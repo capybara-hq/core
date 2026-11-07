@@ -2,6 +2,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
@@ -198,6 +199,10 @@ describe("Conversation HTTP", () => {
         method: "GET",
         url: `/api/v1/orgs/${orgId}/conversations/${conv.id}/events`,
       }),
+      await other.req({
+        method: "GET",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv.id}/events?before=end`,
+      }),
       await post(other.req, orgId, conv.id, { text: "hi" }),
     ]) {
       expect(res.statusCode).toBe(404);
@@ -266,6 +271,7 @@ describe("Conversation HTTP", () => {
       ["GET", base, undefined],
       ["GET", `${base}/${conv.id}`, undefined],
       ["GET", `${base}/${conv.id}/events`, undefined],
+      ["GET", `${base}/${conv.id}/events?before=end`, undefined],
       ["POST", `${base}/${conv.id}/messages`, { text: "hi" }],
       ["GET", `${base}/${conv.id}/outputs/00000000-0000-4000-8000-000000000000`, undefined],
     ] as const) {
@@ -294,6 +300,74 @@ describe("Conversation HTTP", () => {
     expect(await seqs("?after=2&limit=2")).toEqual([3, 4]);
     expect(await seqs("?after=5")).toEqual([]);
     expect((await req({ method: "GET", url: `${url}?after=-1` })).statusCode).toBe(400);
+  });
+
+  it("events?before= reads turn-aligned pages from the end (history paging spec §2)", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const log = k.app.get(EventLog);
+    const user = (text: string, runId?: string) => ({
+      type: "user_message" as const,
+      ...(runId ? { runId } : {}),
+      payload: { content: [{ type: "text", text }], authorAccountId: owner.id },
+    });
+    const started = (runId: string) => ({
+      type: "run_started" as const,
+      runId,
+      payload: {
+        agentVersion: 1,
+        model: { provider: "model-fake", model: "fake-1" },
+        triggerAccountId: owner.id,
+      },
+    });
+    // 1 u · 2-4 run r1 (finished) · 5 u · 6-8 run r2 (failed) · 9 u · 10 run r3 (going)
+    await log.append(conv.id, [
+      user("a"),
+      started("r1"),
+      user("a2", "r1"),
+      { type: "run_finished", runId: "r1", payload: { reason: "completed", consumedUpToSeq: 3 } },
+      user("b"),
+      started("r2"),
+      user("b2", "r2"),
+      { type: "run_failed", runId: "r2", payload: { error: { code: "x", message: "x" } } },
+      user("c"),
+      started("r3"),
+    ]);
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv.id}/events`;
+    const page = async (q: string) => {
+      const res = await req({ method: "GET", url: `${url}${q}` });
+      expect(res.statusCode, q).toBe(200);
+      const body = res.json() as { events: EventJson[]; turnsBefore: number };
+      return { seqs: body.events.map((e) => e.seq), turnsBefore: body.turnsBefore };
+    };
+    // the last 2 start right after r2's end
+    expect(await page("?before=end&limit=2")).toEqual({ seqs: [9, 10], turnsBefore: 2 });
+    // one event is extended back to the turn's start
+    expect(await page("?before=end&limit=1")).toEqual({ seqs: [9, 10], turnsBefore: 2 });
+    expect(await page("?before=9&limit=2")).toEqual({ seqs: [5, 6, 7, 8], turnsBefore: 1 });
+    expect(await page("?before=5&limit=10")).toEqual({ seqs: [1, 2, 3, 4], turnsBefore: 0 });
+    expect(await page("?before=1")).toEqual({ seqs: [], turnsBefore: 0 });
+    expect(await page("?before=end")).toEqual({
+      seqs: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      turnsBefore: 0,
+    });
+    // `after` is unchanged and has no turnsBefore
+    const after = await req({ method: "GET", url: `${url}?after=8` });
+    expect(after.json()).not.toHaveProperty("turnsBefore");
+    for (const q of ["?before=0", "?before=x", "?after=1&before=5", "?before=end&limit=0"]) {
+      const res = await req({ method: "GET", url: `${url}${q}` });
+      expect(res.statusCode, q).toBe(400);
+    }
+    // past the extension a long run starts mid-run, its start counted in turnsBefore
+    const mid = await log.readTurnPageBefore(conv.id, null, 1, 0);
+    expect(mid.events.map((e) => e.seq)).toEqual([10]);
+    expect(mid.turnsBefore).toBe(2);
+    // a log without a run end in reach starts at its first event when that is in reach
+    expect((await log.readTurnPageBefore(conv.id, 4, 1, 2)).events.map((e) => e.seq)).toEqual([
+      1, 2, 3,
+    ]);
   });
 
   it("GET /conversations 按 next 游标分页", async () => {

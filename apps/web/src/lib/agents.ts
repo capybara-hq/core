@@ -34,6 +34,7 @@ export const BUILTIN_TOOLS = [
   "SkillWrite",
   "WebSearch",
   "WebFetch",
+  "Platform",
 ] as const;
 
 /**
@@ -61,7 +62,7 @@ export interface AgentDefinitionInput {
   modelParams?: Record<string, ParamValue>;
   /** 兜底模型的参数；没有兜底模型时必须为空。 */
   fallbackParams?: Record<string, ParamValue>;
-  /** 引用的工具；创建时不给则由内核填默认（AskUserQuestion、ReadToolOutput）。 */
+  /** The tools; when absent on create the kernel fills the defaults (AskUserQuestion, ReadToolOutput, Platform). */
   tools?: AgentToolRef[];
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
@@ -430,6 +431,18 @@ export const createAgent = (
 
 export const getAgent = (orgId: string, agentId: string) =>
   apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
+
+/** One saved version of an agent (newest first in the list). */
+export interface AgentVersionSummary {
+  version: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+export const listAgentVersions = (orgId: string, agentId: string) =>
+  apiFetch<{ versions: AgentVersionSummary[] }>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/versions`,
+  );
 
 /**
  * A definition as a save sends it: with `instructions` (the prompt files left out: the kernel keeps

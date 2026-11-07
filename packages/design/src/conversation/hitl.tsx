@@ -31,6 +31,8 @@ export type ApprovalBlockProps = {
   tool: string;
   /** The model-visible tool key, always shown: a title is unreviewed display text. */
   toolKey: string;
+  /** What the call does, in one sentence, rendered by the kernel; shown above the input. */
+  summary?: string;
   /** The whole tool input. Every property is shown. */
   input: Record<string, unknown>;
   /** The tool's key arguments: shown first, in this order. */
@@ -211,6 +213,11 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           {p.toolKey}
         </span>
       </div>
+      {p.summary ? (
+        <div className="cb-small" data-part="summary">
+          {p.summary}
+        </div>
+      ) : null}
       {args.length === 0 ? (
         <div className="cb-muted cb-small">{t("hitl.noArgs")}</div>
       ) : (

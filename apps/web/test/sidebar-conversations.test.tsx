@@ -189,7 +189,7 @@ describe("useConversationGroups", () => {
     show("o1");
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(screen.getByRole("button", { name: "与 研究助手 新建会话" }));
-    expect(router.push).toHaveBeenCalledWith("/chat?agent=a1");
+    expect(router.push).toHaveBeenCalledWith("/?agent=a1");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
@@ -249,7 +249,7 @@ describe("useConversationGroups", () => {
         <Sidebar {...base} conversations={noOrgConversations("/")} mode="full" />
       </DesignProvider>,
     );
-    expect(within(section()).getByText("还没有会话。")).toBeTruthy();
+    expect(within(section()).getByText("还没有会话")).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
 });
@@ -545,13 +545,13 @@ describe("useConversationGroups filter, archived list and row actions (web order
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ archived: false }),
     );
     // the archived view stays open, now empty, and its count follows
-    expect(await within(section()).findByText("没有已归档的会话。")).toBeTruthy();
+    expect(await within(section()).findByText("没有已归档的会话")).toBeTruthy();
     expect(
       within(section()).getByRole("button", { name: "返回会话列表：已归档 · 0" }),
     ).toBeTruthy();
   });
 
-  it("deleting the open conversation navigates to /chat", async () => {
+  it("deleting the open conversation navigates to / (a new conversation)", async () => {
     let deleted = false;
     const calls = stubApi({
       [groupsUrl]: () =>
@@ -572,7 +572,7 @@ describe("useConversationGroups filter, archived list and row actions (web order
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除会话？" });
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
 

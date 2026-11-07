@@ -6,6 +6,7 @@ import { useState } from "react";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
 import { canEditAgent, canUpdateOrg } from "../lib/org-settings";
+import { newConversationPath } from "../lib/routes";
 import type { Me } from "../lib/session";
 import { SaveAsTemplateDialog } from "./SaveAsTemplateDialog";
 import { navLevelOf } from "./shell/nav";
@@ -31,7 +32,7 @@ export function matchesAgent(a: Agent, query: string): boolean {
 /**
  * One agent as a card (rulings P4-15, P4-16): avatar, name (the whole card opens the agent's page,
  * read-only for whoever may only use it), the description, the meta line owner · 可见范围, the
- * primary 开始会话 (`/chat?agent=`, a new conversation with that agent picked, created on the first
+ * primary 开始会话 (`/?agent=`, a new conversation with that agent picked, created on the first
  * send) and the ⋯ menu as the agent page's: 设置 (whoever may change it), 运行记录 (org admins, and
  * a member who owns it). The owner is changed on the agent page only, never from the list
  * (acceptance item P; ruling P4-16 as amended). 另存为模板 (org admins, ruling P4-9) opens the
@@ -67,7 +68,7 @@ export function AgentCard({
         {...(description !== "" ? { description } : {})}
         // Visibility is plain metadata, never a chip; the owner only when it can be named
         meta={[...(owner !== undefined ? [owner] : []), t(`scope.${agent.visibility}`)]}
-        primary={{ label: t("chat"), href: `/chat?agent=${encodeURIComponent(agent.id)}` }}
+        primary={{ label: t("chat"), href: newConversationPath(agent.id) }}
         menu={[
           ...(editable ? [{ label: t("settings"), href: page }] : []),
           ...(canViewRuns

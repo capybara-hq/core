@@ -54,6 +54,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * which have no page, read as plain text.
  */
 export const APP_PAGES: readonly string[] = [
+  "/",
   "/account/connections",
   "/account/grants",
   "/account/identities",
@@ -84,11 +85,12 @@ export const APP_PAGES: readonly string[] = [
   "/channels",
   "/channels/[id]",
   "/channels/new",
-  "/chat",
   "/chat/[conversationId]",
   "/connectors",
   "/connectors/[connectorId]",
   "/connectors/install",
+  "/environments",
+  "/environments/[id]",
   "/evals",
   "/evals/[setId]",
   "/evals/[setId]/cases/[caseId]",

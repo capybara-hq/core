@@ -16,6 +16,7 @@ import {
   Select,
   Stack,
   StatusMark,
+  Subsection,
   Text,
   useTimeZone,
   useToast,
@@ -440,40 +441,44 @@ function SampleDialog({
         <Text variant="prose" tone="muted">
           {t("hint")}
         </Text>
-        <Field label={t("count")}>
-          <Input
-            type="number"
-            min={1}
-            max={50}
-            value={count}
-            onChange={(e) => setCount(e.target.value)}
-          />
-        </Field>
-        <Field label={t("status")}>
-          <Select
-            value={status}
-            onChange={(e) => setStatus(e.target.value as typeof status)}
-            options={(["completed", "failed", "any"] as const).map((s) => ({
-              value: s,
-              label: t(`statuses.${s}`),
-            }))}
-          />
-        </Field>
-        <Field label={t("minToolCalls")}>
-          <Input
-            type="number"
-            min={0}
-            max={1000}
-            value={minToolCalls}
-            onChange={(e) => setMinToolCalls(e.target.value)}
-          />
-        </Field>
-        <Field label={t("from")} optional>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </Field>
-        <Field label={t("to")} optional>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </Field>
+        <Subsection title={t("groups.which")} variant="divided">
+          <Field label={t("count")}>
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={count}
+              onChange={(e) => setCount(e.target.value)}
+            />
+          </Field>
+          <Field label={t("status")}>
+            <Select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as typeof status)}
+              options={(["completed", "failed", "any"] as const).map((s) => ({
+                value: s,
+                label: t(`statuses.${s}`),
+              }))}
+            />
+          </Field>
+          <Field label={t("minToolCalls")}>
+            <Input
+              type="number"
+              min={0}
+              max={1000}
+              value={minToolCalls}
+              onChange={(e) => setMinToolCalls(e.target.value)}
+            />
+          </Field>
+        </Subsection>
+        <Subsection title={t("groups.when")} variant="divided">
+          <Field label={t("from")} optional>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </Field>
+          <Field label={t("to")} optional>
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </Field>
+        </Subsection>
         {error !== null ? <FormError message={error} /> : null}
       </Stack>
     </Dialog>

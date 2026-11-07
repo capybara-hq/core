@@ -450,7 +450,9 @@ export function Repeater({
           })}
         </ul>
       )}
-      <div className="cb-repeater-foot">{addButton}</div>
+      <div className="cb-repeater-foot" data-part="repeater-foot">
+        {addButton}
+      </div>
     </div>
   );
 }

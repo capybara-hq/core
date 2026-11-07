@@ -7,8 +7,9 @@ export { SUBAGENT_HANDBACK } from "../builtin-names.js";
 /**
  * The `SubagentHandback` builtin tool (agent map spec §4.3, children only): delivers a report to
  * the agent that dispatched the sub-agent, as a `report` `subagent_delivery` in the parent's log.
- * The sub-agent keeps its turn and may go on working; several handbacks are allowed, and a finish
- * after one is delivered as a one-line status. The tool pipeline handles the call itself
+ * The sub-agent keeps its turn and may go on working; several handbacks are allowed. A run that
+ * handed back and then completes delivers nothing more (it only logs `subagent_finished`); one that
+ * ends otherwise (failed, stopped, a limit) is delivered as a one-line status. The tool pipeline handles the call itself
  * (`SubagentMessages`), so {@link handbackTool}'s `run` is only a guard.
  */
 

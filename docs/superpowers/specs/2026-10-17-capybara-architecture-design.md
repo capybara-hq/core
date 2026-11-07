@@ -577,7 +577,7 @@ CAPYBARA_NACOS_DATA_ID=capybara.yaml
 
 ### 8.3 Sandbox
 
-- **Lazy creation on demand**: it is started only when a sandbox-type tool is used.
+- **Environments**: work happens in environments, not per-conversation sandboxes (`docs/superpowers/specs/2026-11-07-environments-design.md`). A cloud environment is one instance plus a file system; the instance is created on the first sandbox-type tool call, suspended when idle and destroyed after long disuse, and the files are kept until the environment is deleted. The provider contract is `sandbox@2` (§5.1 of that spec).
 - The implementation is chosen by deployment config (one kind per deployment):
 
 | Form | Implementation | Isolation |
@@ -595,7 +595,7 @@ sandbox:
     memory: 2Gi
     egress: allowlist         # none | allowlist | open
     suspendAfterIdle: 10m     # suspend after idle (not destroyed)
-    destroyAfterInactive: 30d # destroyed (files included) only after long disuse
+    destroyAfterInactive: 30d # the instance is destroyed only after long disuse (files stay until the environment is deleted)
     maxRunning: 2h            # backstop: maximum continuous running time, forcibly suspended when reached
   docker:
     runtime: runsc            # runc | runsc

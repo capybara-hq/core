@@ -92,6 +92,15 @@ export const CONV_FIXTURE: {
   },
 };
 
+/** The composer's environment picker (spec §6.16.2): the choices, one of them not usable. */
+export const ENVIRONMENT_FIXTURE = {
+  selected: "dev-docker",
+  items: [
+    { id: "dev-docker", label: "开发沙盒" },
+    { id: "prod-cloud", label: "云端沙盒", tag: "未配置", disabled: true },
+  ],
+} as const;
+
 /** Composer, title bar and panel copy of the reference pages (zh; product copy goes through i18n). */
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",
@@ -104,6 +113,8 @@ export const CONV_COPY = {
   model: "切换模型",
   effort: "思考档位",
   agentLocked: "发送第一条消息后不能再换智能体",
+  environment: "切换环境",
+  environmentLocked: "发送第一条消息后不能再换环境",
   modelHint: "从下一条消息起生效",
   properties: "属性面板",
   files: "文件",
@@ -472,6 +483,8 @@ export const HITL_FIXTURE: {
     scopes: ("once" | "session" | "always")[];
     policy: string;
     denyReason: string;
+    /** The kernel-rendered one-sentence summary of a call (the `pending-summary` state). */
+    summary: string;
   };
   question: { question: string; options: string[]; selected: number; other: string };
   questionUrl: { question: string; url: string };
@@ -496,6 +509,7 @@ export const HITL_FIXTURE: {
     scopes: ["once", "session", "always"],
     policy: "策略：发消息需审批",
     denyReason: "先别发，等财务确认",
+    summary: "添加市场源 https://plugins.acme.example",
   },
   question: {
     question: "示例表里同一收款人有两行映射，流程应该保留哪一个类别？",

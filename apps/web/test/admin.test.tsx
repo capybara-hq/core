@@ -271,10 +271,22 @@ const ORGS = [
   { id: "o2", slug: "beta", name: "Beta", createdAt: "2026-10-02T00:00:00Z", memberCount: 1 },
 ];
 
+/** The deployment's defaults `GET /admin/orgs` carries. */
+const LIMIT_DEFAULTS = {
+  runConcurrency: 10,
+  sandbox: { cpu: 1, memoryMb: 2048 },
+  subagents: {
+    maxDepth: 3,
+    maxConcurrentPerConversation: 4,
+    maxDispatchesPerRun: 50,
+    maxTokensPerRun: 5_000_000,
+  },
+};
+
 describe("/admin/orgs（ListPage）", () => {
   it("says in one paragraph that defaults apply and org settings need an org admin", async () => {
     stubApi({
-      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     });
     await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale: "zh" });
@@ -287,7 +299,7 @@ describe("/admin/orgs（ListPage）", () => {
   it.each(LOCALES)("显示覆盖值；设置运行并发与沙箱限额 → PUT settings（%s）", async (locale) => {
     const o = msgs[locale].admin.orgs;
     const calls = stubApi({
-      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "PUT /api/v1/admin/settings": () =>
         json(200, {
@@ -303,7 +315,12 @@ describe("/admin/orgs（ListPage）", () => {
     expect(within(beta).getByText("3")).toBeTruthy();
     expect(within(beta).getByText("2")).toBeTruthy();
     const acme = within(table).getByText("Acme").closest("tr") as HTMLElement;
-    expect(within(acme).getAllByText(o.default).length).toBe(3);
+    // an org without overrides shows the deployment defaults, grouped
+    expect(
+      ["10", "1", "2,048 MB", "5,000,000"].map(
+        (v) => within(acme).getAllByText(fill(o.defaultValue, { value: v })).length,
+      ),
+    ).toEqual([1, 1, 1, 1]);
 
     const user = userEvent.setup();
     await user.click(within(acme).getByRole("button", { name: ROW_ACTIONS[locale] }));
@@ -311,6 +328,15 @@ describe("/admin/orgs（ListPage）", () => {
     const dialog = await screen.findByRole("dialog", {
       name: fill(o.dialog.title, { name: "Acme" }),
     });
+    // the limits as titled regions: 运行, 沙箱 (its note as the help line), 子智能体
+    expect(
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([o.dialog.groups.run, o.dialog.groups.sandbox, o.dialog.groups.subagents]);
+    const sandbox = within(dialog).getByRole("region", { name: o.dialog.groups.sandbox });
+    expect(within(sandbox).getByText(o.dialog.newOnly)).toBeTruthy();
+    expect(within(sandbox).getByRole("textbox", { name: o.dialog.cpu })).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.runConcurrency }), "5");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.cpu }), "1.5");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.memory }), "4096");
@@ -328,7 +354,7 @@ describe("/admin/orgs（ListPage）", () => {
 
   it("清空覆盖 → 发 null；cpu 越界在界面拦下、不发请求", async () => {
     const calls = stubApi({
-      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "PUT /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, runConcurrencyOverrides: {}, sandboxLimitOverrides: {} }),
@@ -365,7 +391,7 @@ describe("/admin/orgs（ListPage）", () => {
     async (locale) => {
       const o = msgs[locale].admin.orgs;
       const calls = stubApi({
-        "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+        "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
         "GET /api/v1/admin/settings": () =>
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
         "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
@@ -413,9 +439,70 @@ describe("/admin/orgs（ListPage）", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "placeholders show the deployment defaults; 不限制 saves 0 for dispatches and tokens (%s)",
+    async (locale) => {
+      const o = msgs[locale].admin.orgs;
+      const calls = stubApi({
+        "GET /api/v1/admin/orgs": () =>
+          json(200, {
+            orgs: ORGS,
+            limitDefaults: {
+              ...LIMIT_DEFAULTS,
+              subagents: { ...LIMIT_DEFAULTS.subagents, maxDispatchesPerRun: 0 },
+            },
+          }),
+        "GET /api/v1/admin/settings": () =>
+          json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxTokensPerRun: 0 } } }),
+        "PUT /api/v1/admin/settings": () =>
+          json(200, {
+            ...SETTINGS,
+            subagentLimitOverrides: { o2: { maxDispatchesPerRun: 0 } },
+          }),
+      });
+      await renderRouteWithCache("/admin/orgs", lastStubRoutes(), { locale });
+      const table = await screen.findByRole("table", { name: o.title });
+      const beta = within(table).getByText("Beta").closest("tr") as HTMLElement;
+      // the org's token budget is unlimited
+      expect(within(beta).getByText(o.unlimited)).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(within(beta).getByRole("button", { name: ROW_ACTIONS[locale] }));
+      await user.click(await screen.findByRole("menuitem", { name: o.edit }));
+      const dialog = await screen.findByRole("dialog");
+      const box = (name: string) =>
+        within(dialog).getByRole("textbox", { name }) as HTMLInputElement;
+      expect(box(o.dialog.runConcurrency).placeholder).toBe(
+        fill(o.dialog.placeholder, { value: "10" }),
+      );
+      expect(box(o.dialog.memory).placeholder).toBe(fill(o.dialog.placeholder, { value: "2,048" }));
+      // a deployment default of 0 is no limit
+      expect(box(o.dialog.subagentDispatches).placeholder).toBe(
+        fill(o.dialog.placeholder, { value: o.unlimited }),
+      );
+      // the org's 0 checks 不限制 and disables its input
+      const [dispatchesOff, tokensOff] = within(dialog).getAllByRole("checkbox", {
+        name: o.dialog.unlimited,
+      }) as HTMLInputElement[];
+      expect(tokensOff?.checked).toBe(true);
+      expect(box(o.dialog.subagentTokens).disabled).toBe(true);
+      expect(dispatchesOff?.checked).toBe(false);
+      // unchecking tokens (empty: the default) and checking dispatches saves 0 for dispatches only
+      await user.click(tokensOff as HTMLInputElement);
+      expect(box(o.dialog.subagentTokens).disabled).toBe(false);
+      await user.click(dispatchesOff as HTMLInputElement);
+      expect(box(o.dialog.subagentDispatches).disabled).toBe(true);
+      await user.click(within(dialog).getByRole("button", { name: o.dialog.save }));
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((c) => c.method === "PUT"))).toMatchObject({
+          subagentLimitOverrides: { o2: { maxDispatchesPerRun: 0 } },
+        }),
+      );
+    },
+  );
+
   it("内核 400（validation_failed）：在对话框里显示，对话框不关", async () => {
     stubApi({
-      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS }),
+      "GET /api/v1/admin/orgs": () => json(200, { orgs: ORGS, limitDefaults: LIMIT_DEFAULTS }),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "PUT /api/v1/admin/settings": () =>
         json(400, { error: { code: "validation_failed", message: "x" } }),
@@ -655,6 +742,43 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     expect(
       (within(dialog).getByRole("checkbox", { name: "Beta" }) as HTMLInputElement).disabled,
     ).toBe(false);
+  });
+
+  it("detail: what needs attention is one notice above the tabs, the facts one block above the tab", async () => {
+    const listed = item({
+      disabled: true,
+      contentChanged: true,
+      pendingVersion: "1.1.0",
+      versions: ["1.1.0", "1.0.0"],
+    });
+    stubApi({
+      ...routes([listed]),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(listed)),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    // one Callout in the head (above the tabs) listing every note, each said once
+    const callouts = document.querySelectorAll('[data-part="callout"]');
+    expect(callouts).toHaveLength(1);
+    const notice = callouts[0] as HTMLElement;
+    expect(notice.closest('[data-part="page-tabs"]')).toBeNull();
+    expect(notice.closest(".cb-pageheader-notice")).not.toBeNull();
+    for (const note of [
+      P.detail.notShareableNote,
+      fill(P.detail.pendingVersionNote, { version: "v1.1.0" }),
+      P.detail.disabledNote,
+      P.detail.contentChanged,
+    ]) {
+      expect(within(notice).getAllByText(note)).toHaveLength(1);
+      expect(screen.getAllByText(note)).toHaveLength(1);
+    }
+    // the owner is a fact (no separate owner sentence); the facts sit in the facts block
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(within(facts).getByText(fill(P.detail.ownerValue, { org: "Acme" }))).toBeTruthy();
+    // the facts do not repeat per tab: switching tabs keeps the one block
+    await userEvent.setup().click(screen.getByRole("tab", { name: P.detail.tabs.orgs }));
+    expect(document.querySelectorAll('[data-part="detail-facts"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-part="callout"]')).toHaveLength(1);
   });
 
   it("detail of a shared org plugin: the full scope dialog, the owner kept; no 更新到 a pending version", async () => {

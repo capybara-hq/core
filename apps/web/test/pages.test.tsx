@@ -122,7 +122,7 @@ describe("(app) 页面模板", () => {
     expect(within(card).getByText(`Lin · ${zh.agents.scope.org}`)).toBeTruthy();
     // 开始会话: a new conversation with the agent picked; nothing is created before the first send
     expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
-      "/chat?agent=ag1",
+      "/?agent=ag1",
     );
     expect(screen.getByRole("link", { name: zh.agents.new }).getAttribute("href")).toBe(
       "/agents/new",
@@ -180,7 +180,7 @@ describe("(app) 页面模板", () => {
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("404");
     expect(screen.getByText(zh.notFound.description)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: zh.notFound.back }));
-    expect(router.push).toHaveBeenCalledWith("/chat");
+    expect(router.push).toHaveBeenCalledWith("/");
   });
 
   it("not-found keeps the page's path in the head, not ~", () => {
@@ -189,7 +189,7 @@ describe("(app) 页面模板", () => {
     const nav = screen.getByRole("navigation", { name: "路径" });
     expect(nav.textContent).toBe("acme/trajectories/9f60c1e6");
     // the org scope links home (the new conversation; there is no home page)
-    expect(within(nav).getByRole("link", { name: "acme" }).getAttribute("href")).toBe("/chat");
+    expect(within(nav).getByRole("link", { name: "acme" }).getAttribute("href")).toBe("/");
     expect(within(nav).getByRole("link", { name: "trajectories" }).getAttribute("href")).toBe(
       "/trajectories",
     );
@@ -252,7 +252,7 @@ describe("(auth) 页面模板", () => {
     );
     await user.type(screen.getByRole("textbox", { name: en.setup.displayNameLabel }), "Admin");
     await user.click(screen.getByRole("button", { name: en.setup.submit }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.find((c) => c.method === "POST")?.body).toEqual({
       login: "admin",
       password: "correct-horse-battery",
@@ -281,11 +281,12 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     const links = within(nav).getAllByRole("link");
     expect(links.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
       // A new conversation starts at the composer (UI refresh B)
-      ["新会话", "/chat"],
+      ["新会话", "/"],
       // no home item; 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07)
       [zh.nav.agents, "/agents"],
       [zh.nav.skills, "/skills"],
       [zh.nav.connectors, "/connectors"],
+      [zh.nav.environments, "/environments"],
     ]);
     // the inbox is the brand row's icon button
     expect(screen.getByRole("link", { name: zh.nav.inbox }).getAttribute("href")).toBe("/inbox");
@@ -355,7 +356,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: c.create })).toBeTruthy();
     expect(screen.getByRole("link", { name: c.admin }).getAttribute("href")).toBe("/admin");
     await userEvent.click(within(orgs[1] as HTMLElement).getByRole("button", { name: c.enter }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(calls.find((x) => x.method === "PUT")?.body).toEqual({ orgId: "o2" });
     // the button stays pending until the server's new frame arrives
     expect(
@@ -378,12 +379,11 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(screen.getByRole("button", { name: zh.orgChooser.logout })).toBeTruthy();
   });
 
-  it("the account menu's Organization submenu ends with Create organization", async () => {
+  it("the org switcher's menu ends with Create organization", async () => {
     renderFrame(shellOf(ME));
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
-    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
-    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
+    await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
+    // jsdom has no layout: pick items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitem", { name: zh.shell.createOrg })).focus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("dialog", { name: zh.home.createOrg.title })).toBeTruthy();
@@ -406,7 +406,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
       }),
     );
     await userEvent.click(screen.getByRole("button", { name: "与 研究助手 新建会话" }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=a1"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/?agent=a1"));
   });
 
   it("非超级管理员看不到一级导航「管理」（组织 owner 也不行）", async () => {
@@ -473,7 +473,7 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     expect(within(link).getByText("2+")).toBeTruthy();
   });
 
-  it("the account menu holds Organization ▸ and Language ▸ above sign-out; the theme switch follows the account", async () => {
+  it("the account menu holds Language ▸ above sign-out, the org switcher switches orgs; the theme switch follows the account", async () => {
     const me = {
       ...ME,
       memberships: [...ME.memberships, { orgId: "o2", slug: "b", name: "Beta", role: "member" }],
@@ -485,22 +485,22 @@ describe("AppFrame（(app) 布局的 App Shell）", () => {
     renderFrame(shellOf(me));
     const user = userEvent.setup();
     const account = () => screen.getByRole("button", { name: `账户: ${ME.account.displayName}` });
-    // the account menu: Organization ▸ and Language ▸ above sign-out
+    // the account menu: Language ▸ above sign-out, no org entry
     await user.click(account());
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      zh.shell.orgMenu,
       zh.common.language,
       zh.shell.accountSettings,
       zh.common.logout,
     ]);
-    await user.click(screen.getByRole("menuitem", { name: zh.shell.orgMenu }));
+    await user.keyboard("{Escape}");
+    // the org switcher's menu: the orgs as radio items directly
+    await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
     const current = await screen.findByRole("menuitemradio", { name: "Acme" });
     expect(current.getAttribute("aria-checked")).toBe("true");
     expect(current.querySelector("svg")).toBeTruthy();
     expect(current.textContent).toBe("Acme");
     // the current org is the current choice, in primary text: not disabled
     expect(current.getAttribute("aria-disabled")).toBeNull();
-    // jsdom has no layout: pick submenu items with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
     await vi.waitFor(() =>
@@ -562,8 +562,10 @@ describe("activeNavOf", () => {
     expect(activeNavOf("/channels/new")).toBe("channels");
     expect(activeNavOf("/chat/c1")).toBe("");
     // the new conversation is the home: 新会话 is current there
-    expect(activeNavOf("/chat")).toBe("new");
-    expect(activeNavOf("/")).toBe("");
+    expect(activeNavOf("/")).toBe("new");
+    // the old `/chat` never renders (next.config redirects it to `/`); admin pages are not 新会话
+    expect(activeNavOf("/chat")).toBe("");
+    expect(activeNavOf("/admin/plugins")).not.toBe("new");
     expect(activeNavOf("/skills")).toBe("skills");
     expect(activeNavOf("/skills/s1")).toBe("skills");
     expect(activeNavOf("/plugins")).toBe("plugins");

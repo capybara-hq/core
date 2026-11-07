@@ -850,14 +850,19 @@ describe("Sidebar conversations", () => {
     ).toEqual(["旧助手 会话 2"]);
   });
 
-  it("ready with no groups: the compact empty state with a New conversation link", () => {
+  it("ready with no groups: the panel empty state (capybara at scale 4) with a default New conversation link", () => {
     const p = props();
     zh(<Sidebar {...p} conversations={{ ...p.conversations, groups: [] }} />);
     const sec = convSection();
     const es = sec.querySelector('[data-part="empty-state"]');
-    expect(es?.getAttribute("data-size")).toBe("compact");
-    expect(within(sec).getByText("还没有会话。")).toBeTruthy();
-    expect(within(sec).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/chat");
+    expect(es?.getAttribute("data-size")).toBe("panel");
+    const art = es?.querySelector('[data-part="empty-illustration"] svg');
+    expect([art?.getAttribute("width"), art?.getAttribute("height")]).toEqual(["57", "41"]);
+    expect(within(sec).getByText("还没有会话")).toBeTruthy();
+    const link = within(sec).getByRole("link", { name: "新会话" });
+    expect(link.getAttribute("href")).toBe("/chat");
+    expect(link.className).toContain("cb-btn-link-default");
+    expect(link.getAttribute("data-density")).toBe("dense");
   });
 
   it("a filter that matches nothing: the empty state with Clear filter", async () => {
@@ -876,12 +881,12 @@ describe("Sidebar conversations", () => {
     );
     const sec = convSection();
     expect(within(sec).getByText("没有匹配的会话")).toBeTruthy();
-    // the in-list form of the compact empty state (centered in the list like the DataTable's)
+    // the same panel empty state as the empty list, the capybara included
     const hint = sec.querySelector('[data-part="empty-hint"]');
     expect(hint?.getAttribute("data-state")).toBe("no-match");
-    expect(hint?.querySelector('[data-part="empty-state"]')?.getAttribute("data-size")).toBe(
-      "compact",
-    );
+    const es = hint?.querySelector('[data-part="empty-state"]');
+    expect(es?.getAttribute("data-size")).toBe("panel");
+    expect(es?.querySelector('[data-part="empty-illustration"]')).toBeTruthy();
     await userEvent.click(within(sec).getByRole("button", { name: "清除筛选" }));
     expect(onChange).toHaveBeenCalledWith({ q: "", state: "all" });
   });

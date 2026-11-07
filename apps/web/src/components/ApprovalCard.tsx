@@ -22,6 +22,7 @@ import {
   scopesFor,
 } from "../lib/approvals";
 import type { ToolInfo } from "../lib/conversations";
+import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
@@ -29,7 +30,7 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useWaiterWords } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
-import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
+import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
 
@@ -62,7 +63,7 @@ export function ScopePicker({
   onChange,
   disabled,
 }: {
-  approval: Pick<Approval, "requestedFor">;
+  approval: Pick<Approval, "requestedFor" | "scopes">;
   value: ApprovalScope;
   onChange(scope: ApprovalScope): void;
   disabled?: boolean;
@@ -166,16 +167,20 @@ export function useDecide(orgId: string) {
  * key and every argument (key arguments first), one approve button per allowed scope, Deny with an
  * optional reason, and which rule asked. Pending, it reads the approval (who may decide, the
  * scopes); a viewer who can't decide (404) sees only that an approver is awaited. Decided, one line:
- * who, the scope, when, and the reason of a denial.
+ * who, the scope, when, and the reason of a denial. With `fromRead` (a sub-agent's wait, whose
+ * decision the parent's log does not carry) the item's `decided: null` means unknown, not pending:
+ * nothing is drawn until the read answers, so a decided approval never paints as pending first.
  */
 export function ApprovalCard({
   orgId,
   item,
   info,
+  fromRead = false,
 }: {
   orgId: string;
   item: ApprovalItem;
   info?: ToolInfo | undefined;
+  fromRead?: boolean;
 }) {
   const t = useTranslations("approval");
   const locale = useLocale();
@@ -186,10 +191,13 @@ export function ApprovalCard({
   const decided = item.decided;
   // Pending, the approval tells who may decide; not visible = may not decide (assigned to
   // someone else, or the role is too low).
+  const approvalQ = approvalQuery(orgId, item.approvalId);
   const approval = useQuery({
-    ...approvalQuery(orgId, item.approvalId),
+    ...approvalQ,
     enabled: decided === null,
     retry: false,
+    // a 404 the server read (not this viewer's to decide) stays as it was painted
+    retryOnMount: retryOnMountOf(approvalQ.queryKey),
   });
   const view: Approval | null | undefined =
     approval.data !== undefined ? approval.data : approval.error !== null ? null : undefined;
@@ -223,7 +231,13 @@ export function ApprovalCard({
     }
   }
 
-  const tool = toolLabelText(info ? toolLabel(info, locale) : toolLabelOfKey(item.toolKey));
+  // a Platform call's approval is keyed `Platform:<operation>` (the conversation item's key is the tool's)
+  const platformKey = view?.toolKey?.startsWith(PLATFORM_PREFIX) ? view.toolKey : undefined;
+  const tool = toolLabelText(
+    info && platformKey === undefined
+      ? toolLabel(info, locale)
+      : toolLabelOfKey(platformKey ?? item.toolKey),
+  );
   const input =
     typeof item.input === "object" && item.input !== null && !Array.isArray(item.input)
       ? (item.input as Record<string, unknown>)
@@ -250,6 +264,8 @@ export function ApprovalCard({
         </Text>
       </div>
     );
+  } else if (view === undefined && fromRead) {
+    return null;
   } else {
     state = { kind: "pending", busy: pending !== undefined || view === undefined };
   }
@@ -257,7 +273,8 @@ export function ApprovalCard({
     <div data-role="approval" data-approval-id={item.approvalId}>
       <ApprovalBlock
         tool={tool}
-        toolKey={item.toolKey}
+        toolKey={platformKey ?? item.toolKey}
+        {...(view?.summary ? { summary: view.summary[lang(locale)] } : {})}
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}

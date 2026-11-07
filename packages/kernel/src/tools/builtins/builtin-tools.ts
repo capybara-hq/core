@@ -5,12 +5,17 @@ import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
 import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
+import { ConversationEnvironments } from "../../environments/conversation-environments.js";
 import { ExtensionHost } from "../../extensions/host.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import { ModelPurposesService } from "../../models/purposes.js";
+import { readOrgSettings } from "../../orgs/settings.service.js";
+import { PlatformActor } from "../../platform/actor.js";
+import { AgentDocs } from "../../platform/agent-docs.js";
+import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { UsageReporter } from "../../runtime/usage-report.js";
@@ -22,6 +27,7 @@ import type { BuiltinTool } from "../registry.js";
 import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
 import { handbackTool } from "./handback.js";
+import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
@@ -50,6 +56,7 @@ export class BuiltinTools {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(EventLog) eventLog: EventLog,
     @Inject(SandboxService) sandbox: SandboxService,
+    @Inject(ConversationEnvironments) environments: ConversationEnvironments,
     @Inject(ExtensionPointDefaults) points: ExtensionPointDefaults,
     @Inject(WebPages) webPages: WebPages,
     /** The WebFetch extraction call: the `web_fetch` purpose, its hooks, usage and denials. */
@@ -61,9 +68,13 @@ export class BuiltinTools {
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
     @Inject(BackgroundTaskFinisher) finisher: BackgroundTaskFinisher,
     @Inject(BackgroundTaskStopper) stopper: BackgroundTaskStopper,
+    @Inject(PlatformOperations) platformOps: PlatformOperations,
+    @Inject(PlatformActor) platformActor: PlatformActor,
+    @Inject(AgentDocs) agentDocs: AgentDocs,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
+      environments,
       background,
       tasks: { finisher, stopper },
       attachments,
@@ -87,6 +98,7 @@ export class BuiltinTools {
         storage,
         config,
         sandbox,
+        environments,
         attachments,
         eventLog,
         get db() {
@@ -108,6 +120,13 @@ export class BuiltinTools {
             page,
             prompt,
           ),
+      }),
+      // the platform's own operations and docs, as the run's person (Platform tool spec)
+      platformTool({
+        ops: platformOps,
+        actor: platformActor,
+        docs: agentDocs,
+        setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
       }),
     ];
   }

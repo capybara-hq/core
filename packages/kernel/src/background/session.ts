@@ -1,4 +1,5 @@
-import type { SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { SandboxActor, SandboxHandle } from "@capybara-hq/plugin-sdk";
+import type { HeldProvider, TaggedProvider } from "../sandbox/sandbox.service.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
 
 /**
@@ -7,6 +8,25 @@ import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
  * stopping is `pkill -s <sid>` (never `kill -0` or `/proc`, which disagree between sandbox-fake and
  * Linux).
  */
+
+/**
+ * `p` with every `exec` carrying `actor` (`SandboxService.ifRunning` tags execs but leaves the
+ * actor to the caller): the provider then reads like a `withSandbox` holder's.
+ */
+export function actingAs(p: TaggedProvider, actor: SandboxActor): HeldProvider {
+  const wrapped = Object.create(p) as HeldProvider;
+  Object.defineProperty(wrapped, "exec", {
+    value: (h: SandboxHandle, args: Parameters<HeldProvider["exec"]>[1]) =>
+      p.exec(h, { ...args, actor }),
+  });
+  return wrapped;
+}
+
+/** Who a background task's own execs (poll, stop, reads) act for: its trigger and its owner. */
+export const taskActor = (task: {
+  triggerAccountId: string;
+  conversationId: string;
+}): SandboxActor => ({ accountId: task.triggerAccountId, conversationId: task.conversationId });
 
 /** A session id (the pid `setsid` started). */
 export const SID_RE = /^[1-9][0-9]*$/;
@@ -39,7 +59,7 @@ export function killSessionScript(sid: string): string {
  * empty; false when it could not be (an error is never thrown).
  */
 export async function killSession(
-  p: SandboxProvider,
+  p: Pick<HeldProvider, "exec">,
   h: SandboxHandle,
   sid: string,
 ): Promise<boolean> {

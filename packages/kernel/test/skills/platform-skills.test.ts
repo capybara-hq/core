@@ -335,7 +335,7 @@ describe("skills from platform components", { timeout: 90_000 }, () => {
     const r = await call(conv, "Skill", { skill: "alpha" }, 1);
     expect(r.isError, r.content).toBe(false);
     expect(r.content).toContain("Do alpha from the platform.");
-    expect(r.content).toContain("/skills/alpha/");
+    expect(r.content).toMatch(/\/skills\/alpha@[0-9a-f]{12}\//);
 
     const snaps = await catalogs(conv);
     expect(snaps).toHaveLength(1);

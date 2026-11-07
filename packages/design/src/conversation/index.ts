@@ -17,6 +17,7 @@ export {
   type AgentPanelProps,
   AgentRow,
   type AgentRowItem,
+  AgentRowLoading,
   type AgentRowProps,
   gridStep,
 } from "./agent-row";
@@ -146,6 +147,7 @@ export {
 } from "./subagents";
 export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";
 export { ThinkingRow, type ThinkingRowProps } from "./thinking";
+export { ThreadHistory, type ThreadHistoryProps, type ThreadHistoryState } from "./thread-history";
 export {
   NewTitleBar,
   RenameDialog,

@@ -12,6 +12,8 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/backgroun
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
+import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -31,6 +33,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { seedEnvironment } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -54,7 +57,7 @@ let root: string;
 let sandbox: SandboxService;
 let store: BackgroundTaskStore;
 let tools: readonly BuiltinTool[];
-/** The conversations whose sandboxes a test used (destroyed after it: their tasks die with them). */
+/** The environments a test used (destroyed after it: their tasks die with them). */
 let used: string[] = [];
 
 beforeAll(async () => {
@@ -89,7 +92,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const c of used) await sandbox.destroyFor(c).catch(() => {});
+  for (const e of used) await sandbox.destroyEnvironment(e).catch(() => {});
   used = [];
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
     WHERE status = 'running'`.execute(raw);
@@ -97,12 +100,19 @@ afterEach(async () => {
 
 const tool = (name: string): BuiltinTool => tools.find((t) => t.spec.name === name) as BuiltinTool;
 
-type Conv = Awaited<ReturnType<typeof seedConversation>>;
+type Conv = Awaited<ReturnType<typeof seedConversation>> & { environmentId: string };
 
+/** A seeded conversation bound to an environment of its own. */
 async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
-  used.push(s.conversationId);
-  return s;
+  const environmentId = await seedEnvironment(raw, s.orgId, s.accountId);
+  await db
+    .updateTable("conversations")
+    .set({ environment_id: environmentId })
+    .where("id", "=", s.conversationId)
+    .execute();
+  used.push(environmentId);
+  return { ...s, environmentId };
 }
 
 const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallContext => ({
@@ -135,7 +145,12 @@ async function start(ctx: BuiltinCallContext, command: string): Promise<Backgrou
 /** Runs `command` in the conversation's sandbox. */
 async function shell(c: Conv, command: string): Promise<string> {
   return sandbox.withSandbox(
-    c,
+    {
+      orgId: c.orgId,
+      environmentId: c.environmentId,
+      holderConversationId: c.conversationId,
+      actor: { accountId: c.accountId, conversationId: c.conversationId },
+    },
     async (h, p, _info, sig) =>
       (
         await p.exec(h, {
@@ -171,6 +186,7 @@ async function reservation(c: Conv, id: string): Promise<void> {
         orgId: c.orgId,
         conversationId: c.conversationId,
         sandboxConversationId: c.conversationId,
+        environmentId: c.environmentId,
         runId: "run-1",
         callId: "call-1",
         triggerAccountId: c.accountId,
@@ -352,9 +368,9 @@ describe("TaskOutput", () => {
     });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.reported).toBe(true);
     const st = await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("status")
-      .where("conversation_id", "=", c.conversationId)
+      .where("environment_id", "=", c.environmentId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
   }, 60_000);
@@ -383,6 +399,26 @@ describe("TaskOutput", () => {
       }
     }
     expect((await store.get(t.id))?.status).toBe("running");
+  }, 60_000);
+});
+
+describe("the environment access re-check", () => {
+  it("TaskOutput and TaskStop check that the owner may still use the environment", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "sleep 30");
+    const forTool = vi
+      .spyOn(k.app.get(ConversationEnvironments), "forTool")
+      .mockRejectedValue(new ApiError("environment.forbidden", "no longer allowed"));
+    for (const run of [output, stop]) {
+      const e = await run(c, { task_id: t.id, block: false }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as Error).message).toContain("may no longer use its environment");
+    }
+    expect(forTool).toHaveBeenCalledWith(c.orgId, c.conversationId);
+    // nothing was read or stopped
+    expect((await store.get(t.id))?.status).toBe("running");
+    forTool.mockRestore();
+    expect(isError(await output(c, { task_id: t.id, block: false }))).toBe(false);
   }, 60_000);
 });
 

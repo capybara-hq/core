@@ -73,9 +73,6 @@
 .cb-dialog[data-size="1060"] {
   width: min(1060px, calc(100vw - 32px));
 }
-.cb-dialog[data-size="1100"] {
-  width: min(1100px, calc(100vw - 32px));
-}
 .cb-dialog-head,
 .cb-sheet-head {
   display: flex;

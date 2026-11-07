@@ -14,7 +14,12 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
-import { runSandboxDestroyFor, SANDBOX_DESTROY_FOR_JOB } from "../sandbox/jobs.js";
+import {
+  runSandboxDestroyFor,
+  runSandboxResetFiles,
+  SANDBOX_DESTROY_FOR_JOB,
+  SANDBOX_RESET_FILES_JOB,
+} from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
@@ -33,8 +38,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
 
 /**
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
- * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` →
- * {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
+ * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` and
+ * `sandbox-reset-files` → {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
  * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}, `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
@@ -46,7 +51,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
 export class MaintenanceProcessor extends WorkerHost<Worker> {
   constructor(
     @Inject(Waits) private readonly waits: Pick<Waits, "processTimeout">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "destroyFor">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "destroyEnvironment" | "resetFileSystem">,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
@@ -84,6 +90,9 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         return;
       case SANDBOX_DESTROY_FOR_JOB:
         await runSandboxDestroyFor(this.sandbox, this.log, job);
+        return;
+      case SANDBOX_RESET_FILES_JOB:
+        await runSandboxResetFiles(this.sandbox, job);
         return;
       case DRIFT_CONNECTOR_JOB: {
         const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;

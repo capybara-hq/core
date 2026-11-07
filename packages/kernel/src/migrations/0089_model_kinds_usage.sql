@@ -1,7 +1,7 @@
 -- Model platform providers (spec 2026-11-06-model-platform-providers-design.md). Expand-only: two
 -- new tables, nothing existing changes.
 
--- 0087, spec §5.3: models disabled on two layers. `org_id` null is the platform's list (the super
+-- 0089, spec §5.3: models disabled on two layers. `org_id` null is the platform's list (the super
 -- admin; such a model is invisible to every org), otherwise the org's own list (an org admin, among
 -- the models the platform left on). No row means the model is enabled; a model a provider lists
 -- later is enabled everywhere until someone disables it. Keyed on the model id, so a row applies to
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS model_disabled (
 CREATE UNIQUE INDEX IF NOT EXISTS model_disabled_scope_key
   ON model_disabled ((coalesce(org_id, '')), provider, model);
 
--- 0087, spec §5.4: model usage outside conversations (an extension's `ctx.models.embed` call). One
+-- 0089, spec §5.4: model usage outside conversations (an extension's `ctx.models.embed` call). One
 -- row per call; `reported_at` is set once the `usage.report` job for the row (eventId = id) has
 -- nothing left to deliver (delivered, no subscriber, or a definite drop); `report_failed_at` once
 -- the job gave up after its last attempt. The sweeper re-enqueues recent rows where both are null.

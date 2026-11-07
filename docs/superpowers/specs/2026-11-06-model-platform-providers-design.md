@@ -1,7 +1,7 @@
 # Model platform providers: DeepSeek, Alibaba Bailian, Volcengine Ark
 
 Status: core part implemented on `feat/model-platform-core` (plan
-`docs/superpowers/plans/2026-11-07-model-platform-core.md`, migration `0087_model_kinds_usage.sql`):
+`docs/superpowers/plans/2026-11-07-model-platform-core.md`, migration `0089_model_kinds_usage.sql`):
 SDK kinds / `embed` / `ModelCallOptions`, kernel enablement and `ctx.models`, web model catalog and
 disabling, conformance and model-fake changes; the three plugins (§6) are not started. Error code
 added: `model.provider_not_found` (404). Routes added: `GET /api/v1/orgs/:orgId/models/catalog` and

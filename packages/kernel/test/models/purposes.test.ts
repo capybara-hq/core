@@ -9,6 +9,7 @@ import {
   KERNEL_PURPOSES,
   ModelPurposesService,
   type PurposeView,
+  withDeclaredByNames,
 } from "../../src/models/purposes.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
@@ -158,17 +159,17 @@ describe("purpose list", () => {
       {
         purpose: "subagent_fast",
         kind: "chat",
-        label: { zh: "子代理：快速", en: "Sub-agent: fast" },
+        label: { zh: "子智能体：快速", en: "Sub-agent: fast" },
       },
       {
         purpose: "subagent_standard",
         kind: "chat",
-        label: { zh: "子代理：标准", en: "Sub-agent: standard" },
+        label: { zh: "子智能体：标准", en: "Sub-agent: standard" },
       },
       {
         purpose: "subagent_capable",
         kind: "chat",
-        label: { zh: "子代理：最强", en: "Sub-agent: capable" },
+        label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
       },
     ]);
     const views = await list(ent, adminUrl());
@@ -182,14 +183,17 @@ describe("purpose list", () => {
       kind: "chat",
       label: { zh: "评测评委", en: "Eval judge" },
       declaredBy: "kernel",
+      declaredByName: null,
       default: null,
       override: null,
       effective: null,
     });
+    // the fixture plugin has no display name
     expect(find(views, "model-eval.summarize")).toMatchObject({
       kind: "chat",
       label: { zh: "摘要", en: "Summarize" },
       declaredBy: "model-eval",
+      declaredByName: null,
       effective: null,
     });
     expect(find(views, "embed-consumer.memory")).toMatchObject({
@@ -201,6 +205,33 @@ describe("purpose list", () => {
       "model-eval.summarize",
       "embed-consumer.memory",
     ]);
+  });
+});
+
+describe("withDeclaredByNames", () => {
+  it("names the declaring extension; a kernel purpose has none and is never looked up", async () => {
+    const view = (purpose: string, declaredBy: string): PurposeView => ({
+      purpose,
+      kind: "chat",
+      label: { zh: purpose, en: purpose },
+      declaredBy,
+      default: null,
+      override: null,
+      effective: null,
+    });
+    const asked: string[][] = [];
+    const names = {
+      many: async (n: string[]) => {
+        asked.push(n);
+        return new Map([["ext-a", { zh: "扩展甲", en: "Ext A" }]]);
+      },
+    };
+    const out = await withDeclaredByNames(
+      [view("eval", "kernel"), view("a.x", "ext-a"), view("b.y", "ext-b")],
+      names,
+    );
+    expect(asked).toEqual([["ext-a", "ext-b"]]);
+    expect(out.map((v) => v.declaredByName)).toEqual([null, { zh: "扩展甲", en: "Ext A" }, null]);
   });
 });
 

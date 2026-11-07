@@ -17,9 +17,14 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
+import { environmentState } from "../../lib/environments";
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
-import { connectorsQuery, sandboxQuery } from "../../lib/query/conversation";
+import {
+  connectorsQuery,
+  conversationEnvironmentQuery,
+  conversationQuery,
+} from "../../lib/query/conversation";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
@@ -34,7 +39,9 @@ const slugOf = (toolKey: string): string | null => {
 
 /**
  * The connectors this conversation used, in first-use order: tool calls matched to connector slugs,
- * plus message attachments and connect requests (payload fields still named `appName`).
+ * plus message attachments and connect requests (payload fields still named `appName`). Only the
+ * loaded part of the log counts (history paging spec §5: no server summary; it grows as earlier
+ * pages load).
  */
 export function connectorsUsed(
   events: readonly ConversationEvent[],
@@ -62,8 +69,9 @@ export function connectorsUsed(
 }
 
 /**
- * How many sandbox tool results the events hold, or null while the metadata of any result key is
- * still unknown (so the count never jumps when it arrives).
+ * The newest sandbox tool result's seq (0 without one), or null while the metadata of any result
+ * key is still unknown (so it never jumps when it arrives). A seq, not a count: earlier pages of
+ * the log loaded later (history paging spec §5) are no new use.
  */
 const sandboxUses = (
   events: readonly ConversationEvent[],
@@ -74,14 +82,48 @@ const sandboxUses = (
     if (e.type !== "tool_result") continue;
     const i = info.get(e.payload.toolKey);
     if (i === undefined) return null;
-    if (i.sandbox) n++;
+    if (i.sandbox) n = e.seq;
   }
   return n;
 };
 
 /**
+ * Reads the conversation's environment again whenever the number of sandbox tool results changes:
+ * a result may have started, stopped or suspended the instance. It lives in the conversation page,
+ * which is mounted from the start, not in the properties panel: a panel opened after the tools ran
+ * would take the current count as its baseline and keep showing a fresh but outdated state.
+ */
+export function useEnvironmentRefresh(
+  orgId: string,
+  conversationId: string,
+  events: readonly ConversationEvent[],
+): void {
+  const qc = useQueryClient();
+  const resultKeys = useMemo(
+    () => [
+      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
+    ],
+    [events],
+  );
+  const info = useToolInfo(orgId, conversationId, resultKeys);
+  const uses = useMemo(() => sandboxUses(events, info), [events, info]);
+  const seenUses = useRef<number | null>(null);
+  useEffect(() => {
+    if (uses === null) return;
+    const prev = seenUses.current;
+    seenUses.current = uses;
+    // The first resolved count is the baseline, not a change.
+    if (prev !== null && uses !== prev)
+      void qc.invalidateQueries({
+        queryKey: conversationEnvironmentQuery(orgId, conversationId).queryKey,
+      });
+  }, [uses, qc, orgId, conversationId]);
+}
+
+/**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
- * the model, the sandbox state (read again after each sandbox tool result) and the connectors used.
+ * the model, the environment and its state (kept current by {@link useEnvironmentRefresh}) and the
+ * connectors used.
  * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
 export function ContextSection({
@@ -104,7 +146,6 @@ export function ContextSection({
   total?: string | undefined;
 }) {
   const t = useTranslations("chatPanel");
-  const qc = useQueryClient();
   const connectorsQ = connectorsQuery(orgId);
   const connectors = useQuery({
     ...connectorsQ,
@@ -114,38 +155,35 @@ export function ContextSection({
     () => new Map((connectors?.connectors ?? []).map((a) => [a.slug, a.name])),
     [connectors],
   );
-  const sandboxQ = sandboxQuery(orgId, conversationId);
-  const sandbox = useQuery({ ...sandboxQ, retryOnMount: retryOnMountOf(sandboxQ.queryKey) });
-  const resultKeys = useMemo(
-    () => [
-      ...new Set(events.flatMap((e) => (e.type === "tool_result" ? [e.payload.toolKey] : []))),
-    ],
-    [events],
-  );
-  const toolInfo = useToolInfo(orgId, conversationId, resultKeys);
-  const uses = useMemo(() => sandboxUses(events, toolInfo), [events, toolInfo]);
-  // A sandbox tool result since the last look may have started, stopped or replaced it.
-  const seenUses = useRef<number | null>(null);
-  useEffect(() => {
-    if (uses === null) return;
-    const prev = seenUses.current;
-    seenUses.current = uses;
-    // The first resolved count is the baseline, not a change.
-    if (prev !== null && uses !== prev) void qc.invalidateQueries({ queryKey: sandboxQ.queryKey });
-  }, [uses, qc, sandboxQ.queryKey]);
-  const sandboxText =
-    sandbox.data === undefined
-      ? sandbox.error === null
+  const te = useTranslations("environments");
+  const rowQ = conversationQuery(orgId, conversationId);
+  const environmentId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
+    ?.environmentId;
+  const environmentQ = conversationEnvironmentQuery(orgId, conversationId);
+  const environment = useQuery({
+    ...environmentQ,
+    retryOnMount: retryOnMountOf(environmentQ.queryKey),
+  });
+  // The route answers null both for "none bound" and "the bound one was deleted": the
+  // conversation's own environmentId tells them apart.
+  const environmentText =
+    environment.data === undefined
+      ? environment.error === null
         ? undefined
-        : t("sandboxFailed")
-      : sandbox.data === null
-        ? t("sandboxNone")
-        : t(sandbox.data.status === "running" ? "sandboxRunning" : "sandboxSuspended");
+        : t("environmentFailed")
+      : environment.data === null
+        ? environmentId
+          ? t("environmentDeleted")
+          : t("environmentNone")
+        : t("environmentLine", {
+            name: environment.data.name ?? te("personal"),
+            state: te(`state.${environmentState(environment.data)}`),
+          });
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
-      {...(sandboxText !== undefined ? { sandbox: `${t("sandbox")} ${sandboxText}` } : {})}
+      {...(environmentText !== undefined ? { sandbox: environmentText } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}
       {...(total !== undefined ? { total } : {})}

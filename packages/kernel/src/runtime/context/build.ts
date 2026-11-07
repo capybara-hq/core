@@ -31,6 +31,7 @@ import {
   snapshotSystemText,
   systemSkillsCatalog,
 } from "./skills.js";
+import { toolsChangedText } from "./tool-changes.js";
 
 /**
  * 平台行为规范（模型可见，英文）。短而通用（spec 6 原则 5）；不放时间戳、会话 ID 等会变化的内容，
@@ -535,7 +536,8 @@ export function summaryText(summary: string): string {
  * - messages：最近一条摘要（若有）作为首条 user 消息，其后按 seq 回放 `coversUpToSeq` 之后的
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
- *   （`role: "system"`，放在它所在的位置）/ `background_task_finished`（`role: "system"`, the text of
+ *   （`role: "system"`，放在它所在的位置）/ `tools_changed` (`role: "system"`, the text of {@link toolsChangedText}, at its position) /
+ *   `background_task_finished`（`role: "system"`, the text of
  *   {@link renderBackgroundFinished}, placed like a user_message）/ `subagent_delivery` (likewise,
  *   the text of {@link renderSubagentDelivery})；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
  *   （同一步的多个结果合并，按该 assistant 消息里 tool_call 的顺序；找不到对应调用的结果不进请求）。
@@ -777,6 +779,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "reminder":
         messages.push({ role: "system", content: e.payload.text });
         reminderSeqs.push(e.seq);
+        break;
+      // the tool set changed since the previous request (tool naming spec §9.1); one covered by
+      // the summary is dropped: the request's tool list is current anyway
+      case "tools_changed":
+        messages.push({ role: "system", content: toolsChangedText(e.payload) });
         break;
       // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
       // (and nothing for a denied model request), so request building skips it

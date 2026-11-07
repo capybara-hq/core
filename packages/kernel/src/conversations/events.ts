@@ -463,6 +463,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
+  /**
+   * The step's resolved tool set differs from the one the conversation's previous model request
+   * offered (`toolSetChange`): tool names as the model sees them, sorted. Written before that
+   * step's request, never before a conversation's first one. **Model-visible**: rendered at its
+   * position as a system message (`toolsChangedText`); dropped once a summary covers it.
+   */
+  ev(
+    "tools_changed",
+    z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
+  ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",
@@ -783,7 +793,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * handed back a report (`SubagentHandback`), sent a note (`SendMessage to: "parent"`) or its run
    * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
    * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
-   * `handedBack: true` and renders as one status line; a finish without one carries the child's
+   * `handedBack: true` and renders as one status line, except that a run that handed back and
+   * `completed` writes no finished delivery at all (acceptance 2026-11-07; older logs have one and
+   * keep rendering it); a finish without a handback carries the child's
    * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
    * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
    * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs

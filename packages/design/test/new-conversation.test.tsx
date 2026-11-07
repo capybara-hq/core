@@ -8,6 +8,7 @@ import {
   AgentPanel,
   AgentRow,
   type AgentRowItem,
+  AgentRowLoading,
   ComposerBox,
   ConversationPage,
   DesignProvider,
@@ -540,5 +541,45 @@ describe("ConversationPage new-conversation slots", () => {
     );
     const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;
     expect(within(body).getByRole("heading", { name: "研究助手" })).toBeTruthy();
+  });
+});
+
+describe("AgentRowLoading (spec §6.16.26)", () => {
+  it("draws three chips with the loaded chip's parts and no buttons", () => {
+    const { container } = wrap(<AgentRowLoading />);
+    const row = container.querySelector('[data-part="agent-row"]') as HTMLElement;
+    expect(row.className).toBe("cb-agent-row");
+    const chips = row.querySelectorAll('[data-part="agent-chip"].cb-agent-chip');
+    expect(chips.length).toBe(3);
+    for (const c of chips) {
+      expect(c.querySelector('[data-part="skeleton-box"]')).toBeTruthy();
+      expect(
+        c.querySelector('[data-part="agent-chip-name"] [data-part="skeleton-bar"]'),
+      ).toBeTruthy();
+    }
+    expect(row.querySelectorAll("button").length).toBe(0);
+  });
+
+  it("ConversationPage loading.agents replaces the row and makes the page busy", () => {
+    const { container } = wrap(
+      <ConversationPage
+        titleBar={{
+          title: null,
+          untitled: "",
+          menu: [],
+          properties: { pressed: false, onToggle() {} },
+          panels: [],
+        }}
+        newConversation={{ agents: <div data-part="real-row" /> }}
+        composer={<div />}
+        status={{ context: "", version: "" } as never}
+        right="none"
+        onCloseRight={() => {}}
+        loading={{ agents: true }}
+      />,
+    );
+    expect(container.querySelector('[data-part="real-row"]')).toBeNull();
+    expect(container.querySelector('[data-loading="true"][data-part="agent-row"]')).toBeTruthy();
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
   });
 });

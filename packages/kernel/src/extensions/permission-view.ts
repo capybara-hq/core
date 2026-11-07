@@ -77,7 +77,7 @@ export interface PermissionItem {
 }
 
 /**
- * 敏感的能力（D10 + 计划扩展，F-AI）：`sandbox@1` 在部署里执行任意命令、`object-store@1` 保管全部附件与插件包（D10）；
+ * 敏感的能力（D10 + 计划扩展，F-AI）：`sandbox@2` 在部署里执行任意命令、`object-store@1` 保管全部附件与插件包（D10）；
  * `channel@1` 收到组织在 IM 里的对话内容（Ruling A33）、`directory@1` 能把人加进组织（并为其建账号、建身份）、
  * `identity-source@1` 决定谁能登录成哪个账号。插件提供其中任何一个时，「提供」一组标为敏感，
  * 后台插件列表的 `sensitive` 为真，须超级管理员批准。只影响展示，不改权限快照的键。
@@ -86,7 +86,7 @@ export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "channel@1",
   "directory@1",
   "identity-source@1",
-  "sandbox@1",
+  "sandbox@2",
   "object-store@1",
 ];
 

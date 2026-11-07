@@ -93,7 +93,9 @@ Each line is the rule you must not miss; the skill has the rest.
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
   `view.tsx`; one box is enough: never a box inside a box (`web-ui-box-in-box` and the jsdom guard
   `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
-  (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
+  (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
+  the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
+  2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible
   input needs a `DriftReason`. Run the zero-drift fixture tests before and after changing request
@@ -118,6 +120,7 @@ Each line is the rule you must not miss; the skill has the rest.
   creates a private copy from it (a missing connector becomes a pending entry, a setup request goes
   to the org admins), org admins save agents as org templates; spec §15 of
   `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
+- **Platform tool:** a new HTTP route gets a Platform operation or an exclusion with a reason; operations call the controllers' services, never new logic (`pnpm check:platform-ops`).
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
@@ -127,7 +130,8 @@ Each line is the rule you must not miss; the skill has the rest.
   purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
   through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
   recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** abort must kill the command; locking, suspension and destruction are the kernel's;
+- **Sandboxes:** work happens in environments (one instance + a file system kept until the environment
+  is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the

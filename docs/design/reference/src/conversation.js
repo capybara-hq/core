@@ -314,6 +314,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)} <span class="r-faint">${esc(W.denied.toolKey)}</span><span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
     const scopes = o.state === "pending-once" ? ["once"] : A.scopes;
     const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span>${toolKey(A.toolKey)}</div>`;
+    const summary =
+      o.state === "pending-summary" ? `<div class="r-small" data-part="summary">${esc(A.summary)}</div>` : "";
     const args = `<div class="r-args">${kv(A.args, " r-kv-capped")}<button class="r-linkbtn r-small">查看完整输入</button></div>`;
     let actions;
     if (o.state === "deny-reason") {
@@ -323,7 +325,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const buttons = scopes.map((s, i) => btn(LABEL[s], i === 0 ? "primary" : "default")).join("");
       actions = `<div class="r-card-actions">${buttons}${btn("拒绝…", "default")}<span class="r-card-note">${esc(A.policy)}</span></div>`;
     }
-    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${args}${actions}</div>`;
+    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${summary}${args}${actions}</div>`;
   }
 
   function question(o) {
@@ -377,9 +379,16 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function picker(label, o = {}) {
     if (o.locked)
-      return `<span class="r-picker" data-locked title="${esc(K.agentLocked)}">${esc(label)}</span>`;
+      return `<span class="r-picker" data-locked title="${esc(o.locked === true ? K.agentLocked : o.locked)}">${esc(label)}</span>`;
     // An open picker is the anchor its menu hangs from (the menu is aligned with its trigger).
     return `<button class="r-btn r-picker" data-variant="ghost"${o.open ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${esc(label)}${icon("chevron-down", 12)}</button>`;
+  }
+
+  // The environment picker (§6.16.2) between the agent and the model: "locked" after the first message.
+  function envPicker(o) {
+    const E = F.ENVIRONMENT_FIXTURE;
+    const label = E.items.find((i) => i.id === E.selected).label;
+    return o.env === "locked" ? picker(label, { locked: K.environmentLocked }) : picker(label);
   }
 
   function composer(o = {}) {
@@ -414,19 +423,26 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.env ? envPicker(o) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
   }
 
-  /** The agents chip (§6.16.29): a ghost picker without a chevron, the dot before the label. */
+  /**
+   * The agents chip (§6.16.29): a ghost picker without a chevron; a mark (the dot while active,
+   * else the agent icon) before the label, whose number is ink at 500; an activity part after it
+   * while some are active.
+   */
   function agentsChip(a) {
     const dot = a.running > 0 ? "running" : a.waiting > 0 ? "waiting" : null;
     const word = { running: "运行中", waiting: "等待" };
     const name = `${a.count} 个智能体，${a.running} 个运行中${a.waiting > 0 ? `，${a.waiting} 个等待中` : ""}`;
-    // below 640 (the narrow state) the dot, or the agent icon when nothing is active, and the count
     const lead = dot
       ? `<span class="r-amap-dot" data-part="agent-dot" data-status="${dot}" role="img" aria-label="${word[dot]}"></span>`
       : `<span class="r-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">${icon("agent", 14)}</span>`;
-    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}<span class="r-agents-chip-label" data-part="agents-chip-label">${a.count} 个智能体</span><span class="r-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">${a.count}</span></button>`;
+    const num = (n, part) => `<span class="r-agents-chip-number" data-part="${part}">${n}</span>`;
+    const activity = dot
+      ? `<span class="r-agents-chip-activity" data-part="agents-chip-activity" aria-hidden="true">· ${dot === "running" ? `${num(a.running, "agents-chip-activity-number")} 个运行中` : `${num(a.waiting, "agents-chip-activity-number")} 个等待中`}</span>`
+      : "";
+    return `<button class="r-btn r-picker r-agents-chip" data-variant="ghost" data-part="agents-chip"${state(a.state)} aria-haspopup="dialog" aria-label="${esc(name)}" title="${esc(name)}">${lead}<span class="r-agents-chip-label" data-part="agents-chip-label">${num(a.count, "agents-chip-number")} 个智能体</span>${activity}<span class="r-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">${a.count}</span></button>`;
   }
 
   function pickerMenu(o) {
@@ -576,7 +592,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   // ── Sub-agents ─────────────────────────────────────────────────────────
 
   const TOK = (n) => (n < 1000 ? `${n} tokens` : `${(Math.round(n / 100) / 10).toFixed(1)}k tokens`);
-  const STATUS_WORD = { running: "运行中", waiting: "等待", completed: "完成", failed: "失败", aborted: "已停止" };
+  const STATUS_WORD = { running: "运行中", waiting: "等待", completed: "完成", limit: "已达上限", failed: "失败", aborted: "已停止" };
 
   /** One Agent call block (§6.16.15): the tool box (Agent + task, IN prompt) and the status line. */
   function agentCall(s, status, o = {}) {
@@ -589,7 +605,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (status === "running") text = s.current ? `后台运行中：${esc(s.current)}` : "后台运行中";
     else if (status === "waiting") text = s.current ? `后台等待中：${esc(s.current)}` : "后台等待中";
     else {
-      const word = status === "failed" ? failWord : STATUS_WORD[status];
+      const word =
+        status === "failed"
+          ? failWord
+          : status === "limit"
+            ? '<span class="r-warn-word">已达上限</span>'
+            : STATUS_WORD[status];
       text = `${word} · ${esc(s.duration)} · ${TOK(s.tokens)}`;
     }
     const line = `<div class="r-acall-status"><span class="r-amap-dot" data-status="${status}" role="img" aria-label="${STATUS_WORD[status]}"></span><span class="r-tlabel">${text}</span><button class="r-linkbtn r-acall-open">在智能体图中查看</button></div>`;
@@ -598,12 +619,21 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function subGroup(o) {
     const failed = S.done.filter((s) => s.status === "failed").length;
+    // the limit state: the second row ended on a limit (agent map spec §9.5), counted in warn
+    const limited = o.state === "limit" ? 1 : 0;
+    const limitPart = limited > 0 ? `<span class="r-warn-word">（${limited} 个已达上限）</span>` : "";
     const doneHead = (open) =>
-      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子智能体已完成<span class="r-fail-word">（${failed} 个失败）</span><span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
+      `<div class="r-tline" role="button" aria-expanded="${open}"><span class="r-tlabel">${S.done.length} 个子智能体已完成<span class="r-fail-word">（${failed} 个失败）</span>${limitPart}<span class="r-faint"> · 共 ${S.totals.calls} 次调用 · ${esc(S.totals.duration)}</span></span>${chev(open)}</div>`;
     if (o.state === "done") return doneHead(false);
-    if (o.state === "failed" || o.state === "expanded" || o.state === "stopped") {
+    if (o.state === "failed" || o.state === "expanded" || o.state === "stopped" || o.state === "limit") {
       const status = (s, i) =>
-        s.status === "failed" ? "failed" : o.state === "stopped" && i === 1 ? "aborted" : "completed";
+        s.status === "failed"
+          ? "failed"
+          : i === 1 && o.state === "stopped"
+            ? "aborted"
+            : i === 1 && o.state === "limit"
+              ? "limit"
+              : "completed";
       const calls = S.done.map((s, i) => agentCall(s, status(s, i), { expanded: o.state === "expanded" && i === 0 })).join("");
       return `${doneHead(true)}<div class="r-acalls">${calls}</div>`;
     }

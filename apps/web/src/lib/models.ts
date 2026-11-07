@@ -72,6 +72,8 @@ export interface PurposeView {
   label: { zh: string; en: string };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
+  /** The declaring extension's display name (`null`: a kernel purpose, or none declared). */
+  declaredByName: LocalizedName | null;
   default: PurposeTarget | null;
   override: PurposeTarget | null;
   effective: PurposeTarget | null;

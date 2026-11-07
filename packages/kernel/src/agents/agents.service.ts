@@ -8,13 +8,10 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
-import { SandboxJobs } from "../sandbox/jobs.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import { legacyKeySaveText } from "../tools/legacy-keys.js";
@@ -48,8 +45,6 @@ export {
 } from "./agent-lookup.js";
 export { paramIssues, SUBAGENT_ROSTER_MAX } from "./definition.js";
 
-/** 删除 agent 时每个销毁任务带的对话数。 */
-const SANDBOX_DESTROY_BATCH = 500;
 export interface AgentVersion {
   version: number;
   definition: AgentDefinition;
@@ -74,6 +69,18 @@ export function assertProfileWritable(profile: ProfileInput | undefined): void {
 }
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
+
+/** A per-operation policy key of the `Platform` tool (Platform tool spec §6.2). */
+const PLATFORM_POLICY_KEY = /^Platform:[a-z][a-z-]*\.[a-z][a-z-]*$/;
+
+/**
+ * May `toolPolicies` hold this key: one of the agent's tool keys, or `Platform:<operation>` when
+ * `Platform` is among them (an unknown operation id is kept: a removed operation's policy is
+ * harmless).
+ */
+function isToolPolicyKey(key: string, toolKeys: ReadonlySet<string>): boolean {
+  return toolKeys.has(key) || (toolKeys.has("Platform") && PLATFORM_POLICY_KEY.test(key));
+}
 
 /** 键排序后的 JSON：jsonb 不保留键顺序，比较定义是否变化时用。 */
 function canonical(v: unknown): string {
@@ -270,7 +277,9 @@ export async function assertSubagents(
     for (const [j, key] of (x.disallowedTools ?? []).entries()) {
       tool(key, `${base}.disallowedTools.${j}`);
     }
-    for (const key of Object.keys(x.toolPolicies ?? {})) tool(key, `${base}.toolPolicies.${key}`);
+    for (const key of Object.keys(x.toolPolicies ?? {})) {
+      if (!isToolPolicyKey(key, a.toolKeys)) tool(key, `${base}.toolPolicies.${key}`);
+    }
     (x.skills ?? []).forEach((id, j) => {
       if (!selected.has(id) && !own.has(id)) add("skill_not_selected", `${base}.skills.${j}`, id);
     });
@@ -338,12 +347,6 @@ export class AgentsService {
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     /** Resolves the agent's models (and their parameter declarations) when it is saved. */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    /**
-     * The sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
-     * 在锁内逐个销毁，幂等).
-     */
-    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
@@ -361,7 +364,7 @@ export class AgentsService {
     const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
     const details = [...issues];
     for (const key of Object.keys(def.toolPolicies)) {
-      if (!keys.has(key)) {
+      if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
         const renamed = legacyKeySaveText(key, keys);
         details.push({
@@ -437,6 +440,7 @@ export class AgentsService {
       profile?: ProfileInput;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const { agent, warnings } = await this.createChecked(
       orgId,
@@ -444,6 +448,7 @@ export class AgentsService {
       request,
       null,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -466,8 +471,9 @@ export class AgentsService {
     },
     template: TemplateProvenance,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId);
+    return this.createChecked(orgId, actorAccountId, request, template, actorTokenId, auditDetail);
   }
 
   private async createChecked(
@@ -481,6 +487,7 @@ export class AgentsService {
     },
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
     const input = { ...request, definition: deriveInstructions(request.definition, null) };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
@@ -497,6 +504,7 @@ export class AgentsService {
       toolKeys,
       template,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings, role };
   }
@@ -514,6 +522,7 @@ export class AgentsService {
     toolKeys: Set<string>,
     template: TemplateProvenance | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; role: OrgRole }> {
     const t = this.db.db;
     const { role } = await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "agents.create");
@@ -578,6 +587,7 @@ export class AgentsService {
         version: 1,
         visibility: input.visibility,
         ...(template !== null && { template: { id: template.id, version: template.version } }),
+        ...auditDetail,
       },
     });
     return { agent: await this.lookup.view(id), role };
@@ -636,6 +646,7 @@ export class AgentsService {
       expectedVersion?: number | undefined;
     },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
     const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
@@ -647,6 +658,7 @@ export class AgentsService {
       patch,
       toolKeys,
       actorTokenId,
+      auditDetail,
     );
     return { agent, warnings };
   }
@@ -664,6 +676,7 @@ export class AgentsService {
     },
     toolKeys: Set<string> | null,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<AgentView> {
     const t = this.db.db;
     const before = await this.lockForWrite(orgId, agentId, actorAccountId);
@@ -763,6 +776,7 @@ export class AgentsService {
         ...(visibility !== before.visibility && {
           visibility: { from: before.visibility, to: visibility },
         }),
+        ...auditDetail,
       },
     });
     return this.lookup.view(agentId);
@@ -777,7 +791,6 @@ export class AgentsService {
   ): Promise<void> {
     const cancelled = await this.softDeleteIn(orgId, agentId, actorAccountId, actorTokenId);
     await this.skillChanges.finishCancel(orgId, cancelled);
-    await this.destroySandboxes(orgId, agentId);
   }
 
   @Transactional()
@@ -831,26 +844,6 @@ export class AgentsService {
       "agent_deleted",
       actorTokenId,
     );
-  }
-
-  /** 提交后尽力而为：投递销毁这个 agent 各对话还没销毁的沙箱（失败只记日志，留给不活跃销毁扫描）。 */
-  private async destroySandboxes(orgId: string, agentId: string): Promise<void> {
-    try {
-      const rows = await this.db
-        .selectFrom("sandboxes as s")
-        .innerJoin("conversations as c", "c.id", "s.conversation_id")
-        .select("s.conversation_id")
-        .where("c.org_id", "=", orgId)
-        .where("c.agent_id", "=", agentId)
-        .where("s.status", "<>", "destroyed")
-        .execute();
-      const ids = rows.map((r) => r.conversation_id);
-      for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
-        await this.sandboxJobs.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
-      }
-    } catch (err) {
-      this.log.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
-    }
   }
 
   /**

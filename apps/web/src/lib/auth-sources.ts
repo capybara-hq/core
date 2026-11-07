@@ -58,12 +58,10 @@ export const ssoStartUrl = (plugin: string, returnTo: string) =>
 
 /**
  * The sign-in page's path with its return path (no language prefix; next-intl's navigation adds
- * it). Home (or `/`, which redirects there) needs no `returnTo`: sign-in goes home by default.
+ * it). Home (`/`) needs no `returnTo`: sign-in goes home by default.
  */
 export const loginPathFor = (returnTo: string) =>
-  returnTo === "/" || returnTo === HOME_PATH
-    ? "/login"
-    : `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  returnTo === HOME_PATH ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
 
 /**
  * Where the sign-in page at `path` (path and query) sends a visitor who is already signed in: its

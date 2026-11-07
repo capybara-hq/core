@@ -11,7 +11,8 @@ export interface SandboxEgressSetting {
  * - `toolSearch`：工具很多时改用目录 + `ToolSearch` 按需加载（默认 on）；
  * - `locale`：组织默认语言（默认 en），机器人在 IM 里说的固定话术按它选择；
  * - `sandboxToolPolicy`：沙箱工具的默认策略（默认 allow；ask 时除只读工具外都要审批）；
- * - `sandboxEgress`：沙箱出站，缺省跟随部署默认（`deployment.sandboxEgress`）。
+ * - `sandboxEgress`：沙箱出站，缺省跟随部署默认（`deployment.sandboxEgress`）；
+ * - `platformTool`: the `Platform` builtin for the whole org (`on` / `read-only` / `off`, default on).
  */
 export interface OrgSettings {
   toolSearch: "on" | "off";
@@ -19,6 +20,8 @@ export interface OrgSettings {
   /** 旧内核没有这个字段：缺省按 allow。 */
   sandboxToolPolicy?: "allow" | "ask";
   sandboxEgress?: SandboxEgressSetting;
+  /** An older kernel leaves it out: read as on. */
+  platformTool?: "on" | "read-only" | "off";
 }
 
 /** 部署默认值（旧内核不返回）。 */

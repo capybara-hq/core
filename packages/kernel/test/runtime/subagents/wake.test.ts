@@ -77,6 +77,15 @@ const RULES: ScriptRule[] = [
     reply: { text: "trio child done", barrier: held("trio") },
   },
   { when: { systemIncludes: CHILD, lastUserIncludes: "child-quick" }, reply: { text: "quick" } },
+  // hands back a report, then its final call is held
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "child-handback", assistantTurns: 0 },
+    reply: { toolCalls: [{ name: "SubagentHandback", input: { message: "HB report" } }] },
+  },
+  {
+    when: { systemIncludes: CHILD, lastUserIncludes: "child-handback" },
+    reply: { text: "after the handback", barrier: held("handback") },
+  },
   // an intermediate child: dispatches a held leaf, goes on, and answers when woken
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "mid-dispatch", assistantTurns: 0 },
@@ -103,6 +112,10 @@ const RULES: ScriptRule[] = [
   {
     when: { lastUserIncludes: "SCENARIO quick", assistantTurns: 0 },
     reply: { toolCalls: [agent("Quick task", "child-quick: work")] },
+  },
+  {
+    when: { lastUserIncludes: "SCENARIO handback", assistantTurns: 0 },
+    reply: { toolCalls: [agent("Reporter", "child-handback: work")] },
   },
   {
     when: { lastUserIncludes: "SCENARIO deep", assistantTurns: 0 },
@@ -364,6 +377,36 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     await expectZeroDrift(conv, wake.id, "SCENARIO hold");
   });
 
+  it("a child that handed back wakes the idle root with its report; its completion wakes nobody", async () => {
+    capture.reset();
+    const conv = await dispatched("SCENARIO handback");
+    const [child] = await childRunsOf(db, conv);
+    if (!child) throw new Error("no child dispatched");
+    // the report wakes the idle parent while the child's final call is held
+    await waiting("handback");
+    await waitForTerminal(db, conv, 2, 30_000);
+    const [report, ...more] = await deliveriesOf(conv);
+    expect(more).toEqual([]);
+    expect(report?.payload).toMatchObject({ kind: "report", text: "HB report" });
+    const wake = (await runRows(conv))[1] as RunRow;
+    expect(Number(wake.trigger_seq)).toBe(report?.seq);
+    // the child completes: only subagent_finished, no finished delivery, no wake run
+    release("handback");
+    const finished = await waitFor(
+      async () =>
+        (await eventsOf(db, conv)).find(
+          (e) => e.type === "subagent_finished" && e.payload.childRunId === child.runId,
+        ) ?? null,
+      30_000,
+      "the child's subagent_finished",
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    expect((await deliveriesOf(conv)).map((d) => d.payload.kind)).toEqual(["report"]);
+    expect(await consumedSeq(db, conv)).toBeLessThan(finished.seq);
+    await expectNoWake(conv, 2);
+    await expectZeroDrift(conv, wake.id, "SCENARIO handback");
+  });
+
   it("delivery during a parent run is absorbed, not woken", async () => {
     capture.reset();
     const conv = await createConv(owner, orgId, agentId);
@@ -483,6 +526,8 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       orgId,
       conversationId: child.conversationId,
       sandboxConversationId: conv,
+      // a row without a process: no instance to address
+      environmentId: null,
       runId: child.runId,
       callId: "call-x",
       triggerAccountId: ownerId,
@@ -836,6 +881,8 @@ async function finishChildTask(
     orgId,
     conversationId: child.conversationId,
     sandboxConversationId: conv,
+    // a row without a process: no instance to address
+    environmentId: null,
     runId: child.runId,
     callId: "call-x",
     triggerAccountId: ownerId,

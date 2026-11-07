@@ -542,10 +542,12 @@ function ApprovalPending({
   id,
   scopes,
   deny,
+  summary,
 }: {
   id: string;
   scopes: ("once" | "session" | "always")[];
   deny?: boolean;
+  summary?: boolean;
 }) {
   const A = H.approval;
   return (
@@ -561,6 +563,7 @@ function ApprovalPending({
         input={Object.fromEntries(A.args)}
         scopes={scopes}
         policy={A.policy}
+        {...(summary ? { summary: A.summary } : {})}
         state={{ kind: "pending" }}
         onApprove={noop}
         onDeny={noop}
@@ -577,6 +580,7 @@ function approvalBlocks(): ReactNode {
     <>
       <ApprovalPending id="approval-block-pending" scopes={A.scopes} />
       <ApprovalPending id="approval-block-pending-once" scopes={["once"]} />
+      <ApprovalPending id="approval-block-pending-summary" scopes={A.scopes} summary />
       <ApprovalPending id="approval-block-deny-reason" scopes={A.scopes} deny />
       <Block id="approval-block-approved">
         <ApprovalBlock

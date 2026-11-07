@@ -201,8 +201,7 @@ function api(
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${PARENT}/tools`]: () => json(200, { tools: [] }),
     [`GET ${PARENT}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${PARENT}/sandbox`]: () =>
-      json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+    [`GET ${PARENT}/environment`]: () => json(200, { environment: null }),
     [`GET ${PARENT}/subagents`]: () => json(200, { subagents: [], next: null }),
     [`GET ${PARENT}/background-tasks`]: () => json(200, { tasks: [] }),
     [`GET ${PARENT}/usage`]: () =>
@@ -408,7 +407,7 @@ describe("the agent map's entry points", () => {
     expect(agentsChip()?.getAttribute("aria-label")).toMatch(/^3 agents, /);
   }, 15_000);
 
-  it("open properties, open the map, close the map: the properties are back", async () => {
+  it("open properties, open the map, close the map: the properties stay under it and are back", async () => {
     api(parentEvents());
     window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChatRoute();
@@ -418,6 +417,9 @@ describe("the agent map's entry points", () => {
     await user.click(agentsChip() as HTMLButtonElement);
     expect(window.location.hash).toBe("#agents");
     const dialog = await mapDialog();
+    // the map is a dialog over the page: the right area stays as it was under it
+    // (hidden from assistive tech while the modal dialog is open)
+    expect(document.querySelector('aside[aria-label="Properties"]')).not.toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
     expect(window.location.hash).toBe("#properties");
@@ -467,8 +469,7 @@ describe("the agent map's entry points", () => {
       [`GET ${CHILD}/events`]: () => json(200, { events: childSubagent }),
       [`GET ${CHILD}/queue`]: () => json(200, { items: [], paused: false }),
       [`GET ${CHILD}/files`]: () => json(200, { files: [], next: null }),
-      [`GET ${CHILD}/sandbox`]: () =>
-        json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+      [`GET ${CHILD}/environment`]: () => json(200, { environment: null }),
       [`GET ${CHILD}/subagents`]: () => json(200, { subagents: [], next: null }),
       [`GET ${CHILD}/background-tasks`]: () => json(200, { tasks: [] }),
       [`GET ${CHILD}/usage`]: () =>
@@ -912,7 +913,7 @@ describe("the agent map's statuses and keys (final review)", () => {
     expect(await within(dialog).findByRole("button", { name: "Stop" })).toBeTruthy();
   });
 
-  it("a run that ran out of steps reads as failed in the tree and at level 2, as in the stream", async () => {
+  it("a run that ran out of steps reads as limit (not failed) in the tree and at level 2, as in the stream", async () => {
     const ended = [
       ...childEvents().slice(0, 5),
       c(6, "run_finished", { reason: "max_steps", consumedUpToSeq: 2 }),
@@ -942,7 +943,7 @@ describe("the agent map's statuses and keys (final review)", () => {
         .closest('[data-part="agent-node"]')
         ?.querySelector('[data-part="agent-dot"]')
         ?.getAttribute("data-status"),
-    ).toBe("failed");
+    ).toBe("limit");
     await userEvent.setup().click(scan);
     const detail = await detailDialog();
     await waitFor(() =>
@@ -950,7 +951,7 @@ describe("the agent map's statuses and keys (final review)", () => {
         detail
           .querySelector('[data-part="agent-map-head"] [data-part="agent-dot"]')
           ?.getAttribute("data-status"),
-      ).toBe("failed"),
+      ).toBe("limit"),
     );
   });
 
@@ -1246,7 +1247,7 @@ describe("stopping a sub-agent from the map (AC5)", () => {
       "running",
       "aborted",
     ],
-    ["run out of steps, tree still running", ended("max_steps"), "running", "failed"],
+    ["run out of steps, tree still running", ended("max_steps"), "running", "limit"],
     ["a queued restart after the end, tree queued", [...ended(), restart(7)], "queued", "running"],
     ["a message after the end, tree idle", [...ended(), restart(7)], "idle", "completed"],
     [

@@ -8,8 +8,8 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
-/** 0087_model_kinds_usage.sql: the model disabled lists and model usage (0086 -> 0087). */
-const FILE = "0087_model_kinds_usage.sql";
+/** 0089_model_kinds_usage.sql: the model disabled lists and model usage (0088 -> 0089). */
+const FILE = "0089_model_kinds_usage.sql";
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
@@ -40,7 +40,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0087 model kinds and usage", () => {
+describe("0089 model kinds and usage", () => {
   it("creates both tables; a rerun of the file is a no-op", async () => {
     expect(await tables()).toEqual([]);
     const upTo = copyMigrations((f) => f <= FILE);

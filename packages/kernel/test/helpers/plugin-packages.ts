@@ -459,9 +459,9 @@ const SANDBOX_FAKE_SRC = fileURLToPath(
 );
 
 /**
- * 测试用 `sandbox@1` 插件 `sandbox-fake`（`test/fixtures/plugins/sandbox-fake`，部署配置 `{ root }`）打成的插件包：
+ * Test `sandbox@2` plugin `sandbox-fake`（`test/fixtures/plugins/sandbox-fake`，部署配置 `{ root }`）打成的插件包：
  * entry 是去掉类型标注后的同一份源码（只 import `node:*`、SDK 与 zod），静态清单取自真实模块。
- * 提供 `sandbox@1`，安装确认页标敏感。
+ * Provides `sandbox@2`; the install confirmation page marks it sensitive.
  */
 export async function sandboxFakePkg(): Promise<Uint8Array> {
   const { stripTypeScriptTypes } = await import("node:module");

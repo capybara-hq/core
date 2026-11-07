@@ -211,6 +211,7 @@ export function DataTable<T>({
               data-part="header-cell"
               data-align={c.align === "right" ? "right" : undefined}
               data-sorted={current ? "true" : undefined}
+              data-fit={c.fit ? "true" : undefined}
               aria-sort={current ? (current.dir === "asc" ? "ascending" : "descending") : undefined}
               style={c.width ? { width: c.width } : undefined}
             >
@@ -404,6 +405,7 @@ export function DataTable<T>({
                                 data-align={c.align === "right" ? "right" : undefined}
                                 data-tone={c.tone}
                                 data-wrap={c.wrap ? "true" : undefined}
+                                data-fit={c.fit ? "true" : undefined}
                                 data-lead={lead ? "true" : undefined}
                                 data-label={!lead && c.header ? c.header : undefined}
                                 data-no-open={c.interactive ? "true" : undefined}

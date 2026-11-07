@@ -71,6 +71,8 @@ type ToolSource = "connector" | "resources";
 export interface ConnectorToolView {
   name: string;
   key: string;
+  /** The reviewed definition's display-only title (`ToolSpec.title`), or null. */
+  title: string | null;
   description: string;
   inputSchema: Record<string, unknown>;
   annotations: ToolAnnotations | null;
@@ -1152,6 +1154,7 @@ export class ConnectorsService {
         return {
           name: t.name,
           key: connectorToolKey(r.slug, t.name),
+          title: typeof spec.title === "string" ? spec.title : null,
           description: spec.description,
           inputSchema: spec.inputSchema,
           annotations: spec.annotations ?? null,

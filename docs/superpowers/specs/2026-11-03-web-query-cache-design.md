@@ -165,7 +165,7 @@ My call where the user gave the principle but not the numbers; each class is one
 | Mine, changed only by me | `me`, my memberships, preferences, my tokens, my identities | `Infinity` | invalidation after my mutation; reload |
 | Org configuration | agents, models, connectors, skills, extensions, members, org settings, catalog | 30 s | invalidation after a mutation; refetch on the next view once stale |
 | Live state | inbox count, conversation groups, sandbox status, queue, files of a conversation | 30 s | invalidation; SSE `changed` frames where they exist; next view once stale |
-| A conversation's events | events of `/chat/[id]` | `Infinity` | the SSE stream appends to the cached list; reconnect catches up from the last seq (as today) |
+| A conversation's events | events of `/chat/[id]` | `Infinity` | the SSE stream appends to the cached list; reconnect catches up from the last seq (as today); since 2026-11-07 the list is a window of the log's latest part, earlier pages prepended on scroll (`2026-11-07-conversation-history-paging-design.md`) |
 | Deployment (admin) | deployment config, installed extensions, marketplaces | 30 s | invalidation after a mutation |
 | Unclassified | anything not listed | 0 | (default; a check forbids leaving a query unclassified, §8) |
 
@@ -199,6 +199,13 @@ would re-read every mounted query); `refetchOnMount` on (stale data refreshes on
   the unconditional re-read on every stream open (web-SSR R5's "open catches up"): a `changed`
   frame missed while away for less than 30 s with no event in between shows at the next view after
   that (Q3).
+- **A card's state the log does not carry is a first-paint read** (acceptance 2026-11-08): a
+  sub-agent's approval or question (the parent's log names only its id, the decision is logged in
+  the child) and an approval whose `approval_decided` the window has not reached are prefetched by
+  the route's `then` (`openWaitReads`), so a reload paints a decided approval decided; until such a
+  read answers (a client navigation, a wait the stream just delivered) the card draws nothing, never
+  a pending card that may not be pending. A 404 the server read (not this viewer's to decide) is not
+  read again on mount.
 - **A send writes what it knows** (amended by the conversation send spec 2026-11-04 §2.1, §2.4): a
   follow-up's answer goes into the log through `appendEvents`; the first message's create answer
   seeds the new conversation (`seedNewConversation`: the row, the create's `events` from seq 1 into the log, and an empty

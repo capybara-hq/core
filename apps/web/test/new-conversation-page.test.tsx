@@ -16,6 +16,7 @@ import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
+  ENVIRONMENTS,
   FakeEventSource,
   LIMITS,
   MODELS,
@@ -23,7 +24,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache, testQueryClient } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -97,6 +98,7 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
   [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
   [`GET ${ORG}/agents`]: () => json(200, agents),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
+  [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
   [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
 });
 
@@ -122,7 +124,7 @@ async function pick(user: ReturnType<typeof userEvent.setup>, title: string) {
 }
 
 beforeEach(() => {
-  resetNavigation("/chat");
+  resetNavigation("/");
   vi.stubGlobal("EventSource", FakeEventSource);
   // 09:00 local: the morning set; the first line of it
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -141,7 +143,7 @@ afterEach(() => {
 describe("the new conversation page (agent profile design §4)", () => {
   it("the page shows a greeting for the bucket, the agents row and the first agent's quick actions", async () => {
     expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/chat", routes());
+    const { container } = await renderRouteWithCache("/", routes());
     // picked after mount: the morning's first line with the person's name
     expect(
       await screen.findByRole("heading", {
@@ -181,12 +183,26 @@ describe("the new conversation page (agent profile design §4)", () => {
     }
   });
 
+  it("the model and effort menus carry no 'from the next message' note: nothing was sent yet", async () => {
+    const { container } = await renderRouteWithCache("/", routes());
+    await screen.findByRole("heading", {
+      name: String(en.chat.greeting.morning[0]).replace("{name}", "Grant"),
+    });
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    const model = await within(bar).findByRole("button", {
+      name: new RegExp(`^${en.chat.pickModel}: `),
+    });
+    await userEvent.setup().click(model);
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    expect(screen.queryByText(en.chat.nextMessage)).toBeNull();
+  });
+
   it("selecting another agent switches the quick actions and the composer's agent", async () => {
     const calls = stubApi({
       [`POST ${ORG}/conversations`]: () =>
         json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
     });
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
@@ -208,21 +224,38 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ agentId: "ag1" });
   });
 
+  it("while the agents load, the row draws placeholder chips and nothing is interactive", async () => {
+    const { container } = await renderRouteEmptyCache("/", {
+      ...routes(),
+      [`GET ${ORG}/agents`]: () => new Promise<Response>(() => {}),
+    });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-part="agent-row"][data-loading="true"]')).toBeTruthy(),
+    );
+    const loading = container.querySelector('[data-part="agent-row"][data-loading="true"]');
+    expect(loading?.querySelectorAll('[data-part="agent-chip"]').length).toBe(3);
+    expect(within(loading as HTMLElement).queryAllByRole("button")).toEqual([]);
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+  });
+
   it("one usable agent: no row", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache(
-      "/chat",
+      "/",
       routes({ agents: [AGENTS.agents[0]] }, { groups: [], next: null }),
     );
     await screen.findByRole("heading", { name: /Grant/ });
     expect(row()).toBeNull();
+    // nothing to choose: the line under the greeting names the agent instead of "pick one"
+    expect(screen.getByText("Start a conversation with Alpha")).toBeTruthy();
+    expect(screen.queryByText(en.chat.greeting.sub)).toBeNull();
     expect(await titles(userEvent.setup())).toEqual(["Summarize", "Translate"]);
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
   });
 
   it("picking a quick action fills the composer; ⌘Z restores the previous text", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.type(input(), "my draft");
     await pick(user, "Review");
@@ -259,7 +292,7 @@ describe("the new conversation page (agent profile design §4)", () => {
       el?.querySelector('[data-part="avatar"][data-kind="initial"]')?.textContent;
     // the new conversation's agents row (24)
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes(plain, { groups: [], next: null }));
+    await renderRouteWithCache("/", routes(plain, { groups: [], next: null }));
     const chip = within(row() as HTMLElement).getByRole("button", { name: "echo agent" });
     expect(initialIn(chip)).toBe("E");
     expect(
@@ -343,6 +376,87 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(initialIn(head("gone agent"))).toBe("G");
     // nothing read the agents for the sidebar
     expect(client.getQueryState(agentsQuery("o1").queryKey)?.fetchStatus).toBe("idle");
+  });
+});
+
+describe("the environment picker (environments design §4.1)", () => {
+  const picker = () =>
+    screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickEnvironment}: `) });
+  const withEnvironments = (environments: unknown) => ({
+    ...routes(),
+    [`GET ${ORG}/environments`]: () => json(200, environments),
+  });
+  const send = async (text: string) => {
+    const user = userEvent.setup();
+    await user.type(input(), `${text}{Enter}`);
+    return user;
+  };
+  const createdAt = () => json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "go") });
+
+  it("new conversation sends the chosen environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache("/", withEnvironments(ENVIRONMENTS));
+    const user = userEvent.setup();
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    await user.click(picker() as HTMLElement);
+    // the one whose provider is gone is listed but cannot be chosen
+    const gone = await screen.findByRole("menuitemradio", { name: /Old box/ });
+    expect(gone.hasAttribute("data-disabled")).toBe(true);
+    expect(gone.textContent).toContain(en.environments.state.unavailable);
+    await user.click(screen.getByRole("menuitemradio", { name: /Build box/ }));
+    expect(picker()?.textContent).toContain("Build box");
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      message: { text: "go" },
+      environmentId: "e2",
+    });
+  });
+
+  it("picker defaults to the last used environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e2" }));
+    expect(picker()?.textContent).toContain("Build box");
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "e2" });
+  });
+
+  it("falls back to the default when the last used one is unavailable", async () => {
+    resetNavigation("/");
+    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e3" }));
+    expect(picker()?.textContent).toContain(en.environments.personal);
+  });
+
+  it("an environment whose files are lost is tagged and not preselected", async () => {
+    resetNavigation("/");
+    const lost = {
+      ...ENVIRONMENTS,
+      items: ENVIRONMENTS.items.map((e) => (e.id === "e2" ? { ...e, filesLost: true } : e)),
+      lastUsedId: "e2",
+    };
+    await renderRouteWithCache("/", withEnvironments(lost));
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    const user = userEvent.setup();
+    await user.click(picker() as HTMLElement);
+    const item = await screen.findByRole("menuitemradio", { name: /Build box/ });
+    expect(item.hasAttribute("data-disabled")).toBe(true);
+    expect(item.textContent).toContain(en.environments.state.filesLost);
+  });
+
+  it("without a sandbox provider there is no picker and the send carries no environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withEnvironments({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
+    );
+    expect(picker()).toBeNull();
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("environmentId");
   });
 });
 

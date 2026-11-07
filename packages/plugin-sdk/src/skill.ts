@@ -16,8 +16,9 @@
  * whose types are checked because the kernel uses them (`skillInvocation`, phase D). Matching the
  * directory name is not enforced: an uploaded zip's outer directory often has another name (GitHub's
  * `repo-main/`); the skill's name is always the frontmatter `name`, and its sandbox directory is
- * `/skills/<name>/`.
+ * `/skills/<name>@<digest>/` ({@link skillSandboxDir}, {@link skillDigest}).
  */
+import { createHash } from "node:crypto";
 import { readFrontmatter } from "./frontmatter.js";
 import { hasControlChars } from "./model.js";
 import { validateSandboxPath } from "./sandbox.js";
@@ -58,7 +59,10 @@ export const SKILL_INVOCATION_LIMITS = {
 /** 技能入口文件（包根目录，大小写敏感）。 */
 export const SKILL_ENTRY_FILE = "SKILL.md";
 
-/** 沙箱里放技能的根目录：每个技能在 `/skills/<name>/` 下（只读复制）。 */
+/**
+ * The sandbox root for skills: each skill version is copied (read-only to commands) to
+ * `/skills/<name>@<digest>/` ({@link skillSandboxDir}).
+ */
 export const SKILLS_SANDBOX_ROOT = "/skills";
 
 const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -70,9 +74,29 @@ export function isSkillName(s: unknown): s is string {
   return typeof s === "string" && s.length <= SKILL_LIMITS.nameMaxChars && NAME_RE.test(s);
 }
 
-/** 技能文件在沙箱里的路径：`/skills/<name>/<path>`。 */
-export function skillSandboxPath(name: string, path: string): string {
-  return `${SKILLS_SANDBOX_ROOT}/${name}/${path}`;
+/**
+ * The digest of a skill version's file manifest: the first 12 hex digits of the sha256 of its
+ * files sorted by path (JavaScript string order), one `${path} ${size} ${sha256}\n` line each. Two
+ * versions with the same files get the same digest, so their sandbox directories coincide; any
+ * other change gives a different directory, so two versions of one skill never overwrite each
+ * other in a shared file system.
+ */
+export function skillDigest(files: { path: string; size: number; sha256: string }[]): string {
+  const lines = [...files]
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .map((f) => `${f.path} ${f.size} ${f.sha256}\n`)
+    .join("");
+  return createHash("sha256").update(lines).digest("hex").slice(0, 12);
+}
+
+/** A skill version's directory in the sandbox: `/skills/<name>@<digest>` ({@link skillDigest}). */
+export function skillSandboxDir(name: string, digest: string): string {
+  return `${SKILLS_SANDBOX_ROOT}/${name}@${digest}`;
+}
+
+/** A skill file's path in the sandbox: `/skills/<name>@<digest>/<path>`. */
+export function skillSandboxPath(name: string, digest: string, path: string): string {
+  return `${skillSandboxDir(name, digest)}/${path}`;
 }
 
 /** {@link parseSkillMd} 成功时的结果。 */
@@ -221,7 +245,7 @@ function pathProblem(p: unknown): string | null {
     if (seg === "." || seg === "..") return "path must not contain '.' or '..' segments";
   }
   // 再按沙箱路径规则核一遍（百分号编码的 `..` 等）
-  const errs = validateSandboxPath(skillSandboxPath("skill", p));
+  const errs = validateSandboxPath(skillSandboxPath("skill", "000000000000", p));
   return errs[0] ?? null;
 }
 

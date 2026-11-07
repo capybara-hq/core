@@ -12,8 +12,9 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
-import { type SandboxService, sandboxConfigWarnings } from "../../src/sandbox/sandbox.service.js";
+import { SandboxLockLostError } from "../../src/sandbox/leases.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { syncMarkerPath } from "../../src/tools/builtins/sandbox/common.js";
 import { fileStateOf } from "../../src/tools/builtins/sandbox/file-state.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
@@ -24,11 +25,7 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import {
-  type SandboxServiceDeps,
-  sandboxLeasesFor,
-  sandboxServiceFor,
-} from "../helpers/sandbox.js";
+import { type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent commands in one sandbox under shared leases (sub-agents spec §10, Task 4), on the
@@ -89,10 +86,15 @@ afterAll(async () => {
 
 let orgId: string;
 let conversationId: string;
+let accountId: string;
+let envId: string;
 
 beforeEach(async () => {
   await redis.flushdb();
-  await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
+  await truncateTables(
+    raw,
+    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+  );
   if (root) await rm(root, { recursive: true, force: true, maxRetries: 5 });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-cc-"));
   provider = createFakeSandbox(root);
@@ -101,7 +103,7 @@ beforeEach(async () => {
     redis: { url: rdc.url },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
-  const accountId = randomUUID();
+  accountId = randomUUID();
   orgId = randomUUID();
   const agentId = randomUUID();
   conversationId = randomUUID();
@@ -114,9 +116,17 @@ beforeEach(async () => {
     VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+  envId = randomUUID();
+  await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+    VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
 });
 
-const ctx = () => ({ orgId, conversationId });
+const ctx = () => ({
+  orgId,
+  environmentId: envId,
+  holderConversationId: conversationId,
+  actor: { accountId, conversationId },
+});
 const ops = async (op?: string) =>
   (await readFakeSandboxOps(root)).filter((o) => op === undefined || o[0] === op);
 /** `exec <id> <tag> <startMs> <endMs>` lines of the fake's ops log. */
@@ -145,10 +155,14 @@ const allOverlap = (xs: { start: number; end: number }[]) =>
 function sameNameProvider(inner: SandboxProvider): SandboxProvider {
   const byName = new Map<string, string>();
   const r = (h: SandboxHandle) => ({ id: byName.get(h.id as string) ?? "missing" });
-  const killAll = inner.killAll?.bind(inner);
-  const killTagged = inner.killTagged?.bind(inner);
+  const killAll = inner.killAll.bind(inner);
+  const killTagged = inner.killTagged.bind(inner);
   return {
     concurrentExec: true,
+    createFileSystem: (a) => inner.createFileSystem(a),
+    destroyFileSystem: (fs, sig) => inner.destroyFileSystem(fs, sig),
+    destroyFileSystemByName: (n, sig) => inner.destroyFileSystemByName(n, sig),
+    destroyByName: (n, sig) => inner.destroyByName(n, sig),
     async create(a) {
       const old = byName.get(a.name);
       if (old) await removeFakeSandbox(root, old);
@@ -162,12 +176,8 @@ function sameNameProvider(inner: SandboxProvider): SandboxProvider {
     readFile: (h, p, o) => inner.readFile(r(h), p, o),
     writeFile: (h, p, d, s) => inner.writeFile(r(h), p, d, s),
     stat: (h, p, s) => inner.stat(r(h), p, s),
-    ...(killAll ? { killAll: (h: SandboxHandle, s: AbortSignal) => killAll(r(h), s) } : {}),
-    ...(killTagged
-      ? {
-          killTagged: (h: SandboxHandle, t: string[], s: AbortSignal) => killTagged(r(h), t, s),
-        }
-      : {}),
+    killAll: (h, s) => killAll(r(h), s),
+    killTagged: (h, t, s) => killTagged(r(h), t, s),
   };
 }
 
@@ -220,14 +230,14 @@ describe("concurrent commands (fake sandbox)", () => {
       signal(),
     );
     const [aEnded, rb, ci] = await Promise.all([a, b, c]);
-    expect(rb.info).toEqual({ fresh: true, recreated: true });
+    expect(rb.info).toEqual({ fresh: true, restarted: true });
     expect(rb.r.stdout).toBe("b\n");
     expect(cEntered).toBeGreaterThanOrEqual(aEnded - 50);
-    expect(ci.recreated).toBe(false);
+    expect(ci.restarted).toBe(false);
     expect(await ops("create")).toHaveLength(2);
   });
 
-  it("gone with three running holders rebuilds once and all three see recreated", async () => {
+  it("gone with three running holders rebuilds once and all three see restarted", async () => {
     withCap(3);
     const s = service();
     const first = await run(s, "true");
@@ -242,7 +252,7 @@ describe("concurrent commands (fake sandbox)", () => {
       s.withSandbox(
         ctx(),
         async (h, p, info, sig) => {
-          if (!info.recreated) {
+          if (!info.restarted) {
             if (++entered === 3) {
               await removeFakeSandbox(root, id);
               allIn();
@@ -255,7 +265,7 @@ describe("concurrent commands (fake sandbox)", () => {
         signal(),
       );
     const out = await Promise.all([holder(), holder(), holder()]);
-    for (const o of out) expect(o.info).toEqual({ fresh: true, recreated: true });
+    for (const o of out) expect(o.info).toEqual({ fresh: true, restarted: true });
     expect(new Set(out.map((o) => o.h.id)).size).toBe(1);
     expect(out[0]?.h.id).not.toBe(id);
     expect(await ops("create")).toHaveLength(2);
@@ -277,7 +287,7 @@ describe("concurrent commands (fake sandbox)", () => {
       s.withSandbox(
         ctx(),
         async (h, p, info, sig) => {
-          if (!info.recreated) {
+          if (!info.restarted) {
             if (++entered === 3) {
               await removeFakeSandbox(root, id);
               allIn();
@@ -296,10 +306,10 @@ describe("concurrent commands (fake sandbox)", () => {
         signal(),
       );
     const out = await Promise.all([0, 1, 2].map(holder));
-    for (const info of out) expect(info).toEqual({ fresh: true, recreated: true });
+    for (const info of out) expect(info).toEqual({ fresh: true, restarted: true });
     expect(await ops("create")).toHaveLength(2);
     expect(await ops("destroy")).toHaveLength(0);
-    // no holder's file was wiped by a second rebuild, and a later use is not "recreated"
+    // no holder's file was wiped by a second rebuild, and a later use is not "restarted"
     const after = await s.withSandbox(
       ctx(),
       async (h, p, info, sig) => ({
@@ -313,29 +323,8 @@ describe("concurrent commands (fake sandbox)", () => {
       }),
       signal(),
     );
-    expect(after.info).toEqual({ fresh: false, recreated: false });
+    expect(after.info).toEqual({ fresh: false, restarted: false });
     expect(after.files).toEqual(["0", "1", "2"]);
-  });
-
-  it("a provider without concurrentExec gets cap 1", async () => {
-    withCap(6);
-    const { concurrentExec: _c, ...serial } = provider;
-    const s = service(() => serial);
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: serial })).toBe(1);
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: provider })).toBe(6);
-    const { killTagged: _k, ...half } = provider;
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: half })).toBe(1);
-    expect(
-      sandboxConfigWarnings(config, "sandbox-fake", half).map((w) => w.message),
-    ).toContainEqual(expect.stringMatching(/concurrentExec.*killTagged/));
-    await run(s, "true");
-    await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.3")));
-    const xs = (await execIntervals()).slice(1).sort((a, b) => a.start - b.start);
-    for (let i = 1; i < xs.length; i++) {
-      expect((xs[i] as { start: number }).start).toBeGreaterThanOrEqual(
-        (xs[i - 1] as { end: number }).end,
-      );
-    }
   });
 
   it("Review Focus 5: a suspended sandbox and three simultaneous first commands: one resume, then all three run", async () => {
@@ -346,7 +335,7 @@ describe("concurrent commands (fake sandbox)", () => {
     await setFakeSandboxDelays(root, { resume: 300 });
     const out = await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.4")));
     for (const o of out) {
-      expect(o.info).toEqual({ fresh: false, recreated: false });
+      expect(o.info).toEqual({ fresh: false, restarted: false });
       expect(o.r.exitCode).toBe(0);
     }
     expect(await ops("resume")).toHaveLength(1);
@@ -370,14 +359,14 @@ describe("concurrent commands (fake sandbox)", () => {
     await run(s, "true");
     await run(s, "true");
     await s.withSandbox(ctx(), async (h, p, _i, sig) => p.stat(h, "/workspace", sig), signal());
-    expect((await ops()).map((o) => o[0])).toEqual(["create", "exec", "exec"]);
+    expect((await ops()).map((o) => o[0])).toEqual(["create-fs", "create", "exec", "exec"]);
     // no lease key is left; only the holder's last-seen instance (final review m5), with a TTL
-    const seen = `capk:sandbox-seen:${conversationId}:${conversationId}`;
+    const seen = `capk:sandbox-seen:${envId}:${conversationId}`;
     expect(await redis.keys("capk:*")).toEqual([seen]);
     expect(await redis.ttl(seen)).toBeGreaterThan(0);
   });
 
-  it("the sandbox conversation's keys carry TTLs while held", async () => {
+  it("the environment's keys carry TTLs while held", async () => {
     const s = service();
     const keys = await s.withSandbox(
       ctx(),
@@ -389,13 +378,11 @@ describe("concurrent commands (fake sandbox)", () => {
     );
     expect(keys.map(([k]) => k).sort()).toEqual(
       [
-        // the v2 busy marker: older replicas see a holder (spec §10.8)
-        `capk:sandbox-busy:${conversationId}`,
-        `capk:sandbox-holders:${conversationId}`,
+        `capk:sandbox-holders:${envId}`,
         // the instance this holder last used (final review m5)
-        `capk:sandbox-seen:${conversationId}:${conversationId}`,
-        `capk:sandbox-users:${conversationId}`,
-        `capk:sandbox:${conversationId}`,
+        `capk:sandbox-seen:${envId}:${conversationId}`,
+        `capk:sandbox-users:${envId}`,
+        `capk:sandbox:${envId}`,
       ].sort(),
     );
     for (const [k, ttl] of keys) expect(ttl, k).toBeGreaterThan(0);
@@ -411,10 +398,17 @@ describe("concurrent commands (fake sandbox)", () => {
     const dead = randomUUID();
     const left = provider.exec(
       { id },
-      { command: "sleep 30", timeoutMs: 60_000, maxOutputBytes: 10, signal: signal(), tag: dead },
+      {
+        command: "sleep 30",
+        timeoutMs: 60_000,
+        maxOutputBytes: 10,
+        signal: signal(),
+        tag: dead,
+        actor: ctx().actor,
+      },
     );
-    await redis.hset(`capk:sandbox-holders:${conversationId}`, dead, Date.now() + 600_000);
-    await redis.pexpire(`capk:sandbox-holders:${conversationId}`, 600_000);
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
     const sibling = run(s, "sleep 1");
     await new Promise((r) => setTimeout(r, 200));
     const r = await run(s, "echo ok");
@@ -426,50 +420,60 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("with cap 1 a dead holder is still killed by tag when the provider can (a hot cap change may leave a sibling)", async () => {
+  it("with cap 1 a dead holder is killed by tag, never killAll", async () => {
     withCap(1);
     const s = service();
     await run(s, "true");
     const id = (await ops("create"))[0]?.[1] as string;
     const dead = randomUUID();
-    await redis.hset(`capk:sandbox-holders:${conversationId}`, dead, Date.now() + 600_000);
-    await redis.pexpire(`capk:sandbox-holders:${conversationId}`, 600_000);
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
     await run(s, "true");
     expect(await ops("kill-tagged")).toEqual([["kill-tagged", id, dead]]);
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("a provider without killTagged does not killAll under a shared lease while a sibling is live", async () => {
+  it("resume from suspended kills leftovers once", async () => {
     withCap(3);
-    const { killTagged: _k, ...noTag } = provider;
-    const warns: string[] = [];
-    const quiet = { info() {}, warn: (m: string) => void warns.push(m) };
-    const s = service(() => noTag);
-    class SiblingArrives extends SandboxLeases {
-      override async claimDeadHolders(conv: string, token?: string) {
-        const r = await super.claimDeadHolders(conv, token);
-        const [t] = await redis.time();
-        await redis.zadd(`capk:sandbox-users:${conv}`, Number(t) * 1000 + 60_000, "sibling");
-        return r;
-      }
-    }
-    const s2 = service(() => noTag, {
-      log: quiet,
-      leases: sandboxLeasesFor({ redis, log: quiet, pollMs: 20 }, SiblingArrives),
-    });
+    const s = service();
     await run(s, "true");
-    await redis.hset(`capk:sandbox-holders:${conversationId}`, randomUUID(), Date.now() + 600_000);
-    await redis.pexpire(`capk:sandbox-holders:${conversationId}`, 600_000);
-    // a replica still on a larger cap takes a second shared lease right after this holder's
-    await run(s2, "true");
-    expect(await ops("kill-all")).toHaveLength(0);
-    expect(warns).toContainEqual(expect.stringMatching(/cannot kill/));
+    const id = (await ops("create"))[0]?.[1] as string;
+    // a crashed holder: its tagged command still runs, its record is left, its lease is gone
+    const dead = randomUUID();
+    const left = provider.exec(
+      { id },
+      {
+        command: "sleep 30",
+        timeoutMs: 60_000,
+        maxOutputBytes: 10,
+        signal: signal(),
+        tag: dead,
+        actor: ctx().actor,
+      },
+    );
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
+    // the sweep gets the exclusive lease (no live lease) and suspends
+    expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
+    // three holders arrive at once: one resumes under the exclusive lease and kills everything
+    // before it downgrades; the dead holder's record is claimed then, so nobody kills it by tag
+    const out = await Promise.all([0, 1, 2].map(() => run(s, "echo ok")));
+    for (const o of out) expect(o.r.stdout).toBe("ok\n");
+    expect(await ops("resume")).toHaveLength(1);
+    expect(await ops("kill-all")).toEqual([["kill-all", id]]);
+    expect(await ops("kill-tagged")).toHaveLength(0);
+    expect(await left).toMatchObject({ exitCode: null });
+    expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([]);
+    // later uses of the running instance kill nothing more
+    await run(s, "true");
+    expect(await ops("kill-all")).toHaveLength(1);
+    expect(await ops("kill-tagged")).toHaveLength(0);
   });
 
   it("every tagged exec refreshes the holder's record", async () => {
     const s = service();
     await run(s, "true");
-    const key = `capk:sandbox-holders:${conversationId}`;
+    const key = `capk:sandbox-holders:${envId}`;
     const seen = await s.withSandbox(
       ctx(),
       async (h, p, _i, sig) => {
@@ -488,7 +492,7 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(3);
     const s = service();
     await run(s, "true");
-    await sql`UPDATE capybara.sandboxes SET running_since = now() - interval '3 hours'`.execute(
+    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours'`.execute(
       raw,
     );
     const busy = run(s, "sleep 0.1");
@@ -500,6 +504,17 @@ describe("concurrent commands (fake sandbox)", () => {
 });
 
 describe("path leases in the sandbox tools", () => {
+  /** The root conversations the tools asked for an environment; all are bound to `envId`. */
+  let asked: string[] = [];
+  const environments = {
+    forTool: async (_orgId: string, root: string) => {
+      asked.push(root);
+      return envId;
+    },
+  };
+  beforeEach(() => {
+    asked = [];
+  });
   const callCtx = (): BuiltinCallContext =>
     ({
       orgId,
@@ -513,6 +528,7 @@ describe("path leases in the sandbox tools", () => {
   const tools = (s: SandboxService) =>
     sandboxTools({
       sandbox: s,
+      environments,
       // biome-ignore lint/suspicious/noExplicitAny: only lists attachments
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
@@ -567,12 +583,13 @@ describe("path leases in the sandbox tools", () => {
     const s = service();
     const leased: string[] = [];
     const pathLease = s.pathLease.bind(s);
-    s.pathLease = (conv, path, sig) => {
+    s.pathLease = (env, path, sig) => {
       leased.push(path);
-      return pathLease(conv, path, sig);
+      return pathLease(env, path, sig);
     };
     const t = sandboxTools({
       sandbox: s,
+      environments,
       attachments: {
         listForConversation: async () => [{ id: "a1", name: "data.csv" }],
         openForConversation: async () => ({
@@ -590,7 +607,7 @@ describe("path leases in the sandbox tools", () => {
       config: { get: () => config },
     }).find((x) => x.spec.name === "Bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
-    expect(leased).toEqual(["/workspace/attachments/.capybara-sync.json"]);
+    expect(leased).toEqual([syncMarkerPath(conversationId)]);
     await t.run({ command: "true" }, callCtx());
     await t.run({ command: "true" }, callCtx());
     expect(leased).toHaveLength(1);
@@ -615,16 +632,24 @@ describe("path leases in the sandbox tools", () => {
     expect(st).toBeNull();
   });
 
-  it("the path lease uses the sandbox conversation", async () => {
+  it("the path lease is taken on the root conversation's environment", async () => {
     withCap(3);
     const s = service();
+    const leasedOn: string[] = [];
+    const pathLease = s.pathLease.bind(s);
+    s.pathLease = (env, path, sig) => {
+      leasedOn.push(env);
+      return pathLease(env, path, sig);
+    };
     const child = {
       ...callCtx(),
       conversationId: randomUUID(),
       sandboxConversationId: conversationId,
     };
     await tool(s, "Write").run({ file_path: "/workspace/g.txt", content: "x" }, child);
-    // the child's call used the parent's sandbox: one instance, the file is there
+    // the child's call asked for the root's environment and used it: one instance, the file is there
+    expect(asked).toEqual([conversationId]);
+    expect(leasedOn).toEqual([envId]);
     const out = await run(s, "cat /workspace/g.txt");
     expect(out.r.stdout).toBe("x");
     expect(await ops("create")).toHaveLength(1);

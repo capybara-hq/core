@@ -3,15 +3,15 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "755d7575f62b56becbeda993e06df70ceaa4535f"
+    "commit": "77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777"
   },
   "plugins": [
     {
       "name": "openai-compatible",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai-compatible",
-      "version": "0.1.0-rc.1",
-      "integrity": "sha512-pjzNKZ78rxi9lCRKVPfoiSKleKcOeJcLH0/nTYpwQuG3Yx0/jE27sdqR3TXoMA2aiAd+K8khbvlXhXIjZjoaXw==",
+      "version": "0.1.0-rc.2",
+      "integrity": "sha512-HG3sPg9VjSldr/qP5647SV0LP3xEqIbtnMvl4VG0XHCHRPJ1wc9PBMb8hrTZ3FGc43OKTWgFyfAV3fNKm29JtQ==",
       "required": true
     },
     {

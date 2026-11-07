@@ -10,8 +10,13 @@ export const isPublicPath = (path: string): boolean => PUBLIC_PREFIXES.some((p) 
 export const isAdminPath = (path: string): boolean => under(path, "/admin");
 
 /**
- * The workspace's home: the new conversation (acceptance 2026-11-07; there is no separate home
- * page). `/` redirects here (`next.config.mjs`), and every "go home" (sign-in, setup, an org
- * switch, the not-found page, the path's org scope) goes here directly.
+ * The workspace's home: the new conversation at `/` (maintainer decision 2026-11-07, acceptance;
+ * there is no separate home page). The old `/chat` redirects here permanently (`next.config.mjs`),
+ * and every "go home" (sign-in, setup, an org switch, the not-found page, the path's org scope)
+ * goes here directly.
  */
-export const HOME_PATH = "/chat";
+export const HOME_PATH = "/";
+
+/** The new conversation, with `agentId` picked when given (`/?agent=<id>`). */
+export const newConversationPath = (agentId?: string): string =>
+  agentId === undefined ? HOME_PATH : `${HOME_PATH}?agent=${encodeURIComponent(agentId)}`;

@@ -34,6 +34,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+- **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
+  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
+  request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
+  (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
 
 ## Queued messages (UI refresh B)
 
@@ -131,6 +135,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   (`run_started.trigger: "subagent"`) is seeded from its recorded boundary `run_started.triggerSeq` (the delivery), not the last
   message. New input, so no `DriftReason`. Pinned by `run-replay.test.ts` ("a wake run with trigger "subagent" …", "a delivery
   absorbed mid-run …") and `reconstruct.test.ts` ("a parent request with a subagent_delivery …").
+- **A run that handed back and completed writes no finished delivery** (acceptance 2026-11-07, only `subagent_finished`); older
+  logs keep their `handedBack` delivery and its "already delivered" line. The switch is the delivery's absence in the log, so no
+  `DriftReason`: `reconstruct.test.ts` "a handed-back finish: an old log's delivery keeps its line …".
 - **Parent full-run replay** needs nothing special: `RecordedToolPipeline` matches each `Agent`, `SendMessage` and `SubagentHandback`
   call by `(toolKey, canonical input)` and returns the recorded result; it **never dispatches, sends, hands back or wakes**: no child
   conversation or run, no `subagent_*` event, no `subagent_dispatches` row, nothing appended to another conversation, no child tokens.

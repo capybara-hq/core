@@ -275,7 +275,7 @@ const ASK = `tool:AskUserQuestion:${JSON.stringify({
 })}`;
 
 describe("AskUserQuestion 端到端", () => {
-  it("默认工具的 agent：带 AskUserQuestion / ReadToolOutput 且没有不可用提醒；提问暂停，另一副本回答后续跑", async () => {
+  it("an agent with the default tools: AskUserQuestion / ReadToolOutput / Platform and no unavailable reminder; a question suspends, another replica's answer resumes", async () => {
     const agentId = await createDefaultAgent();
     const convId = await createConv(reqA, orgId, agentId);
     const { runId, questionId, event } = await askedQuestion(convId, ASK);
@@ -333,6 +333,7 @@ describe("AskUserQuestion 端到端", () => {
     const calls = ofType(evs, "model_call");
     expect(calls[0]?.payload.request.tools?.map((t) => t.key).sort()).toEqual([
       "AskUserQuestion",
+      "Platform",
       "ReadToolOutput",
     ]);
     expect(

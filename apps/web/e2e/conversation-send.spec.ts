@@ -3,19 +3,19 @@ import { composer, createAgent, currentOrg, replies } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /**
- * The send experience (conversation send spec 2026-11-04 §4): from `/chat` the composer clears at
+ * The send experience (conversation send spec 2026-11-04 §4): from `/` the composer clears at
  * once, the working line shows before the first token, and the reply streams.
  */
 
 const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
 
-test("send from /chat: the composer clears at once, the working line, then a streaming reply", async ({
+test("send from / (the new conversation): the composer clears at once, the working line, then a streaming reply", async ({
   page,
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Cap send");
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   const input = composer(page);
   // the agent is picked (the composer's placeholder names it)
   await expect(input).not.toHaveAttribute("placeholder", /—/);

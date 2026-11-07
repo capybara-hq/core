@@ -675,12 +675,13 @@ describe("连接器详情切换组织", () => {
     });
     expect(await screen.findByRole("heading", { name: "Fixture" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /^Account: / }));
-    await user.click(await screen.findByRole("menuitem", { name: "Organization" }));
-    // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
+    await user.click(
+      screen.getByRole("button", { name: /^Current organization: .*, switch organization$/ }),
+    );
+    // jsdom has no layout: pick the item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(router.push).not.toHaveBeenCalled();
     // the old org's page stays until the new document replaces it
     expect(screen.getByRole("heading", { name: "Fixture" })).toBeTruthy();
@@ -736,7 +737,7 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     expect(document.body.textContent).toBe("");
     cleanup();
     await renderRouteWithCache("/connectors", routes, { readiness: NOT_READY });
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 
   it("/connectors/<id>: a first render from the hydrated cache makes no browser read (guests too)", async () => {
@@ -800,7 +801,7 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     expect(document.body.textContent).toBe("");
     cleanup();
     await renderRouteWithCache("/connectors/app1", routes, { readiness: NOT_READY });
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 });
 

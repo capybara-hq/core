@@ -72,6 +72,7 @@ beforeEach(async () => {
       tools: [
         {
           name: "search",
+          title: "Search documents",
           description: "Search documents.",
           inputSchema: { type: "object", properties: { q: { type: "string" } } },
           annotations: { readOnlyHint: true },
@@ -216,12 +217,18 @@ describe("连接器 HTTP", () => {
     const byName = Object.fromEntries(app.tools.map((t) => [t.name, t]));
     expect(byName.search).toMatchObject({
       key: "mcp__docs__search",
+      // the display-only title of the reviewed definition (the agent page's tool rows)
+      title: "Search documents",
       status: "enabled",
       defaultPolicy: "allow",
       issue: null,
     });
     expect(byName.delete_doc).toMatchObject({ key: "mcp__docs__delete_doc", defaultPolicy: "ask" });
-    expect(byName.create_doc).toMatchObject({ key: "mcp__docs__create_doc", defaultPolicy: "ask" });
+    expect(byName.create_doc).toMatchObject({
+      key: "mcp__docs__create_doc",
+      title: null,
+      defaultPolicy: "ask",
+    });
     expect(byName.search?.specHash).toMatch(/^[0-9a-f]{16}$/);
     // 用的是请求里带的凭据；会话已关闭
     expect(memState().auths[0]).toEqual({ headers: { Authorization: `Bearer ${TOKEN}` } });

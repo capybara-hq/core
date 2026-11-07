@@ -354,16 +354,21 @@ function ShellFrame({
   useEffect(() => {
     if (lastPath.current === pathname) return;
     lastPath.current = pathname;
-    if (inSetup) router.refresh();
-  }, [pathname, inSetup, router]);
+    if (!inSetup) return;
+    // A route that is no setup route goes home here, on the client: refreshing it would run the
+    // layout's server redirect inside the refresh, which Next's router keeps re-applying (an
+    // endless navigation to `/`, acceptance 2026-11-07). The home's own navigation re-reads.
+    if (setupRoute === "redirect") router.replace(HOME_PATH);
+    else router.refresh();
+  }, [pathname, inSetup, setupRoute, router]);
 
-  // The account menu (web order §2.1): Organization ▸ (the current one checked), Language ▸,
-  // Personal settings, sign out; the theme is the switch after the account.
+  // The account menu (web order §2.1): Language ▸, Personal settings, sign out; the theme is the
+  // switch after the account. The org is shown and switched only in the sidebar's org switcher.
   const createOrgItem: MenuItem[] = me.canCreateOrg
     ? [{ label: t("shell.createOrg"), onSelect: () => setCreatingOrg(true) }]
     : [];
-  // The user's orgs as radio items, then "Create organization…": the org switcher's menu and the
-  // account menu's Organization submenu.
+  // The org switcher's menu: the user's orgs as radio items, then "Create organization…" and
+  // "Leave organization…".
   const orgItems: MenuItem[] = [
     // The current org reads as the current choice (primary text and a check), not as disabled;
     // choosing it again does nothing.
@@ -385,10 +390,6 @@ function ShellFrame({
         ]
       : []),
   ];
-  const orgMenu: MenuItem[] =
-    me.memberships.length === 0 && !me.canCreateOrg
-      ? []
-      : [{ label: t("shell.orgMenu"), submenu: orgItems }];
   const languageMenu: MenuItem = {
     label: preferences.language.label,
     submenu: preferences.language.options.map((o) => ({
@@ -535,15 +536,15 @@ function ShellFrame({
       sidebar={{
         context,
         // A new conversation starts at the composer; nothing is created before the first send.
-        newConversation: { href: "/chat" },
+        newConversation: { href: HOME_PATH },
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
-        account: { name: me.account.displayName, menu: [...orgMenu, ...personalMenu] },
+        account: { name: me.account.displayName, menu: personalMenu },
         theme: preferences.theme,
       }}
       commands={commands}
       status={status}
-      ownStatusBar={under(pathname, "/chat")}
+      ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>

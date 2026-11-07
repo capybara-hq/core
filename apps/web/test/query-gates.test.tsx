@@ -79,7 +79,7 @@ describe("useWorkspace", () => {
     const qc = seeded(ME, NOT_READY);
     const gated = renderHook(() => useWorkspace(), { wrapper: wrapper(qc) });
     expect(gated.result.current).toEqual({ kind: "pending" });
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
 
     router.replace.mockClear();
     const setup = renderHook(() => useWorkspace({ setup: "home" }), { wrapper: wrapper(qc) });

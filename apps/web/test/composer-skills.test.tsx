@@ -7,6 +7,7 @@ import { bodyOf, type Call, json, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
+  ENVIRONMENTS,
   ev,
   FakeEventSource,
   LIMITS,
@@ -687,15 +688,16 @@ describe("the invocation in the thread", () => {
 
 describe("a new conversation", () => {
   it("lists the picked agent's skills without a conversation and sends the first message with the skill", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     const calls = api({
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`POST ${ORG}/conversations`]: () =>
         json(201, { conversation: CONV().conversation, event: invocation(1) }),
     });
-    await renderRouteWithCache("/chat", {
+    await renderRouteWithCache("/", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });
@@ -713,7 +715,7 @@ describe("a new conversation", () => {
   });
 
   it("a typed /name resolves before the composer clears, then the pending bubble shows with it (review fix 4)", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     let answer: (r: Response) => void = () => {};
     const calls = api({
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
@@ -723,9 +725,10 @@ describe("a new conversation", () => {
         }),
       [`POST ${ORG}/conversations`]: () => new Promise<Response>(() => {}),
     });
-    await renderRouteWithCache("/chat", {
+    await renderRouteWithCache("/", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
       [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
       [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
     });

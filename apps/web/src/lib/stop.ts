@@ -10,11 +10,14 @@ import type { ConversationEvent } from "./conversations";
  */
 export const STOP_FALLBACK_MS = 15_000;
 
-/** How many runs of a log have ended (their terminal events). */
+/**
+ * The newest run end of a log (its terminal event's seq; 0 without one). A seq, not a count, so
+ * earlier pages of the log loaded meanwhile (history paging spec §5) never look like a new end.
+ */
 export const runEnds = (events: readonly ConversationEvent[]): number =>
-  events.filter(
+  events.findLast(
     (e) => e.type === "run_finished" || e.type === "run_failed" || e.type === "run_aborted",
-  ).length;
+  )?.seq ?? 0;
 
 /**
  * A stop under way (agent map §6.16.28 `stopping`, the composer's stop): `begin()` at the click; it
@@ -30,7 +33,10 @@ export function useStopUnderWay(
   fallback: () => Promise<unknown>,
 ): { requested: boolean; begin(): void; release(): void } {
   const ends = useMemo(() => runEnds(events), [events]);
-  /** The run ends the log held at the click; null while no stop is under way. */
+  /**
+   * The log's newest seq at the click: a run end past it came after the click (earlier pages
+   * loaded meanwhile hold only older ends). Null while no stop is under way.
+   */
   const [endsAtClick, setEndsAtClick] = useState<number | null>(null);
   const [stopScope, setStopScope] = useState(scope);
   if (stopScope !== scope) {
@@ -38,8 +44,8 @@ export function useStopUnderWay(
     setStopScope(scope);
     setEndsAtClick(null);
   }
-  const endsNow = useRef(ends);
-  endsNow.current = ends;
+  const endsNow = useRef(0);
+  endsNow.current = events.at(-1)?.seq ?? 0;
   useEffect(() => {
     if (endsAtClick !== null && ends > endsAtClick) setEndsAtClick(null);
   }, [ends, endsAtClick]);

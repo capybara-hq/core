@@ -1,7 +1,7 @@
 # @capybara-hq/plugin-sdk
 
 The SDK for writing plugins for [Capybara](https://github.com/capybara-hq/core), an open-source enterprise agent platform. It holds
-the types, extension point contracts (`model-provider@2`, `channel@1`, `connector@1`, `sandbox@1`,
+the types, extension point contracts (`model-provider@2`, `channel@1`, `connector@1`, `sandbox@2`,
 `object-store@1` and others) and pure functions that a plugin's extension is written against, and the
 package formats: the plugin manifest `.capybara-plugin/plugin.json` (`parsePluginManifest`),
 connector template files `connectors/<id>.json` (`parseConnectorTemplateFile`) and the marketplace

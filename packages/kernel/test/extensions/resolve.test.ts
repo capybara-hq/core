@@ -56,8 +56,8 @@ describe("resolveExtensions", () => {
   });
 
   it("单选能力多个提供者：列出全部插件名", () => {
-    const a = mk("aa", { provides: ["sandbox@1"] });
-    const b = mk("bb", { provides: ["sandbox@1"] });
+    const a = mk("aa", { provides: ["sandbox@2"] });
+    const b = mk("bb", { provides: ["sandbox@2"] });
     expect(() => resolveExtensions([a, b], "0.1.0")).toThrow(/aa.*bb/);
   });
 
@@ -85,5 +85,19 @@ describe("resolveExtensions", () => {
 
   it("重复插件名", () => {
     expect(() => resolveExtensions([mk("aa"), mk("aa")], "0.1.0")).toThrow(/aa/);
+  });
+
+  it("an extension providing sandbox@1 is refused at resolve", () => {
+    const a = mk("old-sandbox", { provides: ["sandbox@1"] });
+    expect(() => resolveExtensions([a], "0.1.0")).toThrow(
+      expect.objectContaining({
+        code: "extension.unsupported_extension_point",
+        message:
+          "Plugin old-sandbox provides sandbox@1, which this kernel no longer supports; upgrade it to a version that provides sandbox@2.",
+      }),
+    );
+    expect(
+      resolveExtensions([mk("new-sandbox", { provides: ["sandbox@2"] })], "0.1.0"),
+    ).toHaveLength(1);
   });
 });

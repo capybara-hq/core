@@ -26,6 +26,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
+  // The environments service reads the personal limit at every create.
+  "environments.maxPersonal": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
   "subagents.maxDepth": () => {},
   "subagents.maxConcurrentPerConversation": () => {},

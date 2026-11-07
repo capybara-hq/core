@@ -7,6 +7,7 @@ import {
   replies,
   saveSection,
   startChat,
+  takeAllGroupTools,
   toolGroup,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
@@ -45,12 +46,7 @@ const actionRow = (page: Page) => page.getByRole("region", { name: designZh("she
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
   await newAgent(page, agentName);
   await openAgentSection(page, "tools");
-  await page
-    .getByRole("checkbox", {
-      name: zh.agents.form.connectorTools.replace("{name}", connectorName),
-      exact: true,
-    })
-    .check();
+  await takeAllGroupTools(page, connectorName);
   await saveSection(page);
   await startChat(page, agentName);
   return composer(page);

@@ -168,6 +168,8 @@ describe("tool kinds", () => {
       SubagentHandback: "meta",
       WebSearch: "search",
       WebFetch: "read",
+      // calls the platform's operations: a plain tool row
+      Platform: "tool",
     });
   });
 });

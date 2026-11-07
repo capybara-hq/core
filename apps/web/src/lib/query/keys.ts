@@ -28,6 +28,13 @@ export const keys = {
       agents: (): readonly unknown[] => [...all, "agents"],
       /** One agent. */
       agent: (agentId: string): readonly unknown[] => [...all, "agent", agentId],
+      /** An agent's saved versions (under the agent: invalidating the agent refreshes them). */
+      agentVersions: (agentId: string): readonly unknown[] => [
+        ...all,
+        "agent",
+        agentId,
+        "versions",
+      ],
       /** The skills an agent wrote itself. */
       agentSkills: (agentId: string): readonly unknown[] => [...all, "agentSkills", agentId],
       /** The org's agent templates (from plugins). */
@@ -42,6 +49,10 @@ export const keys = {
         "agentTemplateDeletePreview",
         id,
       ],
+      /** The person's environments in the org. */
+      environments: (): readonly unknown[] => [...all, "environments"],
+      /** One of the person's environments. */
+      environment: (id: string): readonly unknown[] => [...all, "environment", id],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
@@ -261,7 +272,7 @@ export const keys = {
           events: (): readonly unknown[] => [...c, "events"],
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
-          sandbox: (): readonly unknown[] => [...c, "sandbox"],
+          environment: (): readonly unknown[] => [...c, "environment"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],

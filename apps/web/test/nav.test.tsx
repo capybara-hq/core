@@ -64,8 +64,8 @@ function ids(level: NavLevel, superAdmin: boolean) {
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
   // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
-  const primaryGuest = ["agents", "connectors"];
-  const primary = ["agents", "skills", "connectors"];
+  const primaryGuest = ["agents", "connectors", "environments"];
+  const primary = ["agents", "skills", "connectors", "environments"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
@@ -99,7 +99,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 环境 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -124,6 +124,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["智能体", "agent", "/agents"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
+        ["环境", "cpu", "/environments"],
       ],
       more: [
         ["插件", "catalog", "/plugins"],
@@ -243,14 +244,16 @@ describe("activeNavOf", () => {
     // the template page sits under 智能体 (its 模板 tab; ruling P4-14)
     ["/agents/templates/t1", "agents"],
     ["/connectors/c1", "connectors"],
+    ["/environments", "environments"],
+    ["/environments/e1", "environments"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],
     ["/extensions", "extensions"],
     ["/trajectories/x", "evals"],
     ["/account/connections", ""],
-    // the new conversation is the home: 新会话 is current; `/` redirects there before rendering
-    ["/chat", "new"],
-    ["/", ""],
+    // the new conversation is the home at `/`: 新会话 is current; `/chat` redirects there first
+    ["/", "new"],
+    ["/chat", ""],
     // an extension page is its sidebar item (m1), decoded like the item ids
     ["/p/example-board/board", "ext:example-board/board"],
     ["/p/%40acme%2Fboard/main%20view", "ext:@acme/board/main view"],
@@ -291,7 +294,7 @@ describe("AppFrame contexts", () => {
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
     expect(plugins.getAttribute("aria-current")).toBe("page");
     expect(within(nav).queryByRole("link", { name: /平台目录|^市场/ })).toBeNull();
-    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/chat");
+    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));
   });
@@ -310,16 +313,14 @@ describe("AppFrame contexts", () => {
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
   });
 
-  it("the new conversation is the home: on /chat 新会话 is the current nav item", () => {
-    resetNavigation("/chat");
+  it("the new conversation is the home: on / 新会话 is the current nav item", () => {
+    resetNavigation("/");
     renderFrame();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const current = within(nav)
       .getAllByRole("link")
       .filter((l) => l.getAttribute("aria-current") === "page");
-    expect(current.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      ["新会话", "/chat"],
-    ]);
+    expect(current.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([["新会话", "/"]]);
     expect(within(nav).queryByRole("link", { name: "首页" })).toBeNull();
   });
 
@@ -336,18 +337,19 @@ describe("AppFrame contexts", () => {
     expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
   });
 
-  it("account menu has 切换组织 ▸, 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
+  it("account menu has 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
     resetNavigation("/");
     renderFrame();
     screen.getByText("page body");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^账户: Grant/ }));
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
-      zh.shell.orgMenu,
       zh.common.language,
       zh.shell.accountSettings,
       zh.common.logout,
     ]);
+    // the org is shown and switched only by the sidebar's org switcher
+    expect(screen.queryByRole("menuitem", { name: /组织/ })).toBeNull();
     const item = screen.getByRole("menuitem", { name: zh.shell.accountSettings });
     expect(item.getAttribute("href")).toBe("/account/connections");
   });

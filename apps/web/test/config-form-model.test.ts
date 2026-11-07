@@ -5,6 +5,9 @@ import {
   type ConfigNode,
   type Draft,
   fromDraft,
+  isMissingIssue,
+  issueText,
+  itemTitle,
   mapIssues,
   newItemDraft,
   nodeId,
@@ -258,5 +261,118 @@ describe("mapIssues", () => {
       { path: "endpoints.0.baseUrl", message: "invalid url" },
     ]);
     expect(byNode.get(nodeId(["endpoints", 0, "baseUrl"]))).toBe("invalid url");
+  });
+});
+
+describe("issueText: the kernel's issue texts in the page's words (one place)", () => {
+  const scalar = (type: "string" | "number" | "integer") =>
+    ({ kind: "scalar", type }) as unknown as Parameters<typeof issueText>[1];
+  const node = (kind: "array" | "record" | "object") =>
+    ({ kind }) as Parameters<typeof issueText>[1];
+
+  it("a missing list asks for one item, any other missing value is required", () => {
+    expect(issueText("expected array", node("array"), true)).toEqual({ key: "addOne" });
+    expect(issueText("expected array", null, true)).toEqual({ key: "addOne" });
+    expect(issueText("expected string", scalar("string"), true)).toEqual({ key: "required" });
+    expect(issueText("expected number", scalar("number"), true)).toEqual({ key: "required" });
+    expect(issueText("Required", scalar("string"), true)).toEqual({ key: "required" });
+  });
+
+  it("a wrong type on a value that is there is invalid", () => {
+    expect(issueText("expected number", scalar("number"), false)).toEqual({ key: "invalid" });
+  });
+
+  it("limits name the limit for the node's kind", () => {
+    expect(issueText("too small (minimum 1)", node("array"), true)).toEqual({ key: "addOne" });
+    expect(issueText("too small (minimum 2)", node("array"), false)).toEqual({
+      key: "minItems",
+      limit: 2,
+    });
+    expect(issueText("too small (minimum 3)", scalar("string"), false)).toEqual({
+      key: "minLength",
+      limit: 3,
+    });
+    expect(issueText("too small (minimum 1)", scalar("string"), true)).toEqual({
+      key: "required",
+    });
+    expect(issueText("too small (minimum 0)", scalar("integer"), false)).toEqual({
+      key: "min",
+      limit: 0,
+    });
+    expect(issueText("too big (maximum 5)", node("record"), false)).toEqual({
+      key: "maxItems",
+      limit: 5,
+    });
+    expect(issueText("too big (maximum 64)", scalar("string"), false)).toEqual({
+      key: "maxLength",
+      limit: 64,
+    });
+    expect(issueText("too big (maximum 9)", scalar("number"), false)).toEqual({
+      key: "max",
+      limit: 9,
+    });
+  });
+
+  it("anything else is a generic invalid value", () => {
+    for (const m of ["invalid url", "unrecognized keys", "no union member matched", "too small"])
+      expect(issueText(m, scalar("string"), false)).toEqual({ key: "invalid" });
+  });
+
+  it("isMissingIssue: only issues about a value that is not there", () => {
+    const value = { endpoints: [], name: "x" };
+    expect(isMissingIssue({ path: "endpoints", message: "too small (minimum 1)" }, value)).toBe(
+      true,
+    );
+    expect(isMissingIssue({ path: "apiKeys", message: "expected object" }, value)).toBe(true);
+    expect(isMissingIssue({ path: "name", message: "too small (minimum 3)" }, value)).toBe(false);
+    expect(isMissingIssue({ path: "url", message: "invalid url" }, value)).toBe(false);
+    expect(
+      isMissingIssue({ path: "x", message: "expected string", messageKey: "custom" }, value),
+    ).toBe(false);
+  });
+
+  it("mapIssues renders through the page's words when given", () => {
+    const root = buildTree(schema, "en");
+    const { byNode, form } = mapIssues(
+      root,
+      { endpoints: [] },
+      [
+        { path: "endpoints", segments: ["endpoints"], message: "expected array" },
+        { path: "nope", segments: ["nope"], message: "unrecognized keys" },
+      ],
+      (x) => `<${x.key}>`,
+    );
+    expect(byNode.get(nodeId(["endpoints"]))).toBe("<addOne>");
+    expect(form).toEqual(["nope: <invalid>"]);
+  });
+});
+
+describe("itemTitle", () => {
+  const arr = (props: Record<string, unknown>, required: string[] = []) =>
+    child(
+      buildTree(
+        {
+          type: "object",
+          properties: {
+            list: { type: "array", items: { type: "object", properties: props, required } },
+          },
+        },
+        "en",
+      ),
+      "list",
+    ) as ArrayNode;
+
+  it("is the name field, else id, else the first required string field; blank when empty", () => {
+    const str = { type: "string" };
+    expect(itemTitle(arr({ id: str, name: str }), { id: "i", name: "n" })).toBe("n");
+    expect(itemTitle(arr({ url: str, id: str }), { id: "i", url: "u" })).toBe("i");
+    expect(itemTitle(arr({ a: str, url: str }, ["url"]), { a: "x", url: "u" })).toBe("u");
+    expect(itemTitle(arr({ name: str }), { name: "  " })).toBe("");
+    expect(itemTitle(arr({ a: str }), { a: "x" })).toBe("");
+  });
+
+  it("the endpoints of the openai-compatible schema are titled by their name", () => {
+    const endpoints = child(buildTree(schema, "en"), "endpoints") as ArrayNode;
+    expect(itemTitle(endpoints, { name: "vllm" })).toBe("vllm");
   });
 });

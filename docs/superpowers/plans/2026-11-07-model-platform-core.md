@@ -28,7 +28,7 @@ branch `feat/platform-org-layering` (PR #89). Research map with file:line facts:
 ## Global Constraints
 
 - Branch `feat/model-platform-core` is stacked on `feat/platform-org-layering`; it merges after #89.
-- Next migration number `0087`; one migration: `packages/kernel/src/migrations/0087_model_kinds_usage.sql`.
+- Next migration number `0089` (renumbered from 0087 after merging main, which took 0087 and 0088); one migration: `packages/kernel/src/migrations/0089_model_kinds_usage.sql`.
   Expand-only; `IF NOT EXISTS`.
 - `ModelKind = "chat" | "embedding" | "rerank" | "image_generation" | "video_generation" |
   "speech_to_text" | "text_to_speech"`; absent `kind` = `"chat"`. An unknown kind string from a newer
@@ -210,7 +210,7 @@ branch `feat/platform-org-layering` (PR #89). Research map with file:line facts:
 ### Task 4: Model disabling on two layers (kernel)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0087_model_kinds_usage.sql`,
+- Create: `packages/kernel/src/migrations/0089_model_kinds_usage.sql`,
   `packages/kernel/src/models/enablement.ts`, `packages/kernel/src/models/enablement.controller.ts`
 - Modify: `packages/kernel/src/db/kernel-schema.ts`, `packages/kernel/src/runtime/providers.ts`
   (filter), `packages/kernel/src/models/purposes.ts:225-334` (kind + enabled checks),
@@ -221,7 +221,7 @@ branch `feat/platform-org-layering` (PR #89). Research map with file:line facts:
 - Test: `packages/kernel/test/models/enablement.http.test.ts` (new), `packages/kernel/test/models/purposes.test.ts`,
   `packages/kernel/test/agents/agents.http.test.ts`, `packages/kernel/test/models/admin-models.test.ts`
 
-**Interfaces — produces (migration 0087, both tables; Task 6 uses the second):**
+**Interfaces — produces (migration 0089, both tables; Task 6 uses the second):**
 - `model_disabled (org_id text NULL REFERENCES orgs(id) ON DELETE CASCADE, provider text NOT NULL,
   model text NOT NULL, disabled_by text REFERENCES accounts(id) ON DELETE SET NULL, disabled_at
   timestamptz NOT NULL DEFAULT now())`, unique `((coalesce(org_id, '')), provider, model)`;
@@ -264,7 +264,7 @@ branch `feat/platform-org-layering` (PR #89). Research map with file:line facts:
   purpose rejects a chat target (400), an org override on a disabled model is refused, a default
   disabled in the org makes `resolve` 409 `model.unconfigured` for that org only; the switch-model
   plan (`planSwitch`) refuses a disabled model; an eval candidate on a disabled model is refused.
-  Migration test: 0086 → 0087 creates both tables; rerun no-op.
+  Migration test: 0088 → 0089 creates both tables; rerun no-op.
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/kernel/test/models packages/kernel/test/agents/agents.http.test.ts`; expected FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the same, the zero-drift fixtures, `pnpm typecheck`; expected PASS.
@@ -361,7 +361,7 @@ or purposes use these models:.
 disabling; "Extension hooks": `usage.report` embedding payload), `.agents/skills/writing-model-providers/SKILL.md`
 (kinds, embed, `ModelCallOptions`, per-model validation, conformance `expect.embedding`),
 `.agents/skills/writing-extensions/SKILL.md` (`ctx.models`), the B spec status line (core part
-implemented, migration 0087, plan path), changesets listed in Global Constraints (add only the
+implemented, migration 0089, plan path), changesets listed in Global Constraints (add only the
 missing ones).
 
 - [ ] **Step 1:** Update the docs; keep `check:skills-frontmatter` and `check:terms` green.

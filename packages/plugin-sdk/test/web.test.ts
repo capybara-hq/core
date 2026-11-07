@@ -54,13 +54,17 @@ describe("extension point refs", () => {
   });
   it("registers both with org-default selection, and no other point has selection", () => {
     const want = {
+      majors: [1],
       cardinality: "multi",
       brokered: true,
       orgScoped: true,
       selection: "org-default",
     };
-    expect(EXTENSION_POINTS["web-search"]).toEqual(want);
-    expect(EXTENSION_POINTS["web-fetch"]).toEqual(want);
+    expect(EXTENSION_POINTS["web-search"]).toMatchObject(want);
+    expect(EXTENSION_POINTS["web-fetch"]).toMatchObject(want);
+    for (const k of ["web-search", "web-fetch"] as const) {
+      expect(EXTENSION_POINTS[k]?.description).toMatch(/\S/);
+    }
     for (const [k, v] of Object.entries(EXTENSION_POINTS)) {
       if (k !== "web-search" && k !== "web-fetch") expect(v.selection).toBeUndefined();
     }

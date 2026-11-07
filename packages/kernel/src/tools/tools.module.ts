@@ -3,10 +3,12 @@ import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { PlatformModule } from "../platform/platform.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
@@ -48,8 +50,9 @@ import { ToolRegistry } from "./registry.js";
     OrgLockModule,
     // the `Agent` tool's dispatch
     SubagentsModule,
-    // the builtin sandbox and skill tools run in the conversation's sandbox
+    // the builtin sandbox and skill tools run in the conversation's environment
     SandboxModule,
+    EnvironmentsModule,
     // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
     BackgroundModule,
     // the conversation page's tool metadata reads only what the viewer may see
@@ -58,6 +61,8 @@ import { ToolRegistry } from "./registry.js";
     ModelsModule,
     UsageReportModule,
     StepLogModule,
+    // the `Platform` tool's operations, actor facts and agent docs (imports no domain module)
+    PlatformModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

@@ -60,6 +60,7 @@ import {
   AGENTS_CHIP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
+  ENVIRONMENT_FIXTURE,
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
@@ -161,6 +162,13 @@ function subagentGroupBlocks(): ReactNode {
       <Block id="subagent-group-stopped">
         <SubagentGroup
           rows={finished().map((r, i) => (i === 1 ? { ...r, status: "aborted" } : r))}
+          onOpen={noop}
+          defaultOpen
+        />
+      </Block>
+      <Block id="subagent-group-limit">
+        <SubagentGroup
+          rows={finished().map((r, i) => (i === 1 ? { ...r, status: "limit" } : r))}
           onOpen={noop}
           defaultOpen
         />
@@ -278,7 +286,7 @@ function agentMapThread(): ReactNode {
 function agentMapBlocks(): ReactNode {
   return (
     <>
-      <RefBlock id="agent-map-tree" width={1132} height={580} pad>
+      <RefBlock id="agent-map-tree" width={1089} height={580} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree
             root={AM.root}
@@ -295,12 +303,12 @@ function agentMapBlocks(): ReactNode {
         </AgentMapDialog>
       </RefBlock>
       {/* the page's own loading bars and error line, in the tree level's padded body */}
-      <RefBlock id="agent-map-loading" width={1132} height={200} pad>
+      <RefBlock id="agent-map-loading" width={786} height={200} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <SkeletonBars />
         </AgentMapDialog>
       </RefBlock>
-      <RefBlock id="agent-map-failed" width={1132} height={140} pad>
+      <RefBlock id="agent-map-failed" width={786} height={140} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <FormError message="智能体图加载失败。" />
         </AgentMapDialog>
@@ -398,7 +406,16 @@ function titleBarBlocks(): ReactNode {
 
 // ── Composer and pickers ────────────────────────────────────────────────────
 
-type ComposerState = "idle" | "new" | "running" | "attachments" | "focus" | "no-effort" | "skill";
+type ComposerState =
+  | "idle"
+  | "new"
+  | "running"
+  | "attachments"
+  | "focus"
+  | "no-effort"
+  | "skill"
+  | "environment"
+  | "environment-locked";
 
 function modelLabel(provider: string, id: string): string {
   return (
@@ -470,10 +487,31 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "lo
   };
   // the agent picker only in a new conversation: after the first message the title bar's path
   // names the agent (issue U)
-  const agentPart = state === "new" ? { agent } : {};
+  const agentPart = state === "new" || state === "environment" ? { agent } : {};
+  // the environment picker between the agent and the model; locked after the first message
+  const envPart =
+    state === "environment" || state === "environment-locked"
+      ? {
+          environment: {
+            label: K.environment,
+            value: ENVIRONMENT_FIXTURE.items.find((i) => i.id === ENVIRONMENT_FIXTURE.selected)
+              ?.label as string,
+            ...(state === "environment-locked" ? { locked: { hint: K.environmentLocked } } : {}),
+            groups: [
+              {
+                items: ENVIRONMENT_FIXTURE.items.map((i) => ({
+                  ...i,
+                  checked: i.id === ENVIRONMENT_FIXTURE.selected,
+                })),
+              },
+            ],
+            onPick: noop,
+          } satisfies PickerProps,
+        }
+      : {};
   return state === "no-effort"
-    ? { ...agentPart, model: modelPicker }
-    : { ...agentPart, model: modelPicker, effort };
+    ? { ...agentPart, ...envPart, model: modelPicker }
+    : { ...agentPart, ...envPart, model: modelPicker, effort };
 }
 
 function composerProps(
@@ -491,7 +529,9 @@ function composerProps(
     value,
     onChange: noop,
     placeholder:
-      state === "new" ? K.newPlaceholder.replace("研究助手", C.agent.name) : K.placeholder,
+      state === "new" || state === "environment"
+        ? K.newPlaceholder.replace("研究助手", C.agent.name)
+        : K.placeholder,
     ...(state === "running" ? { hint: K.runningHint } : {}),
     ...(state === "attachments" && image && pdf
       ? {
@@ -531,6 +571,8 @@ function composerBlocks(): ReactNode {
     "focus",
     "no-effort",
     "skill",
+    "environment",
+    "environment-locked",
   ];
   return (
     <>
@@ -1251,7 +1293,7 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         }}
         status={
           isNew
-            ? { context: "grant@示例组织:/chat", version: X.version }
+            ? { context: "grant@示例组织:~", version: X.version }
             : {
                 context: C.path,
                 stats: `第 ${X.turns} 轮 · 已用 ${X.elapsed}`,

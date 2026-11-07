@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[];
+
+// @public
 export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE: RegExp;
 
 // @public
@@ -67,6 +70,14 @@ export type AgentTemplateConnector = {
     };
     policies?: Record<string, "ask" | "deny">;
 };
+
+// @public
+export interface AgentTemplateField {
+    description: string;
+    name: string;
+    required: boolean;
+    type: string;
+}
 
 // @public
 export interface AgentTemplateInlineSubagent {
@@ -994,6 +1005,8 @@ export interface ExtensionPermissions {
 export interface ExtensionPointInfo {
     brokered: boolean;
     cardinality: Cardinality;
+    description: string;
+    majors: readonly number[];
     orgScoped: boolean;
     selection?: "org-default";
 }
@@ -1098,6 +1111,20 @@ export interface FilePreviewer {
 export interface FilePreviewProvider {
     previewers: FilePreviewer[];
 }
+
+// @public
+export class FileSystemGoneError extends Error {
+    constructor(message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly fileSystemGone: true;
+}
+
+// @public
+interface FileSystemHandle_2 {
+    id: string;
+}
+export { FileSystemHandle_2 as FileSystemHandle }
 
 // @public
 export const FORBIDDEN_INSTALL_SCRIPTS: readonly ["preinstall", "install", "postinstall", "prepare"];
@@ -1293,6 +1320,9 @@ export function isAttachmentId(s: unknown): s is string;
 
 // @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;
+
+// @public
+export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
 export function isModelError(e: unknown): e is ModelError;
@@ -1964,7 +1994,7 @@ export interface RenderedPrompt {
 }
 
 // @public
-export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string): string;
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string): string;
 
 // @public
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
@@ -1973,6 +2003,7 @@ export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
 export interface RenderSkillInvocationInput {
     args: string;
     body: string;
+    digest: string;
     invocation: SkillInvocation;
     lead?: boolean;
     lines: {
@@ -1985,13 +2016,19 @@ export interface RenderSkillInvocationInput {
 }
 
 // @public
-export const SANDBOX_EXTENSION_POINT = "sandbox@1";
+export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public
 export const SANDBOX_TAG_RE: RegExp;
+
+// @public
+export interface SandboxActor {
+    accountId: string;
+    conversationId: string;
+}
 
 // @public
 export class SandboxGoneError extends Error {
@@ -2017,15 +2054,23 @@ export interface SandboxLimits {
 
 // @public
 export interface SandboxProvider {
-    readonly concurrentExec?: boolean;
+    readonly concurrentExec: true;
     create(args: {
         name: string;
-        image: string;
+        image?: string;
         limits: SandboxLimits;
+        fileSystem: FileSystemHandle_2;
         signal: AbortSignal;
     }): Promise<SandboxHandle>;
+    createFileSystem(args: {
+        name: string;
+        limits: SandboxLimits;
+        signal: AbortSignal;
+    }): Promise<FileSystemHandle_2>;
     destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName?(name: string, signal: AbortSignal): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
+    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     exec(h: SandboxHandle, args: {
         command: string;
         cwd?: string;
@@ -2033,10 +2078,11 @@ export interface SandboxProvider {
         timeoutMs: number;
         maxOutputBytes: number;
         signal: AbortSignal;
-        tag?: string;
+        tag: string;
+        actor: SandboxActor;
     }): Promise<ExecResult>;
-    killAll?(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -2045,6 +2091,7 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;
         isDir: boolean;
@@ -2095,6 +2142,13 @@ export const SKILL_LIMITS: {
 };
 
 // @public
+export function skillDigest(files: {
+    path: string;
+    size: number;
+    sha256: string;
+}[]): string;
+
+// @public
 export interface SkillInvocation {
     argumentHint?: string;
     arguments?: string[];
@@ -2112,7 +2166,10 @@ export function skillInvocation(frontmatter: Readonly<Record<string, unknown>>):
 export const SKILLS_SANDBOX_ROOT = "/skills";
 
 // @public
-export function skillSandboxPath(name: string, path: string): string;
+export function skillSandboxDir(name: string, digest: string): string;
+
+// @public
+export function skillSandboxPath(name: string, digest: string, path: string): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

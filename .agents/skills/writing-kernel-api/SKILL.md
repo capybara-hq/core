@@ -270,6 +270,51 @@ Key points:
 - For concurrency and cross-replica behavior (races, immediate invalidation on another replica after logout and so on) use `createDualReplicaHarness` from `@capybara-hq/testing` (the `config` option deep-merges kernel config, e.g. `{ auth: { cookieSecure: false } }`); see `packages/testing/test/m1-acceptance.test.ts`.
 - A cron or processor test asserts on the worker role's application (`roles: ["worker"]`); `test/lifecycle/roles.test.ts` pins which providers each role builds.
 
+## Platform operations: a route's twin for agents
+
+The `Platform` builtin (spec `docs/superpowers/specs/2026-11-07-platform-tool-design.md`) lets an agent
+call the platform as the person who started the run. Every kernel HTTP route is either mirrored by an
+operation or listed in `packages/kernel/src/platform/exclusions.ts` with a reason; `pnpm check:platform-ops`
+fails otherwise (full run, part of `pnpm check`). So a new route in a PR needs one of the two.
+
+**Defining an operation.** Operations live in `platform/ops/<domain>.ops.ts`, in a provider that calls
+`PlatformOperations.register(...)` from `onModuleInit` (listed in `PlatformOpsModule`; `PlatformModule` imports
+no domain module). `defineOperation({...})` fields:
+
+- `id`: `<domain>.<verb>`, kebab-case parts, the domain one of `PLATFORM_DOMAINS`; the policy key is
+  `Platform:<id>`. `description`: English, the first sentence is what `browse` / `search` show.
+- `input`: a strict zod schema, every string bounded; `example`: a valid input (`describe` shows both).
+- `authz`: `{ orgAction }` equal to the mirrored route's `@OrgAction`, or `{ superAdmin: true }`. When the
+  service enforces a higher role than the decorator, name the stricter action and add
+  `authzNote: "service-enforced"` (the check then requires a role at least the route's).
+- `mirrors`: the routes it corresponds to (`"POST /api/v1/orgs/:orgId/skills"`), `[]` for a synthetic read.
+  A mirror or exclusion naming no route is an orphan.
+- `confirm`: `read` runs without asking; `personal` asks each time and may be remembered; `org` and `platform`
+  ask each time and are never remembered. A route marked `HUMAN_ONLY` is not an operation (exclusion
+  `human-only`).
+- `summary(input)`: for every write, the bilingual card line rendered from the validated input, never from
+  model text (zh says 平台 / 超级管理员 / 智能体).
+- `errors`: `{ code, next }[]` for the notable failures; `describe` shows them. Throw through `asToolError`
+  so a service `ApiError` becomes an actionable `ToolError`, never a 500.
+- `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; a write passes
+  `auditDetail: viaAgent("<id>", ctx)` so the audit event carries `{ via: "agent", conversationId, runId,
+  operation }`. Results hold no secrets or secret config; a list that can exceed 50 entries pages itself
+  (`pageOf`, `params.cursor`, result `{ items, next }`). Super admin operations give other orgs as counts only
+  (`redactOrgs`).
+
+**Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category (`human-only`, `secret`, `transport`,
+`internal`, `later`) and a reason; `later` also needs an `issue` URL. Routes that need credentials or secret
+config are excluded as `secret`: the operation that touches them refuses with a pointer to the web page.
+
+**Docs topics.** What the agent reads with `Platform` `read` is `packages/plugin-sdk/agent-docs/` (served by
+`AgentDocs`); a new extension point needs its topic there and `pnpm gen:agent-docs` renders the field tables
+(`check:agent-docs`).
+
+**The fence.** Tests prove the actor is the run's trigger account, re-read on every call, and that params
+cannot change between an approval and the run: `test/platform/*.test.ts`, and the end-to-end run
+`test/platform/platform-e2e.test.ts` (model-fake scripts the calls through the real pipeline and the log
+replays with zero drift).
+
 ## Checklist
 
 1. Service: an `@Injectable` provider with `@Inject` on every constructor parameter, in its domain module's `providers` (and `exports` when another module or a controller uses it); `@Transactional` methods for writes; unit tests.

@@ -7,11 +7,12 @@ import { describe, expect, it } from "vitest";
  * the stylesheet's rules.
  */
 const sidebar = readFileSync(resolve(import.meta.dirname, "../src/styles/sidebar.css"), "utf8");
+const templates = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
 
-/** The declarations of the top-level rules whose selector list has `sel`, joined. */
-function decls(sel: string): string {
+/** The declarations of the top-level rules in `css` (the sidebar's) whose selector list has `sel`, joined. */
+function decls(sel: string, css = sidebar): string {
   const out: string[] = [];
-  const text = sidebar.replace(/\/\*[\s\S]*?\*\//g, "");
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, "");
   for (const m of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const selectors = (m[1] ?? "").split(",").map((s) => s.trim().replace(/\s+/g, " "));
     if (selectors.includes(sel)) out.push(m[2] ?? "");
@@ -42,14 +43,13 @@ describe("the conversation section", () => {
     expect(decls(".cb-sidebar-group")).not.toMatch(/margin/);
   });
 
-  it("a filter matching nothing draws the compact empty state centered in the list (the DataTable's in-list form)", () => {
-    const hint = decls('.cb-sidebar-empty[data-state="no-match"]');
-    expect(hint).toContain("padding: var(--cb-space-8) 0;");
-    const state = decls(
-      '.cb-sidebar-empty[data-state="no-match"] > .cb-empty-state[data-size="compact"]',
-    );
-    expect(state).toContain("align-items: center;");
-    expect(state).toContain("padding: 0;");
-    expect(state).toContain("text-align: center;");
+  it("the empty list states draw the panel empty state, centered, space.8 above and below", () => {
+    // one rule for empty, archived empty and no match: no special case for a filter
+    expect(sidebar.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/\.cb-sidebar-empty\[data-state/);
+    expect(decls(".cb-sidebar-empty")).not.toMatch(/padding/);
+    const panel = decls('.cb-empty-state[data-size="panel"]', templates);
+    expect(panel).toContain("padding: var(--cb-space-8) var(--cb-space-2);");
+    // centered like the page style (the base rule), never the compact left alignment
+    expect(panel).not.toMatch(/align-items|text-align/);
   });
 });

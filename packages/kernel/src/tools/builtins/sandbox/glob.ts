@@ -5,8 +5,8 @@ import {
   clip,
   display,
   inSandbox,
+  isSyncMarkerEntry,
   type SandboxToolDeps,
-  SYNC_MARKER,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
   unavailableWhenNoSandbox,
@@ -104,7 +104,7 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
             .map((l) => l.slice(2))
             .filter((rel) => matches(rel))
             .map((rel) => `${base}/${rel}`)
-            .filter((abs) => abs !== SYNC_MARKER)
+            .filter((abs) => !isSyncMarkerEntry(abs))
             .sort()
             // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
             .map((abs) => abs.replace(/\n/g, "\\n"))

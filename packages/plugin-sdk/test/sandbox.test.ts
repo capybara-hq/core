@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   EXTENSION_POINTS,
+  isFileSystemGoneError,
   isSandboxGoneError,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_ROOTS,
@@ -10,9 +11,22 @@ import {
   validateSandboxPath,
 } from "../src/index.js";
 
-describe("sandbox@1", () => {
-  it("常量与登记一致", () => {
-    expect(SANDBOX_EXTENSION_POINT).toBe("sandbox@1");
+describe("sandbox@2", () => {
+  it("SANDBOX_EXTENSION_POINT is sandbox@2", () => {
+    expect(SANDBOX_EXTENSION_POINT).toBe("sandbox@2");
+  });
+
+  it("isFileSystemGoneError recognises a copy from another SDK instance", () => {
+    const copy = Object.assign(new Error("volume gone"), {
+      name: "FileSystemGoneError",
+      fileSystemGone: true,
+    });
+    expect(isFileSystemGoneError(copy)).toBe(true);
+    expect(isFileSystemGoneError(new SandboxGoneError("x"))).toBe(false);
+    expect(isFileSystemGoneError(new Error("x"))).toBe(false);
+  });
+
+  it("constants match the registry", () => {
     expect(EXTENSION_POINTS.sandbox).toBeDefined();
     expect([...SANDBOX_ROOTS]).toEqual(["/workspace", "/skills", "/tmp"]);
   });

@@ -427,10 +427,18 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
     await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/Sales bot/)).toBeTruthy();
+    // the impact as titled groups of rows: 受影响的智能体, 将移除 (no character markers)
     expect(
-      within(dialog).getByText(`− ${en.catalog.plugins.componentKind.skill} notes`),
-    ).toBeTruthy();
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual(expect.arrayContaining([p.switchOff.agents, p.switchOff.removed]));
+    const agents = within(dialog).getByRole("list", { name: p.switchOff.agents });
+    expect(within(agents).getByText("Sales bot")).toBeTruthy();
+    const removed = within(dialog).getByRole("list", { name: p.switchOff.removed });
+    const notes = within(removed).getByText("notes").closest("li") as HTMLElement;
+    expect(within(notes).getByText(en.catalog.plugins.componentKind.skill)).toBeTruthy();
+    expect(dialog.textContent).not.toMatch(/[·−] /);
     expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
     await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
     await waitFor(() =>
@@ -1435,9 +1443,10 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
       });
       await renderInstalls({ locale });
       expect(template("DetailPage")).not.toBeNull();
-      expect(
-        await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
-      ).toBeTruthy();
+      const components = await screen.findByRole("list", { name: a.components });
+      const dep = within(components).getByText("crm-core").closest("li") as HTMLElement;
+      expect(within(dep).getByText(a.componentKind.plugin)).toBeTruthy();
+      expect(within(dep).getByText(a.created)).toBeTruthy();
       // only this plugin's install: the dependency's install is on its own page
       expect(screen.queryByText(fill(a.dependencyOf, { names: "crm" }))).toBeNull();
       const user = userEvent.setup();
@@ -1447,18 +1456,21 @@ describe("/plugins/[itemId]: this org's installs (org admins)", () => {
       const report = await screen.findByRole("region", {
         name: fill(a.report.title, { name: "crm" }),
       });
-      expect(within(report).getByText(`− ${a.componentKind.connector} c1`)).toBeTruthy();
-      expect(within(report).getByText(`− ${a.componentKind.plugin} crm-core`)).toBeTruthy();
+      const row = (list: string, name: string) =>
+        within(within(report).getByRole("list", { name: list }))
+          .getByText(name)
+          .closest("li") as HTMLElement;
+      expect(within(row(a.report.removed, "c1")).getByText(a.componentKind.connector)).toBeTruthy();
       expect(
-        within(report).getByText(
-          `· ${a.componentKind.extension} todo — ${a.report.reason.pre_existing}`,
-        ),
+        within(row(a.report.removed, "crm-core")).getByText(a.componentKind.plugin),
       ).toBeTruthy();
       expect(
-        within(report).getByText(
-          `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
-        ),
+        within(row(a.report.kept, "todo")).getByText(a.report.reason.pre_existing),
       ).toBeTruthy();
+      expect(
+        within(row(a.report.kept, "s1")).getByText(a.report.reason.used_by_agents),
+      ).toBeTruthy();
+      expect(report.textContent).not.toMatch(/[·−] /);
       // the clean-up invalidates what a plugin change touches: the installs, the item and the
       // org's readiness (an extension it brought may have been a model provider) are read again
       await waitFor(() =>
@@ -2689,12 +2701,15 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       ).toBeTruthy();
       expect(screen.getByText(r.provenanceMismatch)).toBeTruthy();
       const origin = `${fill(o.git, { location: "git.acme.com/acme/marketplace (plugins/crm)", commit: "fedcba9" })} · ${fill(o.followsBranch, { ref: "main" })}`;
-      expect(screen.getByText(fill(r.origin, { origin }))).toBeTruthy();
-      expect(
-        screen.getByText(
-          fill(r.buildVersion, { version: "v1.0.0+git.fedcba987654", pluginVersion: "v1.0.0" }),
-        ),
-      ).toBeTruthy();
+      // the source is a fact (one key column), the two warnings one notice
+      const originRow = screen.getByText(origin).closest('[data-part="key-value-row"]');
+      expect(originRow?.querySelector("dt")?.textContent).toBe(r.facts.origin);
+      const build = screen.getByText(
+        fill(r.buildVersion, { version: "v1.0.0+git.fedcba987654", pluginVersion: "v1.0.0" }),
+      );
+      const notice = build.closest('[data-part="callout"]');
+      expect(notice?.textContent).toContain(r.provenanceMismatch);
+      expect(document.querySelectorAll('[data-part="callout"]')).toHaveLength(1);
     },
   );
 
@@ -2715,7 +2730,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     await screen.findByRole("region", { name: en.catalog.components.extension });
     expect(
-      screen.queryByText(fill(r.provenanceNotChecked, { reason: "not an npm package" })),
+      screen.queryByText(fill(r.facts.provenanceNotChecked, { reason: "not an npm package" })),
     ).toBeNull();
   });
 
@@ -2729,7 +2744,9 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     expect(
       await screen.findByText(
-        fill(r.provenanceNotChecked, { reason: "the registry has no provenance for this version" }),
+        fill(r.facts.provenanceNotChecked, {
+          reason: "the registry has no provenance for this version",
+        }),
       ),
     ).toBeTruthy();
   });
@@ -2941,9 +2958,12 @@ describe("phase A1: the org plugin page and skill conflicts", () => {
         json(200, { ...DETAIL, agents: ["agents/reviewer.md", "agents/tester.md"] }),
     });
     await renderItem({ me: MEMBER });
-    expect(await screen.findByText("· reviewer")).toBeTruthy();
-    expect(screen.getByText("· tester")).toBeTruthy();
-    expect(screen.getByText(en.catalog.components.agentTemplates)).toBeTruthy();
+    const list = await screen.findByRole("list", { name: en.catalog.components.agentTemplates });
+    expect(
+      within(list)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["reviewer", "tester"]);
   });
 
   it.each(LOCALES)(
@@ -3111,9 +3131,10 @@ describe("phase B: Claude Code plugins on the import review", () => {
       await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
       const report = await screen.findByRole("region", { name: tr.title });
       expect(screen.getByText(tr.formatClaude)).toBeTruthy();
+      const rv = msgs[locale].catalog.admin.review;
       expect(
         screen.getByText(
-          fill(tr.repository, { repository: "https://github.com/obra/superpowers" }),
+          fill(rv.facts.repositoryValue, { repository: "https://github.com/obra/superpowers" }),
         ),
       ).toBeTruthy();
       const count = (g: string) =>
@@ -3445,13 +3466,15 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     await screen.findByRole("region", { name: tr.title });
     // No right inspector: the single centred column
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    // The head carries no description: the full text (line breaks kept) is the column's first block
+    // The head carries no description: the full text (line breaks kept) leads the facts block,
+    // the column's first block, above the tab
     expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
-    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    const block = document.querySelector('[data-part="detail-facts"]');
+    const first = block?.querySelector(".cb-stack")?.firstElementChild;
     expect(first?.textContent).toBe(LONG);
     expect(first?.getAttribute("data-pre")).toBe("true");
-    // The facts are a KeyValue in the column
-    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    // The facts are one KeyValue in that block
+    const facts = block?.querySelector('[data-part="key-value"]');
     expect(facts?.textContent).toContain(d.fields.publisher);
     expect(facts?.textContent).toContain(d.fields.owner);
     // 删除 is a destructive item of the head's ⋯ menu, not a button in the page
@@ -3693,7 +3716,9 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache(`/plugins/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
-    expect(screen.getByText("· crm")).toBeTruthy();
+    expect(
+      within(screen.getByRole("list", { name: en.catalog.components.extension })).getByText("crm"),
+    ).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
@@ -3706,15 +3731,14 @@ describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "crm" })).toBeNull();
-    // one column: the facts' KeyValue (four) and the five component sections; no inspector, no
-    // generic cards
+    // one column, no tab row (one view): the facts block (the description over three rows) and
+    // the five component sections; no inspector, no generic cards
     const page = template("DetailPage") as HTMLElement;
+    expect(page.querySelector('[data-part="page-tabs"]')).toBeNull();
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
     expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
-    const facts = page.querySelector('[data-part="content"] [data-part="loading-key-value"]');
-    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
-    const stack = facts?.closest(".cb-stack") as HTMLElement;
-    expect(stack.children).toHaveLength(6);
+    const facts = page.querySelector('[data-part="detail-facts"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(3);
     await release();
     expect(await screen.findByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
@@ -4143,6 +4167,9 @@ describe("/admin/plugins: installed, detail with scope, pending", () => {
     await user.click(within(s3).getByRole("button", { name: P.pending.review }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(/search/)).toBeTruthy();
+    // the permissions to grant are a titled region (the extension and version as its help line)
+    const grants = within(dialog).getByRole("region", { name: P.pending.grantsTitle });
+    expect(within(grants).getByText(/search/)).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: P.pending.confirm }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/confirm"))).toBe(true));
     expect(bodyOf(calls.find((c) => c.url.endsWith("/confirm")))).toEqual({

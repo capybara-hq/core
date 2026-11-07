@@ -23,6 +23,10 @@ export interface Approval {
   extension?: { name: string; displayName: { zh: string; en: string } } | null;
   agent: { id: string; name: string };
   input: unknown;
+  /** The kernel-rendered summary of the call (Platform operations); null for other tools. */
+  summary?: { zh: string; en: string } | null;
+  /** The scopes the decider may choose; unset or null: derive from `requestedFor`. */
+  scopes?: ApprovalScope[] | null;
   /** 指定处理人；为 null 时按角色升级（只能「仅本次」）。 */
   requestedFor: string | null;
   approverRole: string | null;
@@ -50,8 +54,8 @@ export interface ToolGrant {
 }
 
 /** 可选的批准范围：按角色升级的审批只能「仅本次」。 */
-export const scopesFor = (a: Pick<Approval, "requestedFor">): ApprovalScope[] =>
-  a.requestedFor === null ? ["once"] : [...APPROVAL_SCOPES];
+export const scopesFor = (a: Pick<Approval, "requestedFor" | "scopes">): ApprovalScope[] =>
+  a.scopes ? [...a.scopes] : ["once"];
 
 /** 参数的 JSON 展示（两空格缩进；无法序列化时退回 String）。 */
 export function formatInput(input: unknown): string {

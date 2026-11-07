@@ -214,9 +214,13 @@ describe("/plugins: 上传插件包", () => {
     });
     await renderPlugins({ locale: "zh" });
     const { user, dialog } = await uploadIn(tgz());
-    expect(await within(dialog).findByText(m.scope)).toBeTruthy();
-    // a notice in a Dialog is a warn line with its icon (spec §6.19)
-    expect(within(dialog).getByText(m.extensionNotice).querySelector("svg")).not.toBeNull();
+    // the scope block is a titled section, its one fact as the help line
+    const scope = await within(dialog).findByRole("region", { name: m.scope });
+    expect(within(scope).getByText(m.scopeOnly)).toBeTruthy();
+    // a notice in a Dialog is a warn line with its icon (spec §6.19), first in the body
+    const notice = within(dialog).getByText(m.extensionNotice).closest('[data-part="callout"]');
+    expect(notice?.getAttribute("data-framed")).toBe("false");
+    expect(notice?.querySelector("svg")).not.toBeNull();
     // One box (acceptance item AB): the Dialog holds headings and rows, never a card
     expect(dialog.querySelector('[data-part="card"]')).toBeNull();
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -379,7 +383,7 @@ describe("/plugins: 上传插件包", () => {
       await renderPlugins({ locale: "en" });
       const { dialog } = await uploadIn(tgz(), "en");
       const line = await within(dialog).findByText(
-        fill(en.catalog.update.extension, { from: "v1.0.0", to: "—", orgs: expected }),
+        fill(en.catalog.update.extensionOrgs, { orgs: expected }),
         { exact: false },
       );
       expect(line.textContent).not.toContain("o7");
@@ -585,13 +589,17 @@ describe("/plugins/<id>: the org's own plugin", () => {
     await renderItem({ locale: "zh" });
     await screen.findByText(zh.plugins.chips.ownUpload);
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    // The head carries no description: the full text (line breaks kept) is the column's first block
+    // The head carries no description: the full text (line breaks kept) leads the facts block
     expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
-    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    const block = document.querySelector('[data-part="detail-facts"]');
+    const first = block?.querySelector(".cb-stack")?.firstElementChild;
     expect(first?.textContent).toBe(LONG);
     expect(first?.getAttribute("data-pre")).toBe("true");
-    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    const facts = block?.querySelector('[data-part="key-value"]');
     expect(facts?.textContent).toContain(zh.catalog.org.detail.fields.owner);
     expect(facts?.textContent).toContain(zh.catalog.owner.self);
+    // one view: no tab row; the version is the head's, not a fact again
+    expect(document.querySelector('[data-part="page-tabs"]')).toBeNull();
+    expect(facts?.textContent).not.toContain(zh.catalog.org.detail.fields.version);
   });
 });

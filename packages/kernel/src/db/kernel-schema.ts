@@ -1,4 +1,4 @@
-import type { SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type { FileSystemHandle, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -262,6 +262,8 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
+  /** 0088: the environment the conversation runs in; null = not chosen yet. */
+  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -507,6 +509,14 @@ export interface ApprovalsTable {
   attempt: Generated<number>;
   /** 0056: the reason given with a denial (null without one). */
   deny_reason: Generated<string | null>;
+  /** 0086: the kernel-rendered summary of the call (per-call policies; null without one). */
+  summary: ColumnType<{ zh: string; en: string } | null, string | null | undefined, string | null>;
+  /** 0086: the scopes the person may choose (null: derived, see `approvals.service.ts`). */
+  scopes: ColumnType<
+    ("once" | "session" | "always")[] | null,
+    ("once" | "session" | "always")[] | null | undefined,
+    ("once" | "session" | "always")[] | null
+  >;
 }
 
 /** 0010_tools.sql：AskUserQuestion 提问。 */
@@ -795,10 +805,12 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0088: the environment the task runs in. */
+  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
-export interface SandboxesTable {
+/** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0088). */
+export interface LegacySandboxesTable {
   conversation_id: string;
   org_id: string;
   provider: string;
@@ -826,6 +838,68 @@ export interface SandboxesTable {
     string | null
   >;
   sweep_failed_at: TsNullable;
+}
+
+type InstanceHandle = ColumnType<
+  { id: string; [k: string]: unknown } | null,
+  string | null | undefined,
+  string | null
+>;
+
+/** 0088_environments.sql: a long-lived environment (one instance plus a kept file system). */
+export interface EnvironmentsTable {
+  id: string;
+  org_id: string;
+  owner_kind: "personal";
+  owner_account_id: string;
+  name: ColumnType<string | null, string | null | undefined, string | null>;
+  is_default: ColumnType<boolean, boolean | undefined, boolean>;
+  source: "cloud";
+  provider: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0088_environments.sql: the instance and file system of an environment (replaces sandboxes). */
+export interface EnvironmentInstancesTable {
+  environment_id: string;
+  org_id: string;
+  provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The provider's `FileSystemHandle`; null before the file system exists or after a reset. */
+  fs_handle: ColumnType<FileSystemHandle | null, string | null | undefined, string | null>;
+  fs_status: ColumnType<
+    "none" | "ready" | "lost",
+    "none" | "ready" | "lost" | undefined,
+    "none" | "ready" | "lost"
+  >;
+  handle: InstanceHandle;
+  status: ColumnType<
+    "none" | "creating" | "running" | "suspended" | "destroyed",
+    "none" | "creating" | "running" | "suspended" | "destroyed" | undefined,
+    "none" | "creating" | "running" | "suspended" | "destroyed"
+  >;
+  last_used_at: Ts;
+  running_since: TsNullable;
+  created_at: Ts;
+  suspended_at: TsNullable;
+  destroyed_at: TsNullable;
+  /** Fencing number: every status / handle write under the lock compares and increments it. */
+  generation: ColumnType<number, number | undefined, number>;
+  /** An instance was created at least once (only ever set to true). */
+  had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The old provider's instance left behind by a provider change. */
+  prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
+  prev_handle: InstanceHandle;
+  sweep_failed_at: TsNullable;
+}
+
+/** 0088_environments.sql: the environment a member's new conversations use by default. */
+export interface EnvironmentDefaultsTable {
+  org_id: string;
+  account_id: string;
+  environment_id: string;
+  updated_at: Ts;
 }
 
 /** pg numeric：驱动读出为字符串（精确小数），读取方自行 `Number()`。 */
@@ -1043,7 +1117,7 @@ export interface UsageReportSweepTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** A model disabled on the platform (`org_id` null) or in one org (0087, spec B §5.3). */
+/** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
 export interface ModelDisabledTable {
   org_id: string | null;
   provider: string;
@@ -1052,7 +1126,7 @@ export interface ModelDisabledTable {
   disabled_at: Ts;
 }
 
-/** One model call outside a conversation, e.g. an extension's embed call (0087, spec B §5.4). */
+/** One model call outside a conversation, e.g. an extension's embed call (0089, spec B §5.4). */
 export interface ModelUsageTable {
   id: Generated<string>;
   org_id: string;
@@ -1112,7 +1186,10 @@ export interface KernelDatabase {
   org_anonymous_accounts: OrgAnonymousAccountsTable;
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
-  sandboxes: SandboxesTable;
+  sandboxes: LegacySandboxesTable;
+  environments: EnvironmentsTable;
+  environment_instances: EnvironmentInstancesTable;
+  environment_defaults: EnvironmentDefaultsTable;
   background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;

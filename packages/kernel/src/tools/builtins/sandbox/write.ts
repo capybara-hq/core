@@ -74,9 +74,9 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const path = checkWritable((input as WriteInput).file_path);
       const data = new TextEncoder().encode((input as WriteInput).content);
-      const { value, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
+      const { value, notices } = await inSandbox(deps, ctx, ({ environmentId, h, p, signal }) =>
         // stat, read the previous content, write: one holder at a time per file
-        withPathLease(deps, ctx, path, signal, async (signal) => {
+        withPathLease(deps, { environmentId }, path, signal, async (signal) => {
           const st = await p.stat(h, path, signal);
           if (st?.isDir) throw new ToolError(isDirectory(path));
           // the previous content: for the read-before-write check, and the diff on the row (display

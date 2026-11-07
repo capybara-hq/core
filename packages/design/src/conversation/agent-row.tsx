@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Input } from "../controls/inputs";
 import { Avatar, type AvatarValue } from "../display/avatar";
+import { SkeletonBox, SkeletonText } from "../display/skeleton";
 import { COLLISION_PADDING } from "../overlays/menus";
 import { useDesignT } from "../provider";
 
@@ -51,6 +52,26 @@ function visibleAgents(agents: AgentRowItem[], max: number, selected?: string): 
   if (selected === undefined || head.some((a) => a.id === selected)) return head;
   const pick = agents.find((a) => a.id === selected);
   return pick ? [...agents.slice(0, max - 1), pick] : head;
+}
+
+/**
+ * The agent row while the agents are on the way (§6.16.26): three chips with the loaded chip's
+ * box (the same border, radius, height and padding), each an avatar-sized block and a name bar
+ * instead of the content. Nothing is interactive; the page's busy region announces the load.
+ */
+export function AgentRowLoading(): JSX.Element {
+  return (
+    <div className="cb-agent-row" data-part="agent-row" data-loading="true" aria-hidden="true">
+      {[56, 72, 48].map((w) => (
+        <span key={w} className="cb-agent-chip" data-part="agent-chip" data-loading="true">
+          <SkeletonBox part="mark" width={24} height={24} />
+          <span className="cb-agent-chip-name" data-part="agent-chip-name">
+            <SkeletonText width={w} />
+          </span>
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**

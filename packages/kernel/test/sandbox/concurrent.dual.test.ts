@@ -18,7 +18,8 @@ import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
- * Concurrent sandbox holders on two replicas (sub-agents spec §10.5, §10.9, Task 4). Each replica
+ * Concurrent sandbox holders on two replicas (sub-agents spec §10.5, §10.9; environments spec
+ * §4.2: several conversations share one environment's instance). Each replica
  * is a `SandboxService` with its own PG pool and Redis connection, sharing PG, Redis and the fake
  * sandbox's provider root; the service keeps no state in process, so this equals two processes.
  * A replica "crashes" by losing its Redis connection while its command keeps running in the
@@ -68,6 +69,10 @@ const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
 
 let orgId: string;
 let conversationId: string;
+/** A second conversation bound to the same environment. */
+let convB: string;
+let accountId: string;
+let envId: string;
 
 beforeEach(async () => {
   const raw = createDb(pgc.url, 1);
@@ -75,8 +80,11 @@ beforeEach(async () => {
     const r = new Redis(rdc.url);
     await r.flushdb();
     r.disconnect();
-    await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
-    const accountId = randomUUID();
+    await truncateTables(
+      raw,
+      "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    );
+    accountId = randomUUID();
     orgId = randomUUID();
     const agentId = randomUUID();
     conversationId = randomUUID();
@@ -87,8 +95,14 @@ beforeEach(async () => {
       VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
     await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
       VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
-    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-      VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+    convB = randomUUID();
+    for (const id of [conversationId, convB]) {
+      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
+        VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
+    }
+    envId = randomUUID();
+    await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
   } finally {
     await raw.destroy();
   }
@@ -102,11 +116,16 @@ beforeEach(async () => {
   });
 });
 
-const ctx = () => ({ orgId, conversationId });
+const ctx = (conv = conversationId) => ({
+  orgId,
+  environmentId: envId,
+  holderConversationId: conv,
+  actor: { accountId, conversationId: conv },
+});
 const signal = () => AbortSignal.timeout(50_000);
-const run = (s: SandboxService, command: string) =>
+const run = (s: SandboxService, command: string, conv = conversationId) =>
   s.withSandbox(
-    ctx(),
+    ctx(conv),
     async (h, p, info, sig) => ({
       info,
       r: await p.exec(h, { command, timeoutMs: 40_000, maxOutputBytes: 1000, signal: sig }),
@@ -123,7 +142,7 @@ const until = async (cond: () => Promise<boolean>, ms = 20_000) => {
 };
 
 describe("concurrent sandbox holders (two replicas)", () => {
-  it("holders on replicas A and B run concurrently; killing A mid-command leaves B's command running; the next acquirer kills only A's tag", async () => {
+  it("crashed holder in a shared environment kills only its tags", async () => {
     const fake = createFakeSandbox(root);
     // A dies with its command still running: its provider never kills on abort
     const deaf: SandboxProvider = {
@@ -132,35 +151,36 @@ describe("concurrent sandbox holders (two replicas)", () => {
     };
     const a = replica(deaf, { ttlMs: 1500 });
     const b = replica(fake);
-    await run(b.s, "true");
-    const holders = `capk:sandbox-holders:${conversationId}`;
+    await run(b.s, "true", convB);
+    const holders = `capk:sandbox-holders:${envId}`;
 
-    const aCall = run(a.s, "sleep 30");
-    const bCall = run(b.s, "sleep 4; echo b-done");
+    // conversation A on replica A and conversation B on replica B share the environment
+    const aCall = run(a.s, "sleep 30", conversationId);
+    const bCall = run(b.s, "sleep 4; echo b-done", convB);
     await until(async () => (await b.redis.hlen(holders)) === 2);
-    // both commands run at the same time
-    expect(await b.redis.zcard(`capk:sandbox-users:${conversationId}`)).toBe(2);
+    // both commands run at the same time under shared leases
+    expect(await b.redis.zcard(`capk:sandbox-users:${envId}`)).toBe(2);
+    // no single "sandbox in use" marker: holder records are per holder
+    expect(await b.redis.keys("capk:sandbox-busy:*")).toEqual([]);
 
     // replica A crashes: no renewals, no unregister, its lease expires after its TTL
     a.redis.disconnect();
-    const tagsBefore = await b.redis.hkeys(holders);
-    // A's lease (TTL 1.5 s) expires; expired members are purged by the next script that looks
     await new Promise((r) => setTimeout(r, 2000));
 
-    // the next acquirer (on B) finds A's record without a lease and kills only A's command
-    const next = await run(b.s, "echo next");
+    // B's next acquisition finds A's record without a lease and kills only A's tag
+    const next = await run(b.s, "echo next", convB);
     expect(next.r.stdout).toBe("next\n");
-    const aResult = await aCall;
-    expect(aResult.r.exitCode).toBeNull();
-    const kills = await ops("kill-tagged");
-    expect(kills).toHaveLength(1);
-    const killed = String(kills[0]?.[2]).split(",");
-    expect(killed).toHaveLength(1);
-    expect(tagsBefore).toContain(killed[0]);
-    // B's command was not touched
+    expect((await aCall).r.exitCode).toBeNull();
+    // B's running command survived
     const bResult = await bCall;
     expect(bResult.r.exitCode).toBe(0);
     expect(bResult.r.stdout).toBe("b-done\n");
+    // exactly A's tag was killed: the tag of conversation A's exec, none of B's
+    const execs = await ops("exec");
+    const tagsOf = (conv: string) => execs.filter((o) => o[6] === conv).map((o) => o[2]);
+    expect(tagsOf(conversationId)).toHaveLength(1);
+    expect((await ops("kill-tagged")).map((o) => o[2])).toEqual(tagsOf(conversationId));
+    expect(tagsOf(convB)).not.toContain(tagsOf(conversationId)[0]);
     expect(await ops("kill-all")).toHaveLength(0);
   });
 

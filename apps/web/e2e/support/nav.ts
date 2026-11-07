@@ -1,6 +1,14 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 
 /**
+ * The workspace home, the new conversation (`/`, no query; `/chat` redirects there, maintainer
+ * decision 2026-11-07), as a full URL.
+ */
+export const HOME_URL = /^https?:\/\/[^/]+\/$/;
+/** The new conversation with an agent picked (`/?agent=<id>`), as a full URL. */
+export const NEW_CHAT_URL = /^https?:\/\/[^/]+\/\?agent=[^&]+$/;
+
+/**
  * A link of the sidebar's navigation: a main item directly, or an item of the 更多 flyout (a menu
  * to the right of the sidebar), which is opened first.
  */

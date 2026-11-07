@@ -185,8 +185,7 @@ function api(
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${PARENT}/tools`]: () => json(200, { tools: [] }),
     [`GET ${PARENT}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${PARENT}/sandbox`]: () =>
-      json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+    [`GET ${PARENT}/environment`]: () => json(200, { environment: null }),
     [`GET ${PARENT}/subagents`]: () => json(200, { subagents: [subagent], next: null }),
     [`GET ${PARENT}/usage`]: () =>
       json(200, {

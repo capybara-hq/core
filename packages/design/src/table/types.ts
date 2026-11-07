@@ -16,6 +16,11 @@ export type Column<T> = {
    */
   wrap?: boolean;
   /**
+   * The column takes its content's width and never truncates (spec §6.6): a short id, a version,
+   * a relative time beside a `wrap` column, which then takes the rest of the row.
+   */
+  fit?: boolean;
+  /**
    * The cell holds its own control (a switch): a click inside it does not open the row
    * (`onOpen`), so the control works without opening the row's Sheet.
    */

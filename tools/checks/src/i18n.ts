@@ -8,7 +8,14 @@ import {
   type MessageFormatElement,
   parse,
 } from "@formatjs/icu-messageformat-parser";
-import type { Finding } from "./source.js";
+import {
+  type Finding,
+  isParseError,
+  listSourceFiles,
+  type Node,
+  parseFile,
+  walk,
+} from "./source.js";
 
 export type { Finding };
 
@@ -188,6 +195,11 @@ const ZH_BANNED: { rule: string; pattern: RegExp; fix: string }[] = [
     pattern: /\bagents?\b/i,
     fix: "the Chinese UI says 智能体 (子智能体, 智能体模板); a {placeholder} named agent is fine",
   },
+  {
+    rule: "i18n-zh-subagent",
+    pattern: /子代理/,
+    fix: "the Chinese UI says 子智能体, never 子代理",
+  },
 ];
 
 /** 企业 or the Latin word agent in the text of a Chinese message. */
@@ -257,6 +269,51 @@ export function checkDesignI18n(file: string): Finding[] {
         line: i + 1,
         rule: b.rule,
         message: `「${key}」(${JSON.stringify(message)}): ${b.fix}`,
+      });
+    }
+  }
+  return findings;
+}
+
+/**
+ * The zh strings the kernel and the SDK ship to the UI (`{ zh: "…", en: "…" }` label objects such as
+ * the model purposes, tool display summaries, channel phrases) follow the same zh word rules. Every
+ * `zh:` property whose value is a string or template literal under the given source directories is
+ * checked (a template's interpolations are not text); test files are skipped. A `zh:` value that is
+ * not a literal (a variable, a call) is not text here and is skipped.
+ */
+export function checkSourceZh(dirs: string[]): Finding[] {
+  const findings: Finding[] = [];
+  for (const dir of dirs) {
+    for (const f of listSourceFiles(dir)) {
+      if (f.isTest) continue;
+      const parsed = parseFile(f.file);
+      if (isParseError(parsed)) {
+        findings.push(parsed);
+        continue;
+      }
+      walk(parsed.program, (n: Node) => {
+        if (n.type !== "Property" || n.computed === true) return;
+        const key = n.key as Node;
+        const name = key.type === "Identifier" ? key.name : key.type === "Literal" ? key.value : "";
+        if (name !== "zh") return;
+        const value = n.value as Node;
+        let text: string | undefined;
+        if (value.type === "Literal" && typeof value.value === "string") text = value.value;
+        else if (value.type === "TemplateLiteral") {
+          const quasis = value.quasis as { value: { cooked: string | null; raw: string } }[];
+          text = quasis.map((q) => q.value.cooked ?? q.value.raw).join("\u0000");
+        }
+        if (text === undefined) return;
+        const shown = text.split("\u0000").join("{…}");
+        for (const b of ZH_BANNED.filter((x) => x.pattern.test(text))) {
+          findings.push({
+            file: f.file,
+            line: parsed.lineOf(n.start),
+            rule: b.rule,
+            message: `zh: (${JSON.stringify(shown)}): ${b.fix}`,
+          });
+        }
       });
     }
   }

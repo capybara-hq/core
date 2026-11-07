@@ -4,7 +4,7 @@ import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
 import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
-import type { Conversation, ConversationEvent } from "../conversations";
+import type { Conversation } from "../conversations";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
@@ -37,6 +37,7 @@ import {
   agentsQuery,
   agentTemplateQuery,
   agentTemplatesQuery,
+  agentVersionsQuery,
   availableExtensionPointsQuery,
   extensionToolsQuery,
 } from "./agents";
@@ -51,14 +52,16 @@ import {
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
+  conversationEnvironmentQuery,
   conversationFollowUps,
   conversationQuery,
+  type EventWindow,
   eventsQuery,
   filesQuery,
   modelsQuery,
   queueQuery,
-  sandboxQuery,
 } from "./conversation";
+import { environmentQuery, environmentsQuery } from "./environments";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -459,7 +462,9 @@ export const ROUTES: readonly RouteEntry[] = [
         : [q(orgExtensionsQuery(orgId)), q(agentsQuery(orgId))],
   },
   {
-    pattern: "/chat",
+    // The new conversation, the workspace home (`/chat` redirects here, maintainer decision
+    // 2026-11-07).
+    pattern: "/",
     // The sidebar's groups name the agent most recently talked to (the shell reads them too).
     queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
     // Until the org can run, the frame draws the setup home here: the composer's reads wait for
@@ -470,9 +475,12 @@ export const ROUTES: readonly RouteEntry[] = [
       const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
       if (!setupReady(readiness)) return;
       await Promise.all(
-        [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(attachmentLimitsQuery(orgId))].map((o) =>
-          qc.prefetchQuery({ ...o, retry: false }),
-        ),
+        [
+          q(agentsQuery(orgId)),
+          q(modelsQuery(orgId)),
+          q(attachmentLimitsQuery(orgId)),
+          q(environmentsQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
   },
@@ -489,7 +497,7 @@ export const ROUTES: readonly RouteEntry[] = [
         q(queueQuery(orgId, id)),
         q(contributionsQuery(orgId)),
         q(filesQuery(orgId, id)),
-        q(sandboxQuery(orgId, id)),
+        q(conversationEnvironmentQuery(orgId, id)),
         q(connectorsQuery(orgId)),
         q(attachmentLimitsQuery(orgId)),
       ];
@@ -498,7 +506,7 @@ export const ROUTES: readonly RouteEntry[] = [
     then: async ({ orgId, params, me }, qc) => {
       const id = params.conversationId;
       if (orgId === null || id === undefined) return;
-      const events = qc.getQueryData<ConversationEvent[]>(eventsQuery(orgId, id).queryKey);
+      const events = qc.getQueryData<EventWindow>(eventsQuery(orgId, id).queryKey)?.events;
       const row = qc.getQueryData<Conversation>(conversationQuery(orgId, id).queryKey);
       if (events === undefined || row === undefined) return;
       await Promise.all(
@@ -519,6 +527,15 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.connectorId === undefined
         ? []
         : [q(connectorQuery(orgId, params.connectorId))],
+  },
+  {
+    pattern: "/environments",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(environmentsQuery(orgId))]),
+  },
+  {
+    pattern: "/environments/[id]",
+    queries: ({ orgId, params }) =>
+      orgId === null || params.id === undefined ? [] : [q(environmentQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",
@@ -573,7 +590,8 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/evals/[setId]/run",
-    // Org admins: the set, the models and the purposes (a section), then the set's agent.
+    // Org admins: the set, the models and the purposes (a section), then the set's agent and its
+    // versions (a section: the version options' saved times).
     queries: ({ orgId, me, params }) =>
       orgId === null || params.setId === undefined || !atLeast(me, "admin")
         ? []
@@ -584,7 +602,10 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || setId === undefined || !atLeast(me, "admin")) return;
       const set = qc.getQueryData<EvalSetDetail>(evalSetQuery(orgId, setId).queryKey);
       if (set === undefined) return;
-      await qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false });
+      await Promise.all([
+        qc.prefetchQuery({ ...agentQuery(orgId, set.agentId), retry: false }),
+        qc.prefetchQuery({ ...agentVersionsQuery(orgId, set.agentId), retry: false }),
+      ]);
     },
   },
   {

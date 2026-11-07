@@ -6,7 +6,9 @@ import { Redis } from "ioredis";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../src/config/schema.js";
+import { migrate } from "../src/db/migrator.js";
 import type { KernelHttpApp } from "../src/http/app.js";
+import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../src/kernel.js";
 import { createLogger, type KernelLogger } from "../src/log.js";
 import { SLOW_GATES_KEY, type SlowGates } from "./fixtures/plugins/slow/index.js";
 import { SSE_HOLD_KEY } from "./fixtures/plugins/sse-hold/index.js";
@@ -139,6 +141,9 @@ async function stopDuringMigration(schema: string, config: KernelConfig): Promis
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  // The kernel migrations run here, once, not in the first test's kernel start: on a loaded
+  // machine applying every migration to the fresh database took longer than that test's budget.
+  await migrate(pgc.url, { schema: KERNEL_SCHEMA, dir: KERNEL_MIGRATIONS_DIR });
 });
 afterEach(async () => {
   const ks = kernels;

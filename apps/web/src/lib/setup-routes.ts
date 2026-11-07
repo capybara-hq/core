@@ -9,17 +9,19 @@ export const under = (pathname: string, prefix: string) =>
 
 /**
  * Where a route stands while the org is not ready (web-order spec §3.8): `outside` keeps its own
- * frame (the admin console); `home` is the setup home (`/chat`, the workspace's home; `/`
- * redirects there); `step` renders inside the setup frame (the pages a step needs, personal
+ * frame (the admin console); `home` is the setup home (`/`, the workspace's home; the old
+ * `/chat` redirects there); `step` renders inside the setup frame (the pages a step needs, personal
  * settings); anything else `redirect`s home.
  */
 export function setupRouteOf(pathname: string): "outside" | "home" | "step" | "redirect" {
   if (under(pathname, "/admin")) return "outside";
-  if (pathname === "/chat") return "home";
+  if (pathname === "/") return "home";
   if (
     pathname === "/settings/models" ||
     pathname === "/settings/members" ||
-    pathname === "/channels/new" ||
+    // connecting a channel needs its extension switched on (扩展), and creating one opens its page
+    pathname === "/extensions" ||
+    under(pathname, "/channels") ||
     under(pathname, "/agents") ||
     under(pathname, "/plugins") ||
     under(pathname, "/account")
