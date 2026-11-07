@@ -5195,3 +5195,17 @@ textarea {
   display: flex;
   margin-top: var(--cb-space-1);
 }
+
+/* ImpactPreview (spec §6.35): divided subsections of rows, space.4 apart; one muted empty line. */
+.r-impact-preview {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-4);
+}
+.r-impact-preview-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

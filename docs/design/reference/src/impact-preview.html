@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ImpactPreview · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ImpactPreview</h1>
+<p>What a change would do, in its confirmation Dialog (spec §6.35): titled groups split by hairlines (divided subsections), each a list of rows with their notes, a warning about one org as a line under that org; with nothing to show, one muted line, said once.</p>
+<div class="r-blocks">
+<section data-ref-block="impact-preview-default" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">关闭 crm</div><div class="r-boxcard-body">
+  <div class="r-impact-preview" data-part="impact-preview">
+    <section class="r-subsection" data-variant="divided" data-part="subsection"><div class="r-subsection-head" data-part="subsection-head"><div class="r-subsection-heading"><h3 class="r-subsection-title" data-part="subsection-title">受影响的智能体</h3><span class="r-subsection-count">1</span></div></div><div class="r-subsection-body" data-part="subsection-body">
+      <ul class="r-item-list" data-part="item-list">
+        <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">研究助手</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span>技能 crm-notes、连接器 crm</span></div></li>
+      </ul>
+    </div></section>
+    <section class="r-subsection" data-variant="divided" data-part="subsection"><div class="r-subsection-head" data-part="subsection-head"><div class="r-subsection-heading"><h3 class="r-subsection-title" data-part="subsection-title">将移除</h3><span class="r-subsection-count">2</span></div></div><div class="r-subsection-body" data-part="subsection-body">
+      <ul class="r-item-list" data-part="item-list">
+        <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">crm-notes</span><span class="r-item-code" data-part="item-list-code">技能</span></span></div></li>
+        <li class="r-item-row" data-shape="item" data-part="item-list-row"><div class="r-item-head" data-part="item-list-head"><span class="r-item-titles"><span class="r-item-title" data-part="item-list-title">crm</span><span class="r-item-code" data-part="item-list-code">连接器</span></span></div><div class="r-item-lines" data-part="item-list-meta"><span class="r-warn"><i data-icon="circle-alert" data-size="12"></i> 凭据会清空</span></div></li>
+      </ul>
+    </div></section>
+    <section class="r-subsection" data-variant="divided" data-part="subsection"><div class="r-subsection-head" data-part="subsection-head"><div class="r-subsection-heading"><h3 class="r-subsection-title" data-part="subsection-title">保留</h3></div></div><div class="r-subsection-body" data-part="subsection-body">
+      <p class="r-impact-preview-empty" data-part="impact-preview-empty">没有保留的组件</p>
+    </div></section>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="impact-preview-empty" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">设置范围</div><div class="r-boxcard-body">
+  <div class="r-impact-preview" data-part="impact-preview" data-state="empty">
+    <p class="r-impact-preview-empty" data-part="impact-preview-empty">没有组织受影响</p>
+  </div>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

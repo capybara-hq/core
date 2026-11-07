@@ -8,6 +8,7 @@ import {
   DataTable,
   Field,
   FormSection,
+  ImpactPreview,
   Input,
   ItemList,
   ItemListItem,
@@ -224,8 +225,52 @@ function calloutBlocks(): ReactNode {
   );
 }
 
+/** What a change would do (spec §6.35): divided groups of rows, a warn note under its row. */
+function impactPreviewBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="impact-preview-default" width={640} pad>
+        <Card title="关闭 crm">
+          <ImpactPreview
+            empty="没有影响"
+            groups={[
+              {
+                id: "agents",
+                title: "受影响的智能体",
+                items: [
+                  { id: "a1", title: "研究助手", notes: [{ text: "技能 crm-notes、连接器 crm" }] },
+                ],
+              },
+              {
+                id: "removed",
+                title: "将移除",
+                items: [
+                  { id: "s", title: "crm-notes", code: "技能" },
+                  {
+                    id: "c",
+                    title: "crm",
+                    code: "连接器",
+                    notes: [{ text: "凭据会清空", tone: "warn" }],
+                  },
+                ],
+              },
+              { id: "kept", title: "保留", items: [], empty: "没有保留的组件" },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="impact-preview-empty" width={640} pad>
+        <Card title="设置范围">
+          <ImpactPreview empty="没有组织受影响" groups={[{ id: "orgs", title: "受影响的组织" }]} />
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
 export const BOX_BLOCKS = {
   callout: calloutBlocks,
+  "impact-preview": impactPreviewBlocks,
   "item-list": itemListBlocks,
   subsection: subsectionBlocks,
 } as const;

@@ -121,6 +121,8 @@ export const REFERENCE_COMPONENTS = [
   "item-list",
   "subsection",
   "callout",
+  // what a change would do, in its confirmation Dialog (text-pile pass, 2026-11-07)
+  "impact-preview",
   // cards on the page ground (plugin scope phase 4, ruling P4-15)
   "card-grid",
 ] as const;
