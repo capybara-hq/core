@@ -181,6 +181,20 @@ describe("the new conversation page (agent profile design §4)", () => {
     }
   });
 
+  it("the model and effort menus carry no 'from the next message' note: nothing was sent yet", async () => {
+    const { container } = await renderRouteWithCache("/", routes());
+    await screen.findByRole("heading", {
+      name: String(en.chat.greeting.morning[0]).replace("{name}", "Grant"),
+    });
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    const model = await within(bar).findByRole("button", {
+      name: new RegExp(`^${en.chat.pickModel}: `),
+    });
+    await userEvent.setup().click(model);
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    expect(screen.queryByText(en.chat.nextMessage)).toBeNull();
+  });
+
   it("selecting another agent switches the quick actions and the composer's agent", async () => {
     const calls = stubApi({
       [`POST ${ORG}/conversations`]: () =>

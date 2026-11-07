@@ -1348,7 +1348,7 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 - **Model**: grouped by provider, each group under a label (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); the chat models of the org's enabled providers (`GET /orgs/:orgId/models`), the agent's own model first and tagged "agent 默认" / "agent default" (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`). The agent's fallback model is never listed.
 - **Effort**: exactly the values the selected model declares, in the order low, medium, high, xhigh, max.
 - **Agent**: the agents the person can use (new conversation only).
-- A note closes each menu (`micro` `muted`, a `line-soft` top line, padding `space.2` `pad.default.x` `space.1`): model and effort "从下一条消息起生效" / "Applies from the next message"; agent "发送第一条消息后不能再换 agent" / "The agent can't change after the first message".
+- A note closes each menu (`micro` `muted`, a `line-soft` top line, padding `space.2` `pad.default.x` `space.1`): model and effort "从下一条消息起生效" / "Applies from the next message" (an ongoing conversation only: on a new conversation the pick is the first message's, so its menus have no note); agent "发送第一条消息后不能再换 agent" / "The agent can't change after the first message".
 
 <!-- states: picker-menu -->
 States: `model`, `effort`, `agent`, `long`

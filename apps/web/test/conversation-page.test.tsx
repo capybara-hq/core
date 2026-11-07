@@ -393,6 +393,8 @@ describe("the conversation page (ConversationPage)", () => {
     await screen.findByRole("button", { name: en.chat.stop });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` }));
+    // an ongoing conversation's menu says the pick applies from the next message
+    expect(await screen.findByText(en.chat.nextMessage)).toBeTruthy();
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
     await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
     await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));

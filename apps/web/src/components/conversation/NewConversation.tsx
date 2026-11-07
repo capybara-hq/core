@@ -136,7 +136,7 @@ export function useNewConversationPage(
     },
     invalidates: () => [],
   });
-  const selection = useSelection(providers, agent, undefined);
+  const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
   const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>({ n: 0 });
