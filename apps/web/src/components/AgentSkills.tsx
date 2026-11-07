@@ -1,8 +1,18 @@
 "use client";
 
-import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  DangerConfirm,
+  EmptyState,
+  Stack,
+  Subsection,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { type OrgComponent, unavailableComponent } from "../lib/components";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -19,19 +29,24 @@ import { useErrorMessage } from "../lib/use-error-message";
  * 「已删除的技能」并保持勾选，取消勾选即从定义里移除（内核修改时只核对新加的引用，保留它不会报错）。
  * A platform skill is selected when the definition names it or one of the org copies linked to it
  * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
- * every alias; ticking it adds the platform skill's own id.
+ * every alias; ticking it adds the platform skill's own id. A region of the skills card; with no
+ * org skills the panel empty state, linking to the skills page when `skillsHref` is given (the
+ * viewer can see it).
  */
 export function OrgSkillsPicker({
   skills,
   offered,
   value,
   onChange,
+  skillsHref,
 }: {
   skills: SkillSummary[] | undefined;
   /** The platform components offered to the org: an id of one that is off reads as unavailable. */
   offered?: OrgComponent[] | null;
   value: string[];
   onChange(next: string[]): void;
+  /** The skills page, for the empty state's action; undefined when the viewer cannot see it. */
+  skillsHref?: string | undefined;
 }) {
   const t = useTranslations("agents.form");
   const toggle = (s: SkillSummary, on: boolean) => {
@@ -47,16 +62,18 @@ export function OrgSkillsPicker({
   });
   const deleted = missing.filter((id) => !unavailable.some((u) => u.id === id));
   return (
-    // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
-    <div role="group" aria-label={t("orgSkillsLabel")}>
+    <Subsection variant="divided" title={t("orgSkillsLabel")}>
       <Stack gap={4}>
-        <Text variant="small" tone="muted">
-          {t("orgSkillsLabel")}
-        </Text>
         {skills !== undefined && skills.length === 0 && missing.length === 0 && (
-          <Text variant="small" tone="faint">
-            {t("noOrgSkills")}
-          </Text>
+          <EmptyState
+            size="panel"
+            text={t("noOrgSkills")}
+            {...(skillsHref === undefined
+              ? {}
+              : {
+                  action: { label: t("goToSkills"), variant: "default" as const, href: skillsHref },
+                })}
+          />
         )}
         {(skills ?? []).map((s) => (
           <Stack key={s.id} direction="row" gap={8} align="center">
@@ -100,7 +117,7 @@ export function OrgSkillsPicker({
           </Text>
         )}
       </Stack>
-    </div>
+    </Subsection>
   );
 }
 
@@ -120,8 +137,10 @@ function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork" | "o
 }
 
 /**
- * 私有 agent 的 `SkillWrite` 确认开关（`skills.writePolicy`，D10）：勾选 = `ask`，agent 每次写技能前都要负责人确认；
- * 不勾选（缺省）= 直接生效。共享 agent 的技能变更一律走审批，表单只在私有 agent 上显示它。
+ * A private agent's `SkillWrite` confirmation (`skills.writePolicy`, D10): ticked = `ask`, every
+ * skill write waits for the owner's confirmation; unticked (the default) = it takes effect
+ * directly. A shared agent's skill changes always go through approval, so the form shows it only
+ * on private agents, inside the agent-written skills region.
  */
 export function SkillWriteSwitch({
   value,
@@ -150,7 +169,9 @@ export function SkillWriteSwitch({
  * (the kernel only refuses a changed list); when it changed, saving is refused. A pinned id that
  * is no longer selectable (its skill was deleted) stays ticked as a deleted skill until unticked.
  * `skills` is undefined when either skill list could not be read: the pins are then kept as they
- * are and only a status line shows, so a live pin never looks deleted.
+ * are and only a status line shows, so a live pin never looks deleted. A region of the skills
+ * card: the count against the limit at the heading's right; with nothing selected, one short line
+ * where the pin list would be.
  */
 export function PinnedSkillsPicker({
   skills,
@@ -174,17 +195,11 @@ export function PinnedSkillsPicker({
   const t = useTranslations("agents.form");
   if (skills === undefined) {
     return (
-      // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
-      <div role="group" aria-label={t("pinnedLabel")}>
-        <Stack gap={4}>
-          <Text variant="small" tone="muted">
-            {t("pinnedLabel")}
-          </Text>
-          <Text variant="small" tone="faint">
-            {t("pinnedUnavailable")}
-          </Text>
-        </Stack>
-      </div>
+      <Subsection variant="divided" title={t("pinnedLabel")} description={t("pinnedHint")}>
+        <Text variant="small" tone="faint">
+          {t("pinnedUnavailable")}
+        </Text>
+      </Subsection>
     );
   }
   // a linked copy's id stands for its platform skill (older agents select and pin copy ids)
@@ -210,15 +225,17 @@ export function PinnedSkillsPicker({
     onChange(on ? [...value, s.ref] : value.filter((x) => !aliases.includes(x)));
   };
   return (
-    // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
-    <div role="group" aria-label={t("pinnedLabel")}>
-      <Stack gap={4}>
-        <Text variant="small" tone="muted">
-          {t("pinnedLabel")}
-        </Text>
+    <Subsection
+      variant="divided"
+      title={t("pinnedLabel")}
+      description={t("pinnedHint")}
+      actions={
         <Text variant="small" tone="faint">
-          {t("pinnedHint")}
+          {t("pinnedCount", { count: value.length, max })}
         </Text>
+      }
+    >
+      <Stack gap={4}>
         {rows.length === 0 && stale.length === 0 && (
           <Text variant="small" tone="faint">
             {t("noPinnable")}
@@ -271,9 +288,9 @@ export function PinnedSkillsPicker({
               {t("pinnedManualOnly", { name: s.name })}
             </Text>
           ))}
-        {value.length > 0 && (
+        {tokens > 0 && (
           <Text variant="small" tone="muted">
-            {t("pinnedTotal", { count: value.length, max, n: tokens })}
+            {t("pinnedTotal", { n: tokens })}
           </Text>
         )}
         {full && rows.length > value.length && (
@@ -292,13 +309,15 @@ export function PinnedSkillsPicker({
           </>
         )}
       </Stack>
-    </div>
+    </Subsection>
   );
 }
 
 /**
- * agent 自己写的技能（`scope=agent`，只读）：名称 · 版本与描述；负责人可删除（输入技能名二次确认），
- * 删除后 `onDeleted` 让调用方重读。
+ * The skills the agent wrote itself (`scope=agent`, read-only): name · version and description;
+ * the owner may delete one (typing its name to confirm), then `onDeleted` lets the caller read
+ * again. A region of the skills card; `children` (the write confirmation) stand under its heading,
+ * above the list or its panel empty state.
  */
 export function OwnSkills({
   orgId,
@@ -306,12 +325,14 @@ export function OwnSkills({
   skills,
   canDelete,
   onDeleted,
+  children,
 }: {
   orgId: string;
   agentId: string;
   skills: SkillSummary[] | undefined;
   canDelete: boolean;
   onDeleted(skillId: string): void;
+  children?: ReactNode;
 }) {
   const t = useTranslations("agents.form");
   const toast = useToast();
@@ -324,21 +345,11 @@ export function OwnSkills({
   });
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
-    <div role="group" aria-label={t("ownSkillsLabel")}>
+    <Subsection variant="divided" title={t("ownSkillsLabel")}>
       <Stack gap={8}>
-        <Stack gap={4}>
-          <Text variant="small" tone="muted">
-            {t("ownSkillsLabel")}
-          </Text>
-          <Text variant="small" tone="faint">
-            {t("ownSkillsHint")}
-          </Text>
-        </Stack>
+        {children}
         {skills !== undefined && skills.length === 0 && (
-          <Text variant="small" tone="faint">
-            {t("noOwnSkills")}
-          </Text>
+          <EmptyState size="panel" text={t("noOwnSkills")} />
         )}
         {(skills ?? []).map((s) => (
           <Stack key={s.id} direction="row" gap={12} align="center" justify="between">
@@ -382,6 +393,6 @@ export function OwnSkills({
           onDeleted(target.id);
         }}
       />
-    </div>
+    </Subsection>
   );
 }

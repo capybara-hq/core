@@ -11,6 +11,7 @@ import {
   skillAliases,
 } from "../../lib/skills";
 import { OrgSkillsPicker, OwnSkills, PinnedSkillsPicker, SkillWriteSwitch } from "../AgentSkills";
+import { navLevelOf } from "../shell/nav";
 import { useSession } from "../shell/session";
 import { sameJson, savedDefinition } from "./definition-parts";
 import {
@@ -31,8 +32,8 @@ const draftOf = (a: Agent): Draft => ({
 });
 
 /**
- * 技能 Skills (agent profile design §3.2): the org skills, the pinned ones, the `SkillWrite`
- * confirmation and the agent's own skills. The confirmation (`skills.writePolicy`) applies only
+ * 技能 Skills (agent profile design §3.2): three titled regions in one card: the org skills, the
+ * pinned ones, and the agent's own skills with the `SkillWrite` confirmation. The confirmation (`skills.writePolicy`) applies only
  * to private agents, so it shows when the **saved** visibility is private (Basics' draft never
  * counts). Its save sends the saved definition with only `skills` changed, merged: keys the web
  * does not know stay as saved.
@@ -157,6 +158,8 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
             offered={data.offered}
             value={d.orgSkills}
             onChange={onOrgSkillsChange}
+            // members browse the skills page, guests don't (the nav's audience)
+            skillsHref={navLevelOf(me) === "guest" ? undefined : "/skills"}
           />
           <PinnedSkillsPicker
             skills={pinnable}
@@ -166,12 +169,6 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
             onChange={(pinned) => edit((cur) => ({ ...cur, pinned }))}
             changed={!sameJson(d.pinned, saved.pinned)}
           />
-          {isPrivate && (
-            <SkillWriteSwitch
-              value={d.confirmSkillWrite}
-              onChange={(confirmSkillWrite) => edit((cur) => ({ ...cur, confirmSkillWrite }))}
-            />
-          )}
           <OwnSkills
             orgId={orgId}
             agentId={agent.id}
@@ -182,7 +179,14 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
                 edit((cur) => ({ ...cur, pinned: cur.pinned.filter((x) => x !== id) }));
               }
             }}
-          />
+          >
+            {isPrivate && (
+              <SkillWriteSwitch
+                value={d.confirmSkillWrite}
+                onChange={(confirmSkillWrite) => edit((cur) => ({ ...cur, confirmSkillWrite }))}
+              />
+            )}
+          </OwnSkills>
         </FormSection>
       </Stack>
     </AgentSectionFrame>

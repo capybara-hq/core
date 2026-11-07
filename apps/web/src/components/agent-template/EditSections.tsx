@@ -3,6 +3,7 @@
 import {
   Button,
   Checkbox,
+  EmptyState,
   Field,
   FormSection,
   Input,
@@ -10,6 +11,7 @@ import {
   ItemListItem,
   Select,
   Stack,
+  Subsection,
   Text,
   Textarea,
 } from "@capybara-hq/design";
@@ -59,6 +61,8 @@ import {
   quickActionsOf,
 } from "../agent/QuickActionsEditor";
 import { useSectionDraft } from "../agent/useSectionDraft";
+import { navLevelOf } from "../shell/nav";
+import { useSession } from "../shell/session";
 import {
   type TemplateSave,
   TemplateSaveFeedback,
@@ -585,11 +589,15 @@ export function ToolsEdit() {
 /**
  * 技能: the skills by name (a template carries names, ruling P4-1): pick from the org's skills,
  * and preload (pin) up to 3 of the picked ones. A name the org does not have stays picked and is
- * marked (用它创建 leaves it out); unticking drops it.
+ * marked (用它创建 leaves it out); unticking drops it. Two titled regions in the card, as on the
+ * agent page: the org skills (the panel empty state, linking to the skills page for members) and
+ * the pinned ones (the count against the limit at the heading's right; with nothing selected, one
+ * short line where the pin list would be).
  */
 export function SkillsEdit() {
   const t = useTranslations("agents.templatePage");
   const { orgId, template, definition } = useTemplatePage();
+  const { me } = useSession();
   const save = useTemplateSave();
   const sq = skillsQuery(orgId);
   const skills = useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) });
@@ -639,16 +647,22 @@ export function SkillsEdit() {
       onDiscard={draft.reset}
     >
       <FormSection id="skills" title={t("sections.skills")} description={t("skills.hint")}>
-        {/* biome-ignore lint/a11y/useSemanticElements: a fieldset brings browser styles; apps/web writes none */}
-        <div role="group" aria-label={t("skills.selectLabel")}>
+        <Subsection variant="divided" title={t("skills.selectLabel")}>
           <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("skills.selectLabel")}
-            </Text>
             {org.length === 0 && missing.length === 0 && skills.data !== undefined ? (
-              <Text variant="small" tone="faint">
-                {t("skills.noOrgSkills")}
-              </Text>
+              <EmptyState
+                size="panel"
+                text={t("skills.noOrgSkills")}
+                {...(navLevelOf(me) === "guest"
+                  ? {}
+                  : {
+                      action: {
+                        label: t("skills.goToSkills"),
+                        variant: "default" as const,
+                        href: "/skills",
+                      },
+                    })}
+              />
             ) : null}
             {skills.isError ? (
               <Text variant="small" tone="faint">
@@ -679,13 +693,18 @@ export function SkillsEdit() {
               </Text>
             ) : null}
           </Stack>
-        </div>
-        {/* biome-ignore lint/a11y/useSemanticElements: as above */}
-        <div role="group" aria-label={t("skills.pinLabel")}>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("skills.pinLabel")}
+        </Subsection>
+        <Subsection
+          variant="divided"
+          title={t("skills.pinLabel")}
+          description={t("skills.pinHint")}
+          actions={
+            <Text variant="small" tone="faint">
+              {t("skills.pinCount", { count: d.pinned.length, max: TEMPLATE_LIMITS.skills })}
             </Text>
+          }
+        >
+          <Stack gap={4}>
             {d.selected.length === 0 ? (
               <Text variant="small" tone="faint">
                 {t("skills.noneToPin")}
@@ -708,11 +727,8 @@ export function SkillsEdit() {
                 />
               );
             })}
-            <Text variant="small" tone="faint">
-              {t("skills.pinHint", { max: TEMPLATE_LIMITS.skills })}
-            </Text>
           </Stack>
-        </div>
+        </Subsection>
       </FormSection>
     </EditFrame>
   );
