@@ -97,6 +97,15 @@ const _failure = async (p: Promise<unknown>): Promise<ToolError> => {
   return e as ToolError;
 };
 
+const failure = async (p: Promise<unknown>): Promise<ToolError> => {
+  const e = await p.then(
+    () => null,
+    (x: unknown) => x,
+  );
+  expect(e).toBeInstanceOf(ToolError);
+  return e as ToolError;
+};
+
 const audits = (action: string) =>
   env.db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
 
@@ -133,7 +142,12 @@ describe("registration", () => {
       "connectors.template-disable-preview",
       "connectors.set-template-enabled",
       "plugins.components",
+      "plugins.component-scope-preview",
       "plugins.component-versions",
+      "plugins.set-component-scope",
+      "plugins.set-component-disabled",
+      "plugins.set-component-shown",
+      "plugins.update-agent-template",
     ]) {
       expect(ids).toContain(id);
     }
@@ -309,5 +323,93 @@ describe("plugins.components", () => {
     );
     expect(versions).toMatchObject({ versions: [{ version: "1" }] });
     for (const v of [list, versions]) expect(JSON.stringify(v)).not.toContain(org2);
+  });
+});
+
+describe("platform component writes", () => {
+  it("previews and changes a scope, auditing it as the agent's and naming no org", async () => {
+    const item = await importSkill(env, { name: "pdf-tools" });
+    await setScope(env, item, "optional");
+    const id = await skillComponent("pdf-tools");
+    const target = { kind: "skill", componentId: id, scope: "named", orgs: [org2] };
+    const preview = (await run("plugins.component-scope-preview", target, ctxOf(env.rootId))) as {
+      scopeHash: string;
+    };
+    expect(preview.scopeHash).toBeTruthy();
+    const set = { ...target, scopeHash: preview.scopeHash };
+    expect(await precheck("plugins.set-component-scope", set, ctxOf(env.rootId))).toEqual({
+      ok: true,
+    });
+    expect(
+      await precheck(
+        "plugins.set-component-scope",
+        { ...set, scopeHash: "stale" },
+        ctxOf(env.rootId),
+      ),
+    ).toMatchObject({ ok: false, code: "plugin.scope_stale" });
+    const summary = await summarize("plugins.set-component-scope", set, ctxOf(env.rootId));
+    expect(summary?.en).toContain('Set the scope of platform skill "pdf-tools" to named (1 orgs)');
+    const done = await run("plugins.set-component-scope", set, ctxOf(env.rootId));
+    expect(done).toMatchObject({ component: { id, scope: "named", onIn: 1 } });
+    expect(JSON.stringify([preview, done, summary])).not.toContain(org2);
+    const rows = await audits("component.scope_changed");
+    expect(rows.at(-1)?.detail).toMatchObject({
+      via: "agent",
+      operation: "plugins.set-component-scope",
+    });
+    expect(availability(op("plugins.set-component-scope"), facts("admin")).ok).toBe(false);
+  });
+
+  it("shows, disables and enables a component", async () => {
+    await importSkill(env, { name: "pdf-tools" });
+    const id = await skillComponent("pdf-tools");
+    await run(
+      "plugins.set-component-shown",
+      { kind: "skill", componentId: id, shownToOthers: false },
+      ctxOf(env.rootId),
+    );
+    const [shown] = await audits("component.shown_changed");
+    expect(shown?.detail).toMatchObject({ via: "agent", operation: "plugins.set-component-shown" });
+    expect(
+      await precheck(
+        "plugins.set-component-disabled",
+        { kind: "skill", componentId: id, disabled: true },
+        ctxOf(env.rootId),
+      ),
+    ).toMatchObject({ ok: false, code: "validation_failed" });
+    const p = (await run(
+      "plugins.component-scope-preview",
+      { kind: "skill", componentId: id, disabled: true },
+      ctxOf(env.rootId),
+    )) as { scopeHash: string };
+    const off = { kind: "skill", componentId: id, disabled: true, scopeHash: p.scopeHash };
+    expect(await run("plugins.set-component-disabled", off, ctxOf(env.rootId))).toMatchObject({
+      component: { state: "disabled" },
+    });
+    expect(
+      await run(
+        "plugins.set-component-disabled",
+        { kind: "skill", componentId: id, disabled: false },
+        ctxOf(env.rootId),
+      ),
+    ).toMatchObject({ component: { state: "on" } });
+  });
+
+  it("refuses another org's own component", async () => {
+    await importSkill(env, { name: "pdf-tools" });
+    const mine = await skillComponent("pdf-tools");
+    await env.db
+      .updateTable("platform_skills")
+      .set({ owner_org_id: org2 })
+      .where("id", "=", mine)
+      .execute();
+    const e = await failure(
+      run(
+        "plugins.set-component-shown",
+        { kind: "skill", componentId: mine, shownToOthers: true },
+        ctxOf(env.rootId),
+      ),
+    );
+    expect(e.message).not.toContain(ORG2_NAME);
   });
 });

@@ -360,36 +360,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Uploads a platform skill package as raw bytes",
   },
-  {
-    route: "POST /api/v1/admin/components/agent_template/:id/versions",
-    category: "human-only",
-    reason:
-      "Publishing platform agent template content is a super admin's decision made in the admin console",
-  },
-  {
-    route: "POST /api/v1/admin/components/:kind/:id/scope/preview",
-    category: "human-only",
-    reason:
-      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
-  },
-  {
-    route: "PUT /api/v1/admin/components/:kind/:id/scope",
-    category: "human-only",
-    reason:
-      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
-  },
-  {
-    route: "PUT /api/v1/admin/components/:kind/:id/disabled",
-    category: "human-only",
-    reason:
-      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
-  },
-  {
-    route: "PUT /api/v1/admin/components/:kind/:id/shown",
-    category: "human-only",
-    reason:
-      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
-  },
   // marketplaces
   {
     route: "GET /api/v1/admin/marketplaces/entries",

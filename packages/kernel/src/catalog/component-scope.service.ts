@@ -205,6 +205,9 @@ interface Target {
   disabled: boolean;
 }
 
+/** Actor facts of a write: the token, and detail the caller adds to the audit row. */
+type AuditOpts = ActorOpts & { auditDetail?: Record<string, unknown> };
+
 const notFound = () => new ApiError("component.not_found", "Component not found");
 const staleError = () =>
   new ApiError(
@@ -629,7 +632,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     body: ({ scope: PluginScope; orgs?: string[] } | { follow: true }) & { scopeHash: string },
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     const { scopeHash, ...target } = body;
     const r = await this.resolve(kind, id);
@@ -670,7 +673,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     body: { disabled: boolean; scopeHash?: string },
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     if (body.disabled && body.scopeHash === undefined) {
       throw new ApiError(
@@ -689,7 +692,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     shown: boolean,
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     const r = await this.resolve(kind, id);
     if ("c" in r) {
@@ -899,7 +902,7 @@ export class ComponentScopeService {
     id: string,
     target: { scope: PluginScope; orgs?: string[] } | { follow: true },
     hash: string,
-    opts: ActorOpts,
+    opts: AuditOpts,
     x: { hashId: string; promote?: PreparedPromotion },
   ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -959,6 +962,7 @@ export class ComponentScopeService {
         plugin: c.plugin,
         from: { scopeMode: c.scopeMode, scope: c.scope, orgs: from },
         to: { scopeMode: t.scopeMode, scope: t.scope, orgs: t.orgs },
+        ...opts.auditDetail,
       },
     });
     return id;
@@ -971,7 +975,7 @@ export class ComponentScopeService {
     id: string,
     disabled: boolean,
     hash: string | undefined,
-    opts: ActorOpts,
+    opts: AuditOpts,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
     const c = await this.component(kind, id, true);
@@ -998,6 +1002,7 @@ export class ComponentScopeService {
         name: c.name,
         plugin: c.plugin,
         disabled: { from: c.disabled, to: disabled },
+        ...opts.auditDetail,
       },
     });
   }
@@ -1009,7 +1014,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     shown: boolean,
-    opts: ActorOpts,
+    opts: AuditOpts,
     promote?: PreparedPromotion,
   ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -1029,7 +1034,14 @@ export class ComponentScopeService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "component.shown_changed",
       target: id,
-      detail: { kind, name: c.name, plugin: c.plugin, from: c.shownToOthers, to: shown },
+      detail: {
+        kind,
+        name: c.name,
+        plugin: c.plugin,
+        from: c.shownToOthers,
+        to: shown,
+        ...opts.auditDetail,
+      },
     });
     return id;
   }

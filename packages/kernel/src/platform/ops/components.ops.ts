@@ -1,11 +1,23 @@
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { ComponentParams } from "../../catalog/component-scope.schemas.js";
+import {
+  ComponentDisabledSchema,
+  ComponentParams,
+  ComponentScopeFields,
+  ComponentScopePreviewFields,
+  ComponentShownSchema,
+  ComponentTemplateVersionSchema,
+  componentScopeRules,
+} from "../../catalog/component-scope.schemas.js";
 import {
   ComponentScopeService,
+  type ComponentTarget,
+  type ComponentView,
   type OrgOfferedComponentView,
 } from "../../catalog/component-scope.service.js";
 import type { ComponentKind } from "../../catalog/component-state.js";
+import { PlatformComponents } from "../../catalog/platform-components.js";
 import { ApiError } from "../../errors.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { redactOrgs } from "../redact-orgs.js";
@@ -37,6 +49,60 @@ const REFUSED: Record<string, string> = {
     "What switching this component off affects has changed, or the confirm value is not the preview's",
 };
 
+const OTHER_ORG_COMPONENT =
+  "This component belongs to another org; its owner manages it, and the admin console shows it.";
+
+/** A platform component as the super admin's list and writes show it: orgs only as counts. */
+const brief = (c: ComponentView) => ({
+  id: c.id,
+  name: c.name,
+  kind: c.kind,
+  state: c.disabled || c.pluginStopped ? "disabled" : "on",
+  plugin: c.plugin,
+  scope: c.scope,
+  scopeMode: c.scopeMode,
+  shownToOthers: c.shownToOthers,
+  version: c.version,
+  onIn: c.onIn.length,
+});
+
+/** The scope as card summaries say it. */
+const scopeText = (t: { scope?: string | undefined; orgs?: readonly string[] | undefined }) =>
+  t.scope === undefined
+    ? { zh: "跟随所属插件的范围", en: "follow its plugin's scope" }
+    : t.scope === "named"
+      ? {
+          zh: `指定组织（${t.orgs?.length ?? 0} 个）`,
+          en: `named (${t.orgs?.length ?? 0} orgs)`,
+        }
+      : t.scope === "all"
+        ? { zh: "所有组织", en: "all orgs" }
+        : { zh: "可选", en: "optional" };
+
+type ScopeInput = {
+  scope?: "all" | "optional" | "named" | undefined;
+  orgs?: string[] | undefined;
+  disabled?: true | undefined;
+};
+const previewTarget = (i: ScopeInput): ComponentTarget =>
+  i.scope !== undefined
+    ? { scope: i.scope, ...(i.orgs !== undefined && { orgs: i.orgs }) }
+    : i.disabled === true
+      ? { disabled: true }
+      : { follow: true };
+const scopeTarget = (i: ScopeInput): ComponentTarget =>
+  i.scope !== undefined
+    ? { scope: i.scope, ...(i.orgs !== undefined && { orgs: i.orgs }) }
+    : { follow: true };
+const scopeBody = (i: ScopeInput & { scopeHash: string }) =>
+  i.scope !== undefined
+    ? {
+        scope: i.scope,
+        scopeHash: i.scopeHash,
+        ...(i.orgs !== undefined && { orgs: i.orgs }),
+      }
+    : { follow: true as const, scopeHash: i.scopeHash };
+
 /** A platform component as the `available` lists show it: a compact row. */
 function row(c: OrgOfferedComponentView) {
   return {
@@ -67,7 +133,62 @@ export class ComponentsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ComponentScopeService) private readonly components: ComponentScopeService,
+    @Inject(PlatformComponents) private readonly platformComponents: PlatformComponents,
   ) {}
+
+  /** Refuses a super-admin operation on a component another org owns (spec section 6.1). */
+  private async assertNotOtherOrgs(kind: ComponentKind, id: string, orgId: string) {
+    const c = (await this.components.list(kind)).find((x) => x.id === id);
+    if (c !== undefined && c.owner.kind === "org" && c.owner.orgId !== orgId) {
+      throw new ToolError(OTHER_ORG_COMPONENT);
+    }
+  }
+
+  private async adminName(kind: ComponentKind, id: string): Promise<string> {
+    return orElse(async () => {
+      const c = (await this.components.list(kind)).find((x) => x.id === id);
+      if (c === undefined) throw new Error("unknown");
+      return named(c.name);
+    }, id);
+  }
+
+  /** What a scope change or disable would touch, as counts (no org is named). */
+  private async previewCounts(kind: ComponentKind, id: string, target: ComponentTarget) {
+    const p = await this.components.preview(kind, id, target);
+    return {
+      affectedOrgs: p.affected.length,
+      affectedAgents: p.affected.reduce((n, a) => n + a.agents.length, 0),
+      connectorsKept: p.affected.reduce((n, a) => n + a.connectorsKept, 0),
+      conflicts: p.conflicts.length,
+      scopeHash: p.scopeHash,
+    };
+  }
+
+  /** The precheck of a scope change or disable: another org's component, a stale hash, a name clash. */
+  private precheckTarget(
+    kind: ComponentKind,
+    id: string,
+    target: ComponentTarget,
+    hash: string | undefined,
+    orgId: string,
+  ) {
+    return precheckBy(async () => {
+      await this.assertNotOtherOrgs(kind, id, orgId);
+      const p = await this.components.preview(kind, id, target);
+      if (hash !== undefined && p.scopeHash !== hash) {
+        throw new ApiError(
+          "plugin.scope_stale",
+          "The scope preview is out of date; preview again and use its new scopeHash",
+        );
+      }
+      if (p.conflicts.length > 0) {
+        throw new ApiError(
+          kind === "skill" ? "plugin.skill_conflict" : "agent_template.name_taken",
+          `${p.conflicts.length} orgs already use this component's name, so the change is refused`,
+        );
+      }
+    });
+  }
 
   private async available(kind: ComponentKind, cursor: string | undefined, orgId: string) {
     const all = await this.components.orgList(orgId, { kind });
@@ -476,15 +597,311 @@ export class ComponentsOperations implements OnModuleInit {
           const rows = visible.map((c) => ({
             id: c.id,
             name: c.name,
-            state: c.disabled || c.pluginStopped ? "disabled" : "on",
+            state: brief(c).state,
             plugin: c.plugin,
             scope: c.scope,
-            onIn: c.onIn,
+            onIn: c.onIn.length,
           }));
           return redactOrgs({
             ...pageOf(rows, startOf(input.cursor), PAGE),
             otherOrgComponents: all.length - visible.length,
           });
+        },
+      }),
+      defineOperation({
+        id: "plugins.component-scope-preview",
+        description:
+          "Preview a platform component's scope change, deployment-level disable or return to its plugin's scope (super admin): how many orgs and agents are affected, name clashes, and the scopeHash plugins.set-component-scope or plugins.set-component-disabled takes. Send exactly one of scope (with orgs for named), disabled: true or follow: true. Orgs are given as counts only; the admin console shows which.",
+        input: ComponentScopePreviewFields.extend({
+          kind: ComponentParams.shape.kind,
+          componentId: Id,
+        })
+          .strict()
+          .refine(componentScopeRules.exactlyOnePreviewTarget, {
+            message:
+              "send exactly one of scope (with orgs for named), disabled: true or follow: true",
+          })
+          .refine(componentScopeRules.orgsNeedScope, {
+            message: "orgs: only allowed with scope named",
+            path: ["orgs"],
+          }),
+        example: { kind: "skill", componentId: EXAMPLE_ID, scope: "optional" as const },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/components/:kind/:id/scope/preview"],
+        renames: { componentId: "id" },
+        confirm: "read",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the component id and kind with plugins.components.",
+          },
+          {
+            code: "plugin.builtin",
+            next: "The component belongs to a built-in plugin: it is on in every org and its scope cannot be changed.",
+          },
+        ],
+        run: async (i, ctx) => {
+          await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
+          const p = await this.previewCounts(
+            i.kind as ComponentKind,
+            i.componentId,
+            previewTarget(i),
+          );
+          return redactOrgs(p);
+        },
+      }),
+      defineOperation({
+        id: "plugins.set-component-scope",
+        description:
+          "Give a platform component its own scope (all, optional or named with orgs), or make it follow its plugin's scope again (super admin), for every org at once: pass the scopeHash plugins.component-scope-preview returned. A stale preview or an org whose own skill has the component's name is refused.",
+        input: ComponentScopeFields.extend({
+          kind: ComponentParams.shape.kind,
+          componentId: Id,
+        })
+          .strict()
+          .refine(componentScopeRules.scopeXorFollow, {
+            message: "send either scope (with orgs for named) or follow: true",
+          })
+          .refine(componentScopeRules.orgsNeedScope, {
+            message: "orgs: only allowed with scope named",
+            path: ["orgs"],
+          }),
+        example: {
+          kind: "skill",
+          componentId: EXAMPLE_ID,
+          scope: "optional" as const,
+          scopeHash: "abc123",
+        },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/components/:kind/:id/scope"],
+        renames: { componentId: "id" },
+        confirm: "platform",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the component id and kind with plugins.components.",
+          },
+          {
+            code: "plugin.scope_stale",
+            next: "Call plugins.component-scope-preview again and use its new scopeHash.",
+          },
+          {
+            code: "plugin.skill_conflict",
+            next: "An org's own skill has this skill's name: that org renames or deletes it first.",
+          },
+          {
+            code: "plugin.builtin",
+            next: "The component belongs to a built-in plugin: its scope cannot be changed.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          this.precheckTarget(
+            i.kind as ComponentKind,
+            i.componentId,
+            scopeTarget(i),
+            i.scopeHash,
+            ctx.orgId,
+          ),
+        summary: async (i) => {
+          const kind = i.kind as ComponentKind;
+          const n = await this.adminName(kind, i.componentId);
+          const sc = scopeText(i);
+          const p = await orElse(
+            () => this.previewCounts(kind, i.componentId, scopeTarget(i)),
+            null,
+          );
+          const tail =
+            p === null
+              ? { zh: "", en: "" }
+              : {
+                  zh: `；影响 ${p.affectedOrgs} 个组织、${p.affectedAgents} 个智能体`,
+                  en: `; ${p.affectedOrgs} orgs and ${p.affectedAgents} agents affected`,
+                };
+          return {
+            zh: `把${LABEL[kind].zh}「${n}」的范围设为${sc.zh}${tail.zh}`,
+            en: `Set the scope of ${LABEL[kind].en} "${n}" to ${sc.en}${tail.en}`,
+          };
+        },
+        run: async (i, ctx) => {
+          await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
+          return redactOrgs({
+            component: brief(
+              await this.components.setScope(
+                ctx.actorAccountId,
+                i.kind as ComponentKind,
+                i.componentId,
+                scopeBody(i),
+                { auditDetail: viaAgent("plugins.set-component-scope", ctx) },
+              ),
+            ),
+          });
+        },
+      }),
+      defineOperation({
+        id: "plugins.set-component-disabled",
+        description:
+          "Disable a platform component on the whole deployment, or enable it again (super admin). Disabling needs the scopeHash of plugins.component-scope-preview called with disabled: true; enabling needs none. Orgs keep their own switches.",
+        input: ComponentDisabledSchema.extend({
+          kind: ComponentParams.shape.kind,
+          componentId: Id,
+        }).strict(),
+        example: { kind: "skill", componentId: EXAMPLE_ID, disabled: true, scopeHash: "abc123" },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/components/:kind/:id/disabled"],
+        renames: { componentId: "id" },
+        confirm: "platform",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the component id and kind with plugins.components.",
+          },
+          {
+            code: "plugin.scope_stale",
+            next: "Call plugins.component-scope-preview with disabled: true again and use its new scopeHash.",
+          },
+          {
+            code: "validation_failed",
+            next: "Disabling needs scopeHash from plugins.component-scope-preview with disabled: true.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          i.disabled && i.scopeHash === undefined
+            ? Promise.resolve({
+                ok: false as const,
+                code: "validation_failed",
+                message: "scopeHash: required when disabling",
+              })
+            : this.precheckTarget(
+                i.kind as ComponentKind,
+                i.componentId,
+                { disabled: i.disabled },
+                i.disabled ? i.scopeHash : undefined,
+                ctx.orgId,
+              ),
+        summary: async (i) => {
+          const kind = i.kind as ComponentKind;
+          const n = await this.adminName(kind, i.componentId);
+          return i.disabled
+            ? {
+                zh: `在整个平台停用${LABEL[kind].zh}「${n}」`,
+                en: `Disable ${LABEL[kind].en} "${n}" on the whole platform`,
+              }
+            : {
+                zh: `在整个平台重新启用${LABEL[kind].zh}「${n}」`,
+                en: `Enable ${LABEL[kind].en} "${n}" on the platform again`,
+              };
+        },
+        run: async (i, ctx) => {
+          await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
+          return redactOrgs({
+            component: brief(
+              await this.components.setDisabled(
+                ctx.actorAccountId,
+                i.kind as ComponentKind,
+                i.componentId,
+                {
+                  disabled: i.disabled,
+                  ...(i.scopeHash !== undefined && { scopeHash: i.scopeHash }),
+                },
+                { auditDetail: viaAgent("plugins.set-component-disabled", ctx) },
+              ),
+            ),
+          });
+        },
+      }),
+      defineOperation({
+        id: "plugins.set-component-shown",
+        description:
+          "Show a platform component to orgs outside its named list, or hide it from them (super admin). Showing does not make it usable there; those orgs' admins can then switch it on.",
+        input: ComponentShownSchema.extend({
+          kind: ComponentParams.shape.kind,
+          componentId: Id,
+        }).strict(),
+        example: { kind: "skill", componentId: EXAMPLE_ID, shownToOthers: true },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/components/:kind/:id/shown"],
+        renames: { componentId: "id" },
+        confirm: "platform",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the component id and kind with plugins.components.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId),
+          ),
+        summary: async (i) => {
+          const kind = i.kind as ComponentKind;
+          const n = await this.adminName(kind, i.componentId);
+          return i.shownToOthers
+            ? {
+                zh: `向其他组织展示${LABEL[kind].zh}「${n}」`,
+                en: `Show ${LABEL[kind].en} "${n}" to other orgs`,
+              }
+            : {
+                zh: `对其他组织隐藏${LABEL[kind].zh}「${n}」`,
+                en: `Hide ${LABEL[kind].en} "${n}" from other orgs`,
+              };
+        },
+        run: async (i, ctx) => {
+          await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
+          return redactOrgs({
+            component: brief(
+              await this.components.setShown(
+                ctx.actorAccountId,
+                i.kind as ComponentKind,
+                i.componentId,
+                i.shownToOthers,
+                { auditDetail: viaAgent("plugins.set-component-shown", ctx) },
+              ),
+            ),
+          });
+        },
+      }),
+      defineOperation({
+        id: "plugins.update-agent-template",
+        description:
+          "Publish a new version of a platform agent template on its own (super admin): content is the template markdown file, which must keep the template's name. It serves in orgs at once. Takes the template id from plugins.components with kind agent_template.",
+        input: ComponentTemplateVersionSchema.extend({ templateId: Id }).strict(),
+        example: {
+          templateId: EXAMPLE_ID,
+          content: "---\nname: support-triage\n---\nTriage requests.",
+        },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/components/agent_template/:id/versions"],
+        renames: { templateId: "id" },
+        confirm: "platform",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the component id and kind with plugins.components.",
+          },
+          {
+            code: "validation_failed",
+            next: "Fix the template file as the message says; it must keep the template's name.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() => this.assertNotOtherOrgs("agent_template", i.templateId, ctx.orgId)),
+        summary: async (i) => {
+          const n = await this.adminName("agent_template", i.templateId);
+          return {
+            zh: `发布平台智能体模板「${n}」的新版本`,
+            en: `Publish a new version of platform agent template "${n}"`,
+          };
+        },
+        run: async (i, ctx) => {
+          await this.assertNotOtherOrgs("agent_template", i.templateId, ctx.orgId);
+          return this.platformComponents.uploadAgentTemplateVersion(
+            {
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("plugins.update-agent-template", ctx),
+            },
+            i.templateId,
+            i.content,
+          );
         },
       }),
       defineOperation({
