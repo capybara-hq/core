@@ -121,6 +121,13 @@ describe("ToolPolicyList (spec §6.36)", () => {
     expect(screen.getByRole("checkbox", { name: "更新待办" })).toHaveProperty("checked", true);
     await user.type(screen.getByRole("searchbox", { name: "搜索工具" }), "没有这个");
     expect(screen.getByText("没有匹配的工具")).toBeTruthy();
+    // a filter matching nothing is the panel empty state, as the sidebar's (spec §6.18)
+    expect(
+      screen
+        .getByText("没有匹配的工具")
+        .closest('[data-part="empty-state"]')
+        ?.getAttribute("data-size"),
+    ).toBe("panel");
   });
 
   it("without onCheckAll and search, neither the select-all row nor the filter is drawn", () => {

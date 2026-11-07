@@ -1026,13 +1026,10 @@
   flex: none;
   width: var(--cb-layout-policy-select);
 }
+/* A search matching nothing holds the panel EmptyState (§6.18), which pads itself. */
 .cb-tool-policy-empty {
-  margin: 0;
-  padding: var(--cb-space-2) 0;
-  color: var(--cb-muted);
-  font-family: var(--cb-font-prose);
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
+  display: flex;
+  flex-direction: column;
 }
 .cb-tool-policy[data-inset="flush"] > .cb-tool-policy-search {
   padding: var(--cb-space-3) var(--cb-space-4) var(--cb-space-2);

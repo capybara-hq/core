@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { EmptyState } from "../display/empty-state";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { Input } from "./inputs";
@@ -99,9 +100,10 @@ export function ToolPolicyList({
         </div>
       ) : null}
       {visible.length === 0 && rows.length > 0 ? (
-        <p className="cb-tool-policy-empty" data-part="tool-policy-empty">
-          {t("toolPolicy.noMatch")}
-        </p>
+        // A search that matched nothing: the panel empty state, as the sidebar's (spec §6.18)
+        <div className="cb-tool-policy-empty" data-part="tool-policy-empty">
+          <EmptyState size="panel" text={t("toolPolicy.noMatch")} />
+        </div>
       ) : null}
       <ul id={id} className="cb-tool-policy-rows" aria-label={label}>
         {visible.map((r) => (

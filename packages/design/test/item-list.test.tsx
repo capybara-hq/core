@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
   DesignProvider,
@@ -50,10 +50,33 @@ describe("ItemList", () => {
     expect(within(rows[1] as HTMLElement).queryByRole("link")).toBeNull();
   });
 
-  it("empty: the muted empty text, no list", () => {
-    zh(<ItemList label="会话" rows={[]} empty="还没有会话。" />);
+  it("empty: the panel empty state (a list is always inside a box, spec §6.18), no list", () => {
+    const { container } = zh(<ItemList label="会话" rows={[]} empty="还没有会话。" />);
     expect(screen.queryByRole("list")).toBeNull();
     expect(screen.getByText("还没有会话。")).toBeTruthy();
+    const state = container.querySelector('[data-part="empty-state"]');
+    expect(state?.getAttribute("data-size")).toBe("panel");
+    expect(state?.querySelector('[data-part="empty-illustration"]')).not.toBeNull();
+  });
+
+  it("empty with a hint and the next step: the action is a dense default button", () => {
+    const onSelect = vi.fn();
+    zh(
+      <ItemList
+        label="渠道"
+        rows={[]}
+        empty={{
+          text: "这个智能体还没有接入渠道。",
+          hint: "接入后，渠道里的消息会交给它。",
+          action: { label: "接入渠道", variant: "default", onSelect },
+        }}
+      />,
+    );
+    expect(screen.getByText("接入后，渠道里的消息会交给它。")).toBeTruthy();
+    const button = screen.getByRole("button", { name: "接入渠道" });
+    expect(button.getAttribute("data-density")).toBe("dense");
+    button.click();
+    expect(onSelect).toHaveBeenCalled();
   });
 });
 
