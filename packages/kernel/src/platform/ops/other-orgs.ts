@@ -40,7 +40,8 @@ export async function otherOrgItems(db: KernelSchemaDb, orgId: string): Promise<
  * The extensions (by name) that only other orgs' own plugins bring: an org upload's extension the
  * super admin confirmed is installed on the deployment, but it is that org's private plugin
  * (spec §14.5 item 1): counted, never described or changed through this org's agent. An extension
- * that a platform plugin or the conversation org's own plugin also brings is not one of them.
+ * that a live platform plugin or the conversation org's own plugin also brings is not one of
+ * them; deleted catalog items count on neither side.
  */
 export async function otherOrgExtensions(
   db: KernelSchemaDb,
@@ -51,11 +52,13 @@ export async function otherOrgExtensions(
   let sources = db
     .selectFrom("extension_catalog_sources as s")
     .innerJoin("catalog_items as i", "i.id", "s.item_id")
-    .select(["s.plugin as plugin", "i.owner_org_id as owner"]);
+    .select(["s.plugin as plugin", "i.owner_org_id as owner"])
+    .where("i.deleted_at", "is", null);
   let installs = db
     .selectFrom("extension_installs as e")
     .innerJoin("catalog_items as i", "i.id", "e.catalog_item_id")
-    .select(["e.name as plugin", "i.owner_org_id as owner"]);
+    .select(["e.name as plugin", "i.owner_org_id as owner"])
+    .where("i.deleted_at", "is", null);
   if (names !== undefined) {
     sources = sources.where("s.plugin", "in", names);
     installs = installs.where("e.name", "in", names);

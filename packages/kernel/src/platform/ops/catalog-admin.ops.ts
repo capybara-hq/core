@@ -15,6 +15,7 @@ import {
 import { CatalogService } from "../../catalog/catalog.service.js";
 import { CatalogScopeService, type ScopePreview } from "../../catalog/catalog-scope.service.js";
 import { PluginImport, type PluginReview } from "../../catalog/plugin-import.js";
+import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
@@ -131,6 +132,38 @@ export class CatalogAdminOperations implements OnModuleInit {
       .where("id", "=", itemId)
       .executeTakeFirst();
     return row?.owner_org_id != null;
+  }
+
+  /**
+   * A name conflict the service found at write time (the precheck skipped, or a change landed in
+   * between) without the plugins it names, which may be another org's own: the same error code,
+   * the orgs and skill names from the current preview, the plugins counted, no details.
+   */
+  private async withoutPluginNames<T>(
+    itemId: string,
+    target: { scope: "all" | "optional" | "named"; orgs?: string[] } | { disabled: true } | null,
+    write: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await write();
+    } catch (e) {
+      if (
+        !(e instanceof ApiError) ||
+        (e.code !== "plugin.skill_conflict" && e.code !== "agent_template.name_taken")
+      ) {
+        throw e;
+      }
+      const conflicts = await orElse(
+        async () => (target === null ? [] : (await this.scope.preview(itemId, target)).conflicts),
+        [] as ScopePreview["conflicts"],
+      );
+      throw new ApiError(
+        e.code,
+        conflicts.length > 0
+          ? `The change would offer a name twice: ${conflictText(conflicts)}`
+          : "The change would offer a skill or agent template name twice in an org that already uses it",
+      );
+    }
   }
 
   /** The precheck refusal of an unknown or deleted item (`catalog.get` includes deleted ones). */
@@ -414,16 +447,18 @@ export class CatalogAdminOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
+          const target = {
+            scope: input.scope,
+            ...(input.orgs !== undefined && { orgs: input.orgs }),
+          };
           return {
-            item: await this.scope.setScope(
-              ctx.actorAccountId,
-              input.itemId,
-              {
-                scope: input.scope,
-                scopeHash: input.scopeHash,
-                ...(input.orgs !== undefined && { orgs: input.orgs }),
-              },
-              { auditDetail: viaAgent("plugins.set-scope", ctx) },
+            item: await this.withoutPluginNames(input.itemId, target, () =>
+              this.scope.setScope(
+                ctx.actorAccountId,
+                input.itemId,
+                { ...target, scopeHash: input.scopeHash },
+                { auditDetail: viaAgent("plugins.set-scope", ctx) },
+              ),
             ),
           };
         },
@@ -493,14 +528,16 @@ export class CatalogAdminOperations implements OnModuleInit {
         run: async (input, ctx) => {
           await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
           return {
-            item: await this.scope.setDisabled(
-              ctx.actorAccountId,
-              input.itemId,
-              {
-                disabled: input.disabled,
-                ...(input.scopeHash !== undefined && { scopeHash: input.scopeHash }),
-              },
-              { auditDetail: viaAgent("plugins.set-disabled", ctx) },
+            item: await this.withoutPluginNames(input.itemId, null, () =>
+              this.scope.setDisabled(
+                ctx.actorAccountId,
+                input.itemId,
+                {
+                  disabled: input.disabled,
+                  ...(input.scopeHash !== undefined && { scopeHash: input.scopeHash }),
+                },
+                { auditDetail: viaAgent("plugins.set-disabled", ctx) },
+              ),
             ),
           };
         },

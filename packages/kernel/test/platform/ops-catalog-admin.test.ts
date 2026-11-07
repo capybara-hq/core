@@ -305,6 +305,45 @@ describe("the platform catalog (super admin)", () => {
     ).toMatch(/preview again/);
   });
 
+  it("set-scope run, past the precheck: a write-time conflict never names another org's plugin", async () => {
+    const item = await importSkill(env);
+    await setScope(env, item, "named", [env.orgId]);
+    // org2's own plugin brings a skill of the same name, installed there
+    const theirs = await importSkill(env, { name: "gamma-secret-plugin", skillName: "pdf-tools" });
+    await setScope(env, theirs, "named", [org2]);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: org2 })
+      .where("id", "=", theirs)
+      .execute();
+    const on = await env.root({
+      method: "PUT",
+      url: `/api/v1/orgs/${org2}/catalog/${theirs}/switch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
+    const c = ctxOf(env.rootId);
+    const p = (await run(
+      "plugins.scope-preview",
+      { itemId: item, scope: "named", orgs: [org2] },
+      c,
+    )) as { scopeHash: string; conflicts: { plugins: number }[] };
+    expect(p.conflicts).toMatchObject([{ plugins: 1 }]);
+    expect(JSON.stringify(p)).not.toContain("gamma-secret-plugin");
+    // the run without its precheck (skipped on a timeout, or a change in between)
+    const e = await failure(
+      run(
+        "plugins.set-scope",
+        { itemId: item, scope: "named", orgs: [org2], scopeHash: p.scopeHash },
+        c,
+      ),
+    );
+    expect(e.message).toContain("plugin.skill_conflict");
+    expect(e.message).toContain(ORG2_NAME);
+    expect(e.message).toContain("1 plugin(s)");
+    expect(e.message).not.toContain("gamma-secret-plugin");
+  });
+
   it("set-shown refuses a plugin an org owns, the conversation org's own included", async () => {
     const item = await importSkill(env, { name: "own-shown" });
     await env.db
@@ -467,6 +506,41 @@ describe("platform extensions (super admin)", () => {
     const mine = (await run("extensions.platform-list", {}, c)) as { items: { id: string }[] };
     expect(mine.items.map((x) => x.id)).toContain("gamma-private-ext");
     await run("extensions.platform-disable", { name: "gamma-private-ext" }, c);
+  });
+
+  it("a deleted catalog item counts on neither side for an extension's owner", async () => {
+    const { itemId } = await importDeployedPlugin(env, "gamma-deleted-ext");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: org2, deleted_at: new Date() })
+      .where("id", "=", itemId)
+      .execute();
+    const c = ctxOf(env.rootId);
+    // the only item is deleted: nobody's private extension, so it is listed
+    const list = (await run("extensions.platform-list", {}, c)) as {
+      items: { id: string }[];
+      otherOrgExtensions: number;
+    };
+    expect(list.items.map((x) => x.id)).toContain("gamma-deleted-ext");
+    // a live item of another org next to a deleted platform one: theirs
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: null })
+      .where("id", "=", itemId)
+      .execute();
+    const live = await importSkill(env, { name: "gamma-deleted-ext-2" });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: org2 })
+      .where("id", "=", live)
+      .execute();
+    await env.db
+      .insertInto("extension_catalog_sources")
+      .values({ plugin: "gamma-deleted-ext", item_id: live })
+      .execute();
+    expect(
+      (await failure(run("extensions.platform-get", { name: "gamma-deleted-ext" }, c))).message,
+    ).toBe(OTHER_ORG);
   });
 });
 
