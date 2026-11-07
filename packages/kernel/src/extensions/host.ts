@@ -664,8 +664,11 @@ export class ExtensionHost {
     @Inject(LockService) locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
-    /** Each hook call's effective config for its organization (layering spec A §6). */
-    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
+    /**
+     * Each hook call's effective config for its organization, and the providers excluded from an
+     * org's point resolution (layering spec A §6).
+     */
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
   ) {
     const c = config.get();
     this.deps = {
@@ -1956,6 +1959,7 @@ export class ExtensionHost {
           i.provided.has(ref) ? [{ plugin: i.name, impl: i.provided.get(ref) }] : [],
         ),
     enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+    configOk: async (orgId, plugin) => (await this.effective.get(orgId, plugin)).ok,
   };
 
   private get loadDeps(): LoadDeps {

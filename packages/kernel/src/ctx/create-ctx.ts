@@ -87,6 +87,11 @@ export interface ExtensionPointAccess {
   providers(ref: ExtensionPointRef): { plugin: string; impl: unknown }[];
   /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`); queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
+  /**
+   * Whether the extension's effective config is valid in the organization (layering spec A §6):
+   * a provider that is not is excluded from point resolution for that org.
+   */
+  configOk(orgId: string, plugin: string): Promise<boolean>;
 }
 
 /**
@@ -245,6 +250,7 @@ function guardBuilder<T extends object>(builder: T, plugin: string): T {
 const noProviders = (deps: KernelDeps): ExtensionPointAccess => ({
   providers: () => [],
   enabledPlugins: (orgId) => queryEnabledPlugins(deps.db, orgId),
+  configOk: async () => true,
 });
 
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
@@ -402,11 +408,20 @@ export function createExtensionContext(
     if (!chosen) throw new ExtensionPointUnavailableError(`extension point ${ref} has no provider`);
     return { info, chosen };
   };
-  /** 组织视角过滤提供方：orgScoped 能力只留该组织已启用的（每次查询，不缓存）。 */
+  /**
+   * The org's view of the providers: an orgScoped point keeps only those the org enabled (queried
+   * every time, not cached), and every point drops those whose effective config is not valid in
+   * the org (layering spec A §6: a call on behalf of an org never reaches such a provider).
+   */
   const forOrg = async (orgScoped: boolean, orgId: string, entries: Entry[]) => {
-    if (!orgScoped || entries.length === 0) return entries;
-    const enabled = await extensionPointAccess.enabledPlugins(orgId);
-    return entries.filter((e) => enabled.has(e.plugin));
+    if (entries.length === 0) return entries;
+    let out = entries;
+    if (orgScoped) {
+      const enabled = await extensionPointAccess.enabledPlugins(orgId);
+      out = out.filter((e) => enabled.has(e.plugin));
+    }
+    const ok = await Promise.all(out.map((e) => extensionPointAccess.configOk(orgId, e.plugin)));
+    return out.filter((_, i) => ok[i]);
   };
   const listAll = (ref: ExtensionPointRef) => {
     const info = checkExtensionPoint(ref);
@@ -422,7 +437,7 @@ export function createExtensionContext(
         const { info, chosen } = pick(ref, provider);
         if ((await forOrg(info.orgScoped, orgId, [chosen])).length === 0) {
           throw new ExtensionPointUnavailableError(
-            `extension point ${ref} provider ${chosen.plugin} is not enabled in organization ${orgId}`,
+            `extension point ${ref} provider ${chosen.plugin} is not available in organization ${orgId} (not enabled there, or its configuration is not valid there)`,
           );
         }
         return chosen.impl;
