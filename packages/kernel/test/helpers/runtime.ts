@@ -54,7 +54,7 @@ export function providerRegistryFor(
     /** The kernel config's `models.listTimeoutMs` (10 s by default; `listTimeoutMs` wins). */
     configListTimeoutMs?: number;
     /** The disabled lists (default: nothing disabled). */
-    enablement?: Pick<ModelEnablement, "disabled">;
+    enablement?: Pick<ModelEnablement, "disabled" | "switchedOff">;
   } = {},
 ): ProviderRegistry {
   return new ProviderRegistry(
@@ -66,7 +66,10 @@ export function providerRegistryFor(
       get: () =>
         ({ models: { listTimeoutMs: opts.configListTimeoutMs ?? 10_000 } }) as KernelConfig,
     },
-    opts.enablement ?? { disabled: async () => new Set<string>() },
+    opts.enablement ?? {
+      disabled: async () => new Set<string>(),
+      switchedOff: async () => new Set<string>(),
+    },
     log,
     opts.listTimeoutMs,
   );

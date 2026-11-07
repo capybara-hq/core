@@ -91,6 +91,27 @@ export class ModelEnablement {
     return q.execute();
   }
 
+  /**
+   * The extensions `orgId` explicitly turned off: a row of the org's own switch
+   * (`extension_org_configs.enabled = false`, what the org's extension or plugin switch writes when
+   * an org admin turns it off), never a required bootstrap plugin. An extension with no row for the
+   * org is not in the set (it keeps working as before: spec A §8 with B's no-breakage anti-goal).
+   * Read from PG on every call (one small query; the switch has its own writers, nothing to evict).
+   */
+  async switchedOff(orgId: string): Promise<Set<string>> {
+    const rows = await this.db
+      .selectFrom("extension_org_configs as eoc")
+      .leftJoin("extension_installs as ri", (j) =>
+        j.onRef("ri.name", "=", "eoc.plugin").on("ri.required", "=", true),
+      )
+      .select("eoc.plugin")
+      .where("eoc.org_id", "=", orgId)
+      .where("eoc.enabled", "=", false)
+      .where("ri.name", "is", null)
+      .execute();
+    return new Set(rows.map((r) => r.plugin));
+  }
+
   /** Whether neither the platform nor `orgId` disabled the model (the lists only; see the class). */
   async isEnabled(orgId: string, provider: string, model: string): Promise<boolean> {
     const key = modelKey(provider, model);

@@ -194,7 +194,7 @@ export class ProviderListError extends ApiError {
 /** Where a provider's calls for one org (or the platform) go: the call options and list digest. */
 type Target =
   | { ok: true; call: ModelCallOptions; hash: string | undefined }
-  | { ok: false; reason: "org_configured" | "needs_config" };
+  | { ok: false; reason: "org_configured" | "needs_config" | "switched_off" };
 
 /**
  * `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，不给默认值
@@ -246,8 +246,9 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
  *
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
  * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`; a provider whose
- * effective config is not valid in the org offers no models there. The admin view (no org) lists
- * with the platform config.
+ * effective config is not valid in the org offers no models there, and neither does one the org
+ * explicitly turned off (its own extension switch row off, spec A §8; a provider with no switch row
+ * stays usable). The admin view (no org) lists with the platform config.
  *
  * Each list is validated per model (spec B §5.1): kinds are normalised (absent = `chat`, unknown =
  * `other`); a chat model failing `assertValidDeclarations`, or an `embedding` model without
@@ -267,7 +268,8 @@ export class ProviderRegistry {
     @Inject(CacheService) readonly cacheService: CacheService,
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(ModelEnablement) private readonly enablement: Pick<ModelEnablement, "disabled">,
+    @Inject(ModelEnablement)
+    private readonly enablement: Pick<ModelEnablement, "disabled" | "switchedOff">,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -303,8 +305,9 @@ export class ProviderRegistry {
    * readiness, web-order spec §3.8).
    */
   async hasProvider(orgId: string): Promise<boolean> {
+    const off = await this.enablement.switchedOff(orgId);
     for (const p of this.providers()) {
-      if ((await this.target(p, orgId)).ok) return true;
+      if ((await this.target(p, orgId, off)).ok) return true;
     }
     return false;
   }
@@ -347,9 +350,14 @@ export class ProviderRegistry {
    * The call options and list digest of `p` for `orgId`, or for the platform when `orgId` is
    * undefined (the admin view). An org: its effective config (not valid -> `needs_config`); the
    * platform's digest while it follows the platform, a per-org one for its copy. The platform: its
-   * own config (a required overridable field left empty -> `org_configured`).
+   * own config (a required overridable field left empty -> `org_configured`). `off`: the
+   * extensions the org explicitly turned off (`ModelEnablement.switchedOff`) -> `switched_off`.
    */
-  private async target(p: ProviderEntry, orgId: string | undefined): Promise<Target> {
+  private async target(
+    p: ProviderEntry,
+    orgId: string | undefined,
+    off: ReadonlySet<string> = new Set(),
+  ): Promise<Target> {
     const inst = this.host.current?.(p.plugin);
     const schema = inst?.manifest.config?.deployment as z.ZodTypeAny | undefined;
     if (orgId === undefined) {
@@ -358,6 +366,7 @@ export class ProviderRegistry {
       }
       return { ok: true, call: { config: inst?.config }, hash: p.configHash };
     }
+    if (off.has(p.plugin)) return { ok: false, reason: "switched_off" };
     const eff = await this.effective.get(orgId, p.plugin);
     if (!eff.ok) return { ok: false, reason: "needs_config" };
     // an `@1` provider ignores the per-call options (it reads `ctx.config`): the org's own copy
@@ -510,24 +519,27 @@ export class ProviderRegistry {
    */
   private async statuses(orgId: string | undefined): Promise<ProviderStatus[]> {
     const providers = this.providers();
+    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
     const settled = await Promise.allSettled(
-      providers.map(async (p): Promise<KernelModelInfo[] | "org_configured" | "needs_config"> => {
-        const t = await this.target(p, orgId);
-        if (!t.ok) return t.reason;
-        const failed = listFailedKey(p, t.hash);
-        // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
-        if ((await this.kv.get(failed)) !== null) {
-          throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
-        }
-        try {
-          return await this.models(p, t);
-        } catch (err) {
-          if (err instanceof ProviderListError) {
-            await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
+      providers.map(
+        async (p): Promise<KernelModelInfo[] | Exclude<Target, { ok: true }>["reason"]> => {
+          const t = await this.target(p, orgId, off);
+          if (!t.ok) return t.reason;
+          const failed = listFailedKey(p, t.hash);
+          // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
+          if ((await this.kv.get(failed)) !== null) {
+            throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
           }
-          throw err;
-        }
-      }),
+          try {
+            return await this.models(p, t);
+          } catch (err) {
+            if (err instanceof ProviderListError) {
+              await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
+            }
+            throw err;
+          }
+        },
+      ),
     );
     return settled.map((r, i): ProviderStatus => {
       const provider = (providers[i] as { plugin: string }).plugin;
@@ -537,6 +549,10 @@ export class ProviderRegistry {
         }
         if (r.value === "needs_config") {
           const error = `Model provider ${provider} needs configuration in this organization`;
+          return { provider, plugin: provider, status: "error", error, models: [] };
+        }
+        if (r.value === "switched_off") {
+          const error = `Model provider ${provider} is turned off in this organization`;
           return { provider, plugin: provider, status: "error", error, models: [] };
         }
         return { provider, plugin: provider, status: "ok", models: r.value };
@@ -590,13 +606,16 @@ export class ProviderRegistry {
       );
     const p = this.providers().find((x) => x.plugin === ref.provider);
     if (!p) throw unavailable();
-    const t = await this.target(p, orgId);
+    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
+    const t = await this.target(p, orgId, off);
     if (!t.ok) {
       throw new ApiError(
         "agent.model_unavailable",
         t.reason === "org_configured"
           ? `Model provider ${ref.provider} is configured by each organization`
-          : `Model provider ${ref.provider} needs configuration in this organization`,
+          : t.reason === "switched_off"
+            ? `Model provider ${ref.provider} is turned off in this organization`
+            : `Model provider ${ref.provider} needs configuration in this organization`,
       );
     }
     const info = (await this.models(p, t)).find((m) => m.id === ref.model);

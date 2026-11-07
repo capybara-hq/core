@@ -7,11 +7,12 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
+import { ModelPurposesService } from "../../src/models/purposes.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
-import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { MODEL_FAKE, MODEL_FAKE_B } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
@@ -65,7 +66,12 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, fixture("model-v1-copy"), fixture("model-copy-fail")],
+        extensions: [
+          MODEL_FAKE,
+          MODEL_FAKE_B,
+          fixture("model-v1-copy"),
+          fixture("model-copy-fail"),
+        ],
         extensionConfig: {
           "model-fake": {
             models: [
@@ -453,6 +459,69 @@ describe("runs and the switch plan", { timeout: 60_000 }, () => {
       expect(res.statusCode, res.body).toBe(400);
       expect(errCode(res)).toBe("agent.model_unavailable");
     }
+  });
+});
+
+describe("a provider the org turned off (spec A §8)", { timeout: 60_000 }, () => {
+  const B1 = { provider: "model-fake-b", model: "b-1" };
+  const switchB = (orgId: string, enabled: boolean) =>
+    ok(owner, "PUT", `/api/v1/orgs/${orgId}/extensions/model-fake-b`, { enabled });
+  const bIds = async (orgId: string) =>
+    (await models(owner, orgId))
+      .find((p) => p.provider === "model-fake-b")
+      ?.models.map((m) => m.id);
+  const runOnce = async (orgId: string, agent: string) => {
+    const conv = await createConv(owner, orgId, agent);
+    await ok(owner, "POST", `/api/v1/orgs/${orgId}/conversations/${conv}/messages`, {
+      text: "echo:hello",
+    });
+    await waitForTerminal(db, conv, 1, 20_000);
+    return eventsOf(db, conv);
+  };
+
+  it("a provider never switched in an org stays usable", async () => {
+    expect(await bIds(org1)).toEqual(["b-1", "b-2"]);
+    expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
+  });
+
+  it("switched off in org 1: absent from its list, catalog and purposes; runs fall back or fail; org 2 keeps it", async () => {
+    const withFallback = await agentId(owner, org1, "B fb", B1, FAKE_1);
+    const without = await agentId(owner, org1, "B only", B1);
+    await ok(admin, "PUT", `/api/v1/orgs/${org1}/model-purposes/title`, { target: { model: B1 } });
+    await switchB(org1, false);
+
+    expect(await bIds(org1)).toBeUndefined();
+    expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
+    const cat = (await catalog(admin, org1)).find((p) => p.provider === "model-fake-b");
+    expect(cat?.status).toBe("error");
+    expect(cat?.models).toEqual([]);
+    const registry = k.app.get(ProviderRegistry);
+    expect(await codeOf(registry.resolve(org1, B1))).toBe("agent.model_unavailable");
+    expect((await registry.resolve(org2, B1)).info.id).toBe("b-1");
+    await expect(k.app.get(ModelPurposesService).resolve(org1, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    // saving an agent on it is refused in org 1 only
+    expect((await agent(owner, org1, "New", B1)).code).toBe("agent.model_unavailable");
+    expect((await agent(owner, org2, "New", B1)).statusCode).toBe(201);
+
+    const fb = await runOnce(org1, withFallback);
+    expect(ofType(fb, "run_finished")).toHaveLength(1);
+    expect(
+      (ofType(fb, "model_call") as Extract<Ev, { type: "model_call" }>[]).map((c) => [
+        c.payload.model,
+        c.payload.fallback,
+      ]),
+    ).toEqual([["fake-1", true]]);
+    const failed = ofType(await runOnce(org1, without), "run_failed")[0] as Extract<
+      Ev,
+      { type: "run_failed" }
+    >;
+    expect(failed.payload.error.code).toBe("run.model_unavailable");
+
+    // switched on again: usable again
+    await switchB(org1, true);
+    expect(await bIds(org1)).toEqual(["b-1", "b-2"]);
   });
 });
 
