@@ -121,6 +121,7 @@ export class AgentsFromTemplate {
     actorAccountId: string,
     req: CreateFromTemplateRequest,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView }> {
     const row = await this.template(orgId, req.templateId);
     const plan = await this.plan(orgId, row, req.model);
@@ -156,6 +157,7 @@ export class AgentsFromTemplate {
       },
       { id: req.templateId, version: row.version, name: row.name },
       actorTokenId,
+      auditDetail,
     );
     const keys = (agent.definition.pendingConnectors ?? []).map((c) => c.key);
     if (keys.length > 0 && !can(role, "connectors.manage")) {

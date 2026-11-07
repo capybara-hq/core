@@ -9,8 +9,11 @@ describe("EXTENSION_POINTS selection", () => {
       orgScoped: true,
       selection: "org-default",
     };
-    expect(EXTENSION_POINTS["web-search"]).toEqual(want);
-    expect(EXTENSION_POINTS["web-fetch"]).toEqual(want);
+    expect(EXTENSION_POINTS["web-search"]).toMatchObject(want);
+    expect(EXTENSION_POINTS["web-fetch"]).toMatchObject(want);
+    for (const k of ["web-search", "web-fetch"] as const) {
+      expect(EXTENSION_POINTS[k]?.description).toMatch(/\S/);
+    }
     const withSelection = Object.entries(EXTENSION_POINTS)
       .filter(([, v]) => v.selection !== undefined)
       .map(([k]) => k);

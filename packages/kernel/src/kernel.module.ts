@@ -30,6 +30,8 @@ import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import { KERNEL_APP_OPTIONS } from "./lifecycle/tokens.js";
 import { createConfiguredLogger } from "./log-config.js";
 import { KERNEL_OVERRIDE_TOKENS } from "./overrides.js";
+import { PlatformModule } from "./platform/platform.module.js";
+import { PlatformOpsModule } from "./platform/platform-ops.module.js";
 import { GatewayModule } from "./roles/gateway.module.js";
 import { WorkerModule } from "./roles/worker.module.js";
 import { UsageReportModule } from "./runtime/usage-report.js";
@@ -107,6 +109,10 @@ export class KernelModule {
         TitlesModule,
         UsageReportModule,
         ChannelsModule,
+        // the Platform tool's operation registry and actor facts
+        PlatformModule,
+        // its operations (skills, agents, ...), registered at start on every role
+        PlatformOpsModule,
         // the role modules, by `roles` (nest kernel spec §2)
         ...(config.roles.includes("api") ? [ApiModule] : []),
         ...(config.roles.includes("worker") ? [WorkerModule.forRoot(config)] : []),

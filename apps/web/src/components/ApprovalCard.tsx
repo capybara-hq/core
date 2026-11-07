@@ -30,7 +30,7 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useWaiterWords } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
-import { toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
+import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useSession } from "./shell/session";
 
@@ -63,7 +63,7 @@ export function ScopePicker({
   onChange,
   disabled,
 }: {
-  approval: Pick<Approval, "requestedFor">;
+  approval: Pick<Approval, "requestedFor" | "scopes">;
   value: ApprovalScope;
   onChange(scope: ApprovalScope): void;
   disabled?: boolean;
@@ -231,7 +231,13 @@ export function ApprovalCard({
     }
   }
 
-  const tool = toolLabelText(info ? toolLabel(info, locale) : toolLabelOfKey(item.toolKey));
+  // a Platform call's approval is keyed `Platform:<operation>` (the conversation item's key is the tool's)
+  const platformKey = view?.toolKey?.startsWith(PLATFORM_PREFIX) ? view.toolKey : undefined;
+  const tool = toolLabelText(
+    info && platformKey === undefined
+      ? toolLabel(info, locale)
+      : toolLabelOfKey(platformKey ?? item.toolKey),
+  );
   const input =
     typeof item.input === "object" && item.input !== null && !Array.isArray(item.input)
       ? (item.input as Record<string, unknown>)
@@ -267,7 +273,8 @@ export function ApprovalCard({
     <div data-role="approval" data-approval-id={item.approvalId}>
       <ApprovalBlock
         tool={tool}
-        toolKey={item.toolKey}
+        toolKey={platformKey ?? item.toolKey}
+        {...(view?.summary ? { summary: view.summary[lang(locale)] } : {})}
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}

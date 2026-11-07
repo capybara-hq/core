@@ -20,7 +20,7 @@ import {
   type PolicyInput,
   R3_FIXED_ASK_TOOL_KEYS,
 } from "../../src/tools/policy.js";
-import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
+import { type CallPolicy, type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { eventsOf } from "../helpers/runs.js";
@@ -691,5 +691,101 @@ describe("ApprovalsService.request", () => {
         approverRole: null,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("createDecidePolicy with a per-call policy (Platform tool spec §6.2)", () => {
+  const PSPEC: ToolSpec = { name: "Platform", description: "P.", inputSchema: { type: "object" } };
+  const platform: ResolvedTool = {
+    key: "Platform",
+    source: { kind: "builtin", name: "Platform" },
+    spec: PSPEC,
+    specHash: specHash(PSPEC),
+    defaultPolicy: "allow",
+  };
+  const op = (id: string, policy: "allow" | "ask" | "deny", remember = true): CallPolicy => ({
+    key: `Platform:${id}`,
+    policy,
+    remember,
+  });
+
+  it("the call's policy replaces the tool default and its key names the approval", async () => {
+    const policy = createDecidePolicy(db);
+    expect(await policy(platform, agentDef, { ...ctx, callPolicy: op("x.read", "allow") })).toBe(
+      "allow",
+    );
+    expect(await policy(platform, agentDef, { ...ctx, callPolicy: op("x.write", "ask") })).toEqual({
+      ask: {
+        toolKey: "Platform:x.write",
+        specHash: platform.specHash,
+        connectorId: null,
+        requestedFor: seed.accountId,
+        approverRole: null,
+        policy: "default",
+      },
+    });
+    expect(
+      await policy(platform, agentDef, { ...ctx, callPolicy: op("x.org", "ask", false) }),
+    ).toMatchObject({ ask: { toolKey: "Platform:x.org", policy: "fixed" } });
+    expect(await policy(platform, agentDef, { ...ctx, callPolicy: op("x.gone", "deny") })).toBe(
+      "deny",
+    );
+  });
+
+  it("grants match the per-call key: a session grant on the root conversation, never for remember:false", async () => {
+    const policy = createDecidePolicy(db);
+    await sql`INSERT INTO capybara.conversation_tool_grants (conversation_id, tool_key, spec_hash)
+      VALUES (${seed.conversationId}, 'Platform:x.personal', ${platform.specHash}),
+        (${seed.conversationId}, 'Platform:x.org', ${platform.specHash})`.execute(raw);
+    expect(
+      await policy(platform, agentDef, { ...ctx, callPolicy: op("x.personal", "ask") }),
+    ).toEqual({ grant: "session" });
+    expect(
+      await policy(platform, agentDef, { ...ctx, callPolicy: op("x.other", "ask") }),
+    ).toMatchObject({ ask: { toolKey: "Platform:x.other" } });
+    expect(
+      await policy(platform, agentDef, { ...ctx, callPolicy: op("x.org", "ask", false) }),
+    ).toMatchObject({ ask: { toolKey: "Platform:x.org" } });
+  });
+
+  it("the current version and the parent agent tighten by the per-call key", async () => {
+    const policy = createDecidePolicy(db);
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 2, ${JSON.stringify({ ...agentDef, toolPolicies: { "Platform:x.read": "ask" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 2 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    expect(
+      await policy(platform, agentDef, { ...ctx, callPolicy: op("x.read", "allow") }),
+    ).toMatchObject({ ask: { toolKey: "Platform:x.read", policy: "agent" } });
+    expect(await policy(platform, agentDef, { ...ctx, callPolicy: op("x.list", "allow") })).toBe(
+      "allow",
+    );
+    // an org agent sub-agent: the parent agent's current per-call policy applies on top
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES ('ag-op-child', ${seed.orgId}, ${seed.accountId}, 'org', 1)`.execute(raw);
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES ('ag-op-child', 1, ${JSON.stringify(agentDef)}::jsonb, ${seed.accountId})`.execute(
+      raw,
+    );
+    await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+      VALUES (${seed.agentId}, 3, ${JSON.stringify({ ...agentDef, toolPolicies: { "Platform:x.list": "deny" } })}::jsonb,
+        ${seed.accountId})`.execute(raw);
+    await sql`UPDATE capybara.agents SET current_version = 3 WHERE id = ${seed.agentId}`.execute(
+      raw,
+    );
+    const child: PolicyContext = {
+      ...ctx,
+      agentId: "ag-op-child",
+      conversationId: "child-conv",
+      parentConversationId: seed.conversationId,
+    };
+    expect(await policy(platform, agentDef, { ...child, callPolicy: op("x.list", "allow") })).toBe(
+      "deny",
+    );
+    expect(await policy(platform, agentDef, { ...child, callPolicy: op("x.read", "allow") })).toBe(
+      "allow",
+    );
   });
 });

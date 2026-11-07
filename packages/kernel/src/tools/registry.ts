@@ -123,6 +123,53 @@ export interface BuiltinTool {
    * per-org extension-point default).
    */
   unavailable?: (ctx: { orgId: string }) => Promise<string | null> | string | null;
+  /**
+   * A policy key derived from the validated input (Platform tool spec §6.2), or null to use the
+   * tool key. With a key, agent and parent policies, grants and approvals are keyed by it (an
+   * agent's policy on the tool key still applies on top); the model-visible key stays the tool key.
+   * May be async (the `Platform` tool reads the actor's facts); it never throws for bad input:
+   * an input that cannot run is a `deny` with a `denyReason`.
+   */
+  callPolicy?: CallPolicyFn;
+}
+
+/** Where a call happens, for {@link BuiltinTool.callPolicy}: the runtime's context, never input. */
+export interface CallPolicyContext {
+  orgId: string;
+  /** The run's trigger account. */
+  accountId: string;
+  agentId: string;
+  conversationId: string;
+  /** Null outside a run (a builtin called directly). */
+  runId: string | null;
+  /**
+   * The call's input as the model sent it, before `{"$output": id}` references were resolved
+   * (the approval card shows this form). Absent outside the pipeline.
+   */
+  rawInput?: unknown;
+}
+
+/** {@link BuiltinTool.callPolicy}. */
+export type CallPolicyFn = (
+  input: unknown,
+  ctx: CallPolicyContext,
+) => CallPolicy | null | Promise<CallPolicy | null>;
+
+/** What {@link BuiltinTool.callPolicy} returns for one call. */
+export interface CallPolicy {
+  /** The policy key, e.g. `Platform:skills.create`. */
+  key: string;
+  /** The default for this call (it replaces the tool's `defaultPolicy`). */
+  policy: ToolPolicy;
+  /**
+   * False: always confirm, only "once": the approval offers only "once" and remembered grants
+   * never apply.
+   */
+  remember: boolean;
+  /** The bilingual summary shown on the approval (rendered by the kernel, never by the model). */
+  summary?: { zh: string; en: string };
+  /** With `policy: "deny"`: the actionable English reason returned as the tool error. */
+  denyReason?: string;
 }
 
 /**
@@ -158,6 +205,8 @@ export interface ResolvedTool {
    * （推给持有该角色的人）。M3 的内置与连接器工具都不设。
    */
   requiredRole?: OrgRole;
+  /** A builtin's per-call policy key (see {@link BuiltinTool.callPolicy}). */
+  callPolicy?: CallPolicyFn;
 }
 
 /** 不可用的引用：`ref` 尽量写成模型认识的工具 key（`mcp__docs__search`、`mcp__docs__*`），否则 `app:<id>`。 */
@@ -247,6 +296,7 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
   defaultPolicy: b.defaultPolicy,
   ...(b.timeoutMs !== undefined && { timeoutMs: b.timeoutMs }),
   ...(b.spillChars !== undefined && { spillChars: b.spillChars }),
+  ...(b.callPolicy !== undefined && { callPolicy: b.callPolicy }),
 });
 
 /**

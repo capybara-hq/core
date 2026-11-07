@@ -1,11 +1,13 @@
 import { join } from "node:path";
 import { type NamedCheck, pluginChecks, runChecks } from "@capybara-hq/plugin-tools";
+import { checkAgentDocs } from "../agent-docs.js";
 import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
+import { checkPlatformOps } from "../platform-ops.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
@@ -48,8 +50,10 @@ const checks: NamedCheck[] = [
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
+  { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },
+  { name: "Platform operations", run: () => checkPlatformOps(root) },
   {
     name: "compose haproxy",
     run: () =>

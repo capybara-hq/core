@@ -20,11 +20,12 @@ const docx: FilePreviewer = {
 describe("file-preview@1", () => {
   it("is a registered, org-scoped, multi-provider extension point", () => {
     expect(FILE_PREVIEW_EXTENSION_POINT).toBe("file-preview@1");
-    expect(EXTENSION_POINTS["file-preview"]).toEqual({
+    expect(EXTENSION_POINTS["file-preview"]).toMatchObject({
       cardinality: "multi",
       brokered: false,
       orgScoped: true,
     });
+    expect(EXTENSION_POINTS["file-preview"]?.description).toMatch(/\S/);
   });
 
   it("accepts a valid provider (render and embed previewers)", () => {

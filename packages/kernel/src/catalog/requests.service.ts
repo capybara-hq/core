@@ -260,7 +260,7 @@ export class CatalogRequestsService {
       orgId,
       action: "catalog.requested",
       target: id,
-      detail: { itemId, name, kind: input.kind },
+      detail: { itemId, name, kind: input.kind, ...opts.auditDetail },
     });
     return id;
   }
@@ -364,6 +364,7 @@ export class CatalogRequestsService {
         marketplaceId: input.marketplaceId,
         name: input.name,
         version: input.version,
+        ...opts.auditDetail,
       },
     });
     return id;
@@ -715,6 +716,22 @@ export class CatalogRequestsService {
       .where("r.status", "in", ["approved", "rejected"])
       .where("r.dismissed_at", "is", null)
       .orderBy("r.decided_at", "desc")
+      .orderBy("r.id")
+      .limit(CATALOG_REQUESTS_LIST_MAX)
+      .execute();
+    return this.toViews(rows);
+  }
+
+  /**
+   * The account's own requests in the org, pending and decided (dismissed ones too), newest first;
+   * cancelled ones are left out (the Platform tool's `requests.list-mine`).
+   */
+  async listForRequester(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
+    const rows = await this.baseQuery()
+      .where("r.org_id", "=", orgId)
+      .where("r.requested_by", "=", accountId)
+      .where("r.status", "in", ["pending", "approved", "rejected"])
+      .orderBy("r.created_at", "desc")
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();

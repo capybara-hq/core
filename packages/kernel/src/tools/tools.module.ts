@@ -7,6 +7,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { PlatformModule } from "../platform/platform.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
@@ -58,6 +59,8 @@ import { ToolRegistry } from "./registry.js";
     ModelsModule,
     UsageReportModule,
     StepLogModule,
+    // the `Platform` tool's operations, actor facts and agent docs (imports no domain module)
+    PlatformModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

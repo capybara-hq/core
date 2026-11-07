@@ -28,6 +28,7 @@ const APPROVAL = {
   agent: { id: "ag1", name: "Echo agent" },
   input: { id: "x1" },
   requestedFor: "a1",
+  scopes: ["once", "session", "always"],
   approverRole: null,
   status: "pending",
   scope: null,
@@ -80,6 +81,29 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     expect(screen.getByText(zh.approval.policy.connector)).toBeTruthy();
   });
 
+  it("a Platform confirmation shows the operation, the summary in the UI language and only once", async () => {
+    const platform = {
+      ...APPROVAL,
+      toolKey: "Platform:marketplaces.add",
+      toolName: "Platform",
+      connector: null,
+      input: { action: "call", operation: "marketplaces.add", params: { url: "https://x" } },
+      summary: { zh: "添加市场源 https://x", en: "Add marketplace source https://x" },
+      scopes: ["once"],
+    };
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: platform }) });
+    const platformItem = { ...item(), toolKey: "Platform", input: platform.input };
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={platformItem} />, {
+      locale: "zh",
+    });
+    await screen.findByRole("button", { name: "批准" });
+    expect(screen.getByText("Platform [marketplaces.add]")).toBeTruthy();
+    expect(screen.getByText("添加市场源 https://x")).toBeTruthy();
+    expect(container.querySelector('[data-part="summary"]')).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "本会话内都批准" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "总是批准" })).toBeNull();
+  });
+
   it.each([
     ["once", "批准"],
     ["session", "本会话内都批准"],
@@ -124,7 +148,9 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
   it("a role escalation offers only once; deny sends the reason", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, { approval: { ...APPROVAL, requestedFor: null, approverRole: "admin" } }),
+        json(200, {
+          approval: { ...APPROVAL, requestedFor: null, scopes: ["once"], approverRole: "admin" },
+        }),
       "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
         json(200, { approval: { ...APPROVAL, status: "denied", decidedBy: "a1" } }),
     });

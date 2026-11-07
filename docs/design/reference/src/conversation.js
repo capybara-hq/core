@@ -314,6 +314,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)} <span class="r-faint">${esc(W.denied.toolKey)}</span><span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
     const scopes = o.state === "pending-once" ? ["once"] : A.scopes;
     const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span>${toolKey(A.toolKey)}</div>`;
+    const summary =
+      o.state === "pending-summary" ? `<div class="r-small" data-part="summary">${esc(A.summary)}</div>` : "";
     const args = `<div class="r-args">${kv(A.args, " r-kv-capped")}<button class="r-linkbtn r-small">查看完整输入</button></div>`;
     let actions;
     if (o.state === "deny-reason") {
@@ -323,7 +325,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const buttons = scopes.map((s, i) => btn(LABEL[s], i === 0 ? "primary" : "default")).join("");
       actions = `<div class="r-card-actions">${buttons}${btn("拒绝…", "default")}<span class="r-card-note">${esc(A.policy)}</span></div>`;
     }
-    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${args}${actions}</div>`;
+    return `<div class="r-card" data-pending role="group" aria-label="需要你批准">${head}${summary}${args}${actions}</div>`;
   }
 
   function question(o) {

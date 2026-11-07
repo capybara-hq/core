@@ -83,6 +83,11 @@ export interface OrgExtensionView {
   needsConfig: boolean;
 }
 
+/** The extension points an extension provides, from its permission list's `provides` group. */
+export function providesOf(view: Pick<OrgExtensionView, "permissions">): string[] {
+  return view.permissions.filter((g) => g.category === "provides").flatMap((g) => g.items);
+}
+
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
 export interface OrgExtensionInput {
   enabled?: boolean | undefined;
