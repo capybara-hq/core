@@ -284,7 +284,7 @@ pages through `SetupContext`; pages never read it themselves.
 | 评测 `/evals`, 运行记录 `/trajectories` | work · 更多 · **评测与运行** (tabs 评测集 · 运行记录) | object list + record table | unchanged |
 | 设置 · 组织设置 | 组织设置 · 通用 (+ 沙箱 split out) | settings | `/settings/organization`, `/settings/sandbox` |
 | 设置 · 成员 / 扩展 / 已安装的插件 / 模型用途 | 组织设置 · 成员 / 扩展 / 插件 / 模型 | settings | unchanged |
-| 设置 · 我的连接 / 已记住的授权 / IM 身份 | **个人设置** (account menu) | settings | `/account/connections`, `/account/grants`, `/account/identities` (old paths redirect) |
+| 偏好设置 · 我的连接 / 已记住的授权 / IM 身份 | **个人设置** (account menu; opens 偏好设置) | settings | `/account/preferences`, `/account/connections`, `/account/grants`, `/account/identities` (old paths redirect) |
 | 管理 `/admin` | admin · 概览 | overview | unchanged |
 | 账号 / 组织 | admin · 账号 / 组织 | record table | unchanged |
 | 扩展 (+ install, detail) | admin · 扩展 | object list / detail | unchanged |
