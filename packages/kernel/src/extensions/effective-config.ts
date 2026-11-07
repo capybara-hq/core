@@ -223,6 +223,8 @@ export class EffectiveConfigs {
       this.kernelConfig.get().extensionConfig[plugin],
       schema,
     );
+    // the full schema, object-level refinements included: zod runs them only once every field
+    // parsed, so a refinement never sees an absent required field
     const r = schema.safeParse(mergeCopy(schema, raw, copy));
     return r.success
       ? { ok: true, config: r.data, source: "copy" }

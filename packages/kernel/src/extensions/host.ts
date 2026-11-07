@@ -77,7 +77,7 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
-import { relaxOverridable } from "./org-levels.js";
+import { parseLoadGate } from "./org-levels.js";
 import { declaredDisplayName, permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
@@ -1522,7 +1522,7 @@ export class ExtensionHost {
     let config: unknown = raw;
     // the load gate (spec A §5.4a): overridable fields may stay empty on the platform, so
     // `ctx.config` may lack them; hidden and read-only fields must be complete
-    const parsed = readConfig && schema ? relaxOverridable(schema).safeParse(raw) : undefined;
+    const parsed = readConfig && schema ? parseLoadGate(schema, raw) : undefined;
     if (a.source !== "install") this.configValidity.set(name, parsed?.success ?? true);
     if (decision.action === "pending") {
       // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
@@ -1699,9 +1699,7 @@ export class ExtensionHost {
         configurable: schema !== undefined,
         configValid:
           this.configValidity.get(name) ??
-          (schema
-            ? relaxOverridable(schema).safeParse(this.extensionConfig[name] ?? {}).success
-            : true),
+          (schema ? parseLoadGate(schema, this.extensionConfig[name] ?? {}).success : true),
         displayName: this.declaredDisplayNames.get(name) ?? null,
       };
     });
@@ -2118,7 +2116,7 @@ export class ExtensionHost {
         if (schema) {
           try {
             const raw = await this.rawConfigOf(plugin, schema);
-            this.configValidity.set(plugin, relaxOverridable(schema).safeParse(raw).success);
+            this.configValidity.set(plugin, parseLoadGate(schema, raw).success);
           } catch (err) {
             this.log.warn("cannot read the stored deployment config of plugin", {
               plugin,
@@ -2140,7 +2138,7 @@ export class ExtensionHost {
         );
         return "invalid";
       }
-      const r = relaxOverridable(schema).safeParse(raw);
+      const r = parseLoadGate(schema, raw);
       if (!r.success) {
         this.log.warn(
           "plugin deployment config changed but is invalid on this replica; keeping the current config",

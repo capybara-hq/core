@@ -23,7 +23,7 @@ import { ExtensionsModule } from "./extensions.module.js";
 import { ExtensionHost, type InspectedExtension } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle-topics.js";
-import { relaxOverridable } from "./org-levels.js";
+import { parseLoadGate } from "./org-levels.js";
 import {
   ExtensionPackageError,
   extensionPackageApiError,
@@ -84,7 +84,8 @@ export function parseDeploymentConfig(
   stored: Record<string, unknown>,
   fileValue: unknown,
 ): { ok: true; value: unknown } | { ok: false; issues: ConfigIssue[] } {
-  const r = relaxOverridable(schema).safeParse(
+  const r = parseLoadGate(
+    schema,
     mergeDeploymentConfig(
       stored,
       fileValue,

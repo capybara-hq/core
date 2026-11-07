@@ -5,9 +5,12 @@ import {
   fieldLevels,
   jsonSchemaFieldLevels,
   missingOverridable,
+  parseLoadGate,
   relaxOverridable,
 } from "../../src/extensions/org-levels.js";
 import { OrglevelsDeploymentSchema } from "../fixtures/plugins/orglevels/index.js";
+import { OrgrefinedDeploymentSchema } from "../fixtures/plugins/orgrefined/index.js";
+import { OrgwrappedDeploymentSchema } from "../fixtures/plugins/orgwrapped/index.js";
 
 describe("org field levels (spec A §5.1, §5.4a)", () => {
   it("fieldLevels reads each top-level key's orgAccess; no level is hidden", () => {
@@ -83,6 +86,56 @@ describe("org field levels (spec A §5.1, §5.4a)", () => {
       ),
     ).toEqual({ a: "hidden", b: "readonly", c: "override", d: "hidden" });
     expect(jsonSchemaFieldLevels(undefined).size).toBe(0);
+  });
+});
+
+describe("the load gate on a refined deployment schema (spec A §5.4a)", () => {
+  it("relaxOverridable does not throw on an object-level refinement", () => {
+    expect(() => relaxOverridable(OrgrefinedDeploymentSchema)).not.toThrow();
+  });
+
+  it("an empty overridable field passes, without running the refinement", () => {
+    expect(parseLoadGate(OrgrefinedDeploymentSchema, { mode: "strict" })).toEqual({
+      success: true,
+      data: { mode: "strict" },
+    });
+    // a hidden field is still required
+    expect(parseLoadGate(OrgrefinedDeploymentSchema, {}).success).toBe(false);
+  });
+
+  it("a complete config is parsed with the refinement", () => {
+    const bad = parseLoadGate(OrgrefinedDeploymentSchema, { mode: "strict", endpoint: "http://x" });
+    expect(bad.success).toBe(false);
+    expect(bad.error?.issues.map((i) => [i.path.join("."), i.message])).toEqual([
+      ["endpoint", "strict mode needs https"],
+    ]);
+    expect(
+      parseLoadGate(OrgrefinedDeploymentSchema, { mode: "strict", endpoint: "https://x" }).success,
+    ).toBe(true);
+    expect(
+      parseLoadGate(OrgrefinedDeploymentSchema, { mode: "loose", endpoint: "http://x" }).success,
+    ).toBe(true);
+  });
+
+  it("parseDeploymentConfig (CLI) uses the same gate", () => {
+    expect(
+      parseDeploymentConfig(OrgrefinedDeploymentSchema, { mode: "strict" }, undefined),
+    ).toEqual({ ok: true, value: { mode: "strict" } });
+    const r = parseDeploymentConfig(
+      OrgrefinedDeploymentSchema,
+      { mode: "strict", endpoint: "http://x" },
+      undefined,
+    );
+    expect(!r.ok && r.issues.map((i) => i.path)).toEqual(["endpoint"]);
+  });
+});
+
+describe("a wrapped overridable field", () => {
+  it("fieldLevels reads orgAccess through .default()", () => {
+    expect(Object.fromEntries(fieldLevels(OrgwrappedDeploymentSchema))).toEqual({
+      host: "hidden",
+      region: "override",
+    });
   });
 });
 

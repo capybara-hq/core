@@ -55,7 +55,7 @@ import {
   fieldLevels,
   jsonSchemaFieldLevels,
   missingOverridable,
-  relaxOverridable,
+  parseLoadGate,
 } from "./org-levels.js";
 
 export {
@@ -394,7 +394,8 @@ export class ExtensionDeploymentConfigService {
     const touched = new Set([...Object.keys(values), ...secretEntries.map((e) => e.path)]);
     if (info.schema) {
       // overridable fields may stay empty on the platform (spec A §5.4a)
-      const r = relaxOverridable(info.schema as z.ZodTypeAny).safeParse(
+      const r = parseLoadGate(
+        info.schema as z.ZodTypeAny,
         mergeDeploymentConfig(next, fileValue, fieldPaths),
       );
       if (!r.success) {
@@ -476,7 +477,7 @@ export class ExtensionDeploymentConfigService {
     let issues: ConfigIssue[] = [];
     if (info.schema) {
       // the load gate: overridable fields may stay empty (spec A §5.4a)
-      const r = relaxOverridable(info.schema as z.ZodTypeAny).safeParse(raw);
+      const r = parseLoadGate(info.schema as z.ZodTypeAny, raw);
       if (r.success) effective = r.data;
       else {
         valid = false;

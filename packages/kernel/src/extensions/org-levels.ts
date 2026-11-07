@@ -38,18 +38,33 @@ const overrideKeys = (schema: z.ZodTypeAny): string[] =>
   [...fieldLevels(schema)].filter(([, l]) => l === "override").map(([k]) => k);
 
 /**
- * The platform's load gate schema (§5.4a): the same object with every `override` key optional, so
- * the platform may leave overridable fields empty (each org then brings its own); hidden and
- * read-only fields stay as declared. The identity when there is no `override` key.
+ * The platform's relaxed schema (§5.4a): a plain object rebuilt from the shape with every
+ * `override` key optional, so the platform may leave overridable fields empty (each org then
+ * brings its own); hidden and read-only fields stay as declared. Object-level refinements
+ * (`.refine` / `.superRefine`) are not carried over: they may read the absent fields, and zod
+ * refuses `.extend()` on a refined object. The identity when there is no `override` key. Parse
+ * through {@link parseLoadGate}, which uses this only when an overridable field is missing.
  */
 export function relaxOverridable(schema: z.ZodTypeAny): z.ZodTypeAny {
   const keys = overrideKeys(schema);
   if (keys.length === 0) return schema;
   const obj = schema as z.ZodObject;
-  const shape = obj.shape as Record<string, z.ZodTypeAny>;
-  return obj.extend(
-    Object.fromEntries(keys.map((k) => [k, (shape[k] as z.ZodTypeAny).optional()])),
-  );
+  const shape = { ...(obj.shape as Record<string, z.ZodTypeAny>) };
+  for (const k of keys) shape[k] = (shape[k] as z.ZodTypeAny).optional();
+  const plain = z.object(shape);
+  const catchall = obj._zod.def.catchall as z.ZodTypeAny | undefined;
+  return catchall ? plain.catchall(catchall) : plain;
+}
+
+/**
+ * The platform's load gate (§5.4a): the original schema, refinements included, whenever the
+ * platform config `raw` leaves no required overridable field empty; otherwise the relaxed plain
+ * object ({@link relaxOverridable}). Following orgs are then `needsConfig` and never called, and
+ * an org copy is parsed with the full schema.
+ */
+export function parseLoadGate(schema: z.ZodTypeAny, raw: unknown): z.ZodSafeParseResult<unknown> {
+  if (missingOverridable(schema, raw).length === 0) return schema.safeParse(raw);
+  return relaxOverridable(schema).safeParse(raw);
 }
 
 /**
