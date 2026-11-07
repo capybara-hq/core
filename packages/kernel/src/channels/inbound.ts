@@ -337,11 +337,10 @@ export class ChannelInbound {
     if (usable.length === 0) return replyText(phrase("envNone", locale));
     if (name === null) return replyText(fill("envList", { list }));
     const wanted = name.toLowerCase();
-    const hit = usable.find((v) =>
-      v.name === null
-        ? wanted === "personal" || wanted === "个人环境"
-        : v.name.toLowerCase() === wanted,
-    );
+    // an environment the person named "Personal" wins over the default's alias
+    const hit =
+      usable.find((v) => v.name !== null && v.name.toLowerCase() === wanted) ??
+      usable.find((v) => v.name === null && (wanted === "personal" || wanted === "个人环境"));
     if (hit === undefined) return replyText(fill("envUnknown", { name, list }));
     try {
       await this.environments.setImDefault(orgId, accountId, hit.id);

@@ -357,7 +357,9 @@ export class EnvironmentsService {
   /**
    * Sets the person's IM default. Only one of their own live environments in the org, usable now
    * (`environment.not_found` / `environment.unavailable` otherwise); the row is written by one
-   * statement that re-checks the environment is live, so a racing delete leaves no row behind.
+   * statement that re-checks the environment is live. There is no row lock, so a delete racing
+   * past that check can leave a stale row; reads ignore it ({@link imDefault} joins on
+   * `deleted_at IS NULL`).
    */
   async setImDefault(orgId: string, accountId: string, environmentId: string): Promise<void> {
     await this.access.usable(orgId, accountId, environmentId);

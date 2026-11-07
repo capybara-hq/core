@@ -15,7 +15,7 @@ import {
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ChannelInbound } from "../../src/channels/inbound.js";
 import {
   CHANNEL_QUEUE_NAME,
@@ -593,8 +593,15 @@ describe("/env: the IM default environment", () => {
         .executeTakeFirstOrThrow()
     ).id;
 
+  let lab: string;
+  beforeAll(async () => {
+    lab = await newEnvironment("Lab");
+  });
+  beforeEach(async () => {
+    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+  });
+
   it("/env lists environments in a direct message", async () => {
-    await newEnvironment("Lab");
     const text = await sendDm("env-1", "/env");
     expect(text).toContain("Your environments:");
     expect(text).toContain("- Personal (current)");
@@ -603,14 +610,6 @@ describe("/env: the IM default environment", () => {
   });
 
   it("/env <name> sets the IM default for the next thread", async () => {
-    const lab = (
-      await db
-        .selectFrom("environments")
-        .select("id")
-        .where("owner_account_id", "=", ownerId)
-        .where("name", "=", "Lab")
-        .executeTakeFirstOrThrow()
-    ).id;
     expect(await sendDm("env-2", "/env lab")).toBe(
       "Your next new conversation will use the environment \u201cLab\u201d; send /new to start one.",
     );
@@ -635,12 +634,35 @@ describe("/env: the IM default environment", () => {
     expect(await environmentOf(await liveConversation())).toBe(await defaultEnvironment());
   });
 
+  it("an environment named Personal wins over the default's alias", async () => {
+    const named = await newEnvironment("Personal");
+    try {
+      await sendDm("env-10", "/env personal");
+      const row = await db
+        .selectFrom("environment_defaults")
+        .select("environment_id")
+        .where("account_id", "=", ownerId)
+        .executeTakeFirstOrThrow();
+      expect(row.environment_id).toBe(named);
+    } finally {
+      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/environments/${named}` });
+    }
+  });
+
   it("/env in a group is posted as a normal message", async () => {
     const before = (await threads()).length;
+    const sent = im.sent.length;
     await pushAndSettle(group("g-env", "u-owner", "@bot /env lab"));
     const t = (await threads()).find((r) => r.thread_key === "g-env");
     expect((await threads()).length).toBe(before + 1);
     const messages = await userMessages(t?.conversation_id as string);
     expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).toContain("/env lab");
+    expect(
+      im.sent
+        .slice(sent)
+        .some((x) => /Your environments|Your next new conversation/.test(x.message.text ?? "")),
+    ).toBe(false);
+    expect(await db.selectFrom("environment_defaults").selectAll().execute()).toHaveLength(0);
   });
 });
