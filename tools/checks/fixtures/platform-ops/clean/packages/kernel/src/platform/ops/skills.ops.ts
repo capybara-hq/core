@@ -17,6 +17,13 @@ export const ops = [
     authz: { orgAction: "skills.manage" },
     mirrors: ["POST /api/v1/orgs/:orgId/skills"],
     confirm: "org",
+    errors: [
+      { code: "skill.name_exists", next: "Pick another name." },
+      {
+        code: "catalog.not_deployed",
+        next: { superAdmin: "Fill in its config in the admin console.", member: "Ask an admin." },
+      },
+    ],
     summary: () => ({ zh: "创建技能", en: "Create a skill" }),
     run: async () => ({}),
   }),

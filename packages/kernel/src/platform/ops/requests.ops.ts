@@ -8,7 +8,7 @@ import {
 import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/requests.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 /** A request as the requester reads it (no org name: it is this org's). */
@@ -93,18 +93,17 @@ export class RequestsOperations implements OnModuleInit {
                 zh: `向超级管理员申请插件 ${i.itemId} 的使用权`,
                 en: `Request access to plugin ${i.itemId} from the super admin`,
               },
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            request: view(
-              await this.requests.requestItem(
-                ctx.orgId,
-                ctx.actorAccountId,
-                input.itemId,
-                { kind: input.kind, ...(input.note !== undefined && { note: input.note }) },
-                { auditDetail: viaAgent("requests.create", ctx) },
-              ),
+        run: async (input, ctx) => ({
+          request: view(
+            await this.requests.requestItem(
+              ctx.orgId,
+              ctx.actorAccountId,
+              input.itemId,
+              { kind: input.kind, ...(input.note !== undefined && { note: input.note }) },
+              { auditDetail: viaAgent("requests.create", ctx) },
             ),
-          })),
+          ),
+        }),
       }),
       defineOperation({
         id: "requests.create-import",
@@ -133,22 +132,21 @@ export class RequestsOperations implements OnModuleInit {
           zh: `申请从市场导入插件 ${i.name} ${i.version}`,
           en: `Request the import of plugin ${i.name} ${i.version} from a marketplace`,
         }),
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            request: view(
-              await this.requests.requestImport(
-                ctx.orgId,
-                ctx.actorAccountId,
-                {
-                  marketplaceId: input.marketplaceId,
-                  name: input.name,
-                  version: input.version,
-                  ...(input.note !== undefined && { note: input.note }),
-                },
-                { auditDetail: viaAgent("requests.create-import", ctx) },
-              ),
+        run: async (input, ctx) => ({
+          request: view(
+            await this.requests.requestImport(
+              ctx.orgId,
+              ctx.actorAccountId,
+              {
+                marketplaceId: input.marketplaceId,
+                name: input.name,
+                version: input.version,
+                ...(input.note !== undefined && { note: input.note }),
+              },
+              { auditDetail: viaAgent("requests.create-import", ctx) },
             ),
-          })),
+          ),
+        }),
       }),
     ]);
   }

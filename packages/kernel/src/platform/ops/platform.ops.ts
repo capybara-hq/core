@@ -10,7 +10,6 @@ import { ToolRegistry } from "../../tools/registry.js";
 import { PlatformActor } from "../actor.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError } from "./errors.js";
 
 /** What a role may build, as the model says it to the person: the action and its plain words. */
 const BUILDS: readonly { action: OrgAction; what: string }[] = [
@@ -117,38 +116,37 @@ export class PlatformOperationsProvider implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: [],
         confirm: "read",
-        run: async (_input, ctx) =>
-          asToolError(async () => {
-            const agent = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
-            const d = agent.definition;
-            const { keys: toolKeys, unavailable } = await this.toolKeys(ctx.orgId, d);
-            const sandbox = toolKeys.some((k) =>
-              (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
-            );
-            const org = await this.settings.get(ctx.orgId);
-            const dep = this.settings.deployment().sandboxEgress;
-            const egress = effectiveSandboxEgress(
-              { egress: dep.mode, allowHosts: dep.allowHosts },
-              org.sandboxEgress,
-            );
-            return {
-              id: agent.id,
-              name: d.name,
-              visibility: agent.visibility,
-              version: agent.currentVersion,
-              model: d.model,
-              fallback: d.fallback,
-              tools: toolKeys,
-              ...(unavailable.length > 0 && { unavailableTools: unavailable }),
-              toolPolicies: d.toolPolicies,
-              skills: {
-                orgSkills: d.skills?.orgSkills ?? [],
-                pinned: d.skills?.pinned ?? [],
-              },
-              subagents: d.subagents ?? null,
-              sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
-            };
-          }),
+        run: async (_input, ctx) => {
+          const agent = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
+          const d = agent.definition;
+          const { keys: toolKeys, unavailable } = await this.toolKeys(ctx.orgId, d);
+          const sandbox = toolKeys.some((k) =>
+            (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
+          );
+          const org = await this.settings.get(ctx.orgId);
+          const dep = this.settings.deployment().sandboxEgress;
+          const egress = effectiveSandboxEgress(
+            { egress: dep.mode, allowHosts: dep.allowHosts },
+            org.sandboxEgress,
+          );
+          return {
+            id: agent.id,
+            name: d.name,
+            visibility: agent.visibility,
+            version: agent.currentVersion,
+            model: d.model,
+            fallback: d.fallback,
+            tools: toolKeys,
+            ...(unavailable.length > 0 && { unavailableTools: unavailable }),
+            toolPolicies: d.toolPolicies,
+            skills: {
+              orgSkills: d.skills?.orgSkills ?? [],
+              pinned: d.skills?.pinned ?? [],
+            },
+            subagents: d.subagents ?? null,
+            sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
+          };
+        },
       }),
     ]);
   }

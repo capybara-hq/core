@@ -10,7 +10,6 @@ import {
 import { publicEndpoint } from "../../tools/endpoint.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 const PAGE = 50;
@@ -89,12 +88,11 @@ export class ConnectorsOperations implements OnModuleInit {
         errors: [
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            connector: detail(
-              await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId),
-            ),
-          })),
+        run: async (input, ctx) => ({
+          connector: detail(
+            await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId),
+          ),
+        }),
       }),
       defineOperation({
         id: "connectors.templates",

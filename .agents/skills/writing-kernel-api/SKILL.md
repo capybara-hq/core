@@ -294,8 +294,18 @@ no domain module). `defineOperation({...})` fields:
   `human-only`).
 - `summary(input)`: for every write, the bilingual card line rendered from the validated input, never from
   model text (zh says 平台 / 超级管理员 / 智能体).
-- `errors`: `{ code, next }[]` for the notable failures; `describe` shows them. Throw through `asToolError`
-  so a service `ApiError` becomes an actionable `ToolError`, never a 500.
+- `errors`: `{ code, next }[]` for the notable failures; `describe` shows them, and the tool appends an
+  `ApiError`'s entry to its message. `next` says what to do next; where the step differs by role it is
+  `{ superAdmin?, orgAdmin?, member? }` (only the super admin gets the `superAdmin` text: the admin console
+  path; an org admin falls back to `member`, a member to `orgAdmin`). `check:platform-ops` rule
+  `platform-op-errors` requires `next` on every entry. Let a service `ApiError` propagate: the tool turns
+  it into an actionable `ToolError` (`toToolError`), never a 500.
+- `precheck(input, ctx)`: for a write, the read-only preconditions known to fail (a taken name, a stale
+  preview hash, an invalid URL), returning `{ ok: true }` or `{ ok: false, code, message }`; the tool
+  runs it after availability and denies a failure with the message and the role's next step, so no card
+  appears. Prefer a read-only `check…` method of the service that throws the write's own `ApiError`, wrapped
+  in `precheckBy`. It runs again when an approved call resumes (a failure then returns the error and
+  nothing runs); after 2 s or on a throw it is skipped and the write's own errors speak.
 - `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; a write passes
   `auditDetail: viaAgent("<id>", ctx)` so the audit event carries `{ via: "agent", conversationId, runId,
   operation }`. Results hold no secrets or secret config; a list that can exceed 50 entries pages itself

@@ -4,7 +4,7 @@ import { SkillCreateFields, SkillPathParams } from "../../skills/skills.schemas.
 import { SkillsService } from "../../skills/skills.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { precheckBy, viaAgent } from "./errors.js";
 
 const NoInput = z.object({}).strict();
 const SkillId = z.object({ skillId: SkillPathParams.shape.id.max(100) }).strict();
@@ -44,7 +44,7 @@ export class SkillsOperations implements OnModuleInit {
         mirrors: ["GET /api/v1/orgs/:orgId/skills/:id"],
         renames: { skillId: "id" },
         confirm: "read",
-        run: async (input, ctx) => asToolError(() => this.skills.get(ctx.orgId, input.skillId)),
+        run: async (input, ctx) => this.skills.get(ctx.orgId, input.skillId),
       }),
       defineOperation({
         id: "skills.create",
@@ -74,7 +74,23 @@ export class SkillsOperations implements OnModuleInit {
             code: "skill.name_exists",
             next: "A skill of that name exists: pick another name, or read the existing one with skills.get.",
           },
+          {
+            code: "validation_failed",
+            next: "Fix the SKILL.md as the message says (name, description, body), then call again.",
+          },
+          {
+            code: "catalog.custom_disabled",
+            next: {
+              superAdmin:
+                "The platform does not allow custom skills: allow them in the admin console under Settings, then call again.",
+              orgAdmin:
+                "The platform does not allow custom skills; ask the super admin, or use a platform skill from skills.list.",
+              member:
+                "The platform does not allow custom skills; use a platform skill from skills.list, or ask an org admin.",
+            },
+          },
         ],
+        precheck: (i, ctx) => precheckBy(() => this.skills.checkCreateFromText(ctx.orgId, i)),
         summary: (i) =>
           i.shareable === true
             ? {
@@ -83,15 +99,13 @@ export class SkillsOperations implements OnModuleInit {
               }
             : { zh: `新建组织技能「${i.name}」`, en: `Create org skill "${i.name}"` },
         run: async (input, ctx) =>
-          asToolError(() =>
-            this.skills.createFromText(ctx.orgId, ctx.actorAccountId, {
-              name: input.name,
-              description: input.description,
-              body: input.body,
-              ...(input.shareable !== undefined && { shareable: input.shareable }),
-              auditDetail: viaAgent("skills.create", ctx),
-            }),
-          ),
+          this.skills.createFromText(ctx.orgId, ctx.actorAccountId, {
+            name: input.name,
+            description: input.description,
+            body: input.body,
+            ...(input.shareable !== undefined && { shareable: input.shareable }),
+            auditDetail: viaAgent("skills.create", ctx),
+          }),
       }),
     ]);
   }

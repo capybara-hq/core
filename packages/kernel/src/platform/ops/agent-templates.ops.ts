@@ -10,7 +10,7 @@ import {
 } from "../../agents/templates.schemas.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
 /** Agent template operations of the `Platform` tool (spec §7). */
@@ -46,10 +46,9 @@ export class AgentTemplatesOperations implements OnModuleInit {
         mirrors: ["GET /api/v1/orgs/:orgId/agent-templates/:id"],
         renames: { templateId: "id" },
         confirm: "read",
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            template: await this.orgTemplates.detail(ctx.orgId, input.templateId),
-          })),
+        run: async (input, ctx) => ({
+          template: await this.orgTemplates.detail(ctx.orgId, input.templateId),
+        }),
       }),
       defineOperation({
         id: "agent-templates.save",
@@ -81,15 +80,13 @@ export class AgentTemplatesOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) =>
-          asToolError(() =>
-            this.orgTemplates.saveAs(
-              ctx.orgId,
-              ctx.actorAccountId,
-              input.agentId,
-              { name: input.name, description: input.description },
-              undefined,
-              viaAgent("agent-templates.save", ctx),
-            ),
+          this.orgTemplates.saveAs(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.agentId,
+            { name: input.name, description: input.description },
+            undefined,
+            viaAgent("agent-templates.save", ctx),
           ),
       }),
     ]);

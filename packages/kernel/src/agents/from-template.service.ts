@@ -116,13 +116,15 @@ export class AgentsFromTemplate {
     };
   }
 
-  async create(
+  /**
+   * The template and the plan of a create, read only: 404 `component.not_found` for a template
+   * not usable here, 409 `agent.template_preview_stale` for a hash that no longer matches, and
+   * `agent.model_unavailable` when no model resolves.
+   */
+  private async checked(
     orgId: string,
-    actorAccountId: string,
-    req: CreateFromTemplateRequest,
-    actorTokenId?: string,
-    auditDetail?: Record<string, unknown>,
-  ): Promise<{ agent: AgentView }> {
+    req: Pick<CreateFromTemplateRequest, "templateId" | "previewHash" | "model">,
+  ): Promise<{ row: TemplateRow; plan: TemplatePlan; model: NonNullable<TemplatePlan["model"]> }> {
     const row = await this.template(orgId, req.templateId);
     const plan = await this.plan(orgId, row, req.model);
     // the base part always; the automatic model's part only when the person chose none, so a
@@ -137,6 +139,29 @@ export class AgentsFromTemplate {
     if (plan.model === null) {
       throw new ApiError("agent.model_unavailable", "No model is available for the new agent");
     }
+    return { row, plan, model: plan.model };
+  }
+
+  /**
+   * The read-only checks of {@link create}, for the `Platform` tool's precheck (before the card):
+   * throws the `ApiError` the create would for an unknown template, a stale preview hash or no
+   * model.
+   */
+  async check(
+    orgId: string,
+    req: Pick<CreateFromTemplateRequest, "templateId" | "previewHash" | "model">,
+  ): Promise<void> {
+    await this.checked(orgId, req);
+  }
+
+  async create(
+    orgId: string,
+    actorAccountId: string,
+    req: CreateFromTemplateRequest,
+    actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<{ agent: AgentView }> {
+    const { row, plan, model } = await this.checked(orgId, req);
     const { agent, role } = await this.agents.createFromTemplate(
       orgId,
       actorAccountId,
@@ -144,8 +169,8 @@ export class AgentsFromTemplate {
         definition: {
           ...plan.definition,
           name: req.name,
-          model: plan.model.ref,
-          modelParams: plan.model.params,
+          model: model.ref,
+          modelParams: model.params,
         },
         visibility: req.visibility ?? "private",
         ...(req.members !== undefined && { memberIds: req.members }),

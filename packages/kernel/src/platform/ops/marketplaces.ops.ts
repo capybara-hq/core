@@ -12,7 +12,7 @@ import { readOrgMarketplaceBrowse } from "../../identity/settings.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 const PAGE = 50;
@@ -100,31 +100,36 @@ export class MarketplacesOperations implements OnModuleInit {
         errors: [
           {
             code: "not_found",
-            next: "The platform does not let orgs browse the marketplaces; ask the super admin.",
+            next: {
+              superAdmin:
+                "Org marketplace browsing is off (deployment setting orgMarketplaceBrowse); browse and import the marketplaces in the admin console under Plugins instead.",
+              orgAdmin:
+                "The platform does not let orgs browse the marketplaces; ask the super admin.",
+              member: "The platform does not let orgs browse the marketplaces; ask an org admin.",
+            },
           },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
-              throw new ApiError("not_found", "Marketplace browsing is off for organizations");
-            }
-            const r = await this.marketplaces.entries({
-              ...(input.marketplaceId !== undefined && { marketplaceId: input.marketplaceId }),
-              ...(input.q !== undefined && { q: input.q }),
-            });
-            // as the route: an item the org can neither see nor request reads as not imported
-            const seen = await itemsSeenBy(
-              this.kdb.db,
-              ctx.orgId,
-              r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
-            );
-            const items = r.items.map((e) =>
-              e.adopted === null || seen.has(e.adopted.itemId)
-                ? e
-                : { ...e, adopted: null, newerAvailable: false, contentChanged: false },
-            );
-            return pageOf(items.map(entry), startOf(input.cursor), PAGE);
-          }),
+        run: async (input, ctx) => {
+          if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
+            throw new ApiError("not_found", "Marketplace browsing is off for organizations");
+          }
+          const r = await this.marketplaces.entries({
+            ...(input.marketplaceId !== undefined && { marketplaceId: input.marketplaceId }),
+            ...(input.q !== undefined && { q: input.q }),
+          });
+          // as the route: an item the org can neither see nor request reads as not imported
+          const seen = await itemsSeenBy(
+            this.kdb.db,
+            ctx.orgId,
+            r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+          );
+          const items = r.items.map((e) =>
+            e.adopted === null || seen.has(e.adopted.itemId)
+              ? e
+              : { ...e, adopted: null, newerAvailable: false, contentChanged: false },
+          );
+          return pageOf(items.map(entry), startOf(input.cursor), PAGE);
+        },
       }),
       defineOperation({
         id: "marketplaces.add",
@@ -142,25 +147,48 @@ export class MarketplacesOperations implements OnModuleInit {
             code: "validation_failed",
             next: "Fix the name or URL as the message says (https, no user info), then call again.",
           },
+          {
+            code: "marketplace.already_added",
+            next: "Use the existing source (marketplaces.list) instead of adding it again.",
+          },
         ],
+        precheck: async (i) => {
+          let same: { id: string; name: string } | null;
+          try {
+            same = await this.marketplaces.checkAdd({
+              name: i.name,
+              url: i.url,
+              ...(i.ref !== undefined && { ref: i.ref }),
+            });
+          } catch (e) {
+            if (e instanceof ApiError) return { ok: false, code: e.code, message: e.message };
+            throw e;
+          }
+          return same === null
+            ? { ok: true }
+            : {
+                ok: false,
+                code: "marketplace.already_added",
+                message: `The marketplace source "${same.name}" (id ${same.id}) already has this URL`,
+              };
+        },
         summary: (i) => ({
           zh: `添加市场源「${i.name}」${i.url}`,
           en: `Add marketplace source "${i.name}" ${i.url}`,
         }),
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            marketplace: source(
-              await this.marketplaces.add(
-                ctx.actorAccountId,
-                {
-                  name: input.name,
-                  url: input.url,
-                  ...(input.ref !== undefined && { ref: input.ref }),
-                },
-                { auditDetail: viaAgent("marketplaces.add", ctx) },
-              ),
+        run: async (input, ctx) => ({
+          marketplace: source(
+            await this.marketplaces.add(
+              ctx.actorAccountId,
+              {
+                name: input.name,
+                url: input.url,
+                ...(input.ref !== undefined && { ref: input.ref }),
+              },
+              { auditDetail: viaAgent("marketplaces.add", ctx) },
             ),
-          })),
+          ),
+        }),
       }),
     ]);
   }

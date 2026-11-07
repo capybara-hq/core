@@ -36,6 +36,8 @@ describe("checkPlatformOps", () => {
         "platform-op-authz",
         "platform-op-describe",
         "platform-op-describe",
+        "platform-op-errors",
+        "platform-op-errors",
         "platform-op-exclusion-reason",
         "platform-op-exclusion-reason",
         "platform-op-literal",
@@ -79,6 +81,8 @@ describe("checkPlatformOps", () => {
       lineOf(ops, "defineOperation(someOperation)"),
       "object literal",
     );
+    has("platform-op-errors", ops, lineOf(ops, 'id: "skills.errors"'), "skill.no_next");
+    has("platform-op-errors", ops, lineOf(ops, 'id: "skills.errors"'), "orgAdmin or member");
     has("platform-op-literal", exc, lineOf(exc, "route: ROUTE"), "route");
     const dyn = join(root, SRC, "skills/dynamic.controller.ts");
     has("platform-op-literal", dyn, lineOf(dyn, "@Get(PATH)"), "route path");

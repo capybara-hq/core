@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ApiError } from "../../src/errors.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
-import { toToolError } from "../../src/platform/errors.js";
+import { nextStepFor, OPERATION_ERROR_NEXT, toToolError } from "../../src/platform/errors.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { PLATFORM_UNAVAILABLE_OFF, platformTool } from "../../src/tools/builtins/platform.js";
@@ -21,6 +21,16 @@ import type {
 
 const ran: { id: string; input: unknown; agentId: string }[] = [];
 let failWith: unknown = null;
+/** What `skills.create`'s precheck does: pass, fail on a taken name, hang, or throw. */
+let precheckMode: "pass" | "taken" | "hang" | "throw" = "pass";
+let precheckSignal: AbortSignal | null = null;
+
+/** A next step that differs by role (spec §14.5 item 7). */
+const DEPLOY_NEXT = {
+  superAdmin: "Open the admin console, Extensions, and fill in the extension's config.",
+  orgAdmin: "Ask the super admin with requests.create.",
+  member: "Ask an org admin to request it.",
+};
 
 const listOp = defineOperation({
   id: "skills.list",
@@ -44,9 +54,11 @@ const personalOp = defineOperation({
   authz: { orgAction: "org.read" },
   mirrors: ["POST /api/v1/orgs/:orgId/requests"],
   confirm: "personal",
+  errors: [{ code: "catalog.not_deployed", next: DEPLOY_NEXT }],
   summary: (i) => ({ zh: `提交申请：${i.text}`, en: `Create a request: ${i.text}` }),
   run: async (input, ctx) => {
     ran.push({ id: "requests.create", input, agentId: ctx.agentId });
+    if (failWith !== null) throw failWith;
     return { id: "r1" };
   },
 });
@@ -59,7 +71,23 @@ const orgOp = defineOperation({
   authz: { orgAction: "org.update" },
   mirrors: ["POST /api/v1/orgs/:orgId/skills"],
   confirm: "org",
-  errors: [{ code: "skill.name_exists", next: "Pick another name." }],
+  errors: [
+    { code: "skill.name_exists", next: "Pick another name, or read it with skills.get." },
+    { code: "catalog.not_deployed", next: DEPLOY_NEXT },
+  ],
+  precheck: async (i, c) => {
+    precheckSignal = c.signal;
+    if (precheckMode === "throw") throw new Error("db down");
+    if (precheckMode === "hang") return new Promise(() => {});
+    if (precheckMode === "taken") {
+      return {
+        ok: false,
+        code: "skill.name_exists",
+        message: `A skill named "${i.name}" already exists in this organization`,
+      };
+    }
+    return { ok: true };
+  },
   summary: (i) => ({ zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` }),
   run: async (input, ctx) => {
     ran.push({ id: "skills.create", input, agentId: ctx.agentId });
@@ -109,6 +137,8 @@ let tool: BuiltinTool;
 beforeEach(() => {
   ran.length = 0;
   failWith = null;
+  precheckMode = "pass";
+  precheckSignal = null;
   facts = ADMIN;
   factsCalls = [];
   setting = "on";
@@ -131,6 +161,7 @@ beforeEach(() => {
       read: (id) => (id === "plugin-format" ? "# The plugin format\n\nA tgz." : null),
     },
     setting: async () => setting,
+    precheckTimeoutMs: 50,
   });
 });
 
@@ -266,7 +297,10 @@ describe("browse, search, describe, read", () => {
       example: orgOp.example,
       available: true,
       related: ["skills.list"],
-      errors: [{ code: "skill.name_exists", next: "Pick another name." }],
+      errors: [
+        { code: "skill.name_exists", next: "Pick another name, or read it with skills.get." },
+        { code: "catalog.not_deployed", next: DEPLOY_NEXT.orgAdmin },
+      ],
     });
     expect(out.inputSchema).toEqual(
       z.toJSONSchema(orgOp.input, { io: "input", unrepresentable: "any" }),
@@ -329,7 +363,7 @@ describe("call", () => {
     expect(ran).toEqual([]);
   });
 
-  it("an ApiError from an operation keeps its code and says what to do next", async () => {
+  it("an ApiError from an operation keeps its code and gives the operation's next step", async () => {
     failWith = new ApiError("skill.name_exists", "A skill with this name already exists");
     const msg = await toolError({
       action: "call",
@@ -337,7 +371,37 @@ describe("call", () => {
       params: orgOp.example,
     });
     expect(msg).toBe(
-      "skill.name_exists: A skill with this name already exists. Check the input with describe and call again, or ask the person.",
+      "skill.name_exists: A skill with this name already exists. Pick another name, or read it with skills.get.",
+    );
+    // a code the operation does not declare gets the generic step
+    failWith = new ApiError("forbidden", "No");
+    expect(
+      await toolError({ action: "call", operation: "skills.create", params: orgOp.example }),
+    ).toBe(`forbidden: No. ${OPERATION_ERROR_NEXT}`);
+  });
+
+  it("a role-keyed next step goes to its role: the super admin's path never to a member", async () => {
+    failWith = new ApiError("catalog.not_deployed", "The extension is not loaded");
+    const call = { action: "call", operation: "requests.create", params: { text: "hi" } };
+    facts = { ...ADMIN, isSuperAdmin: true };
+    expect(await toolError(call)).toBe(
+      `catalog.not_deployed: The extension is not loaded. ${DEPLOY_NEXT.superAdmin}`,
+    );
+    facts = { ...ADMIN };
+    expect(await toolError(call)).toContain(DEPLOY_NEXT.orgAdmin);
+    facts = { ...ADMIN, role: "member" };
+    const member = await toolError(call);
+    expect(member).toContain(DEPLOY_NEXT.member);
+    expect(member).not.toContain("admin console");
+  });
+
+  it("a precheck that passes, then a service refusal after the approval, names the next step (Review Focus 2)", async () => {
+    const input = { action: "call", operation: "skills.create", params: orgOp.example };
+    expect((await policy(input))?.policy).toBe("ask");
+    // the name was taken while the card waited
+    failWith = new ApiError("skill.name_exists", "A skill with this name already exists");
+    expect(await toolError(input)).toBe(
+      "skill.name_exists: A skill with this name already exists. Pick another name, or read it with skills.get.",
     );
   });
 
@@ -476,6 +540,69 @@ describe("callPolicy: target-dependent class, async summaries, output references
         { ...policyCtx, rawInput: read },
       ),
     ).toMatchObject({ policy: "allow" });
+  });
+});
+
+describe("callPolicy: precheck before the card", () => {
+  const input = { action: "call", operation: "skills.create", params: orgOp.example };
+
+  it("a write whose precheck fails is denied with the reason and the next step: no card", async () => {
+    precheckMode = "taken";
+    const p = await policy(input);
+    expect(p).toEqual({
+      key: "Platform:skills.create",
+      policy: "deny",
+      remember: false,
+      denyReason:
+        'Operation skills.create cannot run now: skill.name_exists: A skill named "weekly-report" already exists in this organization. Pick another name, or read it with skills.get.',
+    });
+    expect(ran).toEqual([]);
+  });
+
+  it("runs after availability: an unavailable operation is denied without a precheck", async () => {
+    precheckMode = "taken";
+    facts = { ...ADMIN, role: "member" };
+    expect((await policy(input))?.denyReason).toContain("skills.create is unavailable");
+    expect(precheckSignal).toBeNull();
+  });
+
+  it("on resume a precheck that fails by now denies the approved call", async () => {
+    expect((await policy(input))?.policy).toBe("ask");
+    precheckMode = "taken";
+    expect((await policy(input))?.policy).toBe("deny");
+  });
+
+  it("a precheck that times out or throws is skipped: the card appears", async () => {
+    precheckMode = "hang";
+    expect((await policy(input))?.policy).toBe("ask");
+    expect(precheckSignal?.aborted).toBe(true);
+    precheckMode = "throw";
+    expect((await policy(input))?.policy).toBe("ask");
+  });
+
+  it("describe gives each error's next step for the actor's role", async () => {
+    facts = { ...ADMIN, role: "member" };
+    const out = await run({ action: "describe", operation: "requests.create" });
+    expect(out.errors).toEqual([{ code: "catalog.not_deployed", next: DEPLOY_NEXT.member }]);
+    facts = { ...ADMIN, isSuperAdmin: true };
+    const sa = await run({ action: "describe", operation: "requests.create" });
+    expect(sa.errors).toEqual([{ code: "catalog.not_deployed", next: DEPLOY_NEXT.superAdmin }]);
+  });
+});
+
+describe("nextStepFor", () => {
+  const errors = [
+    { code: "a", next: "Plain." },
+    { code: "b", next: { superAdmin: "SA.", orgAdmin: "OA." } },
+    { code: "c", next: { superAdmin: "SA only." } },
+  ];
+  it("falls back down for admins, never up to the super admin's text", () => {
+    expect(nextStepFor(errors, "a", "member")).toBe("Plain.");
+    expect(nextStepFor(errors, "b", "superAdmin")).toBe("SA.");
+    expect(nextStepFor(errors, "b", "member")).toBe("OA.");
+    expect(nextStepFor(errors, "c", "orgAdmin")).toBeUndefined();
+    expect(nextStepFor(errors, "c", "member")).toBeUndefined();
+    expect(nextStepFor(errors, "zzz", "superAdmin")).toBeUndefined();
   });
 });
 

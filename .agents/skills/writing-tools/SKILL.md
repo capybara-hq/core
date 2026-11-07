@@ -387,7 +387,14 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   `platformTool` = `read-only`: writes are unavailable with the reason; `off`: the tool is unavailable.
   `@SuperAdmin` operations run only through the super admin's own private agent (judged on the root
   conversation's agent).
-- **Errors** the model sees are English and say what to do next.
+- **Before the card.** After availability, a write's `precheck` runs (read only, 2 s bound; a timeout or a
+  throw skips it): a known failure is a `deny` with its reason and the role's next step, and no approval
+  is created. The policy is derived again when an approved call resumes, so a precheck failing by then
+  returns its error and the tool never runs.
+- **Errors** the model sees are English and say what to do next. An `ApiError` from `run` keeps its code
+  and message and gets the operation's `errors[]` entry for the actor's role (`superAdmin` / `orgAdmin` /
+  `member`, see `platform/errors.ts`), else the generic step; `describe` shows each entry resolved for the
+  actor.
 - **Tests:** `packages/kernel/test/platform/platform-e2e.test.ts` scripts calls with model-fake
   (`tool:Platform:{"action":"call","operation":"skills.list","params":{}}`) through approvals and replay.
 

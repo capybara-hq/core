@@ -766,6 +766,30 @@ export class MarketplacesService {
     return this.get(id);
   }
 
+  /**
+   * The read-only checks of {@link add}, for the `Platform` tool's precheck (before the card): the
+   * name, URL and git fields as `add` checks them (throws `validation_failed`), then the source
+   * that has the same URL and ref already, if any (adding a duplicate is allowed; the tool points
+   * the agent at the existing source instead).
+   */
+  async checkAdd(input: {
+    name: string;
+    url: string;
+    ref?: string;
+  }): Promise<{ id: string; name: string } | null> {
+    this.checkName(input.name);
+    const { form, url } = marketplaceForm(input.url);
+    this.checkUrls(url, []);
+    this.checkGitFields(form, input.ref ?? null, []);
+    const same = await this.db
+      .selectFrom("marketplaces")
+      .select(["id", "name"])
+      .where("url", "=", url)
+      .where("ref", input.ref === undefined ? "is" : "=", input.ref ?? null)
+      .executeTakeFirst();
+    return same ?? null;
+  }
+
   @Transactional()
   private async writeAdd(
     actor: string,

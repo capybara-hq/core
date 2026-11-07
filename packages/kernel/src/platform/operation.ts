@@ -21,6 +21,27 @@ export interface OperationContext {
   signal: AbortSignal;
 }
 
+/**
+ * The next step after an error: one text, or one per role where the step differs (spec §14.5
+ * item 7). Only the super admin gets the `superAdmin` text (the admin console path); see
+ * `nextStepFor` in ./errors.ts for the fallbacks.
+ */
+export type OperationErrorNext =
+  | string
+  | { readonly superAdmin?: string; readonly orgAdmin?: string; readonly member?: string };
+
+/** A notable error code of an operation and what to do next (model-visible English). */
+export interface OperationError {
+  code: string;
+  next: OperationErrorNext;
+}
+
+/** What {@link PlatformOperation.precheck} found: nothing known against the write, or why it fails. */
+export type PrecheckResult = { ok: true } | { ok: false; code: string; message: string };
+
+/** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
+export const PRECHECK_TIMEOUT_MS = 2000;
+
 /** One operation of the `Platform` tool (spec §7), defined next to its domain. */
 export interface PlatformOperation<I = unknown> {
   /** `<domain>.<verb>`, matching {@link OPERATION_ID}; the domain is one of {@link PLATFORM_DOMAINS}. */
@@ -67,9 +88,18 @@ export interface PlatformOperation<I = unknown> {
   confirmFor?(input: I, ctx: OperationContext): Promise<ConfirmClass>;
   /**
    * The notable error codes of the operation and what to do next (model-visible English), shown
-   * by `describe` (spec §3).
+   * by `describe` (spec §3) and appended to an `ApiError` of that code (spec §14.5 item 7). `next`
+   * is keyed by role where the step differs (`check:platform-ops` rule `platform-op-errors`).
    */
-  errors?: readonly { code: string; next: string }[];
+  errors?: readonly OperationError[];
+  /**
+   * Preconditions read before the card (spec §14.2 item 2): a write known to fail (a taken name, a
+   * stale preview) is denied with this reason and the person is never asked. Reads only; runs
+   * again when an approved call resumes (a failure then returns the error, nothing runs). Bounded
+   * by the tool ({@link PRECHECK_TIMEOUT_MS}); a timeout or a throw skips it, and the write's own
+   * errors speak.
+   */
+  precheck?(input: I, ctx: OperationContext): Promise<PrecheckResult>;
   /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.

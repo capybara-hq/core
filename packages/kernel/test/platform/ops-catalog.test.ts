@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AgentsService } from "../../src/agents/agents.service.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
+import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { NEEDS_INPUT, OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
 import { redactOrgs } from "../../src/platform/redact-orgs.js";
@@ -69,10 +70,19 @@ const ctxOf = (accountId: string): OperationContext => ({
   signal: new AbortController().signal,
 });
 
-/** Parses like the tool does, then runs. */
+/** Parses like the tool does, then runs; a service refusal becomes the tool's error. */
 const run = (id: string, input: unknown, ctx: OperationContext) => {
   const o = op(id);
-  return o.run(o.input.parse(input), ctx);
+  return o.run(o.input.parse(input), ctx).catch((e: unknown) => {
+    throw toToolError(e, (code) => nextStepFor(o.errors, code, "orgAdmin"));
+  });
+};
+
+/** The operation's precheck, as the tool's callPolicy runs it before the card. */
+const precheck = (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  if (o.precheck === undefined) throw new Error(`${id} has no precheck`);
+  return o.precheck(o.input.parse(input), ctx);
 };
 
 /** The card summary of a write, as the tool's callPolicy reads it. */
@@ -283,6 +293,22 @@ describe("marketplaces", () => {
     });
     await env.db.deleteFrom("marketplaces").where("id", "=", out.marketplace.id).execute();
   });
+
+  it("the precheck refuses a URL that is already a source and an invalid URL, before the card", async () => {
+    const c = ctxOf(env.rootId);
+    const input = { name: "Team plugins", url: "https://dup.example.com/marketplace.json" };
+    expect(await precheck("marketplaces.add", input, c)).toEqual({ ok: true });
+    const out = (await run("marketplaces.add", input, c)) as { marketplace: { id: string } };
+    expect(await precheck("marketplaces.add", { ...input, name: "Again" }, c)).toMatchObject({
+      ok: false,
+      code: "marketplace.already_added",
+      message: expect.stringContaining(out.marketplace.id),
+    });
+    expect(
+      await precheck("marketplaces.add", { name: "Plain", url: "http://x.example.com/m.json" }, c),
+    ).toMatchObject({ ok: false, code: "validation_failed" });
+    await env.db.deleteFrom("marketplaces").where("id", "=", out.marketplace.id).execute();
+  });
 });
 
 describe("plugins in the org", () => {
@@ -293,6 +319,17 @@ describe("plugins in the org", () => {
     );
     expect(e.message).toBe(NEEDS_INPUT);
     expect(e.message).toContain("插件 page");
+    // known before the card
+    expect(
+      await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
+    ).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
+    expect(
+      await precheck(
+        "plugins.set-enabled",
+        { itemId: randomUUID(), enabled: true },
+        ctxOf(env.bossId),
+      ),
+    ).toMatchObject({ ok: false, code: "catalog.item_not_found" });
     const [got] = await env.db
       .selectFrom("plugin_installs")
       .select("id")

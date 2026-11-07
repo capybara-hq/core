@@ -21,7 +21,7 @@ import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { type ConfirmClass, defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { precheckBy, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
 const AgentId = AgentPathParams.shape.agentId.max(100);
@@ -117,10 +117,9 @@ export class AgentsOperations implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/agents/:agentId"],
         confirm: "read",
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            agent: await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId),
-          })),
+        run: async (input, ctx) => ({
+          agent: await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId),
+        }),
       }),
       defineOperation({
         id: "agents.create",
@@ -173,17 +172,15 @@ export class AgentsOperations implements OnModuleInit {
             ...(d.skills !== undefined && { skills: d.skills }),
             ...(d.subagents !== undefined && { subagents: d.subagents }),
           });
-          return asToolError(() =>
-            this.agents.create(
-              ctx.orgId,
-              ctx.actorAccountId,
-              {
-                definition: { ...parsed, instructions: d.instructions },
-                visibility: "private",
-              },
-              undefined,
-              viaAgent("agents.create", ctx),
-            ),
+          return this.agents.create(
+            ctx.orgId,
+            ctx.actorAccountId,
+            {
+              definition: { ...parsed, instructions: d.instructions },
+              visibility: "private",
+            },
+            undefined,
+            viaAgent("agents.create", ctx),
           );
         },
       }),
@@ -245,34 +242,33 @@ export class AgentsOperations implements OnModuleInit {
                 en: `Update shared agent "${name}" (version ${i.version})`,
               };
         },
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            const { agentId, version, ...patch } = input;
-            const current = (await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId))
-              .definition;
-            // the files are the authoring form of the prompt: a new prompt replaces them
-            const { instructionFiles, ...base } = current;
-            const definition = {
-              ...(patch.instructions === undefined && instructionFiles !== undefined
-                ? { ...base, instructionFiles }
-                : base),
-              ...(patch.name !== undefined && { name: patch.name }),
-              ...(patch.instructions !== undefined && { instructions: patch.instructions }),
-              ...(patch.model !== undefined && { model: patch.model as ModelRef }),
-              ...(patch.tools !== undefined && { tools: patch.tools }),
-              ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
-              ...(patch.skills !== undefined && { skills: patch.skills }),
-              ...(patch.subagents !== undefined && { subagents: patch.subagents }),
-            };
-            return this.agents.update(
-              ctx.orgId,
-              agentId,
-              ctx.actorAccountId,
-              { definition, expectedVersion: version },
-              undefined,
-              viaAgent("agents.update", ctx),
-            );
-          }),
+        run: async (input, ctx) => {
+          const { agentId, version, ...patch } = input;
+          const current = (await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId))
+            .definition;
+          // the files are the authoring form of the prompt: a new prompt replaces them
+          const { instructionFiles, ...base } = current;
+          const definition = {
+            ...(patch.instructions === undefined && instructionFiles !== undefined
+              ? { ...base, instructionFiles }
+              : base),
+            ...(patch.name !== undefined && { name: patch.name }),
+            ...(patch.instructions !== undefined && { instructions: patch.instructions }),
+            ...(patch.model !== undefined && { model: patch.model as ModelRef }),
+            ...(patch.tools !== undefined && { tools: patch.tools }),
+            ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
+            ...(patch.skills !== undefined && { skills: patch.skills }),
+            ...(patch.subagents !== undefined && { subagents: patch.subagents }),
+          };
+          return this.agents.update(
+            ctx.orgId,
+            agentId,
+            ctx.actorAccountId,
+            { definition, expectedVersion: version },
+            undefined,
+            viaAgent("agents.update", ctx),
+          );
+        },
       }),
       defineOperation({
         id: "agents.preview-from-template",
@@ -283,8 +279,7 @@ export class AgentsOperations implements OnModuleInit {
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template/preview"],
         confirm: "read",
-        run: async (input, ctx) =>
-          asToolError(() => this.fromTemplate.preview(ctx.orgId, input.templateId)),
+        run: async (input, ctx) => this.fromTemplate.preview(ctx.orgId, input.templateId),
       }),
       defineOperation({
         id: "agents.create-from-template",
@@ -314,7 +309,37 @@ export class AgentsOperations implements OnModuleInit {
             code: "agent.template_preview_stale",
             next: "Call agents.preview-from-template again and use its new previewHash.",
           },
+          {
+            code: "component.not_found",
+            next: "Check the template id with agent-templates.list; this org cannot use that template.",
+          },
+          {
+            code: "agent.model_unavailable",
+            next: {
+              superAdmin:
+                "No model is set up: configure a model provider in the admin console, then call again.",
+              orgAdmin:
+                "No model is available in this deployment; ask the super admin to set one up.",
+              member: "No model is available in this deployment; ask an org admin.",
+            },
+          },
+          {
+            code: "agent.visibility_web_only",
+            next: "Leave visibility out (the agent is private), and share it on the agents page of the web app.",
+          },
         ],
+        precheck: async (i, ctx) => {
+          if (i.visibility !== undefined && i.visibility !== "private") {
+            return { ok: false, code: "agent.visibility_web_only", message: WEB_ONLY };
+          }
+          return precheckBy(() =>
+            this.fromTemplate.check(ctx.orgId, {
+              templateId: i.templateId,
+              previewHash: i.previewHash,
+              ...(i.model !== undefined && { model: i.model }),
+            }),
+          );
+        },
         summary: async (i, ctx) => {
           const t = named(
             await orElse(
@@ -331,20 +356,18 @@ export class AgentsOperations implements OnModuleInit {
           if (input.visibility !== undefined && input.visibility !== "private") {
             throw new ToolError(WEB_ONLY);
           }
-          return asToolError(() =>
-            this.fromTemplate.create(
-              ctx.orgId,
-              ctx.actorAccountId,
-              {
-                templateId: input.templateId,
-                name: input.name,
-                previewHash: input.previewHash,
-                visibility: "private",
-                ...(input.model !== undefined && { model: input.model }),
-              },
-              undefined,
-              viaAgent("agents.create-from-template", ctx),
-            ),
+          return this.fromTemplate.create(
+            ctx.orgId,
+            ctx.actorAccountId,
+            {
+              templateId: input.templateId,
+              name: input.name,
+              previewHash: input.previewHash,
+              visibility: "private",
+              ...(input.model !== undefined && { model: input.model }),
+            },
+            undefined,
+            viaAgent("agents.create-from-template", ctx),
           );
         },
       }),

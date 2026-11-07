@@ -13,7 +13,7 @@ import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation } from "../operation.js";
 import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { localized } from "./summary.js";
 
@@ -148,11 +148,10 @@ export class PluginsOperations implements OnModuleInit {
         errors: [
           { code: "catalog.item_not_found", next: "Check the plugin id with plugins.list." },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
-            return { ...d, item: brief(d.item) };
-          }),
+        run: async (input, ctx) => {
+          const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
+          return { ...d, item: brief(d.item) };
+        },
       }),
       defineOperation({
         id: "plugins.disable-preview",
@@ -167,21 +166,20 @@ export class PluginsOperations implements OnModuleInit {
         errors: [
           { code: "catalog.item_not_found", next: "Check the plugin id with plugins.list." },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
-            if (!d.item.switchable) throw new ToolError(LOCKED);
-            const live = d.item.installed;
-            if (live === null) {
-              return {
-                preview: null,
-                confirm: NOTHING_INSTALLED,
-                next: "Nothing is installed in the org, so switching off removes nothing; pass this confirm value.",
-              };
-            }
-            const preview = await this.installer.previewUninstall(ctx.orgId, live.pluginInstallId);
-            return { preview, confirm: uninstallPreviewHash(preview) };
-          }),
+        run: async (input, ctx) => {
+          const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
+          if (!d.item.switchable) throw new ToolError(LOCKED);
+          const live = d.item.installed;
+          if (live === null) {
+            return {
+              preview: null,
+              confirm: NOTHING_INSTALLED,
+              next: "Nothing is installed in the org, so switching off removes nothing; pass this confirm value.",
+            };
+          }
+          const preview = await this.installer.previewUninstall(ctx.orgId, live.pluginInstallId);
+          return { preview, confirm: uninstallPreviewHash(preview) };
+        },
       }),
       defineOperation({
         id: "plugins.set-enabled",
@@ -215,7 +213,19 @@ export class PluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.disabled",
-            next: "The super admin stopped this plugin on the platform; ask them.",
+            next: {
+              superAdmin:
+                "The plugin is stopped on the platform: turn it back on in the admin console under Plugins, then call again.",
+              orgAdmin: "The super admin stopped this plugin on the platform; ask them.",
+            },
+          },
+          {
+            code: "catalog.item_not_found",
+            next: "Check the plugin id with plugins.list.",
+          },
+          {
+            code: "plugin.needs_input",
+            next: "Ask the person to enable it on the 插件 page, where they enter its configuration.",
           },
           {
             code: "catalog.approval_required",
@@ -226,6 +236,23 @@ export class PluginsOperations implements OnModuleInit {
             next: "An org skill has the name of one of the plugin's skills; the person resolves it on the web.",
           },
         ],
+        // what is known to fail before the card: an unknown plugin, switching off a locked one,
+        // switching on one that needs a person's input
+        precheck: async (i, ctx) => {
+          const [item] = UUID_RE.test(i.itemId)
+            ? await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, i.itemId)
+            : [];
+          if (item === undefined) {
+            return { ok: false, code: "catalog.item_not_found", message: "Catalog item not found" };
+          }
+          if (!i.enabled && !item.switchable) {
+            return { ok: false, code: "plugin.scope_locked", message: LOCKED };
+          }
+          if (i.enabled && needsInput(item, await this.extensions.list(ctx.orgId))) {
+            return { ok: false, code: "plugin.needs_input", message: NEEDS_INPUT };
+          }
+          return { ok: true };
+        },
         summary: async (i, ctx) => {
           const [item] = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, i.itemId);
           if (item === undefined) throw new Error("no such plugin");
@@ -247,30 +274,25 @@ export class PluginsOperations implements OnModuleInit {
             en: `Disable plugin "${n.en}" in the org: removes ${p.components.length} components; ${p.agents.length} agents use it`,
           };
         },
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            if (input.enabled) {
-              const [item] = await this.orgCatalog.list(
-                ctx.orgId,
-                ctx.actorAccountId,
-                input.itemId,
-              );
-              if (item && needsInput(item, await this.extensions.list(ctx.orgId))) {
-                throw new ToolError(NEEDS_INPUT);
-              }
+        run: async (input, ctx) => {
+          if (input.enabled) {
+            const [item] = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, input.itemId);
+            if (item && needsInput(item, await this.extensions.list(ctx.orgId))) {
+              throw new ToolError(NEEDS_INPUT);
             }
-            const r = await this.orgCatalog.setSwitch(
-              ctx.orgId,
-              ctx.actorAccountId,
-              input.itemId,
-              input.enabled ? { enabled: true } : { enabled: false, confirm: input.confirm },
-              undefined,
-              viaAgent("plugins.set-enabled", ctx),
-            );
-            if (r.kind === "done") return { item: brief(r.item) };
-            // unreachable: confirm is required when switching off
-            return { preview: r.preview, confirm: r.confirm };
-          }),
+          }
+          const r = await this.orgCatalog.setSwitch(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.itemId,
+            input.enabled ? { enabled: true } : { enabled: false, confirm: input.confirm },
+            undefined,
+            viaAgent("plugins.set-enabled", ctx),
+          );
+          if (r.kind === "done") return { item: brief(r.item) };
+          // unreachable: confirm is required when switching off
+          return { preview: r.preview, confirm: r.confirm };
+        },
       }),
       defineOperation({
         id: "plugins.platform-list",
@@ -309,22 +331,21 @@ export class PluginsOperations implements OnModuleInit {
             next: "Check the plugin id with plugins.platform-list.",
           },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
-            const d = await this.catalog.get(input.itemId);
-            return redactOrgs({
-              item: d.item,
-              versions: d.versions.map((v) => ({
-                version: v.version,
-                source: v.source,
-                sourceRef: v.sourceRef,
-                sourceFormat: v.sourceFormat,
-                importedAt: v.importedAt,
-                ...(v.version === d.item.platformVersion && { manifest: v.manifest }),
-              })),
-            });
-          }),
+        run: async (input, ctx) => {
+          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+          const d = await this.catalog.get(input.itemId);
+          return redactOrgs({
+            item: d.item,
+            versions: d.versions.map((v) => ({
+              version: v.version,
+              source: v.source,
+              sourceRef: v.sourceRef,
+              sourceFormat: v.sourceFormat,
+              importedAt: v.importedAt,
+              ...(v.version === d.item.platformVersion && { manifest: v.manifest }),
+            })),
+          });
+        },
       }),
       defineOperation({
         id: "plugins.update-preview",
@@ -342,11 +363,10 @@ export class PluginsOperations implements OnModuleInit {
             next: "Check the plugin id and its versions with plugins.platform-get.",
           },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
-            return redactOrgs(await this.updater.preview(input.itemId, input.version));
-          }),
+        run: async (input, ctx) => {
+          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+          return redactOrgs(await this.updater.preview(input.itemId, input.version));
+        },
       }),
       defineOperation({
         id: "plugins.update",
@@ -397,18 +417,17 @@ export class PluginsOperations implements OnModuleInit {
             en: `Update platform plugin "${n.en}" from ${p.from ?? "none"} to ${p.to}: components ${changed} updated, ${added} added, ${removed} removed; ${orgs} orgs affected`,
           };
         },
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
-            return redactOrgs(
-              await this.updater.update(
-                ctx.actorAccountId,
-                input.itemId,
-                { version: input.version, diffHash: input.diffHash },
-                { auditDetail: viaAgent("plugins.update", ctx) },
-              ),
-            );
-          }),
+        run: async (input, ctx) => {
+          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+          return redactOrgs(
+            await this.updater.update(
+              ctx.actorAccountId,
+              input.itemId,
+              { version: input.version, diffHash: input.diffHash },
+              { auditDetail: viaAgent("plugins.update", ctx) },
+            ),
+          );
+        },
       }),
     ]);
   }
