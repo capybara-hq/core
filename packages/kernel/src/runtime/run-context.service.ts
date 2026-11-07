@@ -18,7 +18,10 @@ import {
   snapshotDescription,
 } from "./context/run-context.js";
 
-/** Optional provider: the clock run start reads the date from (default `Date.now`; tests). */
+/**
+ * Optional provider: the clock run start reads the date from and the `CurrentTime` builtin reads
+ * the time from (default `Date.now`; tests).
+ */
 export const RUN_CONTEXT_CLOCK = Symbol("RUN_CONTEXT_CLOCK");
 
 /** The idem key of a run's `run_context` (one per run at most). */
@@ -166,6 +169,30 @@ export class RunContextService {
       timeZone: zone,
     };
   }
+}
+
+/**
+ * The time zone a conversation's run context holds now (the latest `run_context` with a
+ * `timeZone`, as the fold reads it), else the org default (§3.3), else UTC. The `CurrentTime`
+ * builtin's default zone.
+ */
+export async function conversationTimeZone(
+  t: KernelSchemaDb,
+  orgId: string,
+  conversationId: string,
+): Promise<string> {
+  const row = await t
+    .selectFrom("conversation_events")
+    .select(sql<string | null>`payload->>'timeZone'`.as("timeZone"))
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "run_context")
+    .where(sql<boolean>`payload ? 'timeZone'`)
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (row?.timeZone != null && isTimeZone(row.timeZone)) return row.timeZone;
+  const zone = (await readOrgSettings(t, orgId)).timeZone;
+  return zone !== undefined && isTimeZone(zone) ? zone : "UTC";
 }
 
 /** The fold of a conversation's `run_context` events (read inside the caller's transaction). */

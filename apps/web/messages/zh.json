@@ -452,7 +452,8 @@
         "SkillWrite": "编写技能",
         "WebSearch": "搜索网页",
         "WebFetch": "读取网页",
-        "Platform": "操作平台"
+        "Platform": "操作平台",
+        "CurrentTime": "获取当前时间"
       },
       "connectorsLabel": "连接器",
       "noConnectors": "还没有安装连接器。",

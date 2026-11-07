@@ -29,6 +29,7 @@ export const BUILTIN = {
   WebSearch: "WebSearch",
   WebFetch: "WebFetch",
   Platform: "Platform",
+  CurrentTime: "CurrentTime",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
@@ -77,6 +78,7 @@ export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
  * by the registry; `Agent` dispatches sub-agents and its description is built per agent;
  * `SendMessage` and `SubagentHandback` are added by the registry ({@link SUBAGENT_MESSAGE_TOOLS}).
  * `Platform` calls the platform's own operations as the run's person (Platform tool spec).
+ * `CurrentTime` reads the clock (the run context carries only the date).
  */
 export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.AskUserQuestion,
@@ -90,6 +92,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SubagentHandback,
   ...WEB_TOOL_NAMES,
   BUILTIN.Platform,
+  BUILTIN.CurrentTime,
 ];
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
@@ -142,12 +145,14 @@ export const CHILD_REMOVED_TOOLS = [
 /**
  * The tools of a new agent created without `tools` (`ToolSearch` is added by the registry, never
  * by a definition). Only for create requests; updates and stored versions get no defaults.
- * `Platform` is on by default (Platform tool spec §3: reads are harmless, every write confirmed).
+ * `Platform` is on by default (Platform tool spec §3: reads are harmless, every write confirmed),
+ * and so is `CurrentTime` (read-only, no side effects).
  */
 export const DEFAULT_AGENT_TOOLS: AgentToolRef[] = [
   { kind: "builtin", name: BUILTIN.AskUserQuestion },
   { kind: "builtin", name: BUILTIN.ReadToolOutput },
   { kind: "builtin", name: BUILTIN.Platform },
+  { kind: "builtin", name: BUILTIN.CurrentTime },
 ];
 
 /** Kinds of the builtin tools (display only); a builtin missing here is a plain `tool`. */
@@ -171,6 +176,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.WebSearch]: "search",
   [BUILTIN.WebFetch]: "read",
   [BUILTIN.Platform]: "tool",
+  [BUILTIN.CurrentTime]: "tool",
 };
 
 /**

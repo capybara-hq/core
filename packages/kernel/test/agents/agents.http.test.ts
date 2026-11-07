@@ -143,11 +143,12 @@ describe("Agent HTTP", () => {
       avatarUrl: null,
       modelParams: {},
       fallbackParams: {},
-      // no tools on create -> the default tools (Ruling P7; Platform tool spec §3)
+      // no tools on create -> the default tools (Ruling P7; Platform tool spec §3; CurrentTime)
       tools: [
         { kind: "builtin", name: "AskUserQuestion" },
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Platform" },
+        { kind: "builtin", name: "CurrentTime" },
       ],
       toolPolicies: {},
     });

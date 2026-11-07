@@ -369,3 +369,32 @@ describe("agent page Tools section: web tools", () => {
     expect(browser).toEqual([]);
   });
 });
+
+describe("agent page Tools section: the CurrentTime builtin", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+
+  it.each([
+    ["zh", "获取当前时间"],
+    ["en", "Current time"],
+  ] as const)(
+    "its row reads %s %s and is listed whatever providers exist",
+    async (locale, label) => {
+      expect(msgs[locale].agents.form.builtin.CurrentTime).toBe(label);
+      stubApi({
+        ...sessionRoutes(),
+        [`GET ${ORG}/agents/ag1`]: () =>
+          json(200, {
+            agent: agentWith([
+              { kind: "builtin", name: "AskUserQuestion" },
+              { kind: "builtin", name: "CurrentTime" },
+            ]),
+          }),
+        [`GET ${ORG}/models`]: () => json(200, MODELS),
+        [`GET ${ORG}/extension-points/available`]: available(false, false),
+      });
+      await renderEditAgent({ section: "tools", locale });
+      const row = await screen.findByRole("checkbox", { name: label });
+      expect(row).toHaveProperty("checked", true);
+    },
+  );
+});

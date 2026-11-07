@@ -431,6 +431,7 @@ describe("creating an agent from a template", () => {
       ["AskUserQuestion", "carried", "default"],
       ["ReadToolOutput", "carried", "default"],
       ["Platform", "carried", "default"],
+      ["CurrentTime", "carried", "default"],
     ]);
     expect(agent.definition.pendingConnectors).toBeUndefined();
     expect(agent.definition.subagents).toBeUndefined();

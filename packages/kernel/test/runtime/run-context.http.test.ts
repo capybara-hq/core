@@ -6,6 +6,8 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { RUN_CONTEXT_CLOCK, RunContextService } from "../../src/runtime/run-context.service.js";
+import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
+import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -255,7 +257,54 @@ describe("run start", { timeout: 90_000 }, () => {
     const all = await contexts(conv);
     expect(all).toHaveLength(2);
     expect(all.at(-1)).toEqual({ agent: { name: "Racer" } });
-    await service.record({ ...input, runId, agent: { ...agent, name: "Other" } });
+    // either racer may have written it: retry with the run id of the event that was written
+    const written = (await eventsOf(db, conv)).filter((e) => e.type === "run_context").at(-1);
+    const winner = written?.runId ?? runId;
+    await service.record({ ...input, runId: winner, agent: { ...agent, name: "Other" } });
     expect(await contexts(conv)).toHaveLength(2);
+  });
+});
+
+describe("CurrentTime reads the run context's zone and the run context clock", {
+  timeout: 60_000,
+}, () => {
+  const currentTime = async (conversationId: string, input: unknown = {}) => {
+    const tool = k.app
+      .get(BuiltinTools)
+      .list()
+      .find((t) => t.spec.name === "CurrentTime");
+    if (tool === undefined) throw new Error("CurrentTime is not a builtin");
+    const ctx = {
+      orgId,
+      conversationId,
+      signal: new AbortController().signal,
+    } as unknown as BuiltinCallContext;
+    const r = (await tool.run(input, ctx)) as { content: { text: string }[] };
+    return r.content.map((c) => c.text).join("");
+  };
+
+  it("the latest run context zone; before any run the org default, else UTC", async () => {
+    clockMs = Date.parse("2026-11-08T13:05:33Z");
+    const conv = await createConv(owner, orgId, agentId);
+    // no run context yet, no org default: UTC
+    expect(await currentTime(conv)).toContain("Time zone: UTC (UTC+00:00)");
+    const url = `/api/v1/orgs/${orgId}/settings`;
+    await owner({ method: "PATCH", url, payload: { timeZone: "Asia/Tokyo" } });
+    expect(await currentTime(conv)).toContain("Current time: 2026-11-08T22:05:33+09:00 (Sunday)");
+
+    await send(conv, "echo:1", { timeZone: "Asia/Shanghai", locale: "zh" });
+    await waitForTerminal(db, conv, 1, 30_000);
+    expect(await currentTime(conv)).toBe(
+      "Current time: 2026-11-08T21:05:33+08:00 (Sunday)\n" +
+        "Time zone: Asia/Shanghai (UTC+08:00)\n" +
+        "UTC: 2026-11-08T13:05:33Z",
+    );
+    await send(conv, "echo:2", { timeZone: "America/New_York", locale: "en" });
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(await currentTime(conv)).toContain("Time zone: America/New_York (UTC-05:00)");
+    // an explicit zone wins
+    expect(await currentTime(conv, { timeZone: "Europe/London" })).toContain(
+      "Current time: 2026-11-08T13:05:33+00:00 (Sunday)",
+    );
   });
 });

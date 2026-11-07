@@ -452,7 +452,8 @@
         "SkillWrite": "Write skills",
         "WebSearch": "Search the web",
         "WebFetch": "Read web pages",
-        "Platform": "Use the platform"
+        "Platform": "Use the platform",
+        "CurrentTime": "Current time"
       },
       "connectorsLabel": "Connectors",
       "noConnectors": "No connectors are installed.",

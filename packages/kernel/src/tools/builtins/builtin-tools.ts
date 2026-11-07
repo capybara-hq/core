@@ -1,5 +1,5 @@
 import type { Logger } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { BackgroundTaskFinisher } from "../../background/finish.js";
 import { BackgroundTaskStopper } from "../../background/stop.js";
 import { BackgroundTaskStore } from "../../background/store.js";
@@ -16,6 +16,7 @@ import { PlatformActor } from "../../platform/actor.js";
 import { AgentDocs } from "../../platform/agent-docs.js";
 import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
+import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { UsageReporter } from "../../runtime/usage-report.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
@@ -25,6 +26,7 @@ import { ToolOutputs } from "../outputs.js";
 import type { BuiltinTool } from "../registry.js";
 import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
+import { currentTimeTool } from "./current-time.js";
 import { handbackTool } from "./handback.js";
 import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
@@ -69,6 +71,8 @@ export class BuiltinTools {
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
+    /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
+    @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
   ) {
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
@@ -123,6 +127,12 @@ export class BuiltinTools {
         actor: platformActor,
         docs: agentDocs,
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
+      }),
+      // the clock in the run context's time zone (the run context carries only the date)
+      currentTimeTool({
+        now: now ?? Date.now,
+        timeZoneOf: ({ orgId, conversationId }) =>
+          conversationTimeZone(db.db, orgId, conversationId),
       }),
     ];
   }

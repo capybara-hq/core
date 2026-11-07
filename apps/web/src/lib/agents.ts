@@ -35,6 +35,7 @@ export const BUILTIN_TOOLS = [
   "WebSearch",
   "WebFetch",
   "Platform",
+  "CurrentTime",
 ] as const;
 
 /**
@@ -68,7 +69,7 @@ export interface AgentDefinitionInput {
   modelParams?: Record<string, ParamValue>;
   /** 兜底模型的参数；没有兜底模型时必须为空。 */
   fallbackParams?: Record<string, ParamValue>;
-  /** The tools; when absent on create the kernel fills the defaults (AskUserQuestion, ReadToolOutput, Platform). */
+  /** The tools; when absent on create the kernel fills the defaults (AskUserQuestion, ReadToolOutput, Platform, CurrentTime). */
   tools?: AgentToolRef[];
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;

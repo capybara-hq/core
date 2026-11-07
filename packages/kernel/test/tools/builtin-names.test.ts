@@ -155,6 +155,7 @@ describe("builtin names", () => {
       BUILTIN.WebSearch,
       BUILTIN.WebFetch,
       BUILTIN.Platform,
+      BUILTIN.CurrentTime,
     ]);
     for (const f of [
       "apps/web/src/lib/timeline.ts",
@@ -178,7 +179,7 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task, web, message and Platform tools never had one)", () => {
+  it("the legacy map covers the 13 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
@@ -187,6 +188,7 @@ describe("builtin names", () => {
       BUILTIN.SubagentHandback,
       ...WEB_TOOL_NAMES,
       BUILTIN.Platform,
+      BUILTIN.CurrentTime,
     ];
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
       new Set(BUILTIN_TOOL_NAMES.filter((n) => !never.includes(n))),

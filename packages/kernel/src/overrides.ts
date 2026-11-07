@@ -30,7 +30,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
  *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`: shorter timings;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
- * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from;
+ * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
+ *   `CurrentTime` builtin the time;
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
