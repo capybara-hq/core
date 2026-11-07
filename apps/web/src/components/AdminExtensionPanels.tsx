@@ -7,14 +7,16 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
-  DateTime,
   Dialog,
+  Disclosure,
   formatDateTime,
+  formatRelative,
   KeyValue,
   LinkButton,
   Stack,
   Subsection,
   Text,
+  useNow,
   useTimeZone,
   useToast,
   versionLabel,
@@ -161,6 +163,7 @@ export function AdminExtensionOverview({
   onUninstalled,
   place = "page",
   leadFacts = [],
+  leadLine,
 }: {
   plugin: AdminExtension;
   drainSeconds: number;
@@ -173,8 +176,10 @@ export function AdminExtensionOverview({
    * no id: it is the Sheet's meta) and 副本.
    */
   place?: "page" | "sheet";
-  /** The facts the Sheet puts first (state, capabilities, scope). */
+  /** The facts the Sheet puts first (capabilities, scope). */
   leadFacts?: { k: string; v: ReactNode }[];
+  /** The Sheet's 状态 region's first line, without a key (the heading names it): the state. */
+  leadLine?: ReactNode;
 } & AdminExtensionChanged) {
   const t = useTranslations("admin.extensions");
   const lang = labelLocale(useLocale());
@@ -236,27 +241,44 @@ export function AdminExtensionOverview({
       ? plugin.status === "disabled"
       : (desiredState === "disabled") !== (plugin.status === "disabled");
 
+  // 版本 only when a replica runs another version than the extension's (or still serves one)
+  const versionsDiffer = plugin.replicas.some(
+    (r) => r.version !== plugin.version || Boolean(r.servingVersion),
+  );
+  // 副本, 版本, 状态 and 心跳 take their content's width; 原因 takes the rest and wraps. The reason
+  // is the localized one only: the raw validator text belongs to the config section's fields.
   const columns: Column<ExtensionReplica>[] = [
-    { key: "replica", header: t("detail.replicaColumns.replica"), cell: (r) => r.replicaId },
     {
-      key: "version",
-      header: t("detail.replicaColumns.version"),
-      tone: "muted",
-      cell: (r) =>
-        r.servingVersion ? (
-          <Stack gap={4}>
-            <Text>{versionLabel(r.version)}</Text>
-            <Text variant="small" tone="muted">
-              {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
-            </Text>
-          </Stack>
-        ) : (
-          versionLabel(r.version)
-        ),
+      key: "replica",
+      header: t("detail.replicaColumns.replica"),
+      fit: true,
+      cell: (r) => r.replicaId,
     },
+    ...(versionsDiffer
+      ? [
+          {
+            key: "version",
+            header: t("detail.replicaColumns.version"),
+            tone: "muted" as const,
+            fit: true,
+            cell: (r: ExtensionReplica) =>
+              r.servingVersion ? (
+                <Stack gap={4}>
+                  <Text>{versionLabel(r.version)}</Text>
+                  <Text variant="small" tone="muted">
+                    {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
+                  </Text>
+                </Stack>
+              ) : (
+                versionLabel(r.version)
+              ),
+          },
+        ]
+      : []),
     {
       key: "state",
       header: t("detail.replicaColumns.state"),
+      fit: true,
       cell: (r) => {
         const label = replicaWord(r);
         return r.state === "failed" ? <Text tone="fail">{label}</Text> : label;
@@ -268,14 +290,14 @@ export function AdminExtensionOverview({
       tone: "muted",
       // the whole reason, on more lines when it is long
       wrap: true,
-      cell: (r) =>
-        [reasonText(r.reason), r.detail].filter((s) => s !== null && s !== "").join(" · ") || "—",
+      cell: (r) => reasonText(r.reason) ?? "—",
     },
     {
       key: "heartbeat",
       header: t("detail.replicaColumns.heartbeat"),
       tone: "muted",
-      cell: (r) => <DateTime value={r.heartbeatAt} />,
+      fit: true,
+      cell: (r) => <RelativeTime value={r.heartbeatAt} />,
     },
   ];
 
@@ -313,6 +335,7 @@ export function AdminExtensionOverview({
       {plugin.error !== undefined && (
         <FormError message={t("detail.packageError", { error: plugin.error })} />
       )}
+      {place === "sheet" && leadLine}
       {facts}
       {plugin.required && (
         <Text variant="small" tone="muted">
@@ -385,10 +408,13 @@ export function AdminExtensionOverview({
                     {t("detail.stillServing", { version: versionLabel(r.servingVersion) })}
                   </Text>
                 )}
+                {/* The raw text, one click away (never inline, spec §6.24) */}
                 {r.detail !== null && r.detail !== "" && (
-                  <Text variant="small" tone="fail">
-                    {r.detail}
-                  </Text>
+                  <Disclosure summary={t("detail.rawDetail")}>
+                    <Text variant="small" tone="muted" pre>
+                      {r.detail}
+                    </Text>
+                  </Disclosure>
                 )}
               </Stack>
             ))}
@@ -576,5 +602,17 @@ export function AdminExtensionPermissions({
         </Subsection>
       )}
     </Stack>
+  );
+}
+
+/** A heartbeat as a relative time ("3 分钟前"), the full date and time on hover. */
+function RelativeTime({ value }: { value: string }) {
+  const locale = useLocale();
+  const now = useNow();
+  const timeZone = useTimeZone();
+  return (
+    <Text tone="muted" title={formatDateTime(value, "full", timeZone)}>
+      {formatRelative(value, locale, now)}
+    </Text>
   );
 }

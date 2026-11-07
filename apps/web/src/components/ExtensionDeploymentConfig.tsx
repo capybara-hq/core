@@ -178,17 +178,15 @@ export function useDeploymentConfig({
       ) : null,
     form: (
       <Stack gap={16}>
-        {readonly && (
+        {/* The form's notes as one quiet line over it (read-only fields, not validated now) */}
+        {(readonly || !view.validated) && (
           <Text variant="small" tone="muted">
-            {t("hint")}
+            {[readonly ? t("hint") : null, view.validated ? null : t("notValidated")]
+              .filter((x): x is string => x !== null)
+              .join(t("noteSep"))}
           </Text>
         )}
         {error === undefined && viewIssues.length > 0 && <FormError message={t("invalid")} />}
-        {!view.validated && (
-          <Text variant="small" tone="muted">
-            {t("notValidated")}
-          </Text>
-        )}
         <ConfigForm
           key={formKey}
           schema={form.schema}
@@ -199,27 +197,29 @@ export function useDeploymentConfig({
           onChange={(value, entries, state) => setLive({ current: { value, entries, state } })}
         />
         {error !== undefined && <FormError message={error.message} />}
-        {changed && (
-          <Text variant="small" tone="muted">
-            {reloads(view, body) ? t("willReload", { seconds: drainSeconds }) : t("appliesNow")}
-          </Text>
-        )}
-        {busy && reloads(view, body) && (
-          <Text variant="small" tone="muted">
-            {t("saving", { seconds: drainSeconds })}
-          </Text>
-        )}
       </Stack>
     ),
+    // What saving does sits beside the save (one quiet line), never as a sentence in the form
     save: (
-      <Button
-        variant="primary"
-        loading={busy}
-        disabled={busy || !changed || current.state.problems.length > 0}
-        onClick={() => void save()}
-      >
-        {t("save")}
-      </Button>
+      <Stack direction="row" gap={12} align="center">
+        {changed && (
+          <Text variant="small" tone="muted">
+            {busy && reloads(view, body)
+              ? t("saving", { seconds: drainSeconds })
+              : reloads(view, body)
+                ? t("willReload", { seconds: drainSeconds })
+                : t("appliesNow")}
+          </Text>
+        )}
+        <Button
+          variant="primary"
+          loading={busy}
+          disabled={busy || !changed || current.state.problems.length > 0}
+          onClick={() => void save()}
+        >
+          {t("save")}
+        </Button>
+      </Stack>
     ),
     dirty: changed,
   };

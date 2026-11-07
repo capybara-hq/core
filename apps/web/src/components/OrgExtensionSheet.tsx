@@ -179,9 +179,10 @@ export function OrgExtensionSheet({
           </Subsection>
         )}
         <Subsection title={t("stateTitle")} variant="divided">
+          {/* The state is the region's first line (its heading names it), then the facts */}
+          <Text tone={state.tone}>{state.label}</Text>
           <KeyValue
             rows={[
-              { k: t("stateTitle"), v: <Text tone={state.tone}>{state.label}</Text> },
               {
                 k: t("capabilitiesTitle"),
                 v: capabilities.length > 0 ? capabilities.join(" · ") : "—",

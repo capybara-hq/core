@@ -392,8 +392,8 @@ function AdminExtensionSheet({
           moving={moving}
           onUninstalled={onClose}
           place="sheet"
+          leadLine={<ExtensionStatusMark status={plugin.status} />}
           leadFacts={[
-            { k: te("stateTitle"), v: <ExtensionStatusMark status={plugin.status} /> },
             {
               k: te("capabilitiesTitle"),
               v: capabilities.length > 0 ? capabilities.join(" · ") : "—",

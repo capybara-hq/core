@@ -2,8 +2,10 @@
 
 import {
   Badge,
+  Callout,
   Card,
   DetailPage,
+  ItemList,
   KeyValue,
   Stack,
   SwitchField,
@@ -72,7 +74,6 @@ export default function PluginItemView({ itemId }: { itemId: string }) {
 
 function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me: Me }) {
   const scope = usePagePath("org");
-  const t = useTranslations("catalog.org");
   const read = usePageQuery(orgCatalogItemQuery(orgId, itemId));
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -80,17 +81,12 @@ function CatalogItem({ orgId, itemId, me }: { orgId: string; itemId: string; me:
     return (
       <DetailPage
         header={{ path: [...scope, { label: "plugins", href: "/plugins" }], title: "" }}
-        tabs={{
-          label: t("detail.tabsLabel"),
-          items: [{ id: "overview", label: t("detail.tabs.overview") }],
-          value: "overview",
-          onChange: () => {},
-        }}
-        // One column: the facts (publisher, owner, version, status) and the five component
-        // sections (extension, skills, agent templates, connector templates, dependencies)
+        // One column, no tab row (one view): the facts (the description over publisher, owner and
+        // status) and the five component sections (extension, skills, agent templates, connector
+        // templates, dependencies)
         loading={{
+          facts: { rows: 3, keyWidth: "10ch", lead: true },
           content: [
-            { kind: "key-value", rows: 4, keyWidth: "10ch" },
             { kind: "list" },
             { kind: "list" },
             { kind: "list" },
@@ -177,38 +173,39 @@ function CatalogItemDetail({
         ...(owned && { status: <Badge>{tp("chips.ownUpload")}</Badge> }),
         // while one runs (a switch-off preview from the menu too) the other buttons wait
         ...(headActions.length > 0 ? { actions: lockWhileRunning(headActions, busy) } : {}),
+        ...(item.awaitingConfirmation !== true && item.pendingVersion != null
+          ? {
+              notice: (
+                <Callout tone="warn">
+                  {tp("chips.pendingVersion", { version: versionLabel(item.pendingVersion) })}
+                </Callout>
+              ),
+            }
+          : {}),
       }}
-      tabs={{
-        label: t("detail.tabsLabel"),
-        items: [{ id: "overview", label: t("detail.tabs.overview") }],
-        value: "overview",
-        onChange: () => {},
-      }}
+      facts={
+        <Stack gap={12}>
+          {/* The full description (the head's line would cut it), then the facts; the version is
+              the head's */}
+          {description !== "" && (
+            <Text variant="prose" tone="muted" pre>
+              {description}
+            </Text>
+          )}
+          {detail.hasIcon && <CatalogIcon src={orgIconUrl(orgId, item.id)} name={item.name} />}
+          <KeyValue
+            keyWidth="10ch"
+            rows={[
+              { k: t("detail.fields.publisher"), v: item.publisher || "—" },
+              { k: t("detail.fields.owner"), v: ownerLabel(item.owner) },
+              { k: t("detail.fields.status"), v: <Text tone={state.tone}>{state.label}</Text> },
+            ]}
+          />
+        </Stack>
+      }
     >
       <Stack gap={16}>
-        {/* The full description, first in the column (the head's line would cut it) */}
-        {description !== "" && (
-          <Text variant="prose" tone="muted" pre>
-            {description}
-          </Text>
-        )}
-        {item.awaitingConfirmation !== true && item.pendingVersion != null && (
-          <Text variant="small" tone="warn">
-            {tp("chips.pendingVersion", { version: versionLabel(item.pendingVersion) })}
-          </Text>
-        )}
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
-        {/* The facts, in the single column (no right inspector) */}
-        {detail.hasIcon && <CatalogIcon src={orgIconUrl(orgId, item.id)} name={item.name} />}
-        <KeyValue
-          keyWidth="10ch"
-          rows={[
-            { k: t("detail.fields.publisher"), v: item.publisher || "—" },
-            { k: t("detail.fields.owner"), v: ownerLabel(item.owner) },
-            { k: t("detail.fields.version"), v: versionLabel(item.latestVersion) },
-            { k: t("detail.fields.status"), v: <Text tone={state.tone}>{state.label}</Text> },
-          ]}
-        />
         {dialog}
         {owned && <OwnedSection orgId={orgId} item={item} admin={admin} />}
         {admin && <PluginInstallsSection orgId={orgId} itemId={item.id} />}
@@ -218,25 +215,30 @@ function CatalogItemDetail({
           count={detail.extension === null ? 0 : 1}
           empty={tc("extensionNone")}
         >
-          <Text>{`· ${detail.extension ?? ""}`}</Text>
+          <ItemList
+            label={tc("extension")}
+            rows={detail.extension === null ? [] : [{ id: "ext", title: detail.extension }]}
+          />
         </ComponentSection>
         <ComponentSection
           title={tc("skills")}
           count={detail.skills.length}
           empty={tc("skillsNone")}
         >
-          {detail.skills.map((s) => (
-            <Text key={s}>{`· ${skillNameOf(s)}`}</Text>
-          ))}
+          <ItemList
+            label={tc("skills")}
+            rows={detail.skills.map((s) => ({ id: s, title: skillNameOf(s) }))}
+          />
         </ComponentSection>
         <ComponentSection
           title={tc("agentTemplates")}
           count={detail.agents?.length ?? 0}
           empty={tc("agentTemplatesNone")}
         >
-          {(detail.agents ?? []).map((a) => (
-            <Text key={a}>{`· ${agentTemplateNameOf(a)}`}</Text>
-          ))}
+          <ItemList
+            label={tc("agentTemplates")}
+            rows={(detail.agents ?? []).map((a) => ({ id: a, title: agentTemplateNameOf(a) }))}
+          />
         </ComponentSection>
         <ComponentSection
           title={tc("templates")}
@@ -280,9 +282,10 @@ function CatalogItemDetail({
           <Text variant="small" tone="muted">
             {tc("dependenciesHint")}
           </Text>
-          {detail.dependencies.map((d) => (
-            <Text key={d.name}>{`· ${d.name} ${d.range}`}</Text>
-          ))}
+          <ItemList
+            label={tc("dependencies")}
+            rows={detail.dependencies.map((d) => ({ id: d.name, title: d.name, meta: d.range }))}
+          />
         </ComponentSection>
       </Stack>
       {deleting && (

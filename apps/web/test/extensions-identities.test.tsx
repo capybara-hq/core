@@ -298,6 +298,9 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       expect(summary.textContent).toContain(`${m.category.secrets} 1`);
       expect(summary.textContent).toContain(`${m.category.tools} 1`);
       expect(summary.textContent).toContain(m.sensitive);
+      // neither region repeats its heading: no 状态 key, no 权限 word in the folded line
+      expect(within(sheet).queryByText(m.stateTitle, { selector: "dt" })).toBeNull();
+      expect(summary.textContent?.includes(m.permissions)).toBe(false);
       expect(within(sheet).queryByRole("region", { name: fill(m.permissionsLabel) })).toBeNull();
       await user.click(summary);
       const perms = within(sheet).getByRole("region", { name: fill(m.permissionsLabel) });

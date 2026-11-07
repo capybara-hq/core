@@ -1,6 +1,14 @@
 "use client";
 
-import { Button, Dialog, type MenuItem, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Dialog,
+  ImpactPreview,
+  type MenuItem,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
@@ -425,46 +433,56 @@ export function SwitchOffDialog({
         </>
       }
     >
-      <Stack gap={12}>
+      <Stack gap={16}>
         {notice !== undefined && <FormError message={notice} />}
         <Text variant="prose">{t("hint")}</Text>
-        {preview.agents.length > 0 && (
-          <Stack gap={4}>
-            <Text variant="small" tone="warn">
-              {t("agents")}
-            </Text>
-            {preview.agents.map((a) => (
-              <Text key={a.id} variant="small">
-                {`· ${a.name}: ${a.uses.map((u) => `${kind(u.kind)} ${refOf(u)}`).join(sep)}`}
-              </Text>
-            ))}
-          </Stack>
-        )}
-        <Stack gap={4}>
-          <Text variant="small" tone="muted">
-            {t("removed")}
-          </Text>
-          {removed.length === 0 && <Text variant="small">{t("none")}</Text>}
-          {removed.map((c) => (
-            <Text key={`${c.kind}:${c.ref}`} variant="small">
-              {`− ${kind(c.kind)} ${refOf(c)}`}
-            </Text>
-          ))}
-        </Stack>
-        {preview.kept.length > 0 && (
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("kept")}
-            </Text>
-            {preview.kept.map((c) => (
-              <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`· ${kind(c.kind)} ${refOf(c)} — ${
-                  tk.has(`report.reason.${c.reason}`) ? tk(`report.reason.${c.reason}`) : c.reason
-                }`}
-              </Text>
-            ))}
-          </Stack>
-        )}
+        <ImpactPreview
+          empty={t("none")}
+          groups={[
+            {
+              id: "agents",
+              title: t("agents"),
+              items: preview.agents.map((a) => ({
+                id: a.id,
+                title: a.name,
+                notes: [
+                  {
+                    text: t("uses", {
+                      names: a.uses.map((u) => `${kind(u.kind)} ${refOf(u)}`).join(sep),
+                    }),
+                    tone: "warn" as const,
+                  },
+                ],
+              })),
+            },
+            {
+              id: "removed",
+              title: t("removed"),
+              items: removed.map((c) => ({
+                id: `${c.kind}:${c.ref}`,
+                title: refOf(c),
+                code: kind(c.kind),
+              })),
+              empty: t("none"),
+            },
+            {
+              id: "kept",
+              title: t("kept"),
+              items: preview.kept.map((c) => ({
+                id: `${c.kind}:${c.ref}`,
+                title: refOf(c),
+                code: kind(c.kind),
+                notes: [
+                  {
+                    text: tk.has(`report.reason.${c.reason}`)
+                      ? tk(`report.reason.${c.reason}`)
+                      : c.reason,
+                  },
+                ],
+              })),
+            },
+          ]}
+        />
       </Stack>
     </Dialog>
   );

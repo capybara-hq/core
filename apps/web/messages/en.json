@@ -866,7 +866,7 @@
       "description": "Description",
       "descriptionRequired": "Enter a description.",
       "carried": "The prompt, model, tools, skills, connectors (which ones it needs, never credentials), sub-agents and quick actions go into the template, which the organization owns.",
-      "rosterLeftOut": "These organization agents in its sub-agents are not templates and are left out:",
+      "rosterLeftOut": "These organization agents in its sub-agents are not templates and are left out",
       "rosterLabel": "Organization agents left out",
       "submit": "Save as template",
       "close": "Close",
@@ -916,7 +916,8 @@
         "fallback": "templates record no fallback model or its parameters",
         "empty_text": "{field, select, none {it is blank, which a template cannot hold} other {its {field} is blank, which a template cannot hold}}",
         "other": "left out"
-      }
+      },
+      "carriedTitle": "Goes into the template"
     },
     "templates": {
       "listLabel": "Agent templates",
@@ -1994,8 +1995,8 @@
     "advanced": "Advanced",
     "options": "Options",
     "add": "Add",
-    "itemN": "Item {n}",
     "addNamed": "Add {label}",
+    "itemN": "Item {n}",
     "key": "Key",
     "value": "Value",
     "jsonHint": "Enter a JSON value.",
@@ -2438,7 +2439,8 @@
           "cancelled": "Cancelled",
           "pending": "Awaiting answer"
         },
-        "subagent": "Sub-agent"
+        "subagent": "Sub-agent",
+        "subagentTrajectory": "Trajectory"
       },
       "hook": {
         "title": "Blocked by a policy hook",
@@ -2565,7 +2567,11 @@
       "from": "From (inclusive)",
       "to": "To (exclusive)",
       "submit": "Sample",
-      "done": "Added {added} cases, skipped {skipped}."
+      "done": "Added {added} cases, skipped {skipped}.",
+      "groups": {
+        "which": "Count and state",
+        "when": "Time range"
+      }
     },
     "case": {
       "title": "Case · {title}"
@@ -2717,7 +2723,8 @@
         "estimate": "Estimate before run",
         "estimateValue": "{model} requests + {judge} judge · {tokens} tokens · cost {cost}",
         "judgeShare": "Judge share",
-        "judgeShareValue": "{tokens} tokens · cost {cost}"
+        "judgeShareValue": "{tokens} tokens · cost {cost}",
+        "instructionsTitle": "Instructions override"
       },
       "inspector": {
         "title": "Result",
@@ -2725,10 +2732,10 @@
         "status": "Status",
         "drift": "Drift",
         "error": "Error",
-        "textDiff": "Reply text diff (- baseline / + candidate)",
-        "noTextDiff": "The reply text is the same.",
+        "textDiff": "Reply text diff",
+        "noTextDiff": "The reply text is the same",
         "toolDiff": "Tool-call diff",
-        "noToolCalls": "Neither side made tool calls.",
+        "noToolCalls": "Neither side made tool calls",
         "toolKinds": {
           "same": "same",
           "args_changed": "args differ",
@@ -2739,7 +2746,6 @@
         "judge": "Judge",
         "verdict": "Verdict",
         "score": "Score",
-        "reason": "Reason",
         "judgeError": "The judge gave no verdict: {reason}.",
         "unparseable": "the judge's reply could not be parsed",
         "label": "Human label",
@@ -2749,7 +2755,12 @@
         "clear": "Clear label",
         "evalTrajectory": "View eval conversation trajectory",
         "diffCaption": "diff",
-        "driftSeparator": ", "
+        "driftSeparator": ", ",
+        "summary": "Summary",
+        "trajectory": "Trajectory",
+        "textDiffHint": "- baseline / + candidate",
+        "labelCurrent": "Current: {label}",
+        "labelNone": "Not labeled yet"
       }
     },
     "drift": {
@@ -3033,7 +3044,7 @@
         "memory": "Sandbox memory (MB)",
         "memoryHelp": "A whole number from 256 to 262144; leave empty for the deployment default.",
         "memoryInvalid": "Memory must be a whole number from 256 to 262144.",
-        "newOnly": "Sandbox limits apply to sandboxes created from now on.",
+        "newOnly": "Applies to sandboxes created from now on",
         "save": "Save",
         "subagentConcurrent": "Sub-agents running at once per conversation",
         "subagentConcurrentHelp": "1–20; empty uses the deployment default (subagents.maxConcurrentPerConversation).",
@@ -3046,7 +3057,12 @@
         "subagentDispatchesInvalid": "Enter a whole number from 1 to 500.",
         "subagentTokens": "Sub-agent tokens per message",
         "subagentTokensHelp": "At least 10,000, counted over the whole agent tree since the person's latest message; empty uses the deployment default.",
-        "subagentTokensInvalid": "Enter a whole number of at least 10,000."
+        "subagentTokensInvalid": "Enter a whole number of at least 10,000.",
+        "groups": {
+          "run": "Runs",
+          "sandbox": "Sandbox",
+          "subagents": "Sub-agents"
+        }
       }
     },
     "settings": {
@@ -3203,7 +3219,8 @@
           "status": "Status",
           "replicas": "Replicas",
           "permissions": "Permissions"
-        }
+        },
+        "rawDetail": "Raw error"
       },
       "approve": {
         "title": "Approve permissions",
@@ -3234,7 +3251,8 @@
         "pendingMissing": "Missing required: {fields}",
         "listSep": ", ",
         "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds",
-        "appliesNow": "These changes apply as soon as they are saved"
+        "appliesNow": "These changes apply as soon as they are saved",
+        "noteSep": "; "
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
@@ -3494,9 +3512,9 @@
         "disabledToast": "Disabled \"{name}\".",
         "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled.",
         "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
-        "ownerNote": "It belongs to {org}; new versions come from that organization.",
         "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
-        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab."
+        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab.",
+        "ownerValue": "{org} (new versions come from it)"
       },
       "review": {
         "title": "Import plugin",
@@ -3512,9 +3530,6 @@
         "sourceNpmHint": "Read it from the npm registry by name (and version).",
         "fetch": "Fetch and review",
         "plugin": "{name} {version}",
-        "publisher": "Publisher: {publisher}",
-        "package": "npm package {name}",
-        "license": "License {license}",
         "action": {
           "install": "Install {version}",
           "upgrade": "Upgrade {from} → {to}",
@@ -3546,9 +3561,7 @@
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
         "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
-        "origin": "Source: {origin}",
         "provenance": "Built from {repository}@{commit} by {workflow}",
-        "provenanceNotChecked": "Provenance not checked ({reason})",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
         "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
@@ -3557,7 +3570,6 @@
           "summary": "Read as a Claude Code plugin: only what Capybara supports is taken over, and every other part is listed with the reason.",
           "noManifest": "The plugin has no .claude-plugin/plugin.json; it was read from its directory layout.",
           "claudeManifestIgnored": "The plugin has both .capybara-plugin/plugin.json and .claude-plugin/plugin.json: the Capybara manifest was read and the Claude Code one ignored.",
-          "repository": "Repository: {repository} (from the plugin, not verified)",
           "groupTitle": "{group} ({n})",
           "groups": {
             "imported": "Imported",
@@ -3648,7 +3660,17 @@
         "scopeTitle": "Scope",
         "olderThanDeployed": "Lower than the deployed version: it is only added to the catalog; the deployment is not changed.",
         "requestDefault": "Requested by {org}: by default only that organization gets it.",
-        "namedNeedsOrg": "Choose at least one organization."
+        "namedNeedsOrg": "Choose at least one organization.",
+        "facts": {
+          "package": "npm package",
+          "publisher": "Publisher",
+          "license": "License",
+          "repository": "Repository",
+          "repositoryValue": "{repository} (from the plugin, not verified)",
+          "origin": "Source",
+          "provenance": "Provenance",
+          "provenanceNotChecked": "Not checked ({reason})"
+        }
       },
       "entries": {
         "title": "Browse marketplaces",
@@ -3814,15 +3836,19 @@
         "ownerKept": "The owner organization always keeps it."
       },
       "impact": {
-        "none": "No organization loses access.",
-        "affected": "These organizations lose access; the agents that use it are listed:",
+        "none": "No organization loses access",
         "agents": "Agents: {names}",
-        "noAgents": "No agent uses it.",
-        "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials.",
-        "needsConfig": "These organizations need to fill in its organization config first: {orgs}",
-        "replaced": "These components have their own scope; after the change they follow the plugin again: {names}",
-        "conflicts": "These organizations already have a skill with the same name, so this change is not possible. Rename or delete the skill there first:",
-        "conflictLine": "{org}: {name}"
+        "noAgents": "No agent uses it",
+        "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials",
+        "replaced": "These components have their own scope; after the change they follow the plugin again",
+        "conflicts": "These organizations already have a skill with the same name, so this change is not possible. Rename or delete the skill there first",
+        "groups": {
+          "affected": "Organizations losing access",
+          "needsConfig": "Need their organization config first",
+          "replaced": "Back to following the plugin",
+          "conflicts": "Name clashes"
+        },
+        "conflictNote": "Already has the skill {name}"
       },
       "disableDialog": {
         "title": "Disable {name}",
@@ -3865,7 +3891,8 @@
           "rejectTitle": "Reject {name} uploaded by {org}",
           "reasonHelp": "Optional; the uploading organization sees it.",
           "rejected": "Rejected \"{name}\"."
-        }
+        },
+        "grantsTitle": "Permissions to grant"
       }
     },
     "org": {
@@ -3966,7 +3993,6 @@
         "title": "{name} was uninstalled",
         "removed": "Removed",
         "kept": "Kept",
-        "none": "None",
         "reason": {
           "pre_existing": "existed before the install",
           "used_by_agents": "still used by agents",
@@ -3976,7 +4002,10 @@
           "wanted_by_scope": "kept on by its own scope",
           "org_owned": "kept as the organization's own"
         },
-        "dismiss": "Got it"
+        "dismiss": "Got it",
+        "noneRemoved": "No component removed",
+        "noneKept": "No component kept",
+        "nothing": "No component changed"
       },
       "inProgress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up here after the timeout.",
       "dropped": "no longer in the plugin; kept while still in use",
@@ -4033,23 +4062,29 @@
         "kept": "Kept (still in use)"
       },
       "marksHint": "Components updated on their own move to this version of the plugin; components with their own scope keep it.",
-      "pinned": "{name}: the copies in {orgs} are pinned to their own version and move to the new one.",
-      "keptLine": "{name} is not in the new version but agents still use it, so it is kept: {agents}",
-      "extension": "Extension {from} → {to}, for every organization using it at once: {orgs}",
-      "extensionNew": "The update installs the extension {to} on the deployment; organizations using it: {orgs}",
       "extensionNoOrgs": "none yet",
       "needsApproval": "The new version asks for more permissions: the extension waits for a super admin's confirmation.",
-      "connectors": "{org}: these connectors are updated from the new template: {names}",
-      "credentialsReset": "{org}: the authentication of {names} changed; their credentials are cleared and must be entered again.",
-      "needsConfig": "{org}: the added connector templates {ids} need the organization's address and credentials.",
-      "none": "No component changes; only the version moves.",
+      "none": "No component changes; only the version moves",
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
       "stale": "What the update does has changed. Review it again, then confirm.",
       "orgCount": "{count, plural, one {# organization} other {# organizations}}",
       "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
-      "otherOrg": "another organization"
+      "otherOrg": "another organization",
+      "groups": {
+        "pinned": "Copies moving to the new version",
+        "kept": "Components kept",
+        "extension": "Extension",
+        "orgs": "Organizations affected"
+      },
+      "pinnedNote": "Pinned to their own version in {orgs}",
+      "keptNote": "Not in the new version, still used by: {agents}",
+      "extensionInstall": "Installs {to} on the deployment",
+      "extensionOrgs": "Organizations using it move with it: {orgs}",
+      "connectorsNote": "Updated from the new template: {names}",
+      "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
+      "needsConfigNote": "Added connector templates need an address and credentials: {ids}"
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -4281,13 +4316,14 @@
     "switchOff": {
       "title": "Turn off {name}",
       "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept.",
-      "agents": "These agents use its components and will lose them:",
+      "agents": "Agents affected",
       "removed": "Removed",
       "kept": "Kept",
-      "none": "None",
+      "none": "No component is removed",
       "confirm": "Turn off",
       "cancel": "Cancel",
-      "stale": "What this removes changed; review it again before confirming."
+      "stale": "What this removes changed; review it again before confirming.",
+      "uses": "Loses: {names}"
     },
     "market": {
       "title": "Marketplace",
@@ -4310,7 +4346,7 @@
       "chooseHint": "A plugin package (.tgz); a single skill's .zip is uploaded to Skills.",
       "drop": "Drop the file here",
       "reading": "Reading \"{name}\"…",
-      "scope": "Scope: this organization only",
+      "scope": "Scope",
       "shareable": "Shareable",
       "newVersion": "This is a new version of this organization's plugin \"{name}\"; it keeps the plugin's shareable setting.",
       "extensionNotice": "This plugin contains an extension, whose code runs in the platform's kernel process. It is turned on only after the super admin confirms it.",
@@ -4322,7 +4358,8 @@
       "installed": "\"{name}\" uploaded.",
       "updated": "\"{name}\" updated to {version}.",
       "skillUploaded": "Skill \"{name}\" uploaded.",
-      "stale": "The review of this package is out of date. Choose the file again."
+      "stale": "The review of this package is out of date. Choose the file again.",
+      "scopeOnly": "This organization only"
     },
     "owned": {
       "title": "This organization's plugin",
@@ -4335,7 +4372,7 @@
       "loading": "Reading what deleting it does…",
       "transferred": "Other organizations still use it; after deletion it becomes platform-owned: {orgs}",
       "removed": "This cannot be undone",
-      "agents": "These agents will lose it:",
+      "agents": "Agents that lose it",
       "stale": "What deleting it does has changed; review it again before confirming.",
       "confirm": "Delete",
       "cancel": "Cancel",

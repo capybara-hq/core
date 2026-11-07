@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Callout,
   ContentSection,
   Dialog,
   FilePicker,
@@ -204,10 +205,12 @@ export function OrgPluginUploadDialog({
         ) : (
           review !== null && (
             <>
-              {/* The Dialog is the one box (spec §6.7): the scope lines, then the update and the
-                  review under their headings, never cards */}
-              <Stack gap={8}>
-                <Text>{t("scope")}</Text>
+              {/* The Dialog is the one box (spec §6.7): the extension notice, then the scope, the
+                  update and the review under their headings, never cards */}
+              {review.extension !== undefined && (
+                <Callout tone="warn">{t("extensionNotice")}</Callout>
+              )}
+              <ContentSection title={t("scope")} description={t("scopeOnly")}>
                 {!known ? null : existing === undefined ? (
                   <SwitchField
                     label={t("shareable")}
@@ -220,12 +223,7 @@ export function OrgPluginUploadDialog({
                     {t("newVersion", { name: review.name })}
                   </Text>
                 )}
-                {review.extension !== undefined && (
-                  <Text variant="prose" tone="warn" icon="circle-alert">
-                    {t("extensionNotice")}
-                  </Text>
-                )}
-              </Stack>
+              </ContentSection>
               {staged.update !== null && (
                 <ContentSection title={t("updateTitle")}>
                   <PlatformUpdatePreviewBody

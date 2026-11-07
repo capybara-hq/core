@@ -311,6 +311,15 @@ describe("/admin/orgs（ListPage）", () => {
     const dialog = await screen.findByRole("dialog", {
       name: fill(o.dialog.title, { name: "Acme" }),
     });
+    // the limits as titled regions: 运行, 沙箱 (its note as the help line), 子智能体
+    expect(
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([o.dialog.groups.run, o.dialog.groups.sandbox, o.dialog.groups.subagents]);
+    const sandbox = within(dialog).getByRole("region", { name: o.dialog.groups.sandbox });
+    expect(within(sandbox).getByText(o.dialog.newOnly)).toBeTruthy();
+    expect(within(sandbox).getByRole("textbox", { name: o.dialog.cpu })).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.runConcurrency }), "5");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.cpu }), "1.5");
     await user.type(within(dialog).getByRole("textbox", { name: o.dialog.memory }), "4096");
@@ -638,6 +647,43 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     expect(
       (within(dialog).getByRole("checkbox", { name: "Beta" }) as HTMLInputElement).disabled,
     ).toBe(false);
+  });
+
+  it("detail: what needs attention is one notice above the tabs, the facts one block above the tab", async () => {
+    const listed = item({
+      disabled: true,
+      contentChanged: true,
+      pendingVersion: "1.1.0",
+      versions: ["1.1.0", "1.0.0"],
+    });
+    stubApi({
+      ...routes([listed]),
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(listed)),
+    });
+    await renderRouteWithCache(`/admin/plugins/${ID}`, lastStubRoutes());
+    expect(await screen.findByRole("heading", { name: "acme-crm" })).toBeTruthy();
+    // one Callout in the head (above the tabs) listing every note, each said once
+    const callouts = document.querySelectorAll('[data-part="callout"]');
+    expect(callouts).toHaveLength(1);
+    const notice = callouts[0] as HTMLElement;
+    expect(notice.closest('[data-part="page-tabs"]')).toBeNull();
+    expect(notice.closest(".cb-pageheader-notice")).not.toBeNull();
+    for (const note of [
+      P.detail.notShareableNote,
+      fill(P.detail.pendingVersionNote, { version: "v1.1.0" }),
+      P.detail.disabledNote,
+      P.detail.contentChanged,
+    ]) {
+      expect(within(notice).getAllByText(note)).toHaveLength(1);
+      expect(screen.getAllByText(note)).toHaveLength(1);
+    }
+    // the owner is a fact (no separate owner sentence); the facts sit in the facts block
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(within(facts).getByText(fill(P.detail.ownerValue, { org: "Acme" }))).toBeTruthy();
+    // the facts do not repeat per tab: switching tabs keeps the one block
+    await userEvent.setup().click(screen.getByRole("tab", { name: P.detail.tabs.orgs }));
+    expect(document.querySelectorAll('[data-part="detail-facts"]')).toHaveLength(1);
+    expect(document.querySelectorAll('[data-part="callout"]')).toHaveLength(1);
   });
 
   it("detail of a shared org plugin: the full scope dialog, the owner kept; no 更新到 a pending version", async () => {

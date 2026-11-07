@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Callout,
   CodeBlock,
   type Column,
   DangerConfirm,
@@ -9,6 +10,7 @@ import {
   DateTime,
   DetailPage,
   formatBytes,
+  ImpactPreview,
   KeyValue,
   Stack,
   SwitchField,
@@ -85,10 +87,8 @@ function Skill({ orgId, skillId }: { orgId: string; skillId: string }) {
         tabs={tabs}
         // One column: the facts (a KeyValue), then the content tab's SKILL.md body
         loading={{
-          content: [
-            { kind: "key-value", rows: 5, keyWidth: "10ch" },
-            { kind: "lines", lines: 12 },
-          ],
+          facts: { rows: 5, keyWidth: "10ch", lead: true },
+          content: [{ kind: "lines", lines: 12 }],
         }}
       />
     );
@@ -151,15 +151,19 @@ function SkillDetailView({
             : {}),
         }}
         tabs={tabs}
+        facts={
+          <Stack gap={12}>
+            {/* The full description, line breaks kept, then the facts */}
+            {skill.description !== "" && (
+              <Text variant="prose" tone="muted" pre>
+                {skill.description}
+              </Text>
+            )}
+            <Facts orgId={orgId} skill={skill} />
+          </Stack>
+        }
       >
         <Stack gap={16}>
-          {/* The full description, line breaks kept, first in the column */}
-          {skill.description !== "" && (
-            <Text variant="prose" tone="muted" pre>
-              {skill.description}
-            </Text>
-          )}
-          <Facts orgId={orgId} skill={skill} />
           {tab === "content" ? (
             <ContentTab skill={skill} />
           ) : tab === "files" ? (
@@ -335,12 +339,12 @@ function SkillDeleteDialog({
       }}
       description={
         <Stack gap={12}>
-          {p !== undefined && p.outcome === "transferred" && (
-            <Text variant="prose" tone="warn">
-              {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
-            </Text>
-          )}
           <Text variant="prose">{t("deleteHint")}</Text>
+          {p !== undefined && p.outcome === "transferred" && (
+            <Callout tone="warn">
+              {td("transferred", { orgs: p.orgs.map((o) => o.name).join(sep) })}
+            </Callout>
+          )}
           {p === undefined && !preview.isError && (
             <Text variant="small" tone="muted">
               {td("loading")}
@@ -355,16 +359,16 @@ function SkillDeleteDialog({
             </Stack>
           )}
           {p !== undefined && p.agents.length > 0 && (
-            <Stack gap={4}>
-              <Text variant="small" tone="warn">
-                {td("agents")}
-              </Text>
-              {p.agents.map((a) => (
-                <Text key={a.id} variant="small">
-                  {`· ${a.name}`}
-                </Text>
-              ))}
-            </Stack>
+            <ImpactPreview
+              empty=""
+              groups={[
+                {
+                  id: "agents",
+                  title: td("agents"),
+                  items: p.agents.map((a) => ({ id: a.id, title: a.name })),
+                },
+              ]}
+            />
           )}
         </Stack>
       }

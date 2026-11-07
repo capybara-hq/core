@@ -3,6 +3,7 @@
 import {
   AttachmentChip,
   Button,
+  Callout,
   Dialog,
   FilePicker,
   Stack,
@@ -230,11 +231,7 @@ export function ComponentScopeDialog({
           </>
         ) : (
           <>
-            {notice !== undefined && (
-              <Text variant="prose" tone="warn">
-                {notice}
-              </Text>
-            )}
+            {notice !== undefined && <Callout tone="warn">{notice}</Callout>}
             <ScopeImpact preview={preview} />
           </>
         )}

@@ -250,7 +250,12 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
           .getAllByRole("link")
           .some((l) => l.getAttribute("href") === "/admin/extensions/demo"),
       ).toBe(true);
-      expect(within(sheet).getByText(m.stateTitle, { selector: "dt" })).toBeTruthy();
+      // 状态's first line is the state itself, no 状态 key repeating the heading
+      expect(within(sheet).queryByText(m.stateTitle, { selector: "dt" })).toBeNull();
+      const stateRegion = within(sheet).getByRole("region", { name: p.detail.sections.status });
+      expect(
+        stateRegion.querySelector('[data-part="subsection-body"]')?.firstElementChild?.textContent,
+      ).toContain(p.status.enabled);
       // The regions (spec §6.7): no deployment config here, so 状态, 副本, 权限
       expect(
         within(sheet)
@@ -261,7 +266,18 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
         p.detail.sections.replicas,
         p.detail.sections.permissions,
       ]);
-      expect(within(sheet).getByRole("table", { name: p.detail.replicasTitle })).toBeTruthy();
+      const replicas = within(sheet).getByRole("table", { name: p.detail.replicasTitle });
+      // every replica runs the extension's version: no 版本 column; the heartbeat is relative
+      expect(
+        within(replicas)
+          .getAllByRole("columnheader")
+          .map((h) => h.textContent),
+      ).toEqual([
+        p.detail.replicaColumns.replica,
+        p.detail.replicaColumns.state,
+        p.detail.replicaColumns.reason,
+        p.detail.replicaColumns.heartbeat,
+      ]);
       expect(within(sheet).getByRole("button", { name: p.detail.actions.disable })).toBeTruthy();
       expect(
         within(sheet).getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href"),
@@ -269,6 +285,8 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       // Folded until opened
       const summary = within(sheet).getByRole("button", { expanded: false });
       expect(summary.textContent).toContain(`${m.category.tools} 1`);
+      // under the 权限 heading the line does not say 权限 again
+      expect(summary.textContent?.startsWith(m.permissions)).toBe(false);
       expect(summary.textContent).toContain(m.sensitive);
       expect(within(sheet).queryByText(p.approve.notApproved)).toBeNull();
       await user.click(summary);
@@ -381,7 +399,6 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       // 5. one facts block in one key column: no 标识 (the meta), 期望状态 only when it differs
       const keys = [...sheet.querySelectorAll("dt")].map((d) => d.textContent);
       expect(keys).toEqual([
-        m.stateTitle,
         m.capabilitiesTitle,
         p.detail.fields.source,
         p.detail.fields.version,
@@ -411,6 +428,9 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       await user.type(within(list).getByLabelText(/^name/), "vllm");
       await user.type(within(list).getByLabelText(/^baseUrl/), "nope");
       expect(save.disabled).toBe(false);
+      // what saving does is one quiet line beside the save, not a sentence in the form
+      const note = [p.config.appliesNow, p.config.willReload.split("{")[0] as string];
+      expect(note.some((n) => foot.textContent?.includes(n))).toBe(true);
       // 2. a failed save: the field says it in the page's words, never the kernel's text
       await user.click(save);
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
@@ -692,14 +712,27 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       const callout = alert.closest('[data-part="callout"]') as HTMLElement;
       expect(callout.getAttribute("data-tone")).toBe("fail");
       expect(callout.hasAttribute("data-framed")).toBe(false);
-      expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
+      // the raw text is one click away, never inline
+      expect(screen.queryByText(/connect ECONNREFUSED/)).toBeNull();
+      await userEvent.setup().click(screen.getByRole("button", { name: p.detail.rawDetail }));
+      expect(screen.getByText("connect ECONNREFUSED")).toBeTruthy();
       const serving = fill(p.detail.stillServing, { version: "v1.0.0" });
       expect(screen.getAllByText(serving).length).toBeGreaterThan(0);
       const replicas = screen.getByRole("table", { name: p.detail.replicasTitle });
       expect(within(replicas).getByText("web-1-111-aaaaaa")).toBeTruthy();
       expect(within(replicas).getByText("web-2-222-bbbbbb")).toBeTruthy();
-      expect(within(replicas).getByText(`${reason} · connect ECONNREFUSED`)).toBeTruthy();
+      // the reason column: the localized reason only; 副本 / 版本 / 状态 / 心跳 fit their content
+      expect(within(replicas).getByText(reason)).toBeTruthy();
+      expect(within(replicas).queryByText(/ECONNREFUSED/)).toBeNull();
       expect(within(replicas).queryByText(/setup_failed/)).toBeNull();
+      const heads = within(replicas).getAllByRole("columnheader");
+      expect(heads.map((h) => h.getAttribute("data-fit"))).toEqual([
+        "true",
+        "true",
+        "true",
+        null,
+        "true",
+      ]);
     },
   );
 

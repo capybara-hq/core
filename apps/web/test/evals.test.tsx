@@ -415,6 +415,12 @@ describe("评测集详情（DetailPage）", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: E.set.sample }));
     const dialog = await screen.findByRole("dialog", { name: E.sample.title });
+    // the fields in two titled groups: count and state, then the time range
+    expect(
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([E.sample.groups.which, E.sample.groups.when]);
     const count = within(dialog).getByRole("spinbutton", { name: E.sample.count });
     await user.clear(count);
     await user.type(count, "5");
@@ -839,7 +845,32 @@ describe("评测运行（DetailPage）", () => {
         within(sheet).getByText("Delete the stale item", { selector: ".cb-sheet-meta" }),
       ).toBeTruthy();
       // the Sheet is the one named landmark: no region of the same name inside it
-      expect(within(sheet).queryByRole("region")).toBeNull();
+      expect(within(sheet).queryByRole("region", { name: m.run.inspector.title })).toBeNull();
+      // its body is titled regions in order, split by hairlines
+      const regions = within(sheet).getAllByRole("region");
+      expect(regions.map((r) => r.getAttribute("data-variant"))).toEqual(
+        regions.map(() => "divided"),
+      );
+      expect(
+        within(sheet)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([
+        m.run.inspector.summary,
+        m.run.inspector.textDiff,
+        m.run.inspector.toolDiff,
+        m.run.inspector.judge,
+        m.run.inspector.label,
+      ]);
+      // the labeling actions sit in the Sheet's footer, the note in 人工标注
+      const foot = sheet.querySelector(".cb-sheet-foot") as HTMLElement;
+      expect(
+        within(foot)
+          .getAllByRole("button")
+          .map((b) => b.textContent),
+      ).toEqual([m.run.inspector.fail, m.run.inspector.pass]);
+      const labelRegion = within(sheet).getByRole("region", { name: m.run.inspector.label });
+      expect(within(labelRegion).getByLabelText(new RegExp(m.run.inspector.note))).toBeTruthy();
       const region = sheet;
       const inspector = within(region);
       // 文本差异：lineDiff + CodeBlock（标注走 i18n）；工具差异的代码块不带标注

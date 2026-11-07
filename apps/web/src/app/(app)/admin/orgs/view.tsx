@@ -9,6 +9,7 @@ import {
   Input,
   ListPage,
   Stack,
+  Subsection,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -259,67 +260,71 @@ function LimitsDialog({
         </>
       }
     >
-      <Stack gap={12}>
-        <Field
-          label={t("runConcurrency")}
-          help={t("runConcurrencyHelp")}
-          {...(runValue === "invalid" && { error: t("runConcurrencyInvalid") })}
-        >
-          <Input inputMode="numeric" value={run} onChange={(e) => setRun(e.target.value)} />
-        </Field>
-        <Field
-          label={t("cpu")}
-          help={t("cpuHelp")}
-          {...(cpuValue === "invalid" && { error: t("cpuInvalid") })}
-        >
-          <Input inputMode="decimal" value={cpu} onChange={(e) => setCpu(e.target.value)} />
-        </Field>
-        <Field
-          label={t("memory")}
-          help={t("memoryHelp")}
-          {...(memoryValue === "invalid" && { error: t("memoryInvalid") })}
-        >
-          <Input inputMode="numeric" value={memory} onChange={(e) => setMemory(e.target.value)} />
-        </Field>
-        <Text variant="small" tone="muted">
-          {t("newOnly")}
-        </Text>
-        <Field
-          label={t("subagentDepth")}
-          help={t("subagentDepthHelp")}
-          {...(depthValue === "invalid" && { error: t("subagentDepthInvalid") })}
-        >
-          <Input inputMode="numeric" value={depth} onChange={(e) => setDepth(e.target.value)} />
-        </Field>
-        <Field
-          label={t("subagentConcurrent")}
-          help={t("subagentConcurrentHelp")}
-          {...(concurrentValue === "invalid" && { error: t("subagentConcurrentInvalid") })}
-        >
-          <Input
-            inputMode="numeric"
-            value={concurrent}
-            onChange={(e) => setConcurrent(e.target.value)}
-          />
-        </Field>
-        <Field
-          label={t("subagentDispatches")}
-          help={t("subagentDispatchesHelp")}
-          {...(dispatchesValue === "invalid" && { error: t("subagentDispatchesInvalid") })}
-        >
-          <Input
-            inputMode="numeric"
-            value={dispatches}
-            onChange={(e) => setDispatches(e.target.value)}
-          />
-        </Field>
-        <Field
-          label={t("subagentTokens")}
-          help={t("subagentTokensHelp")}
-          {...(tokensValue === "invalid" && { error: t("subagentTokensInvalid") })}
-        >
-          <Input inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
-        </Field>
+      {/* The Dialog is the one box (spec §6.7): 运行, 沙箱, 子智能体 as titled regions */}
+      <Stack gap={16}>
+        <Subsection title={t("groups.run")} variant="divided">
+          <Field
+            label={t("runConcurrency")}
+            help={t("runConcurrencyHelp")}
+            {...(runValue === "invalid" && { error: t("runConcurrencyInvalid") })}
+          >
+            <Input inputMode="numeric" value={run} onChange={(e) => setRun(e.target.value)} />
+          </Field>
+        </Subsection>
+        <Subsection title={t("groups.sandbox")} description={t("newOnly")} variant="divided">
+          <Field
+            label={t("cpu")}
+            help={t("cpuHelp")}
+            {...(cpuValue === "invalid" && { error: t("cpuInvalid") })}
+          >
+            <Input inputMode="decimal" value={cpu} onChange={(e) => setCpu(e.target.value)} />
+          </Field>
+          <Field
+            label={t("memory")}
+            help={t("memoryHelp")}
+            {...(memoryValue === "invalid" && { error: t("memoryInvalid") })}
+          >
+            <Input inputMode="numeric" value={memory} onChange={(e) => setMemory(e.target.value)} />
+          </Field>
+        </Subsection>
+        <Subsection title={t("groups.subagents")} variant="divided">
+          <Field
+            label={t("subagentDepth")}
+            help={t("subagentDepthHelp")}
+            {...(depthValue === "invalid" && { error: t("subagentDepthInvalid") })}
+          >
+            <Input inputMode="numeric" value={depth} onChange={(e) => setDepth(e.target.value)} />
+          </Field>
+          <Field
+            label={t("subagentConcurrent")}
+            help={t("subagentConcurrentHelp")}
+            {...(concurrentValue === "invalid" && { error: t("subagentConcurrentInvalid") })}
+          >
+            <Input
+              inputMode="numeric"
+              value={concurrent}
+              onChange={(e) => setConcurrent(e.target.value)}
+            />
+          </Field>
+          <Field
+            label={t("subagentDispatches")}
+            help={t("subagentDispatchesHelp")}
+            {...(dispatchesValue === "invalid" && { error: t("subagentDispatchesInvalid") })}
+          >
+            <Input
+              inputMode="numeric"
+              value={dispatches}
+              onChange={(e) => setDispatches(e.target.value)}
+            />
+          </Field>
+          <Field
+            label={t("subagentTokens")}
+            help={t("subagentTokensHelp")}
+            {...(tokensValue === "invalid" && { error: t("subagentTokensInvalid") })}
+          >
+            <Input inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
+          </Field>
+        </Subsection>
         {error !== null && <FormError message={error} />}
       </Stack>
     </Dialog>
