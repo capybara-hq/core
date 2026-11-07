@@ -4164,7 +4164,7 @@
   "orgChooser": {
     "title": "Choose an organization",
     "titleNone": "Create an organization",
-    "subtitle": "{name}, choose the organization to open. Next time you sign in you go straight to it; switch later from the account menu at the bottom left.",
+    "subtitle": "{name}, choose the organization to open. Next time you sign in you go straight to it; switch later from the organization switcher at the top left.",
     "subtitleCreate": "You don't belong to any organization yet. Create one to get started.",
     "subtitleAsk": "You don't belong to any organization yet.",
     "listLabel": "Your organizations",
@@ -4185,7 +4185,7 @@
     },
     "waiting": "The organization is still being set up. You can start chatting once an org admin finishes.",
     "refresh": "Refresh",
-    "waitingDeployment": "A super admin needs to set up a model service before you can continue.",
+    "waitingDeployment": "Refresh once it is set up.",
     "steps": {
       "model": "Configure a model",
       "agent": "Create an agent",

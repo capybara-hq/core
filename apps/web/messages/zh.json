@@ -4152,7 +4152,7 @@
   "orgChooser": {
     "title": "选择组织",
     "titleNone": "新建组织",
-    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左下角的账户菜单里切换。",
+    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左上角的组织切换器里切换。",
     "subtitleCreate": "你还不属于任何组织。新建一个组织开始使用。",
     "subtitleAsk": "你还不属于任何组织。",
     "listLabel": "你的组织",
@@ -4173,7 +4173,7 @@
     },
     "waiting": "组织还在配置中，组织管理员完成后你就能开始对话。",
     "refresh": "刷新",
-    "waitingDeployment": "需要超级管理员配置模型服务后才能继续。",
+    "waitingDeployment": "配置好后点刷新继续。",
     "steps": {
       "model": "配置模型",
       "agent": "新建智能体",
