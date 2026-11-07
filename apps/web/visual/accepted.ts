@@ -256,6 +256,7 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
   thread: "the loaded turns' text length decides the height; the skeleton draws three fixed turns",
   table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
   card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
+  rail: "the inbox rail is as tall as its list: the fixture's items, or the loading list's own skeleton rows",
 };
 
 /**
@@ -315,6 +316,10 @@ export const DATA_ONLY_PARTS: Record<string, string> = {
   segment:
     "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
   "switch-knob": "the knob inside a loaded switch; the switch box itself is counted (`switch`)",
+  "select-label":
+    "an option label inside a loaded select (one per option, only the current one visible); the select itself is a loaded control kind, counted through `field`",
+  "bubble-body":
+    "the text box inside a loaded message bubble (it collapses a long user message); the loading bubble is one bar, compared as `bubble`",
   "field-error": "a validation message exists only for typed data",
   "item-list-title":
     "an item row's title text; the loading row's title line holds a bar (`item-list-head` is compared)",

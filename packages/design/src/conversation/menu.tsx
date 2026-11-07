@@ -501,6 +501,7 @@ function AnchoredContent({
       ref={ref}
       className="cb-cmenu"
       data-anchored="true"
+      {...(inline ? { "data-inline": "true" } : {})}
       side={side}
       avoidCollisions={!inline}
       collisionPadding={MENU_COLLISION_PADDING}
