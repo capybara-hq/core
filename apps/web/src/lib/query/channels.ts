@@ -1,5 +1,5 @@
 import { getChannel, getChannelSchema, listChannels } from "../channels";
-import { listOrgExtensions } from "../extensions";
+import { getOrgOverrides, listOrgExtensions } from "../extensions";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -32,5 +32,13 @@ export const orgExtensionsQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).orgExtensions(),
     fn: () => listOrgExtensions(orgId),
+    freshness: "orgConfig",
+  });
+
+/** One extension's two-level config in the org (org admins; read by the extension's Sheet). */
+export const orgExtensionOverridesQuery = (orgId: string, plugin: string) =>
+  defineQuery({
+    key: keys.org(orgId).orgExtensionOverrides(plugin),
+    fn: () => getOrgOverrides(orgId, plugin),
     freshness: "orgConfig",
   });

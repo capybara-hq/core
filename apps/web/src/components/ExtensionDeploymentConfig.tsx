@@ -9,11 +9,13 @@ import { ApiClientError, configIssues } from "../lib/api";
 import type { ConfigIssue } from "../lib/json-schema";
 import { extensionConfigQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
+import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { ConfigForm, type ConfigFormState, type ConfigSecretEntry } from "./config-form/ConfigForm";
 import { deploymentBody, deploymentForm, reloads } from "./config-form/deployment";
 import { buildTree, fromDraft, toDraft } from "./config-form/model";
+import { ExtensionOrgCopies } from "./ExtensionOrgCopies";
 import { FormError } from "./form-error";
 
 /**
@@ -108,7 +110,8 @@ function DeploymentConfigForm({
   const [error, setError] = useState<{ message: string; issues: ConfigIssue[] }>();
   const put = useAppMutation({
     fn: (v: Parameters<typeof putExtensionConfig>) => putExtensionConfig(...v),
-    invalidates: () => [],
+    // a platform change moves what each org copy differs in
+    invalidates: (v) => [keys.deployment().extensionOrgOverrides(v[0])],
   });
   const body = deploymentBody(view, tree, opened.value, current.value, current.entries);
   const changed = Object.keys(body.values).length > 0 || body.secretEntries.length > 0;
@@ -187,6 +190,7 @@ function DeploymentConfigForm({
           {t("save")}
         </Button>
       </Stack>
+      {view.fields.some((f) => f.org === "override") && <ExtensionOrgCopies name={view.plugin} />}
     </Stack>
   );
 }

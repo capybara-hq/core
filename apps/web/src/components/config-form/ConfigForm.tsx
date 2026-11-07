@@ -300,6 +300,9 @@ function useHelp(node: ConfigNode, segs: Segment[], ctx: Ctx): string | undefine
     node.help,
     own && m?.readonly !== undefined ? t("readonly", { source: m.readonly }) : undefined,
     own && m?.readonly === undefined && m?.hot === true ? t("hot") : undefined,
+    own && m?.readonly === undefined && m?.platform !== undefined ? t("platformSet") : undefined,
+    own && m?.secretState !== undefined ? t(`secretState.${m.secretState}`) : undefined,
+    own && m?.level !== undefined ? t(`level.${m.level}`) : undefined,
   ].filter((s): s is string => s !== undefined && s !== "");
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }

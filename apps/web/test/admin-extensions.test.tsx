@@ -979,3 +979,124 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+describe("two-level extension config on the admin side", () => {
+  const LAYERED = {
+    plugin: "demo",
+    version: "1.0.0",
+    configurable: true,
+    schema: {
+      type: "object",
+      properties: {
+        region: { type: "string" },
+        baseUrl: { type: "string" },
+        internal: { type: "string" },
+      },
+    },
+    fields: [
+      {
+        path: "region",
+        secret: false,
+        hot: false,
+        source: "db",
+        readonly: false,
+        value: "eu",
+        org: "readonly",
+      },
+      {
+        path: "baseUrl",
+        secret: false,
+        hot: false,
+        source: "db",
+        readonly: false,
+        value: "https://p",
+        org: "override",
+      },
+      { path: "internal", secret: false, hot: false, source: "db", readonly: false, value: "x" },
+    ],
+    valid: true,
+    validated: true,
+    issues: [],
+    orgMustConfigure: [],
+  };
+  const COPIES = {
+    overrides: [
+      {
+        orgId: "o2",
+        orgName: "Globex",
+        createdAt: "2026-11-05T08:00:00.000Z",
+        differing: ["baseUrl"],
+        secrets: [{ path: "apiKey", set: true }],
+      },
+    ],
+  };
+
+  it.each(LOCALES)("the config tab tags each field with the org level (%s)", async (locale) => {
+    const m = msgs[locale];
+    detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
+      "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: m.admin.extensions.detail.tabs.config }),
+    );
+    await screen.findByLabelText("region");
+    for (const level of ["readonly", "override", "hidden"] as const)
+      expect(screen.getByText(m.configForm.level[level], { exact: false })).toBeTruthy();
+  });
+
+  it("the config tab lists the orgs that hold a copy: when, what differs, secrets by state, nothing to edit", async () => {
+    const m = en.admin.extensions.orgCopies;
+    detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
+      "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, COPIES),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: en.admin.extensions.detail.tabs.config }),
+    );
+    const list = await screen.findByRole("list", { name: m.title });
+    expect(within(list).getByText("Globex")).toBeTruthy();
+    expect(within(list).getByText(fill(m.differing, { fields: "baseUrl" }))).toBeTruthy();
+    expect(within(list).getByText(fill(m.set, { path: "apiKey" }))).toBeTruthy();
+    expect(within(list).queryByRole("button")).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("no org has a copy: says so", async () => {
+    detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
+      "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: en.admin.extensions.detail.tabs.config }),
+    );
+    expect(await screen.findByText(en.admin.extensions.orgCopies.empty)).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "an enabled extension whose orgs must configure their own reads 运行中 · 组织需各自配置 with the count; one that is off does not (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      listRoutes([
+        plugin({ name: "demo", orgsNeedingConfig: 3 }),
+        plugin({
+          name: "quiet",
+          status: "disabled",
+          orgsNeedingConfig: 2,
+          desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        }),
+      ]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const text = fill(p.status.runningOrgsConfigure, { count: 3 });
+      expect(within(tableRow("demo")).getByText(text)).toBeTruthy();
+      expect(within(tableRow("quiet")).queryByText(/\(2\)|（2）/)).toBeNull();
+      expect(within(tableRow("quiet")).getByText(p.status.disabled)).toBeTruthy();
+    },
+  );
+});

@@ -209,7 +209,9 @@
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
-      "unavailable": "The extension is unavailable right now."
+      "unavailable": "The extension is unavailable right now.",
+      "field_not_overridable": "This field cannot be set by an organization.",
+      "no_org_override": "This organization follows the platform configuration and has none of its own."
     },
     "bootstrap": {
       "download_failed": "A bootstrap plugin pinned by the deployment could not be downloaded from the npm registry. Check the registry (packages.npmRegistry) or put the package in the bootstrap directory.",
@@ -2000,7 +2002,7 @@
     "jsonHint": "Enter a JSON value.",
     "linesHint": "One item per line.",
     "hot": "applies immediately",
-    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} platform {Set by the platform} other {Read-only}}",
     "tristate": {
       "default": "Default",
       "on": "On",
@@ -2029,6 +2031,17 @@
       "maxLength": "At most {limit} characters",
       "minItems": "At least {limit} items",
       "maxItems": "At most {limit} items"
+    },
+    "platformSet": "Set by the platform",
+    "secretState": {
+      "platform": "Configured by the platform",
+      "own": "Configured by this org",
+      "unset": "Not configured"
+    },
+    "level": {
+      "hidden": "Hidden from orgs",
+      "readonly": "Read-only for orgs",
+      "override": "Orgs can override"
     }
   },
   "channels": {
@@ -2265,6 +2278,33 @@
       "ui": "UI",
       "publicRoutes": "Public routes",
       "provides": "Extension points"
+    },
+    "overrides": {
+      "following": "Following the platform",
+      "followingHint": "A change here applies to this org only and does not affect other orgs.",
+      "ownConfig": "This org uses its own configuration",
+      "compare": "Compare with the platform",
+      "usePlatform": "Use the platform configuration",
+      "resetBody": "This org's own configuration, keys included, will be deleted, and the org will follow the platform again.",
+      "firstEdit": "After this change the org uses its own configuration and needs its own keys.",
+      "take": "Use the platform value",
+      "platformConfigured": "Configured by the platform",
+      "orgConfigured": "Configured by this org",
+      "unconfigured": "Not configured",
+      "compareHint": "Each value that differs from the platform. Secrets show only whether they are configured and are never compared.",
+      "same": "No value differs from the platform.",
+      "orgValue": "This org: {value}",
+      "platformValue": "Platform: {value}",
+      "title": "Configuration",
+      "save": "Save",
+      "saveLabel": "Save this org's configuration",
+      "cancel": "Cancel",
+      "saved": "Saved",
+      "taken": "Platform value taken",
+      "resetDone": "Now following the platform",
+      "saveInvalid": "The config is invalid. Check the marked fields.",
+      "loadFailed": "The configuration cannot be loaded.",
+      "retry": "Retry"
     }
   },
   "identities": {
@@ -3115,7 +3155,8 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
-        "legacy_format": "Repack needed"
+        "legacy_format": "Repack needed",
+        "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
       "replicas": {
         "consistent": "Replicas in sync {ok}/{n}",
@@ -3256,6 +3297,18 @@
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel"
+      },
+      "orgCopies": {
+        "title": "Orgs with their own configuration",
+        "hint": "These orgs no longer follow the platform configuration. The platform cannot edit or drop them; each org's admin does.",
+        "empty": "No org uses its own configuration.",
+        "since": "Created",
+        "differing": "Differs from the platform: {fields}",
+        "noDiff": "Same values as the platform",
+        "set": "{path} configured",
+        "unset": "{path} not configured",
+        "loadFailed": "The orgs' configuration cannot be loaded.",
+        "retry": "Retry"
       }
     }
   },
