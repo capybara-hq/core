@@ -2287,7 +2287,6 @@
       "hint": "Turn off a tool to stop every agent in this organization from using it.",
       "loadFailed": "The tools could not be read.",
       "retry": "Retry",
-      "switchLabel": "{tool}",
       "off": "Turned off in this org",
       "offTitle": "Turn off {tool}?",
       "offAgents": "These agents use this tool and will lose it:",

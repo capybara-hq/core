@@ -2275,7 +2275,6 @@
       "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
       "loadFailed": "无法读取工具。",
       "retry": "重试",
-      "switchLabel": "{tool}",
       "off": "已在本组织关闭",
       "offTitle": "关闭 {tool}？",
       "offAgents": "以下智能体正在使用这个工具，关闭后它们将无法使用：",

@@ -52,6 +52,33 @@ function routes(extra: Parameters<typeof stubApi>[0] = {}) {
           { tool: "read", enabled: false },
         ],
       }),
+    [`GET ${BASE}/tools/extensions`]: () =>
+      json(200, {
+        extensions: [
+          {
+            plugin: "todo",
+            displayName: { zh: "待办", en: "Todo" },
+            tools: [
+              {
+                name: "write",
+                key: "plugin__todo__write",
+                title: "Write the list",
+                description: "",
+                annotations: {},
+                defaultPolicy: "allow",
+              },
+              {
+                name: "read",
+                key: "plugin__todo__read",
+                title: null,
+                description: "",
+                annotations: {},
+                defaultPolicy: "allow",
+              },
+            ],
+          },
+        ],
+      }),
     ...extra,
   });
 }
@@ -90,11 +117,11 @@ describe("org switches for single extension tools (Sheet)", () => {
             : json(200, { applied: true }),
       });
       const { user, sheet } = await openSheet(locale);
-      const sw = await within(sheet).findByRole("switch", { name: "write" });
+      const sw = await within(sheet).findByRole("switch", { name: "Write the list" });
       expect(sw.getAttribute("aria-checked")).toBe("true");
       await user.click(sw);
       const dialog = await screen.findByRole("dialog", {
-        name: m.offTitle.replace("{tool}", "write"),
+        name: m.offTitle.replace("{tool}", "Write the list"),
       });
       expect(within(dialog).getByText(m.offAgents)).toBeTruthy();
       expect(within(dialog).getByText("· Helper")).toBeTruthy();
@@ -135,8 +162,8 @@ describe("org switches for single extension tools (Sheet)", () => {
       },
     });
     const { user, sheet } = await openSheet();
-    await user.click(await within(sheet).findByRole("switch", { name: "write" }));
-    const dialog = await screen.findByRole("dialog", { name: /Turn off write/ });
+    await user.click(await within(sheet).findByRole("switch", { name: "Write the list" }));
+    const dialog = await screen.findByRole("dialog", { name: /Turn off Write the list/ });
     await user.click(
       within(dialog).getByRole("button", { name: en.extensions.toolSwitches.offConfirm }),
     );
@@ -144,11 +171,37 @@ describe("org switches for single extension tools (Sheet)", () => {
     expect(screen.getByText(en.extensions.toolSwitches.stale)).toBeTruthy();
   });
 
+  it("the raw name stays beside a title; a tool without a title (or an unreadable offer) shows the name", async () => {
+    routes({
+      [`GET ${BASE}/tools/extensions`]: () =>
+        json(500, { error: { code: "internal", message: "x" } }),
+    });
+    const { sheet } = await openSheet();
+    // the offer cannot be read: the raw names label the switches
+    expect(await within(sheet).findByRole("switch", { name: "write" })).toBeTruthy();
+    expect(within(sheet).getByRole("switch", { name: "read" })).toBeTruthy();
+  });
+
+  it("a title is the label, the registered name is secondary text", async () => {
+    routes();
+    const { sheet } = await openSheet();
+    await within(sheet).findByRole("switch", { name: "Write the list" });
+    expect(within(sheet).getByText("write")).toBeTruthy();
+    expect(within(sheet).getByRole("switch", { name: "read" })).toBeTruthy();
+  });
+
+  it("a switch-off that applies at once confirms with the toast", async () => {
+    routes({ [`PUT ${TOOLS}/write`]: () => json(200, { applied: true }) });
+    const { user, sheet } = await openSheet();
+    await user.click(await within(sheet).findByRole("switch", { name: "Write the list" }));
+    expect(await screen.findByText(en.extensions.toolSwitches.off)).toBeTruthy();
+  });
+
   it("members read the states without switches", async () => {
     routes();
     const { sheet } = await openSheet("en", { me: MEMBER });
-    expect(await within(sheet).findByText("write")).toBeTruthy();
-    expect(within(sheet).queryByRole("switch", { name: "write" })).toBeNull();
+    expect(await within(sheet).findByText("Write the list")).toBeTruthy();
+    expect(within(sheet).queryByRole("switch", { name: "Write the list" })).toBeNull();
     expect(within(sheet).getByText(en.extensions.toolSwitches.off)).toBeTruthy();
   });
 

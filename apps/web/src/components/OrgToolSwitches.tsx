@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { type AffectedToolAgent, putOrgToolSwitch } from "../lib/extensions";
 import { orgExtensionChangeKeys } from "../lib/query/admin";
+import { extensionToolsQuery } from "../lib/query/agents";
 import { orgToolSwitchesQuery } from "../lib/query/channels";
 import { retryOnMountOf } from "../lib/query/client";
 import { keys } from "../lib/query/keys";
@@ -42,6 +43,15 @@ export function OrgToolSwitches({
   const errorMessage = useErrorMessage();
   const q = orgToolSwitchesQuery(orgId, plugin);
   const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  // The display titles the agent editors show; unreadable (or a key not offered): the raw name
+  const offerQ = extensionToolsQuery(orgId);
+  const offer = useQuery({ ...offerQ, retryOnMount: retryOnMountOf(offerQ.queryKey) });
+  const titles = new Map(
+    (offer.data?.extensions.find((e) => e.plugin === plugin)?.tools ?? []).flatMap((x) =>
+      x.title === null ? [] : [[x.name, x.title] as const],
+    ),
+  );
+  const labelOf = (tool: string) => titles.get(tool) ?? tool;
   const [pending, setPending] = useState<Pending | null>(null);
   const [failure, setFailure] = useState<string | undefined>();
   const sw = useAppMutation({
@@ -70,6 +80,7 @@ export function OrgToolSwitches({
     try {
       const r = await sw.mutateAsync({ tool, enabled: false });
       if (!r.applied) setPending({ tool, agents: r.affectedAgents, confirm: r.confirm });
+      else toast.success(t("off"));
     } catch (e) {
       setFailure(errorMessage(e));
     }
@@ -135,16 +146,27 @@ export function OrgToolSwitches({
       )}
       {tools.map((x) =>
         canEdit ? (
-          <Switch
-            key={x.tool}
-            label={t("switchLabel", { tool: x.tool })}
-            checked={x.enabled}
-            disabled={sw.isPending}
-            onChange={(on) => void (on ? turnOn(x.tool) : turnOff(x.tool))}
-          />
+          <Stack key={x.tool} gap={0}>
+            <Switch
+              label={labelOf(x.tool)}
+              checked={x.enabled}
+              disabled={sw.isPending}
+              onChange={(on) => void (on ? turnOn(x.tool) : turnOff(x.tool))}
+            />
+            {labelOf(x.tool) !== x.tool && (
+              <Text variant="small" tone="faint">
+                {x.tool}
+              </Text>
+            )}
+          </Stack>
         ) : (
           <Stack key={x.tool} direction="row" gap={8}>
-            <Text>{x.tool}</Text>
+            <Text>{labelOf(x.tool)}</Text>
+            {labelOf(x.tool) !== x.tool && (
+              <Text variant="small" tone="faint">
+                {x.tool}
+              </Text>
+            )}
             {!x.enabled && (
               <Text variant="small" tone="warn">
                 {t("off")}
@@ -160,7 +182,7 @@ export function OrgToolSwitches({
           onOpenChange={(o) => {
             if (!o) setPending(null);
           }}
-          title={t("offTitle", { tool: pending.tool })}
+          title={t("offTitle", { tool: labelOf(pending.tool) })}
           danger
           initialFocus="cancel"
           footer={
