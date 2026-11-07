@@ -615,6 +615,23 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     expect(within(row("acme-files")).getByText(fill(P.chips.owner, { org: "Beta" }))).toBeTruthy();
   });
 
+  it("the scope cell of an `all` plugin says how many orgs turned it off", async () => {
+    stubApi(
+      routes([
+        item({ id: NEW_ID, name: "everywhere", scope: "all", scopeOrgs: [], offCount: 2 }),
+        item({ name: "quiet", scope: "all", scopeOrgs: [], offCount: 0 }),
+      ]),
+    );
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.title });
+    const row = (name: string) => within(list).getAllByText(name)[0]?.closest("li") as HTMLElement;
+    const has = (el: HTMLElement, text: string) =>
+      within(el).queryByText((c) => c.includes(text)) !== null;
+    expect(has(row("everywhere"), fill(en.catalog.admin.meta.allOff, { n: 2 }))).toBe(true);
+    expect(has(row("quiet"), "turned off")).toBe(false);
+    expect(has(row("quiet"), en.catalog.scope.all)).toBe(true);
+  });
+
   it("detail of a plugin its org does not share: the owner, the reason, 设置范围 only narrows", async () => {
     const listed = item({ scopeOrgs: ["o1", "o2"] });
     stubApi({

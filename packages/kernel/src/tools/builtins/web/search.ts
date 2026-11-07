@@ -231,6 +231,7 @@ export function webSearchTool(deps: WebSearchDeps): BuiltinTool {
           ...(blocked !== undefined && blocked.length > 0 && { blockedDomains: blocked }),
           maxResults: max,
           orgConfig: resolved.orgConfig,
+          config: resolved.config,
           signal: ctx.signal,
         });
         results = Array.isArray(out?.results) ? out.results : [];

@@ -3,6 +3,7 @@ import { defineExtension, secret, staticManifestOf } from "@capybara-hq/plugin-s
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import { enabledExtensionsQuery } from "../../src/extensions/enabled.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
@@ -1162,18 +1163,19 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     });
   });
 
-  it("all and builtin: not switchable, switching off is 409 plugin.scope_locked; a builtin is on without an install", async () => {
+  it("all is switchable (on unless switched off); builtin is not: switching off is 409 plugin.scope_locked", async () => {
     const allId = await importSkill(env, { name: "all-skill" });
     await setScope(env, allId, "all");
-    // not installed yet (no sync runs here): `off`, not switchable off
+    // not installed yet (no sync runs here): `off`, but an org admin may switch it (layering §4)
     expect((await orgList(env.mem)).find((i) => i.id === allId)).toMatchObject({
       scope: "all",
-      switchable: false,
+      switchable: true,
       state: "off",
     });
     const off = await put(env.boss, allId, { enabled: false });
-    expect(off.statusCode).toBe(409);
-    expect(off.json().error.code).toBe("plugin.scope_locked");
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().item).toMatchObject({ state: "off" });
+    expect(await switchRow(allId)).toEqual({ enabled: false });
     const builtinId = await importSkill(env, { name: "builtin-skill", skillName: "builtin-skill" });
     await setBuiltin(env, builtinId);
     expect((await orgList(env.mem)).find((i) => i.id === builtinId)).toMatchObject({
@@ -1184,7 +1186,78 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     });
     expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
     const locked = await put(env.boss, builtinId, { enabled: false });
+    expect(locked.statusCode).toBe(409);
     expect(locked.json().error.code).toBe("plugin.scope_locked");
+  });
+
+  it("an org admin switches an all plugin's extension off (the org's enabled set lacks it) and on again", async () => {
+    const { itemId } = await importDeployedPlugin(env, "all-ext");
+    const url = `/api/v1/orgs/${env.orgId}/extensions/all-ext`;
+    // installed in the org (as the scope sync would), then scoped to every org
+    expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
+    await setScope(env, itemId, "all");
+    const enabled = async () =>
+      (await enabledExtensionsQuery(env.db, env.orgId).execute()).map((r) => r.plugin);
+    expect(await enabled()).toContain("all-ext");
+    const view = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
+    expect(view.statusCode, view.body).toBe(200);
+    expect(
+      (view.json() as { extensions: { plugin: string }[] }).extensions.find(
+        (e) => e.plugin === "all-ext",
+      ),
+    ).toMatchObject({ catalogItem: { itemId, scope: "all" }, switchable: true });
+    const preview = await put(env.boss, itemId, { enabled: false });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const off = await put(env.boss, itemId, { enabled: false, confirm: preview.json().confirm });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().item).toMatchObject({ id: itemId, scope: "all", state: "off" });
+    expect(await switchRow(itemId)).toEqual({ enabled: false });
+    expect(await enabled()).not.toContain("all-ext");
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
+    // the admin list counts the org that turned it off
+    const admin = await env.root({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(admin.statusCode, admin.body).toBe(200);
+    expect(
+      (admin.json() as { items: { id: string; offCount: number }[] }).items.find(
+        (i) => i.id === itemId,
+      )?.offCount,
+    ).toBe(1);
+    const on = await env.boss({ method: "PUT", url, payload: { enabled: true } });
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json().extension).toMatchObject({ plugin: "all-ext", enabled: true });
+    expect(await switchRow(itemId)).toEqual({ enabled: true });
+    expect(await enabled()).toContain("all-ext");
+    const after = await env.root({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(
+      (after.json() as { items: { id: string; offCount: number }[] }).items.find(
+        (i) => i.id === itemId,
+      )?.offCount,
+    ).toBe(0);
+  });
+
+  it("switching off an all dependency an on plugin needs keeps it on (rule 9, as for named)", async () => {
+    const depId = await seedPlugin(env, { name: "dep", skills: ["dep-skill"], templates: false });
+    const appId = await seedPlugin(env, {
+      name: "app",
+      skills: ["app-skill"],
+      templates: false,
+      dependencies: [{ name: "dep", version: "^1.0.0" }],
+    });
+    expect((await install(env.boss, env, appId)).statusCode).toBe(201);
+    await setScope(env, depId, "all");
+    const preview = await put(env.boss, depId, { enabled: false });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const done = await put(env.boss, depId, { enabled: false, confirm: preview.json().confirm });
+    expect(done.statusCode, done.body).toBe(200);
+    // the installer keeps an install another live install depends on (used_by_other_install)
+    expect(done.json().item).toMatchObject({ id: depId, state: "on", switchable: true });
+    expect(
+      await env.db
+        .selectFrom("plugin_installs")
+        .select("item_id")
+        .where("item_id", "=", depId)
+        .execute(),
+    ).toHaveLength(1);
   });
 
   it("a template plugin with scope all needs config until switched on with inputs", async () => {
@@ -1215,7 +1288,7 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
     expect(d.json().error.code).toBe("plugin.disabled");
   });
 
-  it("DELETE plugin-installs follows switch-off semantics: optional writes switch false, all and builtin are 409 plugin.scope_locked", async () => {
+  it("DELETE plugin-installs follows switch-off semantics: optional and all write switch false", async () => {
     const itemId = await importSkill(env);
     expect((await put(env.boss, itemId, { enabled: true })).statusCode).toBe(200);
     expect(await switchRow(itemId)).toEqual({ enabled: true });
@@ -1225,17 +1298,13 @@ describe("the org switch (plugin scope)", { timeout: 60_000 }, () => {
       state: "off",
       installed: null,
     });
-    // all: installed through the alias, then not removable here
+    // all: installed through the alias, removable here like an optional one (layering §4)
     const allId = await importSkill(env, { name: "all-skill", skillName: "all-skill" });
     expect((await install(env.boss, env, allId)).statusCode).toBe(201);
     await setScope(env, allId, "all");
-    const del = await env.boss({
-      method: "DELETE",
-      url: `/api/v1/orgs/${env.orgId}/plugin-installs/${await installOf(allId)}`,
-    });
-    expect(del.statusCode, del.body).toBe(409);
-    expect(del.json().error.code).toBe("plugin.scope_locked");
-    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(1);
+    await uninstall(allId);
+    expect(await switchRow(allId)).toEqual({ enabled: false });
+    expect(await env.db.selectFrom("plugin_installs").select("id").execute()).toHaveLength(0);
   });
 
   it("an org outside a named item's list cannot enable its extension directly (catalog.approval_required)", async () => {

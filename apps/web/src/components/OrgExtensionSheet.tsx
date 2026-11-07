@@ -9,6 +9,8 @@ import type { ConfigIssue } from "../lib/json-schema";
 import { ConfigForm } from "./config-form/ConfigForm";
 import { orgConfig, orgFormMeta } from "./config-form/org";
 import { FormError } from "./form-error";
+import { OrgOverrideSection } from "./OrgOverrideSection";
+import { OrgToolSwitches } from "./OrgToolSwitches";
 import { PermissionReview } from "./PermissionReview";
 import { PermissionSummary } from "./PermissionSummary";
 
@@ -35,6 +37,7 @@ export interface SaveError {
  * The list page keeps the switch logic; this Sheet only reports the person's actions.
  */
 export function OrgExtensionSheet({
+  orgId,
   extension: plugin,
   label,
   canEdit,
@@ -43,6 +46,7 @@ export function OrgExtensionSheet({
   platform,
   unavailable,
   configForm,
+  overrides,
   needsConfig,
   locked,
   problem,
@@ -55,6 +59,7 @@ export function OrgExtensionSheet({
   onForceDisable,
   onSync,
 }: {
+  orgId: string;
   extension: OrgExtension;
   label: string;
   canEdit: boolean;
@@ -63,6 +68,8 @@ export function OrgExtensionSheet({
   platform: boolean;
   unavailable: boolean;
   configForm: boolean;
+  /** The extension has overridable deployment fields: the two-level form is shown (org admins). */
+  overrides: boolean;
   needsConfig: boolean;
   /** The switch is not the org's (platform-wide or not switchable): no 保存并启用. */
   locked: boolean;
@@ -83,6 +90,7 @@ export function OrgExtensionSheet({
     ok: boolean;
     dirty: boolean;
   }>({ config: orgConfig(plugin.config), ok: true, dirty: false });
+  const [overridesDirty, setOverridesDirty] = useState(false);
   const directory = provides(plugin, "directory");
   const saveEnable = configForm && !plugin.enabled && !locked;
   return (
@@ -95,8 +103,8 @@ export function OrgExtensionSheet({
       meta={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
         .filter((x): x is string => x !== null)
         .join(" · ")}
-      width={configForm ? 720 : 480}
-      dirty={form.dirty}
+      width={configForm || overrides ? 720 : 480}
+      dirty={form.dirty || overridesDirty}
       {...(configForm
         ? {
             footer: (
@@ -127,6 +135,14 @@ export function OrgExtensionSheet({
         : {})}
     >
       <Stack gap={16}>
+        {overrides && (
+          <Stack gap={12}>
+            <Text variant="small" tone="muted">
+              {t("overrides.title")}
+            </Text>
+            <OrgOverrideSection orgId={orgId} plugin={plugin.plugin} onDirty={setOverridesDirty} />
+          </Stack>
+        )}
         {configForm && (
           <Stack gap={12}>
             <Text variant="small" tone="muted">
@@ -203,6 +219,9 @@ export function OrgExtensionSheet({
               </Text>
             )}
           </Stack>
+        )}
+        {plugin.enabled && !unavailable && (
+          <OrgToolSwitches orgId={orgId} plugin={plugin.plugin} canEdit={canEdit} />
         )}
         {canEdit && !unavailable && directory && plugin.enabled && (
           <Stack gap={8}>

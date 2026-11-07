@@ -46,5 +46,8 @@ export async function pluginItemsOf(
   return out;
 }
 
-/** Whether an item keeps its plugin on in every org (`all` or builtin): its switch cannot go off. */
-export const itemLocked = (i: ExtensionPluginItem): boolean => i.builtin || i.scope === "all";
+/**
+ * Whether an item keeps its plugin on in every org (builtin only: an org may switch off an `all`
+ * one, layering spec §4): its switch cannot go off.
+ */
+export const itemLocked = (i: ExtensionPluginItem): boolean => i.builtin;

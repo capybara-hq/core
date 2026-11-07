@@ -16,6 +16,7 @@ export * from "./identity.js";
 export * from "./marketplace.js";
 export * from "./model.js";
 export * from "./model-params.js";
+export * from "./org-access.js";
 export * from "./permissions.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";

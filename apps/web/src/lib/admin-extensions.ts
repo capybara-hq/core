@@ -102,6 +102,11 @@ export interface AdminExtension {
   } | null;
   configurable: boolean;
   configValid: boolean;
+  /**
+   * Orgs with the extension on whose effective config is not valid because the platform left an
+   * overridable field empty (spec A §5.4a); absent when none.
+   */
+  orgsNeedingConfig?: number;
   removable: boolean;
   /** 包读不到时的说明（此时 status 为 failed、权限为空）。 */
   error?: string;
@@ -130,6 +135,8 @@ export interface DeploymentConfigField {
    * names, never values); saved per key through `secretEntries`.
    */
   keys?: string[];
+  /** What orgs may do with the field: see it (`readonly`) or bring their own (`override`); absent = hidden. */
+  org?: "readonly" | "override";
 }
 
 /** One operation on a secret record drawn per item (kernel `SecretEntry`). */
@@ -155,6 +162,18 @@ export interface DeploymentConfigView {
   /** false：本副本没加载这个插件，`valid` 不是校验结果（加载时才校验）。 */
   validated: boolean;
   issues: ConfigIssue[];
+  /** The required overridable fields the platform left empty: each org must configure them itself. */
+  orgMustConfigure?: string[];
+}
+
+/** One org copy of the overridable config (kernel `OrgOverrideSummary`). */
+export interface OrgOverrideSummary {
+  orgId: string;
+  orgName: string;
+  createdAt: string;
+  /** The overridable non-secret fields whose copy value differs from the platform's. */
+  differing: string[];
+  secrets: { path: string; set: boolean }[];
 }
 
 const base = "/api/v1/admin/extensions";
@@ -185,6 +204,10 @@ export const uninstallExtension = (name: string) => apiFetch<void>(one(name), { 
 
 export const getExtensionConfig = (name: string) =>
   apiFetch<DeploymentConfigView>(`${one(name)}/config`);
+
+/** The orgs holding a copy of the extension's overridable config (read only). */
+export const listExtensionOrgOverrides = (name: string) =>
+  apiFetch<{ overrides: OrgOverrideSummary[] }>(`${one(name)}/org-overrides`);
 
 /**
  * 保存部署级配置：键为字段点路径，`null` 清除，没给的字段不变；`secretEntries` 改带提示的密钥 record 的单个键。

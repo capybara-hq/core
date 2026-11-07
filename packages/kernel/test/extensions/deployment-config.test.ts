@@ -34,6 +34,7 @@ import { PW, type Req, session, startKernel, type TestKernel, waitFor } from "..
 
 const DEPLOYCFG = fileURLToPath(new URL("../fixtures/plugins/deploycfg/index.ts", import.meta.url));
 const BADCONFIG = fileURLToPath(new URL("../fixtures/plugins/badconfig/index.ts", import.meta.url));
+const ORGLEVELS = fileURLToPath(new URL("../fixtures/plugins/orglevels/index.ts", import.meta.url));
 const TOKEN = "tok-Zq8vR3secret-value";
 const TOKEN2 = "tok-second-Wm4kP9value";
 
@@ -45,6 +46,7 @@ interface Field {
   readonly: boolean;
   value?: unknown;
   set?: boolean;
+  org?: "readonly" | "override";
 }
 interface ConfigView {
   plugin: string;
@@ -55,6 +57,7 @@ interface ConfigView {
   valid: boolean;
   validated: boolean;
   issues: { path: string; message: string }[];
+  orgMustConfigure: string[];
 }
 
 describe("配置来源标注（extensionConfigSources / loadConfigWithSources）", () => {
@@ -149,7 +152,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       roles: ["api", "worker"],
-      extensions: [MODEL_FAKE, DEPLOYCFG],
+      extensions: [MODEL_FAKE, DEPLOYCFG, ORGLEVELS],
       extensionPermissions: { autoApprove: true },
       extensionHost: { dir: extDir },
       extensionConfig: { deploycfg: fileCfg },
@@ -179,6 +182,7 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
         "displayName",
         "fields",
         "issues",
+        "orgMustConfigure",
         "plugin",
         "schema",
         "valid",
@@ -571,6 +575,58 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     await k?.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
     await waitFor(async () => live()?.greeting === "from-pg", 10_000, "periodic picks it up");
     expect(deploycfgProbe().setups).toBe(before);
+  });
+
+  it("org levels: the platform may leave overridable fields empty; the extension loads and the view tags levels", async () => {
+    const url = "/api/v1/admin/extensions/orglevels/config";
+    const putOrg = (values: Record<string, unknown>) =>
+      admin({ method: "PUT", url, payload: { values } });
+    // hidden fields stay required: saving without host is refused
+    const missingHost = await putOrg({ limit: 7 });
+    expect(missingHost.statusCode, missingHost.body).toBe(400);
+    expect(missingHost.json().error.code).toBe("extension.config_invalid");
+    expect(missingHost.json().error.details.map((d: { path: string }) => d.path)).toEqual(["host"]);
+
+    const saved = await putOrg({ host: "h" });
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(
+      async () => k?.app.get(ExtensionHost).current("orglevels"),
+      10_000,
+      "orglevels loaded",
+    );
+    // ctx.config is the relaxed parse: the overridable fields are absent
+    expect(k?.app.get(ExtensionHost).current("orglevels")?.config).toEqual({ host: "h", limit: 5 });
+    await waitFor(async () => {
+      const r = await admin({ method: "GET", url: "/api/v1/admin/extensions/orglevels" });
+      return r.json().status === "enabled";
+    });
+    const status = await admin({ method: "GET", url: "/api/v1/admin/extensions/orglevels" });
+    expect(status.json()).toMatchObject({ status: "enabled", configValid: true });
+    // fed by EffectiveConfigs.countNeedingConfig (the count itself is Task 5's)
+    expect(typeof status.json().orgsNeedingConfig).toBe("number");
+
+    const res = await admin({ method: "GET", url });
+    expect(res.statusCode, res.body).toBe(200);
+    const v = res.json() as ConfigView;
+    expect(v).toMatchObject({ valid: true, issues: [], orgMustConfigure: ["baseUrl", "apiKey"] });
+    expect(Object.fromEntries(v.fields.map((f) => [f.path, f.org ?? null]))).toEqual({
+      host: null,
+      limit: "readonly",
+      baseUrl: "override",
+      apiKey: "override",
+    });
+    expect(field(v, "host")).not.toHaveProperty("org");
+
+    // with every overridable field set, orgs have nothing they must configure
+    const full = await admin({
+      method: "PUT",
+      url,
+      payload: { values: { baseUrl: "https://p.example", apiKey: "pk-orglevels" } },
+    });
+    expect(full.statusCode, full.body).toBe(200);
+    expect(full.json()).toMatchObject({ valid: true, orgMustConfigure: [] });
+    const after = await admin({ method: "GET", url: "/api/v1/admin/extensions/orglevels" });
+    expect(after.json()).not.toHaveProperty("orgsNeedingConfig");
   });
 
   it("文件后来加了 PG 里已有的字段：以文件为准并显示为只读；PUT 该字段 409", async () => {

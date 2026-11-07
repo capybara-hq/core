@@ -105,7 +105,9 @@ export interface ExtensionContext {
    * manifest's `requires` / `optional`. Without `orgId` it is the deployment-level view and returns
    * synchronously; with `orgId` it returns a Promise, and orgScoped extension points (such as
    * `channel`, `directory`) are filtered by that org's enablement (queried every time, not cached);
-   * `get` rejects with `ExtensionPointUnavailableError` when the provider is not enabled in that org.
+   * with `orgId`, a provider whose effective config is not valid in that org is excluded too;
+   * `get` rejects with `ExtensionPointUnavailableError` when the provider is not enabled in that
+   * org or its config is not valid there.
    * When there is no provider, `get` throws `ExtensionPointUnavailableError` and `list` returns an
    * empty list.
    */

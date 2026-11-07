@@ -15,6 +15,7 @@ import { sql } from "kysely";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { ExtensionHost, type LoadedUiContribution } from "../extensions/host.js";
 import { PreviewerRegistry } from "../files/previewers.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -57,6 +58,12 @@ export interface UiEmbedTarget {
 
 interface UiViewsDeps {
   host: Pick<ExtensionHost, "uiContributions">;
+  /**
+   * The effective deployment config of an extension for an org (layering spec A §6): passed to
+   * `render` / `action` as `config`; when it is not valid the block fails alone (409
+   * `extension.needs_config`) and the extension is not called.
+   */
+  effective: Pick<EffectiveConfigs, "get">;
   /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`), queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
@@ -197,9 +204,11 @@ export class UiViews {
     @Inject(PreviewerRegistry) previewers: PreviewerRegistry,
     @Inject(KernelDb) db: KernelDb,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
+    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
   ) {
     this.d = {
       host,
+      effective,
       // org config rows plus the required bootstrap plugins
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       canAccessConversation: (orgId, id, accountId) =>
@@ -331,6 +340,7 @@ export class UiViews {
       accountId: string;
       role: OrgRole;
       locale: UiTarget["locale"];
+      config: unknown;
       conversationId?: string;
       item?: string;
       card?: { callId: string; key?: string };
@@ -352,7 +362,18 @@ export class UiViews {
     );
     if (!entry || !canUsePlace(entry.contribution.place, t.role)) throw notFound();
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
-    const base = { orgId: t.orgId, accountId: t.accountId, role: t.role, locale: t.locale };
+    // spec A §6: the extension is not called for an org whose effective config is not valid
+    const effective = await this.d.effective.get(t.orgId, t.plugin);
+    if (!effective.ok) {
+      throw new ApiError("extension.needs_config", `Extension ${t.plugin} ${NEEDS_CONFIG_REASON}`);
+    }
+    const base = {
+      orgId: t.orgId,
+      accountId: t.accountId,
+      role: t.role,
+      locale: t.locale,
+      config: effective.config,
+    };
     if (!isConversationPlace(entry.contribution.place)) {
       if (t.item !== undefined || t.card !== undefined) {
         throw new ApiError("validation_failed", "item and callId are for conversation views");

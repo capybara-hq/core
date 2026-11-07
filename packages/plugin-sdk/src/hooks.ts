@@ -182,12 +182,23 @@ export type HookVerdict = void | { deny: string };
 
 /**
  * A hook handler. The payload is a deep-frozen copy (mutating it throws). `signal` aborts when the
- * hook runs past `hooks.timeoutMs` or the call it observes is aborted.
+ * hook runs past `hooks.timeoutMs` or the call it observes is aborted. `call.config` is the
+ * extension's effective deployment config for the payload's org (the platform's config with the
+ * org's copy applied to the overridable fields, or `ctx.config` while the org follows it); the
+ * kernel always passes it, and never calls a hook for an org where that config is not valid
+ * (observe hooks are skipped, policy hooks deny).
  */
 export type HookHandler<K extends AvailableHook> = (
   payload: HookPayloads[K],
   signal: AbortSignal,
+  call?: HookCall,
 ) => Promise<HookVerdict> | HookVerdict;
+
+/** The per-call context of a hook handler (see {@link HookHandler}). */
+export interface HookCall {
+  /** The extension's effective deployment config for the payload's org. */
+  config: unknown;
+}
 
 /**
  * - `policy` (only on {@link POLICY_HOOKS}): policy hooks run serially by plugin name (registration

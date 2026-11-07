@@ -184,6 +184,26 @@ describe("agent page Tools section: extension tools", () => {
     },
   );
 
+  it.each(["zh", "en"] as const)(
+    "a selected tool the org turned off shows the switched-off reason (%s)",
+    async (locale) => {
+      const m = msgs[locale].agents.form;
+      const ref = { kind: "plugin", plugin: "todo", name: "write" };
+      stubApi({
+        ...sessionRoutes(),
+        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith([ASK, ref]) }),
+        [`GET ${ORG}/models`]: () => json(200, MODELS),
+        [`GET ${ORG}/tools/extensions`]: () =>
+          json(200, {
+            extensions: [{ ...TODO, tools: [{ ...TODO.tools[0], switchedOff: true }] }],
+          }),
+      });
+      await renderEditAgent({ section: "tools", locale });
+      const ext = await screen.findByRole("group", { name: TODO.displayName[locale] });
+      expect(within(ext).getByText(m.extensionToolOffInOrg)).toBeTruthy();
+    },
+  );
+
   it("the extension tools are part of the first paint (no browser read)", async () => {
     const browser = expectNoFirstPaintFetch();
     const { calls } = await renderEditAgent({

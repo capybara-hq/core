@@ -126,6 +126,28 @@ export interface ExtensionOrgConfigsTable {
   updated_at: Ts;
 }
 
+/** An org's copy of an extension's overridable deployment config fields (0086, spec A §5.4). */
+export interface ExtensionOrgOverridesTable {
+  plugin: string;
+  org_id: string;
+  /** The copy's non-secret values (its secrets are in `secrets`). */
+  config: ColumnType<Record<string, unknown>, string | undefined, string>;
+  created_by: string | null;
+  created_at: Ts;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
+/** An org admin's switch of one extension tool (0086, spec A §7). */
+export interface OrgToolSwitchesTable {
+  org_id: string;
+  plugin: string;
+  tool: string;
+  enabled: boolean;
+  updated_by: string | null;
+  updated_at: Ts;
+}
+
 export interface AuditEventsTable {
   id: Generated<string>;
   at: Ts;
@@ -1040,6 +1062,8 @@ export interface KernelDatabase {
   api_tokens: ApiTokensTable;
   deployment_settings: DeploymentSettingsTable;
   extension_org_configs: ExtensionOrgConfigsTable;
+  extension_org_overrides: ExtensionOrgOverridesTable;
+  org_tool_switches: OrgToolSwitchesTable;
   audit_events: AuditEventsTable;
   secrets: SecretsTable;
   agents: AgentsTable;

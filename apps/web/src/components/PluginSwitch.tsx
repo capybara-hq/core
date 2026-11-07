@@ -46,8 +46,9 @@ export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
       case "not_offered":
         return { label: t("not_offered"), tone: "muted" };
       case "on":
-        return i.builtin || i.scope === "all"
-          ? { label: t("platform"), tone: "ok" }
+        if (i.builtin) return { label: t("platform"), tone: "ok" };
+        return i.scope === "all"
+          ? { label: t("platformDefault"), tone: "ok" }
           : { label: t("on"), tone: "ok" };
       default:
         if (i.notDeployed) return { label: t("notDeployed"), tone: "warn" };

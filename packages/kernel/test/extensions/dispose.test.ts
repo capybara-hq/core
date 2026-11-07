@@ -323,7 +323,11 @@ describe("插件撤销：每一种登记", () => {
     const setupsBefore = probe.setups;
     const deps0 = {
       kernel: deps,
-      extensionPointAccess: { providers: () => [], enabledPlugins: async () => new Set<string>() },
+      extensionPointAccess: {
+        providers: () => [],
+        enabledPlugins: async () => new Set<string>(),
+        configOk: async () => true,
+      },
       nextGeneration: () => 7,
     };
     const input = {

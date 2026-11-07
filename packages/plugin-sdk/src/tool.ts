@@ -181,6 +181,14 @@ export interface ToolCallContext {
   signal: AbortSignal;
   /** null = 用户取消或超时。 */
   resume?: { state: unknown; answer: FormAnswer | null };
+  /**
+   * The extension's effective deployment config for this org: the platform's deployment config
+   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+   * for work done for this org. Optional in the type so older extensions compile; the kernel
+   * always passes it.
+   */
+  config?: unknown;
 }
 
 export type ToolHandler = (

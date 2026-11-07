@@ -28,6 +28,8 @@ const registryOf = (tool: BuiltinTool): ToolRegistry =>
     { tools: () => [], enabledPlugins: async () => new Set() },
     { list: () => [] },
     { list: () => [tool] },
+    { get: async () => ({ ok: true, config: {}, source: "platform" }) },
+    { offKeys: async () => new Set() },
   );
 
 const def = {

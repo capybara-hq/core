@@ -96,6 +96,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     issue: "https://github.com/capybara-hq/core/issues/TODO-platform-extensions-admin",
   },
   {
+    route: "GET /api/v1/admin/extensions/:name/org-overrides",
+    category: "secret",
+    reason: "Lists every org's config copy of an extension: cross-org config state",
+  },
+  {
     route: "GET /api/v1/admin/extensions/:name/config",
     category: "secret",
     reason: "Returns deployment config that can include secret fields",
@@ -481,6 +486,38 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
     category: "secret",
     reason: "Org extension config may hold secret fields",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/extensions/:extension/overrides",
+    category: "secret",
+    reason: "The org's copy of an extension's deployment config, with secret fields as set or not",
+  },
+  {
+    route: "PUT /api/v1/orgs/:orgId/extensions/:extension/overrides",
+    category: "secret",
+    reason: "Saves the org's config copy, including the org's own secrets entered in the same save",
+  },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/extensions/:extension/overrides",
+    category: "secret",
+    reason: "Drops the org's config copy and its secrets; part of the config-copy lifecycle on the web",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/extensions/:extension/overrides/take",
+    category: "secret",
+    reason: "Starts an org config copy whose secrets a person enters on the web",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/extensions/:extension/tools",
+    category: "later",
+    reason: "An extension's tools with the org's on/off switches, readable by an agent later",
+    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-extensions",
+  },
+  {
+    route: "PUT /api/v1/orgs/:orgId/extensions/:extension/tools/:tool",
+    category: "later",
+    reason: "Turns one extension tool on or off in the org; an org-class write for later",
+    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-extensions",
   },
   // org-uploads
   {

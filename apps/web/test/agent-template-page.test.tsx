@@ -541,6 +541,41 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
   const save = (user: ReturnType<typeof userEvent.setup>) =>
     user.click(screen.getByRole("button", { name: TF.submit }));
 
+  it("工具: a picked extension tool the org turned off shows the switched-off reason", async () => {
+    const r = live();
+    r[`GET ${ORG}/agent-templates/t9`] = () =>
+      json(
+        200,
+        detail({
+          definition: { ...DEFINITION, tools: ["AskUserQuestion", "plugin__todo__write"] },
+        }),
+      );
+    r[`GET ${ORG}/tools/extensions`] = () =>
+      json(200, {
+        extensions: [
+          {
+            plugin: "todo",
+            displayName: { zh: "待办", en: "Todo" },
+            tools: [
+              {
+                name: "write",
+                key: "plugin__todo__write",
+                title: "Write the list",
+                description: "",
+                annotations: {},
+                defaultPolicy: "allow",
+                switchedOff: true,
+              },
+            ],
+          },
+        ],
+      });
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=tools", r);
+    const group = await screen.findByRole("group", { name: "Todo" });
+    expect(within(group).getByText(TF.extensionToolOffInOrg)).toBeTruthy();
+  });
+
   it("连接器: a connector template on in the org is added, policies are set per listed tool, and both round-trip", async () => {
     const r = live();
     r[`GET ${ORG}/components`] = () =>

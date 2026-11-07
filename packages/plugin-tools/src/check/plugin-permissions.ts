@@ -213,6 +213,7 @@ function scanSetup(
   m: Manifest,
   decls: Map<string, Node>,
   onTool?: (r: ToolRegistration) => void,
+  onCall?: (area: string, method: string | undefined) => void,
 ): Finding[] {
   const out: Finding[] = [];
   /** 明确的违规：豁免注释不起作用。 */
@@ -284,6 +285,7 @@ function scanSetup(
         const obj = unwrap(callee.object as Node);
         if (obj.type !== "MemberExpression" || !isCtx(obj.object)) return;
         const area = memberName(obj);
+        if (area !== undefined) onCall?.(area, method);
         if (area === "http" && method === "route") {
           const verb = args[0] ? stringValue(resolve(args[0], decls)) : undefined;
           const path = args[1] ? stringValue(resolve(args[1], decls)) : undefined;
@@ -419,7 +421,11 @@ function scanSetup(
   return out;
 }
 
-function scanFile(f: ParsedFile, onTool?: (r: ToolRegistration) => void): Finding[] {
+function scanFile(
+  f: ParsedFile,
+  onTool?: (r: ToolRegistration) => void,
+  onCall?: (area: string, method: string | undefined) => void,
+): Finding[] {
   const decls = buildDecls(f);
   const out: Finding[] = [];
   walk(f.program, (n) => {
@@ -429,7 +435,7 @@ function scanFile(f: ParsedFile, onTool?: (r: ToolRegistration) => void): Findin
     const arg = (n.arguments as Node[])[0];
     const obj = arg ? resolve(arg, decls) : undefined;
     if (obj?.type !== "ObjectExpression") return;
-    out.push(...scanSetup(f, readManifest(obj, decls), decls, onTool));
+    out.push(...scanSetup(f, readManifest(obj, decls), decls, onTool, onCall));
   });
   return out;
 }
@@ -485,4 +491,33 @@ export function findToolRegistrations(pluginDirs: string[]): ToolRegistration[] 
     }
   }
   return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+}
+
+/** The `ctx.<area>.<method>` calls an extension's setup makes (see {@link findCtxCalls}). */
+export interface CtxCalls {
+  /** `ctx.tools.register` is called. */
+  tools: boolean;
+  /** `ctx.ui.view` or `ctx.ui.action` is called. */
+  ui: boolean;
+  /** `ctx.hooks.on` is called. */
+  hooks: boolean;
+}
+
+/**
+ * Which of `ctx.tools.register`, `ctx.ui.view|action` and `ctx.hooks.on` the non-test sources
+ * under `pluginDir` call, found by the same scanner as {@link checkPluginPermissions}.
+ */
+export function findCtxCalls(pluginDir: string): CtxCalls {
+  const out: CtxCalls = { tools: false, ui: false, hooks: false };
+  for (const { file, isTest } of listSourceFiles(pluginDir)) {
+    if (isTest) continue;
+    const parsed = parseFile(file);
+    if (isParseError(parsed)) continue;
+    scanFile(parsed, undefined, (area, method) => {
+      if (area === "tools" && method === "register") out.tools = true;
+      else if (area === "ui" && (method === "view" || method === "action")) out.ui = true;
+      else if (area === "hooks" && method === "on") out.hooks = true;
+    });
+  }
+  return out;
 }

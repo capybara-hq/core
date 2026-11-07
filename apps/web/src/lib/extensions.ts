@@ -1,6 +1,6 @@
 import { apiFetch } from "./api";
 import type { LocalizedName, PluginScope, SwitchPreview } from "./catalog";
-import type { JsonSchema } from "./json-schema";
+import type { ConfigIssue, JsonSchema } from "./json-schema";
 
 /**
  * Sensitive reason codes (kernel `SensitiveReason`): the UI translates them by code
@@ -61,6 +61,44 @@ export interface OrgExtension {
    * permissions but this (older kernels leave it out; then the `provides` permission group).
    */
   provides?: string[];
+  /**
+   * The two-level deployment config in this org (spec A §5.3): the org `following` the platform, a
+   * `copy` of the overridable fields, or `none` (no overridable field). Admins only; older kernels
+   * leave it out.
+   */
+  overrideState?: "following" | "copy" | "none";
+  /**
+   * The org must configure the extension before it works here (the effective config is not valid,
+   * or a required org-only field is missing), as the kernel decides.
+   */
+  needsConfig?: boolean;
+}
+
+/** One field of an org's two-level config (kernel `OrgOverrideField`). */
+export interface OrgOverrideField {
+  path: string;
+  level: "readonly" | "override";
+  secret: boolean;
+  /** The platform's value (non-secret) or only whether it is set (secret). */
+  platform: { value?: unknown; set?: boolean };
+  /** With a copy, on an overridable field: the copy's value, or whether its secret is set. */
+  org?: { value?: unknown; set?: boolean };
+  /** With a copy, on an overridable non-secret field: the copy's value differs from the platform's. */
+  differs?: boolean;
+}
+
+/**
+ * `GET / PUT / DELETE …/extensions/:name/overrides` (kernel `OrgOverrideView`): hidden fields never
+ * appear, secrets give only whether they are set. `schema` is the form's JSON Schema when the
+ * kernel sends one; without it the form is drawn from the fields.
+ */
+export interface OrgOverrideView {
+  state: "following" | "copy";
+  createdAt?: string;
+  fields: OrgOverrideField[];
+  valid: boolean;
+  issues: ConfigIssue[];
+  schema?: JsonSchema | null;
 }
 
 /**
@@ -113,6 +151,31 @@ export const putOrgExtension = (orgId: string, plugin: string, input: PutOrgExte
     },
   );
 
+const overridesPath = (orgId: string, plugin: string) =>
+  `${base(orgId)}/${encodeURIComponent(plugin)}/overrides`;
+
+/** The org's two-level config of an extension (org admins). */
+export const getOrgOverrides = (orgId: string, plugin: string) =>
+  apiFetch<OrgOverrideView>(overridesPath(orgId, plugin));
+
+/** Saves overridable fields (`null` clears; secrets are plain values); the first save makes the copy. */
+export const putOrgOverrides = (orgId: string, plugin: string, values: Record<string, unknown>) =>
+  apiFetch<OrgOverrideView>(overridesPath(orgId, plugin), {
+    method: "PUT",
+    body: JSON.stringify({ values }),
+  });
+
+/** Drops the copy (its secrets too): the org follows the platform again. */
+export const resetOrgOverrides = (orgId: string, plugin: string) =>
+  apiFetch<OrgOverrideView>(overridesPath(orgId, plugin), { method: "DELETE" });
+
+/** Takes the platform's current values of these non-secret fields into the copy. */
+export const takeOrgOverrides = (orgId: string, plugin: string, paths: string[]) =>
+  apiFetch<OrgOverrideView>(`${overridesPath(orgId, plugin)}/take`, {
+    method: "POST",
+    body: JSON.stringify({ paths }),
+  });
+
 /** 立即同步通讯录（202，后台任务）。 */
 export const syncDirectory = (orgId: string, plugin: string) =>
   apiFetch<{ jobId: string }>(`${base(orgId)}/${encodeURIComponent(plugin)}/directory/sync`, {
@@ -161,6 +224,8 @@ export interface ExtensionToolOffer {
   description: string;
   annotations: Record<string, boolean>;
   defaultPolicy: "allow" | "ask";
+  /** The org turned this tool off (older kernels leave it out): still listed, shown as off. */
+  switchedOff?: boolean;
 }
 
 /** An extension enabled in the org with the tools it registered (kernel `ExtensionToolsOffer`). */
@@ -179,3 +244,39 @@ export const listExtensionTools = (orgId: string) =>
 /** Whether each `org-default` point has a provider for the org now (`agents.use`; no names). */
 export const listAvailableExtensionPoints = (orgId: string) =>
   apiFetch<{ points: { point: string; available: boolean }[] }>(`${pointsBase(orgId)}/available`);
+
+/** One tool of an extension with the org's switch (kernel `OrgToolSwitch`). */
+export interface OrgToolSwitch {
+  tool: string;
+  enabled: boolean;
+}
+
+/** An org agent whose current version selects the tool being switched off. */
+export interface AffectedToolAgent {
+  id: string;
+  name: string;
+}
+
+/** `PUT …/tools/:tool`: the switch-off preview with its confirm hash, or the switch applied. */
+export type ToolSwitchResult =
+  | { applied: false; affectedAgents: AffectedToolAgent[]; confirm: string }
+  | { applied: true };
+
+const toolsPath = (orgId: string, plugin: string) =>
+  `${base(orgId)}/${encodeURIComponent(plugin)}/tools`;
+
+/** The extension's tools with the org's switches (members read). */
+export const listOrgToolSwitches = (orgId: string, plugin: string) =>
+  apiFetch<{ tools: OrgToolSwitch[] }>(toolsPath(orgId, plugin));
+
+/** Switches one tool; off answers the preview until `confirm` carries its hash (org admins). */
+export const putOrgToolSwitch = (
+  orgId: string,
+  plugin: string,
+  tool: string,
+  input: { enabled: boolean; confirm?: string },
+) =>
+  apiFetch<ToolSwitchResult>(`${toolsPath(orgId, plugin)}/${encodeURIComponent(tool)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });

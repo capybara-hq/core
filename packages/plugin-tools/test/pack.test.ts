@@ -468,6 +468,19 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
     expect(a.manifest.extension?.configSchemas).toEqual(manifest.extension?.configSchemas);
   }, 60_000);
 
+  it("packs an org override field with x-org, leaving the static config fields unchanged", async () => {
+    const r = await packPlugin(fixture("org-override-pack"), out);
+    const manifest = manifestOf(await readTgz(r.file));
+    const props = manifest.extension?.configSchemas?.deployment?.properties as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    expect(props?.region?.["x-org"]).toBe("override");
+    expect(props?.region).not.toHaveProperty("org");
+    expect(manifest.extension?.manifest?.config?.deployment).toEqual([
+      { path: "region", secret: false, hot: false },
+    ]);
+  }, 60_000);
+
   it("a plugin without config schemas gets no configSchemas", async () => {
     const r = await packPlugin(fixture("metadata"), out);
     expect(manifestOf(await readTgz(r.file)).extension?.configSchemas).toBeUndefined();
