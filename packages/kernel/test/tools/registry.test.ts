@@ -10,6 +10,7 @@ import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
+import { OrgToolSwitches } from "../../src/tools/org-tool-switches.js";
 import {
   canonicalJson,
   DISPLAY_ONLY_SPEC_FIELDS,
@@ -20,7 +21,12 @@ import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
-import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  enableConnectorExtensions,
+  enableExtensions,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 import { kernelDbFor } from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
@@ -76,6 +82,7 @@ beforeAll(async () => {
     k.app.get(ExtensionHost),
     { list: () => [askUser] },
     k.app.get(EffectiveConfigs),
+    k.app.get(OrgToolSwitches),
   );
 }, 120_000);
 afterAll(async () => {
@@ -345,6 +352,36 @@ describe("ToolRegistry", () => {
     expect(copied.tools.map((t) => t.key)).toEqual(["plugin__orglevels__echo"]);
   });
 
+  it("an extension tool the org turned off is unavailable there only (spec A §7)", async () => {
+    const def = {
+      tools: [
+        { kind: "plugin" as const, plugin: "mem-connector", name: "echo" },
+        { kind: "plugin" as const, plugin: "mem-connector", name: "wipe" },
+      ],
+    };
+    await enablePlugin("mem-connector", true);
+    const other = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Other" } });
+    const otherId = (other.json() as { org: { id: string } }).org.id;
+    await enableExtensions(raw, otherId, "mem-connector");
+    await db
+      .insertInto("org_tool_switches")
+      .values({ org_id: orgId, plugin: "mem-connector", tool: "echo", enabled: false })
+      .execute();
+    const here = await registry.forAgent(orgId, def);
+    expect(here.tools.map((t) => t.key)).toEqual(["plugin__mem-connector__wipe"]);
+    expect(here.unavailable).toEqual([
+      {
+        ref: "plugin__mem-connector__echo",
+        reason: "Tool plugin__mem-connector__echo is turned off in this organization",
+      },
+    ]);
+    const there = await registry.forAgent(otherId, def);
+    expect(there.tools.map((t) => t.key)).toEqual([
+      "plugin__mem-connector__echo",
+      "plugin__mem-connector__wipe",
+    ]);
+  });
+
   it("同一 key 只保留第一个，其余报重复", async () => {
     const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
@@ -381,6 +418,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       k.app.get(ExtensionHost),
       { list: () => [askUser, toolSearchTool()] },
       k.app.get(EffectiveConfigs),
+      k.app.get(OrgToolSwitches),
       { get: cfg },
     );
   const settingsUrl = () => `/api/v1/orgs/${orgId}/settings`;

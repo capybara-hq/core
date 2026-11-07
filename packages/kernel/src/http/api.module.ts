@@ -32,6 +32,7 @@ import {
 import {
   OrgExtensionConfigsController,
   OrgExtensionOverridesController,
+  OrgExtensionToolSwitchesController,
 } from "../catalog/org-extension.controller.js";
 import {
   OrgOwnedPluginsController,
@@ -108,6 +109,7 @@ const CONTROLLERS: Type[] = [
   OrgMarketplacesController,
   OrgExtensionConfigsController,
   OrgExtensionOverridesController,
+  OrgExtensionToolSwitchesController,
   AgentsController,
   AgentTemplatesController,
   AgentSaveAsTemplateController,

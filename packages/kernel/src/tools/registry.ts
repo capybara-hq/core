@@ -39,6 +39,7 @@ import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
 import { legacyKeySaveText } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
+import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
 export { canonicalJson } from "./canonical-json.js";
@@ -258,7 +259,8 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  * - extension tools: the extension is loaded and registered the tool, this org enabled the
  *   extension (`extension_org_configs.enabled`, spec 2.2 "installed at deployment level, enabled at
  *   org level"; required bootstrap plugins are enabled in every org, `enabled.ts`), and the
- *   extension's effective config for the org is valid (layering spec A §6);
+ *   extension's effective config for the org is valid (layering spec A §6) and the org did not
+ *   turn the tool off (§7);
  * - connector tools: the connector belongs to this org, is not deleted or disabled, the connector is
  *   installed, the tool status is `enabled` and the key is valid.
  *   `tools: "all"` takes only enabled tools; disabled / pending-review ones count as deliberately
@@ -280,6 +282,8 @@ export class ToolRegistry {
      * unavailable in an org whose effective config is not valid.
      */
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
+    /** The org's switches of single extension tools (layering spec A §7). */
+    @Inject(OrgToolSwitches) private readonly switches: Pick<OrgToolSwitches, "offKeys">,
     /**
      * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `ToolSearch` is never
      * offered and the sub-agent limits are the schema defaults.
@@ -544,9 +548,9 @@ export class ToolRegistry {
       }
     };
 
-    const enabledPlugins = def.tools.some((r) => r.kind === "plugin")
-      ? await this.enabledPlugins(orgId)
-      : new Set<string>();
+    const [enabledPlugins, offKeys] = def.tools.some((r) => r.kind === "plugin")
+      ? await Promise.all([this.enabledPlugins(orgId), this.switches.offKeys(orgId)])
+      : [new Set<string>(), new Set<string>()];
     const connectorIds = [
       ...new Set(def.tools.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
     ];
@@ -608,7 +612,11 @@ export class ToolRegistry {
           });
           continue;
         }
-        // the pipeline refuses such a call too (a resumed step), this keeps it from the model
+        // the pipeline refuses such calls too (a resumed step), this keeps them from the model
+        if (offKeys.has(key)) {
+          unavailable.push({ ref: key, reason: toolTurnedOffReason(key) });
+          continue;
+        }
         if (!(await configuredIn(ref.plugin))) {
           unavailable.push({ ref: key, reason: `Plugin ${ref.plugin} ${NEEDS_CONFIG_REASON}` });
           continue;

@@ -199,6 +199,8 @@ let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined
 let pluginHooks: HookRunner | undefined;
 /** The effective configs the pipeline reads (layering spec A §6); undefined = the helper's default. */
 let effective: PipelineTestDeps["effective"];
+/** The org tool switches the pipeline reads (layering spec A §7); undefined = none off. */
+let switches: PipelineTestDeps["switches"];
 
 function pipeline(): ToolPipeline {
   const deps: PipelineTestDeps = {
@@ -234,6 +236,7 @@ function pipeline(): ToolPipeline {
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
     ...(pluginHooks !== undefined && { pluginHooks }),
     ...(effective !== undefined && { effective }),
+    ...(switches !== undefined && { switches }),
   };
   return pipelineFor(deps);
 }
@@ -272,6 +275,7 @@ beforeEach(async () => {
   afterExecute = undefined;
   pluginHooks = undefined;
   effective = undefined;
+  switches = undefined;
   unavailable = [];
   hidden = [];
   handlerCalls = {};
@@ -788,6 +792,26 @@ describe("ToolPipeline.runStep", () => {
         isError: true,
         content:
           'Tool "plugin__probe__ctx" is unavailable: needs configuration in this organization.',
+      },
+    ]);
+  });
+
+  it("a plugin tool turned off in the org is not dispatched (a stale call, spec A §7)", async () => {
+    const asked: [string, string, string][] = [];
+    switches = {
+      isToolOff: async (orgId, plugin, tool) => {
+        asked.push([orgId, plugin, tool]);
+        return plugin === "probe" && tool === "ctx";
+      },
+    };
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__ctx", input: {} }]);
+    expect(handlerCalls.ctx).toBeUndefined();
+    expect(asked).toEqual([[seed.orgId, "probe", "ctx"]]);
+    expect(resultsOf(evs)).toMatchObject([
+      {
+        callId: "c1",
+        isError: true,
+        content: "Tool plugin__probe__ctx is turned off in this organization.",
       },
     ]);
   });

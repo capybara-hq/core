@@ -56,6 +56,7 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import { type LegacyScope, legacyHint, legacyToolInput, legacyToolKey } from "./legacy-keys.js";
+import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 import { renderResult, resolveOutputRefs, spillIfLarge, ToolOutputs } from "./outputs.js";
 import { createDecidePolicy } from "./policy.js";
 import { type QuestionRecord, QuestionsService } from "./questions.service.js";
@@ -253,6 +254,8 @@ interface PipelineDeps {
    * tool's handler gets it as `ToolCallContext.config`, and is not called when it is not valid.
    */
   readonly effective: Pick<EffectiveConfigs, "get">;
+  /** The org's switches of single extension tools: a turned-off one is not called (spec A §7). */
+  readonly switches: Pick<OrgToolSwitches, "isToolOff">;
   /**
    * Ids of an extension's `inline` ui contributions (read live, no alias): a plugin tool's
    * `ToolResult.card` must name one of them, otherwise it is dropped with a warning.
@@ -445,6 +448,7 @@ export class ToolPipeline {
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "hooks" | "current"> | undefined,
     @Inject(ToolDrift) drift: Pick<ToolDrift, "onToolsChanged"> | undefined,
     @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
+    @Inject(OrgToolSwitches) switches: Pick<OrgToolSwitches, "isToolOff">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Optional() @Inject(TOOL_PIPELINE_HOOKS) hooks?: ToolPipelineHooks,
   ) {
@@ -465,6 +469,7 @@ export class ToolPipeline {
         return host?.hooks;
       },
       effective,
+      switches,
       inlineViews: (plugin) =>
         new Set(
           (host?.current(plugin)?.manifest.ui ?? [])
@@ -1167,6 +1172,10 @@ export class ToolPipeline {
       // (layering spec A §6): one read per call, cached by EffectiveConfigs
       let config: { config?: unknown } = {};
       if (tool.source.kind === "plugin") {
+        // turned off in the org since the step resolved its tools (spec A §7)
+        if (await this.deps.switches.isToolOff(ctx.orgId, tool.source.plugin, tool.source.name)) {
+          return { kind: "error", message: `${toolTurnedOffReason(tool.key)}.` };
+        }
         const effective = await this.deps.effective.get(ctx.orgId, tool.source.plugin);
         if (!effective.ok) {
           return { kind: "error", message: unavailableText(tool.key, NEEDS_CONFIG_REASON) };

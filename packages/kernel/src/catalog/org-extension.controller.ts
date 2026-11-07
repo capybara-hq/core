@@ -14,6 +14,11 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import {
+  type OrgToolSwitch,
+  OrgToolSwitches,
+  type OrgToolSwitchResult,
+} from "../tools/org-tool-switches.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import type { UninstallPreview } from "./plugin-install.js";
 
@@ -58,6 +63,16 @@ const OverridesPut = z
 const OverridesTake = z
   .object({ paths: z.array(z.string().min(1).max(256)).min(1).max(200) })
   .strict();
+
+const ToolSwitchPut = z
+  .object({
+    enabled: z.boolean(),
+    /** The hash of the switch-off preview, to confirm turning the tool off. */
+    confirm: z.string().min(1).max(128).optional(),
+  })
+  .strict();
+
+class OrgToolSwitchPutBody extends createZodDto(ToolSwitchPut, "OrgToolSwitchPutBody") {}
 
 class OrgOverridesPutBody extends createZodDto(OverridesPut, "OrgOverridesPutBody") {}
 class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTakeBody") {}
@@ -209,6 +224,50 @@ export class OrgExtensionOverridesController {
       accountId: p.account.id,
       tokenId: patTokenId(p),
     });
+  }
+}
+
+/**
+ * The org's switches of an extension's single tools (layering spec A §7): members read them, org
+ * admins turn a tool off (previewed with the agents that selected it, PCM §5 rule 8) or on.
+ */
+@Controller("api/v1/orgs/:orgId/extensions/:extension/tools")
+export class OrgExtensionToolSwitchesController {
+  constructor(@Inject(OrgToolSwitches) private readonly switches: OrgToolSwitches) {}
+
+  /** Every tool the extension registers, with its switch (on unless the org turned it off). */
+  @Get()
+  @OrgAction("org.extensions.read")
+  async list(
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+  ): Promise<{ tools: OrgToolSwitch[] }> {
+    return { tools: await this.switches.list(org.orgId, extension) };
+  }
+
+  /**
+   * Switches one tool: on applies at once; off answers `{ applied: false, affectedAgents, confirm }`
+   * until `confirm` carries the hash (a changed preview -> 409 `plugin.switch_stale`). A tool the
+   * extension does not register -> 404 `extension.tool_not_found`.
+   */
+  @Put(":tool")
+  @OrgAction("org.extensions.manage")
+  set(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+    @Param("tool") tool: string,
+    @ZBody(OrgToolSwitchPutBody) body: z.infer<typeof ToolSwitchPut>,
+  ): Promise<OrgToolSwitchResult> {
+    const p = requireUser(principal);
+    return this.switches.set(
+      org.orgId,
+      extension,
+      tool,
+      body.enabled,
+      { accountId: p.account.id, tokenId: patTokenId(p) },
+      body.confirm,
+    );
   }
 }
 

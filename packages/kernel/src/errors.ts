@@ -39,6 +39,8 @@ export const ERROR_CODES = {
   "invitation.expired": 410,
   "invitation.used": 409,
   "extension.not_found": 404,
+  /** The extension registers no tool of that name (org tool switches, layering spec A §7). */
+  "extension.tool_not_found": 404,
   "extension.unavailable": 503,
   "extension.no_org_config": 400,
   "extension.config_invalid": 400,
