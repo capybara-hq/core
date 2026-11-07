@@ -4,14 +4,16 @@ import { switchable, visibleTo, wantedOn } from "../../src/catalog/scope.js";
 describe("plugin scope rules", () => {
   it.each([
     ["all", false, false, false, null, true],
-    ["all", false, false, false, false, true], // org cannot turn off `all`
+    ["all", false, false, false, false, false], // an org may turn off `all` (layering spec §4)
+    ["all", false, false, false, true, true],
     ["all", true, false, false, null, false], // disabled wins
     ["optional", false, false, false, null, false],
     ["optional", false, false, false, true, true],
     ["named", false, false, true, null, true], // default on for listed orgs
     ["named", false, false, true, false, false],
     ["named", false, false, false, true, false], // not listed: never on
-    ["all", false, true, false, false, true], // builtin implies all: switch ignored
+    ["all", false, true, false, false, true], // builtin: on everywhere, switch ignored
+    ["optional", false, true, false, false, true],
     ["named", true, false, true, null, false], // disabled wins over the list
   ] as const)(
     "%s disabled=%s builtin=%s listed=%s switch=%s -> %s",
@@ -31,8 +33,9 @@ describe("plugin scope rules", () => {
     expect(visibleTo({ scope: "optional" }, false)).toBe(true);
   });
 
-  it("all and builtin items are not switchable", () => {
-    expect(switchable({ scope: "all", builtin: false })).toBe(false);
+  it("only builtin items are not switchable", () => {
+    expect(switchable({ scope: "all", builtin: false })).toBe(true);
+    expect(switchable({ scope: "all", builtin: true })).toBe(false);
     expect(switchable({ scope: "optional", builtin: true })).toBe(false);
     expect(switchable({ scope: "optional", builtin: false })).toBe(true);
     expect(switchable({ scope: "named", builtin: false })).toBe(true);

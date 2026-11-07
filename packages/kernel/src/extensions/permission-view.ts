@@ -296,6 +296,11 @@ export interface AdminExtensionView {
   /** 有部署级配置字段。 */
   configurable: boolean;
   configValid: boolean;
+  /**
+   * Only when the platform config leaves required overridable fields empty (spec A §5.4a; the
+   * extension still runs): the number of orgs where it is on and that still need their own config.
+   */
+  orgsNeedingConfig?: number;
   /** 能从部署卸载（只有安装记录，必需的引导插件除外；卸载前须先停用）。 */
   removable: boolean;
   /**

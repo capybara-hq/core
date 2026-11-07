@@ -23,9 +23,10 @@ export type OrgPluginState =
   | "awaiting_confirmation";
 
 /**
- * Whether the item should be on in the org. Builtin implies `all`: it is on unless disabled and
- * its switch is ignored. Otherwise `all` is on unless disabled, `optional` is on only with an
- * explicit `true` switch, and `named` is on for a listed org unless its switch is `false`.
+ * Whether the item should be on in the org. Builtin is on unless disabled and its switch is
+ * ignored. Otherwise `all` is on unless disabled or the org switched it off (layering spec §4),
+ * `optional` is on only with an explicit `true` switch, and `named` is on for a listed org unless
+ * its switch is `false`.
  */
 export function wantedOn(
   item: { scope: PluginScope; disabled: boolean; builtin: boolean },
@@ -33,10 +34,10 @@ export function wantedOn(
   sw: boolean | null,
 ): boolean {
   if (item.disabled) return false;
-  const scope = item.builtin ? "all" : item.scope;
-  switch (scope) {
+  if (item.builtin) return true;
+  switch (item.scope) {
     case "all":
-      return true;
+      return sw !== false;
     case "optional":
       return sw === true;
     case "named":
@@ -49,9 +50,9 @@ export function visibleTo(item: { scope: PluginScope }, inList: boolean): boolea
   return item.scope !== "named" || inList;
 }
 
-/** Whether the org admin may switch the item: never for `all` or builtin items. */
+/** Whether the org admin may switch the item: every item but a builtin one (layering spec §4). */
 export function switchable(item: { scope: PluginScope; builtin: boolean }): boolean {
-  return !item.builtin && item.scope !== "all";
+  return !item.builtin;
 }
 
 /**

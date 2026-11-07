@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { HookNeedsConfigError } from "../../src/extensions/hooks.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { createLogger } from "../../src/log.js";
@@ -474,6 +475,37 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
     // pending = the dropped plugin only (m-1)
     expect(out).toMatchObject({ state: "failed", attemptsMade: 1, pending: ["x"] });
     expect(out.failedReason).toContain("dropped: x (registered no usage.report handler)");
+    expect(c.y).toBe(1);
+    expect(errors).toEqual([]);
+    expect(warns).toEqual([
+      ["usage.report target dropped", expect.objectContaining({ plugin: "x" })],
+    ]);
+    await r.stop();
+  });
+
+  it("a plugin that needs configuration in the org: dropped at once, never retried (layering A §6)", async () => {
+    const warns: [string, unknown][] = [];
+    const errors: unknown[] = [];
+    const { c, y } = yCounter();
+    let xCalls = 0;
+    const r = reporter(
+      {
+        // what the hook registry's wrapper throws instead of calling the handler
+        x: async () => {
+          xCalls++;
+          throw new HookNeedsConfigError("x");
+        },
+        y,
+      },
+      ["x", "y"],
+      { attempts: 3, warn: (m, f) => warns.push([m, f]), error: (m) => errors.push(m) },
+    );
+    r.startWorker();
+    await r.enqueue(ev.conv, ev.seq);
+    const out = await finished();
+    expect(out).toMatchObject({ state: "failed", attemptsMade: 1, pending: ["x"] });
+    expect(out.failedReason).toContain("dropped: x (needs configuration in this organization)");
+    expect(xCalls).toBe(1);
     expect(c.y).toBe(1);
     expect(errors).toEqual([]);
     expect(warns).toEqual([

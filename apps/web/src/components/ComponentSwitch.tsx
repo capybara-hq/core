@@ -31,7 +31,9 @@ export function useComponentState(): (c: OrgComponent) => PluginStateLabel {
     c.on
       ? c.locked
         ? { label: t("platform"), tone: "ok" }
-        : { label: t("on"), tone: "ok" }
+        : c.platformDefault === true
+          ? { label: t("platformDefault"), tone: "ok" }
+          : { label: t("on"), tone: "ok" }
       : c.pluginOn
         ? { label: t("off"), tone: "muted" }
         : { label: t("pluginOff"), tone: "muted" };

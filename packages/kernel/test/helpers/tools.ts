@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
+import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
@@ -14,6 +15,7 @@ import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
 import { Credentials } from "../../src/tools/credentials.js";
+import type { OrgToolSwitches } from "../../src/tools/org-tool-switches.js";
 import { ToolOutputs } from "../../src/tools/outputs.js";
 import {
   type DecidePolicy,
@@ -105,6 +107,10 @@ export interface PipelineTestDeps {
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
   pluginHooks?: HookRunner;
+  /** The effective configs (default: every org follows the platform with an empty config). */
+  effective?: Pick<EffectiveConfigs, "get">;
+  /** The org tool switches (default: none off). */
+  switches?: Pick<OrgToolSwitches, "isToolOff">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
@@ -135,6 +141,10 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
           },
         }
       : undefined,
+    d.effective ?? {
+      get: async () => ({ ok: true, config: {}, source: "platform" }),
+    },
+    d.switches ?? { isToolOff: async () => false },
     h.txHost,
     {
       ...d.hooks,

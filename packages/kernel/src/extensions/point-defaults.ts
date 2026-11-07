@@ -7,13 +7,17 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "./enabled.js";
 import { OrgExtensionConfigs } from "./org-config.js";
 import { ExtensionRegistry } from "./registry.js";
 
-/** The outcome of {@link ExtensionPointDefaults.resolve}. */
+/**
+ * The outcome of {@link ExtensionPointDefaults.resolve}: the provider with its org config and its
+ * effective deployment config for the org (layering spec A §6), both to pass back to it.
+ */
 export type PointResolution<T> =
-  | { ok: true; extension: string; impl: T; orgConfig: unknown }
+  | { ok: true; extension: string; impl: T; orgConfig: unknown; config: unknown }
   | { ok: false; reason: "none" | "ambiguous" };
 
 /** One `org-default` extension point of an org (the admin view). */
@@ -31,6 +35,7 @@ interface Candidate {
   extension: string;
   impl: unknown;
   orgConfig: unknown;
+  config: unknown;
 }
 
 /** The extension points whose provider each org chooses (`selection: "org-default"`). */
@@ -46,8 +51,8 @@ const hasSelection = (point: string): boolean =>
 /**
  * The org default provider of an `org-default` extension point (web tools spec §6). Per call,
  * never cached in process: the candidates are the providers loaded on this replica that are
- * enabled in the org, whose org config is valid and whose `configured()` (when present) does not
- * return false. One candidate is used as is; several need the org's stored default
+ * enabled in the org, whose org config and effective deployment config for the org (layering spec
+ * A §6) are valid, and whose `configured()` (when present) does not return false. One candidate is used as is; several need the org's stored default
  * (`capybara.org_extension_point_defaults`), else the choice is ambiguous. A stored default that
  * is not a candidate (disabled, uninstalled, unconfigured) stays and counts again once it is one.
  */
@@ -58,12 +63,14 @@ export class ExtensionPointDefaults {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: Pick<OrgExtensionConfigs, "get">,
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
   /**
    * The provider of `point` (the name without the major, e.g. `web-search`) for `orgId`, with the
-   * org's decrypted config to pass back to it. Throws when the point has no `selection`.
+   * org's decrypted config and the effective deployment config to pass back to it. Throws when the
+   * point has no `selection`.
    */
   async resolve<T>(orgId: string, point: string): Promise<PointResolution<T>> {
     if (!hasSelection(point)) {
@@ -73,7 +80,13 @@ export class ExtensionPointDefaults {
     const chosen = await this.choose(orgId, point, candidates);
     if (!chosen.ok) return chosen;
     const c = chosen.candidate;
-    return { ok: true, extension: c.extension, impl: c.impl as T, orgConfig: c.orgConfig };
+    return {
+      ok: true,
+      extension: c.extension,
+      impl: c.impl as T,
+      orgConfig: c.orgConfig,
+      config: c.config,
+    };
   }
 
   /** Every `org-default` point with its candidates, stored default and effective provider. */
@@ -178,11 +191,26 @@ export class ExtensionPointDefaults {
         continue;
       }
       if (!cfg?.enabled) continue;
-      const configured = (impl as { configured?: (orgConfig: unknown) => boolean }).configured;
+      // spec A §6: an org whose effective config is not valid gets no call from this extension
+      let effective: Awaited<ReturnType<EffectiveConfigs["get"]>>;
+      try {
+        effective = await this.effective.get(orgId, extension);
+      } catch (err) {
+        this.log.warn("org default provider: provider excluded, cannot read its effective config", {
+          orgId,
+          point,
+          extension,
+          err,
+        });
+        continue;
+      }
+      if (!effective.ok) continue;
+      const configured = (impl as { configured?: (orgConfig: unknown, config: unknown) => boolean })
+        .configured;
       if (typeof configured === "function") {
         let ok: boolean;
         try {
-          ok = configured.call(impl, cfg.config) !== false;
+          ok = configured.call(impl, cfg.config, effective.config) !== false;
         } catch (err) {
           this.log.warn("org default provider: provider excluded, configured() threw", {
             orgId,
@@ -194,7 +222,7 @@ export class ExtensionPointDefaults {
         }
         if (!ok) continue;
       }
-      out.push({ extension, impl, orgConfig: cfg.config });
+      out.push({ extension, impl, orgConfig: cfg.config, config: effective.config });
     }
     return out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
   }

@@ -209,7 +209,11 @@
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
-      "unavailable": "The extension is unavailable right now."
+      "unavailable": "The extension is unavailable right now.",
+      "field_not_overridable": "This field cannot be set by an organization.",
+      "no_org_override": "This organization follows the platform configuration and has none of its own.",
+      "tool_not_found": "This extension has no such tool",
+      "needs_config": "This extension needs to be configured in this organization first"
     },
     "bootstrap": {
       "download_failed": "A bootstrap plugin pinned by the deployment could not be downloaded from the npm registry. Check the registry (packages.npmRegistry) or put the package in the bootstrap directory.",
@@ -457,6 +461,7 @@
       "extensionToolUnavailable": "Unavailable: {reason}",
       "extensionNotEnabled": "The extension {extension} is not enabled in this organization, or was uninstalled.",
       "extensionToolGone": "The extension {extension} no longer provides this tool.",
+      "extensionToolOffInOrg": "Turned off in this org",
       "policiesLabel": "Policies",
       "policy": {
         "default": "Default",
@@ -2000,7 +2005,7 @@
     "jsonHint": "Enter a JSON value.",
     "linesHint": "One item per line.",
     "hot": "applies immediately",
-    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} other {Read-only}}",
+    "readonly": "{source, select, env {From an environment variable (read-only)} file {From the config file (read-only)} nacos {From Nacos (read-only)} platform {Set by the platform} other {Read-only}}",
     "tristate": {
       "default": "Default",
       "on": "On",
@@ -2029,6 +2034,17 @@
       "maxLength": "At most {limit} characters",
       "minItems": "At least {limit} items",
       "maxItems": "At most {limit} items"
+    },
+    "platformSet": "Set by the platform",
+    "secretState": {
+      "platform": "Configured by the platform",
+      "own": "Configured by this org",
+      "unset": "Not configured"
+    },
+    "level": {
+      "hidden": "Hidden from orgs",
+      "readonly": "Read-only for orgs",
+      "override": "Orgs can override"
     }
   },
   "channels": {
@@ -2265,6 +2281,46 @@
       "ui": "UI",
       "publicRoutes": "Public routes",
       "provides": "Extension points"
+    },
+    "toolSwitches": {
+      "title": "Tools",
+      "hint": "Turn off a tool to stop every agent in this organization from using it.",
+      "loadFailed": "The tools could not be read.",
+      "retry": "Retry",
+      "off": "Turned off in this org",
+      "offTitle": "Turn off {tool}?",
+      "offAgents": "These agents use this tool and will lose it:",
+      "offNoAgents": "No agent uses this tool.",
+      "offConfirm": "Turn off",
+      "offCancel": "Cancel",
+      "stale": "The agents using this tool changed before you confirmed; review them again."
+    },
+    "overrides": {
+      "following": "Following the platform",
+      "followingHint": "A change here applies to this org only and does not affect other orgs.",
+      "ownConfig": "This org uses its own configuration",
+      "compare": "Compare with the platform",
+      "usePlatform": "Use the platform configuration",
+      "resetBody": "This org's own configuration, keys included, will be deleted, and the org will follow the platform again.",
+      "firstEdit": "After this change the org uses its own configuration and needs its own keys.",
+      "take": "Use the platform value",
+      "platformConfigured": "Configured by the platform",
+      "orgConfigured": "Configured by this org",
+      "unconfigured": "Not configured",
+      "compareHint": "Each value that differs from the platform. Secrets show only whether they are configured and are never compared.",
+      "same": "No value differs from the platform.",
+      "orgValue": "This org: {value}",
+      "platformValue": "Platform: {value}",
+      "title": "Configuration",
+      "save": "Save",
+      "saveLabel": "Save this org's configuration",
+      "cancel": "Cancel",
+      "saved": "Saved",
+      "taken": "Platform value taken",
+      "resetDone": "Now following the platform",
+      "saveInvalid": "The config is invalid. Check the marked fields.",
+      "loadFailed": "The configuration cannot be loaded.",
+      "retry": "Retry"
     }
   },
   "identities": {
@@ -3115,7 +3171,8 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
-        "legacy_format": "Repack needed"
+        "legacy_format": "Repack needed",
+        "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
       "replicas": {
         "consistent": "Replicas in sync {ok}/{n}",
@@ -3256,6 +3313,18 @@
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel"
+      },
+      "orgCopies": {
+        "title": "Orgs with their own configuration",
+        "hint": "These orgs no longer follow the platform configuration. The platform cannot edit or drop them; each org's admin does.",
+        "empty": "No org uses its own configuration.",
+        "since": "Created",
+        "differing": "Differs from the platform: {fields}",
+        "noDiff": "Same values as the platform",
+        "set": "{path} configured",
+        "unset": "{path} not configured",
+        "loadFailed": "The orgs' configuration cannot be loaded.",
+        "retry": "Retry"
       }
     }
   },
@@ -3351,7 +3420,7 @@
   },
   "catalog": {
     "scope": {
-      "all": "All organizations",
+      "all": "All orgs",
       "optional": "Organizations choose",
       "named": "Selected organizations",
       "disabled": "Disabled"
@@ -3477,7 +3546,7 @@
         },
         "componentsEmpty": "This version has no components.",
         "orgsHint": {
-          "all": "All organizations: on in every organization; org admins cannot turn it off.",
+          "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
           "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
           "named": "Selected organizations: only the organizations below can use it."
         },
@@ -3773,6 +3842,7 @@
       "meta": {
         "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
         "named": "Selected: {orgs}",
+        "allOff": "All orgs · {n} turned off",
         "components": {
           "extension": "{n, plural, one {# extension} other {# extensions}}",
           "skills": "{n, plural, one {# skill} other {# skills}}",
@@ -3792,7 +3862,7 @@
         "title": "Set the scope of {name}",
         "scopeLabel": "Scope",
         "hints": {
-          "all": "On in every organization, including new ones; org admins cannot turn it off.",
+          "all": "On by default in every organization, including new ones; org admins can turn it off in their own.",
           "optional": "Off by default; each org admin turns it on.",
           "named": "On only in the organizations you choose."
         },
@@ -4241,6 +4311,7 @@
       "off": "Off",
       "needs_config": "Needs configuration",
       "platform": "On · set by the platform",
+      "platformDefault": "On by default for all orgs",
       "not_offered": "Not offered, can be requested",
       "requested": "Requested, waiting",
       "unavailable": "Stopped by the platform",
@@ -4424,7 +4495,7 @@
       "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again when it is enabled.",
       "pluginStoppedNote": "Its plugin is disabled or deleted, so it is off in every organization.",
       "orgsHint": {
-        "all": "All organizations: every organization uses it and org admins cannot turn it off.",
+        "all": "All orgs: on by default in every organization; org admins can turn it off in their own.",
         "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
         "named": "Named organizations: only the organizations below can use it."
       },
@@ -4464,6 +4535,7 @@
       "on": "On",
       "off": "Off",
       "platform": "On · set by the platform",
+      "platformDefault": "On by default for all orgs",
       "pluginOff": "Plugin off"
     },
     "origin": {

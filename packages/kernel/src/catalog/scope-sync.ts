@@ -35,12 +35,14 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  *   on stays as a standalone install (the installer's rule), the others are synced again.
  * The decision is made outside the org row lock; the installer re-checks the scope under it for a
  * `via: "scope"` install or uninstall, so a person's switch committed meanwhile wins.
- * The sync writes no switch row: those record people's choices. Builtin items are left alone (on
- * everywhere through their required extension). A failed install, uninstall or dependency install
- * is logged, audited `plugin.scope_sync_failed`, kept as the pair's open failure
- * (`plugin_scope_sync_failures`, the super admin's inbox, until a later sync of the pair does not
- * fail) and not retried until the next enqueue. An error outside those steps (a read, the failure
- * write itself) ends the attempt without touching the pair's row, so an older failure stays open.
+ * The sync writes no switch row: those record people's choices, and `wantedOn` honours them for
+ * every scope (an org that switched an `all` item off stays off, also across a scope change away
+ * and back, layering spec §4). Builtin items are left alone (on everywhere through their required
+ * extension). A failed install, uninstall or dependency install is logged, audited
+ * `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`, the
+ * super admin's inbox, until a later sync of the pair does not fail) and not retried until the next
+ * enqueue. An error outside those steps (a read, the failure write itself) ends the attempt without
+ * touching the pair's row, so an older failure stays open.
  * Every worker start enqueues every live item once ({@link PluginScopeSync.enqueueAll}), which
  * also catches a lost enqueue.
  *

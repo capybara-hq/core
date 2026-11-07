@@ -19,11 +19,13 @@ import { createExtensionContext, type KernelDeps } from "../../src/ctx/create-ct
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import type { EffectiveConfig } from "../../src/extensions/effective-config.js";
 import {
   EMPTY_DENY_REASON,
   errMsg,
   HOOK_DETAIL_MAX_CHARS,
   HOOK_REASON_MAX_CHARS,
+  HookNeedsConfigError,
   HookRegistry,
   type HookSource,
   OBSERVE_INFLIGHT_MAX,
@@ -127,6 +129,8 @@ function setup(
     log?: KernelDeps["log"];
     /** Deployment state: plugin → mounts with policy hooks (M-1). */
     expected?: Record<string, string[]>;
+    /** Effective configs (default: `{ of: <plugin> }` for every org). */
+    effective?: (orgId: string, plugin: string) => Promise<EffectiveConfig>;
   } = {},
 ) {
   const sources: Src[] = [];
@@ -141,6 +145,8 @@ function setup(
       typeof enabled === "function"
         ? enabled
         : async () => new Set(enabled ?? ["alpha", "beta", "zeta"]),
+    effectiveConfig:
+      opts.effective ?? (async (_o, p) => ({ ok: true, config: { of: p }, source: "platform" })),
     locks: new LockService(redis, createLogger("error")),
     config: () => ({ hooks: { timeoutMs: opts.timeoutMs ?? 1000 } }),
     log: opts.log ?? quiet,
@@ -587,6 +593,109 @@ describe("HookRegistry.run: a policy plugin not loaded on this replica (M-1)", (
     const { r, plugin } = setup({ expected: { beta: ["tool.preExecute"] } });
     plugin("beta").on("tool.preExecute", () => {}, { mode: "observe" });
     expect(await r.run("tool.preExecute", toolPre(), signal())).toEqual({ allowed: true });
+  });
+});
+
+describe("HookRegistry: the effective config per organization (layering spec A §6)", () => {
+  /** org-a needs configuration for `guard`; org-b has a copy whose `baseUrl` is "org-b". */
+  const effective = async (orgId: string, plugin: string): Promise<EffectiveConfig> => {
+    if (plugin === "guard" && orgId === "org-a") {
+      return { ok: false, issues: [{ path: "baseUrl", segments: ["baseUrl"], message: "x" }] };
+    }
+    return {
+      ok: true,
+      config: { baseUrl: orgId === "org-b" ? "org-b" : "platform" },
+      source: orgId === "org-b" ? "copy" : "platform",
+    };
+  };
+  const inOrg = (orgId: string): ModelRequestHookPayload => ({ ...modelReq(), orgId });
+
+  it("passes each hook its plugin's effective config for the payload's org", async () => {
+    const { r, plugin } = setup({ enabled: ["guard", "zeta"], effective });
+    const policy = vi.fn();
+    const observe = vi.fn();
+    plugin("guard").on("model.request", policy, { mode: "policy" });
+    plugin("zeta").on("model.request", observe, { mode: "observe" });
+    expect(await r.run("model.request", inOrg("org-b"), signal())).toEqual({ allowed: true });
+    expect(policy.mock.calls[0]?.[2]).toEqual({ config: { baseUrl: "org-b" } });
+    await vi.waitFor(() => expect(observe).toHaveBeenCalledOnce());
+    expect(observe.mock.calls[0]?.[2]).toEqual({ config: { baseUrl: "org-b" } });
+    await r.run("model.request", inOrg("org-c"), signal());
+    expect(policy.mock.calls[1]?.[2]).toEqual({ config: { baseUrl: "platform" } });
+  });
+
+  it("a policy hook of a plugin needing configuration in the org denies there without running", async () => {
+    const { r, plugin } = setup({ enabled: ["guard", "zeta"], effective });
+    const policy = vi.fn();
+    const other = vi.fn();
+    const observe = vi.fn();
+    plugin("guard").on("model.request", policy, { mode: "policy" });
+    plugin("zeta")
+      .on("model.request", other, { mode: "policy" })
+      .on("model.request", observe, { mode: "observe" });
+    expect(await r.run("model.request", inOrg("org-a"), signal())).toMatchObject({
+      allowed: false,
+      plugin: "guard",
+      reason: "The guard policy check is unavailable",
+      cause: "hook_error",
+      needsConfig: true,
+      detail: expect.stringContaining("needs configuration in this organization"),
+    });
+    expect(policy).not.toHaveBeenCalled();
+    expect(other).not.toHaveBeenCalled();
+    // other plugins' observe hooks still see the denied call
+    await vi.waitFor(() => expect(observe).toHaveBeenCalledOnce());
+    expect(await r.run("model.request", inOrg("org-b"), signal())).toEqual({ allowed: true });
+    expect(policy).toHaveBeenCalledOnce();
+  });
+
+  it("an observe hook of a plugin needing configuration in the org is skipped there", async () => {
+    const { r, plugin } = setup({ enabled: ["guard"], effective });
+    const observe = vi.fn();
+    plugin("guard").on("model.request", observe, { mode: "observe" });
+    expect(await r.run("model.request", inOrg("org-a"), signal())).toEqual({ allowed: true });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(observe).not.toHaveBeenCalled();
+    await r.run("model.request", inOrg("org-b"), signal());
+    await vi.waitFor(() => expect(observe).toHaveBeenCalledOnce());
+  });
+
+  it("a config read that fails denies with a policy hook (R10) and skips observe-only", async () => {
+    const failing = async (): Promise<EffectiveConfig> => {
+      throw new Error("redis down");
+    };
+    const policyOnly = setup({ enabled: ["guard"], effective: failing });
+    const policy = vi.fn();
+    policyOnly.plugin("guard").on("model.request", policy, { mode: "policy" });
+    expect(await policyOnly.r.run("model.request", inOrg("org-b"), signal())).toMatchObject({
+      allowed: false,
+      plugin: "guard",
+      cause: "hook_error",
+      preflight: true,
+    });
+    expect(policy).not.toHaveBeenCalled();
+    const observeOnly = setup({ enabled: ["guard"], effective: failing });
+    const observe = vi.fn();
+    observeOnly.plugin("guard").on("model.request", observe, { mode: "observe" });
+    expect(await observeOnly.r.run("model.request", inOrg("org-b"), signal())).toEqual({
+      allowed: true,
+    });
+    await new Promise((res) => setTimeout(res, 20));
+    expect(observe).not.toHaveBeenCalled();
+  });
+
+  it("usage.report handlers get the config, and are not called where it is not valid", async () => {
+    const { r, plugin } = setup({ enabled: ["guard"], effective });
+    const handler = vi.fn();
+    plugin("guard").on("usage.report", handler, { mode: "observe" });
+    const [h] = r.handlers("usage.report");
+    const payload = (orgId: string) => ({ orgId }) as HookPayloads["usage.report"];
+    await h?.handler(payload("org-b"), signal());
+    expect(handler.mock.calls[0]?.[2]).toEqual({ config: { baseUrl: "org-b" } });
+    await expect(h?.handler(payload("org-a"), signal())).rejects.toBeInstanceOf(
+      HookNeedsConfigError,
+    );
+    expect(handler).toHaveBeenCalledOnce();
   });
 });
 

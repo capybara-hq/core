@@ -8,6 +8,7 @@ import {
   ExtensionDeploymentConfigService,
 } from "../extensions/deployment-config.js";
 import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js";
+import { type OrgOverrideSummary, OrgOverrides } from "../extensions/org-overrides.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
   CurrentPrincipal,
@@ -18,7 +19,7 @@ import {
 } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 
 const ApproveSchema = z.object({
   /** 安装记录的包（审阅时的 sha256）；配置声明的插件为 null。 */
@@ -68,6 +69,9 @@ class ExtensionApproveBody extends createZodDto(ApproveSchema, "ExtensionApprove
 class ExtensionInstallBody extends createZodDto(InstallSchema, "ExtensionInstallBody") {}
 class ExtensionConfigBody extends createZodDto(ConfigSchema, "ExtensionConfigBody") {}
 class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImportBody") {}
+/** The `:name` route parameter of the org-overrides list (decision R20). */
+const NameParams = z.object({ name: z.string().min(1).max(64) });
+class AdminExtensionNameParamsDto extends createZodDto(NameParams, "AdminExtensionNameParams") {}
 
 /**
  * Deployment-level extension management (`/api/v1/admin/extensions/*`, super admins): package
@@ -87,6 +91,7 @@ export class AdminExtensionsController {
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KernelConfigService) private readonly kernelConfig: KernelConfigService,
+    @Inject(OrgOverrides) private readonly orgOverrides: OrgOverrides,
   ) {}
 
   /**
@@ -115,6 +120,18 @@ export class AdminExtensionsController {
   @Get(":name/config")
   config(@Param("name") name: string): Promise<DeploymentConfigView> {
     return this.deploymentConfigs.view(name);
+  }
+
+  /**
+   * The orgs keeping their own copy of the extension's overridable config (spec A §5.7): when it
+   * was made, which non-secret fields differ from the platform, whether each secret is set; never
+   * a secret value. The super admin cannot edit or drop a copy.
+   */
+  @Get(":name/org-overrides")
+  async orgCopies(
+    @ZParam(AdminExtensionNameParamsDto) { name }: z.infer<typeof NameParams>,
+  ): Promise<{ overrides: OrgOverrideSummary[] }> {
+    return { overrides: await this.orgOverrides.listForPlugin(name) };
   }
 
   /**

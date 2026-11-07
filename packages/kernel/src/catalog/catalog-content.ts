@@ -44,6 +44,7 @@ export interface OrgCatalogItem
     | "newerInMarketplace"
     | "scopeOrgs"
     | "enabledOrgs"
+    | "offCount"
     | "pending"
     | "shownToOthers"
     | "awaitingConfirmation"

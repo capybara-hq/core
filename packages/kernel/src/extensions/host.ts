@@ -63,6 +63,7 @@ import {
 import { ExtensionBlobIntegrityError } from "./blobs.js";
 import { toIssues } from "./config-issues.js";
 import { configFormSchema, describeConfigUiProblems } from "./config-json-schema.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { HookRegistry } from "./hooks.js";
 import type { InflightTracker } from "./inflight.js";
 import { type DesiredExtension, ExtensionInstalls } from "./installs.js";
@@ -76,6 +77,7 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
+import { parseLoadGate } from "./org-levels.js";
 import { declaredDisplayName, permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
@@ -662,6 +664,11 @@ export class ExtensionHost {
     @Inject(LockService) locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
+    /**
+     * Each hook call's effective config for its organization, and the providers excluded from an
+     * org's point resolution (layering spec A §6).
+     */
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
   ) {
     const c = config.get();
     this.deps = {
@@ -682,6 +689,7 @@ export class ExtensionHost {
       current: (plugin) => this.registry.current(plugin),
       expectedPolicy: (mount) => this.expectedPolicy(mount),
       enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+      effectiveConfig: (orgId, plugin) => effective.get(orgId, plugin),
       locks,
       config: () => ({ hooks: { timeoutMs: this.config.get().hooks.timeoutMs } }),
       log,
@@ -1515,7 +1523,9 @@ export class ExtensionHost {
       return undefined;
     }
     let config: unknown = raw;
-    const parsed = readConfig ? schema?.safeParse(raw) : undefined;
+    // the load gate (spec A §5.4a): overridable fields may stay empty on the platform, so
+    // `ctx.config` may lack them; hidden and read-only fields must be complete
+    const parsed = readConfig && schema ? parseLoadGate(schema, raw) : undefined;
     if (a.source !== "install") this.configValidity.set(name, parsed?.success ?? true);
     if (decision.action === "pending") {
       // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
@@ -1692,7 +1702,7 @@ export class ExtensionHost {
         configurable: schema !== undefined,
         configValid:
           this.configValidity.get(name) ??
-          (schema ? schema.safeParse(this.extensionConfig[name] ?? {}).success : true),
+          (schema ? parseLoadGate(schema, this.extensionConfig[name] ?? {}).success : true),
         displayName: this.declaredDisplayNames.get(name) ?? null,
       };
     });
@@ -1949,6 +1959,7 @@ export class ExtensionHost {
           i.provided.has(ref) ? [{ plugin: i.name, impl: i.provided.get(ref) }] : [],
         ),
     enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+    configOk: async (orgId, plugin) => (await this.effective.get(orgId, plugin)).ok,
   };
 
   private get loadDeps(): LoadDeps {
@@ -2058,6 +2069,16 @@ export class ExtensionHost {
   }
 
   /**
+   * The raw (unparsed) deployment config of a running extension: the startup config merged with
+   * the PG values, as the host reads it before parsing (secrets included; never echo it). An org
+   * copy is applied to this and parsed once (layering spec A §6), so schema transforms are not
+   * run twice. Without a running instance, the stored values without a schema.
+   */
+  rawDeploymentConfig(plugin: string): Promise<unknown> {
+    return this.rawConfigOf(plugin, this.registry.current(plugin)?.manifest.config?.deployment);
+  }
+
+  /**
    * 本副本拿得到的插件清单里的部署级 schema（生效实例 → 配置声明 → 安装记录准备好的候选）；
    * 都没有返回 undefined（如未加载的安装记录：调用方改用包内静态清单）。
    */
@@ -2099,7 +2120,7 @@ export class ExtensionHost {
         if (schema) {
           try {
             const raw = await this.rawConfigOf(plugin, schema);
-            this.configValidity.set(plugin, schema.safeParse(raw).success);
+            this.configValidity.set(plugin, parseLoadGate(schema, raw).success);
           } catch (err) {
             this.log.warn("cannot read the stored deployment config of plugin", {
               plugin,
@@ -2121,7 +2142,7 @@ export class ExtensionHost {
         );
         return "invalid";
       }
-      const r = schema.safeParse(raw);
+      const r = parseLoadGate(schema, raw);
       if (!r.success) {
         this.log.warn(
           "plugin deployment config changed but is invalid on this replica; keeping the current config",

@@ -10,6 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
+import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import { OrgExtensionConfigs } from "../extensions/org-config.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -65,7 +66,9 @@ const KEEP_FAILED = { age: 86_400 };
 
 /**
  * 不同步的原因（陈旧任务、插件已停用 / 配置不再有效、组织已删除、另一同步在跑；`not_configured`：插件的
- * `Directory.configured` 说这份组织配置没配好通讯录，Ruling A28，静默跳过）。
+ * `Directory.configured` 说这份组织配置没配好通讯录，Ruling A28，静默跳过）。`needs_config`: the
+ * extension's effective deployment config for the org is not valid (layering spec A §6): skipped
+ * silently like `not_configured`; the org admin sees the extension as needing configuration.
  */
 export type DirectorySkipReason =
   | "plugin_unavailable"
@@ -73,6 +76,7 @@ export type DirectorySkipReason =
   | "not_enabled"
   | "config_invalid"
   | "not_configured"
+  | "needs_config"
   | "locked";
 
 export type DirectorySyncResult =
@@ -146,11 +150,15 @@ export interface SyncJobData {
   requestedByToken?: string;
 }
 
+/** Skips that log nothing and enqueue nothing: Ruling A28 and an org needing configuration. */
+const silentSkip = (reason: DirectorySkipReason): boolean =>
+  reason === "not_configured" || reason === "needs_config";
+
 /** 组织已删除（同步途中）：停止本轮。 */
 class OrgGone extends Error {}
 
 type Eligible =
-  | { ok: true; directory: Directory; orgConfig: unknown }
+  | { ok: true; directory: Directory; orgConfig: unknown; config: unknown }
   | { ok: false; reason: Exclude<DirectorySkipReason, "locked"> };
 
 /**
@@ -194,6 +202,7 @@ export class DirectorySync {
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: Pick<OrgExtensionConfigs, "get">,
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     @Inject(ExternalIdentities) private readonly external: Pick<ExternalIdentities, "resolve">,
     @Inject(Offboarding)
     private readonly offboarding: Pick<Offboarding, "offboard" | "afterOffboard">,
@@ -206,8 +215,8 @@ export class DirectorySync {
   /** A `directory-sync` job (dispatched by `MaintenanceProcessor`). */
   async runSyncJob(data: SyncJobData): Promise<void> {
     const r = await this.sync(data.orgId, data.plugin, data);
-    // 通讯录未配置（Ruling A28）静默跳过
-    if (r.status === "skipped" && r.reason !== "not_configured") {
+    // 通讯录未配置（Ruling A28）and an org needing configuration (spec A §6) are skipped silently
+    if (r.status === "skipped" && !silentSkip(r.reason)) {
       this.log.info("directory sync skipped", {
         orgId: data.orgId,
         plugin: data.plugin,
@@ -225,7 +234,11 @@ export class DirectorySync {
       | undefined;
   }
 
-  /** The org exists, the extension provides a directory, is enabled in the org and its org config satisfies the schema (reuses the `OrgExtensionConfigs.get` validation). */
+  /**
+   * The org exists, the extension provides a directory, is enabled in the org, its org config
+   * satisfies the schema (reuses the `OrgExtensionConfigs.get` validation) and its effective
+   * deployment config for the org is valid (layering spec A §6).
+   */
   private async eligible(orgId: string, plugin: string): Promise<Eligible> {
     const directory = this.provider(plugin);
     if (!directory) return { ok: false, reason: "plugin_unavailable" };
@@ -248,17 +261,25 @@ export class DirectorySync {
       return { ok: false, reason: "config_invalid" };
     }
     if (!cfg?.enabled) return { ok: false, reason: "not_enabled" };
+    let effective: Awaited<ReturnType<EffectiveConfigs["get"]>>;
+    try {
+      effective = await this.effective.get(orgId, plugin);
+    } catch (err) {
+      this.log.warn("directory sync: cannot read the effective config", { orgId, plugin, err });
+      return { ok: false, reason: "config_invalid" };
+    }
+    if (!effective.ok) return { ok: false, reason: "needs_config" };
     // Ruling A28：插件说通讯录没配好（组织只用它的别的能力）→ 不同步；插件实现出错按未配置处理
     if (directory.configured !== undefined) {
       let configured = false;
       try {
-        configured = directory.configured(cfg.config) === true;
+        configured = directory.configured(cfg.config, effective.config) === true;
       } catch {
         configured = false;
       }
       if (!configured) return { ok: false, reason: "not_configured" };
     }
-    return { ok: true, directory, orgConfig: cfg.config };
+    return { ok: true, directory, orgConfig: cfg.config, config: effective.config };
   }
 
   /**
@@ -272,7 +293,7 @@ export class DirectorySync {
     now: Date = new Date(),
   ): Promise<string | undefined> {
     const e = await this.eligible(orgId, plugin);
-    if (!e.ok && e.reason === "not_configured") return undefined;
+    if (!e.ok && silentSkip(e.reason)) return undefined;
     return this.addJob(orgId, plugin, "changed", directorySyncJobId(orgId, plugin, "changed", now));
   }
 
@@ -305,7 +326,8 @@ export class DirectorySync {
    * Manual trigger by an admin: re-checks `org.members.manage` live under the org row lock, then that
    * the extension can sync (does not provide a directory -> `extension.not_found`, not enabled ->
    * `extension.not_enabled`, config no longer valid -> `extension.config_invalid`, the extension says
-   * the directory is not configured -> `directory.not_configured`, Ruling A28), and enqueues a sync
+   * the directory is not configured -> `directory.not_configured`, Ruling A28; the effective config
+   * is not valid in the org -> `extension.needs_config`, layering spec A §6), and enqueues a sync
    * job with a unique id.
    */
   async request(
@@ -339,6 +361,11 @@ export class DirectorySync {
           throw new ApiError(
             "directory.not_configured",
             `The directory of extension ${plugin} is not configured for this organization`,
+          );
+        case "needs_config":
+          throw new ApiError(
+            "extension.needs_config",
+            `Extension ${plugin} needs configuration in this organization`,
           );
       }
     }
@@ -430,7 +457,7 @@ export class DirectorySync {
     // 锁丢了（续租失败、过期后被他人取得）：停止本轮，不再移除任何人
     const signal = lease.lost;
     try {
-      return await this.run(orgId, plugin, e.directory, e.orgConfig, signal, opts);
+      return await this.run(orgId, plugin, e.directory, e.orgConfig, e.config, signal, opts);
     } finally {
       await lease.release().catch(() => {});
       await this.rerunIfDirty(orgId, plugin, dirtyKey);
@@ -456,6 +483,7 @@ export class DirectorySync {
     plugin: string,
     directory: Directory,
     orgConfig: unknown,
+    config: unknown,
     signal: AbortSignal,
     opts: {
       trigger?: DirectorySyncTrigger;
@@ -479,6 +507,7 @@ export class DirectorySync {
         signal.throwIfAborted();
         const r = await directory.listMembers({
           orgConfig,
+          config,
           ...(cursor !== undefined && { cursor }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(DIRECTORY_PAGE_TIMEOUT_MS)]),
         });
@@ -518,7 +547,7 @@ export class DirectorySync {
       if (!still.ok) {
         partial = true;
         // 途中通讯录配置被清空（Ruling A28）：照样不移除，但不记警告
-        if (still.reason !== "not_configured") {
+        if (!silentSkip(still.reason)) {
           this.log.warn("directory sync: plugin no longer eligible before removals", {
             orgId,
             plugin,

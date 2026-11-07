@@ -537,6 +537,7 @@ describe("runTitleJob (direct)", { timeout: 60_000 }, () => {
         current: () => undefined,
         expectedPolicy: (mount) => (mount === "model.request" ? ["dlp"] : []),
         enabledPlugins: async () => new Set(["dlp"]),
+        effectiveConfig: async () => ({ ok: true, config: {}, source: "platform" }),
         locks: new LockService(redis, createLogger("error")),
         config: () => ({ hooks: { timeoutMs: 1000 } }),
         log: console,

@@ -167,7 +167,7 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       header: t("columns.status"),
       cell: (p) => (
         <Stack direction="row" gap={8} align="center">
-          <ExtensionStatusMark status={p.status} />
+          <ExtensionStatusMark status={p.status} orgsNeedingConfig={p.orgsNeedingConfig} />
           {p.sensitive && <Badge tone="warn">{t("sensitive")}</Badge>}
         </Stack>
       ),
@@ -378,7 +378,15 @@ function AdminExtensionSheet({
         )}
         <KeyValue
           rows={[
-            { k: te("stateTitle"), v: <ExtensionStatusMark status={plugin.status} /> },
+            {
+              k: te("stateTitle"),
+              v: (
+                <ExtensionStatusMark
+                  status={plugin.status}
+                  orgsNeedingConfig={plugin.orgsNeedingConfig}
+                />
+              ),
+            },
             {
               k: te("capabilitiesTitle"),
               v: capabilities.length > 0 ? capabilities.join(" · ") : "—",

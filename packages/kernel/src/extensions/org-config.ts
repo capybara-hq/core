@@ -27,9 +27,11 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configMessages, type JsonSchema, safeConfigFormSchema } from "./config-json-schema.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
+import { fieldLevels } from "./org-levels.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
 import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
@@ -69,6 +71,16 @@ export interface OrgExtensionView {
   catalogItem: { itemId: string; scope: PluginScope } | null;
   /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
   switchable: boolean;
+  /**
+   * The two-level deployment config (spec A §5.3, §5.4): `following` the platform, a `copy` of the
+   * overridable fields, or `none` (the extension has no overridable field, or is unavailable).
+   */
+  overrideState: "following" | "copy" | "none";
+  /**
+   * The org must configure the extension before it works here (spec A §6): its effective config
+   * is not valid, or a required org-only field is missing. Always false when unavailable.
+   */
+  needsConfig: boolean;
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -114,7 +126,8 @@ type Obj = Record<string, unknown>;
 
 /**
  * The scope part of an org view: the extension's primary plugin and whether the org can switch it.
- * With several source items, one that is `all` or builtin locks the extension on (scope `all`).
+ * With several source items, a builtin one locks the extension on (scope `all`); an `all` one does
+ * not (layering spec §4).
  */
 function scopeFields(
   items: readonly ExtensionPluginItem[] | undefined,
@@ -187,6 +200,8 @@ export class OrgExtensionConfigs {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Secret values handled (written or decrypted) are masked in the logs after the commit. */
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The effective deployment config of each org (spec A §6): read for `needsConfig`. */
+    @Inject(EffectiveConfigs) private readonly effective: EffectiveConfigs,
   ) {}
 
   /** The kernel-schema handle of the current transaction. */
@@ -207,15 +222,45 @@ export class OrgExtensionConfigs {
   }
 
   /**
-   * 列出所有已加载插件在该组织下的状态（按加载顺序）；无记录时 enabled=false、config=null。
-   * 之后是已安装但此刻没加载的插件（部署上停用等），`available: false`，按名字排序。
+   * The state of every loaded extension the org sees, in load order (no row: `enabled` false,
+   * `config` null), then the installed extensions not loaded right now (disabled on the deployment
+   * and the like) as `available: false`, sorted by name.
    */
   async list(orgId: string): Promise<OrgExtensionView[]> {
     const installed = (await this.installs.list()).map((r) => ({
       name: r.name,
       version: r.version,
     }));
-    return this.listSnapshot(orgId, installed);
+    return this.withLayers(orgId, await this.listSnapshot(orgId, installed));
+  }
+
+  /**
+   * Fills `overrideState` and the platform half of `needsConfig` (spec A §6) for the views of
+   * extensions with overridable fields (the others always run with the platform's config, which
+   * loaded valid). Reads the org's copy rows once and the effective config of each such extension.
+   */
+  private async withLayers(orgId: string, views: OrgExtensionView[]): Promise<OrgExtensionView[]> {
+    const layered = views.filter((v) => v.overrideState !== "none");
+    if (layered.length === 0) return views;
+    const copies = new Set(
+      (
+        await this.db
+          .selectFrom("extension_org_overrides")
+          .select("plugin")
+          .where("org_id", "=", orgId)
+          .where(
+            "plugin",
+            "in",
+            layered.map((v) => v.plugin),
+          )
+          .execute()
+      ).map((r) => r.plugin),
+    );
+    for (const v of layered) {
+      v.overrideState = copies.has(v.plugin) ? "copy" : "following";
+      if (!(await this.effective.get(orgId, v.plugin)).ok) v.needsConfig = true;
+    }
+    return views;
   }
 
   /** `REPEATABLE READ` read-only: the config rows and the secrets come from one snapshot. */
@@ -253,14 +298,7 @@ export class OrgExtensionConfigs {
           .execute()
       ).map((r) => r.item_id),
     );
-    const seen = (name: string) => {
-      const of = items.get(name);
-      if (!of) return true;
-      return (
-        required.has(name) ||
-        of.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)))
-      );
-    };
+    const seen = (name: string) => required.has(name) || itemsVisible(items.get(name), listed);
     const views = loaded
       .filter((m) => seen(m.name))
       .map((m) =>
@@ -290,6 +328,8 @@ export class OrgExtensionConfigs {
           available: false,
           required: required.has(i.name),
           ...scopeFields(items.get(i.name), required.has(i.name)),
+          overrideState: "none",
+          needsConfig: false,
         }),
       );
     return [...views, ...unavailable];
@@ -299,8 +339,8 @@ export class OrgExtensionConfigs {
    * How an `enabled` write of this extension is handled: `direct` through {@link put} (a required
    * bootstrap plugin keeps `extension.required`; an extension without a live item is config-declared;
    * several live items keep the direct write, the strictest source rules applying), `locked` (a live
-   * item is `all` or builtin and the write switches off: `plugin.scope_locked`), or `item` (the single
-   * plugin whose org switch it is).
+   * item is builtin and the write switches off: `plugin.scope_locked`), or `item` (the single plugin
+   * whose org switch it is).
    */
   async switchPlan(
     plugin: string,
@@ -343,7 +383,16 @@ export class OrgExtensionConfigs {
         `Extension ${plugin} has no organization config`,
       );
     }
-    return this.write(orgId, plugin, manifest, input, actorAccountId, actorTokenId, opts);
+    const view = await this.write(
+      orgId,
+      plugin,
+      manifest,
+      input,
+      actorAccountId,
+      actorTokenId,
+      opts,
+    );
+    return (await this.withLayers(orgId, [view]))[0] as OrgExtensionView;
   }
 
   @Transactional()
@@ -757,6 +806,12 @@ export class OrgExtensionConfigs {
       available: true,
       required,
       ...scopeFields(items, required),
+      overrideState: [...fieldLevels(m.config?.deployment).values()].includes("override")
+        ? "following"
+        : "none",
+      needsConfig:
+        schema !== undefined &&
+        orgConfigIncomplete(schema, config, (p) => setKeys.has(secretKey(m.name, p))),
     };
   }
 
@@ -786,6 +841,67 @@ export class OrgExtensionConfigs {
       .execute();
     return new Set(rows.map((r) => r.key));
   }
+}
+
+/**
+ * Whether an org may see an extension with these live catalog items (`listed`: the items whose
+ * `named` list has the org): one visible item is enough; without an item (config-declared, or its
+ * items deleted) it is visible. A builtin item counts as `all`.
+ */
+function itemsVisible(
+  items: readonly ExtensionPluginItem[] | undefined,
+  listed: ReadonlySet<string>,
+): boolean {
+  if (!items) return true;
+  return items.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)));
+}
+
+/**
+ * Whether the org sees `plugin` in its extension list (a required bootstrap plugin always; else
+ * under its catalog items' scope, as {@link OrgExtensionConfigs.list} filters). `db` may be a
+ * transaction.
+ */
+export async function extensionVisibleTo(
+  db: KernelSchemaDb,
+  orgId: string,
+  plugin: string,
+): Promise<boolean> {
+  if ((await requiredExtensions(db)).has(plugin)) return true;
+  const items = (await pluginItemsOf(db, [plugin])).get(plugin);
+  if (!items) return true;
+  const listed = new Set(
+    (
+      await db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("org_id", "=", orgId)
+        .where(
+          "item_id",
+          "in",
+          items.map((i) => i.id),
+        )
+        .execute()
+    ).map((r) => r.item_id),
+  );
+  return itemsVisible(items, listed);
+}
+
+/**
+ * The stored org-only config does not satisfy the org schema (a required field missing): what the
+ * org form reports before any edit. A set secret is not decrypted here; issues on it or below it
+ * are ignored (it was validated when written).
+ */
+function orgConfigIncomplete(
+  schema: z.ZodTypeAny,
+  plain: Obj | null,
+  secretSet: (path: string) => boolean,
+): boolean {
+  const r = schema.safeParse(plain ?? {});
+  if (r.success) return false;
+  const secrets = secretPaths(schema).filter(secretSet);
+  return toIssues(r.error).some(
+    (i) => !secrets.some((p) => i.path === p || i.path.startsWith(`${p}.`)),
+  );
 }
 
 const requiredError = (plugin: string) =>

@@ -109,7 +109,9 @@ interface Row {
   unavailable: boolean;
   /** The org config form is shown (an admin, an available extension with fields). */
   configForm: boolean;
-  /** 待配置: off, and the saved config lacks a required field. */
+  /** The two-level deployment form is shown (an admin, an available extension with overridable fields). */
+  overrides: boolean;
+  /** 待配置: the kernel's `needsConfig` (effective config invalid or a required field missing). */
   needsConfig: boolean;
   problem: ToggleProblem | undefined;
   state: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
@@ -270,13 +272,18 @@ function ExtensionList({
   const rows: Row[] = extensions.map((ext) => {
     const label = extensionLabel({ name: ext.plugin, displayName: ext.displayName }, lang);
     const unavailable = ext.available === false;
-    const platform = ext.required === true || ext.catalogItem?.scope === "all";
+    const platform = ext.required === true;
     const configForm =
       canEdit && !unavailable && ext.configurable && hasConfigFields(ext.orgConfigSchema);
+    const overrides =
+      canEdit && !unavailable && ext.overrideState !== undefined && ext.overrideState !== "none";
+    // The kernel decides (spec A §6); an older kernel leaves it out: derived from the saved org config
     const needsConfig =
-      !ext.enabled &&
-      configForm &&
-      !savedConfigComplete(ext.orgConfigSchema, ext.config, ext.secrets, lang);
+      !unavailable &&
+      (ext.needsConfig ??
+        (!ext.enabled &&
+          configForm &&
+          !savedConfigComplete(ext.orgConfigSchema, ext.config, ext.secrets, lang)));
     const problem = problems[ext.plugin];
     const state: Row["state"] = unavailable
       ? { label: t("unavailable"), tone: "warn" }
@@ -285,7 +292,14 @@ function ExtensionList({
         : needsConfig
           ? { label: t("needsConfig"), tone: "warn" }
           : ext.enabled
-            ? { label: platform ? tp("state.platform") : t("enabled"), tone: "ok" }
+            ? {
+                label: platform
+                  ? tp("state.platform")
+                  : ext.catalogItem?.scope === "all"
+                    ? tp("state.platformDefault")
+                    : t("enabled"),
+                tone: "ok",
+              }
             : { label: t("disabled"), tone: "muted" };
     const rank: Row["rank"] =
       !unavailable && (problem !== undefined || needsConfig)
@@ -297,9 +311,10 @@ function ExtensionList({
       ext,
       label,
       platform,
-      locked: platform || ext.switchable === false || unavailable || needsConfig,
+      locked: platform || ext.switchable === false || unavailable || (needsConfig && !ext.enabled),
       unavailable,
       configForm,
+      overrides,
       needsConfig,
       problem,
       state,
@@ -533,6 +548,7 @@ function ExtensionList({
       {current !== undefined && (
         <OrgExtensionSheet
           key={current.ext.plugin}
+          orgId={orgId}
           extension={current.ext}
           label={current.label}
           canEdit={canEdit}
@@ -541,6 +557,7 @@ function ExtensionList({
           platform={current.platform}
           unavailable={current.unavailable}
           configForm={current.configForm}
+          overrides={current.overrides}
           needsConfig={current.needsConfig}
           locked={current.platform || current.ext.switchable === false || current.unavailable}
           problem={current.problem}

@@ -5,7 +5,12 @@ import {
   listAdminAccounts,
   listAdminOrgs,
 } from "../admin";
-import { getAdminExtension, getExtensionConfig, listAdminExtensions } from "../admin-extensions";
+import {
+  getAdminExtension,
+  getExtensionConfig,
+  listAdminExtensions,
+  listExtensionOrgOverrides,
+} from "../admin-extensions";
 import { getPlatformInbox, getPlatformInboxCount } from "../admin-inbox";
 import {
   getCatalogItem,
@@ -153,6 +158,14 @@ export const extensionConfigQuery = (name: string) =>
   defineQuery({
     key: d().extensionConfig(name),
     fn: () => getExtensionConfig(name),
+    freshness: "deployment",
+  });
+
+/** The orgs holding a copy of one extension's overridable config (the Config tab's list). */
+export const extensionOrgOverridesQuery = (name: string) =>
+  defineQuery({
+    key: d().extensionOrgOverrides(name),
+    fn: () => listExtensionOrgOverrides(name).then((r) => r.overrides),
     freshness: "deployment",
   });
 
