@@ -273,9 +273,9 @@ skills.
 - Language: model-visible text English; card summaries zh and en through i18n; zh UI terms (平台,
   超级管理员, 智能体).
 - Depends on: platform / org layering and environments (both on branches) for the shape of some
-  operations (`me`'s environment, org config). The plan is written after both merge, against
-  `main` then **(designer's call)**; routes those branches add before that are classified by this
-  work's first fence run.
+  operations (`me`'s environment, org config). This work starts on `main` now (decided, 2026-11-07):
+  `me` reports the sandbox as it is today, and whichever lands second adapts. When this merges
+  first, the fence makes those branches classify the routes they add.
 
 ## 11. Left to the builder
 
