@@ -274,8 +274,7 @@ the platform's values while its tools use the org's, and authors could not work 
 - extension tools: the tool call context;
 - extension UI: `ctx.ui` view and action handlers (`plugin-sdk/src/ui.ts`) and file-preview
   `render` (`file-preview.ts`);
-- hooks whose payload carries an org (`hooks.ts`);
-- extension HTTP routes called in an org's context;
+- hooks whose payload carries an org (`hooks.ts`), including `usage.report`;
 - model-provider@2: becomes org-bound in design B (its calls carry the org and the effective config;
   B §5.5).
 
@@ -283,7 +282,16 @@ The builder lists the full set from the SDK. Points that are deployment-wide tod
 object-store@1, channel@1 with its connection config, identity-source@1, connector@1) carry no org;
 `override` has no effect on them until a later design makes them org-bound. `capybara-plugin check`
 warns when an extension marks `override` but provides only such points and has no org-bound callback
-(tools, UI, hooks, routes) **(designer's call)**.
+(tools, UI, hooks) **(designer's call)**. Extension HTTP routes (`ctx.http.route`) are dispatched
+without auth or org context today (`http/plugin-dispatch.ts`), so they get no effective config; an
+extension that needs org values there goes through `ctx.ui` actions instead.
+
+When an org's effective config is not valid (§5.4a), the kernel does not call the extension for that
+org: it is excluded from point resolution and directory sync, its tools are unavailable with the
+reason "needs configuration in this organization", its UI blocks fail alone, and its hooks for that
+org behave as on a replica where the extension is not loaded (observe hooks skipped, policy hooks
+deny, AGENTS.md "Extension hooks") **(designer's call)**. The kernel reports this as the org
+extension's `needsConfig` state, which today only the web derives (`config-form/org.ts`).
 
 The effective config of an org with a copy never contains a platform secret (§5.4); while
 following, it contains the platform's values, secrets included, exactly as `ctx.config` does today.
@@ -306,8 +314,9 @@ the SDK API rules (snapshot and changeset bumping `@capybara-hq/plugin-sdk`).
   status (`connector_tools.status`), and the sandbox tools have `sandboxToolPolicy`
   **(designer's call)**.
 - Turning a tool off follows PCM §5 rule 8 (the confirmation lists the org's agents that selected
-  it). An agent selecting the extension's tools as `all` simply lacks the switched-off tool. An agent
-  created from a template (PCM §15) that names a switched-off tool gets it marked unavailable, like
+  it). Agents select extension tools one by one (`AgentToolRef` `{ kind: "plugin", plugin, name }`),
+  so a switched-off tool shows as unavailable in every agent that selected it. An agent created from a
+  template (PCM §15) that names a switched-off tool gets it marked unavailable, like
   any tool the org cannot use **(designer's call)**.
 - Stored per (org, extension, tool name) (builder names the table). A tool the extension stops
   registering keeps its row harmlessly; the row applies again if the tool comes back.
