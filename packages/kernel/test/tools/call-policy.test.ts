@@ -89,7 +89,8 @@ const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input) => {
   const key = `Platform:${op}`;
   switch (op) {
     case "x.read":
-      return { key, policy: "allow", remember: true };
+      // as the real tool: a read never asks and is not remembered
+      return { key, policy: "allow", remember: false };
     case "x.write":
     case "x.personal":
     case "x.other":
@@ -275,6 +276,22 @@ describe("per-call policy keys", () => {
     // x.other is not covered by the x.write deny: it asks
     const asked = await runStep([call("c3", "x.other")], { agent: denying });
     expect(asked.kind).toBe("suspended");
+  });
+
+  it("a read (allow, remember:false) never prompts; tightened to ask it asks once-only despite a grant", async () => {
+    expect(await runStep([call("c1", "x.read")])).toEqual({ kind: "done" });
+    expect(calls).toEqual([{ op: "x.read" }]);
+    expect(await approvalOf("c1")).toBeUndefined();
+    await grantAlways("Platform:x.read");
+    const asking = { ...agent, toolPolicies: { "Platform:x.read": "ask" as const } };
+    const out = await runStep([call("c2", "x.read", "again")], { agent: asking });
+    expect(out.kind).toBe("suspended");
+    expect(await approvalOf("c2")).toMatchObject({
+      tool_key: "Platform:x.read",
+      status: "pending",
+      scopes: ["once"],
+    });
+    expect(calls).toHaveLength(1);
   });
 
   it("a policy on the whole tool still applies to every operation", async () => {

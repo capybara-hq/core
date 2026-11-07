@@ -187,9 +187,11 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     // 可见性实时读（R5）：共享 agent 的 SkillWrite 固定 ask，私有 agent 不问（见 R3_SHARED_AGENT_ONLY_TOOL_KEYS）
     // 当前版本的 skills.writePolicy 同样实时读（R5）：运行中改为 ask，下一次调用即生效；固定 ask 时授权不放行
     const writePolicy = (currentDef as AgentDefinition | undefined)?.skills?.writePolicy;
-    // `remember: false` (an org / platform operation): every call asks, grants never apply
+    // `remember: false` on a call that is not a plain allow (an org / platform operation, or a read
+    // an agent tightened to ask): every call asks, grants never apply. A read (`allow`) never asks.
     const fixedAsk =
-      isFixedAsk(tool, current?.visibility, writePolicy) || (call !== null && !call.remember);
+      isFixedAsk(tool, current?.visibility, writePolicy) ||
+      (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {
       connectorDefault,
       ...(agentOverride !== undefined && { agentOverride }),
