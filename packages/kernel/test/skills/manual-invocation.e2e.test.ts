@@ -23,6 +23,7 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
+import { fakeEnvFile } from "../helpers/fake-fs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -173,15 +174,8 @@ async function send(payload: { text: string; skill?: { name: string } }): Promis
   return (res.json() as { event: { seq: number } }).event.seq;
 }
 
-async function sandboxFile(convId: string, path: string): Promise<string | null> {
-  const row = await db
-    .selectFrom("sandboxes")
-    .select("handle")
-    .where("conversation_id", "=", convId)
-    .executeTakeFirstOrThrow();
-  const id = (row.handle as { id: string }).id;
-  return readFile(join(root, "instances", id, "fs", path), "utf8").catch(() => null);
-}
+const sandboxFile = (convId: string, path: string): Promise<string | null> =>
+  fakeEnvFile(db, root, convId, path);
 
 describe("phase D acceptance: commands, manual-only and forked skills", {
   timeout: 120_000,
@@ -328,14 +322,15 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const events = await eventsOf(db, state.convId as string);
     const msg = ofType(events, "user_message").find((e) => e.seq === seq);
     expect(msg?.payload.skill).toMatchObject({ name: "manual-script", mode: "inline" });
-    expect(texts(msg?.payload.content ?? [])[0]).toContain(
-      'call Skill with "manual-script" to copy them to /skills/manual-script/',
+    expect(texts(msg?.payload.content ?? [])[0]).toMatch(
+      /call Skill with "manual-script" to copy them to \/skills\/manual-script@[0-9a-f]{12}\//,
     );
     const loaded = ofType(events, "tool_result").at(-1);
     expect(loaded?.payload.toolKey).toBe("Skill");
     expect(loaded?.payload.isError, loaded?.payload.content).toBe(false);
-    expect(loaded?.payload.content).toContain("/skills/manual-script/");
-    expect(await sandboxFile(state.convId as string, "skills/manual-script/scripts/run.sh")).toBe(
+    const dir = /\/skills\/manual-script@[0-9a-f]{12}/.exec(loaded?.payload.content ?? "")?.[0];
+    expect(dir, loaded?.payload.content).toBeTruthy();
+    expect(await sandboxFile(state.convId as string, `${dir?.slice(1)}/scripts/run.sh`)).toBe(
       '#!/bin/sh\necho "manual-script ok"\n',
     );
     expect(lastReply(events)).toBe("copied the script");

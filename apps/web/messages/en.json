@@ -294,6 +294,14 @@
       "unavailable": "No sandbox is available in this deployment.",
       "busy": "The sandbox is busy; try again shortly."
     },
+    "environment": {
+      "not_found": "The environment does not exist or has been deleted.",
+      "name_taken": "You already have an environment with this name. Choose another name.",
+      "limit_reached": "You have reached the limit of environments. Delete one to create another.",
+      "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
+      "files_lost": "The files of this environment were lost. Rebuild its files on the environments page to use it again.",
+      "forbidden": "You can no longer use this environment."
+    },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
@@ -1293,6 +1301,10 @@
     "contextPct": "Context {n}%",
     "toolLines": "lines {from}–{to}",
     "pickModel": "Switch model",
+    "pickEnvironment": "Environment",
+    "environmentNote": "Fixed once the first message is sent",
+    "environmentLocked": "A conversation keeps its environment",
+    "environmentDeleted": "Environment deleted",
     "pickEffort": "Effort",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
@@ -1403,17 +1415,78 @@
     "download": "Download",
     "previewTruncated": "Showing the beginning only; download for the full file.",
     "previewFailed": "Preview failed to load.",
-    "sandbox": "Sandbox",
-    "sandboxNone": "Not created",
-    "sandboxRunning": "Running",
-    "sandboxSuspended": "Suspended",
-    "sandboxLastUsed": "Last used",
-    "sandboxFailed": "Status unavailable",
+    "environmentLine": "Environment: {name} · {state}",
+    "environmentNone": "No environment",
+    "environmentDeleted": "Environment deleted",
+    "environmentFailed": "Environment status unavailable",
     "lastRun": "Last run · {parts}"
   },
   "pluginPage": {
     "pathLabel": "Extension page",
     "liveLost": "Live updates stopped. Reload the page for the latest content."
+  },
+  "environments": {
+    "title": "Environments",
+    "listLabel": "Your environments",
+    "personal": "Personal",
+    "new": "New environment",
+    "none": "None",
+    "source": { "cloud": "Cloud sandbox" },
+    "state": {
+      "running": "Running",
+      "suspended": "Suspended",
+      "notStarted": "Not started",
+      "filesLost": "Files lost",
+      "unavailable": "Unavailable"
+    },
+    "isolation": {
+      "isolated": "Processes isolated between sessions",
+      "shared": "Processes not isolated between sessions"
+    },
+    "egress": { "none": "no network", "allowlist": "allowlisted hosts", "open": "open network" },
+    "empty": "You have no environments yet.",
+    "noCloud": {
+      "text": "The platform has no cloud sandbox.",
+      "hint": "Ask the super admin to set up a sandbox provider.",
+      "notice": "The platform has no cloud sandbox, so these environments are unavailable. You can still delete them. Ask the super admin to set up a sandbox provider."
+    },
+    "create": {
+      "title": "New environment",
+      "name": "Name",
+      "nameHelp": "Up to 64 characters. Your environment names are unique.",
+      "cancel": "Cancel",
+      "submit": "Create",
+      "created": "Environment {name} created."
+    },
+    "detail": {
+      "tabsLabel": "Environment sections",
+      "tabs": { "summary": "Summary" },
+      "source": "Source",
+      "provider": "Provider",
+      "state": "State",
+      "isolation": "Isolation",
+      "limits": "Limits",
+      "limitsValue": "{cpu} CPU · {memory} memory · {disk} disk · {egress}",
+      "files": "Files",
+      "filesNote": "Files are kept until the environment is deleted.",
+      "suspendNote": "Suspending ends the processes that are running.",
+      "filesLostNote": "The files of this environment are gone at the provider. Rebuild the files to use it again.",
+      "created": "Created",
+      "rename": "Rename",
+      "renameTitle": "Rename environment",
+      "renameSubmit": "Save",
+      "renamed": "Environment renamed to {name}.",
+      "delete": "Delete environment",
+      "deleteTitle": "Delete environment",
+      "deleteHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. Type its name to confirm.",
+      "deleteDefaultHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. A new, empty {name} environment is created the next time one is needed. Type its name to confirm.",
+      "deleted": "Environment {name} deleted.",
+      "resetFiles": "Rebuild files",
+      "resetTitle": "Rebuild the files of {name}?",
+      "resetHint": "The workspace is wiped and the next use starts with empty files.",
+      "resetSubmit": "Rebuild files",
+      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done."
+    }
   },
   "nav": {
     "agents": "Agents",
@@ -1421,6 +1494,7 @@
     "actions": "Actions",
     "inbox": "Inbox",
     "connectors": "Connectors",
+    "environments": "Environments",
     "channels": "Channels",
     "skills": "Skills",
     "evals": "Evals & runs",

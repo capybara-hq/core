@@ -241,8 +241,7 @@ function api(
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${PARENT}/tools`]: () => json(200, { tools: [] }),
     [`GET ${PARENT}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${PARENT}/sandbox`]: () =>
-      json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+    [`GET ${PARENT}/environment`]: () => json(200, { environment: null }),
     [`GET ${PARENT}/subagents`]: () =>
       json(200, {
         subagents: [view("ch2", "Check tests", "running"), view("ch1", "Scan docs", "completed")],
@@ -849,8 +848,7 @@ describe("sub-agents on the conversation page", () => {
           json(200, {
             usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
           }),
-        [`GET ${CHILD}/sandbox`]: () =>
-          json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+        [`GET ${CHILD}/environment`]: () => json(200, { environment: null }),
       },
       { child },
     );
@@ -882,7 +880,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
         `${PARENT}/tools`,
         `${ORG}/ui/contributions`,
         `${PARENT}/files`,
-        `${PARENT}/sandbox`,
+        `${PARENT}/environment`,
         `${ORG}/connectors`,
         `${ORG}/agents/ag1/invocable-skills`,
         `${ORG}/attachments/limits`,
@@ -893,7 +891,7 @@ describe("the conversation page's server snapshot (web-SSR spec §6.2)", () => {
     expect(group()?.textContent).toContain("1 subagents running");
     const props = await screen.findByRole("complementary", { name: "Properties" });
     expect(within(props).getByText(/1,234/)).toBeTruthy();
-    expect(within(props).getByText(new RegExp(en.chatPanel.sandboxNone))).toBeTruthy();
+    expect(within(props).getByText(new RegExp(en.chatPanel.environmentNone))).toBeTruthy();
     expect(calls).toEqual([]);
   });
 });

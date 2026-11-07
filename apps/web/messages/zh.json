@@ -294,6 +294,14 @@
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
     },
+    "environment": {
+      "not_found": "该环境不存在或已被删除。",
+      "name_taken": "你已有同名环境，请换一个名称。",
+      "limit_reached": "环境数量已达上限，请先删除一个再新建。",
+      "unavailable": "该环境的沙箱提供方当前不可用，请联系超级管理员。",
+      "files_lost": "该环境的文件已丢失。请在环境页面重建文件后再使用。",
+      "forbidden": "你已无法使用该环境。"
+    },
     "skill": {
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
@@ -1293,6 +1301,10 @@
     "contextPct": "上下文 {n}%",
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
+    "pickEnvironment": "环境",
+    "environmentNote": "发出第一条消息后不能更换",
+    "environmentLocked": "对话开始后环境不再更换",
+    "environmentDeleted": "环境已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "智能体默认",
@@ -1391,17 +1403,78 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "sandbox": "沙箱",
-    "sandboxNone": "未创建",
-    "sandboxRunning": "运行中",
-    "sandboxSuspended": "已休眠",
-    "sandboxLastUsed": "最近使用",
-    "sandboxFailed": "状态读取失败",
+    "environmentLine": "环境：{name} · {state}",
+    "environmentNone": "未绑定环境",
+    "environmentDeleted": "环境已删除",
+    "environmentFailed": "环境状态读取失败",
     "lastRun": "上次运行 · {parts}"
   },
   "pluginPage": {
     "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
+  },
+  "environments": {
+    "title": "环境",
+    "listLabel": "我的环境",
+    "personal": "个人环境",
+    "new": "新建环境",
+    "none": "无",
+    "source": { "cloud": "云端沙箱" },
+    "state": {
+      "running": "运行中",
+      "suspended": "已暂停",
+      "notStarted": "未启动",
+      "filesLost": "文件已丢失",
+      "unavailable": "不可用"
+    },
+    "isolation": {
+      "isolated": "会话之间隔离进程",
+      "shared": "会话之间不隔离进程"
+    },
+    "egress": { "none": "无网络", "allowlist": "仅允许名单内的主机", "open": "开放网络" },
+    "empty": "你还没有环境。",
+    "noCloud": {
+      "text": "平台没有云端沙箱。",
+      "hint": "请联系超级管理员配置沙箱提供方。",
+      "notice": "平台没有云端沙箱，下列环境不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
+    },
+    "create": {
+      "title": "新建环境",
+      "name": "名称",
+      "nameHelp": "最多 64 个字符，你的环境名称不能重复。",
+      "cancel": "取消",
+      "submit": "创建",
+      "created": "已创建环境 {name}。"
+    },
+    "detail": {
+      "tabsLabel": "环境分区",
+      "tabs": { "summary": "概要" },
+      "source": "来源",
+      "provider": "提供方",
+      "state": "状态",
+      "isolation": "隔离",
+      "limits": "限制",
+      "limitsValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk} · {egress}",
+      "files": "文件",
+      "filesNote": "文件保留到环境被删除。",
+      "suspendNote": "暂停会结束正在运行的进程。",
+      "filesLostNote": "该环境的文件已在提供方丢失。重建文件后才能再次使用。",
+      "created": "创建时间",
+      "rename": "重命名",
+      "renameTitle": "重命名环境",
+      "renameSubmit": "保存",
+      "renamed": "环境已重命名为 {name}。",
+      "delete": "删除环境",
+      "deleteTitle": "删除环境",
+      "deleteHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。输入环境名称以确认。",
+      "deleteDefaultHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的{name}。输入环境名称以确认。",
+      "deleted": "已删除环境 {name}。",
+      "resetFiles": "重建文件",
+      "resetTitle": "重建 {name} 的文件？",
+      "resetHint": "工作区会被清空，下次使用时从空文件开始。",
+      "resetSubmit": "重建文件",
+      "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。"
+    }
   },
   "nav": {
     "agents": "智能体",
@@ -1409,6 +1482,7 @@
     "actions": "操作",
     "inbox": "收件箱",
     "connectors": "连接器",
+    "environments": "环境",
     "channels": "渠道",
     "skills": "技能",
     "evals": "评测与运行",

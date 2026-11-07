@@ -92,6 +92,15 @@ export const CONV_FIXTURE: {
   },
 };
 
+/** The composer's environment picker (spec §6.16.2): the choices, one of them not usable. */
+export const ENVIRONMENT_FIXTURE = {
+  selected: "dev-docker",
+  items: [
+    { id: "dev-docker", label: "开发沙盒" },
+    { id: "prod-cloud", label: "云端沙盒", tag: "未配置", disabled: true },
+  ],
+} as const;
+
 /** Composer, title bar and panel copy of the reference pages (zh; product copy goes through i18n). */
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",
@@ -104,6 +113,8 @@ export const CONV_COPY = {
   model: "切换模型",
   effort: "思考档位",
   agentLocked: "发送第一条消息后不能再换智能体",
+  environment: "切换环境",
+  environmentLocked: "发送第一条消息后不能再换环境",
   modelHint: "从下一条消息起生效",
   properties: "属性面板",
   files: "文件",

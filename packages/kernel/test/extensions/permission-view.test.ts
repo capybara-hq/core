@@ -115,11 +115,11 @@ describe("permissionGroups", () => {
     expect(plain?.sensitive).toBe(false);
   });
 
-  it("D10 + 计划扩展：提供 sandbox@1 或 object-store@1 时「提供」一组同样标为敏感，CLI 逐项标记", () => {
+  it("D10 + planned extensions: providing sandbox@2 or object-store@1 makes the provides group sensitive, the CLI marks each item", () => {
     expect([...SENSITIVE_EXTENSION_POINTS].sort()).toEqual(
-      ["channel@1", "directory@1", "identity-source@1", "object-store@1", "sandbox@1"].sort(),
+      ["channel@1", "directory@1", "identity-source@1", "object-store@1", "sandbox@2"].sort(),
     );
-    for (const cap of ["sandbox@1", "object-store@1"]) {
+    for (const cap of ["sandbox@2", "object-store@1"]) {
       const [g] = permissionGroups({ ...base, provides: [cap] });
       expect(g, cap).toEqual({
         category: "provides",
@@ -128,7 +128,7 @@ describe("permissionGroups", () => {
         entries: [{ value: cap, sensitive: true, reason: cap.split("@")[0]?.replaceAll("-", "_") }],
       });
       expect(isSensitivePermissionKey(`provides:${cap}`), cap).toBe(true);
-      // 只影响展示：依赖它不算敏感
+      // display only: requiring it is not sensitive
       expect(isSensitivePermissionKey(`requires:${cap}`), cap).toBe(false);
     }
   });

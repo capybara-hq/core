@@ -146,3 +146,65 @@ describe("ComposerBox token (skill chip)", () => {
     expect(screen.getByRole("button", { name: "移除 /x" })).toBeTruthy();
   });
 });
+
+describe("ComposerBox environment picker", () => {
+  const env = (over: Partial<NonNullable<ComposerBoxProps["pickers"]["environment"]>> = {}) => ({
+    label: "Environment",
+    value: "Docker dev",
+    groups: [
+      {
+        items: [
+          { id: "e1", label: "Docker dev", checked: true },
+          { id: "e2", label: "E2B cloud", tag: "Not configured", disabled: true },
+        ],
+      },
+    ],
+    onPick: noop,
+    ...over,
+  });
+
+  it("environment picker renders between agent and model", () => {
+    wrap(<ComposerBox {...props({ pickers: { ...props().pickers, environment: env() } })} />);
+    const names = ["Agent: Research", "Environment: Docker dev", "Model: opus 5.5"];
+    const nodes = names.map((n) => screen.getByRole("button", { name: n }));
+    expect(nodes[0]?.compareDocumentPosition(nodes[1] as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(nodes[1]?.compareDocumentPosition(nodes[2] as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("locked environment picker opens no menu", async () => {
+    const user = userEvent.setup();
+    wrap(
+      <ComposerBox
+        {...props({
+          pickers: {
+            ...props().pickers,
+            environment: env({ locked: { hint: "Fixed after the first message" } }),
+          },
+        })}
+      />,
+    );
+    const locked = document.querySelector('[data-part="picker"][data-locked="true"]');
+    expect(locked?.textContent).toBe("Docker dev");
+    expect(locked?.getAttribute("title")).toBe("Fixed after the first message");
+    await user.click(locked as Element);
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Environment/ })).toBeNull();
+  });
+
+  it("a disabled environment item shows its hint and cannot be picked", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    wrap(
+      <ComposerBox {...props({ pickers: { ...props().pickers, environment: env({ onPick }) } })} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Environment: Docker dev" }));
+    const item = screen.getByRole("menuitemradio", { name: /E2B cloud/ });
+    expect(item.textContent).toContain("Not configured");
+    await user.click(item);
+    expect(onPick).not.toHaveBeenCalled();
+  });
+});

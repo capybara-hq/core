@@ -43,6 +43,8 @@ import { ChannelConnectionsController } from "../channels/connections.controller
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { EnvironmentsController } from "../environments/environments.controller.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -118,6 +120,7 @@ const CONTROLLERS: Type[] = [
   ReadinessController,
   ConversationsController,
   BackgroundController,
+  EnvironmentsController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,
@@ -173,6 +176,7 @@ const CONTROLLERS: Type[] = [
     AgentsModule,
     ConversationsModule,
     BackgroundModule,
+    EnvironmentsModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,

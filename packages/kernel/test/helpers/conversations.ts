@@ -87,7 +87,8 @@ const noRuns: RunControl = {
 
 /**
  * A conversations service over test doubles: what is left out refuses (`resolveAttachments`,
- * `bindFiles`, `invoker`, the model `providers`) or does nothing (`runs`).
+ * `bindFiles`, `invoker`, the model `providers`) or does nothing (`runs`); conversations are
+ * created unbound (no environment).
  */
 export function conversationsFor(
   h: DbHandles,
@@ -125,6 +126,8 @@ export function conversationsFor(
     { bindForMessage: d.bindFiles ?? refuse("bindFiles") },
     { prepare: invoker ? (a) => invoker.prepare(a) : refuse("invoker") },
     { stopForDeletedConversation: async () => {} },
+    // no sandbox provider here: new conversations stay unbound
+    { forNew: async () => null },
     h.txHost,
   );
 }

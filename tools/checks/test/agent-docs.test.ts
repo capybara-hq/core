@@ -12,6 +12,7 @@ const point = (description: string): ExtensionPointInfo => ({
   cardinality: "multi",
   brokered: false,
   orgScoped: true,
+  majors: [1],
 });
 const points = { alpha: point("Alpha does a thing | really.") };
 const agentTemplateFields = [

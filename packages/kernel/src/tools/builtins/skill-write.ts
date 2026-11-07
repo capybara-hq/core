@@ -45,7 +45,7 @@ const SPEC: ToolSpec = {
     "user-invocable, context, agent, argument-hint and arguments, which are kept; with " +
     "disable-model-invocation: true only a person can invoke the skill and you cannot load it). " +
     "Every other entry in `files` is stored at " +
-    "/skills/<name>/<path>. Files of the previous version that you leave out are not part of the new " +
+    "/skills/<name>@<version-id>/<path> once loaded. Files of the previous version that you leave out are not part of the new " +
     "version. Text files only, at most 1 MB per skill in total. Use an existing skill's name to update " +
     "it; an organization skill with the same name is shadowed by this agent's own skill. On a private " +
     "agent the new version takes effect immediately. On a shared agent the change is sent to the " +

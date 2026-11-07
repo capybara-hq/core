@@ -4,6 +4,7 @@ import type { Job, Worker } from "bullmq";
 import type { KernelConfig } from "../config/schema.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import {
@@ -31,6 +32,7 @@ import { AnonymousGuestLock, AnonymousGuests } from "./threads.js";
  */
 @Module({
   imports: [
+    EnvironmentsModule,
     EventLogModule,
     ExtensionsModule,
     IdentityModule,

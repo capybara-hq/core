@@ -1289,9 +1289,10 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
-- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · environment picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
   - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short). When the row is short (a phone) a picker's label gives way with an ellipsis, the whole value in its tooltip; the icon buttons and the agents chip keep their size (AC3 fix round 1).
   - Where a page passes the agent picker it is a picker only before the first message; a `locked` one is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
+  - The environment picker (`pickers.environment`, environments design: a conversation picks its environment before the model) sits between the agent and the model pickers, so the slot order is 智能体 · 环境 · 模型 · 档位. States: default (a picker menu of the environments the agent may use, the current one checked); an environment that cannot be chosen is a **disabled item** (`PickerItem.disabled`, not selectable, its `tag` the reason, "未配置" / "Not configured"); **locked** after the first message (the same `locked` plain `muted` text with no chevron and no menu, `data-locked="true"`, `title` "发送第一条消息后不能再换环境" / "The environment can't change after the first message"). It is absent when the page passes none.
   - The effort picker is hidden when the selected model declares no `effort` values.
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
 - Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running (state `running`) the hint "运行中发送的消息会在下一步交给智能体" / "Messages sent while it works reach it at its next step" (run input spec 2026-11-07 §4: ↵ and ⌘↵ both send an interjection). Keys: §6.11.
@@ -1299,7 +1300,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 - **Skill chip** (phase D, state `skill`): a skill picked from the `/` menu (or typed as `/name`) shows as a chip before the text on its first line, `space.2` from it, centered on the prose line: `control.dense` high, radius `sm`, padding 0 `space.1` 0 `space.2`, gap `space.1`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, then a remove × (`x` 12, a `type.small.line` square, `hover` ground on hover; "移除 /fix-issue" / "Remove /fix-issue"; its hit target extends invisibly to a `control.dense` square, WCAG 2.5.8). The skill's argument hint replaces the placeholder. Backspace with the caret at the start removes the chip and keeps the text; the text that follows is the skill's arguments. Removing it with the × puts focus in the text; while the chip is there the text area is described by its label (`aria-describedby`).
 
 <!-- states: composer -->
-States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
+States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, `environment`, `environment-locked`
 
 <!-- size-table: composer -->
 | Part | State | Property | Value |
@@ -1336,6 +1337,10 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 | composer-token | skill | color | color.accent |
 | composer-token | skill | font-size | type.body |
 | composer-token-remove | skill | width | type.small.line |
+| picker | environment | height | control.default |
+| picker | environment | color | color.muted |
+| picker | environment-locked | height | control.default |
+| picker | environment-locked | color | color.muted |
 | composer-token-remove | skill | height | type.small.line |
 | composer-input | skill | font-size | type.prose |
 

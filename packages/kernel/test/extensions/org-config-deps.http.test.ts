@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { EXTENSION_POINTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -23,7 +24,18 @@ const PW = "correct horse battery";
 const fx = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 
+/**
+ * Dependencies match by major: no org-scoped point has two supported majors today, so this file
+ * runs a kernel that also accepts channel@2 (the registry entry is restored afterwards; the
+ * refusal of unsupported majors itself is resolve.test.ts's).
+ */
+const channelPoint = EXTENSION_POINTS.channel;
+
 beforeAll(async () => {
+  EXTENSION_POINTS.channel = {
+    ...(channelPoint as NonNullable<typeof channelPoint>),
+    majors: [1, 2],
+  };
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   k = await startKernel(
     KernelConfigSchema.parse({
@@ -54,6 +66,7 @@ afterAll(async () => {
   redis?.disconnect();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
+  if (channelPoint) EXTENSION_POINTS.channel = channelPoint;
 });
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");

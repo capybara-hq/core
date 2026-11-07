@@ -8,7 +8,7 @@ import {
 import type { BackgroundFinish } from "../../../background/finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "../../../background/launch.js";
 import { formatElapsed, lostReasonText } from "../../../background/render.js";
-import { SID_RE } from "../../../background/session.js";
+import { actingAs, SID_RE, taskActor } from "../../../background/session.js";
 import {
   parsePollOutput,
   polledAs,
@@ -18,9 +18,9 @@ import {
 import { notRunningAs, RECREATED } from "../../../background/stop.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import type {
+  HeldProvider,
   IfRunningResult,
   SandboxService,
-  TaggedProvider,
 } from "../../../sandbox/sandbox.service.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../registry.js";
 import {
@@ -31,6 +31,7 @@ import {
   runTimeLeftMs,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
+  sandboxConversationOf,
   unavailableWhenNoSandbox,
 } from "./common.js";
 
@@ -94,6 +95,7 @@ export interface TaskEnv {
   store: NonNullable<SandboxToolDeps["background"]>;
   tasks: NonNullable<SandboxToolDeps["tasks"]>;
   ifRunning: SandboxService["ifRunning"];
+  environments: SandboxToolDeps["environments"];
 }
 
 /** The task tools' dependencies; throws the tool's error when they are missing. */
@@ -105,7 +107,12 @@ export function taskEnv(deps: SandboxToolDeps): TaskEnv {
       "Background tasks are not available here; use Bash without run_in_background instead.",
     );
   }
-  return { store: background, tasks, ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox) };
+  return {
+    store: background,
+    tasks,
+    ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
+    environments: deps.environments,
+  };
 }
 
 const notFound = (id: string): ToolError =>
@@ -128,18 +135,36 @@ export async function ownedTask(
   return task;
 }
 
-/** `ifRunning` on the task's own sandbox instance; sandbox errors become the tools' errors. */
+/**
+ * The per-call access re-check of every sandbox tool (`inSandbox`): the conversation's environment
+ * may still be used by its owner. The task tools read a task's own instance without `inSandbox`,
+ * so they check here first; errors become the tools' errors.
+ */
+export async function recheckEnvironment(env: TaskEnv, ctx: BuiltinCallContext): Promise<void> {
+  try {
+    await env.environments.forTool(ctx.orgId, sandboxConversationOf(ctx));
+  } catch (e) {
+    throw mapSandboxError(e);
+  }
+}
+
+/**
+ * `ifRunning` on the task's own environment instance (its execs act for the task's trigger in its
+ * conversation); sandbox errors become the tools' errors. A task from before environments has no
+ * instance (`not_running`).
+ */
 export async function onTaskInstance<T>(
   env: TaskEnv,
   task: BackgroundTaskRow,
-  fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+  fn: (p: HeldProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
 ): Promise<IfRunningResult<T>> {
+  if (task.environmentId === null) return { kind: "not_running", status: "gone" };
   try {
     return await env.ifRunning(
-      task.sandboxConversationId,
+      task.environmentId,
       { createdAt: task.sandboxCreatedAt as Date },
-      fn,
+      (p, h, sig) => fn(actingAs(p, taskActor(task)), h, sig),
       signal,
     );
   } catch (e) {
@@ -356,6 +381,7 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       const env = taskEnv(deps);
       let task = await ownedTask(env, ctx, task_id);
+      await recheckEnvironment(env, ctx);
       if (block && task.status === "running") {
         const wait = Math.max(
           0,

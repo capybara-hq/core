@@ -54,6 +54,7 @@ describe("extension point refs", () => {
   });
   it("registers both with org-default selection, and no other point has selection", () => {
     const want = {
+      majors: [1],
       cardinality: "multi",
       brokered: true,
       orgScoped: true,

@@ -218,7 +218,12 @@ export function ComposerBar({
   stop?: { onStop(): void; stopping: boolean };
   onSend(m: ComposerMessage): Promise<SendResult>;
   /** The agent picker is absent on the new conversation page (its agents row picks). */
-  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  pickers: {
+    agent?: PickerProps;
+    environment?: PickerProps;
+    model: PickerProps;
+    effort?: PickerProps;
+  };
   /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
   quickActions?: ReactNode;
   /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */

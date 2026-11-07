@@ -1,7 +1,6 @@
 import {
   isSandboxGoneError,
   type SandboxHandle,
-  type SandboxProvider,
   ToolError,
   validateSandboxPath,
 } from "@capybara-hq/plugin-sdk";
@@ -11,10 +10,18 @@ import type { BackgroundTaskStore } from "../../../background/store.js";
 import type { KernelConfig } from "../../../config/schema.js";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { EventLog } from "../../../conversations/event-log.js";
+import {
+  ANONYMOUS_NO_ENVIRONMENT,
+  type ConversationEnvironments,
+} from "../../../environments/conversation-environments.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
-import { SandboxLockLostError, type SandboxService } from "../../../sandbox/sandbox.service.js";
+import {
+  type HeldProvider,
+  SandboxLockLostError,
+  type SandboxService,
+} from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../../registry.js";
 
@@ -27,6 +34,8 @@ export interface SandboxToolDeps {
    */
   sandbox: Pick<SandboxService, "available" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
+  /** The environment a call enters: the root conversation's, checked for its owner every call. */
+  environments: Pick<ConversationEnvironments, "forTool">;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -54,26 +63,31 @@ export interface SandboxToolDeps {
   config: Pick<KernelConfigService, "get">;
 }
 
-/** 回调拿到的沙箱：句柄、提供方与「调用 signal + 锁丢失」合并后的 signal（每个提供方调用都传它）。 */
+/**
+ * The sandbox a callback gets: the instance handle, the provider (every `exec` carries the
+ * holder's tag and the call's actor) and the call's signal combined with the lease's (pass it to
+ * every provider call).
+ */
 export interface SandboxSession {
+  /** The environment the call runs in (path leases are taken on it). */
+  environmentId: string;
   h: SandboxHandle;
-  p: SandboxProvider;
+  p: HeldProvider;
   signal: AbortSignal;
-  /** 本次是新建 / 重建的沙箱（之前复制进去的文件都已不在）。 */
-  reset: boolean;
 }
 
 // ---- 模型可见文案（英文） ----
 
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒与调用结果）。 */
-/** 本对话第一次用沙箱。 */
+/** This conversation's first use of its environment. */
 export const SANDBOX_STARTED_NOTICE =
-  "Sandbox started for this conversation (first use); the working directory is /workspace.";
-/** 沙箱被重建（之前的实例已销毁或不在了）。 */
-export const SANDBOX_RECREATED_NOTICE = "Sandbox was recreated; previous files are gone.";
+  "Environment started (first use in this conversation); the working directory is /workspace, shared with the environment's other conversations.";
+/** A new instance came up on the environment's kept files. */
+export const SANDBOX_RESTARTED_NOTICE =
+  "The environment's instance was restarted; files are kept, running processes and /tmp are gone.";
 
 const BUSY_TEXT =
-  "The sandbox is busy with another command in this conversation; wait for it to finish and retry.";
+  "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
@@ -84,14 +98,38 @@ export function noSandboxError(): ToolError {
   return new ToolError(NO_SANDBOX_TEXT);
 }
 
-const PATH_BUSY_TEXT = "Another sub-agent is writing this file; wait a moment and retry.";
+const PATH_BUSY_TEXT =
+  "Another sub-agent or another conversation in this environment is writing this file; wait a moment and retry.";
+const ANONYMOUS_TEXT =
+  "The sandbox is not available to anonymous IM senders; do the task without the sandbox, or ask the person to link their account and start a new conversation.";
+const ENV_NOT_FOUND_TEXT =
+  "This conversation's environment was deleted or its owner can no longer use it; ask the user to start a new conversation in another environment.";
+const ENV_FORBIDDEN_TEXT =
+  "This conversation's owner may no longer use its environment; ask the user to start a new conversation in an environment they can use.";
+const ENV_UNAVAILABLE_TEXT =
+  "This conversation's environment is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation in another environment, or an administrator to re-enable that provider.";
+const ENV_FILES_LOST_TEXT =
+  "This environment's files are gone. Ask the user to reset its files on the environments page, then retry.";
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
-/** 沙箱里附件所在目录。 */
-export const ATTACHMENTS_DIR = "/workspace/attachments";
-/** 已同步附件的标记文件：`{ <附件 id>: <文件名> }`。 */
-export const SYNC_MARKER = `${ATTACHMENTS_DIR}/.capybara-sync.json`;
+/** The directory of attachments in the environment (each conversation has a subdirectory). */
+export const ATTACHMENTS_ROOT = "/workspace/attachments";
+/**
+ * One conversation's attachment directory: the first 12 hex digits of the root conversation's
+ * UUID, so conversations sharing an environment do not overwrite each other's files.
+ */
+export const attachmentsDir = (rootConversationId: string): string =>
+  `${ATTACHMENTS_ROOT}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
+/** The conversation's marker of synced attachments: `{ <attachment id>: <file name> }`. */
+export const syncMarkerPath = (rootConversationId: string): string =>
+  `${attachmentsDir(rootConversationId)}/.capybara-sync.json`;
+const SYNC_MARKER_NAME = ".capybara-sync.json";
+const SYNC_MARKER_RE = new RegExp(
+  `^${ATTACHMENTS_ROOT}/[^/]+/${SYNC_MARKER_NAME.replaceAll(".", "\\.")}(?=$|[:-])`,
+);
+/** Whether a path, or a Grep output line starting with one, belongs to a sync marker (hidden from Glob / Grep). */
+export const isSyncMarkerEntry = (pathOrLine: string): boolean => SYNC_MARKER_RE.test(pathOrLine);
 const MARKER_MAX_BYTES = 1024 * 1024;
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
@@ -232,11 +270,11 @@ export function assignAttachmentNames(
   used: ReadonlySet<string>,
 ): Map<string, string> {
   const taken = new Set(used);
-  taken.add(SYNC_MARKER.slice(ATTACHMENTS_DIR.length + 1));
+  taken.add(SYNC_MARKER_NAME);
   const out = new Map<string, string>();
   for (const a of items) {
     let base = sanitizeName(a.name);
-    if (validateSandboxPath(`${ATTACHMENTS_DIR}/${base}`).length > 0) {
+    if (validateSandboxPath(`${ATTACHMENTS_ROOT}/${base}`).length > 0) {
       base = `attachment-${a.id.slice(0, 8)}`;
     }
     let name = base;
@@ -274,8 +312,8 @@ function copyFailureReason(e: unknown): string {
 }
 
 /**
- * 把本对话已 ready 的附件复制到 `/workspace/attachments/<name>`，标记文件记下已复制的（不重复复制）。
- * `reset`（新建 / 重建的沙箱，文件已不在）时忽略标记文件全部重新复制。对象已不在的附件跳过（下次再试）。
+ * 把本对话已 ready 的附件复制到 `/workspace/attachments/<conversation>/<name>`（{@link attachmentsDir}），
+ * 标记文件记下已复制的（不重复复制）。对象已不在的附件跳过（下次再试）。
  * 每复制一个就更新标记文件：中途超时 / 中止，下次从停下的地方继续。
  * 单个附件失败（存储故障等）只跳过它并给出说明，不让工具调用失败；signal 已中止或实例已不在时照常抛出。
  * 返回本次复制的沙箱路径与失败说明。
@@ -284,26 +322,26 @@ async function syncAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
   s: SandboxSession,
-  reset: boolean,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
   const conv = sandboxConversationOf(ctx);
   const list = await deps.attachments.listForConversation(ctx.orgId, conv);
   if (list.length === 0) return none;
   // nothing to copy (the usual case): no path lease, so calls do not queue on the marker
-  if (!reset) {
-    const marker = await readSyncMarker(s);
-    if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
-  }
+  const marker = await readSyncMarker(s, conv);
+  if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
   // the sync marker is read, changed and written: one holder at a time
-  return withPathLease(deps, ctx, SYNC_MARKER, s.signal, (signal) =>
-    copyAttachments(deps, ctx, { ...s, signal }, reset, conv, list),
+  return withPathLease(deps, s, syncMarkerPath(conv), s.signal, (signal) =>
+    copyAttachments(deps, ctx, { ...s, signal }, conv, list),
   );
 }
 
 /** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
-async function readSyncMarker(s: SandboxSession): Promise<Record<string, string>> {
-  const m = await s.p.readFile(s.h, SYNC_MARKER, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+async function readSyncMarker(s: SandboxSession, conv: string): Promise<Record<string, string>> {
+  const m = await s.p.readFile(s.h, syncMarkerPath(conv), {
+    maxBytes: MARKER_MAX_BYTES,
+    signal: s.signal,
+  });
   return m && !m.truncated ? parseMarker(m.data) : {};
 }
 
@@ -311,12 +349,11 @@ async function copyAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
   s: SandboxSession,
-  reset: boolean,
   conv: string,
   list: Awaited<ReturnType<SandboxToolDeps["attachments"]["listForConversation"]>>,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
-  let marker: Record<string, string> = reset ? {} : await readSyncMarker(s);
+  let marker: Record<string, string> = await readSyncMarker(s, conv);
   const pending = list.filter((a) => !Object.hasOwn(marker, a.id));
   if (pending.length === 0) return none;
   const names = assignAttachmentNames(pending, new Set(Object.values(marker)));
@@ -324,7 +361,7 @@ async function copyAttachments(
   const failures: string[] = [];
   for (const a of pending) {
     const name = names.get(a.id) as string;
-    const path = `${ATTACHMENTS_DIR}/${name}`;
+    const path = `${attachmentsDir(conv)}/${name}`;
     try {
       const opened = await deps.attachments.openForConversation(ctx.orgId, conv, a.id);
       if (!opened) continue;
@@ -341,7 +378,7 @@ async function copyAttachments(
     copied.push(path);
     const next = { ...marker, [a.id]: name };
     try {
-      await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(next)), s.signal);
+      await s.p.writeFile(s.h, syncMarkerPath(conv), utf8.encode(JSON.stringify(next)), s.signal);
       marker = next;
     } catch (e) {
       if (s.signal.aborted || isSandboxGoneError(e)) throw e;
@@ -354,7 +391,15 @@ async function copyAttachments(
 export function mapSandboxError(e: unknown): unknown {
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
-    if (e.code === "sandbox.unavailable") return new ToolError(NO_SANDBOX_TEXT);
+    if (e.code === "sandbox.unavailable") {
+      const reason = (e.details?.[0] as { reason?: unknown } | undefined)?.reason;
+      if (reason === ANONYMOUS_NO_ENVIRONMENT) return new ToolError(ANONYMOUS_TEXT);
+      return new ToolError(NO_SANDBOX_TEXT);
+    }
+    if (e.code === "environment.not_found") return new ToolError(ENV_NOT_FOUND_TEXT);
+    if (e.code === "environment.forbidden") return new ToolError(ENV_FORBIDDEN_TEXT);
+    if (e.code === "environment.unavailable") return new ToolError(ENV_UNAVAILABLE_TEXT);
+    if (e.code === "environment.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
   }
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
   if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
@@ -362,9 +407,13 @@ export function mapSandboxError(e: unknown): unknown {
 }
 
 /**
- * 在本对话的沙箱上执行 `fn`（`SandboxService.withSandbox`：懒创建、恢复、重建）：先同步附件，
- * 再执行；返回结果与要加在结果开头的状态说明（首次使用 / 重建 / 新复制的附件）。
- * `withSandbox` 遇到实例不在时会重建并再调用一次回调，说明按最后一次调用的为准。
+ * Runs `fn` in the environment of the call's conversation (a sub-agent: its root's): resolves and
+ * checks the environment for the conversation's owner (binding an unbound conversation to the
+ * owner's default first), then `SandboxService.withSandbox` (the instance created, resumed or
+ * rebuilt on the kept files as needed, every `exec` carrying the call's actor). Attachments are
+ * synced first. Returns the value and the notices to put before the result (first use, a new
+ * instance, newly copied attachments). When `withSandbox` rebuilds a gone instance and calls
+ * `fn` again, the notices are the last call's.
  */
 export async function inSandbox<T>(
   deps: SandboxToolDeps,
@@ -372,19 +421,21 @@ export async function inSandbox<T>(
   fn: (s: SandboxSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
   try {
+    const environmentId = await deps.environments.forTool(ctx.orgId, sandboxConversationOf(ctx));
     return await deps.sandbox.withSandbox(
       {
         orgId: ctx.orgId,
-        conversationId: sandboxConversationOf(ctx),
-        // a sub-agent is told when another holder rebuilt the shared sandbox (final review m5)
+        environmentId,
+        // a sub-agent is told when another holder rebuilt the shared instance (final review m5)
         holderConversationId: ctx.conversationId,
+        actor: { accountId: ctx.accountId, conversationId: ctx.conversationId },
       },
       async (h, p, info, signal) => {
-        const s = { h, p, signal, reset: info.fresh || info.recreated };
+        const s: SandboxSession = { environmentId, h, p, signal };
         const notices: string[] = [];
-        if (info.recreated) notices.push(SANDBOX_RECREATED_NOTICE);
+        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
-        const { copied, failures } = await syncAttachments(deps, ctx, s, s.reset);
+        const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
         }
@@ -398,25 +449,26 @@ export async function inSandbox<T>(
   }
 }
 
-/** The conversation whose sandbox a call uses (the root conversation's for a sub-agent). */
+/** The conversation whose environment a call uses (the root conversation's for a sub-agent). */
 export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>
   ctx.sandboxConversationId ?? ctx.conversationId;
 
 /**
- * Runs `fn` under the per-path lease of `path` in the call's sandbox (spec §10.4: the kernel's own
- * read-modify-write of one file never loses another holder's update). `fn` gets `signal` combined
- * with the path lease's: pass it to every provider call, so a lost path lease stops the write.
- * Without `pathLease` (test stubs) it just runs `fn` with `signal`.
+ * Runs `fn` under the per-path lease of `path` in the session's environment (spec §10.4: the
+ * kernel's own read-modify-write of one file never loses another holder's update, from any
+ * conversation sharing the environment). `fn` gets `signal` combined with the path lease's: pass
+ * it to every provider call, so a lost path lease stops the write. Without `pathLease` (test
+ * stubs) it just runs `fn` with `signal`.
  */
 export async function withPathLease<T>(
   deps: Pick<SandboxToolDeps, "sandbox">,
-  ctx: BuiltinCallContext,
+  s: Pick<SandboxSession, "environmentId">,
   path: string,
   signal: AbortSignal,
   fn: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   if (!deps.sandbox.pathLease) return fn(signal);
-  const lease = await deps.sandbox.pathLease(sandboxConversationOf(ctx), path, signal);
+  const lease = await deps.sandbox.pathLease(s.environmentId, path, signal);
   try {
     return await fn(AbortSignal.any([signal, lease.signal]));
   } finally {

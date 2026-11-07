@@ -193,6 +193,8 @@ async function runningTask(conversationId: string, account = ownerId) {
     orgId,
     conversationId,
     sandboxConversationId: conversationId,
+    // a row without a process: no instance to address
+    environmentId: null,
     runId: "run-x",
     callId: "call-x",
     triggerAccountId: account,
@@ -226,6 +228,8 @@ async function finishTask(
     orgId,
     conversationId,
     sandboxConversationId: conversationId,
+    // a row without a process: no instance to address
+    environmentId: null,
     runId: "run-x",
     callId: "call-x",
     triggerAccountId: opts.account ?? ownerId,

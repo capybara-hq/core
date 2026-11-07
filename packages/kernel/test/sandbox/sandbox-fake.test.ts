@@ -1,11 +1,19 @@
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  isFileSystemGoneError,
+  type SandboxHandle,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createFakeSandbox,
+  fakeFileSystems,
+  fakeSandboxMeta,
   fakeSandboxState,
   readFakeSandboxOps,
+  removeFakeFileSystem,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 
 /** 假沙箱（测试夹具）本身的冒烟测试：T8 的工具测试依赖这些行为。 */
@@ -20,17 +28,26 @@ afterAll(async () => {
 
 const limits = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none" as const, allowHosts: [] };
 const sig = () => AbortSignal.timeout(10_000);
+const actor = { accountId: "acc-1", conversationId: "conv-1" };
+
+/** A file system and an instance attached to it. */
+async function mk(p: SandboxProvider, name: string): Promise<SandboxHandle> {
+  const fileSystem = await p.createFileSystem({ name: `fs-${name}`, limits, signal: sig() });
+  return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
+}
 
 describe("sandbox-fake", () => {
   it("exec：沙箱路径映射到实例目录，输出里换回来；退出码、超时、截断", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-x", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-x");
     const run = (command: string, extra: { timeoutMs?: number; maxOutputBytes?: number } = {}) =>
       p.exec(h, {
         command,
         timeoutMs: extra.timeoutMs ?? 5000,
         maxOutputBytes: extra.maxOutputBytes ?? 10_000,
         signal: sig(),
+        tag: "t",
+        actor,
       });
 
     const w = await run("echo hi > /workspace/a.txt && cat /workspace/a.txt && pwd");
@@ -65,12 +82,14 @@ describe("sandbox-fake", () => {
 
   it("killAll 杀掉仍在跑的 exec 命令（前任崩溃遗留的）", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-k", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-k");
     const left = p.exec(h, {
       command: "sleep 30",
       timeoutMs: 60_000,
       maxOutputBytes: 100,
       signal: sig(),
+      tag: "t",
+      actor,
     });
     await new Promise((r) => setTimeout(r, 200));
     await p.killAll?.(h, sig());
@@ -82,13 +101,15 @@ describe("sandbox-fake", () => {
 
   it("中止的 exec 杀掉正在跑的命令；已中止的 signal 让调用立即失败", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-y", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-y");
     const ac = new AbortController();
     const pending = p.exec(h, {
       command: "echo $$ > /workspace/pid; sleep 5",
       timeoutMs: 10_000,
       maxOutputBytes: 1000,
       signal: ac.signal,
+      tag: "t",
+      actor,
     });
     let pid = 0;
     for (let i = 0; i < 100 && pid === 0; i++) {
@@ -134,7 +155,7 @@ describe("sandbox-fake background task shims", () => {
     h: { id: string },
     command: string,
     timeoutMs = 10_000,
-  ) => p.exec(h, { command, timeoutMs, maxOutputBytes: 10_000, signal: sig() });
+  ) => p.exec(h, { command, timeoutMs, maxOutputBytes: 10_000, signal: sig(), tag: "t", actor });
   /** Starts `sleep 30` in a session of its own and returns the session id. */
   const startSession = async (p: ReturnType<typeof createFakeSandbox>, h: { id: string }) => {
     const r = await exec(p, h, "setsid sh -c 'sleep 30' > /dev/null 2>&1 & echo $!");
@@ -154,7 +175,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("setsid prints nothing and returns at once; pgrep -s finds the session; pkill -s ends it", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-s", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-s");
     const t0 = Date.now();
     const sid = await startSession(p, h);
     expect(Date.now() - t0).toBeLessThan(5000);
@@ -174,7 +195,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("a sid without a session record matches nothing, even a live host process, at once", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-u", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-u");
     // this test process: alive, same user, and never started by the fake's setsid
     const t0 = Date.now();
     expect(await exec(p, h, `pgrep -s ${process.pid}`)).toMatchObject({ exitCode: 1, stdout: "" });
@@ -186,7 +207,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("pkill takes a signal: -TERM, -KILL", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-sig", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-sig");
     const a = await startSession(p, h);
     const b = await startSession(p, h);
     expect((await exec(p, h, `pkill -TERM -s ${a}`)).exitCode).toBe(0);
@@ -197,7 +218,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("timeout passes the exit status through, and ends a command that runs too long", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-t", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-t");
     expect((await exec(p, h, "timeout 5 sh -c 'echo out; exit 3'; echo $?")).stdout).toBe(
       "out\n3\n",
     );
@@ -209,7 +230,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("a launch like the background tool's: the exit file appears when the session ends", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-l", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-l");
     const r = await exec(
       p,
       h,
@@ -232,7 +253,7 @@ describe("sandbox-fake background task shims", () => {
 
   it("suspend kills every process the instance started: sessions and exec commands", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-sus", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-sus");
     const sid = await startSession(p, h);
     const pids = await members(p, h, sid);
     const running = exec(p, h, "sleep 30", 60_000);
@@ -244,11 +265,62 @@ describe("sandbox-fake background task shims", () => {
 
   it("destroy kills every process the instance started", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-des", image: "i", limits, signal: sig() });
+    const h = await mk(p, "cap-des");
     const sid = await startSession(p, h);
     const pids = await members(p, h, sid);
     expect(pids.length).toBeGreaterThan(0);
     await p.destroy(h, sig());
     for (const pid of pids) await until(() => !hostAlive(pid));
+  });
+
+  it("destroy keeps the file system", async () => {
+    const p = createFakeSandbox(root);
+    const fileSystem = await p.createFileSystem({ name: "cap-env-keep", limits, signal: sig() });
+    const h1 = await p.create({ name: "keep-1", limits, fileSystem, signal: sig() });
+    await p.writeFile(h1, "/workspace/a", new TextEncoder().encode("kept"), sig());
+    await p.destroy(h1, sig());
+    const h2 = await p.create({ name: "keep-2", limits, fileSystem, signal: sig() });
+    const f = await p.readFile(h2, "/workspace/a", { maxBytes: 100, signal: sig() });
+    expect(new TextDecoder().decode(f?.data)).toBe("kept");
+    expect((await fakeSandboxMeta(root, h2.id))?.image).toBeNull();
+    // idempotent by name
+    expect(await p.createFileSystem({ name: "cap-env-keep", limits, signal: sig() })).toEqual(
+      fileSystem,
+    );
+  });
+
+  it("create on a removed file system throws FileSystemGoneError", async () => {
+    const p = createFakeSandbox(root);
+    const fileSystem = await p.createFileSystem({ name: "cap-env-gone", limits, signal: sig() });
+    await removeFakeFileSystem(root, fileSystem.id);
+    expect(await fakeFileSystems(root)).not.toContain(fileSystem.id);
+    await expect(p.create({ name: "gone-1", limits, fileSystem, signal: sig() })).rejects.toSatisfy(
+      isFileSystemGoneError,
+    );
+  });
+
+  it("exec records its actor", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-actor");
+    await p.exec(h, {
+      command: "true",
+      timeoutMs: 5000,
+      maxOutputBytes: 100,
+      signal: sig(),
+      tag: "actor-tag",
+      actor,
+    });
+    const ops = await readFakeSandboxOps(root);
+    expect(
+      ops.some((o) => o[0] === "exec" && o[1] === h.id && o.slice(5).join(" ") === "acc-1 conv-1"),
+    ).toBe(true);
+  });
+
+  it("destroyFileSystemByName removes a legacy-named file system", async () => {
+    const p = createFakeSandbox(root);
+    const fileSystem = await p.createFileSystem({ name: "legacy-name", limits, signal: sig() });
+    await p.destroyFileSystemByName("legacy-name", sig());
+    expect(await fakeFileSystems(root)).not.toContain(fileSystem.id);
+    await p.destroyFileSystemByName("legacy-name", sig());
   });
 });

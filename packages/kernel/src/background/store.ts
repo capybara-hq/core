@@ -21,8 +21,16 @@ export interface BackgroundTaskRow {
   orgId: string;
   /** The owner: the child conversation for a sub-agent. */
   conversationId: string;
-  /** The root conversation that owns the sandbox. */
+  /**
+   * The root conversation of the owner's tree: `sandbox.background.maxTasks` counts per root
+   * conversation.
+   */
   sandboxConversationId: string;
+  /**
+   * The environment the task runs in (the root conversation's when it was launched): its instance
+   * is where the task's processes are. Null only for tasks from before environments (all finished).
+   */
+  environmentId: string | null;
   runId: string;
   callId: string;
   triggerAccountId: string;
@@ -64,6 +72,7 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   orgId: r.org_id,
   conversationId: r.conversation_id,
   sandboxConversationId: r.sandbox_conversation_id,
+  environmentId: r.environment_id,
   runId: r.run_id,
   callId: r.call_id,
   triggerAccountId: r.trigger_account_id,
@@ -114,9 +123,9 @@ export class BackgroundTaskStore {
   ) {}
 
   /**
-   * Reserves a launch: under the sandbox's launch lock, counts the running tasks of
+   * Reserves a launch: under the root conversation's launch lock, counts the running tasks of
    * `row.sandboxConversationId` and inserts `row` as `running` (no `sid`) when fewer than
-   * `maxTasks` run. False (nothing written) when the sandbox already runs `maxTasks`.
+   * `maxTasks` run. False (nothing written) when that conversation tree already runs `maxTasks`.
    */
   @Transactional()
   async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
@@ -249,6 +258,7 @@ export class BackgroundTaskStore {
         org_id: row.orgId,
         conversation_id: row.conversationId,
         sandbox_conversation_id: row.sandboxConversationId,
+        environment_id: row.environmentId,
         run_id: row.runId,
         call_id: row.callId,
         trigger_account_id: row.triggerAccountId,
@@ -272,7 +282,7 @@ export class BackgroundTaskStore {
     return r === undefined ? undefined : toRow(r);
   }
 
-  /** The running tasks of one sandbox, oldest first. */
+  /** The running tasks of one root conversation's tree, oldest first. */
   async runningIn(sandboxConversationId: string): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
       .selectFrom("background_tasks")
@@ -316,6 +326,7 @@ export class BackgroundTaskStore {
     return rows.map(toRow);
   }
 
+  /** The running tasks of one root conversation's tree (what `maxTasks` limits). */
   async countRunning(sandboxConversationId: string): Promise<number> {
     const r = await this.db
       .selectFrom("background_tasks")
@@ -382,12 +393,15 @@ export class BackgroundTaskStore {
       .execute();
   }
 
-  /** Finished tasks of a sandbox whose process may still exist. */
-  async pendingKills(sandboxConversationId: string): Promise<BackgroundTaskRow[]> {
+  /**
+   * Finished tasks of an environment whose process may still exist (any conversation's: they
+   * share the instance).
+   */
+  async pendingKills(environmentId: string): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
       .selectFrom("background_tasks")
       .selectAll()
-      .where("sandbox_conversation_id", "=", sandboxConversationId)
+      .where("environment_id", "=", environmentId)
       .where("kill_pending", "=", true)
       .orderBy("started_at", "asc")
       .execute();

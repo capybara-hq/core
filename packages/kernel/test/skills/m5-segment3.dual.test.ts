@@ -34,7 +34,7 @@ import { MODEL } from "../runtime/context/fixtures.js";
  * 1. 共享 agent 的 `SkillWrite`：R3 固定确认（发起人批准）→ 生成变更申请；发起对话可试用草稿，另一对话看不到；
  *    负责人在副本 B 上批准 → 另一对话（副本 A）下一次运行开始时追加目录快照（「新技能」提醒），`Skill` 拿到内容；
  * 2. 第二版同样走一遍：批准前另一对话仍是 v1，批准后它在下一次运行开始时看到「Updated skills」提醒并加载到 v2；
- * 3. 带脚本的技能：`Skill` 把文件复制进沙箱 `/skills/<name>/`，`Bash` 用 `sh` 执行脚本。
+ * 3. 带脚本的技能：`Skill` 把文件复制进沙箱 `/skills/<name>@<digest>/`，`Bash` 用 `sh` 执行脚本。
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -325,16 +325,29 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
     expect((snapX4[0] as CatalogEvent).seq).toBeLessThan(firstCall.seq);
     expect(await firstRequestText(convX, x4.runId, def)).toContain("Updated skills");
 
-    // ---- 3. 脚本进沙箱：Skill 复制到 /skills/fruit-sum/，Bash 用 sh 执行 ----
-    // 上一步 Skill 已把 v2 复制进同一个沙箱（覆盖 v1 的文件，沙箱不重建）
+    // ---- 3. 脚本进沙箱：Skill 复制到 /skills/fruit-sum@<digest>/，Bash 用 sh 执行 ----
+    // the previous Skill copied v2 into the same environment (beside v1; no new instance)
     expect(x4.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
+    const dir = /\/skills\/fruit-sum@[0-9a-f]{12}/.exec(x4.result.content)?.[0] as string;
+    expect(dir, x4.result.content).toBeTruthy();
     const box = await db
-      .selectFrom("sandboxes")
-      .select("handle")
-      .where("conversation_id", "=", convX)
+      .selectFrom("environment_instances")
+      .innerJoin(
+        "conversations",
+        "conversations.environment_id",
+        "environment_instances.environment_id",
+      )
+      .select("environment_instances.handle")
+      .where("conversations.id", "=", convX)
       .executeTakeFirstOrThrow();
+    const meta = JSON.parse(
+      await readFile(
+        join(root, "instances", (box.handle as { id: string }).id, "meta.json"),
+        "utf8",
+      ),
+    ) as { fileSystem: string };
     const onDisk = await readFile(
-      join(root, "instances", (box.handle as { id: string }).id, "fs", "skills/fruit-sum/run.sh"),
+      join(root, "filesystems", meta.fileSystem, dir.slice(1), "run.sh"),
       "utf8",
     );
     expect(onDisk).toContain("fruit-sum v2 ok");
@@ -343,7 +356,7 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
       1,
       convX,
       "Bash",
-      { description: "Test step", command: "sh /skills/fruit-sum/run.sh" },
+      { description: "Test step", command: `sh ${dir}/run.sh` },
       5,
     );
     expect(run.result.isError, run.result.content).toBe(false);

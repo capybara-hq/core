@@ -4,9 +4,10 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 
 /**
- * The launch lock of one sandbox (decision R9: one provider per transaction-scoped lock):
- * serializes background task reservations in a sandbox, so the count of running tasks checked
- * against `sandbox.background.maxTasks` and the insert of the new row are one step. Joins the
+ * The launch lock of one root conversation (decision R9: one provider per transaction-scoped
+ * lock): serializes background task reservations in its tree, so the count of running tasks
+ * checked against `sandbox.background.maxTasks` (per root conversation, whatever environment it
+ * works in) and the insert of the new row are one step. Joins the
  * caller's transaction (`mandatory`), which holds it until it ends.
  */
 @Injectable()

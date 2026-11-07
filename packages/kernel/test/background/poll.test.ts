@@ -46,6 +46,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { seedEnvironment } from "../helpers/sandbox.js";
 import { finishedDeliveries } from "../helpers/subagents.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -126,7 +127,7 @@ let sandbox: SandboxService;
 let store: BackgroundTaskStore;
 let job: BackgroundTaskPollJob;
 let stopper: BackgroundTaskStopper;
-/** The conversations whose sandboxes a test used (destroyed after it: their tasks die with them). */
+/** The environments a test used (destroyed after it: their tasks die with them). */
 let used: string[] = [];
 
 const signal = () => AbortSignal.timeout(30_000);
@@ -162,31 +163,54 @@ afterAll(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const c of used) await sandbox.destroyFor(c).catch(() => {});
+  for (const e of used) await sandbox.destroyEnvironment(e).catch(() => {});
   used = [];
   // a test's tasks never reach the next one's polls
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
     WHERE status = 'running'`.execute(raw);
 });
 
-/** A new conversation (seeded in the database). */
+/** A new conversation (seeded in the database) bound to an environment of its own. */
 async function conversation(): Promise<{
   orgId: string;
   conversationId: string;
   accountId: string;
+  environmentId: string;
 }> {
   const s = await seedConversation(raw);
-  used.push(s.conversationId);
-  return s;
+  const environmentId = await seedEnvironment(raw, s.orgId, s.accountId);
+  await db
+    .updateTable("conversations")
+    .set({ environment_id: environmentId })
+    .where("id", "=", s.conversationId)
+    .execute();
+  used.push(environmentId);
+  return { ...s, environmentId };
 }
 
-/** Runs `command` in the conversation's sandbox (creating or resuming it). */
+/** The environment a conversation is bound to. */
+async function envOf(conversationId: string): Promise<string> {
+  const r = await db
+    .selectFrom("conversations")
+    .select("environment_id")
+    .where("id", "=", conversationId)
+    .executeTakeFirstOrThrow();
+  if (r.environment_id === null) throw new Error(`conversation ${conversationId} is not bound`);
+  return r.environment_id;
+}
+
+/** Runs `command` in the conversation's environment (creating or resuming its instance). */
 async function inSandbox(
   c: { orgId: string; conversationId: string },
   command: string,
 ): Promise<{ exitCode: number | null; stdout: string }> {
   return sandbox.withSandbox(
-    c,
+    {
+      orgId: c.orgId,
+      environmentId: await envOf(c.conversationId),
+      holderConversationId: c.conversationId,
+      actor: { accountId: "test", conversationId: c.conversationId },
+    },
     (h, p, _info, sig) =>
       p.exec(h, {
         command,
@@ -214,19 +238,21 @@ async function launch(
   const sid = r.stdout.trim();
   // the fake's setsid shim may still be starting when the launch returns (on Linux the session
   // exists by then): wait for its session record, so a suspension right after kills it
+  const environmentId = await envOf(c.conversationId);
   const { handle } = await db
-    .selectFrom("sandboxes")
+    .selectFrom("environment_instances")
     .select("handle")
-    .where("conversation_id", "=", c.conversationId)
+    .where("environment_id", "=", environmentId)
     .executeTakeFirstOrThrow();
   const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
   await waitFor(async () => existsSync(record), 10_000, "session record");
-  const instance = await sandbox.currentInstance(c.conversationId);
+  const instance = await sandbox.currentInstance(environmentId);
   await store.insert({
     id,
     orgId: c.orgId,
     conversationId: c.conversationId,
     sandboxConversationId: c.conversationId,
+    environmentId,
     runId,
     callId: "call-x",
     triggerAccountId: c.accountId,
@@ -376,9 +402,9 @@ describe("polling", () => {
     });
     // the poll neither resumed the sandbox nor ran anything in it
     const st = await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("status")
-      .where("conversation_id", "=", c.conversationId)
+      .where("environment_id", "=", c.environmentId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
     // the next use resumes it and kills the pending task's session: nothing of it is alive
@@ -390,9 +416,9 @@ describe("polling", () => {
     const c = await conversation();
     const t = await launch(c, "sleep 305");
     const row = await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("handle")
-      .where("conversation_id", "=", c.conversationId)
+      .where("environment_id", "=", c.environmentId)
       .executeTakeFirstOrThrow();
     await inSandbox(c, `pkill -KILL -s ${t.sid}`);
     await removeFakeSandbox(root, (row.handle as { id: string }).id);
@@ -409,7 +435,7 @@ describe("polling", () => {
   it("a task whose sandbox is gone ends lost (sandbox_gone)", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 306");
-    await sandbox.destroyFor(c.conversationId);
+    await sandbox.destroyEnvironment(c.environmentId);
     expect(await job.pollOnce()).toBe(1);
     expect(await store.get(t.id)).toMatchObject({ status: "lost", lostReason: "sandbox_gone" });
   }, 60_000);
@@ -421,15 +447,15 @@ describe("polling", () => {
       k.app.get(KernelConfigService).get().sandbox.limits.suspendAfterIdleMinutes * 60_000;
     const age = async (ago: number) =>
       db
-        .updateTable("sandboxes")
+        .updateTable("environment_instances")
         .set({ last_used_at: new Date(Date.now() - ago) })
-        .where("conversation_id", "=", c.conversationId)
+        .where("environment_id", "=", c.environmentId)
         .execute();
     const status = async () =>
       await db
-        .selectFrom("sandboxes")
+        .selectFrom("environment_instances")
         .select(["status", "last_used_at"])
-        .where("conversation_id", "=", c.conversationId)
+        .where("environment_id", "=", c.environmentId)
         .executeTakeFirstOrThrow();
     await age(2 * idleMs);
     const before = Date.now();
@@ -455,6 +481,7 @@ describe("polling", () => {
           orgId: c.orgId,
           conversationId: c.conversationId,
           sandboxConversationId: c.conversationId,
+          environmentId: c.environmentId,
           runId: "run-x",
           callId: "call-x",
           triggerAccountId: c.accountId,
@@ -484,6 +511,7 @@ describe("polling", () => {
           orgId: conv.orgId,
           conversationId: conv.conversationId,
           sandboxConversationId: conv.conversationId,
+          environmentId: conv.environmentId,
           runId: "run-x",
           callId: "call-x",
           triggerAccountId: conv.accountId,
@@ -649,6 +677,7 @@ describe("stopping", () => {
         orgId: c.orgId,
         conversationId: c.conversationId,
         sandboxConversationId: c.conversationId,
+        environmentId: c.environmentId,
         runId: "run-x",
         callId: "call-x",
         triggerAccountId: c.accountId,

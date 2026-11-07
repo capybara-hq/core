@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
+import type { EnvironmentList } from "../../lib/environments";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -178,5 +179,78 @@ export function useSelection(
       (m: ModelRef) => (providers ? findModel(providers, m)?.capabilities.reasoning : undefined),
       [providers],
     ),
+  };
+}
+
+export type EnvironmentChoice = {
+  /** The environment the first message binds the conversation to (none: no provider, or none usable). */
+  environmentId: string | undefined;
+  /** Undefined without a sandbox provider: the composer then has no environment picker. */
+  picker: PickerProps | undefined;
+};
+
+/**
+ * The new conversation's environment picker (environments design §4.1 item 2): the person's
+ * environments, the ones whose provider is gone (hint 不可用) or whose files are lost (hint 文件已丢失;
+ * 重建文件 on its page first) shown but not selectable. It starts on the last used environment,
+ * else the default, else the first usable one.
+ */
+export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
+  const t = useTranslations("chat");
+  const te = useTranslations("environments");
+  const [picked, setPicked] = useState<string | null>(null);
+  if (list === undefined || !list.cloudAvailable)
+    return { environmentId: undefined, picker: undefined };
+  const pickable = (e: { available: boolean; filesLost: boolean }) => e.available && !e.filesLost;
+  const usable = (id: string | null | undefined) =>
+    list.items.find((e) => e.id === id && pickable(e))?.id;
+  const id =
+    usable(picked) ??
+    usable(list.lastUsedId) ??
+    usable(list.defaultId) ??
+    list.items.find(pickable)?.id;
+  const nameOf = (e: { name: string | null }) => e.name ?? te("personal");
+  const current = list.items.find((e) => e.id === id);
+  return {
+    environmentId: id,
+    picker: {
+      label: t("pickEnvironment"),
+      value: current ? nameOf(current) : "—",
+      groups: [
+        {
+          items: list.items.map((e) => ({
+            id: e.id,
+            label: nameOf(e),
+            checked: e.id === id,
+            ...(!e.available
+              ? { disabled: true, tag: te("state.unavailable") }
+              : e.filesLost
+                ? { disabled: true, tag: te("state.filesLost") }
+                : {}),
+          })),
+        },
+      ],
+      note: t("environmentNote"),
+      onPick: setPicked,
+    },
+  };
+}
+
+/**
+ * An existing conversation's environment, read only (the composer's `locked` picker): its name,
+ * 环境已删除 when the bound environment is gone, nothing for a conversation with none bound.
+ */
+export function lockedEnvironmentPicker(
+  text: { label: string; hint: string; deleted: string; personal: string },
+  environmentId: string | null | undefined,
+  environment: { name: string | null } | null | undefined,
+): PickerProps | undefined {
+  if (!environmentId || environment === undefined) return undefined;
+  return {
+    label: text.label,
+    value: environment === null ? text.deleted : (environment.name ?? text.personal),
+    locked: { hint: text.hint },
+    groups: [],
+    onPick: () => {},
   };
 }

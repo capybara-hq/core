@@ -27,6 +27,21 @@ import { dirname, join } from "node:path";
  * 本机只有一个用户，权限隔离测不了，测试改为核对请求里的用户）。进程以新会话启动（与 setsid 等价），
  * 客户端断开**不会**结束进程（与 envd 一致），只有 SendSignal、杀进程脚本或删沙箱才会。
  *
+ * - **Template build** (the routes `Template.build(Template().fromImage(image), alias)` calls, e2b 2.58.0
+ *   `buildApi`; all need `X-API-KEY`): `POST /v3/templates` (body `{name, tags?, cpuCount?, memoryMB?}`,
+ *   `name` may carry `:tag`; 202 `{templateID, buildID, names, aliases, tags, public}`),
+ *   `GET /templates/{templateID}/files/{hash}` (upload link of a COPY step; `{present: true}`),
+ *   `POST /v2/templates/{templateID}/builds/{buildID}` (body `{fromImage, steps, force, startCmd?,
+ *   readyCmd?}`; 202, and {@link FakeE2BOptions.templateBuildMs} starts counting), `GET
+ *   /templates/{templateID}/builds/{buildID}/status?logsOffset=` (`{buildID, templateID, status:
+ *   waiting | building | ready, logEntries, logs}`), `GET /templates/aliases/{alias}` (200
+ *   `{templateID, public}`, else 404). A template (including the seeded `templates`) creates
+ *   sandboxes by alias or templateID; one still building answers 404; template names never
+ *   registered are accepted as before.
+ * - **Pause**: `POST /sandboxes/{id}/pause` with `{memory: false}` (the SDK's `mode: "filesystem"`)
+ *   ends all processes and keeps the files; otherwise (also an empty body) processes stay.
+ *   {@link FakeE2BServer.removeSandbox} simulates a lost paused sandbox.
+ *
  * `connect` 带 `memory: false`（SDK 的 `onResume: "reboot"`）时结束该沙箱的全部进程（冷启动）。
  * SendSignal 只杀指定进程（不是进程组）。
  *
@@ -41,6 +56,20 @@ export interface FakeE2BOptions {
   pageSize?: number;
   /** create / connect 返回的沙箱 `domain`（默认 null，即用客户端配置的域名）。 */
   domain?: string | null;
+  /** Existing template aliases (treated as built). */
+  templates?: string[];
+  /** Milliseconds from triggering a template build to `ready` (default 0). */
+  templateBuildMs?: number;
+}
+
+export interface FakeE2BTemplate {
+  templateID: string;
+  alias: string;
+  /** The image it was built from (undefined for a seeded template). */
+  image?: string | undefined;
+  buildID?: string | undefined;
+  /** When it becomes `ready` (ms timestamp); undefined until the build is triggered (waiting). */
+  readyAt?: number | undefined;
 }
 
 export interface FakeE2BSandbox {
@@ -51,6 +80,8 @@ export interface FakeE2BSandbox {
   /** 当前的超时（秒）：建沙箱时给的，connect 只会把它调大。 */
   timeout: number;
   autoPause: boolean;
+  /** Whether the last pause kept memory (`pause` body `memory` is not false). */
+  pausedWithMemory?: boolean;
   /** 建沙箱请求体里的出站设置（原样记录）。 */
   allowInternetAccess?: boolean;
   network?: unknown;
@@ -84,6 +115,8 @@ export interface FakeE2BServer {
   url: string;
   apiKey: string;
   sandboxes: Map<string, FakeE2BSandbox>;
+  /** Templates by alias. */
+  templates: Map<string, FakeE2BTemplate>;
   calls: FakeE2BCall[];
   /**
    * 下一个匹配的请求回 `status`：默认 E2B 的错误格式 JSON `{code: status, message}`；`raw` 时回纯文本
@@ -101,6 +134,8 @@ export interface FakeE2BServer {
   withholdAccessToken: boolean;
   /** 沙箱直接消失（杀掉它的进程、删掉根目录）。 */
   expire(id: string): Promise<void>;
+  /** Same as {@link FakeE2BServer.expire}: simulates a lost paused sandbox (connect then answers 404). */
+  removeSandbox(id: string): Promise<void>;
   /** 沙箱内路径在本机上的位置。 */
   hostPath(id: string, sandboxPath: string): string;
   /** 沙箱里还在跑的进程（由 Start 启动、尚未退出的）。 */
@@ -204,6 +239,13 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
 
   const sandboxes = new Map<string, FakeE2BSandbox>();
   const procs = new Map<string, Proc[]>();
+  const templates = new Map<string, FakeE2BTemplate>();
+  for (const alias of opts.templates ?? [])
+    templates.set(alias, { templateID: `t${randomBytes(6).toString("hex")}`, alias });
+  const buildMs = opts.templateBuildMs ?? 0;
+  const templateByRef = (ref: string) =>
+    templates.get(ref) ?? [...templates.values()].find((t) => t.templateID === ref);
+  const ready = (t: FakeE2BTemplate) => t.readyAt !== undefined && Date.now() >= t.readyAt;
   const calls: FakeE2BCall[] = [];
   const fails: { match: FakeE2BMatch; status: number; message: string; raw: boolean }[] = [];
   const reboots = new Map<string, number>();
@@ -247,11 +289,12 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
 
   const newSandbox = async (body: Record<string, unknown>): Promise<FakeE2BSandbox> => {
     const id = `i${randomBytes(9).toString("hex")}`;
+    const tpl = templateByRef(String(body.templateID));
     const root = join(base, id);
     for (const d of ROOT_DIRS) await mkdir(join(root, d), { recursive: true });
     const s: FakeE2BSandbox = {
       id,
-      templateID: String(body.templateID),
+      templateID: tpl?.templateID ?? String(body.templateID),
       metadata: (body.metadata as Record<string, string> | undefined) ?? {},
       state: "running",
       timeout: typeof body.timeout === "number" ? body.timeout : 300,
@@ -293,6 +336,11 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
     if (method === "POST" && path === "/v2/sandboxes") {
       if (typeof body.templateID !== "string" || body.templateID === "") {
         sendJson(res, 400, { code: 400, message: "templateID is required" });
+        return;
+      }
+      const tpl = templateByRef(body.templateID);
+      if (tpl?.buildID !== undefined && !ready(tpl)) {
+        sendJson(res, 404, { code: 404, message: `template '${body.templateID}' is not ready` });
         return;
       }
       const s = await newSandbox(body);
@@ -369,7 +417,86 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
         return;
       }
       s.state = "paused";
+      s.pausedWithMemory = body.memory !== false;
+      if (!s.pausedWithMemory) {
+        // filesystem-only snapshot: the processes are gone, the files stay
+        for (const p of procs.get(s.id) ?? []) killGroup(p);
+        procs.delete(s.id);
+      }
       sendJson(res, 204);
+      return;
+    }
+    if (method === "POST" && path === "/v3/templates") {
+      const name = typeof body.name === "string" ? body.name : "";
+      if (name === "") {
+        sendJson(res, 400, { code: 400, message: "name is required" });
+        return;
+      }
+      const alias = name.split(":")[0] as string;
+      const tags = Array.isArray(body.tags) ? (body.tags as string[]) : [];
+      const t = templates.get(alias) ?? {
+        templateID: `t${randomBytes(6).toString("hex")}`,
+        alias,
+      };
+      t.buildID = randomBytes(8).toString("hex");
+      t.readyAt = undefined;
+      t.image = undefined;
+      templates.set(alias, t);
+      sendJson(res, 202, {
+        templateID: t.templateID,
+        buildID: t.buildID,
+        names: [name],
+        aliases: [alias],
+        tags,
+        public: false,
+      });
+      return;
+    }
+    m = /^\/templates\/([^/]+)\/files\/([^/]+)$/.exec(path);
+    if (m && method === "GET") {
+      sendJson(res, 200, { present: true });
+      return;
+    }
+    m = /^\/v2\/templates\/([^/]+)\/builds\/([^/]+)$/.exec(path);
+    if (m && method === "POST") {
+      const t = templateByRef(m[1] as string);
+      if (!t || t.buildID !== m[2]) {
+        sendJson(res, 404, { code: 404, message: "build not found" });
+        return;
+      }
+      if (typeof body.fromImage !== "string") {
+        sendJson(res, 400, { code: 400, message: "fromImage is required" });
+        return;
+      }
+      t.image = body.fromImage;
+      t.readyAt = Date.now() + buildMs;
+      sendJson(res, 202);
+      return;
+    }
+    m = /^\/templates\/([^/]+)\/builds\/([^/]+)\/status$/.exec(path);
+    if (m && method === "GET") {
+      const t = templateByRef(m[1] as string);
+      if (!t || t.buildID !== m[2]) {
+        sendJson(res, 404, { code: 404, message: "build not found" });
+        return;
+      }
+      sendJson(res, 200, {
+        buildID: t.buildID,
+        templateID: t.templateID,
+        status: t.readyAt === undefined ? "waiting" : ready(t) ? "ready" : "building",
+        logEntries: [],
+        logs: [],
+      });
+      return;
+    }
+    m = /^\/templates\/aliases\/([^/]+)$/.exec(path);
+    if (m && method === "GET") {
+      const t = templates.get(decodeURIComponent(m[1] as string));
+      if (!t) {
+        sendJson(res, 404, { code: 404, message: `template '${m[1]}' not found` });
+        return;
+      }
+      sendJson(res, 200, { templateID: t.templateID, public: false });
       return;
     }
     m = /^\/sandboxes\/([^/]+)$/.exec(path);
@@ -608,6 +735,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
     url,
     apiKey,
     sandboxes,
+    templates,
     calls,
     failNext(match, status, message = `fake failure ${status}`, opts = {}) {
       fails.push({ match, status, message, raw: opts.raw === true });
@@ -623,6 +751,7 @@ export async function startFakeE2B(opts: FakeE2BOptions = {}): Promise<FakeE2BSe
       hangs.push(match);
     },
     expire: destroy,
+    removeSandbox: destroy,
     hostPath(id, sandboxPath) {
       const s = sandboxes.get(id);
       if (!s) throw new Error(`no fake sandbox ${id}`);

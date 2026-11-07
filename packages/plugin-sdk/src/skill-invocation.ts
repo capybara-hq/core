@@ -6,12 +6,17 @@
  * The argument rules follow Claude Code (re-checked 2026-10-27): `$ARGUMENTS` is the whole argument
  * string, `$ARGUMENTS[N]` / `$N` are 0-based positional values (a missing one stays as written),
  * `$name` takes its value from frontmatter `arguments` (a missing one becomes empty), `\$` is a
- * literal `$`, `${CLAUDE_SKILL_DIR}` is `/skills/<name>` and every other `${…}` stays as written.
+ * literal `$`, `${CLAUDE_SKILL_DIR}` is `/skills/<name>@<digest>` and every other `${…}` stays as written.
  * When the body has no argument placeholder and the arguments are not empty, they are appended as
  * `ARGUMENTS: <args>`. Substituted text is never scanned again. Nothing is executed: shell
  * injections (`` !`cmd` ``) stay text, and the model is told how to run them.
  */
-import { isSkillName, SKILL_INVOCATION_LIMITS, SKILLS_SANDBOX_ROOT } from "./skill.js";
+import {
+  isSkillName,
+  SKILL_INVOCATION_LIMITS,
+  SKILLS_SANDBOX_ROOT,
+  skillSandboxDir,
+} from "./skill.js";
 import { argumentHintText, SKILL_ARGUMENT_NAME_RE } from "./skill-keys.js";
 
 /** How a skill can be invoked, read from its SKILL.md frontmatter by {@link skillInvocation}. */
@@ -118,6 +123,14 @@ const checkSkillName = (skillName: string): void => {
   }
 };
 
+const DIGEST_RE = /^[0-9a-f]{12}$/;
+
+const checkDigest = (digest: string): void => {
+  if (typeof digest !== "string" || !DIGEST_RE.test(digest)) {
+    throw new TypeError(`digest must be 12 lowercase hex digits (skillDigest), got "${digest}"`);
+  }
+};
+
 const tooLong = (): RangeError =>
   new RangeError(
     `the rendered skill must be at most ${SKILL_INVOCATION_LIMITS.renderedMaxChars} characters`,
@@ -125,8 +138,9 @@ const tooLong = (): RangeError =>
 
 /**
  * A skill body with its arguments substituted (see the file header), without the wrapper.
- * `skillName` is the resolved skill's bare name: `${CLAUDE_SKILL_DIR}` becomes
- * `/skills/<skillName>` (a qualified `<plugin>:<name>` throws a `TypeError`). `args` is trimmed;
+ * `skillName` is the resolved skill's bare name and `digest` its version's `skillDigest`:
+ * `${CLAUDE_SKILL_DIR}` becomes `/skills/<skillName>@<digest>` (a qualified `<plugin>:<name>` or a
+ * digest that is not 12 lowercase hex digits throws a `TypeError`). `args` is trimmed;
  * more than {@link SKILL_INVOCATION_LIMITS.argumentsMaxChars} characters throw a `RangeError`, and
  * so does a result longer than {@link SKILL_INVOCATION_LIMITS.renderedMaxChars} (checked while
  * substituting, before the long string is built).
@@ -136,8 +150,11 @@ export function renderSkillBody(
   invocation: SkillInvocation,
   args: string,
   skillName: string,
+  digest: string,
 ): string {
   checkSkillName(skillName);
+  checkDigest(digest);
+  const dir = skillSandboxDir(skillName, digest);
   const all = trimmedArgs(args);
   const values = parseSkillArguments(all);
   const named = invocation.arguments ?? [];
@@ -148,7 +165,7 @@ export function renderSkillBody(
   let delta = 0;
   const replace = (m: string, idx?: string, pos?: string, word?: string): string => {
     if (m === "\\$") return "$";
-    if (m === "${CLAUDE_SKILL_DIR}") return `${SKILLS_SANDBOX_ROOT}/${skillName}`;
+    if (m === "${CLAUDE_SKILL_DIR}") return dir;
     if (m === "$ARGUMENTS") {
       placeholder = true;
       return all;
@@ -191,10 +208,12 @@ export interface RenderSkillInvocationInput {
    */
   name: string;
   /**
-   * The resolved skill's bare name (never `<plugin>:<name>`): its sandbox directory
-   * `/skills/<skillName>/`, used for `${CLAUDE_SKILL_DIR}` and the files line.
+   * The resolved skill's bare name (never `<plugin>:<name>`): with `digest`, its sandbox
+   * directory `/skills/<skillName>@<digest>/`, used for `${CLAUDE_SKILL_DIR}` and the files line.
    */
   skillName: string;
+  /** The version's `skillDigest` (12 lowercase hex digits). */
+  digest: string;
   version: number;
   /** The SKILL.md body (after the frontmatter). */
   body: string;
@@ -238,7 +257,7 @@ const escapeAttr = (s: string): string =>
  */
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   const args = trimmedArgs(i.args);
-  const body = renderSkillBody(i.body, i.invocation, args, i.skillName).replace(
+  const body = renderSkillBody(i.body, i.invocation, args, i.skillName, i.digest).replace(
     CLOSE_TAG_RE,
     "<\\/$1",
   );
@@ -255,7 +274,7 @@ export function renderSkillInvocation(i: RenderSkillInvocationInput): string {
   );
   if (i.lines.files === "load") {
     parts.push(
-      `Its files are not in the sandbox yet: call Skill with "${i.name}" to copy them to ${SKILLS_SANDBOX_ROOT}/${i.skillName}/ before running its scripts.`,
+      `Its files are not in the sandbox yet: call Skill with "${i.name}" to copy them to ${skillSandboxDir(i.skillName, i.digest)}/ before running its scripts.`,
     );
   } else if (i.lines.files === "unavailable") {
     parts.push("Its other files are not available in this conversation.");

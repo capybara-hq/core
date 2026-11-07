@@ -1,8 +1,4 @@
-import {
-  type ExtensionContext,
-  SANDBOX_EXTENSION_POINT,
-  type SandboxProvider,
-} from "@capybara-hq/plugin-sdk";
+import { type ExtensionContext, SANDBOX_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -257,11 +253,7 @@ export class KernelLifecycle
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
     if (sandboxEntry !== undefined) {
-      for (const w of sandboxConfigWarnings(
-        cfg(),
-        sandboxEntry.plugin,
-        sandboxEntry.impl as SandboxProvider,
-      )) {
+      for (const w of sandboxConfigWarnings(cfg(), sandboxEntry.plugin)) {
         this.log[w.level](w.message);
       }
     }

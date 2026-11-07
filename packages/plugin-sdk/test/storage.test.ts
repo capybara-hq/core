@@ -16,6 +16,7 @@ describe("object-store@1", () => {
     expect(OBJECT_STORE_EXTENSION_POINT).toBe("object-store@1");
     const { name } = parseExtensionPoint(OBJECT_STORE_EXTENSION_POINT);
     expect(EXTENSION_POINTS[name]).toMatchObject({
+      majors: [1],
       cardinality: "single",
       brokered: true,
       orgScoped: false,

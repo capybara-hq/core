@@ -123,7 +123,8 @@ Each line is the rule you must not miss; the skill has the rest.
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
   kernel's. [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** abort must kill the command; locking, suspension and destruction are the kernel's;
+- **Sandboxes:** work happens in environments (one instance + a file system kept until the environment
+  is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the

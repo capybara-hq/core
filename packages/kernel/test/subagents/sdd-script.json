@@ -593,7 +593,7 @@
             "name": "Bash",
             "input": {
               "description": "Test step",
-              "command": "git init -q && git config user.email sdd@example.com && git config user.name SDD && git add plan.md && git commit -qm 'docs: plan' && git tag task1-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 1"
+              "command": "git init -q && git config user.email sdd@example.com && git config user.name SDD && git add plan.md && git commit -qm 'docs: plan' && git tag task1-base && bash /skills/subagent-driven-development@*/scripts/task-brief /workspace/plan.md 1"
             }
           }
         ]
@@ -636,7 +636,7 @@
             "name": "Bash",
             "input": {
               "description": "Test step",
-              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/review-1.diff"
+              "command": "bash /skills/subagent-driven-development@*/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/review-1.diff"
             }
           }
         ]
@@ -790,7 +790,7 @@
             "name": "Bash",
             "input": {
               "description": "Test step",
-              "command": "git tag task2-base && bash /skills/subagent-driven-development/scripts/task-brief /workspace/plan.md 2"
+              "command": "git tag task2-base && bash /skills/subagent-driven-development@*/scripts/task-brief /workspace/plan.md 2"
             }
           }
         ]
@@ -833,7 +833,7 @@
             "name": "Bash",
             "input": {
               "description": "Test step",
-              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task2-base HEAD /workspace/.superpowers/sdd/plan/review-2.diff"
+              "command": "bash /skills/subagent-driven-development@*/scripts/review-package /workspace/plan.md task2-base HEAD /workspace/.superpowers/sdd/plan/review-2.diff"
             }
           }
         ]
@@ -891,7 +891,7 @@
             "name": "Bash",
             "input": {
               "description": "Test step",
-              "command": "bash /skills/subagent-driven-development/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/final.diff"
+              "command": "bash /skills/subagent-driven-development@*/scripts/review-package /workspace/plan.md task1-base HEAD /workspace/.superpowers/sdd/plan/final.diff"
             }
           }
         ]

@@ -64,8 +64,8 @@ function ids(level: NavLevel, superAdmin: boolean) {
 describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
   // The inbox is the brand row's button (acceptance round 2, B2). No home item: 新会话 is the home;
   // 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07). 技能 is for members up.
-  const primaryGuest = ["agents", "connectors"];
-  const primary = ["agents", "skills", "connectors"];
+  const primaryGuest = ["agents", "connectors", "environments"];
+  const primary = ["agents", "skills", "connectors", "environments"];
   // 组织设置 is shown to members too (read-only for them; user decision, role pass item 8)
   // 插件 and 扩展 for members up (read-only for members; the kernel's org.extensions.read)
   // 智能体模板 is no item: it is the 模板 tab of 智能体 (ruling P4-14)
@@ -99,7 +99,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
     }
   });
 
-  it("the nav reads 智能体 技能 连接器 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
+  it("the nav reads 智能体 技能 连接器 环境 after 新会话; members see 插件 扩展 组织设置 under 更多; org admins also 渠道 评测与运行", () => {
     function Labels({ level }: { level: NavLevel }) {
       const { primary, more } = useNav(0, level, false, false);
       return (
@@ -124,6 +124,7 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
         ["智能体", "agent", "/agents"],
         ["技能", "skills", "/skills"],
         ["连接器", "connector", "/connectors"],
+        ["环境", "cpu", "/environments"],
       ],
       more: [
         ["插件", "catalog", "/plugins"],
@@ -243,6 +244,8 @@ describe("activeNavOf", () => {
     // the template page sits under 智能体 (its 模板 tab; ruling P4-14)
     ["/agents/templates/t1", "agents"],
     ["/connectors/c1", "connectors"],
+    ["/environments", "environments"],
+    ["/environments/e1", "environments"],
     ["/plugins", "plugins"],
     ["/plugins/i1/enable", "plugins"],
     ["/extensions", "extensions"],

@@ -33,6 +33,7 @@ describe("configFields", () => {
       "web.fetch.cacheSeconds",
       "web.fetch.timeoutMs",
       "sandbox.maxConcurrentCommands",
+      "environments.maxPersonal",
       "evals.orgConcurrency",
       "hooks.timeoutMs",
       "log.level",
