@@ -22,4 +22,9 @@ Platform tool phase 2: the rest of the UI.
   agent, and connector setup can be requested and its status read. Agent templates can be updated,
   shared and deleted. Background tasks can be listed and stopped. File previewers and model reads
   are covered too.
+- **Environments** (personal): list, read, create and rename. Delete and files reset are never
+  remembered, and their cards warn that files are destroyed and that bound conversations lose their
+  sandbox.
+- **Agent skills and skill changes**: list and remove an agent's skills (shared agents are always
+  asked) and list invocable skills. Skill changes can be read as a summary; deciding stays on the web.
 - **Prechecks** deny known failures before the card.
