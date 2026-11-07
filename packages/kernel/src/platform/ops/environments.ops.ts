@@ -110,7 +110,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.create",
         description:
-          "Create a personal cloud environment with a name (1-64 characters, unique among yours, case-insensitive). It is ready at once; its instance and files are made on first use. It needs a sandbox provider and is limited per person. ",
+          "Create a personal cloud environment with a name (1-64 characters, unique among yours, case-insensitive). It is ready at once; its instance and files are made on first use. It needs a sandbox provider and is limited per person.",
         input: Name,
         example: { name: "Data analysis" },
         authz: { orgAction: "agents.use" },
@@ -174,9 +174,14 @@ export class EnvironmentsOperations implements OnModuleInit {
           precheckBy(() => this.environments.get(ctx.orgId, ctx.actorAccountId, i.environmentId)),
         summary: async (i, ctx) => {
           const n = await this.label(ctx, i.environmentId);
+          const c = await orElse(
+            () =>
+              this.environments.boundConversations(ctx.orgId, ctx.actorAccountId, i.environmentId),
+            0,
+          );
           return {
-            zh: `删除环境「${n}」：其中所有文件将被销毁且无法恢复`,
-            en: `Delete environment "${n}": all its files are destroyed and cannot be recovered`,
+            zh: `删除环境「${n}」：其中所有文件将被销毁且无法恢复；使用它的 ${c} 个对话将失去沙箱（沙箱工具会失败）`,
+            en: `Delete environment "${n}": all its files are destroyed and cannot be recovered; the ${c} conversations using it lose their sandbox (their sandbox tools fail)`,
           };
         },
         run: async (input, ctx) => {

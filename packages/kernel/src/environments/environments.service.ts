@@ -216,6 +216,18 @@ export class EnvironmentsService {
     await this.assertNameFree(orgId, accountId, name);
   }
 
+  /** How many of the person's conversations work in the environment (read only). */
+  async boundConversations(orgId: string, accountId: string, id: string): Promise<number> {
+    const { n } = await this.db
+      .selectFrom("conversations")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("environment_id", "=", id)
+      .executeTakeFirstOrThrow();
+    return Number(n);
+  }
+
   /** The refusals {@link resetFiles} would raise (not found, its provider not current), read only. */
   async checkReset(orgId: string, accountId: string, id: string): Promise<void> {
     await this.access.usable(orgId, accountId, id);

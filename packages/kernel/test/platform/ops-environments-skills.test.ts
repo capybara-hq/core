@@ -289,6 +289,12 @@ describe("environments: delete and reset files", () => {
       expect(sum?.en).toContain("cannot be recovered");
       expect(sum?.zh).toContain("无法恢复");
     }
+    const del = await op("environments.delete").summary?.(
+      op("environments.delete").input.parse(input),
+      ctx,
+    );
+    expect(del?.en).toContain("0 conversations using it lose their sandbox");
+    expect(del?.zh).toContain("0 个对话将失去沙箱");
     const other = ctxOf(memberId);
     expect(await precheck("environments.delete", input, other)).toMatchObject({
       ok: false,
