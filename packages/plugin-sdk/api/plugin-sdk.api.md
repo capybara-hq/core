@@ -1590,6 +1590,15 @@ export interface ObjectStore {
 }
 
 // @public
+export type OrgAccess = "readonly" | "override";
+
+// @public
+export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess): T;
+
+// @public
+export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
+
+// @public
 export interface OutboundMessage {
     cards?: ChannelCard[];
     text: string;

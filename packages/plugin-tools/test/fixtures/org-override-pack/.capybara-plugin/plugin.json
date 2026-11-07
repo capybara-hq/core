@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-org-override-pack",
+  "displayName": { "zh": "组织覆盖示例", "en": "Org override" },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a deployment field an org may override"
+}
