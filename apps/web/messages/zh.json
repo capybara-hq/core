@@ -1437,12 +1437,13 @@
       "delete": "删除环境",
       "deleteTitle": "删除环境",
       "deleteHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。输入环境名称以确认。",
+      "deleteDefaultHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的{name}。输入环境名称以确认。",
       "deleted": "已删除环境 {name}。",
       "resetFiles": "重建文件",
       "resetTitle": "重建 {name} 的文件？",
       "resetHint": "工作区会被清空，下次使用时从空文件开始。",
       "resetSubmit": "重建文件",
-      "resetDone": "{name} 的文件将在下次使用时重建。"
+      "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。"
     }
   },
   "nav": {

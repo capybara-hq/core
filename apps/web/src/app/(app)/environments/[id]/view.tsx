@@ -41,8 +41,9 @@ import NotFound from "../../not-found";
  * `/environments/[id]`: one environment (DetailPage, one centred column): source, provider, state,
  * whether sessions are isolated, the limits, and the two things a person must know (files stay
  * until the environment is deleted; suspending ends running processes). 重命名, 重建文件 (only
- * when its files are lost, behind a confirmation) and 删除 (typing its name; the files are deleted
- * with it, a destructive item of the ⋯ menu). From the query cache (the layout prefetched it on
+ * when its files are lost, behind a confirmation; a job, so the page then polls until the files
+ * are back) and 删除 (typing its name; the files are deleted with it, a destructive item of the ⋯
+ * menu; deleting 个人环境 says a new empty one is created the next time one is needed). From the query cache (the layout prefetched it on
  * a first load); an environment the kernel does not find is the not-found state.
  */
 export default function EnvironmentView({ id }: { id: string }) {
@@ -55,7 +56,13 @@ export default function EnvironmentView({ id }: { id: string }) {
 function EnvironmentPage({ orgId, id }: { orgId: string; id: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("environments");
-  const read = usePageQuery(environmentQuery(orgId, id));
+  // 重建文件 is a job: after the request the page polls until the files are back
+  const [resetting, setResetting] = useState(false);
+  const read = usePageQuery({
+    ...environmentQuery(orgId, id),
+    refetchInterval: (q) =>
+      resetting && q.state.data?.environment.filesLost ? RESET_POLL_MS : false,
+  });
   const tabs = {
     label: t("detail.tabsLabel"),
     items: [{ id: "summary", label: t("detail.tabs.summary") }],
@@ -77,8 +84,18 @@ function EnvironmentPage({ orgId, id }: { orgId: string; id: string }) {
       />
     );
   }
-  return <Detail orgId={orgId} environment={read.data.environment} tabs={tabs} />;
+  return (
+    <Detail
+      orgId={orgId}
+      environment={read.data.environment}
+      tabs={tabs}
+      onResetScheduled={() => setResetting(true)}
+    />
+  );
 }
+
+/** How often the page reads the environment while a file reset it requested is pending. */
+const RESET_POLL_MS = 1500;
 
 type Dialogs = "rename" | "reset" | "delete" | null;
 
@@ -86,10 +103,12 @@ function Detail({
   orgId,
   environment: e,
   tabs,
+  onResetScheduled,
 }: {
   orgId: string;
   environment: Environment;
   tabs: Parameters<typeof DetailPage>[0]["tabs"];
+  onResetScheduled(): void;
 }) {
   const scope = usePagePath("org");
   const t = useTranslations("environments");
@@ -196,7 +215,8 @@ function Detail({
           onReset={async () => {
             await reset.mutateAsync(undefined);
             setOpen(null);
-            toast.success(t("detail.resetDone", { name }));
+            onResetScheduled();
+            toast.success(t("detail.resetScheduled", { name }));
           }}
         />
       )}
@@ -206,7 +226,11 @@ function Detail({
           if (!o) setOpen(null);
         }}
         title={t("detail.deleteTitle")}
-        description={<Text variant="prose">{t("detail.deleteHint", { name })}</Text>}
+        description={
+          <Text variant="prose">
+            {t(e.isDefault ? "detail.deleteDefaultHint" : "detail.deleteHint", { name })}
+          </Text>
+        }
         confirmName={name}
         confirmLabel={t("detail.delete")}
         onConfirm={async () => {

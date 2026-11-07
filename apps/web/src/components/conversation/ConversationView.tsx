@@ -201,7 +201,9 @@ export function useConversationPage(
       deleted: t("environmentDeleted"),
       personal: tEnvironments("personal"),
     },
-    conv.conversation?.environmentId,
+    // a row read before the first tool call bound the conversation says none; the environment
+    // query (read again after sandbox tool results) knows better
+    conv.conversation?.environmentId ?? environment.data?.id,
     environment.data,
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);

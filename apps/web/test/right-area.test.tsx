@@ -454,6 +454,13 @@ describe("the conversation's environment (environments design §4.1 item 2)", ()
     ).toBeTruthy();
   });
 
+  it("a row read before its first tool call bound it still shows the bound environment", async () => {
+    // the row says unbound, the environment route (read after the first tool call) has one
+    bound(envView("e1", "Build box"), null);
+    await open();
+    expect(await screen.findByText("Build box", { selector: '[data-part="picker"]' })).toBeTruthy();
+  });
+
   it("a conversation with no environment bound says so and shows no picker", async () => {
     bound(null, null);
     const props = await open();

@@ -399,6 +399,22 @@ describe("the environment picker (environments design §4.1)", () => {
     expect(picker()?.textContent).toContain(en.environments.personal);
   });
 
+  it("an environment whose files are lost is tagged and not preselected", async () => {
+    resetNavigation("/chat");
+    const lost = {
+      ...ENVIRONMENTS,
+      items: ENVIRONMENTS.items.map((e) => (e.id === "e2" ? { ...e, filesLost: true } : e)),
+      lastUsedId: "e2",
+    };
+    await renderRouteWithCache("/chat", withEnvironments(lost));
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    const user = userEvent.setup();
+    await user.click(picker() as HTMLElement);
+    const item = await screen.findByRole("menuitemradio", { name: /Build box/ });
+    expect(item.hasAttribute("data-disabled")).toBe(true);
+    expect(item.textContent).toContain(en.environments.state.filesLost);
+  });
+
   it("without a sandbox provider there is no picker and the send carries no environment", async () => {
     resetNavigation("/chat");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });

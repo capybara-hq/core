@@ -187,8 +187,9 @@ export type EnvironmentChoice = {
 
 /**
  * The new conversation's environment picker (environments design §4.1 item 2): the person's
- * environments, the ones whose provider is gone shown but not selectable (hint 不可用). It starts on
- * the last used environment, else the default, else the first usable one.
+ * environments, the ones whose provider is gone (hint 不可用) or whose files are lost (hint 文件已丢失;
+ * 重建文件 on its page first) shown but not selectable. It starts on the last used environment,
+ * else the default, else the first usable one.
  */
 export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
   const t = useTranslations("chat");
@@ -196,13 +197,14 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
   const [picked, setPicked] = useState<string | null>(null);
   if (list === undefined || !list.cloudAvailable)
     return { environmentId: undefined, picker: undefined };
+  const pickable = (e: { available: boolean; filesLost: boolean }) => e.available && !e.filesLost;
   const usable = (id: string | null | undefined) =>
-    list.items.find((e) => e.id === id && e.available)?.id;
+    list.items.find((e) => e.id === id && pickable(e))?.id;
   const id =
     usable(picked) ??
     usable(list.lastUsedId) ??
     usable(list.defaultId) ??
-    list.items.find((e) => e.available)?.id;
+    list.items.find(pickable)?.id;
   const nameOf = (e: { name: string | null }) => e.name ?? te("personal");
   const current = list.items.find((e) => e.id === id);
   return {
@@ -216,7 +218,11 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
             id: e.id,
             label: nameOf(e),
             checked: e.id === id,
-            ...(e.available ? {} : { disabled: true, tag: te("state.unavailable") }),
+            ...(!e.available
+              ? { disabled: true, tag: te("state.unavailable") }
+              : e.filesLost
+                ? { disabled: true, tag: te("state.filesLost") }
+                : {}),
           })),
         },
       ],

@@ -317,6 +317,48 @@ describe("environment detail", () => {
     expect(client.getQueryState(["org", "o1", "environment", "e1"])).toBeUndefined();
   });
 
+  it("deleting the default environment says a new empty one comes next time", async () => {
+    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { environment: env("e1", null) }) });
+    await renderDetail();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
+    await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(
+      E.detail.deleteDefaultHint.replaceAll("{name}", E.personal),
+    );
+  });
+
+  it("a scheduled file reset polls the environment until its files are back", async () => {
+    const lost = env("e1", "Build box", { filesLost: true });
+    let reads = 0;
+    let posted = false;
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, list([lost])),
+      [`GET ${BASE}/e1`]: () => {
+        if (posted) reads += 1;
+        // the job is still running on the first read after the request
+        return json(200, { environment: reads > 1 ? env("e1", "Build box") : lost });
+      },
+      [`POST ${BASE}/e1/files/reset`]: () => {
+        posted = true;
+        return json(202, {});
+      },
+    });
+    await renderDetail();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.detail.resetFiles }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: E.detail.resetSubmit }));
+    expect(
+      await screen.findByText(E.detail.resetScheduled.replace("{name}", "Build box")),
+    ).toBeTruthy();
+    await vi.waitFor(() => expect(screen.queryByText(E.detail.filesLostNote)).toBeNull(), {
+      timeout: 5000,
+    });
+    expect(reads).toBeGreaterThan(1);
+  });
+
   it("reset files is offered only when the files are lost, and invalidates the environment", async () => {
     const lost = env("e1", "Build box", { filesLost: true });
     let reads = 0;

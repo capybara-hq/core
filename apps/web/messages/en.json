@@ -1449,12 +1449,13 @@
       "delete": "Delete environment",
       "deleteTitle": "Delete environment",
       "deleteHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. Type its name to confirm.",
+      "deleteDefaultHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. A new, empty {name} environment is created the next time one is needed. Type its name to confirm.",
       "deleted": "Environment {name} deleted.",
       "resetFiles": "Rebuild files",
       "resetTitle": "Rebuild the files of {name}?",
       "resetHint": "The workspace is wiped and the next use starts with empty files.",
       "resetSubmit": "Rebuild files",
-      "resetDone": "The files of {name} will be rebuilt on next use."
+      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done."
     }
   },
   "nav": {
