@@ -9,6 +9,7 @@ import {
   type ExtensionPointRef,
   type Logger,
   type ModelCallOptions,
+  type ModelEmbeddingInfo,
   type ModelInfo,
   type ModelInfoV1,
   type ModelKind,
@@ -173,6 +174,25 @@ export interface ProviderStatus {
   status: "ok" | "error" | "org_configured";
   error?: string;
   models: ListedModelInfo[];
+}
+
+const positiveInt = (n: unknown): boolean => typeof n === "number" && Number.isInteger(n) && n > 0;
+
+/**
+ * Whether an embedding model's info is usable: at least one dimension, every dimension and the
+ * limits positive integers, and `defaultDimensions` one of `dimensions`. A model failing this is
+ * dropped from the list (every default call on it would fail validation).
+ */
+function isValidEmbeddingInfo(e: ModelEmbeddingInfo): boolean {
+  return (
+    Array.isArray(e.dimensions) &&
+    e.dimensions.length > 0 &&
+    e.dimensions.every(positiveInt) &&
+    positiveInt(e.defaultDimensions) &&
+    e.dimensions.includes(e.defaultDimensions) &&
+    positiveInt(e.maxInputTokens) &&
+    positiveInt(e.maxBatch)
+  );
 }
 
 /**
@@ -413,6 +433,7 @@ export class ProviderRegistry {
         }
       } else if (kind === "embedding") {
         if (!m.embedding) problem = "an embedding model without embedding info";
+        else if (!isValidEmbeddingInfo(m.embedding)) problem = "malformed embedding info";
         else if (typeof impl.embed !== "function") {
           problem = "an embedding model from a provider without embed";
         }

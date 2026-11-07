@@ -388,6 +388,46 @@ describe("model-provider@1 / @2", () => {
     expect(warns).toEqual(["model dropped from the provider's list"]);
   });
 
+  it("@2 embedding model with malformed embedding info is dropped, one warn each; a valid one stays", async () => {
+    const { capabilities, ...rest } = v1Info("emb", false);
+    const { effort: _deprecated, ...caps } = capabilities;
+    const base = { ...rest, capabilities: caps, parameters: [] };
+    const good = { dimensions: [4, 8], defaultDimensions: 8, maxInputTokens: 10, maxBatch: 2 };
+    const bad: Record<string, unknown> = {
+      "no-dims": { ...good, dimensions: [] },
+      "default-not-offered": { ...good, defaultDimensions: 16 },
+      "zero-batch": { ...good, maxBatch: 0 },
+      "fractional-batch": { ...good, maxBatch: 1.5 },
+      "negative-tokens": { ...good, maxInputTokens: -1 },
+      "fractional-dim": { ...good, dimensions: [4, 7.5], defaultDimensions: 4 },
+      "zero-dim": { ...good, dimensions: [0, 8] },
+      "string-batch": { ...good, maxBatch: "2" },
+    };
+    const impl: ModelProvider = {
+      async listModels() {
+        return [
+          { ...base, id: "ok", kind: "embedding", embedding: good },
+          ...Object.entries(bad).map(([id, embedding]) => ({
+            ...base,
+            id,
+            kind: "embedding" as const,
+            embedding: embedding as typeof good,
+          })),
+        ];
+      },
+      stream() {
+        throw new Error("unused");
+      },
+      async embed(r) {
+        return { vectors: r.input.map(() => [0, 0, 0, 0]), usage: { inputTokens: 1 } };
+      },
+    };
+    const warns: unknown[] = [];
+    const r = reg([{ plugin: "e4", capability: "model-provider@2", impl }], warns);
+    expect((await r.list(ORG))[0]?.models.map((m) => m.id)).toEqual(["ok"]);
+    expect(warns).toEqual(Object.keys(bad).map(() => "model dropped from the provider's list"));
+  });
+
   it("@1 适配：stream 把 params.effort 映射为 req.effort，其余参数丢弃", async () => {
     const { impl, seen } = v1([v1Info("e", true)]);
     const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
