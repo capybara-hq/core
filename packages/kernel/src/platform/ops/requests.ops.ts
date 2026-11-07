@@ -4,6 +4,7 @@ import {
   CatalogItemPathParams,
   CatalogMarketplaceRequestBody,
   CatalogRequestBody,
+  CatalogRequestsListQuery,
 } from "../../catalog/org-catalog.schemas.js";
 import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/requests.service.js";
 import { defineOperation } from "../operation.js";
@@ -22,6 +23,16 @@ const view = (r: CatalogRequestView) => ({
   note: r.note,
   reason: r.reason,
   decidedAt: r.decidedAt,
+  createdAt: r.createdAt,
+});
+
+/** A platform request as the super admin's list shows it: a compact row (the inbox's summary). */
+const platformRow = (r: CatalogRequestView) => ({
+  id: r.id,
+  name: r.item?.name ?? r.entry?.name ?? r.kind,
+  state: r.status,
+  kind: r.kind,
+  org: r.orgName,
   createdAt: r.createdAt,
 });
 
@@ -147,6 +158,25 @@ export class RequestsOperations implements OnModuleInit {
             ),
           ),
         }),
+      }),
+      defineOperation({
+        id: "requests.platform-list",
+        description:
+          "List the requests orgs sent the super admin (super admin): access to a plugin and imports from a marketplace, one compact row each (what, status, kind, the requesting org, when), newest first; pending by default, or filter by status. Deciding them is done on the web. Pages by 50: pass the returned next as params.cursor.",
+        input: z
+          .object({ status: CatalogRequestsListQuery.shape.status, cursor: Cursor.optional() })
+          .strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/catalog/requests"],
+        extras: ["cursor"],
+        confirm: "read",
+        run: async (input) => {
+          const all = await this.requests.listDeployment(
+            input.status !== undefined ? { status: input.status } : {},
+          );
+          return pageOf(all.map(platformRow), startOf(input.cursor), 50);
+        },
       }),
     ]);
   }

@@ -975,6 +975,7 @@ export class MarketplacesService {
         ...(set.url !== undefined && { url: set.url }),
         ...(set.form !== undefined && { form: set.form }),
         ...(set.ref !== undefined && { ref: set.ref }),
+        ...opts.auditDetail,
       },
     });
   }
@@ -1003,7 +1004,7 @@ export class MarketplacesService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "marketplace.removed",
       target: id,
-      detail: { name: row.name, url: row.url },
+      detail: { name: row.name, url: row.url, ...opts.auditDetail },
     });
   }
 
@@ -1628,6 +1629,7 @@ export class MarketplacesService {
           from: cur.last_status,
           to: status,
           ...(lastError !== null && { error: lastError }),
+          ...opts.auditDetail,
         },
       });
     }

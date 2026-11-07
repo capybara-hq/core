@@ -126,6 +126,8 @@ export class ExtensionPointDefaults {
     point: string,
     extension: string,
     actorId: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const db = this.kdb.db;
     if (!hasSelection(point)) {
@@ -157,7 +159,7 @@ export class ExtensionPointDefaults {
       orgId,
       action: "extension_point.default_set",
       target: point,
-      detail: { point, extension },
+      detail: { point, extension, ...auditDetail },
     });
   }
 

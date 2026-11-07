@@ -13,11 +13,15 @@ import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
+import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
+import { ModelsOperations } from "./ops/models.ops.js";
+import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
@@ -45,6 +49,11 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   AccountsOperations,
   OrgsOperations,
   AdminOperations,
+  // Task 8: admin catalog, extensions, marketplaces, models, org uploads
+  CatalogAdminOperations,
+  OrgPluginsOperations,
+  ExtensionsAdminOperations,
+  ModelsOperations,
 ] as const;
 
 /**

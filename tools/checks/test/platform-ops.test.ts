@@ -36,6 +36,7 @@ describe("checkPlatformOps", () => {
         "platform-op-authz",
         "platform-op-describe",
         "platform-op-describe",
+        "platform-op-double",
         "platform-op-errors",
         "platform-op-errors",
         "platform-op-exclusion-reason",
@@ -87,6 +88,12 @@ describe("checkPlatformOps", () => {
     const dyn = join(root, SRC, "skills/dynamic.controller.ts");
     has("platform-op-literal", dyn, lineOf(dyn, "@Get(PATH)"), "route path");
     has("platform-op-literal", dyn, lineOf(dyn, '@Get("y")'), "controller prefix");
+    has(
+      "platform-op-double",
+      exc,
+      lineOf(exc, 'skills", category: "internal", reason: "Both."'),
+      "mirrored by skills.list",
+    );
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/a"'), "reason");
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
   });

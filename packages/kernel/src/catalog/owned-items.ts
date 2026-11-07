@@ -619,7 +619,13 @@ export class OwnedItems {
       orgId: owner,
       action: "catalog.ownership_transferred",
       target: item.id,
-      detail: { name: item.name, fromOrgId: owner, reason, usedBy: others.map((o) => o.id) },
+      detail: {
+        name: item.name,
+        fromOrgId: owner,
+        reason,
+        usedBy: others.map((o) => o.id),
+        ...opts.auditDetail,
+      },
     });
     afterCommit(() => this.scope.enqueueSync(item.id));
     return "transferred";

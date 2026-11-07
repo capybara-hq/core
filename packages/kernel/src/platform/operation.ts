@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { OrgAction } from "../orgs/roles.js";
+import type { ErrorRole } from "./errors.js";
 
 /**
  * How an operation is confirmed (spec §6.2): `read` runs; `personal` asks each time and may be
@@ -25,6 +26,12 @@ export interface OperationContext {
    */
   callId?: string;
   signal: AbortSignal;
+  /**
+   * The actor's role for next steps, from the facts the tool read for this call (spec §14.5
+   * item 7). Absent where no tool call is behind the context (a test running `op.run`): read it
+   * then with `roleFor` in ./ops/unavailable.ts.
+   */
+  errorRole?: ErrorRole;
 }
 
 /**
@@ -49,7 +56,8 @@ export interface OperationError {
  *
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
- * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`, and
+ * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
+ * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org), and
  * `account.self` / `account.no_change` (disabling your own account, a status that is set already).
  */
 export type PrecheckResult =
@@ -163,15 +171,25 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "plugins",
-    description: "Plugins in the org and on the platform: list, read, enable, disable, update.",
+    description:
+      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
-    description: "Marketplace sources and their entries: list, browse, add, request a plugin.",
+    description:
+      "Marketplace sources and their entries: list, browse, add, edit, refresh, remove, import, request a plugin.",
   },
-  { id: "requests", description: "Requests to admins: list yours, create one." },
+  {
+    id: "requests",
+    description:
+      "Requests to admins: list yours, create one; the super admin lists the platform's.",
+  },
   { id: "connectors", description: "Connectors and connector templates: list and read." },
-  { id: "extensions", description: "Extensions in the org (state only) and extension points." },
+  {
+    id: "extensions",
+    description:
+      "Extensions in the org (state, tool switches, extension point defaults) and, for the super admin, on the platform (state, enable, disable, uninstall).",
+  },
   {
     id: "conversations",
     description: "Your own conversations: list, read, rename, archive, delete, read their events.",
@@ -192,7 +210,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "models",
     description:
-      "The platform's models (super admin): catalog and disabled list, prices, default model per purpose.",
+      "The org's model per purpose and the models it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
   },
 ];
 

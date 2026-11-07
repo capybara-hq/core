@@ -51,7 +51,7 @@ export interface ModelDisableChange {
 export interface ModelDisableActor {
   accountId: string;
   tokenId?: string | undefined;
-  /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+  /** Merged into the audit detail (a write made through the Platform tool). */
   auditDetail?: Record<string, unknown>;
 }
 

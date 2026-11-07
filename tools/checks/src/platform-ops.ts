@@ -22,6 +22,8 @@ import {
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
+ * - platform-op-double: a route both mirrored by an operation and listed in the exclusions (an
+ *   operation added without removing the route's exclusion, often its old `later` entry);
  * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
  *   operations and exclusion entries with it, spec §14.1 item 4);
  * - platform-op-describe: an operation without `description`, `example`, or (not `read`) `summary`;
@@ -36,6 +38,7 @@ export const PLATFORM_OP_RULES = [
   "platform-op-exclusion-reason",
   "platform-op-authz",
   "platform-op-orphan",
+  "platform-op-double",
   "platform-op-describe",
   "platform-op-literal",
   "platform-op-errors",
@@ -401,10 +404,10 @@ export function checkPlatformOps(root: string): Finding[] {
     return r === undefined ? undefined : ROLE_ORDER.indexOf(r);
   };
 
-  const mirrored = new Set<string>();
+  const mirrored = new Map<string, string>();
   for (const op of ops) {
     for (const m of op.mirrors ?? []) {
-      mirrored.add(m);
+      if (!mirrored.has(m)) mirrored.set(m, op.id);
       const route = routes.get(m);
       if (!route) {
         out.push({
@@ -443,6 +446,14 @@ export function checkPlatformOps(root: string): Finding[] {
   for (const e of exclusions) {
     excluded.add(e.route);
     const at = { file: exclusionsFile, line: e.line };
+    const by = mirrored.get(e.route);
+    if (by !== undefined) {
+      out.push({
+        ...at,
+        rule: "platform-op-double",
+        message: `\`${e.route}\` is mirrored by ${by} and excluded too: remove the exclusion`,
+      });
+    }
     if (!routes.has(e.route)) {
       out.push({
         ...at,

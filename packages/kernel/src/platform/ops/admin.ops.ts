@@ -369,7 +369,7 @@ export class AdminOperations implements OnModuleInit {
         ],
         precheck: (i) =>
           precheckBy(() =>
-            this.purposes.checkDefault(i.purpose, purposeTargetOf({ target: i.target })),
+            this.purposes.validate(null, i.purpose, purposeTargetOf({ target: i.target })),
           ),
         summary: (i) => {
           const target = refOf(i.target);

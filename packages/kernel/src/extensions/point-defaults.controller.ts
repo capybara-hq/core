@@ -1,13 +1,15 @@
 import { Controller, Get, HttpCode, Inject, Put } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { ExtensionPointDefaults, type OrgPointDefaultView } from "./point-defaults.js";
 
-const PointParams = z.object({ point: z.string().min(1).max(100) });
-const DefaultBody = z.object({ extension: z.string().min(1).max(214) }).strict();
+import {
+  ExtensionPointDefaultBody as DefaultBody,
+  ExtensionPointParams as PointParams,
+} from "./point-defaults.schemas.js";
 
 class ExtensionPointParamsDto extends createZodDto(PointParams, "ExtensionPointParams") {}
 class ExtensionPointDefaultBodyDto extends createZodDto(DefaultBody, "ExtensionPointDefaultBody") {}

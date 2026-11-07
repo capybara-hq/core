@@ -286,13 +286,27 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId: string | undefined,
-    auditDetail?: Record<string, unknown>,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
     if (target) await this.check(orgId, target, decl.kind);
     await this.write(orgId, purpose, target, actor, actorTokenId, auditDetail);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
+  }
+
+  /**
+   * The checks {@link set} runs before writing, nothing written: an unknown purpose, and a target
+   * model the scope cannot use, of another kind, or with invalid params (the Platform tool's
+   * precheck, so a known failure never reaches the confirmation card).
+   */
+  async validate(
+    orgId: string | null,
+    purpose: string,
+    target: PurposeTarget | null,
+  ): Promise<void> {
+    const decl = this.find(purpose);
+    if (target) await this.check(orgId, target, decl.kind);
   }
 
   /** The mapping write of {@link set}, under the super admin or org lock. */
@@ -340,23 +354,13 @@ export class ModelPurposesService {
     });
   }
 
-  /**
-   * The checks {@link setDefault} runs before writing, read only: the purpose is declared
-   * (`model.purpose_unknown`) and a target is a callable model of the purpose's kind with valid
-   * params (`validation_failed`). For a confirmation shown before the write.
-   */
-  async checkDefault(purpose: string, target: PurposeTarget | null): Promise<void> {
-    const decl = this.find(purpose);
-    if (target) await this.check(null, target, decl.kind);
-  }
-
   /** 设置（或 `null` 清除）部署默认；只有超级管理员（事务内复核）。 */
   setDefault(
     purpose: string,
     target: PurposeTarget | null,
     actor: string,
     actorTokenId?: string,
-    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    /** Merged into the audit detail (a write made through the Platform tool). */
     auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
     return this.set(null, purpose, target, actor, actorTokenId, auditDetail);
@@ -369,8 +373,10 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
-    return this.set(orgId, purpose, target, actor, actorTokenId);
+    return this.set(orgId, purpose, target, actor, actorTokenId, auditDetail);
   }
 
   /**

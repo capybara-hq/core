@@ -24,6 +24,8 @@ let failWith: unknown = null;
 /** What `skills.create`'s precheck does: pass, fail on a taken name, hang, or throw. */
 let precheckMode: "pass" | "taken" | "hang" | "throw" | "keyed" = "pass";
 let precheckSignal: AbortSignal | null = null;
+/** The `errorRole` each step of `skills.create` was handed (deferred Task 3 item c). */
+let seenRoles: Record<string, unknown> = {};
 
 /** A next step that differs by role (spec §14.5 item 7). */
 const DEPLOY_NEXT = {
@@ -90,6 +92,7 @@ const orgOp = defineOperation({
   ],
   precheck: async (i, c) => {
     precheckSignal = c.signal;
+    seenRoles.precheck = c.errorRole;
     if (precheckMode === "throw") throw new Error("db down");
     if (precheckMode === "hang") return new Promise(() => {});
     if (precheckMode === "keyed") {
@@ -109,8 +112,12 @@ const orgOp = defineOperation({
     }
     return { ok: true };
   },
-  summary: (i) => ({ zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` }),
+  summary: (i, c) => {
+    seenRoles.summary = c.errorRole;
+    return { zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` };
+  },
   run: async (input, ctx) => {
+    seenRoles.run = ctx.errorRole;
     ran.push({ id: "skills.create", input, agentId: ctx.agentId });
     if (failWith !== null) throw failWith;
     return { name: input.name };
@@ -161,6 +168,7 @@ beforeEach(() => {
   failWith = null;
   precheckMode = "pass";
   precheckSignal = null;
+  seenRoles = {};
   facts = ADMIN;
   factsCalls = [];
   logged = [];
@@ -275,6 +283,10 @@ describe("browse, search, describe, read", () => {
       "connectors",
       "extensions",
       "conversations",
+      "orgs",
+      "accounts",
+      "admin",
+      "models",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");
@@ -613,6 +625,15 @@ describe("callPolicy: precheck before the card", () => {
     expect((await policy(input))?.policy).toBe("ask");
     precheckMode = "taken";
     expect((await policy(input))?.policy).toBe("deny");
+  });
+
+  it("hands precheck, summary and run the role of the call's actor facts (no second read)", async () => {
+    facts = { ...ADMIN, isSuperAdmin: true };
+    expect((await policy(input))?.policy).toBe("ask");
+    expect(seenRoles).toEqual({ precheck: "superAdmin", summary: "superAdmin" });
+    facts = ADMIN;
+    await run(input);
+    expect(seenRoles.run).toBe("orgAdmin");
   });
 
   it("a precheck that times out or throws is skipped: the card appears", async () => {
