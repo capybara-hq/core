@@ -23,6 +23,7 @@ import { ExtensionsModule } from "./extensions.module.js";
 import { ExtensionHost, type InspectedExtension } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { PLUGINS_CHANGED_TOPIC } from "./lifecycle-topics.js";
+import { relaxOverridable } from "./org-levels.js";
 import {
   ExtensionPackageError,
   extensionPackageApiError,
@@ -74,6 +75,26 @@ export interface ExtensionCli {
 }
 
 /**
+ * The effective deployment config (the startup config `fileValue` completed by the `stored` PG
+ * fields) parsed as the host's load gate does: overridable fields may stay empty (spec A §5.4a),
+ * hidden and read-only ones must be complete.
+ */
+export function parseDeploymentConfig(
+  schema: z.ZodTypeAny,
+  stored: Record<string, unknown>,
+  fileValue: unknown,
+): { ok: true; value: unknown } | { ok: false; issues: ConfigIssue[] } {
+  const r = relaxOverridable(schema).safeParse(
+    mergeDeploymentConfig(
+      stored,
+      fileValue,
+      schemaFields(schema).map((f) => f.path),
+    ),
+  );
+  return r.success ? { ok: true, value: r.data } : { ok: false, issues: toIssues(r.error) };
+}
+
+/**
  * The CLI's extension management context (C18, F-Q): a Nest application context with
  * the extensions module over the database and a lazy Redis connection used only for publishing
  * and the bootstrap lock. It loads no extension and runs no extension's `setup` (a catalog import
@@ -110,14 +131,7 @@ export async function openExtensionCli(
     const stored = await readStoredDeploymentConfig(db.db, keyring, name, {
       secretPaths: secretPathsOf(schemaFields(schema)),
     });
-    const r = schema.safeParse(
-      mergeDeploymentConfig(
-        stored,
-        config.extensionConfig[name],
-        schemaFields(schema).map((f) => f.path),
-      ),
-    );
-    return r.success ? { ok: true, value: r.data } : { ok: false, issues: toIssues(r.error) };
+    return parseDeploymentConfig(schema, stored, config.extensionConfig[name]);
   };
   const configIssues = new Map<string, ConfigIssue[]>();
   const deploymentConfigs = new Map<string, unknown>();
