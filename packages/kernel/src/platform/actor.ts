@@ -4,9 +4,12 @@ import type { OrgRole } from "../orgs/roles.js";
 import { type OrgSettings, readOrgSettings } from "../orgs/settings.service.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 
-/** What {@link availability} decides on, read live for each call (spec §6.1). */
+/** What `availability()` (./availability.ts) decides on, read live for each call (spec §6.1). */
 export interface ActorFacts {
-  /** The actor's role in the org; null: not a member any more. */
+  /**
+   * The actor's role in the org; null: not a member any more, or the account is disabled (the HTTP
+   * auth refuses a disabled account on every request).
+   */
   role: OrgRole | null;
   isSuperAdmin: boolean;
   /** A person who can see and answer a confirmation is behind this run. */
@@ -69,10 +72,9 @@ export class PlatformActor {
         .where("account_id", "=", ctx.accountId)
         .executeTakeFirst(),
     ]);
-    const role = account?.role ?? null;
-    const activeMember = role !== null && account?.status === "active";
+    const activeMember = account?.role != null && account.status === "active";
     return {
-      role,
+      role: activeMember ? (account?.role ?? null) : null,
       isSuperAdmin: account?.is_super_admin === true && account.status === "active",
       personPresent: activeMember && anonymous === undefined && (await this.personRun(ctx)),
       agentPrivateToActor:

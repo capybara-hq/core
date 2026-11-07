@@ -22,7 +22,7 @@ const refuse = (reason: string): Availability => ({ ok: false, reason });
 export function availability(op: PlatformOperation, f: ActorFacts): Availability {
   if (f.role === null) {
     return refuse(
-      "You are not a member of this org any more, so no Platform operation is available; ask an org admin to add you back.",
+      "You are not a member of this org any more, or your account is disabled, so no Platform operation is available; ask an org admin to add you back or the super admin to enable your account.",
     );
   }
   if (f.setting === "off") {

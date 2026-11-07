@@ -3,9 +3,12 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { PlatformActor } from "../../src/platform/actor.js";
+import { availability } from "../../src/platform/availability.js";
+import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor } from "../helpers/identity.js";
 
@@ -95,6 +98,18 @@ beforeEach(async () => {
 const factsFor = (accountId: string, conversationId: string, runId: string | null) =>
   actor.facts({ orgId, accountId, agentId, conversationId, runId });
 
+/** A read operation any member may call (to check a disabled account loses even reads). */
+const readOp = defineOperation({
+  id: "skills.list",
+  description: "List the org's skills.",
+  input: z.object({}),
+  example: {},
+  authz: { orgAction: "org.read" },
+  mirrors: [],
+  confirm: "read",
+  run: async () => null,
+}) as PlatformOperation;
+
 describe("PlatformActor.facts", () => {
   it("a person's own run in a chat: role, private agent, setting on, present", async () => {
     const conv = await conversation(person);
@@ -147,7 +162,13 @@ describe("PlatformActor.facts", () => {
     expect((await factsFor(person, conv, await run(conv, other))).personPresent).toBe(false);
     const r = await run(conv, person);
     await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${person}`.execute(raw);
-    expect((await factsFor(person, conv, r)).personPresent).toBe(false);
+    const f = await factsFor(person, conv, r);
+    expect(f.personPresent).toBe(false);
+    // a disabled account is refused on every HTTP request: here it is no member, reads included
+    expect(f.role).toBeNull();
+    const verdict = availability(readOp, f);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toContain("disabled");
   });
 
   it("an actor who left the org: role null, no person present", async () => {
@@ -180,5 +201,8 @@ describe("PlatformActor.facts", () => {
     await sql`UPDATE capybara.orgs SET settings = '{"platformTool":"bogus"}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     expect((await factsFor(admin, conv, r)).setting).toBe("on");
+    // a disabled super admin is no super admin
+    await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${admin}`.execute(raw);
+    expect((await factsFor(admin, conv, r)).isSuperAdmin).toBe(false);
   });
 });
