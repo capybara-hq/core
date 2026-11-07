@@ -24,8 +24,21 @@ export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess):
   return schema.meta({ ...(schema.meta() ?? {}), org: access }) as T;
 }
 
-/** The org access level of a schema's meta, or undefined when it has none. */
+/** The wrappers a field's org level is read through, as `configJsonSchema` inherits meta. */
+const WRAPPERS = new Set(["default", "prefault", "optional", "nullable", "readonly", "catch"]);
+
+/**
+ * The org access level of a schema's meta, or undefined when it has none. It sees through
+ * `.optional()`, `.default()`, `.nullable()`, `.prefault()`, `.catch()` and `.readonly()` (the
+ * outermost level wins), so it agrees with the `"x-org"` that `configJsonSchema` publishes.
+ */
 export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined {
-  const v = (schema.meta() as { org?: unknown } | undefined)?.org;
-  return v === "readonly" || v === "override" ? v : undefined;
+  let node: z.ZodTypeAny | undefined = schema;
+  while (node) {
+    const v = (node.meta() as { org?: unknown } | undefined)?.org;
+    if (v === "readonly" || v === "override") return v;
+    const def = node._zod.def as { type: string; innerType?: z.ZodTypeAny };
+    node = WRAPPERS.has(def.type) ? def.innerType : undefined;
+  }
+  return undefined;
 }
