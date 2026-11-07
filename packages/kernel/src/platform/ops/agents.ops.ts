@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
 import {
   AgentCreateBody,
+  AgentCreateDefinition,
   AgentFromTemplateBody,
   AgentFromTemplatePreviewBody,
   AgentPathParams,
@@ -12,9 +13,9 @@ import {
 import { AgentsService } from "../../agents/agents.service.js";
 import {
   AgentDefinitionSchema,
+  AgentToolRefCurrent,
   DEFAULT_AGENT_TOOLS,
   type ModelRef,
-  SubagentsSchema,
 } from "../../agents/definition.js";
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
@@ -23,38 +24,37 @@ import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
-const Id = z.string().min(1).max(100);
 const AgentId = AgentPathParams.shape.agentId.max(100);
+/** The request's definition (create form): the operations tighten its fields, never redeclare them. */
+const Def = AgentCreateDefinition.shape;
+/** Every string the model sends is bounded (the route's tool refs and model strings are not). */
 const Short = z.string().min(1).max(200);
 
-const Model = z.object({ provider: Short, model: Short }).strict();
+const Model = Def.model.extend({ provider: Short, model: Short }).strict();
+const [BuiltinRef, PluginRef, ConnectorRef] = AgentToolRefCurrent.options;
 const ToolRef = z.union([
-  z.object({ kind: z.literal("builtin"), name: Short }).strict(),
-  z.object({ kind: z.literal("plugin"), plugin: Short, name: Short }).strict(),
-  z
-    .object({
-      kind: z.literal("connector"),
-      connectorId: Short,
-      tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
-    })
-    .strict(),
+  BuiltinRef.extend({ name: Short }).strict(),
+  PluginRef.extend({ plugin: Short, name: Short }).strict(),
+  ConnectorRef.extend({
+    connectorId: Short,
+    tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
+  }).strict(),
 ]);
-const ToolPolicies = z.record(Short, z.enum(["ask", "deny"]));
-const Skills = z
-  .object({
-    orgSkills: z.array(Id).max(100),
-    pinned: z.array(Id).max(100).optional(),
-  })
+const RouteSkills = Def.skills.unwrap();
+/** `writePolicy` stays the web's; `orgSkills` is required here (the route defaults it to []). */
+const Skills = RouteSkills.pick({ pinned: true })
+  .extend({ orgSkills: RouteSkills.shape.orgSkills.unwrap() })
   .strict();
 
 /** The definition fields an agent can set through the tool; the rest keep the web's defaults. */
 const Fields = {
-  instructions: z.string().max(100_000),
+  name: Def.name,
+  instructions: Def.instructions.unwrap(),
   model: Model,
   tools: z.array(ToolRef).max(200),
-  toolPolicies: ToolPolicies,
+  toolPolicies: z.record(Short, Def.toolPolicies.unwrap().valueType),
   skills: Skills,
-  subagents: SubagentsSchema,
+  subagents: Def.subagents.unwrap(),
 };
 
 const WEB_ONLY =
@@ -130,7 +130,7 @@ export class AgentsOperations implements OnModuleInit {
           .object({
             definition: z
               .object({
-                name: z.string().min(1).max(80),
+                name: Fields.name,
                 instructions: Fields.instructions.optional(),
                 model: Fields.model,
                 tools: Fields.tools.optional(),
@@ -154,6 +154,7 @@ export class AgentsOperations implements OnModuleInit {
         mirrors: ["POST /api/v1/orgs/:orgId/agents"],
         // sharing and the avatar are set on the web
         omits: ["memberIds", "profile"],
+        loosens: { visibility: "optional: the operation creates private agents only" },
         confirm: "personal",
         summary: (i) => ({
           zh: `新建私有智能体「${i.definition.name}」`,
@@ -194,7 +195,7 @@ export class AgentsOperations implements OnModuleInit {
           .object({
             agentId: AgentId,
             version: AgentUpdateBody.shape.expectedVersion.unwrap(),
-            name: z.string().min(1).max(80).optional(),
+            name: Fields.name.optional(),
             instructions: Fields.instructions.optional(),
             model: Fields.model.optional(),
             tools: Fields.tools.optional(),
@@ -212,17 +213,17 @@ export class AgentsOperations implements OnModuleInit {
         mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId"],
         // flat: the definition's editable fields at the top, merged into the current definition;
         // `version` is the route's `expectedVersion`, required here; visibility is the web's
-        omits: ["definition", "visibility", "memberIds", "expectedVersion"],
-        extras: [
-          "version",
-          "name",
-          "instructions",
-          "model",
-          "tools",
-          "toolPolicies",
-          "skills",
-          "subagents",
-        ],
+        omits: ["visibility", "memberIds"],
+        renames: {
+          version: "expectedVersion",
+          name: "definition.name",
+          instructions: "definition.instructions",
+          model: "definition.model",
+          tools: "definition.tools",
+          toolPolicies: "definition.toolPolicies",
+          skills: "definition.skills",
+          subagents: "definition.subagents",
+        },
         confirm: "personal",
         errors: [
           {

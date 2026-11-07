@@ -94,8 +94,8 @@ export class MarketplacesOperations implements OnModuleInit {
         authz: { orgAction: "catalog.decide" },
         mirrors: ["GET /api/v1/orgs/:orgId/marketplaces/entries"],
         // `marketplaceId` is the route's `sourceId`, named as the entries and requests name it
-        omits: ["sourceId"],
-        extras: ["marketplaceId", "cursor"],
+        renames: { marketplaceId: "sourceId" },
+        extras: ["cursor"],
         confirm: "read",
         errors: [
           {

@@ -199,6 +199,10 @@ export class PluginsOperations implements OnModuleInit {
         mirrors: ["PUT /api/v1/orgs/:orgId/catalog/:itemId/switch"],
         // install inputs a person enters on the web (a plugin that needs them is refused)
         omits: ["inputs"],
+        loosens: {
+          confirm:
+            "also takes `nothing-installed` (plugins.disable-preview's value when nothing is installed), which the route's hash pattern rejects; the service checks confirm only when something is installed",
+        },
         confirm: "org",
         errors: [
           {
@@ -297,8 +301,7 @@ export class PluginsOperations implements OnModuleInit {
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/catalog/items/:id"],
-        omits: ["id"],
-        extras: ["itemId"],
+        renames: { itemId: "id" },
         confirm: "read",
         errors: [
           {
@@ -331,8 +334,7 @@ export class PluginsOperations implements OnModuleInit {
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", version: "1.2.0" },
         authz: { superAdmin: true },
         mirrors: ["POST /api/v1/admin/catalog/items/:id/update/preview"],
-        omits: ["id"],
-        extras: ["itemId"],
+        renames: { itemId: "id" },
         confirm: "read",
         errors: [
           {
@@ -364,8 +366,7 @@ export class PluginsOperations implements OnModuleInit {
         },
         authz: { superAdmin: true },
         mirrors: ["PUT /api/v1/admin/catalog/items/:id/update"],
-        omits: ["id"],
-        extras: ["itemId"],
+        renames: { itemId: "id" },
         confirm: "platform",
         errors: [
           {

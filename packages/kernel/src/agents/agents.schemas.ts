@@ -19,15 +19,17 @@ export const AgentMemberIds = z.array(z.string().min(1).max(100)).max(1000);
  */
 const RequestInstructions = z.string().max(100_000).optional();
 /** Pending connectors come only from a template (ruling P4-6): a create request's are dropped. */
-const CreateDefinition = AgentDefinitionSchema.omit({ pendingConnectors: true }).extend({
-  instructions: RequestInstructions,
-  tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
-});
+export const AgentCreateDefinition = AgentDefinitionSchema.omit({ pendingConnectors: true }).extend(
+  {
+    instructions: RequestInstructions,
+    tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
+  },
+);
 const UpdateDefinition = AgentDefinitionSchema.extend({ instructions: RequestInstructions });
 
 export const AgentCreateBody = z
   .object({
-    definition: CreateDefinition,
+    definition: AgentCreateDefinition,
     visibility: z.enum(AGENT_VISIBILITIES),
     memberIds: AgentMemberIds.optional(),
     /** Without an avatar the agent gets a random preset. */

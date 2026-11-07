@@ -44,8 +44,7 @@ export class AgentTemplatesOperations implements OnModuleInit {
         example: { templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10" },
         authz: { orgAction: "agents.create" },
         mirrors: ["GET /api/v1/orgs/:orgId/agent-templates/:id"],
-        omits: ["id"],
-        extras: ["templateId"],
+        renames: { templateId: "id" },
         confirm: "read",
         run: async (input, ctx) =>
           asToolError(async () => ({

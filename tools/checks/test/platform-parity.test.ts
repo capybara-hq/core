@@ -10,9 +10,18 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   clean,
+  clean2,
+  flattenedLooser,
   looserBound,
+  nestedLooser,
   orphan,
+  patternDeclared,
+  patternLoosened,
+  renameMismatch,
+  requiredLoosened,
   route,
+  route2,
+  staleLoosens,
   typeMismatch,
   undeclaredExtra,
   undeclaredOmission,
@@ -25,14 +34,21 @@ const fixture = (name: string) =>
 
 /**
  * Every registered operation without a Nest app: each provider gets a fresh registry as its first
- * constructor argument and no services, which `onModuleInit` does not touch (handlers reach them
- * only when run, and nothing here runs one).
+ * constructor argument and `undefined` for every service. This assumes `onModuleInit` only
+ * registers (handlers reach services when run, and nothing here runs one); a provider whose
+ * `onModuleInit` touches a service fails here with its name.
  */
 function registeredOperations() {
   const registry = new PlatformOperations();
   for (const Provider of PLATFORM_OPERATION_PROVIDERS) {
     const ctor = Provider as unknown as new (r: PlatformOperations) => { onModuleInit(): void };
-    new ctor(registry).onModuleInit();
+    try {
+      new ctor(registry).onModuleInit();
+    } catch (e) {
+      throw new Error(
+        `${Provider.name}.onModuleInit must only register operations (it ran without services here): ${String(e)}`,
+      );
+    }
   }
   return registry.all();
 }
@@ -75,9 +91,45 @@ describe("inputParity", () => {
       route,
     );
     expect(brief(got)).toEqual([
-      { op: "things.create", field: "gone" },
       { op: "things.create", field: "name" },
+      { op: "things.create", field: "gone" },
     ]);
+  });
+
+  it("compares renamed and flattened fields at their route path, nested objects recursively", () => {
+    expect(inputParity(clean2, route2)).toEqual([]);
+  });
+
+  it("(e) reports a field the route requires and the operation makes optional", () => {
+    const got = inputParity(requiredLoosened, route2);
+    expect(brief(got)).toEqual([{ op: "things.required", field: "code" }]);
+    expect(got[0]?.message).toContain("required");
+  });
+
+  it("(f) reports a lost pattern; `loosens` with a reason excuses it; a needless entry is stale", () => {
+    const got = inputParity(patternLoosened, route2);
+    expect(brief(got)).toEqual([{ op: "things.pattern", field: "code" }]);
+    expect(got[0]?.message).toContain("pattern");
+    expect(inputParity(patternDeclared, route2)).toEqual([]);
+    const stale = inputParity(staleLoosens, route2);
+    expect(brief(stale)).toEqual([{ op: "things.stale", field: "code" }]);
+    expect(stale[0]?.message).toContain("no looser");
+  });
+
+  it("(g) reports a renamed field whose type differs from its route field", () => {
+    const got = inputParity(renameMismatch, route2);
+    expect(brief(got)).toEqual([{ op: "things.rename", field: "thingId" }]);
+    expect(got[0]?.message).toContain("`thingId` (`id`): type number");
+  });
+
+  it("(h) reports a looser nested field and a looser flattened field", () => {
+    const nested = inputParity(nestedLooser, route2);
+    expect(brief(nested)).toEqual([{ op: "things.nested", field: "spec" }]);
+    expect(nested[0]?.message).toContain("spec.title"); // the path inside the field
+    expect(nested[0]?.message).toContain("maxLength 20");
+    const flat = inputParity(flattenedLooser, route2);
+    expect(brief(flat)).toEqual([{ op: "things.flat", field: "title" }]);
+    expect(flat[0]?.message).toContain("`title` (`spec.title`): maxLength unbounded");
   });
 
   it("(d) a mirror of a removed route: not registered here, an orphan for check:platform-ops", () => {

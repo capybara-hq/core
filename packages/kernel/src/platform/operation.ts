@@ -45,8 +45,18 @@ export interface PlatformOperation<I = unknown> {
    * `uploadId` of `skills.create` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
    */
   omits?: readonly string[];
-  /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list, a renamed `skillId`. */
+  /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list. */
   extras?: readonly string[];
+  /**
+   * Input fields compared with a route field of another name or path: `{ skillId: "id" }`, a
+   * flattened `{ name: "definition.name" }`. The route field counts as present.
+   */
+  renames?: Readonly<Record<string, string>>;
+  /**
+   * Input fields allowed to accept more than the route (bounds, pattern, required-ness, never the
+   * type), each with its reason, e.g. a confirm value that also takes `nothing-installed`.
+   */
+  loosens?: Readonly<Record<string, string>>;
   confirm: ConfirmClass;
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
