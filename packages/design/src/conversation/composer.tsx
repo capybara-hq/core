@@ -53,6 +53,8 @@ export type PickerItem = {
   /** A tag after the label ("agent 默认"). */
   tag?: string;
   checked?: boolean;
+  /** Not choosable; its `tag` then says why ("未配置"). */
+  disabled?: boolean;
 };
 
 export type PickerProps = {
@@ -103,6 +105,7 @@ export function Picker({
         label: it.label,
         ...(it.tag ? { tag: it.tag } : {}),
         checked: it.checked === true,
+        ...(it.disabled ? { disabled: true } : {}),
         onSelect: () => onPick(it.id),
       });
     }
@@ -153,9 +156,16 @@ export type ComposerBoxProps = {
   attachDisabled?: boolean;
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
-   * agent (agent profile design §4.2); the model and effort pickers stay.
+   * agent (agent profile design §4.2); the model and effort pickers stay. `environment` sits
+   * between the agent and the model (environments design: a conversation picks its environment
+   * before the model) and is `locked` after the first message.
    */
-  pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  pickers: {
+    agent?: PickerProps;
+    environment?: PickerProps;
+    model: PickerProps;
+    effort?: PickerProps;
+  };
   /**
    * The selected agent's quick actions (`QuickActions`, §6.16.27): a `zap` button right after the
    * effort picker, given only when the agent has some.
@@ -312,6 +322,7 @@ export function ComposerBox({
           onClick={onAttach}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
+        {pickers.environment ? <Picker {...pickers.environment} /> : null}
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
         {quickActions ?? null}
