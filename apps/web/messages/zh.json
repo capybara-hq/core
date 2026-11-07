@@ -1359,6 +1359,7 @@
     }
   },
   "ui": {
+    "empty": "这里还没有内容。",
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
     "embedRefreshFailed": "扩展页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
     "embedRemountLimit": "扩展页面在加载后反复跳转离开，已停止加载。可以重试，或联系扩展提供方。"
@@ -3810,6 +3811,7 @@
         "title": "市场源",
         "description": "插件从这里的市场源列出。在插件页的「市场」里引入时会下载、按市场的完整性校验，审阅后才加入。",
         "search": "搜索市场源",
+        "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
         "official": "官方市场",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",

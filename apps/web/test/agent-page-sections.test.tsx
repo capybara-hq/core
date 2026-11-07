@@ -612,6 +612,21 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     expect(within(section).queryByRole("link")).toBeNull();
   });
 
+  it("no connections: the panel empty state carries 接入渠道 for an admin, never a loose sentence", async () => {
+    stubApi({ ...channelRoutes(), [`GET ${ORG}/channels`]: ok({ channels: [] }) });
+    await renderEditAgent({ locale: "zh", section: "channels" });
+    const section = await screen.findByRole("region", { name: zh.agents.channels.title });
+    const empty = await within(section).findByText(zh.agents.channels.empty);
+    const state = empty.closest('[data-part="empty-state"]') as HTMLElement;
+    expect(state.getAttribute("data-size")).toBe("panel");
+    // the one 接入渠道 is the empty state's action
+    const buttons = within(section).getAllByRole("button", { name: zh.agents.channels.connect });
+    expect(buttons).toHaveLength(1);
+    expect(state.contains(buttons[0] as HTMLElement)).toBe(true);
+    await userEvent.setup().click(buttons[0] as HTMLElement);
+    expect(router.push).toHaveBeenCalledWith("/channels/new?agentId=ag1&returnTo=%2Fagents%2Fag1");
+  });
+
   it("/agents/<id>: channels the kernel fails show the section's own error to an admin", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderEditAgent({

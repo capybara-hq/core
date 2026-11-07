@@ -196,7 +196,7 @@ function ModelsBody({
         description={t("admin.providers.description", { currency: data.currency })}
       >
         {data.providers.length === 0 ? (
-          <EmptyState size="compact" text={t("admin.noProviders")} />
+          <EmptyState size="panel" text={t("admin.noProviders")} />
         ) : (
           data.providers.map((p) => <ProviderModels key={p.provider} provider={p} data={data} />)
         )}

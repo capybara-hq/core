@@ -1371,6 +1371,7 @@
     }
   },
   "ui": {
+    "empty": "Nothing here yet.",
     "dangerDescription": "The extension performs this action. It may not be reversible.",
     "embedRefreshFailed": "Could not renew the extension page's credentials. Retrying; the page may not load or save data for now.",
     "embedRemountLimit": "The extension page kept navigating away after loading, so it was stopped. Retry, or contact the extension provider."
@@ -3822,6 +3823,7 @@
         "title": "Marketplace sources",
         "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
+        "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
         "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",

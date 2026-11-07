@@ -37,16 +37,26 @@ export function AgentChannels({
     status: { label: tc(`status.${c.status}`) },
     ...(admin ? { href: `/channels/${c.id}` } : {}),
   });
+  const connect = {
+    label: t("connect"),
+    variant: "default" as const,
+    onSelect: () => router.push(newChannelHref(agentId)),
+  };
   return (
     <FormSection id="channels" title={t("title")} description={t("hint")}>
       {channels === null ? (
         <Text tone="muted">{t("loadFailed")}</Text>
       ) : (
-        <ItemList label={t("title")} rows={channels.map(row)} empty={t("empty")} />
+        // No connections: the panel empty state, carrying 接入渠道 for an org admin (spec §6.18)
+        <ItemList
+          label={t("title")}
+          rows={channels.map(row)}
+          empty={{ text: t("empty"), ...(admin ? { action: connect } : {}) }}
+        />
       )}
-      {admin && (
+      {admin && channels?.length !== 0 && (
         <div>
-          <Button onClick={() => router.push(newChannelHref(agentId))}>{t("connect")}</Button>
+          <Button onClick={connect.onSelect}>{t("connect")}</Button>
         </div>
       )}
     </FormSection>

@@ -2,6 +2,7 @@
 
 import {
   Button,
+  EmptyState,
   FormSection,
   ItemList,
   type ItemListRow,
@@ -546,9 +547,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
                   </Text>
                 )
               ) : openGroup.tools.length === 0 ? (
-                <Text variant="prose" tone="muted">
-                  {t("form.groupNoTools")}
-                </Text>
+                <EmptyState size="panel" text={t("form.groupNoTools")} />
               ) : (
                 <ToolPolicyList
                   label={t("form.sheetTools", { name: openGroup.name })}

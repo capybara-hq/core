@@ -2,11 +2,11 @@
 
 import {
   Button,
+  EmptyState,
   FormSection,
   SettingsPage,
   Stack,
   StatusMark,
-  Text,
   useToast,
 } from "@capybara-hq/design";
 import { useQueries } from "@tanstack/react-query";
@@ -92,12 +92,8 @@ function Connections({ orgId }: { orgId: string }) {
   return (
     <SettingsPage header={header} nav={nav} activeNav="connections">
       {shown.length === 0 ? (
-        <Stack gap={4}>
-          <Text>{t("empty")}</Text>
-          <Text variant="small" tone="muted">
-            {t("emptyHint")}
-          </Text>
-        </Stack>
+        // The settings content area has nothing to show: the page empty state (spec §6.18)
+        <EmptyState text={t("empty")} hint={t("emptyHint")} />
       ) : (
         shown.map((app) => <ConnectorConnection key={app.id} orgId={orgId} app={app} />)
       )}

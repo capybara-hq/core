@@ -3,6 +3,7 @@
 import {
   Button,
   DangerConfirm,
+  EmptyState,
   ErrorDetail,
   Field,
   FormSection,
@@ -153,10 +154,20 @@ function Sources({ data }: { data: SourceList }) {
         description: t("description"),
         search: { label: t("search"), value: q, onChange: setQ },
       }}
+      // A search matching no marketplace: the page empty state instead of the sections (§6.18)
+      {...(needle !== "" && !officialShown && shownCustom.length === 0
+        ? {
+            empty: {
+              text: t("noMatch"),
+              action: {
+                label: t("clearSearch"),
+                variant: "default" as const,
+                onSelect: () => setQ(""),
+              },
+            },
+          }
+        : {})}
     >
-      {needle !== "" && !officialShown && shownCustom.length === 0 && (
-        <Text tone="muted">{t("noMatch")}</Text>
-      )}
       <FormSection id="official" title={t("official")} description={t("officialHint")}>
         {data.offline && <Text tone="warn">{t("offline")}</Text>}
         {officialShown && (
@@ -170,7 +181,7 @@ function Sources({ data }: { data: SourceList }) {
       </FormSection>
       <FormSection id="custom" title={t("custom")} description={t("customHint")}>
         <Stack gap={24}>
-          {custom.length === 0 && <Text tone="muted">{t("customEmpty")}</Text>}
+          {custom.length === 0 && <EmptyState size="panel" text={t("customEmpty")} />}
           {shownCustom.map((s) => (
             <SourceEditor key={s.id} source={s} onChanged={replace} onRemoved={reload} />
           ))}

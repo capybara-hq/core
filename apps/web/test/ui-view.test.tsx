@@ -116,6 +116,61 @@ describe("UiViewRenderer", () => {
     expect(container.querySelector('[data-variant="primary"]')).toBeNull();
   });
 
+  it("a view with nothing to show draws one panel empty state, not a blank body (spec §6.18)", () => {
+    // the todo panel with no tasks: one checklist without items
+    const { container } = renderPage(
+      <UiViewRenderer
+        view={{ badge: "0/0", blocks: [{ type: "checklist", items: [] }] }}
+        onAction={vi.fn()}
+      />,
+    );
+    const state = container.querySelector('[data-part="empty-state"]');
+    expect(state?.getAttribute("data-size")).toBe("panel");
+    expect(state?.textContent).toContain(en.ui.empty);
+    expect(container.querySelector("[data-block]")).toBeNull();
+    cleanup();
+    // no blocks at all, and an empty table or key-value list, are the same
+    for (const blocks of [
+      [],
+      [
+        { type: "table" as const, columns: [{ key: "a", label: "A" }], rows: [] },
+        { type: "keyValue" as const, items: [] },
+      ],
+    ]) {
+      const r = renderPage(<UiViewRenderer view={{ blocks }} onAction={vi.fn()} />);
+      expect(screen.getByText(en.ui.empty)).toBeTruthy();
+      expect(r.container.querySelectorAll('[data-part="empty-state"]')).toHaveLength(1);
+      cleanup();
+    }
+  });
+
+  it("an empty list among other blocks: the panel empty state in its place; an extension page draws the page style", () => {
+    const { container } = renderPage(
+      <UiViewRenderer
+        view={{
+          blocks: [
+            { type: "heading", text: "Tasks" },
+            { type: "checklist", items: [] },
+          ],
+        }}
+        onAction={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Tasks" })).toBeTruthy();
+    expect(
+      blockOf(container, "checklist")
+        .querySelector('[data-part="empty-state"]')
+        ?.getAttribute("data-size"),
+    ).toBe("panel");
+    cleanup();
+    const page = renderPage(
+      <UiViewRenderer view={{ blocks: [] }} onAction={vi.fn()} emptySize="page" />,
+    );
+    expect(
+      page.container.querySelector('[data-part="empty-state"]')?.getAttribute("data-size"),
+    ).toBe("page");
+  });
+
   it("按钮回传 actionId 与 payload", async () => {
     const onAction = vi.fn(async () => {});
     renderPage(<UiViewRenderer view={VIEW} onAction={onAction} />);

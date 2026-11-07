@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Dialog, Field, Select, Skeleton, Text, useToast } from "@capybara-hq/design";
+import { Button, Dialog, EmptyState, Field, Select, Skeleton, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -79,7 +79,7 @@ export function ReassignOwnerDialog({
       ) : membersQ.data === undefined ? (
         <FormError message={errorMessage(membersQ.error)} />
       ) : members.length === 0 ? (
-        <Text tone="muted">{t("none")}</Text>
+        <EmptyState size="panel" text={t("none")} />
       ) : (
         <Field label={t("owner")} help={t("help")}>
           <Select
