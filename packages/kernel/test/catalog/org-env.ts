@@ -14,6 +14,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { expect } from "vitest";
 import { putTemplateVersionIn } from "../../src/agents/templates.js";
 import {
@@ -248,7 +249,13 @@ export async function setScope(
   scope: "all" | "optional" | "named",
   orgs: string[] = [],
 ): Promise<void> {
-  await env.db.updateTable("catalog_items").set({ scope }).where("id", "=", itemId).execute();
+  // a scope change bumps scope_version, as the service's does: the sync job id is per version, so an
+  // enqueue after this never folds into a job of the old scope still running (BullMQ dedupes by id)
+  await env.db
+    .updateTable("catalog_items")
+    .set({ scope, scope_version: sql<number>`scope_version + 1` })
+    .where("id", "=", itemId)
+    .execute();
   await env.db.deleteFrom("catalog_item_scope_orgs").where("item_id", "=", itemId).execute();
   if (orgs.length > 0) {
     await env.db
