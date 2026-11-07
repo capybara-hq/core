@@ -92,7 +92,24 @@ export function overrideForm(view: OrgOverrideView): OverrideForm {
     }
     meta[f.path] = m;
   }
+  // Without the kernel's schema (an older kernel) the form is built from the fields and the
+  // required secrets are inferred above; with it, its own `required` decides.
   return { schema: view.schema ?? fieldsSchema(fields, required), value, meta };
+}
+
+/**
+ * The problems that are the org's to fix: a read-only field is the platform's, so a required one
+ * the platform left empty never blocks the org's save.
+ */
+export function orgProblems<P extends { segments: readonly (string | number)[] }>(
+  view: OrgOverrideView,
+  problems: readonly P[],
+): P[] {
+  const readonly = view.fields.filter((f) => f.level === "readonly").map((f) => f.path);
+  return problems.filter((p) => {
+    const at = p.segments.filter((x): x is string => typeof x === "string").join(".");
+    return !readonly.some((r) => at === r || at.startsWith(`${r}.`));
+  });
 }
 
 /**

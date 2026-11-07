@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { keys } from "../src/lib/query/keys";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -41,6 +42,30 @@ const BAILIAN = {
   orgConfigSchema: null,
   overrideState: "following",
   needsConfig: false,
+};
+
+const SCHEMA = {
+  type: "object",
+  properties: {
+    region: { type: "string" },
+    baseUrl: { type: "string", "x-ui": { label: { zh: "接口地址", en: "Endpoint URL" } } },
+    apiKey: { type: "string", "x-secret": true },
+    orgToken: { type: "string", "x-secret": true },
+  },
+  required: ["region", "baseUrl", "apiKey"],
+};
+/** With the kernel's schema: region is read-only and empty on the platform; orgToken is optional. */
+const WITH_SCHEMA = {
+  state: "following",
+  valid: true,
+  issues: [],
+  schema: SCHEMA,
+  fields: [
+    { path: "region", level: "readonly", secret: false, platform: {} },
+    { path: "baseUrl", level: "override", secret: false, platform: { value: "https://p.example" } },
+    { path: "apiKey", level: "override", secret: true, platform: { set: true } },
+    { path: "orgToken", level: "override", secret: true, platform: { set: true } },
+  ],
 };
 
 const FOLLOWING = {
@@ -262,5 +287,50 @@ describe("the org form of a two-level extension config (Sheet)", () => {
     await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
     const row = await screen.findByRole("row", { name: /Bailian/ });
     expect(within(row).getByText(en.extensions.needsConfig)).toBeTruthy();
+  });
+
+  it("drawn from the kernel's schema: its labels, an optional secret stays optional, an empty read-only field does not block Save", async () => {
+    const p = en.extensions.overrides;
+    const calls = routes(WITH_SCHEMA, {
+      [`PUT ${OVERRIDES}`]: () => json(200, COPY),
+    });
+    const { user, sheet } = await openSheet();
+    const url = await within(sheet).findByLabelText(/^Endpoint URL/);
+    expect((within(sheet).getByLabelText(/^region/) as HTMLInputElement).disabled).toBe(true);
+    await user.type(url, "/v2");
+    const save = within(sheet).getByRole("button", { name: p.saveLabel }) as HTMLButtonElement;
+    // apiKey is required, orgToken is not: typing the key is enough
+    expect(save.disabled).toBe(true);
+    await user.type(within(sheet).getByLabelText(/^apiKey/), "sk-own");
+    expect(save.disabled).toBe(false);
+    await user.click(save);
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      values: { baseUrl: "https://p.example/v2", apiKey: "sk-own" },
+    });
+  });
+
+  it("a refetch of an unchanged view keeps the typed draft", async () => {
+    const p = en.extensions.overrides;
+    const calls = routes(FOLLOWING);
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" }).then(
+      async ({ client }) => {
+        const user = userEvent.setup();
+        await user.click(await screen.findByText("Bailian", { selector: ".cb-cell-title-name" }));
+        const sheet = await screen.findByRole("dialog", { name: "Bailian" });
+        const url = (await within(sheet).findByLabelText("baseUrl")) as HTMLInputElement;
+        await user.type(url, "/v2");
+        const reads = () => calls.filter((c) => c.method === "GET" && c.url.endsWith("/overrides"));
+        const before = reads().length;
+        await client.invalidateQueries({
+          queryKey: keys.org("o1").orgExtensionOverrides("bailian"),
+        });
+        await vi.waitFor(() => expect(reads().length).toBe(before + 1));
+        expect((within(sheet).getByLabelText("baseUrl") as HTMLInputElement).value).toBe(
+          "https://platform.example/v2",
+        );
+        expect(within(sheet).getByText(p.firstEdit)).toBeTruthy();
+      },
+    );
   });
 });

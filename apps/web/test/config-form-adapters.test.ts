@@ -13,6 +13,7 @@ import {
 import {
   orgConfig,
   orgFormMeta,
+  orgProblems,
   overrideForm,
   overrideValues,
 } from "../src/components/config-form/org";
@@ -290,5 +291,68 @@ describe("the two-level org config adapter", () => {
     const f = deploymentForm(v);
     expect(f.meta.endpoints?.level).toBe("override");
     expect(f.meta.other?.level).toBe("hidden");
+  });
+});
+
+const ORG_SCHEMA = {
+  type: "object",
+  properties: {
+    region: { type: "string" },
+    baseUrl: { type: "string", "x-ui": { label: { zh: "接口地址", en: "Endpoint URL" } } },
+    limits: {
+      type: "object",
+      properties: { burst: { type: "integer" } },
+    },
+    models: { type: "array", items: { type: "string" } },
+    apiKey: { type: "string", "x-secret": true },
+    orgToken: { type: "string", "x-secret": true },
+  },
+  required: ["region", "baseUrl", "apiKey"],
+} as const;
+
+/** The view the kernel sends with its schema: region is read-only and empty on the platform. */
+const withSchema = (state: "following" | "copy"): OrgOverrideView => ({
+  state,
+  ...(state === "copy" && { createdAt: "2026-11-05T08:00:00.000Z" }),
+  valid: true,
+  issues: [],
+  schema: ORG_SCHEMA as unknown as JsonSchema,
+  fields: [
+    { path: "region", level: "readonly", secret: false, platform: {} },
+    { path: "baseUrl", level: "override", secret: false, platform: { value: "https://p.example" } },
+    { path: "limits.burst", level: "override", secret: false, platform: { value: 5 } },
+    { path: "models", level: "override", secret: false, platform: { value: ["a", "b"] } },
+    { path: "apiKey", level: "override", secret: true, platform: { set: true } },
+    { path: "orgToken", level: "override", secret: true, platform: { set: true } },
+  ],
+});
+
+describe("the org form drawn from the kernel's schema", () => {
+  it("uses the schema: nested object, array, x-ui label; only required secrets are required", () => {
+    const view = withSchema("following");
+    const f = overrideForm(view);
+    expect(f.schema).toBe(view.schema);
+    expect(f.value).toEqual({
+      baseUrl: "https://p.example",
+      limits: { burst: 5 },
+      models: ["a", "b"],
+    });
+    const tree = buildTree(f.schema, "en");
+    const labels = tree.children.map((c) => c.label);
+    expect(labels).toContain("Endpoint URL");
+    expect(labels).toContain("limits");
+    const opened = fromDraft(tree, toDraft(tree, f.value), { secretSet: () => false });
+    // apiKey is in `required`, orgToken is not; region is required but read-only and empty
+    expect(opened.problems.map((p) => p.label).sort()).toEqual(["apiKey", "region"]);
+  });
+
+  it("a required read-only field the platform left empty is not the org's problem", () => {
+    const view = withSchema("following");
+    const f = overrideForm(view);
+    const tree = buildTree(f.schema, "en");
+    const opened = fromDraft(tree, toDraft(tree, f.value), { secretSet: () => false });
+    expect(orgProblems(view, opened.problems).map((p) => p.label)).toEqual(["apiKey"]);
+    const typed = fromDraft(tree, toDraft(tree, f.value), { secretSet: () => true });
+    expect(orgProblems(view, typed.problems)).toEqual([]);
   });
 });

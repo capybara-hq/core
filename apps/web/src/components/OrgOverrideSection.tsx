@@ -20,7 +20,7 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { ConfigForm } from "./config-form/ConfigForm";
 import { buildTree, fromDraft, toDraft } from "./config-form/model";
-import { overrideForm, overrideValues } from "./config-form/org";
+import { orgProblems, overrideForm, overrideValues } from "./config-form/org";
 import { FormError } from "./form-error";
 import { OrgOverrideDiff } from "./OrgOverrideDiff";
 
@@ -202,14 +202,14 @@ function Loaded({
         </Text>
       )}
       <ConfigForm
-        key={`${rounds}:${JSON.stringify(view)}`}
+        key={`${plugin}:${view.state}:${view.createdAt ?? ""}:${rounds}`}
         schema={form.schema}
         value={form.value}
         meta={form.meta}
         issues={error?.issues ?? view.issues}
         disabled={busy}
         onChange={(value, _entries, s) =>
-          setCurrent({ value, ok: s.problems.length === 0, dirty: s.dirty })
+          setCurrent({ value, ok: orgProblems(view, s.problems).length === 0, dirty: s.dirty })
         }
       />
       {error !== undefined && <FormError message={error.message} />}
