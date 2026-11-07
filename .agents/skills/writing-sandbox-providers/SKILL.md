@@ -184,7 +184,17 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); instances inactive longer than `destroyAfterInactiveDays` (default 7) get `destroy` (instance only; the files stay); a deleted environment or org gets `destroy` and `destroyFileSystem`;
   a deleted environment (also a departing member's) is destroyed immediately, instance and file system, through the one-off maintenance job
   `sandbox-destroy-for` (producer `SandboxJobs.destroy(environmentIds)`, data `{ environmentIds }`, consumer `SandboxService.destroyEnvironment`).
-- **Legacy cleanup**: the one-off job `environments-legacy-cleanup` destroys every old per-conversation instance and file system (`destroyByName` and `destroyFileSystemByName` on `cap-<conversationId>`) listed in `sandboxes` and deletes the row; nothing else reads that table.
+- **File reset**: `POST …/environments/:id/files/reset` records the audit row and, after the commit, enqueues the one-off maintenance job `sandbox-reset-files`
+  (producer `SandboxJobs.resetFiles(environmentId)`, job id `sandbox-reset-files-<environmentId>`: a second request while one waits or runs joins it; removed when
+  it ends, so a later request is a new job; consumer `SandboxService.resetFileSystem`, which waits for the exclusive lease) and answers 202.
+- **Legacy cleanup**: the `@LockedInterval` job `environments-legacy-cleanup` (every 5 minutes, once per tick across replicas, `LegacySandboxCleanupJob`) takes up to 50 rows of the legacy
+  `sandboxes` table per tick and destroys each old per-conversation instance and file system through the row's provider (`lookup(provider)`: `destroyByName` and
+  `destroyFileSystemByName` on `cap-<conversationId>`, and `destroyByName` on a loaded `prev_provider`), then deletes the row. No lease: nothing holds a legacy row.
+  Rows of a provider that is not loaded are kept (warned on the first tick of each hour); a failed row gets `sweep_failed_at` and is retried after the others. With
+  no rows a tick is one `SELECT … LIMIT 1`; nothing else reads that table, and a later migration drops it.
+- **Skill directories accumulate**: `Skill` copies each skill version to its own `/skills/<name>@<digest12>/` in the environment's file system, which every
+  conversation of the environment shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
+  version). They are small and stay until the files are reset or the environment is deleted.
 - **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
   (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset the next use is a fresh start (`restarted: false`):
   the seen key records `<created_at>:<file system id>`. A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
