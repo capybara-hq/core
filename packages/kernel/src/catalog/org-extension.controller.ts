@@ -2,7 +2,11 @@ import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
-import { OrgExtensionConfigs, type OrgExtensionView } from "../extensions/org-config.js";
+import {
+  OrgExtensionConfigs,
+  type OrgExtensionView,
+  providesOf,
+} from "../extensions/org-config.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -106,9 +110,4 @@ export class OrgExtensionConfigsController {
       },
     };
   }
-}
-
-/** The extension points an extension provides, from its permission list's `provides` group. */
-function providesOf(view: OrgExtensionView): string[] {
-  return view.permissions.filter((g) => g.category === "provides").flatMap((g) => g.items);
 }

@@ -42,6 +42,11 @@ export interface PlatformOperation<I = unknown> {
   mirrors: readonly string[];
   confirm: ConfirmClass;
   /**
+   * The notable error codes of the operation and what to do next (model-visible English), shown
+   * by `describe` (spec §3).
+   */
+  errors?: readonly { code: string; next: string }[];
+  /**
    * The bilingual card summary of a write, rendered from the input (never from model text);
    * required unless `confirm` is `read`. Method syntax so an operation of any input type is a
    * `PlatformOperation` (the registry's element type).

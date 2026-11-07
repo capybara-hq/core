@@ -63,6 +63,12 @@ export class SkillsOperations implements OnModuleInit {
         authz: { orgAction: "skills.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/skills"],
         confirm: "org",
+        errors: [
+          {
+            code: "skill.name_exists",
+            next: "A skill of that name exists: pick another name, or read the existing one with skills.get.",
+          },
+        ],
         summary: (i) => ({
           zh: `新建组织技能「${i.name}」`,
           en: `Create org skill "${i.name}"`,

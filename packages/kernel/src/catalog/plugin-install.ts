@@ -295,6 +295,9 @@ export class InstallFailure extends Error {
   }
 }
 
+/** Merged into an install's or uninstall's audit detail (a write made through the Platform tool). */
+type AuditDetail = Record<string, unknown>;
+
 export interface UninstallCtx {
   report: UninstallReport;
   /** The installs this uninstall is removing (none of them counts as still using a component). */
@@ -304,7 +307,7 @@ export interface UninstallCtx {
   /** Re-check the actor's org actions (false for a rollback). */
   authorize: boolean;
   reason?: string;
-  opts: { actorTokenId?: string };
+  opts: { actorTokenId?: string; auditDetail?: AuditDetail };
   /** Uninstalled by the plugin scope sync: the connectors it created stay as the org's own. */
   via?: "scope";
 }
@@ -616,7 +619,12 @@ export class PluginInstaller {
     itemId: string,
     version: string,
     input: PluginInstallInput,
-    opts: { actorTokenId?: string; switchOn?: boolean; via?: "scope" } = {},
+    opts: {
+      actorTokenId?: string;
+      auditDetail?: AuditDetail;
+      switchOn?: boolean;
+      via?: "scope";
+    } = {},
   ): Promise<PluginInstallView> {
     const { switchOn, via, ...actorOpts } = opts;
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
@@ -1007,7 +1015,7 @@ export class PluginInstaller {
     orgId: string,
     actor: string | null,
     plan: InstallPlan,
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail },
     ctx: {
       actions: OrgAction[];
       approvedBy?: string;
@@ -1236,7 +1244,7 @@ export class PluginInstaller {
     plan: InstallPlan,
     done: Component[],
     ctx: { parent?: string; switchOn?: boolean; via?: "scope" },
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail },
   ): Promise<void> {
     const { itemId, version } = plan;
     const t = this.db;
@@ -1284,6 +1292,7 @@ export class PluginInstaller {
         components: done,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
         ...(ctx.via !== undefined && { via: ctx.via }),
+        ...opts.auditDetail,
       },
     });
   }
@@ -1522,7 +1531,7 @@ export class PluginInstaller {
     orgId: string,
     actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string; via?: "scope" } = {},
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail; via?: "scope" } = {},
     sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId)) throw installNotFound();
@@ -1540,7 +1549,7 @@ export class PluginInstaller {
     orgId: string,
     actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string; via?: "scope" },
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail; via?: "scope" },
     sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     const { via, ...actorOpts } = opts;
@@ -1850,6 +1859,7 @@ export class PluginInstaller {
         kept: mine.kept,
         ...(ctx.from !== undefined && { dependencyOf: ctx.from }),
         ...(ctx.via !== undefined && { via: ctx.via }),
+        ...ctx.opts.auditDetail,
       },
     });
     return "removed";

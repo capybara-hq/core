@@ -144,7 +144,11 @@ const line = (op: PlatformOperation, facts: ActorFacts) => ({
 
 const capped = <T>(items: readonly T[]) => ({
   items: items.slice(0, LIST_MAX),
-  ...(items.length > LIST_MAX && { total: items.length, truncated: true }),
+  ...(items.length > LIST_MAX && {
+    total: items.length,
+    truncated: true,
+    hint: "Narrow the query or pass params.cursor where the operation pages.",
+  }),
 });
 
 /** An operation's result as a JSON object: a bare list is capped, nothing becomes `{ ok: true }`. */
@@ -314,6 +318,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
         confirm: op.confirm,
         inputSchema: z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }),
         example: op.example,
+        ...(op.errors !== undefined && op.errors.length > 0 && { errors: op.errors }),
         ...availabilityFields(availability(op, f)),
         related: deps.ops
           .inDomain(operationDomain(op.id))

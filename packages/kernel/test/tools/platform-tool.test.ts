@@ -59,6 +59,7 @@ const orgOp = defineOperation({
   authz: { orgAction: "org.update" },
   mirrors: ["POST /api/v1/orgs/:orgId/skills"],
   confirm: "org",
+  errors: [{ code: "skill.name_exists", next: "Pick another name." }],
   summary: (i) => ({ zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` }),
   run: async (input, ctx) => {
     ran.push({ id: "skills.create", input, agentId: ctx.agentId });
@@ -239,6 +240,7 @@ describe("browse, search, describe, read", () => {
       example: orgOp.example,
       available: true,
       related: ["skills.list"],
+      errors: [{ code: "skill.name_exists", next: "Pick another name." }],
     });
     expect(out.inputSchema).toEqual(
       z.toJSONSchema(orgOp.input, { io: "input", unrepresentable: "any" }),
@@ -271,7 +273,11 @@ describe("call", () => {
   it("runs a read operation and caps a list at 50 entries", async () => {
     const out = await run({ action: "call", operation: "skills.list" });
     expect((out.items as unknown[]).length).toBe(50);
-    expect(out).toMatchObject({ total: 60, truncated: true });
+    expect(out).toMatchObject({
+      total: 60,
+      truncated: true,
+      hint: "Narrow the query or pass params.cursor where the operation pages.",
+    });
     expect(ran).toEqual([{ id: "skills.list", input: {}, agentId: "agent-1" }]);
   });
 

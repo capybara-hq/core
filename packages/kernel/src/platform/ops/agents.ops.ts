@@ -193,6 +193,12 @@ export class AgentsOperations implements OnModuleInit {
         authz: { orgAction: "agents.create" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId"],
         confirm: "personal",
+        errors: [
+          {
+            code: "agent.version_conflict",
+            next: "The agent changed since you read it: read it again with agents.get, then send its current version.",
+          },
+        ],
         summary: (i) => ({
           zh: `修改智能体 ${i.agentId}（版本 ${i.version}）`,
           en: `Update agent ${i.agentId} (version ${i.version})`,
@@ -259,6 +265,12 @@ export class AgentsOperations implements OnModuleInit {
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template"],
         confirm: "personal",
+        errors: [
+          {
+            code: "agent.template_preview_stale",
+            next: "Call agents.preview-from-template again and use its new previewHash.",
+          },
+        ],
         summary: (i) => ({
           zh: `从模板新建私有智能体「${i.name}」`,
           en: `Create private agent "${i.name}" from a template`,
