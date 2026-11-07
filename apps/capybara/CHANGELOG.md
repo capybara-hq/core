@@ -1,5 +1,156 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.6
+
+### Minor Changes
+
+- d423777: Agent templates: the 智能体 page has the tabs 智能体 and 模板 and shows both as cards
+  (`/agent-templates` redirects to `/agents?tab=templates`), the admin 智能体模板 list uses cards too.
+  A template card and the new template page (`/agents/templates/<id>`: the read view for members, the
+  editor for org admins) open 用它创建, a dialog with the 带入 / 待配置 / 不可用 preview; the new agent
+  shows its template and a 待配置 notice in Tools where an admin configures each connector (an existing
+  one, one more from the template, or the prefilled custom form) and a member sends or repeats a
+  request. Org admins save an agent as a template from its card or page, and the inbox shows
+  connector setup requests with the same configure dialog.
+- 90c6125: Bootstrap plugins: `openai-compatible` and `object-store-s3` move to 0.1.0-rc.1, and the manifest preinstalls `anthropic`, `openai`, `connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo` as optional entries (installed and enabled on the deployment, off in each organization until an org admin switches them on). `marketplace.commit` and the compose sandbox build contexts move to the plugins commit that lists them.
+- 9f554a3: Org members can read the org's 扩展 page: `GET /api/v1/orgs/:orgId/extensions` is the new action
+  `org.extensions.read` (member and up); a member gets each extension's state without its config, the
+  secrets' state, the config schema or the permission list, admins keep the full view. The page
+  hides every switch and config control for members.
+- 2321382: A platform inbox for the super admin: `GET /api/v1/admin/inbox` (with `total`, and `GET /api/v1/admin/inbox/count` for the sidebar) lists the orgs' requests to the platform (`access` / `import`), plugins whose extension permissions wait for a confirmation, open plugin scope sync failures, including dependencies a platform update added that could not be installed (recorded per item and org in the new table `plugin_scope_sync_failures`, migration 0083, until a later sync of the pair does not fail) and the latest platform components migration run when it failed plugins or is stuck. The admin console gets a 收件箱 page (`/admin/inbox`) and a sidebar item with its count; each item links to the page where it is acted on.
+- a965a1a: Plugin scope: enterprise plugins have a scope (all, optional, named orgs), built-in and disabled states, and the org switch, requests (access, import, enable) and a scope sync worker replace the catalog policy, grants and the install-deployment step. Importing a plugin installs its extension; the admin plugin and extension pages and the workspace plugin and extension pages move accordingly.
+- 7278dec: Plugin scope phase 2: a plugin's skills, agent templates and connector templates are platform
+  components, stored once for the deployment (migration 0081: `platform_skills`,
+  `platform_agent_templates`, `platform_connector_templates` and their versions, files under
+  `deployment/platform/`) and resolved at read time in each org where they are on; an org install no
+  longer copies skills or agent templates. A component follows its plugin's scope or has its own
+  (`/api/v1/admin/components/*`, preview then confirm), org admins switch single components off or on
+  (`PUT /api/v1/orgs/:orgId/components/:kind/:id/switch`), and a super admin uploads a new component
+  version on its own. The worker job `platform-components-migrate` (migration 0082) links org copies
+  made by earlier installs to their platform components under their own ids (agent definitions and
+  conversation logs are not rewritten; a copy changed in the org is pinned to its version) and renames,
+  in its first run only, an org's own skill whose name a platform skill on in the org has, with an inbox
+  notice. The per-org plugin upgrade routes are removed: the super admin updates a platform plugin once
+  (`POST /api/v1/admin/catalog/items/:id/update/preview`, `PUT …/update` with `diffHash`), which moves
+  its extension, components and every org install; connectors follow their template through
+  `platform_template_id`, and an org creates connectors for added templates with
+  `POST /api/v1/orgs/:orgId/catalog/:itemId/connectors`. The admin console gets 技能, 连接器模板 and
+  智能体模板 pages with scope dialogs and version history, and the plugin detail's platform update
+  preview.
+  An org install or switch takes no `version` any more (400): an org installs the platform version, and
+  dependencies resolve to their platform version (refused when it does not satisfy the range). A
+  version-pinned org copy follows its platform component's availability (disable, switch-off, scope
+  removal, uninstall) and counts in the previews' affected agents. The marketplace import default and
+  the market row's version use one order.
+- 26e8757: Workspace platform components: the 技能 page lists the org's own skills and the platform skills offered to the org with their state and the org admin's switch (已启用 · 平台统一 for `all`), a new 智能体模板 page lists agent templates the same way, the plugin detail lists its components with per-component switches, and an installed plugin missing a connector offers 补充配置. The kernel adds `GET /orgs/:orgId/components`, serves a linked skill copy's detail as its platform skill, and names the missing connector templates in the org catalog detail. The agent editor treats linked copy ids as their platform skill or template; the inbox shows decided requests.
+
+### Patch Changes
+
+- e555e04: The agent map opens one sub-agent's summary (latest text, task, background tasks, tool calls newest
+  first, Stop while it runs) and its read-only transcript; an `Agent` call block names the child's
+  current tool and opens it in the map. A sub-agent's reports and its end show in the parent as notice
+  lines, and a parent's messages in a sub-agent's transcript as bubbles labelled with the sender.
+- 1556a45: The conversation page opens an agent map of the conversation's sub-agents (from the sub-agent
+  group's header and a title-bar icon), kept in the URL hash; the org sub-agent limits dialog sets the
+  nesting depth and counts dispatches and tokens over the whole tree since the person's latest message.
+- 3a4b54b: The agent page's Tools section puts each tool's policy on its row (a new `ToolPolicyList`): the
+  built-in tools stay in the card, and each extension or connector is one row with a summary that
+  opens a Sheet with its tools, select-all and a filter. A connector can now be taken tool by tool.
+  The connector detail's tools carry their display `title`.
+- 3c0ad62: A conversation's history loads from the end: the page paints the log's last page and reads earlier
+  pages as the reader scrolls up, without moving what is on screen. `GET …/conversations/:id/events`
+  takes `before=<seq>` or `before=end` for a turn-aligned page (it starts after a run's end) with
+  `turnsBefore`, the runs started before it. Sub-agents, usage and background tasks are read from
+  the server when the loaded part may hide them.
+- abc772e: Switching on an extension whose org config has a required field that was never saved is refused
+  with the plain 400 `extension.config_invalid` and its field issues before the plugin installs
+  (no 502 `plugin.install_failed`); a `config` sent in the same PUT goes into the install. On the
+  扩展 page the switch of such an extension waits for the config (先填写组织级配置再启用), the
+  config form offers 保存并启用 (config and switch in one PUT), and a refused config marks the
+  form's fields.
+- 357c521: A sub-agent that handed back its report and then completed no longer sends its parent a separate
+  "completed; its report was already delivered" notice: the finish is only logged, so it neither
+  wakes an idle parent for an empty run nor pushes the report away from the end of the request. The
+  conversation still shows the agent's "completed" entry.
+- 9e90494: Bootstrap plugin `openai-compatible` moves to 0.1.0-rc.2: the DeepSeek dialect sends
+  mid-conversation system notices (sub-agent reports, background notices, tool-change reminders) as
+  in-place `[system]` user turns, so DeepSeek no longer moves them ahead of the conversation.
+- 237c176: The model purpose APIs return `declaredByName`, the declaring extension's display name.
+- bdd3fa3: A sub-agent stopped by its tree's token budget hands back what it found in one final tool-less
+  call instead of ending with nothing. `subagents.maxTokensPerRun` and `subagents.maxDispatchesPerRun`
+  accept 0 for no limit (deployment config and org override), and `GET /api/v1/admin/orgs` returns the
+  deployment's defaults of the per-org limits (`limitDefaults`).
+- 0e38b13: The deployment-level role "enterprise admin" is now "super admin" (breaking, no compatibility
+  aliases). Migration `0080_rename_enterprise_admin.sql` renames `accounts.is_enterprise_admin` to
+  `is_super_admin` and the stored deployment setting `orgCreation: "enterprise_admin"` to
+  `"super_admin"`; historical audit rows are not rewritten. API: the account field
+  `isEnterpriseAdmin` is `isSuperAdmin` (`GET /api/v1/me`, the admin account list and
+  `PATCH /api/v1/admin/accounts/:id`), account creation takes `superAdmin`, `orgCreation` accepts
+  `"anyone" | "super_admin"`, and the error code `account.last_enterprise_admin` is
+  `account.last_super_admin`. Kernel exports: the `SuperAdmin` route decorator, `SuperAdminLock` /
+  `SuperAdminLockModule`, `AccountsService.countSuperAdmins` / `createSuperAdmin` /
+  `createSuperAdminIfNone` / `setSuperAdminByLogin`, `authorizeSuperAdmin`.
+  
+  Deploying: migration 0080 renames a column, so replace all replicas at once; a rolling upgrade
+  across this version breaks the replicas still running the old code.
+- cfee6f0: The model is told when its tool set changes mid-conversation: a step whose resolved tools differ
+  from the previous request's logs a `tools_changed` event (added and removed tool names) before its
+  request, rendered as a system message ("Your tools changed. Now available: … No longer available:
+  …"). Step replay rebuilds it from the log with zero drift; the web timeline ignores it.
+- e18ee24: UI terms: the web app reads and sends the kernel's renamed `isSuperAdmin` / `superAdmin` /
+  `orgCreation: "super_admin"`. Chinese copy says 超级管理员 (was 企业管理员), 平台 for the deployment
+  layer (平台目录, 已启用 · 平台统一, 平台提供的插件), 自定义市场源 for a non-official marketplace,
+  智能体 for agent (nav 智能体, 新建智能体, 子智能体, 智能体模板), and the role names 组织所有者 /
+  组织管理员 / 组织成员 / 访客; English says Super admin, Platform, Custom marketplaces and Org owner /
+  Org admin / Org member / Guest. The CLI says "super admin" in `capybara admin create | grant |
+  revoke` output and help (`super admin already exists; skipped`, `super admin created`).
+- 47c4241: The workspace has no home page any more: the new conversation is the home. `/` redirects to `/chat`,
+  新会话 is the current nav item there, and sign-in, setup, an org switch, the not-found page and the
+  path's org scope all go to `/chat`. The sidebar reads 新会话 · 智能体 · 技能 · 连接器 · 更多; 技能 and
+  连接器 left the 更多 flyout, which keeps 插件, 扩展, 智能体模板, 渠道, 评测与运行 and 组织设置.
+- Updated dependencies [49ae0b5]
+- Updated dependencies [f222ff8]
+- Updated dependencies [d423777]
+- Updated dependencies [3a4b54b]
+- Updated dependencies [0f383d7]
+- Updated dependencies [8f7a0a5]
+- Updated dependencies [da49ebd]
+- Updated dependencies [90c6125]
+- Updated dependencies [16225b1]
+- Updated dependencies [3c0ad62]
+- Updated dependencies [789068d]
+- Updated dependencies [7c8d05e]
+- Updated dependencies [abc772e]
+- Updated dependencies [8ee4c6c]
+- Updated dependencies [2a12327]
+- Updated dependencies [12fd552]
+- Updated dependencies [3adad42]
+- Updated dependencies [9f554a3]
+- Updated dependencies [8fd18a1]
+- Updated dependencies [9e90494]
+- Updated dependencies [e40774d]
+- Updated dependencies [99a00cd]
+- Updated dependencies [e0a0d60]
+- Updated dependencies [ffc33a2]
+- Updated dependencies [45d7275]
+- Updated dependencies [5ac4bba]
+- Updated dependencies [2fb7d41]
+- Updated dependencies [2321382]
+- Updated dependencies [3c45446]
+- Updated dependencies [cc21d5c]
+- Updated dependencies [a965a1a]
+- Updated dependencies [7278dec]
+- Updated dependencies [bdf5eba]
+- Updated dependencies [703c779]
+- Updated dependencies [77de995]
+- Updated dependencies [11f56fa]
+- Updated dependencies [927fad3]
+- Updated dependencies [7a1e1ae]
+- Updated dependencies [0e38b13]
+- Updated dependencies [cfee6f0]
+- Updated dependencies [26e8757]
+  - @capybara-hq/kernel@0.1.0-rc.5
+
 ## 0.1.0-rc.5
 
 No changes in this release.
