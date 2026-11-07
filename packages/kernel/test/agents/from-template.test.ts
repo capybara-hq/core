@@ -941,7 +941,8 @@ describe("creating an agent from a template", () => {
       ["GH", "pending", "tools_missing"],
       ["Conn nar", "unavailable", "disallowed"],
       ["Conn old", "carried", null],
-      ["GONE", "unavailable", "template_not_found"],
+      // removed, and the org made nothing from it: no longer the org's to see, so unnamed
+      ["gone", "unavailable", "template_not_found"],
     ]);
     // a pending connector keeps its names: none is both kept and dropped
     expect(p.dropped.filter((d) => d.startsWith("connectors."))).toEqual([]);
@@ -1068,6 +1069,318 @@ describe("creating an agent from a template", () => {
     expect((chosen.json() as { agent: AgentView }).agent.definition.modelParams).toEqual({
       effort: "low",
     });
+  });
+
+  it("resolves a bare sub-agent type to the template's own plugin first", async () => {
+    const itemId = await catalogItem("acme");
+    const acmeResearcher = await platformTemplate(tpl({ name: "researcher" }), {
+      plugin: "acme",
+      itemId,
+    });
+    // the org's own bare `researcher` must not shadow the plugin's
+    const orgResearcher = randomUUID();
+    await env.db
+      .insertInto("agent_templates")
+      .values({
+        id: orgResearcher,
+        org_id: env.orgId,
+        name: "researcher",
+        plugin_name: null,
+        current_version: 1,
+      })
+      .execute();
+    await env.db
+      .insertInto("agent_template_versions")
+      .values({
+        template_id: orgResearcher,
+        version: 1,
+        definition: JSON.stringify(tpl({ name: "researcher" })),
+        source_format: "capybara",
+        catalog_version: null,
+      })
+      .execute();
+    const lead = await platformTemplate(
+      tpl({ name: "lead", subagents: { types: ["researcher"] } }),
+      { plugin: "acme", itemId },
+    );
+    const { agent, preview: p } = await createOk(env.boss, lead);
+    expect(pick(p, "subagent")).toEqual([["acme:researcher", "carried", null]]);
+    expect(agent.definition.subagents?.templates).toEqual([acmeResearcher]);
+
+    // a template without a plugin of its own takes the exact bare type
+    const plain = await platformTemplate(
+      tpl({ name: "plain", subagents: { types: ["researcher"] } }),
+    );
+    const q = await createOk(env.boss, plain);
+    expect(q.agent.definition.subagents?.templates).toEqual([orgResearcher]);
+  });
+
+  it("treats a connector template the org may not see as unavailable, without its name", async () => {
+    const hiddenItem = await catalogItem("hidden");
+    // offered only to the orgs on its list: not this one
+    await env.db
+      .updateTable("catalog_items")
+      .set({ scope: "named" })
+      .where("id", "=", hiddenItem)
+      .execute();
+    await connectorTemplate(hiddenItem, "secret");
+    const owned = await connectorTemplate(hiddenItem, "mine");
+    await env.db
+      .updateTable("platform_connector_templates")
+      .set({ owner_org_id: env.orgId })
+      .where("id", "=", owned)
+      .execute();
+    const id = await platformTemplate(
+      tpl({ connectors: [{ template: "hidden:secret" }, { template: "hidden:mine" }] }),
+    );
+    const r = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents/from-template/preview`,
+      payload: { templateId: id },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const p = r.json() as Preview;
+    expect(pick(p, "connector")).toEqual([
+      ["hidden:secret", "unavailable", "template_not_found"],
+      // the org's own connector template stays visible to it
+      ["MINE", "pending", "no_connector"],
+    ]);
+    expect(r.body).not.toContain("SECRET");
+  });
+
+  it("sanitizes a needs endpoint of a plugin template; an invalid one is unavailable", async () => {
+    const id = await platformTemplate(
+      tpl({
+        connectors: [
+          {
+            needs: {
+              protocol: "mcp",
+              endpoint: "https://alice:pw@wiki.example.com/mcp?token=sekrit#top",
+              tools: ["find"],
+              label: "Wiki",
+            },
+          },
+          {
+            needs: { protocol: "openapi", endpoint: "not a url", tools: [], label: "Broken" },
+          },
+        ],
+      }),
+      { plugin: "acme" },
+    );
+    const { agent, preview: p } = await createOk(env.boss, id);
+    expect(pick(p, "connector")).toEqual([
+      ["Wiki", "pending", "needs"],
+      ["Broken", "unavailable", "invalid_endpoint"],
+    ]);
+    expect(agent.definition.pendingConnectors).toEqual([
+      {
+        key: "connector-1",
+        label: "Wiki",
+        source: {
+          needs: {
+            protocol: "mcp",
+            endpoint: "https://wiki.example.com/mcp",
+            tools: ["find"],
+            label: "Wiki",
+          },
+        },
+        tools: ["find"],
+      },
+    ]);
+    expect(JSON.stringify(agent.definition)).not.toContain("sekrit");
+  });
+
+  it("round-trips an agent through save-as and create (P4-10, P4-5)", async () => {
+    const itemId = await catalogItem("kit");
+    const kitTpl = await connectorTemplate(itemId, "kit");
+    const kit = await connector("kit", ["search", "fetch"], kitTpl);
+    // a hand-configured MCP connector: its endpoint's query never travels
+    const wiki = randomUUID();
+    await env.db
+      .insertInto("connectors")
+      .values({
+        id: wiki,
+        org_id: env.orgId,
+        slug: "wiki",
+        name: "Wiki",
+        connector: "mcp",
+        endpoint: JSON.stringify({ url: "https://wiki.example.com/mcp?token=sekrit" }),
+        auth: JSON.stringify({}),
+        created_by: env.bossId,
+      })
+      .execute();
+    await env.db
+      .insertInto("connector_tools")
+      .values(
+        ["find", "wipe"].map((name) => ({
+          connector_id: wiki,
+          name,
+          spec: JSON.stringify({ name, description: "d", inputSchema: { type: "object" } }),
+          spec_hash: "h",
+          status: name === "find" ? ("enabled" as const) : ("disabled" as const),
+          default_policy: "allow" as const,
+        })),
+      )
+      .execute();
+    const pdf = await orgSkill("pdf");
+    const sheets = await orgSkill("sheets");
+    const notes = await orgSkill("review-notes");
+    const reviewer = await platformTemplate(tpl({ name: "reviewer" }), { plugin: "crm" });
+
+    const agentId = randomUUID();
+    await env.db
+      .insertInto("agents")
+      .values({
+        id: agentId,
+        org_id: env.orgId,
+        owner_account_id: env.bossId,
+        visibility: "private",
+        current_version: 1,
+        profile_avatar: JSON.stringify({ kind: "preset", id: "p01" }),
+        profile_description: "Leads the team.",
+        profile_quick_actions: JSON.stringify([{ title: "Weekly", body: "Write the report." }]),
+      })
+      .execute();
+    const source = {
+      name: "Lead",
+      instructions: "# AGENTS.md\n\nLead.\n\n# style.md\n\nBe brief.",
+      instructionFiles: [
+        { name: "AGENTS.md", content: "Lead." },
+        { name: "style.md", content: "Be brief." },
+      ],
+      model: { provider: "model-fake", model: "fake-1" },
+      modelParams: { effort: "high", "model-fake.style": "shout" },
+      fallback: { provider: "model-fake", model: "fake-1" },
+      fallbackParams: { effort: "low" },
+      tools: [
+        { kind: "builtin", name: "Read" },
+        { kind: "builtin", name: "Agent" },
+        { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
+        { kind: "connector", connectorId: kit, tools: ["search"] },
+        { kind: "connector", connectorId: wiki, tools: "all" },
+      ],
+      toolPolicies: {
+        Read: "ask",
+        "plugin__fake-tools-ui__write": "deny",
+        mcp__kit__search: "ask",
+        mcp__wiki__find: "deny",
+      },
+      skills: { orgSkills: [pdf, sheets, notes], pinned: [pdf] },
+      subagents: {
+        general: false,
+        templates: [reviewer],
+        inline: [
+          {
+            name: "helper",
+            description: "Helps.",
+            instructions: "Help out.",
+            tools: ["Read"],
+            skills: [notes],
+            model: "fast",
+          },
+          { name: "solo", description: "Alone.", instructions: "Work alone." },
+          { name: "mute", description: "Talks.", instructions: "Just talk.", tools: [] },
+        ],
+      },
+    };
+    await env.db
+      .insertInto("agent_versions")
+      .values({
+        agent_id: agentId,
+        version: 1,
+        definition: JSON.stringify(source),
+        created_by: env.bossId,
+      })
+      .execute();
+
+    const saved = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents/${agentId}/save-as-template`,
+      payload: { name: "lead", description: "Leads the team." },
+    });
+    expect(saved.statusCode, saved.body).toBe(201);
+    const { template, omitted } = saved.json() as {
+      template: { id: string };
+      omitted: unknown[];
+    };
+    // what has no place in a template is listed, never dropped silently
+    expect(omitted).toEqual([
+      { kind: "model_param", name: "model-fake.style", reason: "model_param" },
+      { kind: "fallback_model", name: "model-fake/fake-1", reason: "fallback" },
+    ]);
+
+    const { agent, preview: p } = await createOk(env.boss, template.id);
+    expect(p.items.filter((i) => i.state !== "carried")).toEqual([
+      { kind: "connector", name: "Wiki", state: "pending", reason: "needs" },
+    ]);
+    expect(p.dropped).toEqual([]);
+    const d = agent.definition;
+    // instructions and files
+    expect(d.instructionFiles).toEqual(source.instructionFiles);
+    expect(d.instructions).toBe(source.instructions);
+    // model, tier and effort (the other params and the fallback were listed above)
+    expect(p.model).toMatchObject({ provider: "model-fake", model: "fake-1", source: "modelRef" });
+    expect(d.model).toEqual(source.model);
+    expect(d.modelParams).toEqual({ effort: "high" });
+    expect(d.fallback).toBeNull();
+    // tools and policies; the template-made connector rebinds with its tools and policy
+    expect(d.tools).toEqual([
+      { kind: "builtin", name: "Read" },
+      { kind: "builtin", name: "Agent" },
+      { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
+      { kind: "connector", connectorId: kit, tools: ["search"] },
+    ]);
+    expect(d.toolPolicies).toEqual({
+      Read: "ask",
+      "plugin__fake-tools-ui__write": "deny",
+      mcp__kit__search: "ask",
+    });
+    // pinned and selected skills
+    expect(d.skills).toEqual({ orgSkills: [pdf, sheets, notes], pinned: [pdf] });
+    // the hand-configured connector comes back as a need, with its policy and no secret
+    expect(d.pendingConnectors).toEqual([
+      {
+        key: "connector-2",
+        label: "Wiki",
+        source: {
+          needs: {
+            protocol: "mcp",
+            endpoint: "https://wiki.example.com/mcp",
+            tools: ["find"],
+            label: "Wiki",
+          },
+        },
+        tools: ["find"],
+        policies: { find: "deny" },
+      },
+    ]);
+    expect(JSON.stringify(d)).not.toContain("sekrit");
+    // sub-agents: the type, and inline ones with tools absent and []
+    expect(d.subagents).toEqual({
+      general: false,
+      templates: [reviewer],
+      inline: [
+        {
+          name: "helper",
+          description: "Helps.",
+          instructions: "Help out.",
+          tools: ["Read"],
+          skills: [notes],
+          model: "fast",
+        },
+        { name: "solo", description: "Alone.", instructions: "Work alone.", model: "inherit" },
+        {
+          name: "mute",
+          description: "Talks.",
+          instructions: "Just talk.",
+          tools: [],
+          model: "inherit",
+        },
+      ],
+    });
+    // the profile
+    expect(agent.profile.description).toBe("Leads the team.");
+    expect(agent.profile.quickActions).toEqual([{ title: "Weekly", body: "Write the report." }]);
   });
 
   it("cuts text in UTF-16 units so the agent saves again as created", async () => {

@@ -14,6 +14,7 @@ import {
   SKILL_ENTRY_FILE,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
+import { connectorTemplateState } from "../catalog/component-state.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
@@ -44,6 +45,7 @@ import {
   type InstructionFile,
   joinInstructionFiles,
 } from "./instruction-files.js";
+import { sanitizeEndpoint } from "./org-templates.js";
 import { PROFILE_LIMITS, ProfileInputSchema, type QuickAction } from "./profile.js";
 import { type TemplateRow, templateTypeOf, usableTemplates } from "./templates.js";
 
@@ -72,8 +74,9 @@ export type PlanItemKind =
  *   inline sub-agent); unavailable `not_found`;
  * - connector: `several` (the first of several connectors made from the template was bound);
  *   pending `no_connector`, `tools_missing` (the connector made from the template lacks every
- *   named tool), `needs`; unavailable `template_not_found`, `disallowed` (`disallowedTools` left
- *   none of its tools);
+ *   named tool), `needs`; unavailable `template_not_found` (also for a template the org may not
+ *   see, named by the entry's reference only), `disallowed` (`disallowedTools` left none of its
+ *   tools), `invalid_endpoint` (a `needs` endpoint that is no http(s) URL);
  * - subagent: unavailable `type_not_found`, `type_taken`, `too_many`.
  */
 export interface PlanItem {
@@ -221,46 +224,77 @@ interface OrgConnector {
 }
 
 /**
+ * Whether the org may see platform connector template `row`: usable (on) or offered in the org,
+ * owned by it, or one it has made connectors from (they stay its own, also after the template is
+ * removed). Anything else is not the org's to know about.
+ */
+async function visibleConnectorTemplate(
+  db: KernelSchemaDb,
+  orgId: string,
+  row: { id: string; owner_org_id: string | null },
+): Promise<boolean> {
+  if (row.owner_org_id === orgId) return true;
+  if ((await connectorTemplateState(db, orgId, row.id)) !== "absent") return true;
+  const made = await db
+    .selectFrom("connectors")
+    .select("id")
+    .where("org_id", "=", orgId)
+    .where("platform_template_id", "=", row.id)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  return made !== undefined;
+}
+
+/**
  * The platform connector template a `{ template }` entry names: `<plugin>:<id>` by its plugin's
  * catalog item; a bare `<id>` of the template's own plugin; otherwise a platform connector template
- * id (what 另存为模板 writes, P4-11). A live row wins; a soft-deleted one (`deleted`) still names
- * the org connectors made from it, but nothing new can be made from it.
+ * id (what 另存为模板 writes, P4-11). Only templates the org may see count
+ * ({@link visibleConnectorTemplate}): one it may not is not found, so its name never reaches the
+ * preview. A live row wins; a soft-deleted one (`deleted`) still names the org connectors made
+ * from it, but nothing new can be made from it.
  */
 async function connectorTemplateOf(
   db: KernelSchemaDb,
+  orgId: string,
   ref: string,
   own: { plugin: string | null; catalogItemId: string | null },
 ): Promise<{ id: string; file: ConnectorTemplateFile; deleted: boolean } | null> {
   const base = db
     .selectFrom("platform_connector_templates as p")
     .innerJoin("catalog_items as c", "c.id", "p.catalog_item_id")
-    .select(["p.id", "p.file", "p.deleted_at", "c.deleted_at as item_deleted_at"])
+    .select(["p.id", "p.file", "p.owner_org_id", "p.deleted_at", "c.deleted_at as item_deleted_at"])
     // live first, then the most recently created
     .orderBy((eb) => eb.case().when("p.deleted_at", "is", null).then(0).else(1).end())
     .orderBy("p.created_at", "desc");
+  type Row = Awaited<ReturnType<typeof base.execute>>[number];
+  const firstVisible = async (rows: Row[]): Promise<Row | undefined> => {
+    for (const r of rows) if (await visibleConnectorTemplate(db, orgId, r)) return r;
+    return undefined;
+  };
   const i = ref.indexOf(":");
-  let row:
-    | { id: string; file: unknown; deleted_at: Date | null; item_deleted_at: Date | null }
-    | undefined;
+  let row: Row | undefined;
   if (i > 0) {
-    row = await base
-      .where("c.name", "=", ref.slice(0, i))
-      .where("p.template_id", "=", ref.slice(i + 1))
-      .executeTakeFirst();
+    row = await firstVisible(
+      await base
+        .where("c.name", "=", ref.slice(0, i))
+        .where("p.template_id", "=", ref.slice(i + 1))
+        .execute(),
+    );
   } else {
     if (own.catalogItemId !== null) {
-      row = await base
-        .where("p.catalog_item_id", "=", own.catalogItemId)
-        .where("p.template_id", "=", ref)
-        .executeTakeFirst();
+      row = await firstVisible(
+        await base
+          .where("p.catalog_item_id", "=", own.catalogItemId)
+          .where("p.template_id", "=", ref)
+          .execute(),
+      );
     }
     if (row === undefined && own.plugin !== null) {
-      row = await base
-        .where("c.name", "=", own.plugin)
-        .where("p.template_id", "=", ref)
-        .executeTakeFirst();
+      row = await firstVisible(
+        await base.where("c.name", "=", own.plugin).where("p.template_id", "=", ref).execute(),
+      );
     }
-    row ??= await base.where("p.id", "=", ref).executeTakeFirst();
+    row ??= await firstVisible(await base.where("p.id", "=", ref).execute());
   }
   if (row === undefined) return null;
   return {
@@ -471,17 +505,24 @@ export async function planFromTemplate(
     const key = pendingKeyOf(i);
     const policies = entry.policies !== undefined && Object.keys(entry.policies).length > 0;
     if ("needs" in entry) {
+      // ruling P4-11 on every path into a pending entry, a plugin's template included: no
+      // userinfo, query or fragment (they may carry credentials); no http(s) URL, no entry
+      const endpoint = sanitizeEndpoint(entry.needs.endpoint);
+      if (endpoint === null) {
+        item("connector", entry.needs.label, "unavailable", "invalid_endpoint");
+        continue;
+      }
       pendingConnectors.push({
         key,
         label: entry.needs.label,
-        source: { needs: { ...entry.needs, tools: [...entry.needs.tools] } },
+        source: { needs: { ...entry.needs, endpoint, tools: [...entry.needs.tools] } },
         tools: [...entry.needs.tools],
         ...(policies && { policies: { ...entry.policies } }),
       });
       item("connector", entry.needs.label, "pending", "needs");
       continue;
     }
-    const ct = await connectorTemplateOf(db, entry.template, {
+    const ct = await connectorTemplateOf(db, orgId, entry.template, {
       plugin: row.plugin,
       catalogItemId: row.catalogItemId,
     });
@@ -506,6 +547,7 @@ export async function planFromTemplate(
       item("connector", label, "pending", reason);
     };
     const made = await connectorsFrom(db, orgId, ct.id);
+    // the entry binds the org's oldest connector made from the template (P4-5 `several`)
     const first = made[0];
     if (first === undefined) {
       pending("no_connector");
@@ -571,14 +613,16 @@ export async function planFromTemplate(
         type: templateTypeOf(u.plugin, u.name),
       }));
       for (const type of sub.types ?? []) {
-        // an exact type; a bare name prefers the template's own plugin, then a unique `<p>:<name>`
+        // a bare name prefers the template's own plugin (`<plugin>:<name>`, as a forked skill's
+        // `agent` does: resolveSkillForkType), then the exact type, then a unique `<p>:<name>`
+        // (findType); a qualified name only matches exactly
         const own =
           !type.includes(":") && row.plugin !== null
             ? roster.find((r) => r.type === templateTypeOf(row.plugin, type))
             : undefined;
         const bare = type.includes(":") ? [] : roster.filter((r) => r.type.endsWith(`:${type}`));
         const found =
-          roster.find((r) => r.type === type) ?? own ?? (bare.length === 1 ? bare[0] : undefined);
+          own ?? roster.find((r) => r.type === type) ?? (bare.length === 1 ? bare[0] : undefined);
         if (found === undefined) {
           item("subagent", type, "unavailable", "type_not_found");
         } else if (taken.has(found.type) || inlineNames.has(found.type)) {

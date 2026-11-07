@@ -77,7 +77,16 @@ export interface AgentTemplateDetail extends AgentTemplateView {
  *   connector tool key in an inline sub-agent's allowlist (kind `subagent_inline`,
  *   `field: "tools"`, `name` the sub-agent): connector keys embed this org's connector slug;
  * - `unsupported_field`: a field of an inline sub-agent a template's inline entry cannot hold
- *   (kind `subagent_inline`, `field`: `disallowedTools`, `toolPolicies`, `effort` or `maxSteps`).
+ *   (kind `subagent_inline`, `field`: `disallowedTools`, `toolPolicies`, `effort` or `maxSteps`);
+ * - `model_param`: a model parameter other than a valid `effort` (kind `model_param`, `name` its
+ *   key): a template records only the effort (P4-10);
+ * - `fallback`: the fallback model and its parameters (kind `fallback_model`, `name`
+ *   `provider/model`): a template has no fallback;
+ * - `empty_text`: whitespace-only text a template requires (kind `subagent_inline` with `field`
+ *   `description` or `instructions`: the sub-agent is left out; kind `quick_action`, `name` its
+ *   title: the quick action is left out).
+ * An inline sub-agent's skills that are the agent's own (`agent_skill`), gone (`unavailable`) or
+ * past the 3 a template holds (`limit`) are listed as kind `skill`.
  */
 export interface SaveAsOmission {
   kind:
@@ -87,7 +96,10 @@ export interface SaveAsOmission {
     | "skill"
     | "connector"
     | "tool"
-    | "tool_policy";
+    | "tool_policy"
+    | "model_param"
+    | "fallback_model"
+    | "quick_action";
   name: string;
   id?: string;
   /** The field of an inline sub-agent left out (`connector_tool`, `unsupported_field`). */
@@ -100,7 +112,10 @@ export interface SaveAsOmission {
     | "unsupported_protocol"
     | "limit"
     | "connector_tool"
-    | "unsupported_field";
+    | "unsupported_field"
+    | "model_param"
+    | "fallback"
+    | "empty_text";
 }
 
 /**
@@ -226,6 +241,25 @@ export async function templateFromAgent(
   const def = agent.definition;
   const omitted: SaveAsOmission[] = [];
   const L = AGENT_TEMPLATE_LIMITS;
+  const blank = (s: unknown): boolean => typeof s !== "string" || s.trim() === "";
+
+  // Model: `modelRef` and `effort` only; every other parameter and the fallback are listed
+  const effortParam = def.modelParams?.effort;
+  const effort =
+    typeof effortParam === "string" && EFFORTS.includes(effortParam as Effort)
+      ? (effortParam as Effort)
+      : undefined;
+  for (const key of Object.keys(def.modelParams ?? {})) {
+    if (key === "effort" && effort !== undefined) continue;
+    omitted.push({ kind: "model_param", name: key, reason: "model_param" });
+  }
+  if (def.fallback != null) {
+    omitted.push({
+      kind: "fallback_model",
+      name: `${def.fallback.provider}/${def.fallback.model}`,
+      reason: "fallback",
+    });
+  }
 
   // Tools: builtin and plugin tool keys; connector tools become `connectors` entries
   const tools: string[] = [];
@@ -289,10 +323,12 @@ export async function templateFromAgent(
         .execute()
     ).map((r) => [r.id, r.name]),
   );
+  const reportedSkills = new Set<string>();
   const skillName = (id: string, report: boolean): string | null => {
     const s = byId.get(id);
     if (s && s.scope === "org") return s.name;
-    if (report) {
+    if (report && !reportedSkills.has(id)) {
+      reportedSkills.add(id);
       const own = agentSkillNames.get(id) ?? s?.name;
       omitted.push(
         own !== undefined
@@ -375,6 +411,9 @@ export async function templateFromAgent(
       ? null
       : [...new Set(refs.flatMap((r) => r.tools as string[]))].slice(0, L.connectorTools);
     if (c.template_id !== null) {
+      // only the platform connector template is recorded, not this connector: creating an agent
+      // from the template rebinds the entry to the org's oldest connector made from that
+      // template (P4-5 `several`), which may be another one than this
       pushConnector(
         {
           template: c.template_id,
@@ -490,6 +529,16 @@ export async function templateFromAgent(
       types.push(type);
     }
     for (const t of sub.inline ?? []) {
+      // a template requires both texts non-blank (the SDK rule); the agent's schema does not
+      const empty = blank(t.description)
+        ? "description"
+        : blank(t.instructions)
+          ? "instructions"
+          : null;
+      if (empty !== null) {
+        omitted.push({ kind: "subagent_inline", name: t.name, field: empty, reason: "empty_text" });
+        continue;
+      }
       if (!room()) {
         omitted.push({ kind: "subagent_inline", name: t.name, reason: "limit" });
         continue;
@@ -520,15 +569,20 @@ export async function templateFromAgent(
       }
       const inlineSkills: string[] = [];
       for (const id of t.skills ?? []) {
-        const n = skillName(id, false);
-        if (n !== null && !inlineSkills.includes(n)) inlineSkills.push(n);
+        const n = skillName(id, true);
+        if (n === null || inlineSkills.includes(n)) continue;
+        if (inlineSkills.length >= L.skills) {
+          omitted.push({ kind: "skill", name: n, id, reason: "limit" });
+          continue;
+        }
+        inlineSkills.push(n);
       }
       inline.push({
         name: t.name,
         description: t.description,
         instructions: t.instructions,
         ...(t.tools !== undefined && { tools: [...new Set(ownTools)].slice(0, L.tools) }),
-        skills: inlineSkills.slice(0, L.skills),
+        skills: inlineSkills,
         model: t.model ?? "inherit",
       });
     }
@@ -542,7 +596,14 @@ export async function templateFromAgent(
     };
   }
 
-  const effort = def.modelParams?.effort;
+  const quickActions: { title: string; body: string }[] = [];
+  for (const q of agent.profile.quickActions) {
+    if (blank(q.title) || blank(q.body)) {
+      omitted.push({ kind: "quick_action", name: q.title, reason: "empty_text" });
+      continue;
+    }
+    quickActions.push({ title: q.title, body: q.body });
+  }
   const template: AgentTemplate = {
     name: meta.name,
     description: meta.description,
@@ -551,16 +612,12 @@ export async function templateFromAgent(
     ...(Object.keys(toolPolicies).length > 0 && { toolPolicies }),
     model: "standard",
     modelRef: `${def.model.provider}/${def.model.model}`,
-    ...(typeof effort === "string" && EFFORTS.includes(effort as Effort)
-      ? { effort: effort as Effort }
-      : {}),
+    ...(effort !== undefined && { effort }),
     ...(skills.length > 0 && { skills }),
     ...(selectedSkills.length > 0 && { selectedSkills }),
     ...(connectors.length > 0 && { connectors }),
     ...(subagents !== undefined && { subagents }),
-    ...(agent.profile.quickActions.length > 0 && {
-      quickActions: agent.profile.quickActions.map((q) => ({ title: q.title, body: q.body })),
-    }),
+    ...(quickActions.length > 0 && { quickActions }),
     ...(def.instructionFiles !== undefined && {
       instructionFiles: def.instructionFiles.map((f) => ({ name: f.name, content: f.content })),
     }),
