@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
+import { OBJECT_ROW_MENU } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
 /** UI copy comes from the zh messages file, so it is not hard-coded twice. */
@@ -122,23 +123,23 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   await expect(page.getByText(D.org.install.summaryDependencies)).toBeVisible();
   await page.getByRole("button", { name: D.org.install.submit }).click();
 
-  // 7. The plugin's page: its install lists crm-core as a dependency; turning crm off previews
-  //    what goes (the dependency install, its skill) and what stays (the crm-core extension,
-  //    enabled before the install), then removes it
+  // 7. The plugin's page: its install lists crm-core as a dependency that was there before (turning
+  //    an extension on in the org is its plugin's switch, scope phase 1); turning crm off previews
+  //    that the dependency stays, then removes crm
   await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
   const card = page.getByRole("region", { name: "crm v1.0.0", exact: true });
   await expect(
-    card.getByText(`· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.created}`),
+    card.getByText(`· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.existing}`),
   ).toBeVisible();
-  await page.getByRole("button", { name: P.action.disable }).click();
+  // 停用 is in the head's ⋯ menu (destructive items)
+  await page.getByRole("button", { name: OBJECT_ROW_MENU }).first().click();
+  await page.getByRole("menuitem", { name: P.action.disable, exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(
     dialog.getByText(
-      `· ${D.plugins.componentKind.extension} crm-core — ${D.plugins.report.reason.pre_existing}`,
+      `· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.report.reason.pre_existing}`,
     ),
   ).toBeVisible();
-  await expect(dialog.getByText(`− ${D.plugins.componentKind.plugin} crm-core`)).toBeVisible();
-  await expect(dialog.getByText(new RegExp(`− ${D.plugins.componentKind.skill} `))).toBeVisible();
   await dialog.getByRole("button", { name: P.switchOff.confirm }).click();
   await expect(page.getByText(P.state.off, { exact: true }).first()).toBeVisible({
     timeout: 60_000,
@@ -146,20 +147,31 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
 });
 
 /** Imports `notes <version>` from the git marketplace's entries and confirms the review. */
-async function importNotes(page: Page, version: string): Promise<void> {
+async function importNotes(page: Page, version: string, { latest }: { latest: boolean }) {
   await page.goto("/admin/plugins/market");
   await page.getByRole("tab", { name: "Team git" }).click();
-  const importIt = page.getByRole("button", {
-    name: fill(D.admin.entries.importVersion, { version: `v${version}` }),
-    exact: true,
-  });
-  // The entry shows the plugin's display name (笔记), not only its id
-  const row = page.getByRole("listitem").filter({ has: importIt }).filter({ hasText: "笔记" });
+  const label = fill(D.admin.entries.importVersion, { version: `v${version}` });
+  // One row per plugin, its latest version (the entry shows the display name 笔记, not only its id)
+  const row = page.getByRole("listitem").filter({ hasText: "笔记" });
   // A git entry pinned to a commit of the notes repository
   await expect(
     row.getByText(new RegExp(fill(D.admin.entries.gitPinned, { commit: "[0-9a-f]{7}" }))),
   ).toBeVisible();
-  await importIt.click();
+  if (latest) {
+    // 引入 v<x>, or 更新 once an older version of the plugin was imported
+    await row
+      .getByRole("button", { name: label, exact: true })
+      .or(row.getByRole("button", { name: D.admin.entries.update, exact: true }))
+      .click();
+  } else {
+    // an older version is under the row's 其他版本 submenu
+    await row.getByRole("button", { name: OBJECT_ROW_MENU }).click();
+    // by keyboard: a pointer moving from the sub trigger to the item can close the submenu first
+    await page.getByRole("menuitem", { name: D.admin.entries.otherVersions }).press("ArrowRight");
+    const item = page.getByRole("menuitem", { name: label, exact: true });
+    await item.focus();
+    await item.press("Enter");
+  }
   await expect(page).toHaveURL(/\/admin\/plugins\/import\?staging=/, { timeout: 60_000 });
   // The review names where it was read from (the marketplace repository at its commit)
   await expect(page.getByText(/127\.0\.0\.1/).first()).toBeVisible();
@@ -191,7 +203,7 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   ).toBeVisible();
 
   // 2. Import notes 1.0.0 and turn it on in the org (a skills-only plugin: no input)
-  await importNotes(page, "1.0.0");
+  await importNotes(page, "1.0.0", { latest: false });
   await page.goto("/plugins");
   // The plugin's display name (plugin.json displayName) names the row, the link and the toasts
   const row = page.getByRole("listitem").filter({ hasText: "笔记" });
@@ -205,7 +217,7 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   // 3. Import 1.1.0 (the import does not move the platform), then update the platform plugin
   // from its admin page: the preview lists each component's change (ruling F2: one version for
   // the deployment; the org upgrade is gone)
-  await importNotes(page, "1.1.0");
+  await importNotes(page, "1.1.0", { latest: true });
   await page
     .getByRole("button", { name: fill(D.admin.detail.actions.update, { version: "v1.1.0" }) })
     .click();
@@ -229,8 +241,9 @@ test("git marketplace: add a repository in the admin console -> refresh -> impor
   const upgraded = page.getByRole("region", { name: "notes v1.1.0", exact: true });
   await expect(upgraded).toBeVisible({ timeout: 60_000 });
 
-  // 4. Clean up: turn it off (the skills it created go with it)
-  await page.getByRole("button", { name: P.action.disable }).click();
+  // 4. Clean up: turn it off from the head's ⋯ menu (the skills it created go with it)
+  await page.getByRole("button", { name: OBJECT_ROW_MENU }).first().click();
+  await page.getByRole("menuitem", { name: P.action.disable, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: P.switchOff.confirm }).click();
   await expect(upgraded).toHaveCount(0, { timeout: 60_000 });
 });

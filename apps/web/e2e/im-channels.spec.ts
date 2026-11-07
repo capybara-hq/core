@@ -62,26 +62,22 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
 }) => {
   await signIn(page);
 
-  // 1. 组织插件：先填组织级配置（通讯录地址），再启用；权限清单里工具与密钥被标为敏感
+  // 1. The org's 扩展 page: fake-im is pending configuration (its switch is read-only); its row opens
+  //    a Sheet with the org config form, and 保存并启用 saves the directory URL and switches it on
   await page.goto("/extensions");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  const section = page.getByRole("region", { name: "fake-im", exact: true });
-  const perms = section.getByRole("region", {
-    name: zh.extensions.permissionsLabel.replace("{plugin}", "fake-im"),
-  });
-  await expect(perms.getByText("· post_announcement")).toBeVisible();
-  await section.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
-  await section
-    .getByRole("button", { name: zh.extensions.saveLabel.replace("{plugin}", "fake-im") })
+  const row = page.getByRole("row").filter({ hasText: "fake-im" });
+  await row.click();
+  const sheet = page.getByRole("dialog", { name: "fake-im", exact: true });
+  await sheet.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
+  await sheet
+    .getByRole("button", { name: zh.extensions.saveAndEnableLabel.replace("{plugin}", "fake-im") })
     .click();
-  await expect(
-    page.getByText(zh.extensions.configSaved.replace("{plugin}", "fake-im")),
-  ).toBeVisible();
-  const enable = section.getByRole("switch", {
+  const enable = row.getByRole("switch", {
     name: zh.extensions.enableLabel.replace("{plugin}", "fake-im"),
   });
-  await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
 
   // 2. 新建一个 agent（model-fake）
   await newAgent(page, "IM agent");

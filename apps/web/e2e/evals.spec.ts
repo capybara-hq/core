@@ -82,7 +82,8 @@ test("建评测集 → 从对话抽样 → 单步运行 → 标注，汇总随�
   // 6. 打开结果 → 标注「通过」→ 页头的人工通过率变成 100%
   const results = page.getByRole("table", { name: E.run.resultsLabel });
   await results.getByRole("row").filter({ hasText: "echo:eval me please" }).click();
-  const inspector = page.getByRole("region", { name: E.run.inspector.title });
+  // the result opens in a right-side Sheet (a dialog named by its title)
+  const inspector = page.getByRole("dialog", { name: E.run.inspector.title });
   await expect(inspector.getByText(E.run.inspector.noTextDiff)).toBeVisible();
   await inspector.getByRole("button", { name: E.run.inspector.pass, exact: true }).click();
   await expect(metric(page, E.run.metrics.humanPass)).toContainText("100%");

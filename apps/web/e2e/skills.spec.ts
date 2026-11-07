@@ -226,7 +226,10 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
   // 2. 收件箱：技能变更卡片显示 agent、文件与差异；负责人批准
   await page.goto("/inbox");
   const list = page.getByRole("table", { name: zh.inbox.listLabel });
-  await list.getByText(`${zh.inbox.skillChange.label} · team-glossary`).click();
+  // a row names the skill, with the kind and the agent as its meta
+  const item = list.getByRole("row").filter({ hasText: "team-glossary" });
+  await expect(item).toContainText(`${zh.inbox.skillChange.label} · Shared writer`);
+  await item.click();
   const card = page.locator("[data-skill-change-id]");
   await expect(card.getByText("Shared writer").first()).toBeVisible();
   await expect(card.getByText(zh.inbox.skillChange.newSkill)).toBeVisible();
@@ -238,7 +241,7 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
   const row = page.getByRole("region", { name: designZh("shell.pending") });
   await row.getByRole("button", { name: zh.inbox.skillChange.approve }).click();
   await expect(page.getByText(zh.inbox.skillChange.approved)).toBeVisible();
-  await expect(list.getByText(`${zh.inbox.skillChange.label} · team-glossary`)).toHaveCount(0);
+  await expect(item).toHaveCount(0);
 
   // 3. 批准后成为 agent 自己的技能：编辑页的技能分组只读列出
   await page.goto(`/agents/${agentId}?s=skills`);

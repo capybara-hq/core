@@ -23,21 +23,36 @@ import { signIn } from "./support/sign-in";
 
 const pd = zh.extensions.pointDefaults;
 
-/** Sets the org token of a fake web provider and enables it on the org extensions page. */
+/**
+ * Sets the org token of a fake web provider and switches it on: on the org 扩展 page its row opens a
+ * Sheet with the org config form, and 保存并启用 saves the token and turns it on.
+ */
 async function enableWebProvider(page: Page, plugin: string) {
-  const section = page.getByRole("region", { name: plugin, exact: true });
-  await section.getByLabel(/^token/).fill(`${plugin}-token`);
-  await section
-    .getByRole("button", { name: zh.extensions.saveLabel.replace("{plugin}", plugin) })
+  const row = page
+    .getByRole("row")
+    .filter({ hasText: plugin })
+    .filter({
+      has: page.getByRole("switch", {
+        name: zh.extensions.enableLabel.replace("{plugin}", plugin),
+        exact: true,
+      }),
+    });
+  await row.click();
+  const sheet = page.getByRole("dialog", { name: plugin, exact: true });
+  await sheet.getByLabel(/^token/).fill(`${plugin}-token`);
+  await sheet
+    .getByRole("button", {
+      name: zh.extensions.saveAndEnableLabel.replace("{plugin}", plugin),
+      exact: true,
+    })
     .click();
-  await expect(
-    page.getByText(zh.extensions.configSaved.replace("{plugin}", plugin)).first(),
-  ).toBeVisible();
-  const enable = section.getByRole("switch", {
+  const enable = row.getByRole("switch", {
     name: zh.extensions.enableLabel.replace("{plugin}", plugin),
+    exact: true,
   });
-  await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
 }
 
 test("web tools: two providers → default provider per point → WebFetch in the agent's Tools → approval card with the URL and three scopes", async ({

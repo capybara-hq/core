@@ -228,8 +228,21 @@ test("member: 用它创建 is private and sends a setup request -> the admin con
   const sourceId = await agentWithConnector(page, `Req source ${run}`, connector);
   await saveAsTemplate(page, sourceId, tpl);
 
-  // a member joins through an invitation (the accept call signs the new account in)
+  // a member joins through an invitation (the accept call signs the new account in). The org needs
+  // an agent the member can see, else the workspace shows the setup layout (web-order spec §3.8)
   const orgId = await currentOrg(page);
+  const shared = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: `Shared ${run}`,
+        instructions: "Help.",
+        model: { provider: "model-fake", model: "fake-1" },
+      },
+      visibility: "org",
+    },
+  });
+  expect(shared.status(), await shared.text()).toBe(201);
   const invite = await page.request.post(`/api/v1/orgs/${orgId}/invitations`, {
     headers: CSRF,
     data: { role: "member", expiresInHours: 24 },
