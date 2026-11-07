@@ -10,6 +10,7 @@ import {
   ModelPurposesService,
   type PurposeView,
 } from "../../src/models/purposes.js";
+import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -395,6 +396,30 @@ describe("a target the org cannot use", () => {
       code: "model.unconfigured",
     });
     expect(await purposes.resolve(other, "title")).toEqual(FAKE_1);
+  });
+
+  it("a provider whose list fails keeps the mapping; the call itself then fails retryably", async () => {
+    await put(ent, adminUrl("title"), J);
+    const purposes = k.app.get(ModelPurposesService);
+    const clear = async () => {
+      for (const pattern of ["cache:*", "capk:models-failed:*"]) {
+        const keys = await redis.keys(pattern);
+        if (keys.length > 0) await redis.del(...keys);
+      }
+    };
+    await clear();
+    evalModelState().listFails = true;
+    try {
+      expect(await purposes.resolve(orgId, "title")).toEqual(J);
+      const err = await k.app
+        .get(ProviderRegistry)
+        .resolve(orgId, J.model)
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ProviderListError);
+    } finally {
+      evalModelState().listFails = false;
+      await clear();
+    }
   });
 });
 

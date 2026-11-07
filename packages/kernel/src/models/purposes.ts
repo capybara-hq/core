@@ -342,7 +342,10 @@ export class ModelPurposesService {
    * An effective target the org cannot use counts as unconfigured there (spec B §5.3): checked in
    * the registry's org view, so a model the platform or the org disabled, a provider off or needing
    * configuration in the org, a model gone from the org's list or of another kind than the purpose
-   * all give `model.unconfigured`. A provider whose list fails (`ProviderListError`) is thrown as is.
+   * all give `model.unconfigured`. A provider whose list fails (`ProviderListError`) keeps the
+   * mapping: the call that follows resolves the model again and fails there, retryably, so paths
+   * that only read the mapping (sub-agent tiers, eval start, `ctx.models.describe`) do not fail on
+   * a transient list error.
    */
   async resolve(orgId: string, purpose: string): Promise<PurposeTarget> {
     const decl = this.find(purpose);
@@ -356,7 +359,7 @@ export class ModelPurposesService {
     try {
       await this.providers.resolve(orgId, view.effective.model, { kind: decl.kind });
     } catch (e) {
-      if (e instanceof ProviderListError) throw e;
+      if (e instanceof ProviderListError) return view.effective;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
         throw new ApiError(
           "model.unconfigured",
