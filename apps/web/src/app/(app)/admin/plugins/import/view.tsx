@@ -269,10 +269,11 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
           path: gitPath.trim(),
         });
       }
-      // The address names the staged import (a reload comes back to the review); the page under it
-      // reads the review from the cache.
+      // The address names the staged import (a reload comes back to the review, read from the
+      // cache). Written with history.replaceState like useUrlTab: a router navigation would re-key
+      // the page and remount this wizard, losing a step taken before it lands.
       qc.setQueryData(stagedImportQuery(p.stagingId).queryKey, p);
-      router.replace(importPageHref(p.stagingId));
+      window.history.replaceState(window.history.state, "", importPageHref(p.stagingId));
       accept(p);
     } catch (e) {
       setFetchError(problem(e));

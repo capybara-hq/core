@@ -922,8 +922,12 @@ describe("/admin/plugins/import (WizardPage)", () => {
       expect(within(templates).getByRole("list", { name: c.templates })).toBeTruthy();
       expect(document.querySelector('[data-part="card"]')).toBeNull();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
-      // The address names the staged import (a reload comes back to this review)
-      expect(router.replace).toHaveBeenCalledWith("/admin/plugins/import?staging=st1");
+      // The address names the staged import (a reload comes back to this review), written in place:
+      // no router navigation, which would remount the wizard under a step taken meanwhile
+      expect(window.location.pathname + window.location.search).toBe(
+        "/admin/plugins/import?staging=st1",
+      );
+      expect(router.replace).not.toHaveBeenCalled();
       await user.click(screen.getByRole("button", { name: w.next }));
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
@@ -2738,7 +2742,9 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       fail = false;
       await user.click(screen.getByRole("button", { name: r.fetch }));
       await waitFor(() =>
-        expect(router.replace).toHaveBeenCalledWith("/admin/plugins/import?staging=st5"),
+        expect(window.location.pathname + window.location.search).toBe(
+          "/admin/plugins/import?staging=st5",
+        ),
       );
       expect(bodyOf(calls.filter((c) => c.method === "POST").at(-1))).toEqual({
         url: "acme/crm",
