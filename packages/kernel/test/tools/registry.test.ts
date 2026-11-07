@@ -359,7 +359,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     const got = await req({ method: "GET", url: settingsUrl() });
     expect(got.statusCode, got.body).toBe(200);
     expect(got.json()).toEqual({
-      settings: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow" },
+      settings: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
       },
@@ -383,10 +383,10 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     const off = await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     expect(off.statusCode, off.body).toBe(200);
     expect(off.json()).toMatchObject({
-      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
+      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
     });
     expect((await req({ method: "GET", url: settingsUrl() })).json()).toMatchObject({
-      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
+      settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
     });
     const audits = await db
       .selectFrom("audit_events")
@@ -395,8 +395,8 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       .execute();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toEqual({
-      before: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow" },
-      after: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow" },
+      before: { toolSearch: "on", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
+      after: { toolSearch: "off", locale: "en", sandboxToolPolicy: "allow", platformTool: "on" },
     });
 
     // 存量 jsonb 里的未知键保留、非法值按默认读
@@ -406,6 +406,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       toolSearch: "on",
       locale: "en",
       sandboxToolPolicy: "allow",
+      platformTool: "on",
     });
     await req({ method: "PATCH", url: settingsUrl(), payload: { toolSearch: "off" } });
     const row = await db
@@ -417,8 +418,24 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       toolSearch: "off",
       locale: "en",
       sandboxToolPolicy: "allow",
+      platformTool: "on",
       future: 1,
     });
+
+    // the Platform tool's org switch: on / read-only / off, anything else 400
+    const badPlatform = await req({
+      method: "PATCH",
+      url: settingsUrl(),
+      payload: { platformTool: "maybe" },
+    });
+    expect(badPlatform.statusCode).toBe(400);
+    const readOnly = await req({
+      method: "PATCH",
+      url: settingsUrl(),
+      payload: { platformTool: "read-only" },
+    });
+    expect(readOnly.statusCode, readOnly.body).toBe(200);
+    expect(readOnly.json().settings.platformTool).toBe("read-only");
 
     // 成员能读不能改
     await sql`UPDATE capybara.memberships SET role = 'member' WHERE org_id = ${orgId}`.execute(raw);

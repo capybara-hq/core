@@ -43,6 +43,7 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/organization`：组织设置（SettingsPage）——工具搜索开关、IM 语言（机器人固定话术的语言）、
+ * the Platform tool's org switch (on / read-only / off);
  * 沙箱的设置在 `/settings/sandbox`。
  * 成员可看，管理员可改；有改动时出现 ActionRow。From the query cache (the layout prefetched it on a
  * first load); a save writes the answer into the cache (the sandbox page shares it).
@@ -65,7 +66,9 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const manage = canUpdateOrg(me);
   const qc = useQueryClient();
   const read = usePageQuery(orgSettingsQuery(orgId));
-  const [draft, setDraft] = useState<Pick<Partial<OrgSettings>, "toolSearch" | "locale">>({});
+  const [draft, setDraft] = useState<
+    Pick<Partial<OrgSettings>, "toolSearch" | "locale" | "platformTool">
+  >({});
   // The answer is the new settings: it replaces the cached ones (the response may leave out the
   // read-only parts the sandbox page shows, so the cached ones are kept).
   const update = useAppMutation({
@@ -110,6 +113,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           description={t("locale.description")}
           loading={{ fields: [{ control: "select" }] }}
         />
+        <FormSection
+          id="platform-tool"
+          title={t("platformTool.title")}
+          description={t("platformTool.description")}
+          loading={{ fields: [{ control: "select", help: true }] }}
+        />
         {myRole(me) === "owner" ? <DeleteOrg orgId={orgId} /> : null}
       </SettingsPage>
     );
@@ -118,10 +127,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const saved = read.data.settings;
   const toolSearch = draft.toolSearch ?? saved.toolSearch ?? "on";
   const locale = draft.locale ?? saved.locale ?? "en";
+  const platformTool = draft.platformTool ?? saved.platformTool ?? "on";
   // 只提交改过的项
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
     ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
+    ...(platformTool !== (saved.platformTool ?? "on") ? { platformTool } : {}),
   };
   const unsaved = Object.keys(patch).length;
   const dirty = unsaved > 0;
@@ -189,6 +200,28 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
             options={(["en", "zh"] as const).map((v) => ({
               value: v,
               label: tc(`localeName.${v}`),
+            }))}
+          />
+        </Field>
+      </FormSection>
+      <FormSection
+        id="platform-tool"
+        title={t("platformTool.title")}
+        description={t("platformTool.description")}
+      >
+        <Field label={t("platformTool.label")} help={t("platformTool.help")}>
+          <Select
+            value={platformTool}
+            disabled={!manage}
+            onChange={(e) =>
+              setDraft((d) => ({
+                ...d,
+                platformTool: e.target.value as NonNullable<OrgSettings["platformTool"]>,
+              }))
+            }
+            options={(["on", "read-only", "off"] as const).map((v) => ({
+              value: v,
+              label: t(`platformTool.${v}`),
             }))}
           />
         </Field>

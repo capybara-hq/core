@@ -21,6 +21,8 @@ import { OrgLock } from "./org-lock.js";
  * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
  * - `sandboxEgress`：组织的沙箱出站（Ruling M19 / D6），缺省跟随部署的 `sandbox.limits.egress` + `allowHosts`。
  *   见 {@link effectiveSandboxEgress}。存量值非法时按 `none` 读（宁可断网，不悄悄放宽到部署默认）。
+ * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
+ *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  */
 
 /** 组织沙箱出站白名单的主机数上限。 */
@@ -56,6 +58,7 @@ export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
+  platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
   sandboxEgress: SandboxEgressSettingSchema.optional().catch({ mode: "none" }),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
@@ -69,6 +72,7 @@ export const OrgSettingsPatchSchema = z
     toolSearch: z.enum(["on", "off"]).optional(),
     locale: z.enum(["zh", "en"]).optional(),
     sandboxToolPolicy: z.enum(["allow", "ask"]).optional(),
+    platformTool: z.enum(["on", "read-only", "off"]).optional(),
     /** null clears (follow the deployment again). */
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /** null 清除（恢复跟随部署默认）。 */
