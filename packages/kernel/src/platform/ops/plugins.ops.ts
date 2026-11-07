@@ -257,6 +257,8 @@ export class PluginsOperations implements OnModuleInit {
               superAdmin:
                 "The plugin is stopped on the platform: turn it back on in the admin console under Plugins, then call again.",
               orgAdmin: "The super admin stopped this plugin on the platform; ask them.",
+              member:
+                "The super admin stopped this plugin on the platform; tell your org admin, who can ask the super admin.",
             },
           },
           {

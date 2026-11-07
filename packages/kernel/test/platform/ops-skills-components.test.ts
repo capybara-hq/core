@@ -22,8 +22,8 @@ import { createOrg, enableExtensions } from "../helpers/runs.js";
 /**
  * Task 6 of phase 2 of the Platform tool: the skill and component operations against PG with the
  * real services (spec §14). Operations run by
- * `op.run(input, ctx)`, refusals by `availability()`. Super-admin results never name another org
- * (Review Focus 4): asserted on the JSON string.
+ * `op.run(input, ctx)`, refusals by `availability()`. Super-admin results name the orgs of platform
+ * components (admin data in full) but never another org's own items: asserted on the JSON string.
  */
 
 let env: OrgEnv;
@@ -351,12 +351,26 @@ describe("platform component writes", () => {
     const summary = await summarize("plugins.set-component-scope", set, ctxOf(env.rootId));
     expect(summary?.en).toContain('Set the scope of platform skill "pdf-tools" to named (1 orgs)');
     const done = await run("plugins.set-component-scope", set, ctxOf(env.rootId));
-    expect(done).toMatchObject({ component: { id, scope: "named", onIn: 1 } });
-    expect(JSON.stringify([preview, done, summary])).not.toContain(org2);
-    // read back: the named scope's orgs are a count in the admin list
+    // a platform component is platform data: the orgs it is on in and is named for are named
+    // (rulings of phase 2, spec §14.5.1)
+    expect(done).toMatchObject({
+      component: {
+        id,
+        scope: "named",
+        onIn: [{ orgId: org2, orgName: ORG2_NAME }],
+        scopeOrgs: [{ orgId: org2, orgName: ORG2_NAME }],
+      },
+    });
+    // read back: the admin list is compact, the orgs counted
     const back = await run("plugins.components", { kind: "skill" }, ctxOf(env.rootId));
     expect(back).toMatchObject({ items: [{ id, scope: "named", onIn: 1 }] });
-    expect(JSON.stringify(back)).not.toContain(org2);
+    // disabling it now would take it away from org2: the preview names the org
+    const off = (await run(
+      "plugins.component-scope-preview",
+      { kind: "skill", componentId: id, disabled: true },
+      ctxOf(env.rootId),
+    )) as { affected: { orgId: string; orgName: string }[] };
+    expect(off.affected).toMatchObject([{ orgId: org2, orgName: ORG2_NAME }]);
     const rows = await audits("component.scope_changed");
     expect(rows.at(-1)?.detail).toMatchObject({
       via: "agent",
@@ -432,7 +446,12 @@ describe("platform component writes", () => {
     const target = { kind: "skill", componentId: id, scope: "optional" as const };
     const p = (await run("plugins.component-scope-preview", target, ctxOf(env.rootId))) as {
       scopeHash: string;
+      conflicts: { orgId: string; orgName: string; items: number }[];
     };
+    expect(p.conflicts).toEqual([
+      expect.objectContaining({ orgId: org2, orgName: ORG2_NAME, items: 1 }),
+    ]);
+    expect(JSON.stringify(p)).not.toContain(own.skill.id);
     // the operation runs without its precheck here: the service's own refusal names the org
     // (platform data, spec §14.5 item 1) and only counts that org's own clashing skill
     const e = await failure(

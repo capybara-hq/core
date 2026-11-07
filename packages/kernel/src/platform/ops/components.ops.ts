@@ -20,6 +20,7 @@ import {
 import type { ComponentKind } from "../../catalog/component-state.js";
 import { PlatformComponents } from "../../catalog/platform-components.js";
 import { ApiError } from "../../errors.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -70,19 +71,31 @@ const clashText = (cs: ComponentScopePreview["conflicts"]): string =>
         )
         .join("; ")}`;
 
-/** A platform component as the super admin's list and writes show it: a compact row. */
-const brief = (c: ComponentView) => ({
-  id: c.id,
-  name: c.name,
-  kind: c.kind,
-  state: c.disabled || c.pluginStopped ? "disabled" : "on",
-  plugin: c.plugin,
-  scope: c.scope,
-  scopeMode: c.scopeMode,
-  shownToOthers: c.shownToOthers,
-  version: c.version,
-  onIn: c.onIn.length,
-});
+const stateOf = (c: ComponentView) => (c.disabled || c.pluginStopped ? "disabled" : "on");
+
+type OrgRef = { orgId: string; orgName: string };
+
+/**
+ * A platform component as the super admin's writes return it: the orgs it is on in and the orgs
+ * its named scope lists are named (admin data in full, spec §14.5.1; another org's own component
+ * never gets here, see `assertNotOtherOrgs`).
+ */
+const brief = (c: ComponentView, names: ReadonlyMap<string, string>) => {
+  const ref = (orgId: string): OrgRef => ({ orgId, orgName: names.get(orgId) ?? orgId });
+  return {
+    id: c.id,
+    name: c.name,
+    kind: c.kind,
+    state: stateOf(c),
+    plugin: c.plugin,
+    scope: c.scope,
+    scopeMode: c.scopeMode,
+    ...(c.scope === "named" && { scopeOrgs: c.orgs.map(ref) }),
+    shownToOthers: c.shownToOthers,
+    version: c.version,
+    onIn: c.onIn.map(ref),
+  };
+};
 
 /** The scope as card summaries say it. */
 const scopeText = (t: { scope?: string | undefined; orgs?: readonly string[] | undefined }) =>
@@ -153,7 +166,23 @@ export class ComponentsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ComponentScopeService) private readonly components: ComponentScopeService,
     @Inject(PlatformComponents) private readonly platformComponents: PlatformComponents,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /** A component as a write returns it, with its orgs named (see {@link brief}). */
+  private async withOrgNames(c: ComponentView) {
+    const ids = [...new Set([...c.onIn, ...c.orgs])];
+    const rows =
+      ids.length === 0
+        ? []
+        : await this.kdb.db
+            .selectFrom("orgs")
+            .select(["id", "name"])
+            .where("id", "in", ids)
+            .where("deleted_at", "is", null)
+            .execute();
+    return brief(c, new Map(rows.map((r) => [r.id, r.name])));
+  }
 
   /** Refuses a super-admin operation on a component another org owns (spec section 6.1). */
   private async assertNotOtherOrgs(kind: ComponentKind, id: string, orgId: string) {
@@ -659,7 +688,7 @@ export class ComponentsOperations implements OnModuleInit {
           const rows = visible.map((c) => ({
             id: c.id,
             name: c.name,
-            state: brief(c).state,
+            state: stateOf(c),
             plugin: c.plugin,
             scope: c.scope,
             onIn: c.onIn.length,
@@ -787,7 +816,7 @@ export class ComponentsOperations implements OnModuleInit {
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
           return {
-            component: brief(
+            component: await this.withOrgNames(
               await this.withoutItemNames(
                 i.kind as ComponentKind,
                 i.componentId,
@@ -862,7 +891,7 @@ export class ComponentsOperations implements OnModuleInit {
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
           return {
-            component: brief(
+            component: await this.withOrgNames(
               await this.withoutItemNames(
                 i.kind as ComponentKind,
                 i.componentId,
@@ -922,7 +951,7 @@ export class ComponentsOperations implements OnModuleInit {
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
           return {
-            component: brief(
+            component: await this.withOrgNames(
               await this.components.setShown(
                 ctx.actorAccountId,
                 i.kind as ComponentKind,
