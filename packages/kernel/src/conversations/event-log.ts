@@ -230,6 +230,70 @@ export class EventLog {
   }
 
   /**
+   * The page of the log that ends right before `beforeSeq` (`null`: the log's end), in ascending
+   * seq: the last `limit` events before it, extended back so the first event is the log's first or
+   * the first one after a run's end (`run_finished` / `run_failed` / `run_aborted`), at most
+   * `extend` events further back (a longer run then starts mid-run). `turnsBefore`: how many runs
+   * started (distinct `run_id` of `run_started`) before the page's first event. History paging
+   * spec §2.
+   */
+  async readTurnPageBefore(
+    conversationId: string,
+    beforeSeq: number | null,
+    limit: number,
+    extend: number,
+  ): Promise<{ events: ConversationEvent[]; turnsBefore: number }> {
+    let q = this.db
+      .selectFrom("conversation_events")
+      .select(EVENT_COLUMNS)
+      .where("conversation_id", "=", conversationId);
+    if (beforeSeq !== null) q = q.where("seq", "<", String(beforeSeq));
+    const rows = (await q.orderBy("seq", "desc").limit(limit).execute()).reverse();
+    const first = rows[0] === undefined ? null : Number(rows[0].seq);
+    if (first === null) return { events: [], turnsBefore: 0 };
+    let start = first;
+    if (first > 1) {
+      // the latest run end at or before the event just above the page, within the extension
+      const end = await this.db
+        .selectFrom("conversation_events")
+        .select((eb) => eb.fn.max("seq").as("seq"))
+        .where("conversation_id", "=", conversationId)
+        .where("seq", "<", String(first))
+        .where("seq", ">=", String(Math.max(1, first - 1 - extend)))
+        .where("type", "in", ["run_finished", "run_failed", "run_aborted"])
+        .executeTakeFirst();
+      // none within reach: the page starts at the log's start when that is in reach, else mid-run
+      if (end?.seq != null) start = Number(end.seq) + 1;
+      else if (first - 1 <= extend) start = 1;
+    }
+    const head =
+      start < first
+        ? await this.db
+            .selectFrom("conversation_events")
+            .select(EVENT_COLUMNS)
+            .where("conversation_id", "=", conversationId)
+            .where("seq", ">=", String(start))
+            .where("seq", "<", String(first))
+            .orderBy("seq")
+            .execute()
+        : [];
+    const turns =
+      start > 1
+        ? await this.db
+            .selectFrom("conversation_events")
+            .select((eb) => eb.fn.count<string>("run_id").distinct().as("n"))
+            .where("conversation_id", "=", conversationId)
+            .where("type", "=", "run_started")
+            .where("seq", "<", String(start))
+            .executeTakeFirst()
+        : undefined;
+    return {
+      events: [...head, ...rows].map(toEvent),
+      turnsBefore: Number(turns?.n ?? 0),
+    };
+  }
+
+  /**
    * 读 `afterSeq` 之后、属于 `runIds` 中某次运行的事件，按 seq 升序，最多 `limit` 条（轨迹按运行分页用）。
    * `runIds` 为空时返回空数组。走部分索引 `conversation_events_run_idx (conversation_id, run_id, seq)`（0027）：
    * 往前翻页读较早的运行时不扫更晚运行的事件。
