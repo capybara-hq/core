@@ -691,6 +691,31 @@ export const listEvents = (orgId: string, id: string, after: number, limit = EVE
     `${one(orgId, id)}/events?after=${after}&limit=${limit}`,
   );
 
+/**
+ * Whether `events` (the cached window of a log) start at the log's beginning: seqs are allocated
+ * from 1 without gaps, so the first event has seq 1 (an empty log has nothing before it either).
+ */
+export const fromStart = (events: readonly ConversationEvent[]): boolean =>
+  events.length === 0 || (events[0] as ConversationEvent).seq === 1;
+
+/** How many events a page of history reads (the first paint's last page, each earlier page). */
+export const HISTORY_PAGE = 200;
+
+/**
+ * The turn-aligned page of events before `before` (`"end"`: the log's last page), with how many
+ * runs started before its first event (history paging spec §2; an older kernel's answer has no
+ * `turnsBefore`).
+ */
+export const listEventsBefore = (
+  orgId: string,
+  id: string,
+  before: number | "end",
+  limit = HISTORY_PAGE,
+) =>
+  apiFetch<{ events: ConversationEvent[]; turnsBefore?: number }>(
+    `${one(orgId, id)}/events?before=${before}&limit=${limit}`,
+  );
+
 /** 读完 `after` 之后的全部事件（逐页）。 */
 export async function listAllEvents(
   orgId: string,

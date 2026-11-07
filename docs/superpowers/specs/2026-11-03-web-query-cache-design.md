@@ -165,7 +165,7 @@ My call where the user gave the principle but not the numbers; each class is one
 | Mine, changed only by me | `me`, my memberships, preferences, my tokens, my identities | `Infinity` | invalidation after my mutation; reload |
 | Org configuration | agents, models, connectors, skills, extensions, members, org settings, catalog | 30 s | invalidation after a mutation; refetch on the next view once stale |
 | Live state | inbox count, conversation groups, sandbox status, queue, files of a conversation | 30 s | invalidation; SSE `changed` frames where they exist; next view once stale |
-| A conversation's events | events of `/chat/[id]` | `Infinity` | the SSE stream appends to the cached list; reconnect catches up from the last seq (as today) |
+| A conversation's events | events of `/chat/[id]` | `Infinity` | the SSE stream appends to the cached list; reconnect catches up from the last seq (as today); since 2026-11-07 the list is a window of the log's latest part, earlier pages prepended on scroll (`2026-11-07-conversation-history-paging-design.md`) |
 | Deployment (admin) | deployment config, installed extensions, marketplaces | 30 s | invalidation after a mutation |
 | Unclassified | anything not listed | 0 | (default; a check forbids leaving a query unclassified, §8) |
 

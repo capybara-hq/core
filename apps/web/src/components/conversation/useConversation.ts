@@ -9,6 +9,7 @@ import {
   abortRun,
   type Conversation,
   type ConversationEvent,
+  fromStart,
   type MessageInput,
   postMessage,
 } from "../../lib/conversations";
@@ -18,8 +19,10 @@ import {
   CONVERSATION_SIDE_KEYS,
   catchUpEvents,
   conversationQuery,
+  type EventWindow,
   eventsQuery,
   isFreshlySeeded,
+  loadEarlierEvents,
 } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
@@ -76,12 +79,24 @@ function deliveredOf(qc: QueryClient): Map<string, number> {
   return map;
 }
 
+/**
+ * The thread's top edge (history paging spec §6): `more` while earlier events are not loaded,
+ * `loading` / `failed` for the read of the previous page, `start` once this view loaded its way
+ * back to the beginning (a log that fit the first page shows no edge).
+ */
+export type HistoryState = "more" | "loading" | "failed" | "start";
+
 /** `onSend`'s outcome: on failure the error (to mark the files it names). */
 export type SendResult = { ok: true } | { ok: false; error: unknown };
 
 export type ConversationState = {
   state: ChatState;
+  /** The cached window of the log (its latest part; earlier pages once loaded). */
   events: ConversationEvent[];
+  /** How many runs started before the window's first event (the status bar's turn count). */
+  turnsBefore: number;
+  /** The thread's top edge and the read of the page before it; undefined while the log loads. */
+  history: { state: HistoryState; loadEarlier(): void } | undefined;
   /** The log is still on its way (nothing cached): the thread shows its loading state. */
   loading: boolean;
   /** The conversation row (title, agent, selection); undefined while it loads. */
@@ -131,7 +146,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const rowQ = conversationQuery(orgId, conversationId);
   const log = useQuery({ ...eventsQ, retryOnMount: retryOnMountOf(eventsQ.queryKey) });
   const row = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) });
-  const events = log.data;
+  const events = log.data?.events;
   /** The deltas since the log last changed in a way that drops them (applied per frame). */
   const [deltas, setDeltas] = useState<readonly StreamDelta[]>([]);
   const [progress, dispatchProgress] = useReducer(reduceProgress, {});
@@ -236,7 +251,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     const delivered = deliveredOf(qc);
     /** Where an open resumes: after what the stream delivered, never past the cached log's end. */
     const resumeAt = () => {
-      const end = qc.getQueryData<ConversationEvent[]>(c.events())?.at(-1)?.seq ?? 0;
+      const end = qc.getQueryData<EventWindow>(c.events())?.events.at(-1)?.seq ?? 0;
       return Math.min(delivered.get(scope) ?? end, end);
     };
     // A log read in full is complete up to its end (the layout's or this page's first read).
@@ -398,10 +413,49 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       void qc.invalidateQueries({ queryKey: keys.org(orgId).conversationGroupsAll() });
   }, [qc, orgId, conversationId, phase]);
 
+  // The page before the window, read when the thread's top edge comes into view.
+  const [earlier, setEarlier] = useState<"idle" | "loading" | "failed">("idle");
+  /** This view loaded an earlier page: reaching the beginning then shows its marker. */
+  const [paged, setPaged] = useState(false);
+  const earlierBusy = useRef(false);
+  const loadEarlier = useCallback(() => {
+    if (earlierBusy.current) return;
+    earlierBusy.current = true;
+    setEarlier("loading");
+    loadEarlierEvents(qc, orgId, conversationId).then(
+      () => {
+        earlierBusy.current = false;
+        setPaged(true);
+        setEarlier("idle");
+      },
+      (e: unknown) => {
+        earlierBusy.current = false;
+        console.warn("conversation: reading earlier events failed", e);
+        setEarlier("failed");
+      },
+    );
+  }, [qc, orgId, conversationId]);
+  const historyState: HistoryState | undefined =
+    events === undefined
+      ? undefined
+      : fromStart(events)
+        ? paged
+          ? "start"
+          : undefined
+        : earlier === "idle"
+          ? "more"
+          : earlier;
+  const history = useMemo(
+    () => (historyState === undefined ? undefined : { state: historyState, loadEarlier }),
+    [historyState, loadEarlier],
+  );
+
   const logError = log.error === null ? undefined : errorMessage(log.error);
   return {
     state,
     events: state.events,
+    turnsBefore: log.data?.turnsBefore ?? 0,
+    history,
     loading: !loaded && log.error === null,
     conversation: row.data,
     running: state.running,

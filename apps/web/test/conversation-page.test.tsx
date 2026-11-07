@@ -96,7 +96,7 @@ describe("the conversation page (ConversationPage)", () => {
     // the first paint is the server's snapshot: the browser reads nothing, the stream opens at 2
     expect(calls).toEqual([]);
     expect(server.map((c) => c.url)).toEqual(
-      expect.arrayContaining([BASE, `${BASE}/events?after=0&limit=500`, `${BASE}/queue`]),
+      expect.arrayContaining([BASE, `${BASE}/events?before=end&limit=200`, `${BASE}/queue`]),
     );
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=2`]);
     expect(container.querySelector('[data-template="ConversationPage"]')).not.toBeNull();
@@ -1403,7 +1403,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const c = keys.org("o1").conversation("c9");
     expect(d.client.getQueryData(c.row())).toEqual(conversation);
-    expect(d.client.getQueryData(c.events())).toEqual([event]);
+    expect(d.client.getQueryData(c.events())).toEqual({ events: [event], turnsBefore: 0 });
     expect(d.client.getQueryData(c.queue())).toEqual({ items: [], paused: false });
     expect(d.client.getQueryData(c.files())).toEqual([]);
     expect(d.client.getQueryData(c.sandbox())).toBeNull();
@@ -1448,7 +1448,10 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     await act(async () => d.answer(json(201, { conversation, event, events: [switched, event] })));
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const c = keys.org("o1").conversation("c9");
-    expect(d.client.getQueryData(c.events())).toEqual([switched, event]);
+    expect(d.client.getQueryData(c.events())).toEqual({
+      events: [switched, event],
+      turnsBefore: 0,
+    });
 
     cleanup();
     FakeEventSource.instances = [];

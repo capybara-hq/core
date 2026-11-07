@@ -4,7 +4,7 @@ import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
 import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
-import type { Conversation, ConversationEvent } from "../conversations";
+import type { Conversation } from "../conversations";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
@@ -53,6 +53,7 @@ import {
   contributionsQuery,
   conversationFollowUps,
   conversationQuery,
+  type EventWindow,
   eventsQuery,
   filesQuery,
   modelsQuery,
@@ -499,7 +500,7 @@ export const ROUTES: readonly RouteEntry[] = [
     then: async ({ orgId, params, me }, qc) => {
       const id = params.conversationId;
       if (orgId === null || id === undefined) return;
-      const events = qc.getQueryData<ConversationEvent[]>(eventsQuery(orgId, id).queryKey);
+      const events = qc.getQueryData<EventWindow>(eventsQuery(orgId, id).queryKey)?.events;
       const row = qc.getQueryData<Conversation>(conversationQuery(orgId, id).queryKey);
       if (events === undefined || row === undefined) return;
       await Promise.all(

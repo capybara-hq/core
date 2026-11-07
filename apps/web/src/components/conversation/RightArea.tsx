@@ -15,6 +15,7 @@ import {
   abortRun,
   type BackgroundTaskView,
   type ConversationEvent,
+  fromStart,
   type ModelRef,
   type SubagentView,
   stopBackgroundTask,
@@ -333,8 +334,13 @@ export function useRightAreaSlot(p: {
   // The agent map (agent map spec §9): its entries (the sub-agent group's link and the composer's
   // agents chip, AC3) show once a root conversation dispatched a sub-agent (a sub-agent
   // conversation's page has none: the tree is its root's).
+  // the log names one, or the list does (a window that does not start at the log's beginning
+  // may have the dispatch above it, history paging spec §5)
   const dispatched = useMemo(() => dispatchedAny(p.events), [p.events]);
-  const hasSubagents = dispatched && p.root === true;
+  const listed = (p.subagents?.length ?? 0) > 0;
+  const hasSubagents = (dispatched || listed) && p.root === true;
+  // whether there are none is known: the log starts at the beginning, or the list answered
+  const subagentsKnown = dispatched || fromStart(p.events) || p.subagents !== undefined;
   const openMap = useCallback(() => open({ kind: "agents" }), [open]);
   const openAgent = useCallback(
     (id: string, transcript?: boolean) =>
@@ -350,7 +356,8 @@ export function useRightAreaSlot(p: {
   });
   // `#agents…` on a conversation without sub-agents, or on a sub-agent's page (a pasted link):
   // nothing to show, drop it
-  const staleMap = p.eventsLoaded && p.root !== undefined && mapTarget !== null && !hasSubagents;
+  const staleMap =
+    p.eventsLoaded && subagentsKnown && p.root !== undefined && mapTarget !== null && !hasSubagents;
   useEffect(() => {
     if (staleMap) closeMap();
   }, [staleMap, closeMap]);

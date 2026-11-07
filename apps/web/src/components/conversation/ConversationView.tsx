@@ -27,6 +27,7 @@ import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
 import {
   type AgentsSummary,
+  dispatchedAny,
   usageTotal,
   useSubagents,
   useTreeLookup,
@@ -231,7 +232,15 @@ export function useConversationPage(
   const awaiting = awaitingRun(conv.events, sentHere, awaitAt);
   const busy = conv.running || pending.shown.length > 0 || awaiting;
   const active = busy || conv.waiting;
-  const stats = useMemo(() => runStats(conv.events), [conv.events]);
+  // the window's runs after those started above it (history paging spec §5)
+  const windowStats = useMemo(() => runStats(conv.events), [conv.events]);
+  const stats = useMemo(
+    () =>
+      windowStats.turns > 0 || conv.turnsBefore > 0
+        ? { ...windowStats, turns: windowStats.turns + conv.turnsBefore }
+        : windowStats,
+    [windowStats, conv.turnsBefore],
+  );
 
   // The message shows at once as a pending bubble, until the log has it (spec §2.1).
   const send = async (m: ComposerMessage): Promise<SendResult> => {
@@ -343,8 +352,9 @@ export function useConversationPage(
     contextPct,
     lastRun,
     subagents: subagents.views,
+    // read also for a window that may hide a dispatch: shown once there is a sub-agent
     total:
-      usageAll === undefined
+      usageAll === undefined || !(dispatchedAny(conv.events) || (subagents.views?.length ?? 0) > 0)
         ? undefined
         : ts("contextTotal", { n: usageTotal(usageAll).toLocaleString(locale) }),
     progress: conv.state.progress,
@@ -444,6 +454,9 @@ export function useConversationPage(
       ...(statusFailed ? { tone: "fail" as const } : {}),
       version: session.version ?? "",
     },
+    ...(conv.history !== undefined
+      ? { history: { state: conv.history.state, onLoadEarlier: conv.history.loadEarlier } }
+      : {}),
     right: slot?.right ?? "none",
     ...(slot?.propertiesNode !== undefined ? { properties: slot.propertiesNode } : {}),
     ...(slot?.panelNode !== undefined ? { panel: slot.panelNode } : {}),

@@ -34,7 +34,9 @@ const slugOf = (toolKey: string): string | null => {
 
 /**
  * The connectors this conversation used, in first-use order: tool calls matched to connector slugs,
- * plus message attachments and connect requests (payload fields still named `appName`).
+ * plus message attachments and connect requests (payload fields still named `appName`). Only the
+ * loaded part of the log counts (history paging spec §5: no server summary; it grows as earlier
+ * pages load).
  */
 export function connectorsUsed(
   events: readonly ConversationEvent[],
@@ -62,8 +64,9 @@ export function connectorsUsed(
 }
 
 /**
- * How many sandbox tool results the events hold, or null while the metadata of any result key is
- * still unknown (so the count never jumps when it arrives).
+ * The newest sandbox tool result's seq (0 without one), or null while the metadata of any result
+ * key is still unknown (so it never jumps when it arrives). A seq, not a count: earlier pages of
+ * the log loaded later (history paging spec §5) are no new use.
  */
 const sandboxUses = (
   events: readonly ConversationEvent[],
@@ -74,7 +77,7 @@ const sandboxUses = (
     if (e.type !== "tool_result") continue;
     const i = info.get(e.payload.toolKey);
     if (i === undefined) return null;
-    if (i.sandbox) n++;
+    if (i.sandbox) n = e.seq;
   }
   return n;
 };

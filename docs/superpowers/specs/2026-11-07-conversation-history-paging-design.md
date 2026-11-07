@@ -59,7 +59,12 @@ whole. What can still reference an event above the window degrades as it does to
 data, never wrongly: a `subagent_finished` / `subagent_waiting` whose `Agent` call is above the
 window updates no row (its `delivery` / wait entries still render on their own), a `retryOf` whose
 failed run is above shows a plain bubble, a `background_task_finished` names its task by its own
-description. A window that starts mid-run (only past the 2000-event cap) renders that run's events
+description. A handed-back child's 「X 已完成」 entry (drawn from `subagent_finished` and named
+by its report, commit 357c5215) waits for the report's page when the report is above the window
+and the finish below it: `subagent_finished` alone cannot tell a handed-back completion from
+another, so the entry is never guessed; once the page loads the timeline is rebuilt from the whole
+window and the entry appears exactly once (an old log's `handedBack` delivery is still deduped).
+A window that starts mid-run (only past the 2000-event cap) renders that run's events
 without its start: rows without a model, no held interjections. Old logs render unchanged.
 
 ## 5. Readers of the window
