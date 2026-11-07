@@ -33,6 +33,7 @@ import {
 import {
   createFakeSandbox,
   fakeSandboxState,
+  fakeWorkspaceDir,
   readFakeSandboxOps,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -228,12 +229,30 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       () => false,
     );
 
-  const sandboxRow = (convId: string) =>
+  /** The environment the conversation is bound to (its owner's default). */
+  const envOf = async (convId: string): Promise<string> =>
+    (
+      await db
+        .selectFrom("conversations")
+        .select("environment_id")
+        .where("id", "=", convId)
+        .executeTakeFirstOrThrow()
+    ).environment_id as string;
+
+  const sandboxRow = async (convId: string) =>
     db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select(["status", "handle", "generation"])
-      .where("conversation_id", "=", convId)
+      .where("environment_id", "=", await envOf(convId))
       .executeTakeFirstOrThrow();
+
+  /** The instance state the conversation's environment route shows (null: no instance). */
+  const shownState = async (replica: 0 | 1, convPath: string): Promise<string | null> => {
+    const r = await at(replica, "GET", `${convPath}/environment`);
+    expect(r.status, JSON.stringify(r.json)).toBe(200);
+    const env = r.json.environment as { instance: { status: string } | null } | null;
+    return env?.instance?.status ?? null;
+  };
 
   it("附件 → Bash 处理 → 交付产物 → 杀执行副本后续跑复用沙箱 → 空闲休眠后恢复", async () => {
     const ag = await at(0, "POST", `${base}/agents`, {
@@ -262,8 +281,9 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(m1.status, JSON.stringify(m1.json)).toBe(202);
     const [t1] = await waitForTerminal(db, convId, 1, 30_000);
     expect(t1?.type).toBe("run_finished");
-    // 只是登记了附件，还没有沙箱
-    expect((await at(0, "GET", `${convPath}/sandbox`)).status).toBe(404);
+    // only the attachment is recorded: the environment has no instance yet
+    expect(await shownState(0, convPath)).toBeNull();
+    const envId = await envOf(convId);
 
     // ---- 2. Bash 处理附件（首次使用：创建沙箱，附件同步到 /workspace/attachments） ----
     await send(0, convId, "Bash", {
@@ -276,9 +296,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(r2.result.isError, r2.result.content).toBe(false);
     expect(r2.result.content.startsWith(SANDBOX_STARTED_NOTICE)).toBe(true);
     expect(r2.result.content).toContain(TOTAL);
-    const status2 = await at(1, "GET", `${convPath}/sandbox`);
-    expect(status2.status).toBe(200);
-    expect(status2.json.status).toBe("running");
+    expect(await shownState(1, convPath)).toBe("running");
     const c2 = await instanceOf(convId);
     expect(c2.state).toBe("running");
     const row2 = await sandboxRow(convId);
@@ -313,7 +331,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     });
     // 命令确实在沙箱里跑起来了（沙箱锁在执行副本手里）
     await waitFor(
-      async () => existsSync(join(root, "instances", c2.id, "fs", "workspace", "step4-started")),
+      async () => existsSync(join(fakeWorkspaceDir(root, c2.id), "step4-started")),
       60_000,
       "step 4 command running",
       200,
@@ -332,7 +350,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(victim, `processedBy=${processedBy}`).toBeDefined();
     const victimIndex = (victim as { index: 0 | 1 }).index;
     const survivor: 0 | 1 = victimIndex === 0 ? 1 : 0;
-    expect(await redis.exists(`capk:sandbox:${convId}`)).toBe(1);
+    expect(await redis.exists(`capk:sandbox:${envId}`)).toBe(1);
     const killedAt = Date.now();
     await h.kill(victimIndex);
 
@@ -367,8 +385,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // dead lease is gone, a replica's minute idle sweep could suspend the sandbox first (killing
     // every command) and the next call would resume it with killAll instead. Keep it in use until
     // step 5 moves last_used_at back (leave keeps the later of last_used_at and now()).
-    await sql`UPDATE capybara.sandboxes SET last_used_at = now() + interval '10 minutes'
-      WHERE conversation_id = ${convId}`.execute(raw);
+    await sql`UPDATE capybara.environment_instances SET last_used_at = now() + interval '10 minutes'
+      WHERE environment_id = ${envId}`.execute(raw);
     await new Promise((r) =>
       setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
     );
@@ -393,8 +411,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // suspendAfterIdleMinutes 最小 1 分钟：把 last_used_at 拨回 2 分钟前（PG 时钟），再立即执行一次扫描
     // (the sweep is a @LockedCron on the replicas; the test runs the same sweep at once
     // over the shared PG, Redis and fake-sandbox root; a replica's own tick may get there first)
-    await sql`UPDATE capybara.sandboxes SET last_used_at = now() - interval '2 minutes'
-      WHERE conversation_id = ${convId}`.execute(raw);
+    await sql`UPDATE capybara.environment_instances SET last_used_at = now() - interval '2 minutes'
+      WHERE environment_id = ${envId}`.execute(raw);
     await sandboxServiceFor({
       db,
       redis,
@@ -409,7 +427,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       log: {},
     }).suspendIdle(new Date());
     await waitFor(
-      async () => (await at(survivor, "GET", `${convPath}/sandbox`)).json.status === "suspended",
+      async () => (await shownState(survivor, convPath)) === "suspended",
       60_000,
       "sandbox suspended",
       250,
@@ -422,8 +440,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(r5.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
     expect(r5.result.content).not.toContain(SANDBOX_RECREATED_NOTICE);
     expect(r5.result.content).toContain(TOTAL);
-    const status5 = await at(survivor, "GET", `${convPath}/sandbox`);
-    expect(status5.json.status).toBe("running");
+    expect(await shownState(survivor, convPath)).toBe("running");
     const c5 = await instanceOf(convId);
     expect(c5.id).toBe(c2.id);
     expect(c5.state).toBe("running");

@@ -8,7 +8,7 @@ import {
 import type { BackgroundFinish } from "../../../background/finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "../../../background/launch.js";
 import { formatElapsed, lostReasonText } from "../../../background/render.js";
-import { SID_RE } from "../../../background/session.js";
+import { actingAs, SID_RE, taskActor } from "../../../background/session.js";
 import {
   parsePollOutput,
   polledAs,
@@ -18,9 +18,9 @@ import {
 import { notRunningAs, RECREATED } from "../../../background/stop.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import type {
+  HeldProvider,
   IfRunningResult,
   SandboxService,
-  TaggedProvider,
 } from "../../../sandbox/sandbox.service.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../registry.js";
 import {
@@ -128,18 +128,23 @@ export async function ownedTask(
   return task;
 }
 
-/** `ifRunning` on the task's own sandbox instance; sandbox errors become the tools' errors. */
+/**
+ * `ifRunning` on the task's own environment instance (its execs act for the task's trigger in its
+ * conversation); sandbox errors become the tools' errors. A task from before environments has no
+ * instance (`not_running`).
+ */
 export async function onTaskInstance<T>(
   env: TaskEnv,
   task: BackgroundTaskRow,
-  fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+  fn: (p: HeldProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
 ): Promise<IfRunningResult<T>> {
+  if (task.environmentId === null) return { kind: "not_running", status: "gone" };
   try {
     return await env.ifRunning(
-      task.sandboxConversationId,
+      task.environmentId,
       { createdAt: task.sandboxCreatedAt as Date },
-      fn,
+      (p, h, sig) => fn(actingAs(p, taskActor(task)), h, sig),
       signal,
     );
   } catch (e) {

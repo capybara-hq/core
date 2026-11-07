@@ -14,6 +14,7 @@ import {
   clip,
   display,
   inSandbox,
+  mapSandboxError,
   noSandboxError,
   runBudgetNote,
   runTimeLeftMs,
@@ -201,6 +202,13 @@ async function runInBackground(
   const requested = input.timeout;
   const seconds = Math.max(1, Math.ceil(Math.min(requested ?? maxMs, maxMs) / 1000));
   const root = sandboxConversationOf(ctx);
+  // the environment the task will run in (the root conversation's, bound for good)
+  let environmentId: string;
+  try {
+    environmentId = await deps.environments.forTool(ctx.orgId, root);
+  } catch (e) {
+    throw mapSandboxError(e);
+  }
   const maxTasks = cfg.sandbox.background.maxTasks;
   const id = newTaskId();
   const description = input.description ?? clip(input.command, 120);
@@ -211,6 +219,7 @@ async function runInBackground(
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
       sandboxConversationId: root,
+      environmentId,
       runId: ctx.runId,
       callId: ctx.callId,
       // the run's trigger account (the pipeline passes `runs.trigger_account_id` as `accountId`)
@@ -285,7 +294,7 @@ async function runInBackground(
       const sid = out;
       try {
         // under the shared lease: no rebuild can come between the launch and this read
-        const instance = await currentInstance(root);
+        const instance = await currentInstance(environmentId);
         if (instance === null) throw new Error("the sandbox instance could not be read");
         const marked = await background.markStarted(id, {
           sid,

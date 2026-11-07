@@ -13,6 +13,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
+import type { EnvironmentView } from "../environments/environments.service.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
@@ -39,6 +40,7 @@ import {
   type SubagentView,
   type UsageTotals,
 } from "./conversations.service.js";
+import { ConversationEnvironmentStatus } from "./environment-status.js";
 import type { ConversationEvent } from "./events.js";
 import {
   ConversationFiles,
@@ -49,7 +51,6 @@ import {
 import { ConversationOutputs, OUTPUT_PAGE_MAX_CHARS, type OutputPage } from "./outputs-read.js";
 import type { QueueItem, QueuePauseReason } from "./queue.js";
 import { ConversationQueue } from "./queue.service.js";
-import { ConversationSandboxStatus, type SandboxStatusView } from "./sandbox-status.js";
 
 /** Shared by the list and groups queries: title search, run activity and the archived list. */
 const searchFields = {
@@ -176,10 +177,13 @@ const MessageBody = MessageFields.strict().refine(...textRule);
  * `POST /conversations`: `message` creates the conversation with its first message (create on
  * first send; `clientMessageId` is required and makes a retry return the same conversation).
  * Without it the conversation is created empty (API clients; the web never does).
+ * `environmentId` binds it to one of the caller's environments; without it the caller's default
+ * environment (environments spec §4.1 item 1).
  */
 const CreateBody = z
   .object({
     agentId: z.string().min(1).max(100),
+    environmentId: z.string().min(1).max(100).optional(),
     message: MessageFields.omit({ retryOf: true })
       .extend({ clientMessageId: z.string().min(1).max(200) })
       .strict()
@@ -268,7 +272,8 @@ export class ConversationsController {
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
     @Inject(ConversationOutputs) private readonly outputs: ConversationOutputs,
     @Inject(ConversationArtifacts) private readonly artifacts: ConversationArtifacts,
-    @Inject(ConversationSandboxStatus) private readonly sandboxStatus: ConversationSandboxStatus,
+    @Inject(ConversationEnvironmentStatus)
+    private readonly environmentStatus: ConversationEnvironmentStatus,
     @Inject(ConversationToolInfo) private readonly toolInfo: ConversationToolInfo,
     @Inject(ConversationQueue) private readonly queue: ConversationQueue,
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
@@ -292,21 +297,28 @@ export class ConversationsController {
     events?: ConversationEvent[];
   }> {
     const p = requireUser(principal);
+    const pick = body.environmentId === undefined ? {} : { environmentId: body.environmentId };
     if (body.message === undefined) {
       return {
-        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId),
+        conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId, pick),
       };
     }
     const m = body.message;
-    const out = await this.conversations.createWithMessage(org.orgId, p.account.id, body.agentId, {
-      text: m.text,
-      clientMessageId: m.clientMessageId,
-      ...(m.attachments !== undefined && { attachments: m.attachments }),
-      ...(m.files !== undefined && { files: m.files }),
-      ...(m.model !== undefined && { model: m.model }),
-      ...(m.effort !== undefined && { effort: m.effort }),
-      ...(m.skill !== undefined && { skill: m.skill }),
-    });
+    const out = await this.conversations.createWithMessage(
+      org.orgId,
+      p.account.id,
+      body.agentId,
+      {
+        text: m.text,
+        clientMessageId: m.clientMessageId,
+        ...(m.attachments !== undefined && { attachments: m.attachments }),
+        ...(m.files !== undefined && { files: m.files }),
+        ...(m.model !== undefined && { model: m.model }),
+        ...(m.effort !== undefined && { effort: m.effort }),
+        ...(m.skill !== undefined && { skill: m.skill }),
+      },
+      pick,
+    );
     reply.status(out.created ? 201 : 200);
     return { conversation: out.conversation, event: out.event, events: out.events };
   }
@@ -588,20 +600,20 @@ export class ConversationsController {
   }
 
   /**
-   * 对话沙箱的状态。响应体**不套外层键**，直接是 `{ status: "running" | "suspended", lastUsedAt }`
-   * （不同于 `{ preview }`、`{ conversation }` 等；网页 `getSandboxStatus` 按此解析）；
-   * 没有可用的沙箱（未创建、已销毁）→ 404 `sandbox.not_found`。可见性与会话流相同。
+   * The environment the conversation works in (a sub-agent: its root's), as its owner sees it,
+   * with its instance state; `null` while unbound, or when the environment was deleted. Same
+   * visibility as the event stream.
    */
-  @Get(":id/sandbox")
+  @Get(":id/environment")
   @Header("cache-control", "private, no-store")
   @OrgAction("agents.use")
-  async sandbox(
+  async environment(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<SandboxStatusView> {
+  ): Promise<{ environment: EnvironmentView | null }> {
     const p = requireUser(principal);
-    return this.sandboxStatus.get(org.orgId, id, p.account.id);
+    return { environment: await this.environmentStatus.get(org.orgId, id, p.account.id) };
   }
 
   /**

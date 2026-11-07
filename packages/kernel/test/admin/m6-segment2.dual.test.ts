@@ -283,8 +283,16 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     expect(r.status, JSON.stringify(r.json)).toBe(202);
   };
-  const newConv = async (i: 0 | 1) =>
-    ((await ok(i, "POST", `${base}/conversations`, { agentId })).conversation as { id: string }).id;
+  /** A new conversation (in `environmentId`, else the caller's default environment). */
+  const newConv = async (i: 0 | 1, environmentId?: string) =>
+    (
+      (
+        await ok(i, "POST", `${base}/conversations`, {
+          agentId,
+          ...(environmentId !== undefined && { environmentId }),
+        })
+      ).conversation as { id: string }
+    ).id;
   /** 第 n 个终态（须为 run_finished completed）对应运行的最后一条 tool_result。 */
   const finished = async (convId: string, n: number): Promise<ToolResult> => {
     const term = await waitForTerminal(db, convId, n, 60_000);
@@ -601,11 +609,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   });
 
   it("5. 组织沙箱覆盖：之后新建的沙箱拿到覆盖的 cpu，已有的不变", async () => {
+    // the instance of the conversation's environment
     const sandboxOf = async (convId: string) => {
       const row = await db
-        .selectFrom("sandboxes")
-        .select("handle")
-        .where("conversation_id", "=", convId)
+        .selectFrom("environment_instances as i")
+        .innerJoin("conversations as c", "c.environment_id", "i.environment_id")
+        .select("i.handle")
+        .where("c.id", "=", convId)
         .executeTakeFirstOrThrow();
       return fakeSandboxMeta(sandboxRoot, row.handle?.id ?? "");
     };
@@ -622,7 +632,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const settings = await ok(1, "GET", `${base}/settings`);
     expect(settings.sandboxLimits).toEqual({ cpu: 2, memoryMb: 2048, source: "override" });
 
-    const after = await newConv(1);
+    // a new environment gets a new instance (the default one keeps its instance and limits)
+    const env = (
+      (await ok(1, "POST", `${base}/environments`, { name: "After override" })).environment as {
+        id: string;
+      }
+    ).id;
+    const after = await newConv(1, env);
     await send(0, after, "Bash", { description: "Test step", command: "echo two" });
     const r2 = await finished(after, 1);
     expect(r2.isError, String(r2.content)).toBe(false);

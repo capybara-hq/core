@@ -45,12 +45,15 @@ beforeEach(async () => {
 });
 
 const T0 = new Date("2026-11-05T10:00:00.000Z");
+/** The environment the tasks run in (the column has no foreign key). */
+const ENV = "env-1";
 
 const task = (id: string, over: Partial<BackgroundTaskInsert> = {}): BackgroundTaskInsert => ({
   id,
   orgId: seed.orgId,
   conversationId: seed.conversationId,
   sandboxConversationId: seed.conversationId,
+  environmentId: ENV,
   runId: "run-1",
   callId: "call-1",
   triggerAccountId: seed.accountId,
@@ -126,9 +129,11 @@ describe("BackgroundTaskStore", () => {
       lostReason: "process_gone",
       killPending: true,
     });
-    expect((await store.pendingKills(seed.conversationId)).map((r) => r.id)).toEqual(["bt_000001"]);
+    expect((await store.pendingKills(ENV)).map((r) => r.id)).toEqual(["bt_000001"]);
+    // by environment: another environment's pending kills are its own
+    expect(await store.pendingKills("env-2")).toEqual([]);
     await store.clearKill(["bt_000001"]);
-    expect(await store.pendingKills(seed.conversationId)).toEqual([]);
+    expect(await store.pendingKills(ENV)).toEqual([]);
   });
 
   it("finish outside a transaction throws (mandatory propagation)", async () => {

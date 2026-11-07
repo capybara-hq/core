@@ -185,8 +185,16 @@ the same transaction as the business rows.
 `Glob`, `Grep`, `Deliver`.
 
 - They exist only when the agent definition references them explicitly (`DEFAULT_AGENT_TOOLS` does not include them); when the deployment has no sandbox extension they are reported unavailable (`unavailable()`).
-- All go through `SandboxService.withSandbox` (one sandbox per conversation, created lazily, see `.agents/skills/writing-sandbox-providers`), passing the lock-linked
-  signal to every provider call; paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`.
+- All run in the conversation's **environment** (spec `docs/superpowers/specs/2026-11-07-environments-design.md` §4.1, §4.2 items 8, 9, 12): `inSandbox`
+  first calls `ConversationEnvironments.forTool(orgId, rootConversationId)`, which binds a still unbound root conversation once (an IM thread to the
+  owner's still usable IM default, else the owner's default environment; `UPDATE … WHERE environment_id IS NULL`) and checks
+  `EnvironmentAccess.usable` for the conversation's **owner** on every call, so a conversation never reaches another person's environment; an
+  anonymous IM sender's conversation has no environment (`sandbox.unavailable`, an anonymous-specific tool error). Then
+  `SandboxService.withSandbox({ orgId, environmentId, holderConversationId, actor })` (instance created lazily, see
+  `.agents/skills/writing-sandbox-providers`), passing the lock-linked signal to every provider call; path leases (`withPathLease(deps, session, …)`)
+  are on the environment. `mapSandboxError` turns `environment.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors.
+  Paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`. A conversation is bound at create (`POST /conversations`
+  `environmentId`, checked with `usable`; without it the owner's default) and its environment is read at `GET …/conversations/:id/environment`.
 - Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =
   `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeout` above the limit is lowered to it and the result says so.
   The other sandbox tools use only the margin (deliver twice). The provider's command time limit arrives first, the model gets `timedOut`, and the sandbox remains usable as usual.
@@ -212,7 +220,7 @@ the same transaction as the business rows.
 `tools/builtins/sandbox/{bash,task-output,task-stop}.ts`):
 
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
-  per-sandbox `XactLock`, `sid` null), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
+  per-root-conversation `XactLock`, `sid` null; the row records its `environment_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
   output in `/workspace/.capybara/tasks/<id>.out`), then records the session id. The call returns at once; `timeout` is the task's own limit
   (default and cap `sandbox.background.maxSeconds`, itself at most `sandbox.limits.maxCommandSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
   "N background tasks are already running; stop one with TaskStop or wait for one to finish, then retry".
@@ -333,7 +341,7 @@ Specs `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9 (phase C
 - **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `Agent` call: the
   `Agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
   child's own calls are gated as usual. A hook point for person-initiated dispatches comes later.
-- **Sandbox**: sub-agents at every depth use the root conversation's sandbox (`BuiltinCallContext.sandboxConversationId`) and may run commands at
+- **Sandbox**: sub-agents at every depth use the root conversation's environment (`BuiltinCallContext.sandboxConversationId`) and may run commands at
   the same time; the `Bash` and `Agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).
 

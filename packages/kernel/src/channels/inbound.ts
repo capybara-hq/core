@@ -236,7 +236,10 @@ export class ChannelInbound {
     if (conversationId === undefined) {
       let created: string;
       try {
-        created = (await this.conversations.create(row.orgId, accountId, row.agentId)).id;
+        // bound to the person's IM default environment, else their default (environments spec
+        // §4.2 item 8); an anonymous sender's stays unbound (no sandbox)
+        created = (await this.conversations.create(row.orgId, accountId, row.agentId, { im: true }))
+          .id;
       } catch (err) {
         if (err instanceof ApiError && err.code === "agent.not_found") {
           await reply("agentUnavailable");

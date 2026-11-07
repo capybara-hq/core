@@ -233,7 +233,6 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  "sandbox.not_found": 404,
   /** The environment is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
   "environment.not_found": 404,
   /** The environment's file system is gone at the provider; reset its files to start empty. */

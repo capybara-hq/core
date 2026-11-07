@@ -141,7 +141,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
-  for (const c of used) await sandbox.destroyFor(c).catch(() => {});
+  for (const e of new Set(used)) await sandbox.destroyEnvironment(e).catch(() => {});
   used = [];
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
     WHERE status = 'running'`.execute(raw);
@@ -149,15 +149,22 @@ afterEach(async () => {
 
 const base = (conv: string) => `/api/v1/orgs/${orgId}/conversations/${conv}/background-tasks`;
 
-/** A new conversation of the owner. */
+/** A new conversation of the owner (in the owner's default environment). */
 async function conversation(): Promise<{
   orgId: string;
   conversationId: string;
   accountId: string;
+  environmentId: string;
 }> {
   const conversationId = await createConv(owner, orgId, agentId);
-  used.push(conversationId);
-  return { orgId, conversationId, accountId: ownerId };
+  const { environment_id } = await db
+    .selectFrom("conversations")
+    .select("environment_id")
+    .where("id", "=", conversationId)
+    .executeTakeFirstOrThrow();
+  const environmentId = environment_id as string;
+  used.push(environmentId);
+  return { orgId, conversationId, accountId: ownerId, environmentId };
 }
 
 /** A sub-agent's conversation under `parent`, seeded in the database. */
@@ -169,9 +176,9 @@ async function child(parent: string): Promise<string> {
   return id;
 }
 
-/** Starts `command` as a background task of `owning`, in the sandbox of `c`, like `Bash` does. */
+/** Starts `command` as a background task of `owning`, in the environment of `c`, like `Bash` does. */
 async function launch(
-  c: { orgId: string; conversationId: string; accountId: string },
+  c: { orgId: string; conversationId: string; accountId: string; environmentId: string },
   command: string,
   owning = c.conversationId,
   seconds = 300,
@@ -179,7 +186,12 @@ async function launch(
   const id = newTaskId();
   const startedAt = new Date();
   const r = await sandbox.withSandbox(
-    c,
+    {
+      orgId: c.orgId,
+      environmentId: c.environmentId,
+      holderConversationId: c.conversationId,
+      actor: { accountId: c.accountId, conversationId: c.conversationId },
+    },
     (h, p, _info, sig) =>
       p.exec(h, {
         command: launchScript(id, command, seconds),
@@ -193,18 +205,19 @@ async function launch(
   expect(r.exitCode).toBe(0);
   const sid = r.stdout.trim();
   const { handle } = await db
-    .selectFrom("sandboxes")
+    .selectFrom("environment_instances")
     .select("handle")
-    .where("conversation_id", "=", c.conversationId)
+    .where("environment_id", "=", c.environmentId)
     .executeTakeFirstOrThrow();
   const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
   await waitFor(async () => existsSync(record), 10_000, "session record");
-  const instance = await sandbox.currentInstance(c.conversationId);
+  const instance = await sandbox.currentInstance(c.environmentId);
   await store.insert({
     id,
     orgId: c.orgId,
     conversationId: owning,
     sandboxConversationId: c.conversationId,
+    environmentId: c.environmentId,
     runId: "run-x",
     callId: "call-x",
     triggerAccountId: c.accountId,
@@ -431,16 +444,15 @@ describe("background task routes", { timeout: 90_000 }, () => {
     expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
     // reading never resumed the sandbox
     const row = await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("status")
-      .where("conversation_id", "=", c.conversationId)
+      .where("environment_id", "=", c.environmentId)
       .executeTakeFirstOrThrow();
     expect(row.status).toBe("suspended");
   });
 
   it("sends changed: background when a task starts and when it finishes", async () => {
-    const conv = await createConv(owner, orgId, agentId);
-    used.push(conv);
+    const { conversationId: conv } = await conversation();
     const sse = await openSse(
       `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${conv}/stream`,
       { cookie: ownerCookie() },

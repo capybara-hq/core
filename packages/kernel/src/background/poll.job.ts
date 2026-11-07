@@ -1,3 +1,4 @@
+import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelConfig } from "../config/schema.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -7,11 +8,16 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import {
+  type HeldProvider,
+  type IfRunningResult,
+  SandboxService,
+} from "../sandbox/sandbox.service.js";
 import { sandboxBaseTimeoutMs } from "../tools/builtins/sandbox/common.js";
 import { type BackgroundFinish, BackgroundTaskFinisher } from "./finish.js";
 import { LAUNCH_EXEC_TIMEOUT_MS } from "./launch.js";
-import { parsePollOutput, polledAs, pollScript } from "./status.js";
+import { actingAs, taskActor } from "./session.js";
+import { parsePollOutput, polledAs, pollScript, type TaskReport } from "./status.js";
 import { notRunningAs, RECREATED } from "./stop.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
@@ -41,11 +47,12 @@ const POLL_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 /**
  * The worker's background task jobs (spec 2026-11-05-background-bash-design §4.3), each once per
  * tick across replicas:
- * - `background-task-poll` (every `sandbox.background.pollSeconds`): for every sandbox with
- *   running tasks, one exec through `SandboxService.ifRunning` (which never creates or resumes a
- *   sandbox) reports each task's exit file and liveness; ended tasks finish through
- *   {@link BackgroundTaskFinisher}. Each poll takes and releases a lease, so `last_used_at` stays
- *   fresh and a sandbox with running tasks is never idle-suspended;
+ * - `background-task-poll` (every `sandbox.background.pollSeconds`): for every environment
+ *   instance with running tasks (of any conversation using it), one exec through
+ *   `SandboxService.ifRunning` (which never creates or resumes an instance) reports each task's
+ *   exit file and liveness; ended tasks finish through {@link BackgroundTaskFinisher}. Each poll
+ *   takes and releases a lease, so `last_used_at` stays fresh and an instance with running tasks
+ *   is never idle-suspended;
  * - `background-task-prune` (daily): deletes finished tasks older than `tools.outputRetentionDays`.
  */
 @Injectable()
@@ -94,7 +101,8 @@ export class BackgroundTaskPollJob {
     const groups = new Map<string, BackgroundTaskRow[]>();
     for (const t of await this.store.runningStarted()) {
       if (t.sid === null || t.sandboxCreatedAt === null) continue;
-      const key = `${t.sandboxConversationId} ${t.sandboxCreatedAt.getTime()}`;
+      // one exec per instance: the tasks of every conversation sharing the environment
+      const key = `${t.environmentId} ${t.sandboxCreatedAt.getTime()}`;
       groups.set(key, [...(groups.get(key) ?? []), t]);
     }
     let finished = 0;
@@ -105,7 +113,7 @@ export class BackgroundTaskPollJob {
       } catch (err) {
         if (signal.aborted) break;
         this.log.warn("cannot poll background tasks; retrying next tick", {
-          conversationId: tasks[0]?.sandboxConversationId,
+          environmentId: tasks[0]?.environmentId,
           err,
         });
       }
@@ -114,29 +122,19 @@ export class BackgroundTaskPollJob {
     return finished;
   }
 
-  /** Polls the tasks of one sandbox instance; returns how many finished. */
+  /** Polls the tasks of one environment instance; returns how many finished. */
   private async pollSandbox(tasks: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
     const [first] = tasks as [BackgroundTaskRow];
-    const r = await this.sandbox.ifRunning(
-      first.sandboxConversationId,
-      { createdAt: first.sandboxCreatedAt as Date },
-      async (p, h, sig) => {
-        const res = await p.exec(h, {
-          command: pollScript(tasks.map((t) => ({ id: t.id, sid: t.sid as string }))),
-          cwd: "/workspace",
-          timeoutMs: POLL_EXEC_TIMEOUT_MS,
-          maxOutputBytes: POLL_MAX_OUTPUT_BYTES,
-          signal: sig,
-        });
-        if (res.exitCode !== 0 || res.truncated) {
-          throw new Error(
-            `the poll exec failed (exit ${res.exitCode}${res.truncated ? ", truncated" : ""}): ${res.stderr.slice(0, 500)}`,
+    // a task from before environments has no instance any more
+    const r: IfRunningResult<Map<string, TaskReport>> =
+      first.environmentId === null
+        ? { kind: "not_running", status: "gone" }
+        : await this.sandbox.ifRunning(
+            first.environmentId,
+            { createdAt: first.sandboxCreatedAt as Date },
+            (p, h, sig) => this.pollExec(actingAs(p, taskActor(first)), h, tasks, sig),
+            signal,
           );
-        }
-        return parsePollOutput(res.stdout);
-      },
-      signal,
-    );
     const now = new Date();
     let n = 0;
     for (const t of tasks) {
@@ -157,6 +155,28 @@ export class BackgroundTaskPollJob {
       if (to && (await this.finisher.finish(t, to, lastLines, false, { unclaimed: true }))) n++;
     }
     return n;
+  }
+
+  /** The poll exec of one instance: each task's report by id. */
+  private async pollExec(
+    p: HeldProvider,
+    h: SandboxHandle,
+    tasks: BackgroundTaskRow[],
+    signal: AbortSignal,
+  ): Promise<Map<string, TaskReport>> {
+    const res = await p.exec(h, {
+      command: pollScript(tasks.map((t) => ({ id: t.id, sid: t.sid as string }))),
+      cwd: "/workspace",
+      timeoutMs: POLL_EXEC_TIMEOUT_MS,
+      maxOutputBytes: POLL_MAX_OUTPUT_BYTES,
+      signal,
+    });
+    if (res.exitCode !== 0 || res.truncated) {
+      throw new Error(
+        `the poll exec failed (exit ${res.exitCode}${res.truncated ? ", truncated" : ""}): ${res.stderr.slice(0, 500)}`,
+      );
+    }
+    return parsePollOutput(res.stdout);
   }
 
   /** Deletes the finished tasks older than `tools.outputRetentionDays` (their rows only). */

@@ -18,10 +18,10 @@ import { createDb } from "../../src/db/pool.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor } from "../helpers/identity.js";
-import { sandboxServiceFor } from "../helpers/sandbox.js";
+import { sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -38,6 +38,8 @@ let store: BackgroundTaskStore;
 let config: KernelConfig;
 let root: string;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
+/** The environment the seeded conversation is bound to. */
+let envId: string;
 let provider: SandboxProvider | undefined;
 let fake: SandboxProvider;
 /** The fake instances created by a test (destroyed after it: their tasks die with them). */
@@ -84,7 +86,10 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await redis.flushdb();
-  await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
+  await truncateTables(
+    raw,
+    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+  );
   root = await mkdtemp(join(tmpdir(), "cap-bash-bg-"));
   handles = [];
   const impl = createFakeSandbox(root);
@@ -120,6 +125,7 @@ beforeEach(async () => {
   provider = fake;
   config = configWith({});
   seed = await seedConversation(raw);
+  envId = await seedEnvironment(raw, seed.orgId, seed.accountId);
 });
 
 afterEach(async () => {
@@ -154,8 +160,8 @@ function bash(): BuiltinTool {
     lockPollMs: 20,
   });
   const wrapped = Object.create(sandbox) as typeof sandbox;
-  wrapped.currentInstance = (conv) =>
-    noInstance ? Promise.resolve(null) : sandbox.currentInstance(conv);
+  wrapped.currentInstance = (env) =>
+    noInstance ? Promise.resolve(null) : sandbox.currentInstance(env);
   wrapped.withSandbox = (async (...args: Parameters<typeof sandbox.withSandbox>) => {
     const v = await sandbox.withSandbox(...args);
     if (leaveThrows) throw new Error("cannot release the sandbox lease: redis down");
@@ -163,6 +169,7 @@ function bash(): BuiltinTool {
   }) as typeof sandbox.withSandbox;
   const deps: SandboxToolDeps = {
     sandbox: wrapped,
+    environments: { forTool: async () => envId },
     background: store,
     attachments: {
       listForConversation: async () => [],
@@ -199,12 +206,12 @@ const withoutRun = (): BuiltinCallContext => {
 const textOf = (r: Awaited<ReturnType<BuiltinTool["run"]>>): string =>
   "content" in r ? (r.content[0] as { text: string }).text : "";
 
-const sandboxCreatedAt = async (conv: string): Promise<Date> =>
+const sandboxCreatedAt = async (env: string): Promise<Date> =>
   (
     await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("created_at")
-      .where("conversation_id", "=", conv)
+      .where("environment_id", "=", env)
       .executeTakeFirstOrThrow()
   ).created_at;
 
@@ -224,6 +231,8 @@ async function alive(sid: string): Promise<boolean> {
     timeoutMs: 10_000,
     maxOutputBytes: 10_000,
     signal: signal(),
+    tag: "test",
+    actor: { accountId: seed.accountId, conversationId: seed.conversationId },
   });
   return r.exitCode === 0;
 }
@@ -258,6 +267,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
       orgId: seed.orgId,
       conversationId: seed.conversationId,
       sandboxConversationId: seed.conversationId,
+      environmentId: envId,
       runId: "run-1",
       callId: c.callId,
       triggerAccountId: seed.accountId,
@@ -268,7 +278,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     });
     expect(row.sid).toMatch(/^[1-9][0-9]*$/);
     expect(row.deadlineAt.getTime() - row.startedAt.getTime()).toBe(600_000);
-    expect(row.sandboxCreatedAt).toEqual(await sandboxCreatedAt(seed.conversationId));
+    expect(row.sandboxCreatedAt).toEqual(await sandboxCreatedAt(envId));
     // the command lives on after the call
     expect(await alive(row.sid as string)).toBe(true);
   });
@@ -285,8 +295,9 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     expect(row).toMatchObject({
       conversationId: child,
       sandboxConversationId: seed.conversationId,
+      environmentId: envId,
     });
-    expect(row?.sandboxCreatedAt).toEqual(await sandboxCreatedAt(seed.conversationId));
+    expect(row?.sandboxCreatedAt).toEqual(await sandboxCreatedAt(envId));
     expect(await store.countRunning(seed.conversationId)).toBe(1);
   });
 
@@ -410,7 +421,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     const h = handles[0] as SandboxHandle;
     const sid = (
       await readFile(
-        join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks", `${row?.id}.sid`),
+        join(fakeWorkspaceDir(root, h.id), ".capybara", "tasks", `${row?.id}.sid`),
         "utf8",
       )
     ).trim();

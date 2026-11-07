@@ -31,6 +31,7 @@ import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { sentToIdleText } from "../../src/tools/builtins/send-message.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -180,7 +181,7 @@ const textOf = (r: ModelRequest, i: number): string => {
 function workspaceDir(): string {
   const ids = readdirSync(join(sandboxRoot, "instances"));
   expect(ids).toHaveLength(1);
-  return join(sandboxRoot, "instances", ids[0] as string, "fs", "workspace");
+  return fakeWorkspaceDir(sandboxRoot, ids[0] as string);
 }
 
 const git = (dir: string, ...args: string[]) =>
@@ -466,9 +467,14 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(readFileSync(join(ws, "farewell.txt"), "utf8")).toBe("bye\n");
     // the SDD workspace stays out of git (sdd-workspace writes its own .gitignore)
     expect(git(ws, "status", "--porcelain")).toBe("");
-    // one sandbox, owned by the parent conversation
-    const boxes = await db.selectFrom("sandboxes").select("conversation_id").execute();
-    expect(boxes.map((b) => b.conversation_id)).toEqual([state.conv]);
+    // one instance, in the parent conversation's environment
+    const boxes = await db.selectFrom("environment_instances").select("environment_id").execute();
+    const { environment_id: rootEnv } = await db
+      .selectFrom("conversations")
+      .select("environment_id")
+      .where("id", "=", state.conv as string)
+      .executeTakeFirstOrThrow();
+    expect(boxes.map((b) => b.environment_id)).toEqual([rootEnv]);
   });
 
   it("the children's usage sums into the parent run's counter", async () => {

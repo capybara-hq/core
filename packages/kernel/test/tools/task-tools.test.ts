@@ -31,6 +31,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { seedEnvironment } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -54,7 +55,7 @@ let root: string;
 let sandbox: SandboxService;
 let store: BackgroundTaskStore;
 let tools: readonly BuiltinTool[];
-/** The conversations whose sandboxes a test used (destroyed after it: their tasks die with them). */
+/** The environments a test used (destroyed after it: their tasks die with them). */
 let used: string[] = [];
 
 beforeAll(async () => {
@@ -89,7 +90,7 @@ afterAll(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  for (const c of used) await sandbox.destroyFor(c).catch(() => {});
+  for (const e of used) await sandbox.destroyEnvironment(e).catch(() => {});
   used = [];
   await sql`UPDATE capybara.background_tasks SET status = 'lost', finished_at = now()
     WHERE status = 'running'`.execute(raw);
@@ -97,12 +98,19 @@ afterEach(async () => {
 
 const tool = (name: string): BuiltinTool => tools.find((t) => t.spec.name === name) as BuiltinTool;
 
-type Conv = Awaited<ReturnType<typeof seedConversation>>;
+type Conv = Awaited<ReturnType<typeof seedConversation>> & { environmentId: string };
 
+/** A seeded conversation bound to an environment of its own. */
 async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
-  used.push(s.conversationId);
-  return s;
+  const environmentId = await seedEnvironment(raw, s.orgId, s.accountId);
+  await db
+    .updateTable("conversations")
+    .set({ environment_id: environmentId })
+    .where("id", "=", s.conversationId)
+    .execute();
+  used.push(environmentId);
+  return { ...s, environmentId };
 }
 
 const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallContext => ({
@@ -135,7 +143,12 @@ async function start(ctx: BuiltinCallContext, command: string): Promise<Backgrou
 /** Runs `command` in the conversation's sandbox. */
 async function shell(c: Conv, command: string): Promise<string> {
   return sandbox.withSandbox(
-    c,
+    {
+      orgId: c.orgId,
+      environmentId: c.environmentId,
+      holderConversationId: c.conversationId,
+      actor: { accountId: c.accountId, conversationId: c.conversationId },
+    },
     async (h, p, _info, sig) =>
       (
         await p.exec(h, {
@@ -171,6 +184,7 @@ async function reservation(c: Conv, id: string): Promise<void> {
         orgId: c.orgId,
         conversationId: c.conversationId,
         sandboxConversationId: c.conversationId,
+        environmentId: c.environmentId,
         runId: "run-1",
         callId: "call-1",
         triggerAccountId: c.accountId,
@@ -352,9 +366,9 @@ describe("TaskOutput", () => {
     });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.reported).toBe(true);
     const st = await db
-      .selectFrom("sandboxes")
+      .selectFrom("environment_instances")
       .select("status")
-      .where("conversation_id", "=", c.conversationId)
+      .where("environment_id", "=", c.environmentId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
   }, 60_000);

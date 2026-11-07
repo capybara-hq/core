@@ -20,6 +20,9 @@ import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
 
+/** Every call's conversation is bound to one environment. */
+const environments = { forTool: async () => "env-1" };
+
 describe("compileGlob", () => {
   it("** crosses directories, * does not", () => {
     const m = compileGlob("**/*.txt");
@@ -147,6 +150,7 @@ describe("Bash time limit", () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
     });
     const bash = sandboxTools({
+      environments,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到配置
       sandbox: { available: true } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -211,13 +215,14 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
         },
       };
       const tool = sandboxTools({
+        environments,
         sandbox: {
           available: true,
           // 等锁用掉了 lockWaitSeconds + 25 秒
           withSandbox: async (_c, fn, sig) => {
             now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
             // biome-ignore lint/suspicious/noExplicitAny: 只用到 stat / exec
-            return fn({ id: "h" }, p as any, { fresh: false, recreated: false }, sig);
+            return fn({ id: "h" }, p as any, { fresh: false, restarted: false }, sig);
           },
         },
         // biome-ignore lint/suspicious/noExplicitAny: 只列附件
@@ -264,6 +269,7 @@ describe("registry without a sandbox provider", () => {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
     }
     const tools = sandboxTools({
+      environments,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到 available
       sandbox: { available: false } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -313,7 +319,7 @@ describe("attachment sync", () => {
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+      ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
     };
     return { files, writes, sandbox };
   }
@@ -332,6 +338,7 @@ describe("attachment sync", () => {
       },
     };
     const read = sandboxTools({
+      environments,
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
       sandbox: mem.sandbox as any,
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
@@ -428,12 +435,13 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       exec: async () => ({ ...opts.exec, truncated: false, timedOut: false }),
     };
     const tools = sandboxTools({
+      environments,
       sandbox: {
         available: true,
         withSandbox: async (
           _ctx: unknown,
           fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-        ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+        ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
       } as unknown as SandboxToolDeps["sandbox"],
       attachments: {
         listForConversation: async () => opts.attachments ?? [],
@@ -591,9 +599,10 @@ describe("read before write over Read's byte limit", () => {
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) => fn({ id: "x" }, p, { fresh: false, recreated: false }, new AbortController().signal),
+      ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
     } as unknown as SandboxToolDeps["sandbox"];
     const tools = sandboxTools({
+      environments,
       sandbox,
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,

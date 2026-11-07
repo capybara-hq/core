@@ -80,7 +80,7 @@ export class EnvironmentsService {
   /**
    * The person's live environments in the org, the default first, then by creation. With a
    * current sandbox provider the default environment is created first if missing (its first need,
-   * spec §4.2 item 7).
+   * spec §4.2 item 7; an existing one is only read).
    */
   async list(orgId: string, accountId: string): Promise<EnvironmentList> {
     const cloudAvailable = this.providers.current() !== undefined;
@@ -92,6 +92,8 @@ export class EnvironmentsService {
       .select("c.environment_id")
       .where("c.org_id", "=", orgId)
       .where("c.account_id", "=", accountId)
+      .where("e.org_id", "=", orgId)
+      .where("e.owner_kind", "=", "personal")
       .where("e.owner_account_id", "=", accountId)
       .where("e.deleted_at", "is", null)
       .orderBy("c.updated_at", "desc")
@@ -292,15 +294,23 @@ export class EnvironmentsService {
 
   /**
    * The person's default environment in the org, created when missing (named by the UI, `name`
-   * NULL). Idempotent under concurrency: the partial unique index on the live default makes a
-   * racing insert do nothing, and the select that follows reads the winner. Needs a current
-   * sandbox provider (`environment.unavailable`). It is the person's baseline, so it is created
-   * even at `environments.maxPersonal`.
+   * NULL). An existing one is read without locking. Creating one first takes the person's
+   * membership row (`FOR SHARE`, after the org row), so an offboarding that removes them cannot
+   * leave a live default behind; not a member (any more) → `org.not_found`. Idempotent under
+   * concurrency: the partial unique index on the live default makes a racing insert do nothing,
+   * and the select that follows reads the winner. Needs a current sandbox provider
+   * (`environment.unavailable`). It is the person's baseline, so it is created even at
+   * `environments.maxPersonal`.
    */
-  @Transactional()
   async ensureDefault(orgId: string, accountId: string): Promise<string> {
+    return (await this.defaultOf(orgId, accountId)) ?? this.insertDefault(orgId, accountId);
+  }
+
+  @Transactional()
+  private async insertDefault(orgId: string, accountId: string): Promise<string> {
     const current = this.providers.current();
     if (!current) throw environmentUnavailable(null);
+    await this.lockMember(orgId, accountId, "share");
     await this.db
       .insertInto("environments")
       .values({
@@ -320,15 +330,23 @@ export class EnvironmentsService {
           .doNothing(),
       )
       .execute();
+    const id = await this.defaultOf(orgId, accountId);
+    if (id === undefined) throw new Error("the default environment was not created");
+    return id;
+  }
+
+  /** The person's live default environment in the org, if any. */
+  private async defaultOf(orgId: string, accountId: string): Promise<string | undefined> {
     const row = await this.db
       .selectFrom("environments")
       .select("id")
       .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
       .where("owner_account_id", "=", accountId)
       .where("is_default", "=", true)
       .where("deleted_at", "is", null)
-      .executeTakeFirstOrThrow();
-    return row.id;
+      .executeTakeFirst();
+    return row?.id;
   }
 
   /** The person's live environments (or the one `id`) as views. */
@@ -395,10 +413,15 @@ export class EnvironmentsService {
 
   /**
    * Serializes the person's environment writes in the org: the org row (`FOR SHARE`), then their
-   * membership row (`FOR NO KEY UPDATE`), the order member removal locks them in. Not a member (any
-   * more) → `org.not_found`, as the org guard answers.
+   * membership row (`FOR NO KEY UPDATE`, or `FOR SHARE` with `mode` share: enough to keep the
+   * membership from being removed meanwhile), the order member removal locks them in. Not a
+   * member (any more) → `org.not_found`, as the org guard answers.
    */
-  private async lockMember(orgId: string, accountId: string): Promise<void> {
+  private async lockMember(
+    orgId: string,
+    accountId: string,
+    mode: "update" | "share" = "update",
+  ): Promise<void> {
     const org = await this.db
       .selectFrom("orgs")
       .select("id")
@@ -413,7 +436,8 @@ export class EnvironmentsService {
         .select("account_id")
         .where("org_id", "=", orgId)
         .where("account_id", "=", accountId)
-        .forNoKeyUpdate()
+        .$if(mode === "update", (q) => q.forNoKeyUpdate())
+        .$if(mode === "share", (q) => q.forShare())
         .executeTakeFirst());
     if (!m) throw new ApiError("org.not_found", "Organization not found");
   }

@@ -579,7 +579,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       } else {
         // the skill's marker is read, compared and written: one holder at a time per skill
         const r = await inSandbox(deps, ctx, (s) =>
-          withPathLease(deps, ctx, skillMarkerPath(v.entry.name), s.signal, (signal) =>
+          withPathLease(deps, s, skillMarkerPath(v.entry.name), s.signal, (signal) =>
             copySkill({ ...s, signal }, v),
           ),
         );

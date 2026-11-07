@@ -101,6 +101,24 @@ describe("environment access", () => {
     expect(next).not.toBe(ids[0]);
   });
 
+  it("ensureDefault makes no default for someone who is not a member (any more)", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const left = (
+      await accountsFor(db).createLocal({
+        login: `left-${randomUUID().slice(0, 8)}`,
+        password: PW,
+        displayName: "L",
+      })
+    ).id;
+    expect(await codeOf(service.ensureDefault(orgId, left))).toBe("org.not_found");
+    const rows = await db
+      .selectFrom("environments")
+      .select("id")
+      .where("owner_account_id", "=", left)
+      .execute();
+    expect(rows).toEqual([]);
+  });
+
   it("usable only by the owner in the environment's org", async () => {
     const access = k.app.get(EnvironmentAccess);
     const id = await k.app.get(EnvironmentsService).ensureDefault(orgId, ownerId);

@@ -242,6 +242,27 @@ describe("environments API", () => {
     expect((err as ApiError).code).toBe("environment.not_found");
   });
 
+  it("my environment is not_found through another org I am a member of", async () => {
+    const env = await create(owner, "Org A only");
+    const otherOrg = await createOrg(owner, "Other");
+    const elsewhere = `/api/v1/orgs/${otherOrg}/environments`;
+    for (const [method, url, payload] of [
+      ["GET", `${elsewhere}/${env.id}`, undefined],
+      ["PATCH", `${elsewhere}/${env.id}`, { name: "Moved" }],
+      ["DELETE", `${elsewhere}/${env.id}`, undefined],
+      ["POST", `${elsewhere}/${env.id}/files/reset`, undefined],
+    ] as const) {
+      const res = await owner({ method, url, ...(payload && { payload }) });
+      expect(res.statusCode, `${method} ${url}`).toBe(404);
+      expect(errCode(res)).toBe("environment.not_found");
+    }
+    const listed = await owner({ method: "GET", url: elsewhere });
+    expect((listed.json() as List).items.map((e) => e.id)).not.toContain(env.id);
+    // untouched in its own org
+    const mine = await owner({ method: "GET", url: `${base()}/${env.id}` });
+    expect((mine.json() as { environment: EnvironmentView }).environment.name).toBe("Org A only");
+  });
+
   it("names are unique per person, case-insensitive", async () => {
     const me = await member();
     const other = await member();

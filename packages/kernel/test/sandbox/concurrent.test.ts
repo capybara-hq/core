@@ -503,6 +503,17 @@ describe("concurrent commands (fake sandbox)", () => {
 });
 
 describe("path leases in the sandbox tools", () => {
+  /** The root conversations the tools asked for an environment; all are bound to `envId`. */
+  let asked: string[] = [];
+  const environments = {
+    forTool: async (_orgId: string, root: string) => {
+      asked.push(root);
+      return envId;
+    },
+  };
+  beforeEach(() => {
+    asked = [];
+  });
   const callCtx = (): BuiltinCallContext =>
     ({
       orgId,
@@ -516,6 +527,7 @@ describe("path leases in the sandbox tools", () => {
   const tools = (s: SandboxService) =>
     sandboxTools({
       sandbox: s,
+      environments,
       // biome-ignore lint/suspicious/noExplicitAny: only lists attachments
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
@@ -570,12 +582,13 @@ describe("path leases in the sandbox tools", () => {
     const s = service();
     const leased: string[] = [];
     const pathLease = s.pathLease.bind(s);
-    s.pathLease = (conv, path, sig) => {
+    s.pathLease = (env, path, sig) => {
       leased.push(path);
-      return pathLease(conv, path, sig);
+      return pathLease(env, path, sig);
     };
     const t = sandboxTools({
       sandbox: s,
+      environments,
       attachments: {
         listForConversation: async () => [{ id: "a1", name: "data.csv" }],
         openForConversation: async () => ({
@@ -618,16 +631,24 @@ describe("path leases in the sandbox tools", () => {
     expect(st).toBeNull();
   });
 
-  it("the path lease uses the sandbox conversation", async () => {
+  it("the path lease is taken on the root conversation's environment", async () => {
     withCap(3);
     const s = service();
+    const leasedOn: string[] = [];
+    const pathLease = s.pathLease.bind(s);
+    s.pathLease = (env, path, sig) => {
+      leasedOn.push(env);
+      return pathLease(env, path, sig);
+    };
     const child = {
       ...callCtx(),
       conversationId: randomUUID(),
       sandboxConversationId: conversationId,
     };
     await tool(s, "Write").run({ file_path: "/workspace/g.txt", content: "x" }, child);
-    // the child's call used the parent's sandbox: one instance, the file is there
+    // the child's call asked for the root's environment and used it: one instance, the file is there
+    expect(asked).toEqual([conversationId]);
+    expect(leasedOn).toEqual([envId]);
     const out = await run(s, "cat /workspace/g.txt");
     expect(out.r.stdout).toBe("x");
     expect(await ops("create")).toHaveLength(1);

@@ -10,6 +10,7 @@ import { SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
+import { actingAs } from "./session.js";
 import { BackgroundTaskStopper } from "./stop.js";
 import { type BackgroundTaskRow, type BackgroundTaskStatus, BackgroundTaskStore } from "./store.js";
 
@@ -148,8 +149,8 @@ export class BackgroundTasks {
   }
 
   /**
-   * The end of the task's output, at most `tail` bytes. Read live when the task's sandbox instance
-   * runs (never resuming a suspended sandbox); a finished task whose sandbox does not run answers
+   * The end of the task's output, at most `tail` bytes. Read live when the task's environment
+   * instance runs (never resuming a suspended one); a finished task whose sandbox does not run answers
    * with the last lines its finished event kept. Anything else is
    * `background_task.output_unavailable` (409).
    */
@@ -161,14 +162,21 @@ export class BackgroundTasks {
     tail: number,
   ): Promise<BackgroundTaskOutput> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
-    if (task.sid !== null && task.sandboxCreatedAt !== null && this.sandbox.available) {
+    if (
+      task.sid !== null &&
+      task.sandboxCreatedAt !== null &&
+      task.environmentId !== null &&
+      this.sandbox.available
+    ) {
       const createdAt = task.sandboxCreatedAt;
+      // the person reading it acts in the task's conversation
+      const actor = { accountId, conversationId: task.conversationId };
       try {
         const r = await this.sandbox.ifRunning(
-          task.sandboxConversationId,
+          task.environmentId,
           { createdAt },
           async (p, h, signal) => {
-            const res = await p.exec(h, {
+            const res = await actingAs(p, actor).exec(h, {
               command: tailScript(task.id, tail),
               cwd: "/workspace",
               timeoutMs: OUTPUT_READ_TIMEOUT_MS,

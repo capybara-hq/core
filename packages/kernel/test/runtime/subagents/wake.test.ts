@@ -483,6 +483,8 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       orgId,
       conversationId: child.conversationId,
       sandboxConversationId: conv,
+      // a row without a process: no instance to address
+      environmentId: null,
       runId: child.runId,
       callId: "call-x",
       triggerAccountId: ownerId,
@@ -836,6 +838,8 @@ async function finishChildTask(
     orgId,
     conversationId: child.conversationId,
     sandboxConversationId: conv,
+    // a row without a process: no instance to address
+    environmentId: null,
     runId: child.runId,
     callId: "call-x",
     triggerAccountId: ownerId,

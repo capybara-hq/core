@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchScript, newTaskId, startedText } from "../../src/background/launch.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 
 /** The launch of a background Bash task (spec 2026-11-05-background-bash-design §4.2). */
 
@@ -18,6 +18,13 @@ afterAll(async () => {
 
 const limits = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none" as const, allowHosts: [] };
 const sig = () => AbortSignal.timeout(10_000);
+const ACTOR = { accountId: "a", conversationId: "c" };
+
+/** A fake instance on a file system of its own. */
+async function instance(p: ReturnType<typeof createFakeSandbox>, name: string) {
+  const fileSystem = await p.createFileSystem({ name, limits, signal: sig() });
+  return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
+}
 
 async function until(cond: () => boolean, ms = 10_000): Promise<void> {
   const end = Date.now() + ms;
@@ -58,7 +65,7 @@ describe("launchScript", { timeout: 30_000 }, () => {
 
   it("runs a command with quotes, $, a backtick, newlines and a heredoc byte for byte", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-launch", image: "i", limits, signal: sig() });
+    const h = await instance(p, "cap-launch");
     const command = [
       `echo 'single "double" $HOME' "it's \`echo tick\`"`,
       "X=1; echo \"x=$X\" '$X'",
@@ -77,6 +84,8 @@ describe("launchScript", { timeout: 30_000 }, () => {
         timeoutMs: 10_000,
         maxOutputBytes: 100_000,
         signal: sig(),
+        tag: "test",
+        actor: ACTOR,
       });
 
     const fg = await run(command);
@@ -89,7 +98,7 @@ describe("launchScript", { timeout: 30_000 }, () => {
     expect(r.stdout).toMatch(/^[1-9][0-9]*\n$/);
     expect(Date.now() - t0).toBeLessThan(5000);
 
-    const dir = join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks");
+    const dir = join(fakeWorkspaceDir(root, h.id), ".capybara", "tasks");
     await until(() => existsSync(join(dir, "bt_rtrip2.exit")));
     expect(await readFile(join(dir, "bt_rtrip2.sh"), "utf8")).toBe(command);
     expect(await readFile(join(dir, "bt_rtrip2.out"), "utf8")).toBe(fg.stdout);
@@ -98,16 +107,18 @@ describe("launchScript", { timeout: 30_000 }, () => {
 
   it("runs the command with bash, as a foreground Bash call does", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-launch-b", image: "i", limits, signal: sig() });
+    const h = await instance(p, "cap-launch-b");
     const r = await p.exec(h, {
       command: launchScript("bt_bash22", "[[ 1 == 1 ]] && echo ok; echo {1..3}", 60),
       cwd: "/workspace",
       timeoutMs: 10_000,
       maxOutputBytes: 10_000,
       signal: sig(),
+      tag: "test",
+      actor: ACTOR,
     });
     expect(r.exitCode).toBe(0);
-    const dir = join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks");
+    const dir = join(fakeWorkspaceDir(root, h.id), ".capybara", "tasks");
     await until(() => existsSync(join(dir, "bt_bash22.exit")));
     expect(await readFile(join(dir, "bt_bash22.out"), "utf8")).toBe("ok\n1 2 3\n");
     expect(await readFile(join(dir, "bt_bash22.exit"), "utf8")).toBe("0\n");
@@ -126,7 +137,7 @@ describe("launchScript", { timeout: 30_000 }, () => {
 
   it("writes the exit status of a failing command and kills one past its seconds (137)", async () => {
     const p = createFakeSandbox(root);
-    const h = await p.create({ name: "cap-launch-x", image: "i", limits, signal: sig() });
+    const h = await instance(p, "cap-launch-x");
     const run = (c: string) =>
       p.exec(h, {
         command: c,
@@ -134,12 +145,14 @@ describe("launchScript", { timeout: 30_000 }, () => {
         timeoutMs: 10_000,
         maxOutputBytes: 10_000,
         signal: sig(),
+        tag: "test",
+        actor: ACTOR,
       });
     expect(
       (await run(launchScript("bt_fail22", "echo out; echo err >&2; exit 3", 60))).exitCode,
     ).toBe(0);
     expect((await run(launchScript("bt_slow22", "sleep 30", 1))).exitCode).toBe(0);
-    const dir = join(root, "instances", h.id, "fs", "workspace", ".capybara", "tasks");
+    const dir = join(fakeWorkspaceDir(root, h.id), ".capybara", "tasks");
     await until(() => existsSync(join(dir, "bt_fail22.exit")));
     expect(await readFile(join(dir, "bt_fail22.exit"), "utf8")).toBe("3\n");
     expect(await readFile(join(dir, "bt_fail22.out"), "utf8")).toBe("out\nerr\n");
