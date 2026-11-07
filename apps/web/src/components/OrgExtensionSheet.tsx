@@ -10,6 +10,7 @@ import { ConfigForm } from "./config-form/ConfigForm";
 import { orgConfig, orgFormMeta } from "./config-form/org";
 import { FormError } from "./form-error";
 import { OrgOverrideSection } from "./OrgOverrideSection";
+import { OrgToolSwitches } from "./OrgToolSwitches";
 import { PermissionReview } from "./PermissionReview";
 import { PermissionSummary } from "./PermissionSummary";
 
@@ -218,6 +219,9 @@ export function OrgExtensionSheet({
               </Text>
             )}
           </Stack>
+        )}
+        {plugin.enabled && !unavailable && (
+          <OrgToolSwitches orgId={orgId} plugin={plugin.plugin} canEdit={canEdit} />
         )}
         {canEdit && !unavailable && directory && plugin.enabled && (
           <Stack gap={8}>

@@ -211,7 +211,9 @@
       "package_too_large": "扩展包超过大小上限。",
       "unavailable": "扩展当前不可用。",
       "field_not_overridable": "这个字段不能由组织设置。",
-      "no_org_override": "本组织正在跟随平台的配置，没有自己的配置。"
+      "no_org_override": "本组织正在跟随平台的配置，没有自己的配置。",
+      "tool_not_found": "这个扩展没有这个工具",
+      "needs_config": "这个扩展需要先在本组织完成配置"
     },
     "bootstrap": {
       "download_failed": "无法从 npm registry 下载部署锁定的某个引导插件。请检查 registry（packages.npmRegistry），或把包放进引导目录。",
@@ -457,6 +459,7 @@
       "noExtensionTools": "本组织启用的扩展没有提供工具。",
       "extensionToolsUnreadable": "暂时读不到扩展工具列表，刷新页面重试。",
       "extensionToolUnavailable": "不可用：{reason}",
+      "extensionToolOffInOrg": "已在本组织关闭",
       "extensionNotEnabled": "扩展 {extension} 没有在本组织启用，或已卸载。",
       "extensionToolGone": "扩展 {extension} 不再提供这个工具。",
       "policiesLabel": "策略",
@@ -2266,6 +2269,20 @@
       "ui": "界面",
       "publicRoutes": "公开路由",
       "provides": "扩展点"
+    },
+    "toolSwitches": {
+      "title": "工具",
+      "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
+      "loadFailed": "无法读取工具。",
+      "retry": "重试",
+      "switchLabel": "{tool}",
+      "off": "已在本组织关闭",
+      "offTitle": "关闭 {tool}？",
+      "offAgents": "以下智能体正在使用这个工具，关闭后它们将无法使用：",
+      "offNoAgents": "没有智能体在使用这个工具。",
+      "offConfirm": "确认关闭",
+      "offCancel": "取消",
+      "stale": "使用这个工具的智能体在你确认前有变化，请重新确认。"
     },
     "overrides": {
       "following": "跟随平台",

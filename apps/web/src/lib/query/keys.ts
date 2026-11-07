@@ -68,6 +68,12 @@ export const keys = {
         "orgExtensionOverrides",
         name,
       ],
+      /** One extension's single-tool switches in the org. */
+      extensionToolSwitches: (name: string): readonly unknown[] => [
+        ...all,
+        "extensionToolSwitches",
+        name,
+      ],
       /** The org's `org-default` extension points: candidates, stored and effective default. */
       extensionPointDefaults: (): readonly unknown[] => [...all, "extensionPointDefaults"],
       /** Whether each `org-default` point has a provider for the org now (the web tools). */

@@ -429,6 +429,7 @@ export function ToolsEdit() {
     tools: e.tools.map((x) => ({
       key: extensionToolKey(e.plugin, x.name),
       label: x.title ?? x.name,
+      off: x.switchedOff === true,
     })),
   }));
   const listed = new Set<string>([
@@ -443,14 +444,20 @@ export function ToolsEdit() {
       tools: on ? [...cur.tools, key] : cur.tools.filter((x) => x !== key),
     }));
   };
-  const box = (key: string, label: string) => (
-    <Checkbox
-      key={key}
-      label={label}
-      checked={d.tools.includes(key)}
-      disabled={save.pending}
-      onChange={(on) => toggle(key, on)}
-    />
+  const box = (key: string, label: string, off = false) => (
+    <Stack key={key} gap={0}>
+      <Checkbox
+        label={label}
+        checked={d.tools.includes(key)}
+        disabled={save.pending}
+        onChange={(on) => toggle(key, on)}
+      />
+      {off && d.tools.includes(key) && (
+        <Text variant="small" tone="warn">
+          {tf("extensionToolOffInOrg")}
+        </Text>
+      )}
+    </Stack>
   );
   const unsaved = [
     !sameJson([...d.tools].sort(), [...saved.tools].sort()),
@@ -513,7 +520,7 @@ export function ToolsEdit() {
               <div key={g.plugin} role="group" aria-label={g.name}>
                 <Stack gap={4}>
                   <Text variant="small">{g.name}</Text>
-                  {g.tools.map((x) => box(x.key, x.label))}
+                  {g.tools.map((x) => box(x.key, x.label, x.off))}
                 </Stack>
               </div>
             ))}

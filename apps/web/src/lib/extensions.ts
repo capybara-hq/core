@@ -224,6 +224,8 @@ export interface ExtensionToolOffer {
   description: string;
   annotations: Record<string, boolean>;
   defaultPolicy: "allow" | "ask";
+  /** The org turned this tool off (older kernels leave it out): still listed, shown as off. */
+  switchedOff?: boolean;
 }
 
 /** An extension enabled in the org with the tools it registered (kernel `ExtensionToolsOffer`). */
@@ -242,3 +244,39 @@ export const listExtensionTools = (orgId: string) =>
 /** Whether each `org-default` point has a provider for the org now (`agents.use`; no names). */
 export const listAvailableExtensionPoints = (orgId: string) =>
   apiFetch<{ points: { point: string; available: boolean }[] }>(`${pointsBase(orgId)}/available`);
+
+/** One tool of an extension with the org's switch (kernel `OrgToolSwitch`). */
+export interface OrgToolSwitch {
+  tool: string;
+  enabled: boolean;
+}
+
+/** An org agent whose current version selects the tool being switched off. */
+export interface AffectedToolAgent {
+  id: string;
+  name: string;
+}
+
+/** `PUT …/tools/:tool`: the switch-off preview with its confirm hash, or the switch applied. */
+export type ToolSwitchResult =
+  | { applied: false; affectedAgents: AffectedToolAgent[]; confirm: string }
+  | { applied: true };
+
+const toolsPath = (orgId: string, plugin: string) =>
+  `${base(orgId)}/${encodeURIComponent(plugin)}/tools`;
+
+/** The extension's tools with the org's switches (members read). */
+export const listOrgToolSwitches = (orgId: string, plugin: string) =>
+  apiFetch<{ tools: OrgToolSwitch[] }>(toolsPath(orgId, plugin));
+
+/** Switches one tool; off answers the preview until `confirm` carries its hash (org admins). */
+export const putOrgToolSwitch = (
+  orgId: string,
+  plugin: string,
+  tool: string,
+  input: { enabled: boolean; confirm?: string },
+) =>
+  apiFetch<ToolSwitchResult>(`${toolsPath(orgId, plugin)}/${encodeURIComponent(tool)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
