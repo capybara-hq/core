@@ -212,6 +212,16 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     description:
       "The org's model per purpose and the models it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
   },
+  {
+    id: "channels",
+    description:
+      "The org's channel connections (IM bots): list, read without credentials, change the binding, remove.",
+  },
+  {
+    id: "org-settings",
+    description:
+      "The org's settings (tool search, language, sandbox policy, the Platform tool switch): read and change.",
+  },
 ];
 
 /**

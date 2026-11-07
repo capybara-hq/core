@@ -208,6 +208,8 @@ export class OrgSettingsService {
     patch: OrgSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<OrgSettings> {
     if (
       patch.sandboxEgress?.mode === "allowlist" &&
@@ -218,7 +220,7 @@ export class OrgSettingsService {
         "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
       );
     }
-    return this.updateIn(orgId, patch, actorAccountId, actorTokenId);
+    return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail);
   }
 
   @Transactional()
@@ -227,6 +229,7 @@ export class OrgSettingsService {
     patch: OrgSettingsPatch,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<OrgSettings> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
     const row = await this.db
@@ -259,7 +262,7 @@ export class OrgSettingsService {
       orgId,
       action: "org.settings_updated",
       target: orgId,
-      detail: { before, after },
+      detail: { before, after, ...auditDetail },
     });
     return after;
   }

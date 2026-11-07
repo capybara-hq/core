@@ -543,6 +543,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     patch: UpdateChannelInput,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ channel: ChannelConnectionView; verifySkipped: boolean }> {
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
@@ -578,6 +580,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       verified,
       actorAccountId,
       actorTokenId,
+      auditDetail,
     });
     if (rotated) this.reportSecrets(rotated.schema, rotated.full);
     // New config, re-enabled or back to long connection: clear the backoff so the next scan connects
@@ -610,8 +613,9 @@ export class ChannelConnections implements OnApplicationShutdown {
     verified: { botUserId: string; tenantId: string } | undefined;
     actorAccountId: string;
     actorTokenId: string | undefined;
+    auditDetail: Record<string, unknown> | undefined;
   }) {
-    const { orgId, id, patch, rotated, verified, actorAccountId, actorTokenId } = a;
+    const { orgId, id, patch, rotated, verified, actorAccountId, actorTokenId, auditDetail } = a;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
     if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
     if (rotated) {
@@ -655,6 +659,7 @@ export class ChannelConnections implements OnApplicationShutdown {
           ),
           ...(rotated ? ["config"] : []),
         ],
+        ...auditDetail,
       },
     });
     return updated;
@@ -666,8 +671,10 @@ export class ChannelConnections implements OnApplicationShutdown {
     id: string,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.removeIn(orgId, id, actorAccountId, actorTokenId);
+    await this.removeIn(orgId, id, actorAccountId, actorTokenId, auditDetail);
     await this.changed(id, true);
   }
 
@@ -678,6 +685,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     id: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
     const r = await this.db
@@ -698,6 +706,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       orgId,
       action: "channel.deleted",
       target: id,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 

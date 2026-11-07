@@ -54,6 +54,8 @@ describe("PlatformOperations", () => {
       "accounts",
       "admin",
       "models",
+      "channels",
+      "org-settings",
     ]);
   });
 
