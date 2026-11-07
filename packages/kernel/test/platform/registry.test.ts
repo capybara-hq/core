@@ -49,6 +49,7 @@ describe("PlatformOperations", () => {
       "requests",
       "connectors",
       "extensions",
+      "conversations",
     ]);
   });
 

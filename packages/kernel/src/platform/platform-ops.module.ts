@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -8,6 +9,7 @@ import { ToolsModule } from "../tools/tools.module.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
+import { ConversationsOperations } from "./ops/conversations.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
@@ -30,6 +32,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   RequestsOperations,
   ConnectorsOperations,
   ExtensionsOperations,
+  ConversationsOperations,
 ] as const;
 
 /**
@@ -46,6 +49,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     CatalogModule,
     ExtensionsModule,
     ToolsModule,
+    ConversationsModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

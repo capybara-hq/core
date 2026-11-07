@@ -160,6 +160,10 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   { id: "requests", description: "Requests to admins: list yours, create one." },
   { id: "connectors", description: "Connectors and connector templates: list and read." },
   { id: "extensions", description: "Extensions in the org (state only) and extension points." },
+  {
+    id: "conversations",
+    description: "Your own conversations: list, read, rename, archive, delete, read their events.",
+  },
 ];
 
 /**

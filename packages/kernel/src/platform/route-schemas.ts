@@ -6,6 +6,7 @@ import { COMPONENT_SCOPE_ROUTES } from "../catalog/component-scope.schemas.js";
 import { MARKETPLACE_ROUTES } from "../catalog/marketplaces.schemas.js";
 import { ORG_CATALOG_ROUTES } from "../catalog/org-catalog.schemas.js";
 import { ORG_EXTENSION_ROUTES } from "../catalog/org-extension.schemas.js";
+import { CONVERSATION_ROUTES } from "../conversations/conversations.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
 
@@ -36,4 +37,5 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...CONNECTOR_ROUTES,
   ...COMPONENT_SCOPE_ROUTES,
   ...ORG_EXTENSION_ROUTES,
+  ...CONVERSATION_ROUTES,
 ];
