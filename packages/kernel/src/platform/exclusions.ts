@@ -283,37 +283,15 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // channels
   {
-    route: "GET /api/v1/orgs/:orgId/channels",
-    category: "later",
-    reason: "Channel connection list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/channels/schema/:plugin",
-    category: "later",
-    reason: "Channel config schema an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "The config form schema of the create and credential routes, which stay on the web; an agent has no use for it",
   },
   {
     route: "POST /api/v1/orgs/:orgId/channels",
     category: "secret",
     reason: "Creates a channel connection with app secrets",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "secret",
-    reason: "Returns a channel connection whose config holds secret fields",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "secret",
-    reason: "Writes channel config that includes secret fields",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "later",
-    reason: "Removing a channel connection, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // attachments
   {
@@ -745,18 +723,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "DELETE /api/v1/orgs/:orgId/service-tokens/:tokenId",
     category: "human-only",
     reason: "Revokes a service token",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/settings",
-    category: "later",
-    reason: "Org settings read an agent could do later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/settings",
-    category: "later",
-    reason: "Org settings write, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // runtime
   {

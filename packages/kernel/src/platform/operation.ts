@@ -222,6 +222,16 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     description:
       "Tool call approvals you can decide: list and read them as summaries, never the call's input. Deciding is done on the web.",
   },
+  {
+    id: "channels",
+    description:
+      "The org's channel connections (IM bots): list, read without credentials, change the binding, remove.",
+  },
+  {
+    id: "org-settings",
+    description:
+      "The org's settings (tool search, language, sandbox policy, the Platform tool switch): read and change.",
+  },
 ];
 
 /**

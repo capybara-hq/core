@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { ChannelsModule } from "../channels/channels.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -16,6 +17,7 @@ import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
 import { ApprovalsOperations } from "./ops/approvals.ops.js";
 import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
+import { ChannelsOperations } from "./ops/channels.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
@@ -25,6 +27,7 @@ import { InboxOperations } from "./ops/inbox.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
 import { ModelsOperations } from "./ops/models.ops.js";
 import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
+import { OrgSettingsOperations } from "./ops/org-settings.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
@@ -60,6 +63,9 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   // Task 9: inbox and pending reads
   InboxOperations,
   ApprovalsOperations,
+  // Task 10: channels, org settings
+  ChannelsOperations,
+  OrgSettingsOperations,
 ] as const;
 
 /**
@@ -81,6 +87,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     ModelsModule,
     ProvidersModule,
     InboxModule,
+    ChannelsModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })
