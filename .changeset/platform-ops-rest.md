@@ -28,3 +28,6 @@ Platform tool phase 2: the rest of the UI.
 - **Agent skills and skill changes**: list and remove an agent's skills (shared agents are always
   asked) and list invocable skills. Skill changes can be read as a summary; deciding stays on the web.
 - **Prechecks** deny known failures before the card.
+- **Admin results.** Platform component writes name the orgs a component is on in and is named for.
+  The platform inbox keeps the admin console's total when more than 100 items wait, and says how
+  many of the newest it listed.
