@@ -405,6 +405,20 @@ const detail = (o: DetailOverrides = {}, { stop = true } = {}) => (
 );
 
 describe("AgentDetail (§6.16.28, level 2)", () => {
+  it("the latest text renders as Markdown (headings, bold, tables), not raw marks", () => {
+    wrap(
+      detail({
+        latestText: "## 调研报告\n\n**未完成**\n\n| 字段 | 内容 |\n|---|---|\n| 版本 | v1.20.0 |",
+      }),
+    );
+    const latest = document.querySelector('[data-part="agent-latest"]') as HTMLElement;
+    expect(within(latest).getByRole("heading", { name: "调研报告" })).toBeTruthy();
+    expect(latest.querySelector("strong")?.textContent).toBe("未完成");
+    expect(within(latest).getByRole("table")).toBeTruthy();
+    expect(latest.textContent).not.toContain("##");
+    expect(latest.textContent).not.toContain("**");
+  });
+
   it("tool calls list newest first, the running one with a pulse and a clock", () => {
     wrap(detail());
     const section = screen.getByRole("region", { name: "工具调用 7" });

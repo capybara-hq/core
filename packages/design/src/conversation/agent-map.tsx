@@ -16,6 +16,7 @@ import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignLocale, useDesignT } from "../provider";
 import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
 import { useClock } from "./clock";
+import { Prose } from "./prose";
 import { type BackgroundTaskItem, type BackgroundTaskStatus, subagentDuration } from "./subagents";
 import { fillCopy } from "./tool-copy";
 
@@ -646,9 +647,10 @@ export function AgentDetail({
       />
       <div className="cb-amap-detail" data-part="agent-detail">
         {latestText !== "" ? (
-          <p className="cb-amap-latest" data-part="agent-latest">
-            {latestText}
-          </p>
+          // the agent's own text is Markdown, rendered like the stream's prose (acceptance 2026-11-07)
+          <div className="cb-amap-latest" data-part="agent-latest">
+            <Prose markdown={latestText} />
+          </div>
         ) : null}
         <DetailSection title={t("agentMap.section.task")} defaultOpen={false}>
           <p className="cb-amap-prompt" data-part="agent-prompt">

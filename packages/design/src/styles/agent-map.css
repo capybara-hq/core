@@ -368,6 +368,7 @@
 }
 .cb-amap-prompt {
   margin: 0;
+  white-space: pre-wrap;
   padding-left: var(--cb-space-5);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);

@@ -284,7 +284,8 @@ Replaces the dialog content; ← returns to the tree. Live, at the granularity o
 
 - head: status dot, description, close; then status · agent type · model · background; "spawned by
   <parent>" (a link to that node); time · tokens;
-- the agent's latest text;
+- the agent's latest text, rendered as Markdown like the stream's prose (the task keeps its line
+  breaks);
 - collapsible sections: the task (the dispatch prompt), its background tasks, tool calls (N) with the
   newest first, the running one with a pulsing dot and a clock; each row is the tool name and its
   display summary (`Bash` description, `Read` path and range, …);
