@@ -140,6 +140,11 @@ export interface CallPolicyContext {
   conversationId: string;
   /** Null outside a run (a builtin called directly). */
   runId: string | null;
+  /**
+   * The call's input as the model sent it, before `{"$output": id}` references were resolved
+   * (the approval card shows this form). Absent outside the pipeline.
+   */
+  rawInput?: unknown;
 }
 
 /** {@link BuiltinTool.callPolicy}. */

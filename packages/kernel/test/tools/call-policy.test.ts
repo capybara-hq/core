@@ -84,10 +84,14 @@ const SPEC: ToolSpec = {
 };
 
 // async like the real `Platform` tool's (it reads the actor's facts)
-const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input) => {
+let seen: { input: unknown; rawInput: unknown }[] = [];
+const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input, ctx) => {
   const op = (input as { op: string }).op;
   const key = `Platform:${op}`;
   switch (op) {
+    case "x.raw":
+      seen.push({ input, rawInput: ctx.rawInput });
+      return { key, policy: "allow", remember: false };
     case "x.read":
       // as the real tool: a read never asks and is not remembered
       return { key, policy: "allow", remember: false };
@@ -176,6 +180,7 @@ let step: number;
 
 beforeEach(async () => {
   calls = [];
+  seen = [];
   step = 0;
   await redis.flushdb();
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -402,6 +407,21 @@ describe("per-call policy keys", () => {
       WHERE id = ${second?.id ?? ""}`.execute(raw);
     expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
     expect(calls).toEqual([{ op: "x.personal", v: "shown" }]);
+  });
+
+  it("callPolicy gets the resolved input and the raw input with its output references", async () => {
+    const saved = await outputsFor(db, config).save({
+      orgId: seed.orgId,
+      conversationId: seed.conversationId,
+      callId: "earlier",
+      content: "the archived text",
+    });
+    const ref = { $output: saved.id };
+    await runStep([{ id: "c1", name: "Platform", input: { op: "x.raw", v: ref } }]);
+    expect(seen).toEqual([
+      { input: { op: "x.raw", v: "the archived text" }, rawInput: { op: "x.raw", v: ref } },
+    ]);
+    expect(calls).toEqual([{ op: "x.raw", v: "the archived text" }]);
   });
 
   it("an approval without a callPolicy keeps today's scopes (role escalation: once)", async () => {

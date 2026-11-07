@@ -6,7 +6,13 @@ import type { AgentDocTopic } from "../../platform/agent-docs.js";
 import { type Availability, availability } from "../../platform/availability.js";
 import { toToolError } from "../../platform/errors.js";
 import { PLATFORM_METHOD } from "../../platform/method.js";
-import { OPERATION_ID, operationDomain, type PlatformOperation } from "../../platform/operation.js";
+import {
+  type ConfirmClass,
+  OPERATION_ID,
+  type OperationContext,
+  operationDomain,
+  type PlatformOperation,
+} from "../../platform/operation.js";
 import type { PlatformOperations } from "../../platform/registry.js";
 import { BUILTIN } from "../builtin-names.js";
 import type {
@@ -167,6 +173,17 @@ const invalidParamsText = (id: string, problems: string) =>
   `Invalid params for ${id}: ${problems}. Call describe with operation "${id}" for its input schema and an example, then call again.`;
 const unavailableOpText = (id: string, reason: string) =>
   `Operation ${id} is unavailable, so do not call it again as is: ${reason}`;
+const outputRefText = (id: string) =>
+  `Operation ${id} writes, and its params hold a {"$output": ...} reference, which the person confirming would see instead of the content. Pass the content inline in params and call again.`;
+
+/** Whether a value holds a `{"$output": …}` reference anywhere (the pipeline's form). */
+function hasOutputRef(v: unknown): boolean {
+  if (Array.isArray(v)) return v.some(hasOutputRef);
+  if (typeof v !== "object" || v === null) return false;
+  const keys = Object.keys(v);
+  if (keys.length === 1 && keys[0] === "$output") return true;
+  return Object.values(v).some(hasOutputRef);
+}
 
 /** Zod issues as one line: `path: message; …` (at most five). */
 function issuesText(error: z.ZodError): string {
@@ -197,6 +214,19 @@ function paramsOf(op: PlatformOperation, params: Record<string, unknown> | undef
   if (!parsed.success) throw new ToolError(invalidParamsText(op.id, issuesText(parsed.error)));
   return parsed.data;
 }
+
+/**
+ * The operation context of a confirmation (`confirmFor`, `summary`): the runtime's ids, never
+ * input. Nothing aborts it; it only reads.
+ */
+const confirmCtx = (ctx: CallPolicyContext): OperationContext => ({
+  orgId: ctx.orgId,
+  actorAccountId: ctx.accountId,
+  agentId: ctx.agentId,
+  conversationId: ctx.conversationId,
+  runId: ctx.runId,
+  signal: new AbortController().signal,
+});
 
 const factsCtx = (ctx: BuiltinCallContext): CallPolicyContext => ({
   orgId: ctx.orgId,
@@ -233,12 +263,21 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     const verdict = availability(op, await facts(ctx));
     if (!verdict.ok) return deny(unavailableOpText(op.id, verdict.reason));
     if (op.confirm === "read") return { key, policy: "allow", remember: false };
+    // the card shows the raw input: a write must carry what it writes, not a reference to it
+    if (hasOutputRef((ctx.rawInput as PlatformInput | undefined)?.params)) {
+      return deny(outputRefText(op.id));
+    }
+    const octx = confirmCtx(ctx);
+    const [cls, summary] = await Promise.all([
+      classOf(op, params, octx),
+      summaryOf(op, params, octx),
+    ]);
     return {
       key,
       policy: "ask",
       // org / platform writes are confirmed every time (spec §6.2)
-      remember: op.confirm === "personal",
-      summary: summaryOf(op, params),
+      remember: cls === "personal",
+      summary,
     };
   }
 
@@ -381,10 +420,31 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
   };
 }
 
-/** The card summary of a write, rendered from the validated params (never from model text). */
-function summaryOf(op: PlatformOperation, params: unknown): { zh: string; en: string } {
+/**
+ * The class of one write: `confirmFor` when the operation has one (the target decides), else
+ * `confirm`. A `confirmFor` that throws counts as `org`: never remembered.
+ */
+async function classOf(
+  op: PlatformOperation,
+  params: unknown,
+  ctx: OperationContext,
+): Promise<ConfirmClass> {
+  if (op.confirmFor === undefined) return op.confirm;
   try {
-    const s = op.summary?.(params);
+    return await op.confirmFor(params, ctx);
+  } catch {
+    return "org";
+  }
+}
+
+/** The card summary of a write, rendered from the validated params and kernel reads. */
+async function summaryOf(
+  op: PlatformOperation,
+  params: unknown,
+  ctx: OperationContext,
+): Promise<{ zh: string; en: string }> {
+  try {
+    const s = await op.summary?.(params, ctx);
     if (s !== undefined) return s;
   } catch {
     // a summary that cannot render falls back to the operation id (the card shows every param)

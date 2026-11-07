@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AgentsService } from "../../src/agents/agents.service.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import type { OperationContext } from "../../src/platform/operation.js";
@@ -72,6 +73,12 @@ const ctxOf = (accountId: string): OperationContext => ({
 const run = (id: string, input: unknown, ctx: OperationContext) => {
   const o = op(id);
   return o.run(o.input.parse(input), ctx);
+};
+
+/** The card summary of a write, as the tool's callPolicy reads it. */
+const summarize = async (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  return o.summary?.(o.input.parse(input), ctx);
 };
 
 const failure = async (p: Promise<unknown>): Promise<ToolError> => {
@@ -164,6 +171,18 @@ describe("super admin operations (Review Focus 4)", () => {
     for (const secret of [org2, ORG2_NAME, connector.id, connector.name]) {
       expect(json).not.toContain(secret);
     }
+
+    // the card names the plugin and counts the preview, never another org (finding 2)
+    const card = await summarize(
+      "plugins.update",
+      { itemId: item, version: "1.1.0", diffHash: out.diffHash },
+      ctxOf(env.rootId),
+    );
+    expect(card).toEqual({
+      zh: "把平台插件「crm」从 1.0.0 更新到 1.1.0：组件 1 个更新、0 个新增、0 个移除，影响 1 个组织",
+      en: 'Update platform plugin "crm" from 1.0.0 to 1.1.0: components 1 updated, 0 added, 0 removed; 1 orgs affected',
+    });
+    expect(JSON.stringify(card)).not.toContain(ORG2_NAME);
 
     // the update itself: redacted too, audited as made through the agent
     const done = await run(
@@ -285,6 +304,15 @@ describe("plugins in the org", () => {
   it("an org admin enables a no-input optional plugin and it is on; disabling takes the preview's confirm", async () => {
     const item = await importSkill(env);
     expect(availability(op("plugins.set-enabled"), facts("admin"))).toEqual({ ok: true });
+    const info = (await run("plugins.get", { itemId: item }, ctxOf(env.memId))) as {
+      item: { name: string; displayName: { zh: string; en: string } | null };
+    };
+    const en = info.item.displayName?.en ?? info.item.name;
+    const zh = info.item.displayName?.zh ?? info.item.name;
+    // the cards name the plugin, not its id (finding 2)
+    expect(
+      await summarize("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
+    ).toEqual({ zh: `在本组织启用插件「${zh}」`, en: `Enable plugin "${en}" in the org` });
     const on = await run("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId));
     expect(on).toMatchObject({ item: { id: item, state: "on" } });
     const [installed] = await audits("plugin.org_installed");
@@ -318,6 +346,18 @@ describe("plugins in the org", () => {
       ),
     );
     expect(stale.message).toContain("plugin.switch_stale");
+    // switching off: the card counts what goes and the agents that lose it
+    const offCard = await summarize(
+      "plugins.set-enabled",
+      { itemId: item, enabled: false, confirm: preview.confirm },
+      ctxOf(env.bossId),
+    );
+    expect(offCard?.en).toMatch(
+      new RegExp(`^Disable plugin "${en}" in the org: removes \\d+ components; 0 agents use it$`),
+    );
+    expect(offCard?.zh).toMatch(
+      new RegExp(`^在本组织停用插件「${zh}」：移除 \\d+ 个组件，0 个智能体在用$`),
+    );
     const off = await run(
       "plugins.set-enabled",
       { itemId: item, enabled: false, confirm: preview.confirm },
@@ -407,6 +447,40 @@ describe("connectors and extensions", () => {
     expect(json).not.toContain("/mcp");
     expect(out.connector).toMatchObject({ endpoint: { url: `${new URL(url).origin}/…` } });
     expect(json).not.toMatch(/"(token|password|clientSecret|headers|connectorData)"/);
+
+    // platform.me names connector tools by the keys the model calls (finding 10)
+    const slug = (list.items[0] as unknown as { slug: string }).slug;
+    const enabled = (out.connector.tools as { name: string; status: string }[])
+      .filter((t) => t.status === "enabled")
+      .map((t) => `mcp__${slug}__${t.name}`);
+    expect(enabled.length).toBeGreaterThan(0);
+    const agent = await env.k.app.get(AgentsService).create(env.orgId, env.bossId, {
+      definition: {
+        name: "With connector",
+        instructions: "Use the docs.",
+        model: { provider: "model-fake", model: "fake-1" },
+        tools: [
+          { kind: "builtin", name: "Platform" },
+          { kind: "connector", connectorId: id, tools: "all" },
+        ],
+        toolPolicies: {},
+        fallback: null,
+        modelParams: {},
+        fallbackParams: {},
+        avatarUrl: null,
+      },
+      visibility: "private",
+    });
+    const me = (await run(
+      "platform.me",
+      {},
+      {
+        ...ctxOf(env.bossId),
+        agentId: agent.agent.id,
+      },
+    )) as { tools: string[] };
+    expect(me.tools).toEqual(["Platform", ...enabled]);
+    expect(JSON.stringify(me)).not.toContain("connector:");
   });
 
   it("extensions.list is state only; extensions.points describes every point", async () => {

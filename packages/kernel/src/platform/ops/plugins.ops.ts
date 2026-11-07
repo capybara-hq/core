@@ -13,6 +13,7 @@ import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
+import { localized } from "./summary.js";
 
 const Id = z.string().min(1).max(100);
 const Version = z.string().min(1).max(100);
@@ -212,10 +213,27 @@ export class PluginsOperations implements OnModuleInit {
             next: "An org skill has the name of one of the plugin's skills; the person resolves it on the web.",
           },
         ],
-        summary: (i) =>
-          i.enabled
-            ? { zh: `在本组织启用插件 ${i.itemId}`, en: `Enable plugin ${i.itemId} in the org` }
-            : { zh: `在本组织停用插件 ${i.itemId}`, en: `Disable plugin ${i.itemId} in the org` },
+        summary: async (i, ctx) => {
+          const [item] = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, i.itemId);
+          if (item === undefined) throw new Error("no such plugin");
+          const n = localized(item.displayName, item.name);
+          if (i.enabled) {
+            return { zh: `在本组织启用插件「${n.zh}」`, en: `Enable plugin "${n.en}" in the org` };
+          }
+          const live = item.installed;
+          if (live === null) {
+            return {
+              zh: `在本组织停用插件「${n.zh}」（本组织未安装任何内容）`,
+              en: `Disable plugin "${n.en}" in the org (nothing is installed here)`,
+            };
+          }
+          // the preview the confirm value binds: what goes, and the agents that lose it
+          const p = await this.installer.previewUninstall(ctx.orgId, live.pluginInstallId);
+          return {
+            zh: `在本组织停用插件「${n.zh}」：移除 ${p.components.length} 个组件，${p.agents.length} 个智能体在用`,
+            en: `Disable plugin "${n.en}" in the org: removes ${p.components.length} components; ${p.agents.length} agents use it`,
+          };
+        },
         run: async (input, ctx) =>
           asToolError(async () => {
             if (input.enabled) {
@@ -335,10 +353,25 @@ export class PluginsOperations implements OnModuleInit {
             next: "Another update of this plugin is running; try again in a minute.",
           },
         ],
-        summary: (i) => ({
-          zh: `把平台插件 ${i.itemId} 更新到 ${i.version}`,
-          en: `Update platform plugin ${i.itemId} to ${i.version}`,
-        }),
+        summary: async (i, ctx) => {
+          await this.assertNotOtherOrgs(i.itemId, ctx.orgId);
+          const [{ item }, p] = await Promise.all([
+            this.catalog.get(i.itemId),
+            this.updater.preview(i.itemId, i.version),
+          ]);
+          const n = localized(item.displayName, item.name);
+          const count = (...changes: string[]) =>
+            p.components.filter((c) => changes.includes(c.change)).length;
+          const changed = count("upgrade", "downgrade");
+          const added = count("added");
+          const removed = count("removed");
+          // one version for every org: the orgs it is on in, as a count (spec §6.1)
+          const orgs = item.enabledOrgs;
+          return {
+            zh: `把平台插件「${n.zh}」从 ${p.from ?? "无"} 更新到 ${p.to}：组件 ${changed} 个更新、${added} 个新增、${removed} 个移除，影响 ${orgs} 个组织`,
+            en: `Update platform plugin "${n.en}" from ${p.from ?? "none"} to ${p.to}: components ${changed} updated, ${added} added, ${removed} removed; ${orgs} orgs affected`,
+          };
+        },
         run: async (input, ctx) =>
           asToolError(async () => {
             await this.assertNotOtherOrgs(input.itemId, ctx.orgId);

@@ -657,12 +657,11 @@ export class ToolPipeline {
       if (sent !== null && !sent.has(tool.key)) return fail(notLoadedText(tool.key), outKey);
     }
 
+    const rawInput = legacy ? legacyToolInput(call.name, call.input) : call.input;
     let input: unknown;
     try {
-      input = await resolveOutputRefs(
-        legacy ? legacyToolInput(call.name, call.input) : call.input,
-        (id) =>
-          this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
+      input = await resolveOutputRefs(rawInput, (id) =>
+        this.deps.outputs.load({ orgId: ctx.orgId, conversationId: ctx.conversationId }, id),
       );
     } catch (e) {
       if (e instanceof ToolError) return fail(e.message, outKey);
@@ -684,6 +683,7 @@ export class ToolPipeline {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
+        rawInput,
       })) ?? null;
     // a deny with a reason (e.g. an unavailable operation): the reason is the tool error
     if (callPolicy?.policy === "deny" && callPolicy.denyReason !== undefined) {

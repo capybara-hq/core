@@ -339,6 +339,63 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
     expect(lastResult(evs).content).toMatch(/describe/);
   });
 
+  it("(h) an always grant from a private-agent edit never covers an edit of a shared agent", async () => {
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Own private",
+          instructions: "Be brief.",
+          model: { provider: "model-fake", model: "fake-1" },
+          tools: [{ kind: "builtin", name: "Platform" }],
+        },
+        visibility: "private",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const privateId = (res.json() as { agent: { id: string } }).agent.id;
+    const conv = await conversation(owner);
+
+    // the private agent: personal, so "always" is offered; the person grants it
+    const first = await conv.ask(
+      call("agents.update", { agentId: privateId, version: 1, instructions: "One." }),
+    );
+    expect(first.payload.toolKey).toBe("Platform:agents.update");
+    const firstView = await approvalOf(owner, first.payload.approvalId);
+    expect(firstView.scopes).toEqual(["once", "session", "always"]);
+    expect(firstView.summary).toEqual({
+      zh: "修改私有智能体「Own private」（版本 1）",
+      en: 'Update private agent "Own private" (version 1)',
+    });
+    expect(
+      await decide(owner, first.payload.approvalId, { decision: "approve", scope: "always" }),
+    ).toMatchObject({ statusCode: 200 });
+    await conv.finish();
+
+    // the grant runs the next edit of the private agent without asking
+    let evs = await conv.turn(
+      call("agents.update", { agentId: privateId, version: 2, instructions: "Two." }),
+    );
+    expect(ofType(evs, "approval_requested")).toHaveLength(1);
+    expect(lastResult(evs)).toMatchObject({ isError: false });
+
+    // the shared agent (this conversation's, visible to the org): asks again, once only
+    const shared = await conv.ask(
+      call("agents.update", { agentId, version: 1, instructions: "Hijack?" }),
+    );
+    expect(shared.payload.toolKey).toBe("Platform:agents.update");
+    const sharedView = await approvalOf(owner, shared.payload.approvalId);
+    expect(sharedView.scopes).toEqual(["once"]);
+    expect(sharedView.summary).toEqual({
+      zh: "修改共享智能体「Helper」（版本 1）",
+      en: 'Update shared agent "Helper" (version 1)',
+    });
+    await decide(owner, shared.payload.approvalId, { decision: "deny" });
+    evs = await conv.finish();
+    expect(lastResult(evs).isError).toBe(true);
+  });
+
   it("(g) two calls with different params: each needs its own approval, none borrows another's", async () => {
     const conv = await conversation(owner);
     const a = { name: "skill-a", description: "d", body: "b" };

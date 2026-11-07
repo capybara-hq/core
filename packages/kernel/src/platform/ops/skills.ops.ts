@@ -69,10 +69,13 @@ export class SkillsOperations implements OnModuleInit {
             next: "A skill of that name exists: pick another name, or read the existing one with skills.get.",
           },
         ],
-        summary: (i) => ({
-          zh: `新建组织技能「${i.name}」`,
-          en: `Create org skill "${i.name}"`,
-        }),
+        summary: (i) =>
+          i.shareable === true
+            ? {
+                zh: `新建组织技能「${i.name}」（可共享给其他组织）`,
+                en: `Create org skill "${i.name}" (shared with other orgs)`,
+              }
+            : { zh: `新建组织技能「${i.name}」`, en: `Create org skill "${i.name}"` },
         run: async (input, ctx) =>
           asToolError(() =>
             this.skills.createFromText(ctx.orgId, ctx.actorAccountId, {

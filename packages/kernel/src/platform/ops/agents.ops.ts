@@ -1,4 +1,4 @@
-import { extensionToolKey, ToolError } from "@capybara-hq/plugin-sdk";
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
@@ -10,9 +10,11 @@ import {
   SubagentsSchema,
 } from "../../agents/definition.js";
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
-import { defineOperation } from "../operation.js";
+import { OrgAgentTemplates } from "../../agents/org-templates.js";
+import { type ConfirmClass, defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
+import { named, orElse } from "./summary.js";
 
 const Id = z.string().min(1).max(100);
 const Short = z.string().min(1).max(200);
@@ -48,14 +50,7 @@ const Fields = {
 };
 
 const WEB_ONLY =
-  "Only private agents can be created or changed with the Platform tool; sharing an agent with the org or with members is done on the agents page of the web app.";
-
-const keyOf = (r: AgentView["definition"]["tools"][number]): string =>
-  r.kind === "builtin"
-    ? r.name
-    : r.kind === "plugin"
-      ? extensionToolKey(r.plugin, r.name)
-      : `connector:${r.connectorId}`;
+  "Agents created with the Platform tool are private, and no agent's visibility can be changed with it; sharing an agent with the org or with members is done on the agents page of the web app.";
 
 const brief = (a: AgentView) => ({
   id: a.id,
@@ -76,7 +71,19 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
+    @Inject(OrgAgentTemplates) private readonly orgTemplates: OrgAgentTemplates,
   ) {}
+
+  /**
+   * `agents.update`'s class (spec §13): `personal` (may be remembered) only on a private agent the
+   * actor owns; any other agent the actor may edit is shared, so each change is confirmed.
+   */
+  private async updateClass(agentId: string, ctx: OperationContext): Promise<ConfirmClass> {
+    const a = await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId);
+    return a.visibility === "private" && a.ownerAccountId === ctx.actorAccountId
+      ? "personal"
+      : "org";
+  }
 
   onModuleInit(): void {
     this.registry.register([
@@ -110,7 +117,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create",
         description:
-          "Create a new private agent owned by you, with a name, a model and optionally instructions, tools, skills and sub-agents. Without tools it gets the default ones. Only private agents can be created or changed with the Platform tool; sharing an agent with the org or with members is done on the agents page of the web app.",
+          "Create a new private agent owned by you, with a name, a model and optionally instructions, tools, skills and sub-agents. Without tools it gets the default ones. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
         input: z
           .object({
             definition: z
@@ -171,7 +178,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          "Change an agent you own (an org admin may change any): send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. Only private agents can be created or changed with the Platform tool; sharing an agent with the org or with members is done on the agents page of the web app.",
+          "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
         input: z
           .object({
             agentId: Id,
@@ -199,10 +206,20 @@ export class AgentsOperations implements OnModuleInit {
             next: "The agent changed since you read it: read it again with agents.get, then send its current version.",
           },
         ],
-        summary: (i) => ({
-          zh: `修改智能体 ${i.agentId}（版本 ${i.version}）`,
-          en: `Update agent ${i.agentId} (version ${i.version})`,
-        }),
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        summary: async (i, ctx) => {
+          const a = await this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId);
+          const name = named(a.definition.name);
+          return a.visibility === "private"
+            ? {
+                zh: `修改私有智能体「${name}」（版本 ${i.version}）`,
+                en: `Update private agent "${name}" (version ${i.version})`,
+              }
+            : {
+                zh: `修改共享智能体「${name}」（版本 ${i.version}）`,
+                en: `Update shared agent "${name}" (version ${i.version})`,
+              };
+        },
         run: async (input, ctx) =>
           asToolError(async () => {
             const { agentId, version, ...patch } = input;
@@ -247,7 +264,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create-from-template",
         description:
-          "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins. Only private agents can be created or changed with the Platform tool; sharing an agent with the org or with members is done on the agents page of the web app.",
+          "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
         input: z
           .object({
             templateId: Id,
@@ -271,10 +288,18 @@ export class AgentsOperations implements OnModuleInit {
             next: "Call agents.preview-from-template again and use its new previewHash.",
           },
         ],
-        summary: (i) => ({
-          zh: `从模板新建私有智能体「${i.name}」`,
-          en: `Create private agent "${i.name}" from a template`,
-        }),
+        summary: async (i, ctx) => {
+          const t = named(
+            await orElse(
+              async () => (await this.orgTemplates.detail(ctx.orgId, i.templateId)).name,
+              i.templateId,
+            ),
+          );
+          return {
+            zh: `从模板「${t}」新建私有智能体「${named(i.name)}」`,
+            en: `Create private agent "${named(i.name)}" from template "${t}"`,
+          };
+        },
         run: async (input, ctx) => {
           if (input.visibility !== undefined && input.visibility !== "private") {
             throw new ToolError(WEB_ONLY);
@@ -299,5 +324,3 @@ export class AgentsOperations implements OnModuleInit {
     ]);
   }
 }
-
-export { keyOf as agentToolKey };

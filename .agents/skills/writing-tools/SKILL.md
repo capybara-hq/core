@@ -364,10 +364,14 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
 - **Classes.** `read` runs; `personal` asks and may be remembered; `org` / `platform` ask every time and are
   never remembered (`remember: false`; the approval stores `scopes: ["once"]`, anything else is
   `approval.scope_not_allowed`, on the web, in IM cards and over the API). A read never prompts; a read an agent tightened to `ask` (`toolPolicies` on
-  `Platform:<operation>`) asks once-only and no grant applies.
-- **The card.** The kernel renders `summary` (zh and en) from the operation and its params; the approval
-  stores it with the exact input and runs only with that input (approvals bound to input: a re-call with other
-  params asks again).
+  `Platform:<operation>`) asks once-only and no grant applies. When the class depends on the target, the
+  operation's `confirmFor(input, ctx)` decides per call (`agents.update`: `personal` only on the actor's own
+  private agent, `org` otherwise; a throw counts as `org`), so a grant never carries over to a shared target.
+- **The card.** The kernel renders `summary(input, ctx)` (zh and en, may be async) from the params and kernel
+  reads (target names, the hash-bound preview's counts), falling back to the operation id when it throws; the
+  approval stores it with the exact input and runs only with that input (approvals bound to input: a re-call
+  with other params asks again). A write whose params hold a `{"$output": id}` reference is denied (the card
+  would show the reference, not the content): `CallPolicyContext.rawInput` carries the unresolved input.
 - **The actor** is the run's trigger account; role, membership and super admin are re-read on every call,
   also right before `run`. No person present (an eval, the org's anonymous guest account) or the org setting
   `platformTool` = `read-only`: writes are unavailable with the reason; `off`: the tool is unavailable.

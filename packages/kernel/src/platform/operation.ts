@@ -42,16 +42,27 @@ export interface PlatformOperation<I = unknown> {
   mirrors: readonly string[];
   confirm: ConfirmClass;
   /**
+   * The class of one call when it depends on the target (read at confirmation time): e.g.
+   * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
+   * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;
+   * absent: `confirm`. The tool treats a throw as not remembered.
+   */
+  confirmFor?(input: I, ctx: OperationContext): Promise<ConfirmClass>;
+  /**
    * The notable error codes of the operation and what to do next (model-visible English), shown
    * by `describe` (spec §3).
    */
   errors?: readonly { code: string; next: string }[];
   /**
-   * The bilingual card summary of a write, rendered from the input (never from model text);
-   * required unless `confirm` is `read`. Method syntax so an operation of any input type is a
-   * `PlatformOperation` (the registry's element type).
+   * The bilingual card summary of a write, rendered from the input and kernel reads (names of
+   * the targets, preview counts), never from model text; required unless `confirm` is `read`.
+   * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
+   * operation of any input type is a `PlatformOperation` (the registry's element type).
    */
-  summary?(input: I): { zh: string; en: string };
+  summary?(
+    input: I,
+    ctx: OperationContext,
+  ): { zh: string; en: string } | Promise<{ zh: string; en: string }>;
   run(input: I, ctx: OperationContext): Promise<unknown>;
 }
 
@@ -73,7 +84,10 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     description: "What this platform is, its tool families, and what you and this agent can do.",
   },
   { id: "skills", description: "The org's skill library: list, read, create, switch on or off." },
-  { id: "agents", description: "Agents in the org: list, read, create, update your own." },
+  {
+    id: "agents",
+    description: "Agents in the org: list, read, create private ones, update those you may edit.",
+  },
   {
     id: "agent-templates",
     description: "Agent templates: list, read, save an agent as a template.",

@@ -326,8 +326,26 @@ Decisions made while building, one per bullet (what, and why).
   params ... call describe". The person is never asked to confirm a call that cannot run, at the
   cost of one extra model step.
 - `agents.update` may edit shared (org or members visible) agents the actor may edit on the web,
-  with the same rights as the web and each write confirmed; its description says visibility cannot
-  be changed (not "only private agents"). It can be narrowed to private agents later.
+  with the same rights as the web; its description says shared agents can be edited, visibility
+  cannot be changed (the input has no `visibility`), and each change on a shared agent is confirmed
+  every time. `PlatformOperation.confirmFor(input, ctx)` gives a call's class when it depends on the
+  target: `agents.update` is `personal` (may be remembered) only on a private agent the actor owns
+  and `org` (never remembered) otherwise, so a grant from a private-agent edit never covers a shared
+  agent. A `confirmFor` that throws counts as `org`. Created agents are always private.
+- `summary(input, ctx)` may be async and read PG: cards name the target (plugin display name, agent
+  name, template name, the source agent of a template save) instead of an id, and the hash-bound
+  operations add their preview as counts (`plugins.update`: components updated / added / removed
+  and the orgs it is on in; `plugins.set-enabled` off: components removed and agents using it). A
+  summary that throws falls back to `Platform operation <id>`. Names are clipped to 80 characters.
+  `skills.create` with `shareable: true` says "(shared with other orgs / 可共享给其他组织)".
+- A write whose `params` hold a `{"$output": id}` reference is denied with "pass the content
+  inline": the approval stores and shows the input as sent, so the person would confirm a
+  reference instead of what is written. The pipeline passes the unresolved input to `callPolicy`
+  as `CallPolicyContext.rawInput`. Reads may take references.
+- `platform.me` lists tools by the keys the model calls: builtins by name, `plugin__<plugin>__<tool>`,
+  and each connector reference expanded to its live tools' `mcp__<slug>__<tool>` keys as
+  `ToolRegistry.forAgent` resolves them; connector tools that cannot load now are listed as
+  `unavailableTools` with the registry's reason.
 - `describe` returns an operation's notable errors with what to do next: `PlatformOperation` has an
   optional `errors: { code, next }[]`, filled for the operations that have notable failures.
 - Operations that can return more than 50 entries page themselves (`params.cursor`, result `{ items,

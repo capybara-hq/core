@@ -1,10 +1,12 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { AgentsService } from "../../agents/agents.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { AgentTemplatesService } from "../../agents/templates.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
+import { named, orElse } from "./summary.js";
 
 /** Agent template operations of the `Platform` tool (spec §7). */
 @Injectable()
@@ -13,6 +15,7 @@ export class AgentTemplatesOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(AgentTemplatesService) private readonly templates: AgentTemplatesService,
     @Inject(OrgAgentTemplates) private readonly orgTemplates: OrgAgentTemplates,
+    @Inject(AgentsService) private readonly agents: AgentsService,
   ) {}
 
   onModuleInit(): void {
@@ -61,10 +64,19 @@ export class AgentTemplatesOperations implements OnModuleInit {
         authz: { orgAction: "agents.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/save-as-template"],
         confirm: "org",
-        summary: (i) => ({
-          zh: `把智能体另存为组织模板「${i.name}」`,
-          en: `Save agent as org template "${i.name}"`,
-        }),
+        summary: async (i, ctx) => {
+          const source = named(
+            await orElse(
+              async () =>
+                (await this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId)).definition.name,
+              i.agentId,
+            ),
+          );
+          return {
+            zh: `把智能体「${source}」另存为组织模板「${named(i.name)}」`,
+            en: `Save agent "${source}" as org template "${named(i.name)}"`,
+          };
+        },
         run: async (input, ctx) =>
           asToolError(() =>
             this.orgTemplates.saveAs(

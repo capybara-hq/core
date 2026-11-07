@@ -1,18 +1,20 @@
+import { extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { effectiveSandboxEgress, OrgSettingsService } from "../../orgs/settings.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
+import { ToolRegistry } from "../../tools/registry.js";
 import { PlatformActor } from "../actor.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { agentToolKey } from "./agents.ops.js";
 import { asToolError } from "./errors.js";
 
 /** What a role may build, as the model says it to the person: the action and its plain words. */
 const BUILDS: readonly { action: OrgAction; what: string }[] = [
-  { action: "agents.create", what: "create and edit your own private agents" },
+  { action: "agents.create", what: "create private agents and edit the agents you own" },
   { action: "skills.manage", what: "create org skills" },
   { action: "agents.manage", what: "manage other people's agents and save org agent templates" },
   { action: "connectors.manage", what: "set up connectors" },
@@ -38,7 +40,36 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(PlatformActor) private readonly actor: PlatformActor,
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(OrgSettingsService) private readonly settings: OrgSettingsService,
+    @Inject(ToolRegistry) private readonly tools: ToolRegistry,
   ) {}
+
+  /**
+   * The agent's tools by the keys the model sees: builtins by name, plugin tools as
+   * `plugin__<plugin>__<tool>`, and each connector reference expanded to its live tools'
+   * `mcp__<slug>__<tool>` keys as the registry resolves them for a run; connector tools that
+   * cannot load now are listed with the registry's reason.
+   */
+  private async toolKeys(orgId: string, d: AgentView["definition"]) {
+    const connectors = d.tools.filter((r) => r.kind === "connector");
+    const resolved =
+      connectors.length === 0
+        ? { tools: [], unavailable: [] }
+        : await this.tools.forAgent(orgId, { tools: connectors });
+    const live = new Map<string, string[]>();
+    for (const t of resolved.tools) {
+      if (t.source.kind !== "connector") continue;
+      live.set(t.source.connectorId, [...(live.get(t.source.connectorId) ?? []), t.key]);
+    }
+    const keys = d.tools.flatMap((r) =>
+      r.kind === "connector"
+        ? (live.get(r.connectorId) ?? [])
+        : [r.kind === "builtin" ? r.name : extensionToolKey(r.plugin, r.name)],
+    );
+    return {
+      keys: [...new Set(keys)],
+      unavailable: resolved.unavailable.map((u) => ({ tool: u.ref, reason: u.reason })),
+    };
+  }
 
   onModuleInit(): void {
     this.registry.register([
@@ -80,7 +111,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, tools by key, skills (org and pinned), sub-agents, whether it runs in a sandbox, and the sandbox network mode. Secrets are never shown.",
+          "Show this agent as configured: its model, tools by the keys you call them by (connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), skills (org and pinned), sub-agents, whether it runs in a sandbox, and the sandbox network mode. Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -90,7 +121,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
           asToolError(async () => {
             const agent = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
             const d = agent.definition;
-            const toolKeys = d.tools.map(agentToolKey);
+            const { keys: toolKeys, unavailable } = await this.toolKeys(ctx.orgId, d);
             const sandbox = toolKeys.some((k) =>
               (SANDBOX_TOOL_NAMES as readonly string[]).includes(k),
             );
@@ -108,6 +139,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
               model: d.model,
               fallback: d.fallback,
               tools: toolKeys,
+              ...(unavailable.length > 0 && { unavailableTools: unavailable }),
               toolPolicies: d.toolPolicies,
               skills: {
                 orgSkills: d.skills?.orgSkills ?? [],

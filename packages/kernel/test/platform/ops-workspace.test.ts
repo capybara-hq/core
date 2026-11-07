@@ -55,6 +55,16 @@ const run = (id: string, input: unknown, ctx: OperationContext) => {
   return o.run(o.input.parse(input), ctx);
 };
 
+/** The card summary and the class of a write, as the tool's callPolicy reads them. */
+const summarize = async (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  return o.summary?.(o.input.parse(input), ctx);
+};
+const classOf = async (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  return o.confirmFor === undefined ? o.confirm : o.confirmFor(o.input.parse(input), ctx);
+};
+
 async function agentOf(owner: string, visibility: "private" | "org", name = "Helper") {
   const r = await env.k.app.get(AgentsService).create(env.orgId, owner, {
     definition: {
@@ -156,6 +166,19 @@ describe("skills", () => {
     expect(got.body).toContain("# Steps");
   });
 
+  it("the skills.create summary says when the skill is shareable with other orgs", async () => {
+    const c = ctxOf(env.bossId, randomUUID());
+    const base = { name: "report", description: "Write reports.", body: "# Steps" };
+    expect(await summarize("skills.create", base, c)).toEqual({
+      zh: "新建组织技能「report」",
+      en: 'Create org skill "report"',
+    });
+    expect(await summarize("skills.create", { ...base, shareable: true }, c)).toEqual({
+      zh: "新建组织技能「report」（可共享给其他组织）",
+      en: 'Create org skill "report" (shared with other orgs)',
+    });
+  });
+
   it("a taken name answers a ToolError naming the code", async () => {
     const c = ctxOf(env.bossId, randomUUID());
     const input = { name: "dup", description: "Dup.", body: "# x" };
@@ -215,6 +238,40 @@ describe("agents", () => {
     expect((e as Error).message).toMatch(/^forbidden:/);
   });
 
+  it("agents.update is personal only on the actor's own private agent; shared edits are org (finding 1)", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const ownShared = await agentOf(env.memId, "org", "Team helper");
+    const theirsPrivate = await agentOf(env.memId, "private", "Member private");
+    const input = (agentId: string) => ({ agentId, version: 1, instructions: "x" });
+    const mc = ctxOf(env.memId, mine);
+    expect(await classOf("agents.update", input(mine), mc)).toBe("personal");
+    expect(await classOf("agents.update", input(ownShared), mc)).toBe("org");
+    // an org admin editing a member's shared agent: not the admin's own, so org
+    expect(await classOf("agents.update", input(ownShared), ctxOf(env.bossId, mine))).toBe("org");
+    // an agent the actor cannot read throws; the tool counts that as org (never remembered)
+    await expect(
+      classOf("agents.update", input(theirsPrivate), ctxOf(env.bossId, mine)),
+    ).rejects.toThrow(/Agent not found/);
+    // the card names the agent and says whether it is shared
+    expect(await summarize("agents.update", input(mine), mc)).toEqual({
+      zh: "修改私有智能体「Mine」（版本 1）",
+      en: 'Update private agent "Mine" (version 1)',
+    });
+    expect(await summarize("agents.update", input(ownShared), mc)).toEqual({
+      zh: "修改共享智能体「Team helper」（版本 1）",
+      en: 'Update shared agent "Team helper" (version 1)',
+    });
+    // the description matches: shared agents can be edited, visibility cannot be changed
+    const d = op("agents.update").description;
+    expect(d).toContain("shared");
+    expect(d).toContain("visibility cannot be changed");
+    expect(d).toContain("confirmed every time");
+    expect(d).not.toContain("Only private agents");
+    expect(op("agents.update").input.safeParse({ ...input(mine), visibility: "org" }).success).toBe(
+      false,
+    );
+  });
+
   it("the owner updates with the current version; a stale version is refused", async () => {
     const id = await agentOf(env.memId, "private");
     const c = ctxOf(env.memId, id);
@@ -248,6 +305,16 @@ describe("agents", () => {
     await expect(stale).rejects.toBeInstanceOf(ToolError);
     await expect(stale).rejects.toThrow(/agent\.template_preview_stale/);
 
+    expect(
+      await summarize(
+        "agents.create-from-template",
+        { templateId, name: "Copy", previewHash: "h" },
+        c,
+      ),
+    ).toEqual({
+      zh: "从模板「tpl」新建私有智能体「Copy」",
+      en: 'Create private agent "Copy" from template "tpl"',
+    });
     const preview = (await run("agents.preview-from-template", { templateId }, c)) as {
       previewHash: string;
     };
@@ -272,6 +339,16 @@ describe("agent templates", () => {
     expect(availability(op("agent-templates.save"), facts("member")).ok).toBe(false);
     expect(availability(op("agent-templates.save"), facts("admin"))).toEqual({ ok: true });
     const c = ctxOf(env.bossId, agent);
+    expect(
+      await summarize(
+        "agent-templates.save",
+        { agentId: agent, name: "triage", description: "Triage." },
+        c,
+      ),
+    ).toEqual({
+      zh: "把智能体「Source」另存为组织模板「triage」",
+      en: 'Save agent "Source" as org template "triage"',
+    });
     const saved = (await run(
       "agent-templates.save",
       { agentId: agent, name: "triage", description: "Triage." },

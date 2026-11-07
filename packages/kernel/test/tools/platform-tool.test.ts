@@ -68,6 +68,31 @@ const orgOp = defineOperation({
   },
 });
 
+/** The class depends on the target (finding 1): personal on "mine", org otherwise; throws on "boom". */
+let targetClassCtx: unknown[] = [];
+const targetedOp = defineOperation({
+  id: "agents.update",
+  description: "Change an agent.",
+  input: z.object({ agentId: z.string().max(100) }),
+  example: { agentId: "mine" },
+  authz: { orgAction: "org.read" },
+  mirrors: [],
+  confirm: "personal",
+  confirmFor: async (i, c) => {
+    targetClassCtx.push(c);
+    if (i.agentId === "boom") throw new Error("no such agent");
+    return i.agentId === "mine" ? "personal" : "org";
+  },
+  summary: async (i, c) => {
+    if (i.agentId === "boom") throw new Error("no such agent");
+    return {
+      zh: `修改智能体「${i.agentId}@${c.orgId}」`,
+      en: `Update agent "${i.agentId}@${c.orgId}"`,
+    };
+  },
+  run: async () => ({ ok: true }),
+});
+
 const ADMIN: ActorFacts = {
   role: "admin",
   isSuperAdmin: false,
@@ -88,7 +113,8 @@ beforeEach(() => {
   factsCalls = [];
   setting = "on";
   const ops = new PlatformOperations();
-  ops.register([listOp, personalOp, orgOp] as PlatformOperation[]);
+  targetClassCtx = [];
+  ops.register([listOp, personalOp, orgOp, targetedOp] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -377,6 +403,79 @@ describe("callPolicy", () => {
     const invalid = await policy({ action: "call", operation: "skills.create", params: {} });
     expect(invalid).toMatchObject({ key: "Platform:skills.create", policy: "deny" });
     expect(invalid?.denyReason).toContain("describe");
+  });
+});
+
+describe("callPolicy: target-dependent class, async summaries, output references", () => {
+  it("confirmFor decides remember per target: a private own agent may be remembered, a shared one never", async () => {
+    const mine = await policy({
+      action: "call",
+      operation: "agents.update",
+      params: { agentId: "mine" },
+    });
+    expect(mine).toEqual({
+      key: "Platform:agents.update",
+      policy: "ask",
+      remember: true,
+      summary: { zh: "修改智能体「mine@org-1」", en: 'Update agent "mine@org-1"' },
+    });
+    const shared = await policy({
+      action: "call",
+      operation: "agents.update",
+      params: { agentId: "shared" },
+    });
+    expect(shared).toMatchObject({ key: "Platform:agents.update", policy: "ask", remember: false });
+    // the operation context comes from the runtime, never from input
+    expect(targetClassCtx[0]).toMatchObject({
+      orgId: "org-1",
+      actorAccountId: "acc-1",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+    });
+  });
+
+  it("a confirmFor that throws is not remembered; a summary that throws falls back to the id", async () => {
+    expect(
+      await policy({ action: "call", operation: "agents.update", params: { agentId: "boom" } }),
+    ).toEqual({
+      key: "Platform:agents.update",
+      policy: "ask",
+      remember: false,
+      summary: { zh: "平台操作 agents.update", en: "Platform operation agents.update" },
+    });
+  });
+
+  it("a write whose params hold an output reference is denied: the content goes inline", async () => {
+    const input = {
+      action: "call",
+      operation: "skills.create",
+      params: { name: "weekly-report", body: "# resolved text" },
+    };
+    const raw = {
+      action: "call",
+      operation: "skills.create",
+      params: { name: "weekly-report", body: { $output: "out-1" } },
+    };
+    const p = await tool.callPolicy?.(input, { ...policyCtx, rawInput: raw });
+    expect(p).toMatchObject({ key: "Platform:skills.create", policy: "deny", remember: false });
+    expect(p?.denyReason).toContain('{"$output"');
+    expect(p?.denyReason).toContain("inline");
+    // a nested reference counts too; a read may take one
+    const nested = {
+      ...raw,
+      params: { name: "weekly-report", body: "x", extra: [{ a: { $output: "out-2" } }] },
+    };
+    expect((await tool.callPolicy?.(input, { ...policyCtx, rawInput: nested }))?.policy).toBe(
+      "deny",
+    );
+    const read = { action: "call", operation: "skills.list", params: { cursor: { $output: "o" } } };
+    expect(
+      await tool.callPolicy?.(
+        { action: "call", operation: "skills.list", params: { cursor: "10" } },
+        { ...policyCtx, rawInput: read },
+      ),
+    ).toMatchObject({ policy: "allow" });
   });
 });
 

@@ -312,6 +312,26 @@ describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => 
     });
     expect(malformed.statusCode).toBe(400);
     expect(detailPaths(malformed)).toEqual(["toolPolicies.Platform:BAD"]);
+
+    // an unknown operation id is kept: a removed operation's policy is harmless
+    const gone = await createAgent({
+      tools: [{ kind: "builtin", name: "Platform" }],
+      toolPolicies: { "Platform:gone-domain.do-it": "ask" },
+    });
+    expect(gone.statusCode, gone.body).toBe(201);
+    expect((gone.json() as AgentRes).agent.definition.toolPolicies).toEqual({
+      "Platform:gone-domain.do-it": "ask",
+    });
+
+    // a domain without a verb, and another tool's prefix, are refused
+    for (const key of ["Platform:skills", "Other:skills.create"]) {
+      const refused = await createAgent({
+        tools: [{ kind: "builtin", name: "Platform" }],
+        toolPolicies: { [key]: "deny" },
+      });
+      expect(refused.statusCode, key).toBe(400);
+      expect(detailPaths(refused)).toEqual([`toolPolicies.${key}`]);
+    }
   });
 });
 
