@@ -47,16 +47,19 @@ import { SubagentPanel } from "./SubagentPanel";
  * The right area's target, kept in the URL hash (a reload keeps it; another conversation's URL has
  * none, so nothing carries over). Opening one thing closes the other (spec §5.1). `back` leaves a
  * sub-agent for what was open before it (e.g. the properties panel it was opened from), else closes.
- * The agent map (`#agents…`, a dialog over the page) is kept in the hash too: `closeMap` returns to
- * what was open before the map, as it was.
+ * The agent map (`#agents…`, a dialog over the page) is kept in the hash too: what was open before
+ * it stays drawn under it (`beneath`), and `closeMap` returns to it, as it was.
  */
 export function useRightArea(): {
   target: RightTarget | null;
   open(t: RightTarget | null): void;
   back(): void;
   closeMap(): void;
+  /** While the agent map is open: what stays open in the right area under it. */
+  beneath: RightTarget | null;
 } {
   const [target, setTarget] = useState<RightTarget | null>(null);
+  const [beneath, setBeneath] = useState<RightTarget | null>(null);
   const current = useRef<RightTarget | null>(null);
   /** What was open before the sub-agent now shown (opening another sub-agent keeps it). */
   const previous = useRef<RightTarget | null>(null);
@@ -78,6 +81,7 @@ export function useRightArea(): {
       current.current = t;
       previous.current = null;
       beforeMap.current = null;
+      setBeneath(null);
       setTarget(t);
     };
     read();
@@ -98,7 +102,10 @@ export function useRightArea(): {
     (t: RightTarget | null) => {
       if (t?.kind === "agents") {
         // the map lies over the page: what was open stays as it was for its close
-        if (current.current?.kind !== "agents") beforeMap.current = current.current;
+        if (current.current?.kind !== "agents") {
+          beforeMap.current = current.current;
+          setBeneath(current.current);
+        }
       } else if (t?.kind === "subagent") {
         if (current.current?.kind !== "subagent") previous.current = current.current;
       } else previous.current = null;
@@ -110,9 +117,10 @@ export function useRightArea(): {
   const closeMap = useCallback(() => {
     const t = beforeMap.current;
     beforeMap.current = null;
+    setBeneath(null);
     show(t);
   }, [show]);
-  return { target, open, back, closeMap };
+  return { target, open, back, closeMap, beneath };
 }
 
 /** The full archived output of a call (replaces the old Run tab's "View full output"). */
@@ -275,7 +283,9 @@ export function useRightAreaSlot(p: {
 }): RightAreaSlot {
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
-  const { target, open, back, closeMap } = useRightArea();
+  const { target: hashTarget, open, back, closeMap, beneath } = useRightArea();
+  // The agent map is a dialog over the page: the right area keeps showing what was open under it
+  const target = hashTarget?.kind === "agents" ? beneath : hashTarget;
   // The extensions' contributions (enabled and loaded only) and the conversation's file outputs.
   // A failed read (R5: not read again on mount) shows none: no extension blocks, no files.
   // Sub-agents cannot deliver files (`Deliver` is removed for children), so their lists
@@ -331,7 +341,7 @@ export function useRightAreaSlot(p: {
       open({ kind: "agents", id, ...(transcript ? { transcript: true } : {}) }),
     [open],
   );
-  const mapTarget = target?.kind === "agents" ? target : null;
+  const mapTarget = hashTarget?.kind === "agents" ? hashTarget : null;
   // read on a root conversation with sub-agents (the agents chip counts the whole tree), kept
   // closer while the map is open
   const tree = useAgentTree(p.orgId, p.conversationId, p.events, p.progress, {

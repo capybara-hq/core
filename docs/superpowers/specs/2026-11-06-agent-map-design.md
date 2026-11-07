@@ -377,7 +377,9 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   conversation has sub-agents, the composer's agents chip "N 个智能体" (acceptance item AC3,
   2026-11-07, design spec §6.16.29; it replaced the title-bar icon); the state lives in the URL
   hash (`#agents`,
-  `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now.
+  `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now. The map is
+  a dialog over the page, not a right-area target: whatever the right area showed (properties, a
+  panel, a file) stays drawn under it and is the same after it closes (acceptance, 2026-11-07).
 - The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
   the node width.
 - The admin sub-agent limits dialog gains a `maxDepth` field, and its "per run" labels are corrected.

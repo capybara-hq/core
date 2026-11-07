@@ -408,7 +408,7 @@ describe("the agent map's entry points", () => {
     expect(agentsChip()?.getAttribute("aria-label")).toMatch(/^3 agents, /);
   }, 15_000);
 
-  it("open properties, open the map, close the map: the properties are back", async () => {
+  it("open properties, open the map, close the map: the properties stay under it and are back", async () => {
     api(parentEvents());
     window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChatRoute();
@@ -418,6 +418,9 @@ describe("the agent map's entry points", () => {
     await user.click(agentsChip() as HTMLButtonElement);
     expect(window.location.hash).toBe("#agents");
     const dialog = await mapDialog();
+    // the map is a dialog over the page: the right area stays as it was under it
+    // (hidden from assistive tech while the modal dialog is open)
+    expect(document.querySelector('aside[aria-label="Properties"]')).not.toBeNull();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
     expect(window.location.hash).toBe("#properties");
