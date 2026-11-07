@@ -1,7 +1,7 @@
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import type { ActorFacts } from "./actor.js";
-import type { OperationError } from "./operation.js";
+import type { OperationError, OperationErrorNext } from "./operation.js";
 
 /** Longest `details` JSON quoted in an operation's tool error. */
 const DETAILS_MAX = 1000;
@@ -36,7 +36,14 @@ export function nextStepFor(
   code: string,
   role: ErrorRole,
 ): string | undefined {
-  const next = errors?.find((e) => e.code === code)?.next;
+  return resolveNext(errors?.find((e) => e.code === code)?.next, role);
+}
+
+/** One next step resolved for this role (the fallbacks of {@link nextStepFor}). */
+export function resolveNext(
+  next: OperationErrorNext | undefined,
+  role: ErrorRole,
+): string | undefined {
   if (next === undefined || typeof next === "string") return next;
   for (const r of FALLBACK[role]) {
     const text = next[r];

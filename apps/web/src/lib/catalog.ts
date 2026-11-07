@@ -1,7 +1,7 @@
 import type { PackageWarning } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { Owner } from "./components";
-import type { PermissionGroup, PermissionItem } from "./extensions";
+import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
 
 /**
  * The platform catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
@@ -761,6 +761,11 @@ export interface OrgCatalogItem
   builtin: boolean;
   /** The effective state in this org. */
   state: OrgPluginState;
+  /**
+   * Only when `unavailable`: why (kernel `OrgCatalogItem.reason`): `plugin_disabled` (the super
+   * admin disabled it), or its extension's reason. Older kernels leave it out.
+   */
+  reason?: "plugin_disabled" | ExtensionUnavailableReason;
   /** The org admin may switch it (never for builtin items; `all` items are on unless switched off). */
   switchable: boolean;
   /** The plugin's extension (or a template's connector extension) is not on the deployment. */

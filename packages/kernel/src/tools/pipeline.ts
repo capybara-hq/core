@@ -697,6 +697,7 @@ export class ToolPipeline {
         conversationId: ctx.conversationId,
         runId: ctx.runId,
         rawInput,
+        signal: ctx.signal,
       })) ?? null;
     // a deny with a reason (e.g. an unavailable operation): the reason is the tool error
     if (callPolicy?.policy === "deny" && callPolicy.denyReason !== undefined) {

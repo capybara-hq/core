@@ -22,7 +22,7 @@ import type {
 const ran: { id: string; input: unknown; agentId: string }[] = [];
 let failWith: unknown = null;
 /** What `skills.create`'s precheck does: pass, fail on a taken name, hang, or throw. */
-let precheckMode: "pass" | "taken" | "hang" | "throw" = "pass";
+let precheckMode: "pass" | "taken" | "hang" | "throw" | "keyed" = "pass";
 let precheckSignal: AbortSignal | null = null;
 
 /** A next step that differs by role (spec §14.5 item 7). */
@@ -79,6 +79,14 @@ const orgOp = defineOperation({
     precheckSignal = c.signal;
     if (precheckMode === "throw") throw new Error("db down");
     if (precheckMode === "hang") return new Promise(() => {});
+    if (precheckMode === "keyed") {
+      return {
+        ok: false,
+        code: "catalog.not_deployed",
+        message: `The extension of "${i.name}" is not running`,
+        next: { superAdmin: `Fix ${i.name} in the admin console.`, member: `Ask about ${i.name}.` },
+      };
+    }
     if (precheckMode === "taken") {
       return {
         ok: false,
@@ -131,6 +139,7 @@ const ADMIN: ActorFacts = {
 
 let facts: ActorFacts;
 let factsCalls: unknown[];
+let logged: { level: string; msg: string; fields?: Record<string, unknown> }[];
 let setting: "on" | "read-only" | "off";
 let tool: BuiltinTool;
 
@@ -141,6 +150,7 @@ beforeEach(() => {
   precheckSignal = null;
   facts = ADMIN;
   factsCalls = [];
+  logged = [];
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
@@ -162,6 +172,10 @@ beforeEach(() => {
     },
     setting: async () => setting,
     precheckTimeoutMs: 50,
+    log: {
+      warn: (msg, fields) => logged.push({ level: "warn", msg, ...(fields && { fields }) }),
+      debug: (msg, fields) => logged.push({ level: "debug", msg, ...(fields && { fields }) }),
+    },
   });
 });
 
@@ -578,6 +592,49 @@ describe("callPolicy: precheck before the card", () => {
     expect(precheckSignal?.aborted).toBe(true);
     precheckMode = "throw";
     expect((await policy(input))?.policy).toBe("ask");
+  });
+
+  it("a precheck's own next step (naming the target) wins over errors[], resolved for the role", async () => {
+    precheckMode = "keyed";
+    facts = { ...ADMIN, isSuperAdmin: true };
+    expect((await policy(input))?.denyReason).toBe(
+      'Operation skills.create cannot run now: catalog.not_deployed: The extension of "weekly-report" is not running. Fix weekly-report in the admin console.',
+    );
+    // an org admin falls back to the member's step, never up to the admin console
+    facts = ADMIN;
+    expect((await policy(input))?.denyReason).toContain("Ask about weekly-report.");
+  });
+
+  it("a precheck that throws is logged as a warning, a timeout at debug, with the operation id", async () => {
+    precheckMode = "throw";
+    await policy(input);
+    expect(logged).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        fields: expect.objectContaining({ operation: "skills.create" }),
+      }),
+    ]);
+    logged = [];
+    precheckMode = "hang";
+    await policy(input);
+    expect(logged).toEqual([
+      expect.objectContaining({
+        level: "debug",
+        fields: expect.objectContaining({ operation: "skills.create" }),
+      }),
+    ]);
+  });
+
+  it("the precheck's signal aborts with the run's signal", async () => {
+    precheckMode = "hang";
+    const run = new AbortController();
+    const p = tool.callPolicy?.(input, { ...policyCtx, signal: run.signal });
+    while (precheckSignal === null) await new Promise((r) => setTimeout(r, 1));
+    const seen = precheckSignal as AbortSignal;
+    expect(seen.aborted).toBe(false);
+    run.abort();
+    expect(seen.aborted).toBe(true);
+    await p;
   });
 
   it("describe gives each error's next step for the actor's role", async () => {

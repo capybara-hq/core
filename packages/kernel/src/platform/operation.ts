@@ -36,8 +36,18 @@ export interface OperationError {
   next: OperationErrorNext;
 }
 
-/** What {@link PlatformOperation.precheck} found: nothing known against the write, or why it fails. */
-export type PrecheckResult = { ok: true } | { ok: false; code: string; message: string };
+/**
+ * What {@link PlatformOperation.precheck} found: nothing known against the write, or why it fails.
+ * `next` replaces the operation's `errors[]` entry for the code when the step depends on the target
+ * (e.g. the admin console path naming the extension).
+ *
+ * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
+ * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
+ * `plugin.needs_input` (input only a person enters on the web) and `agent.visibility_web_only`.
+ */
+export type PrecheckResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string; next?: OperationErrorNext };
 
 /** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
 export const PRECHECK_TIMEOUT_MS = 2000;

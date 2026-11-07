@@ -17,6 +17,7 @@ import type { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
+import type { ExtensionAvailability } from "../../src/extensions/unavailable.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { KernelLogger } from "../../src/log.js";
@@ -204,5 +205,10 @@ export function orgConfigsFor(
         source: "platform",
       }),
     } as unknown as EffectiveConfigs,
+    // the `installed` extensions are not loaded: disabled on the deployment
+    {
+      unavailable: async (names: readonly string[]) =>
+        new Map(names.map((n) => [n, { status: "disabled", reason: "deployment_disabled" }])),
+    } as unknown as ExtensionAvailability,
   );
 }

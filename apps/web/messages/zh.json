@@ -2260,6 +2260,24 @@
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "部署上当前不可用 · 组织的启用设置会保留",
+    "unavailableWith": "不可用 · {reason}",
+    "reasons": {
+      "not_deployed": "平台未安装",
+      "needs_deployment_config": "缺少部署配置",
+      "pending_approval": "权限待批准",
+      "pending_migration": "正在准备",
+      "loading": "正在加载",
+      "dependency": "缺少依赖的扩展",
+      "failed": "加载失败",
+      "deployment_disabled": "平台已停用"
+    },
+    "unavailableNext": {
+      "superAdmin": "在管理后台的扩展页处理后即可使用。",
+      "orgAdmin": "只有超级管理员能处理，请联系超级管理员。",
+      "member": "请联系组织管理员，由超级管理员在平台上处理。",
+      "wait": "平台正在加载，请稍后再看。"
+    },
+    "openAdmin": "去管理后台处理",
     "enabledToast": "已启用「{plugin}」。",
     "disabledToast": "已停用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",

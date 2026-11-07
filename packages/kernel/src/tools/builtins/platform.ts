@@ -1,5 +1,6 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import type { KernelLogger } from "../../log.js";
 import type { OrgSettings } from "../../orgs/settings.service.js";
 import type { ActorFacts } from "../../platform/actor.js";
 import type { AgentDocTopic } from "../../platform/agent-docs.js";
@@ -10,6 +11,7 @@ import {
   errorsFor,
   nextStepFor,
   OPERATION_ERROR_NEXT,
+  resolveNext,
   sentence,
   toToolError,
 } from "../../platform/errors.js";
@@ -18,6 +20,7 @@ import {
   type ConfirmClass,
   OPERATION_ID,
   type OperationContext,
+  type OperationErrorNext,
   operationDomain,
   type PlatformOperation,
   PRECHECK_TIMEOUT_MS,
@@ -131,6 +134,8 @@ export interface PlatformToolDeps {
   setting(orgId: string): Promise<OrgSettings["platformTool"]>;
   /** How long a precheck may take; default {@link PRECHECK_TIMEOUT_MS} (a test seam). */
   precheckTimeoutMs?: number;
+  /** A precheck that throws is logged (warn) and one that times out (debug), with the op id. */
+  log?: Pick<KernelLogger, "warn"> & Partial<Pick<KernelLogger, "debug">>;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -285,9 +290,16 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     if (hasOutputRef((ctx.rawInput as PlatformInput | undefined)?.params)) {
       return deny(outputRefText(op.id));
     }
-    const failed = await precheckOf(op, params, ctx, deps.precheckTimeoutMs ?? PRECHECK_TIMEOUT_MS);
+    const failed = await precheckOf(
+      op,
+      params,
+      ctx,
+      deps.precheckTimeoutMs ?? PRECHECK_TIMEOUT_MS,
+      deps.log,
+    );
     if (failed !== null) {
-      const next = nextStepFor(op.errors, failed.code, errorRoleOf(f));
+      const role = errorRoleOf(f);
+      const next = resolveNext(failed.next, role) ?? nextStepFor(op.errors, failed.code, role);
       return deny(precheckText(op.id, failed.code, failed.message, next));
     }
     const octx = confirmCtx(ctx);
@@ -467,30 +479,33 @@ async function classOf(
 
 /**
  * The operation's precheck, bounded by `ms`: the failure it found, or null (none, passed, timed
- * out, or threw: the write's own errors speak then). Its signal aborts at the timeout.
+ * out, or threw: the write's own errors speak then; a throw is logged as a warning, a timeout at
+ * debug). Its signal aborts at the timeout or when the run's signal aborts.
  */
 async function precheckOf(
   op: PlatformOperation,
   params: unknown,
   ctx: CallPolicyContext,
   ms: number,
-): Promise<{ code: string; message: string } | null> {
+  log: PlatformToolDeps["log"],
+): Promise<{ code: string; message: string; next?: OperationErrorNext } | null> {
   if (op.precheck === undefined) return null;
   const ac = new AbortController();
+  const signal = ctx.signal === undefined ? ac.signal : AbortSignal.any([ac.signal, ctx.signal]);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<null>((resolve) => {
     timer = setTimeout(() => {
       ac.abort();
+      log?.debug?.("platform precheck timed out; the card is shown", { operation: op.id, ms });
       resolve(null);
     }, ms);
   });
   try {
-    const r = await Promise.race([
-      op.precheck(params, { ...confirmCtx(ctx), signal: ac.signal }),
-      timeout,
-    ]);
-    return r === null || r.ok ? null : { code: r.code, message: r.message };
-  } catch {
+    const r = await Promise.race([op.precheck(params, { ...confirmCtx(ctx), signal }), timeout]);
+    if (r === null || r.ok) return null;
+    return { code: r.code, message: r.message, ...(r.next !== undefined && { next: r.next }) };
+  } catch (err) {
+    log?.warn("platform precheck failed; the card is shown", { operation: op.id, err });
     return null;
   } finally {
     clearTimeout(timer);

@@ -65,7 +65,8 @@ import NotFound from "../not-found";
  * The head's tabs (全部, 模型, 网页, 连接器, 沙箱, 存储, 工具与界面; `lib/extension-capabilities.ts`
  * maps the extension points to them, `?tab=` keeps the open one) carry counts, with a search by
  * name. A row: the display name over `plugin · version`, what it can do under that tab, its state
- * (已启用 / 未启用 / 已启用 · 平台统一 / 待配置 / 不可用, or a failed switch) and, for org admins,
+ * (已启用 / 未启用 / 已启用 · 平台统一 / 待配置 / 不可用 with the kernel's reason, e.g. 不可用 · 缺少部署配置,
+ * or a failed switch) and, for org admins,
  * the enable switch, which is its plugin's switch (spec §5 rule 7): switching it off answers the
  * plugin's switch-off preview first (what it takes away, the agents that use it), confirmed in a
  * dialog with the preview's hash. Rows needing attention (待配置, a refused switch) come first,
@@ -93,7 +94,14 @@ export default function ExtensionsView({ tab }: { tab: ExtensionTab }) {
   const ws = useWorkspace({ min: "member", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Extensions orgId={ws.orgId} canEdit={roleAtLeast(ws.role, "admin")} initialTab={tab} />;
+  return (
+    <Extensions
+      orgId={ws.orgId}
+      canEdit={roleAtLeast(ws.role, "admin")}
+      superAdmin={ws.me.account.isSuperAdmin}
+      initialTab={tab}
+    />
+  );
 }
 
 type Busy = "toggle" | "save" | "saveEnable" | "sync";
@@ -132,10 +140,12 @@ const strings = (raw: unknown[], key: string): string[] => [
 function Extensions({
   orgId,
   canEdit,
+  superAdmin,
   initialTab,
 }: {
   orgId: string;
   canEdit: boolean;
+  superAdmin: boolean;
   initialTab: ExtensionTab;
 }) {
   const scope = usePagePath("org");
@@ -168,6 +178,7 @@ function Extensions({
     <ExtensionList
       orgId={orgId}
       canEdit={canEdit}
+      superAdmin={superAdmin}
       extensions={extensions}
       header={header}
       tab={tab}
@@ -191,6 +202,7 @@ function useColumnHeaders(canEdit: boolean): Column<never>[] {
 function ExtensionList({
   orgId,
   canEdit,
+  superAdmin,
   extensions,
   header,
   tab,
@@ -199,6 +211,8 @@ function ExtensionList({
 }: {
   orgId: string;
   canEdit: boolean;
+  /** The viewer is the super admin: an unavailable extension links to the admin console. */
+  superAdmin: boolean;
   extensions: OrgExtension[];
   header: Parameters<typeof ListPage>[0]["header"];
   tab: ExtensionTab;
@@ -286,7 +300,13 @@ function ExtensionList({
           !savedConfigComplete(ext.orgConfigSchema, ext.config, ext.secrets, lang)));
     const problem = problems[ext.plugin];
     const state: Row["state"] = unavailable
-      ? { label: t("unavailable"), tone: "warn" }
+      ? {
+          label:
+            ext.reason === undefined
+              ? t("unavailable")
+              : t("unavailableWith", { reason: t(`reasons.${ext.reason}`) }),
+          tone: "warn",
+        }
       : problem !== undefined
         ? { label: t(ext.enabled ? "disableFailed" : "enableFailed"), tone: "fail" }
         : needsConfig
@@ -554,6 +574,7 @@ function ExtensionList({
           extension={current.ext}
           label={current.label}
           canEdit={canEdit}
+          superAdmin={superAdmin}
           capabilities={capabilitiesIn(capabilityGroups(current.ext), "all").map(capabilityLabel)}
           state={current.state}
           platform={current.platform}

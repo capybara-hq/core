@@ -33,8 +33,13 @@ import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { fieldLevels } from "./org-levels.js";
 import type { PermissionSet } from "./permission-set.js";
-import { type PermissionGroup, permissionGroups } from "./permission-view.js";
+import {
+  type DeploymentExtensionStatus,
+  type PermissionGroup,
+  permissionGroups,
+} from "./permission-view.js";
 import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
+import { ExtensionAvailability, type ExtensionUnavailableReason } from "./unavailable.js";
 
 export { type ConfigIssue, toIssues };
 
@@ -62,6 +67,16 @@ export interface OrgExtensionView {
    * 组织的启用开关保留不变（不能修改），其余字段为空。
    */
   available: boolean;
+  /**
+   * The extension's status on the deployment, as the admin console derives it
+   * (`deriveExtensionStatus`): `enabled` when it is loaded here; otherwise why not.
+   */
+  status: DeploymentExtensionStatus;
+  /**
+   * Only when unavailable: why it cannot be used (spec §14.5 item 4), e.g.
+   * `needs_deployment_config`. State only, never a config value or field name.
+   */
+  reason?: ExtensionUnavailableReason;
   /**
    * A required bootstrap plugin: enabled in every org (`enabled` is always true) and cannot be
    * disabled here (`extension.required`); its org config, when it has one, can still be set.
@@ -207,6 +222,8 @@ export class OrgExtensionConfigs {
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     /** The effective deployment config of each org (spec A §6): read for `needsConfig`. */
     @Inject(EffectiveConfigs) private readonly effective: EffectiveConfigs,
+    /** Why an installed extension is not loaded (`status` / `reason` of the unavailable ones). */
+    @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
   ) {}
 
   /** The kernel-schema handle of the current transaction. */
@@ -236,7 +253,17 @@ export class OrgExtensionConfigs {
       name: r.name,
       version: r.version,
     }));
-    return this.withLayers(orgId, await this.listSnapshot(orgId, installed));
+    const views = await this.listSnapshot(orgId, installed);
+    const why = await this.availability.unavailable(
+      views.filter((v) => !v.available).map((v) => v.plugin),
+    );
+    for (const v of views) {
+      const u = why.get(v.plugin);
+      if (v.available || u === undefined || u.status === null) continue;
+      v.status = u.status;
+      v.reason = u.reason;
+    }
+    return this.withLayers(orgId, views);
   }
 
   /**
@@ -331,6 +358,9 @@ export class OrgExtensionConfigs {
           permissions: [],
           orgConfigSchema: null,
           available: false,
+          // filled in by `list` from the replicas' reports
+          status: "converging",
+          reason: "loading",
           required: required.has(i.name),
           ...scopeFields(items.get(i.name), required.has(i.name)),
           overrideState: "none",
@@ -809,6 +839,7 @@ export class OrgExtensionConfigs {
       permissions: permissionGroups(this.permissionsOf(m.name)),
       orgConfigSchema: schema ? this.formSchema(m.name, m.version, schema) : null,
       available: true,
+      status: "enabled",
       required,
       ...scopeFields(items, required),
       overrideState: [...fieldLevels(m.config?.deployment).values()].includes("override")
