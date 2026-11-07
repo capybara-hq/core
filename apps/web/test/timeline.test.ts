@@ -409,6 +409,16 @@ describe("buildTimeline", () => {
     });
   });
 
+  it("a tool set change (model-facing only) adds no entry", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "tools_changed", { step: 1, added: ["WebSearch"], removed: ["Agent"] }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual(
+      buildTimeline([user(1, "hi")], [], new Map(), "en"),
+    );
+  });
+
   it("drafts stream at the end: live thinking, then prose", () => {
     const out = buildTimeline(
       [],

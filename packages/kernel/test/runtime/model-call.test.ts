@@ -1171,6 +1171,127 @@ describe("runModelStep", () => {
   });
 });
 
+describe("tool set changes (tool naming spec §9.1)", () => {
+  const tooly = () =>
+    stubInfo("tooly", { capabilities: { ...stubInfo("x").capabilities, tools: true } });
+  const mk = (key: string): ResolvedTool => {
+    const spec = { name: key, description: `Do ${key}.`, inputSchema: { type: "object" } };
+    return {
+      key,
+      source: { kind: "builtin", name: key },
+      spec,
+      specHash: specHash(spec),
+      defaultPolicy: "allow",
+    };
+  };
+  /** The tools the next forAgent resolves (changed between steps by the test). */
+  let current: string[] = [];
+  const run = (n: number, over: { model?: string; runId?: string; wrapUp?: boolean } = {}) =>
+    (over.wrapUp ? runFinalWrapUp : runModelStep)(
+      {
+        ...deps,
+        tools: {
+          forAgent: async () => ({ tools: current.map(mk), unavailable: [], toolSearch: false }),
+        },
+      },
+      {
+        orgId,
+        conversationId,
+        runId: over.runId ?? runId,
+        step: n,
+        agent: agentWith({ model: { provider: "stub", model: over.model ?? "tooly" } }),
+        agentVersion: 1,
+        absorbedUpToSeq: ALL_ABSORBED,
+        signal: new AbortController().signal,
+        sink: () => {},
+      },
+    );
+
+  it("writes nothing before the first request nor while the set stays the same", async () => {
+    stubImpl = stub([tooly()], () => "ok");
+    current = ["AskUserQuestion", "ReadToolOutput"];
+    await say("hi");
+    await run(1);
+    await run(2);
+    expect(await ofType("tools_changed")).toEqual([]);
+  });
+
+  it("logs the change before the request that offers it and renders it there; later steps stay quiet", async () => {
+    const s = stub([tooly()], () => "ok");
+    stubImpl = s;
+    current = ["AskUserQuestion", "ReadToolOutput"];
+    await say("hi");
+    await run(1);
+    current = ["AskUserQuestion", "WebSearch", "WebFetch", "plugin__todo__write"];
+    await run(2);
+    const [changed, ...more] = await ofType("tools_changed");
+    expect(more).toEqual([]);
+    expect(changed?.runId).toBe(runId);
+    expect(changed?.payload).toEqual({
+      step: 2,
+      added: ["WebFetch", "WebSearch", "plugin__todo__write"],
+      removed: ["ReadToolOutput"],
+    });
+    const text =
+      "Your tools changed. Now available: WebFetch, WebSearch, plugin__todo__write. No longer " +
+      "available: ReadToolOutput. Use the current tool list; it replaces anything said earlier in " +
+      "this conversation about which tools you have.";
+    const req = s.calls[1] as ModelRequest;
+    expect(req.messages.at(-1)).toEqual({ role: "system", content: text });
+    const calls = await ofType("model_call");
+    expect((changed?.seq ?? 0) < (calls[1]?.seq ?? 0)).toBe(true);
+    expect(calls[1]?.payload.request.toSeq).toBeGreaterThanOrEqual(changed?.seq ?? 0);
+    // the next step: no new event, the notice stays where it was (append-only)
+    await run(3);
+    expect(await ofType("tools_changed")).toHaveLength(1);
+    const third = s.calls[2] as ModelRequest;
+    expect(third.messages.filter((m) => m.content === text)).toHaveLength(1);
+  });
+
+  it("a new run compares with the previous run's last request; the wrap-up call logs a change too", async () => {
+    stubImpl = stub([tooly()], () => "ok");
+    current = ["AskUserQuestion"];
+    await say("hi");
+    await run(1);
+    current = ["AskUserQuestion", "Agent", "SendMessage"];
+    const next = randomUUID();
+    await run(1, { runId: next, wrapUp: true });
+    const [changed] = await ofType("tools_changed");
+    expect(changed?.runId).toBe(next);
+    expect(changed?.payload).toEqual({ step: 1, added: ["Agent", "SendMessage"], removed: [] });
+  });
+
+  it("a retried step finds its change in the log and writes no duplicate", async () => {
+    stubImpl = stub([tooly()], () => "ok");
+    current = ["AskUserQuestion"];
+    await say("hi");
+    await run(1);
+    current = ["AskUserQuestion", "WebSearch"];
+    // a crash after the change was logged and before the request: the step runs again
+    await eventLog.append(conversationId, [
+      {
+        type: "tools_changed",
+        runId,
+        payload: { step: 2, added: ["WebSearch"], removed: [] },
+      },
+    ]);
+    await run(2);
+    expect(await ofType("tools_changed")).toHaveLength(1);
+  });
+
+  it("a request without tools because its model has none is not the baseline", async () => {
+    stubImpl = stub([tooly(), stubInfo("plain")], () => "ok");
+    current = ["AskUserQuestion"];
+    await say("hi");
+    await run(1);
+    await run(2, { model: "plain" });
+    await run(3);
+    expect(await ofType("tools_changed")).toEqual([]);
+    const [, plain] = await ofType("model_call");
+    expect(plain?.payload.request.tools).toEqual([]);
+  });
+});
+
 describe("model.request hooks", () => {
   it("sticky: a logged denial for this attempt fails the step again without running the hooks or the model", async () => {
     await say("hello");

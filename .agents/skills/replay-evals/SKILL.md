@@ -34,6 +34,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   so `display` (the bilingual summary) and `view` (UI refresh B: `command` exit code and description, `edit` line diff, `read` range)
   never reach a request, are not in compaction records and need no `DriftReason`. A tool's input schema change (such as
   `Bash`'s required `description`) needs none either: definitions are fetched from the snapshot by the recorded specHash.
+- **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
+  previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
+  request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
+  (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
 
 ## Queued messages (UI refresh B)
 

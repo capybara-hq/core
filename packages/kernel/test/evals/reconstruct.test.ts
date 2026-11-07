@@ -444,6 +444,23 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     const reminders = events.flatMap((e) => (e.type === "reminder" ? [e.payload.text] : []));
     expect(reminders.some((t) => t.startsWith("The following tools are unavailable"))).toBe(true);
     expect(reminders.some((t) => t.startsWith("You are close to the step limit"))).toBe(true);
+    // the probe switched off and on: each run's first request tells the model (tool naming spec
+    // §9.1), rendered as a system message and rebuilt from the log below
+    const changes = events.flatMap((e) => (e.type === "tools_changed" ? [e.payload] : []));
+    expect(changes).toHaveLength(2);
+    expect(changes[0]?.added).toEqual([]);
+    expect(changes[0]?.removed).toContain(echoKey);
+    expect(changes[1]?.added).toEqual(changes[0]?.removed);
+    expect(changes[1]?.removed).toEqual([]);
+    const notices = sent.flatMap((r) =>
+      r.messages.filter(
+        (m) =>
+          m.role === "system" &&
+          typeof m.content === "string" &&
+          m.content.startsWith("Your tools changed."),
+      ),
+    );
+    expect(notices.length).toBeGreaterThan(0);
     const calls = modelCalls(events);
     expect(calls.some((c) => c.payload.request.catalog !== undefined)).toBe(true);
     expect(calls.some((c) => c.payload.request.tools?.some((t) => t.key === echoKey))).toBe(true);

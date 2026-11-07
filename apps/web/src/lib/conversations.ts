@@ -153,6 +153,8 @@ type EventBody =
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }
+  /** The model's tool set changed since its previous request (model-facing; the UI shows nothing). */
+  | { type: "tools_changed"; payload: { step: number; added: string[]; removed: string[] } }
   | {
       type: "tool_call_started";
       payload: { step: number; callId: string; toolKey: string; specHash: string };

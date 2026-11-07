@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type ContentBlock,
   isModelError,
@@ -42,8 +43,9 @@ import {
   shouldCompact,
 } from "./context/compaction.js";
 import { guardToolPairs } from "./context/pairing.js";
-import { turnLimitReminder } from "./context/reminders.js";
+import { TOOLS_UNSUPPORTED_REMINDER, turnLimitReminder } from "./context/reminders.js";
 import { calibrate, estimateTokens } from "./context/tokens.js";
+import { toolSetChange } from "./context/tool-changes.js";
 import {
   type ConversationKindForHooks,
   fireObserve,
@@ -65,9 +67,7 @@ import type { UsageReporter } from "./usage-report.js";
 export const WRAP_UP_REMINDER =
   "Step limit reached. Do not call tools. Summarize what you found and what remains for the user.";
 
-/** 所用模型不支持工具（`capabilities.tools` 为 false）时的提醒（模型可见，英文）。 */
-export const TOOLS_UNSUPPORTED_REMINDER =
-  "Tools are unavailable for this model. Answer without calling tools.";
+export { TOOLS_UNSUPPORTED_REMINDER } from "./context/reminders.js";
 
 /** 不可用工具提醒的前缀（模型可见，英文）。 */
 export const TOOLS_UNAVAILABLE_PREFIX = "The following tools are unavailable in this run: ";
@@ -274,6 +274,11 @@ const idem = {
   reminder: (runId: string, step: number) => `reminder:${runId}:${step}`,
   toolsUnavailable: (runId: string, step: number) => `tools_unavailable:${runId}:${step}`,
   toolsUnsupported: (runId: string, step: number) => `tools_unsupported:${runId}:${step}`,
+  toolsChanged: (runId: string, step: number, keys: readonly string[]) =>
+    `tools_changed:${runId}:${step}:${createHash("sha256")
+      .update(JSON.stringify([...keys].sort()))
+      .digest("hex")
+      .slice(0, 16)}`,
   modelCall: modelCallIdemKey,
   hookDenied: (runId: string, step: number, attempt: number) =>
     `hook_denied:${runId}:${step}:${attempt}`,
@@ -421,6 +426,20 @@ async function runStep(
         usage: null,
         budget: true,
       };
+    }
+
+    // the tool set changed since the previous request (an extension switched on, a sub-agent
+    // roster added): tell the model before this request (tool naming spec §9.1). Keyed by the new
+    // set, so a retried step finds it in the log (previousToolSet applies it) and writes nothing
+    const toolKeys = resolved.tools.map((t) => t.key);
+    const change = toolSetChange(events, toolKeys);
+    if (change !== null) {
+      events = await appendLocal(deps.eventLog, conversationId, events, {
+        type: "tools_changed",
+        runId,
+        idemKey: idem.toolsChanged(runId, step, toolKeys),
+        payload: { step, ...change },
+      });
     }
 
     const last = lastToolsReminder(events, runId);

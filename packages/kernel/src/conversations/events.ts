@@ -463,6 +463,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   ev("reminder", z.object({ step: count, text: z.string() })),
+  /**
+   * The step's resolved tool set differs from the one the conversation's previous model request
+   * offered (`toolSetChange`): tool names as the model sees them, sorted. Written before that
+   * step's request, never before a conversation's first one. **Model-visible**: rendered at its
+   * position as a system message (`toolsChangedText`); dropped once a summary covers it.
+   */
+  ev(
+    "tools_changed",
+    z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
+  ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",
