@@ -189,7 +189,7 @@ describe("useConversationGroups", () => {
     show("o1");
     await screen.findByRole("link", { name: "一" });
     await userEvent.click(screen.getByRole("button", { name: "与 研究助手 新建会话" }));
-    expect(router.push).toHaveBeenCalledWith("/chat?agent=a1");
+    expect(router.push).toHaveBeenCalledWith("/?agent=a1");
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
@@ -551,7 +551,7 @@ describe("useConversationGroups filter, archived list and row actions (web order
     ).toBeTruthy();
   });
 
-  it("deleting the open conversation navigates to /chat", async () => {
+  it("deleting the open conversation navigates to / (a new conversation)", async () => {
     let deleted = false;
     const calls = stubApi({
       [groupsUrl]: () =>
@@ -572,7 +572,7 @@ describe("useConversationGroups filter, archived list and row actions (web order
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除会话？" });
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/"));
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
   });
 

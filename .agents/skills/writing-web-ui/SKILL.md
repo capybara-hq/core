@@ -44,13 +44,13 @@ rendered DOM in tests.
 
 | Page | Template | Notes |
 |---|---|---|
-| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation `/chat` is the home, `/` redirects there) |
+| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation at `/` is the home; `/chat` redirects permanently to `/` with its query, maintainer decision 2026-11-07) |
 | Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
 | Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
+| The conversation page (`/` for a new one, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
 | Single run detail | `TracePage` | Span waterfall + detail |
 | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
@@ -111,7 +111,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Copy: "文件" / "files" for what an agent delivers, never "产出物" / "artifacts"; tool verbs per kind come from the design i18n (spec §7).
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
-- A new conversation (`/chat`) creates nothing on the kernel before the first send.
+- A new conversation (`/`) creates nothing on the kernel before the first send.
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
@@ -197,7 +197,7 @@ function Agents({ orgId }: { orgId: string }) {
   keeps a hydrated error from being read again on mount).
 - `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
   from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes home,
-  `/chat`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  `/`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
 - **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`

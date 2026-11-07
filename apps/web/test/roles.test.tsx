@@ -261,7 +261,7 @@ describe("NoAccess names the page by its nav label", () => {
     ["/channels", zh.nav.channels],
     ["/settings/organization", zh.nav.settings],
     // New conversation has no nav message of its own: the head says no access
-    ["/chat", zh.roles.noAccess.title],
+    ["/", zh.roles.noAccess.title],
     ["/p/example-board/board", zh.roles.noAccess.title],
   ])("%s → %s", (path, title) => {
     resetNavigation(path);
@@ -530,7 +530,7 @@ describe("agents: edit, read-only and 更改所有者", () => {
         "/agents/ag1",
       );
       expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
-        "/chat?agent=ag1",
+        "/?agent=ag1",
       );
       const more = within(card).queryByRole("button", { name: "更多操作" });
       if (items.length === 0) {

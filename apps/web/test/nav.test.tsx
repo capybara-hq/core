@@ -248,9 +248,9 @@ describe("activeNavOf", () => {
     ["/extensions", "extensions"],
     ["/trajectories/x", "evals"],
     ["/account/connections", ""],
-    // the new conversation is the home: 新会话 is current; `/` redirects there before rendering
-    ["/chat", "new"],
-    ["/", ""],
+    // the new conversation is the home at `/`: 新会话 is current; `/chat` redirects there first
+    ["/", "new"],
+    ["/chat", ""],
     // an extension page is its sidebar item (m1), decoded like the item ids
     ["/p/example-board/board", "ext:example-board/board"],
     ["/p/%40acme%2Fboard/main%20view", "ext:@acme/board/main view"],
@@ -291,7 +291,7 @@ describe("AppFrame contexts", () => {
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
     expect(plugins.getAttribute("aria-current")).toBe("page");
     expect(within(nav).queryByRole("link", { name: /平台目录|^市场/ })).toBeNull();
-    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/chat");
+    expect(screen.getByRole("link", { name: /~\/acme/ }).getAttribute("href")).toBe("/");
     expect(screen.queryByRole("region", { name: "会话" })).toBeNull();
     expect(within(screen.getByRole("contentinfo")).getByText("grant@acme:/admin/plugins/market"));
   });
@@ -310,16 +310,14 @@ describe("AppFrame contexts", () => {
     expect(plugins.getAttribute("href")).toBe("/admin/plugins");
   });
 
-  it("the new conversation is the home: on /chat 新会话 is the current nav item", () => {
-    resetNavigation("/chat");
+  it("the new conversation is the home: on / 新会话 is the current nav item", () => {
+    resetNavigation("/");
     renderFrame();
     const nav = screen.getByRole("navigation", { name: "主导航" });
     const current = within(nav)
       .getAllByRole("link")
       .filter((l) => l.getAttribute("aria-current") === "page");
-    expect(current.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([
-      ["新会话", "/chat"],
-    ]);
+    expect(current.map((l) => [l.textContent, l.getAttribute("href")])).toEqual([["新会话", "/"]]);
     expect(within(nav).queryByRole("link", { name: "首页" })).toBeNull();
   });
 

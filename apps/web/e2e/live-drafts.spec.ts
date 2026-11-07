@@ -35,7 +35,7 @@ test("a message during a streaming reply is a bubble below the reply", async ({ 
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Live interject");
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   await send(page, `slow:150:${A_TEXT}`);
   // the reply is under way, not whole
   await expect.poll(() => lastReply(page), { intervals: [50] }).not.toBe("");
@@ -58,7 +58,7 @@ test("a reload mid-stream resumes the draft with no gap and no duplicate", async
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Live reload");
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   await send(page, `slow:150:${A_TEXT}`);
   await expect.poll(() => lastReply(page), { intervals: [50] }).not.toBe("");
   expect(await lastReply(page)).not.toBe(A_TEXT);
@@ -84,12 +84,12 @@ test("two running conversations switched in the app keep complete drafts", async
   await signIn(page);
   const orgId = await currentOrg(page);
   const agentId = await createAgent(page, orgId, "Live switch");
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   await send(page, `slow:200:${A_TEXT}`);
   const idA = conversationIdOf(page);
   await expect.poll(() => lastReply(page), { intervals: [50] }).not.toBe("");
   // a second conversation starts from the sidebar's new-conversation flow of the same agent
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   await send(page, `slow:200:${B_TEXT}`);
   const idB = conversationIdOf(page);
   expect(idB).not.toBe(idA);

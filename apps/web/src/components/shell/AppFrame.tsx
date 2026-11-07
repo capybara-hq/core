@@ -535,7 +535,7 @@ function ShellFrame({
       sidebar={{
         context,
         // A new conversation starts at the composer; nothing is created before the first send.
-        newConversation: { href: "/chat" },
+        newConversation: { href: HOME_PATH },
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
         account: { name: me.account.displayName, menu: [...orgMenu, ...personalMenu] },
@@ -543,7 +543,7 @@ function ShellFrame({
       }}
       commands={commands}
       status={status}
-      ownStatusBar={under(pathname, "/chat")}
+      ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>

@@ -457,7 +457,9 @@ export const ROUTES: readonly RouteEntry[] = [
         : [q(orgExtensionsQuery(orgId)), q(agentsQuery(orgId))],
   },
   {
-    pattern: "/chat",
+    // The new conversation, the workspace home (`/chat` redirects here, maintainer decision
+    // 2026-11-07).
+    pattern: "/",
     // The sidebar's groups name the agent most recently talked to (the shell reads them too).
     queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
     // Until the org can run, the frame draws the setup home here: the composer's reads wait for

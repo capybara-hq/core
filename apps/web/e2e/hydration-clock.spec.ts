@@ -49,7 +49,7 @@ async function hydratesTimes(page: Page): Promise<void> {
   await page.clock.install({ time: Date.now() + 61_000 });
 
   // the home: the new conversation, with the sidebar's conversation rows
-  await page.goto("/chat");
+  await page.goto("/");
   await hydrated(page);
   const row = page.getByRole("region", { name: "会话" }).locator(`a[href$="/chat/${id}"]`);
   // after mount the browser's own zone: the start time as this browser writes it

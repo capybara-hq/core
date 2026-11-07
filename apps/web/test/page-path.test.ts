@@ -11,7 +11,7 @@ describe("buildPagePath", () => {
         { label: "研究助手" },
       ]),
     ).toEqual([
-      { label: "capybara", href: "/chat" },
+      { label: "capybara", href: "/" },
       { label: "agents", href: "/agents" },
       { label: "研究助手" },
     ]);
@@ -20,7 +20,7 @@ describe("buildPagePath", () => {
   it("uses ~ for personal pages and for an org page without an org", () => {
     expect(buildPagePath("home", "capybara", [])).toEqual([{ label: "~" }]);
     expect(buildPagePath("org", undefined, [{ label: "agents" }])).toEqual([
-      { label: "~", href: "/chat" },
+      { label: "~", href: "/" },
       { label: "agents" },
     ]);
   });

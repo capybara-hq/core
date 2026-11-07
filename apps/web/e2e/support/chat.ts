@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { NEW_CHAT_URL } from "./nav";
 import { selectOption } from "./select";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -38,7 +39,7 @@ export const toolGroup = (page: Page, key: string): Locator =>
 
 /**
  * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a
- * link): the page is `/chat?agent=<id>` and nothing is created before the first send.
+ * link): the page is `/?agent=<id>` and nothing is created before the first send.
  */
 export async function startChat(page: Page, agentName: string): Promise<void> {
   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
@@ -47,7 +48,7 @@ export async function startChat(page: Page, agentName: string): Promise<void> {
     .filter({ hasText: agentName })
     .getByRole("link", { name: zh.agents.chat, exact: true })
     .click();
-  await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
+  await expect(page).toHaveURL(NEW_CHAT_URL);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // the agent is picked: the composer's placeholder names it
   await expect(composer(page)).toHaveAttribute(

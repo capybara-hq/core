@@ -122,7 +122,7 @@ async function pick(user: ReturnType<typeof userEvent.setup>, title: string) {
 }
 
 beforeEach(() => {
-  resetNavigation("/chat");
+  resetNavigation("/");
   vi.stubGlobal("EventSource", FakeEventSource);
   // 09:00 local: the morning set; the first line of it
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -141,7 +141,7 @@ afterEach(() => {
 describe("the new conversation page (agent profile design §4)", () => {
   it("the page shows a greeting for the bucket, the agents row and the first agent's quick actions", async () => {
     expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/chat", routes());
+    const { container } = await renderRouteWithCache("/", routes());
     // picked after mount: the morning's first line with the person's name
     expect(
       await screen.findByRole("heading", {
@@ -186,7 +186,7 @@ describe("the new conversation page (agent profile design §4)", () => {
       [`POST ${ORG}/conversations`]: () =>
         json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
     });
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
@@ -209,7 +209,7 @@ describe("the new conversation page (agent profile design §4)", () => {
   });
 
   it("while the agents load, the row draws placeholder chips and nothing is interactive", async () => {
-    const { container } = await renderRouteEmptyCache("/chat", {
+    const { container } = await renderRouteEmptyCache("/", {
       ...routes(),
       [`GET ${ORG}/agents`]: () => new Promise<Response>(() => {}),
     });
@@ -225,7 +225,7 @@ describe("the new conversation page (agent profile design §4)", () => {
   it("one usable agent: no row", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache(
-      "/chat",
+      "/",
       routes({ agents: [AGENTS.agents[0]] }, { groups: [], next: null }),
     );
     await screen.findByRole("heading", { name: /Grant/ });
@@ -236,7 +236,7 @@ describe("the new conversation page (agent profile design §4)", () => {
 
   it("picking a quick action fills the composer; ⌘Z restores the previous text", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.type(input(), "my draft");
     await pick(user, "Review");
@@ -273,7 +273,7 @@ describe("the new conversation page (agent profile design §4)", () => {
       el?.querySelector('[data-part="avatar"][data-kind="initial"]')?.textContent;
     // the new conversation's agents row (24)
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes(plain, { groups: [], next: null }));
+    await renderRouteWithCache("/", routes(plain, { groups: [], next: null }));
     const chip = within(row() as HTMLElement).getByRole("button", { name: "echo agent" });
     expect(initialIn(chip)).toBe("E");
     expect(

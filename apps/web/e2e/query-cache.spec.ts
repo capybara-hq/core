@@ -10,7 +10,7 @@ import {
   send,
   zh,
 } from "./support/chat";
-import { hydrated } from "./support/nav";
+import { HOME_URL, hydrated } from "./support/nav";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
 /**
@@ -87,7 +87,7 @@ async function twoConversations(page: Page, agentName: string) {
     .getByRole("navigation", { name: "主导航" })
     .getByRole("link", { name: designZh("sidebar.new") })
     .click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(HOME_URL);
   await send(page, "echo:beta");
   await expect(replies(page).last()).toHaveText(/beta/);
   const b = conversationIdOf(page);
@@ -267,7 +267,7 @@ test("switching org never shows the old org", async ({ page }) => {
     await sidebar.locator('button[data-part="account"]').click();
     await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
     await page.getByRole("menuitemradio", { name: otherName }).click();
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(HOME_URL);
     await hydrated(page);
     await expect(sidebar.locator('[data-part="org-switcher"]')).toHaveAttribute("title", otherName);
     // the agent list of the other org, by a client navigation

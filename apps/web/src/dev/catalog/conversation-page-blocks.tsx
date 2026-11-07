@@ -1251,7 +1251,7 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         }}
         status={
           isNew
-            ? { context: "grant@示例组织:/chat", version: X.version }
+            ? { context: "grant@示例组织:~", version: X.version }
             : {
                 context: C.path,
                 stats: `第 ${X.turns} 轮 · 已用 ${X.elapsed}`,

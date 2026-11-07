@@ -28,6 +28,7 @@ import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
+import { HOME_PATH } from "../../lib/routes";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
@@ -68,7 +69,7 @@ export function orderAgents(
 }
 
 /**
- * A new conversation (`/chat`, spec §5.2, agent profile design §4): the greeting, the agents row,
+ * A new conversation (`/`, the home, spec §5.2, agent profile design §4): the greeting, the agents row,
  * the selected agent's quick actions and the composer (no agent picker: the row picks). The agent
  * is `?agent=` when usable, else the one most recently talked to, else the first in the row's
  * order. The greeting is picked after mount (the server draws its same-height placeholder, so the
@@ -92,7 +93,7 @@ export function useNewConversationPage(
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const session = useSession();
-  const signature = useStatusSignature("/chat");
+  const signature = useStatusSignature(HOME_PATH);
   const agentsQ = agentsQuery(orgId);
   const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
   const agents = agentsRead.data?.agents;

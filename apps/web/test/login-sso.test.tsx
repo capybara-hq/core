@@ -125,17 +125,16 @@ describe("第三方登录按钮", () => {
 
   it("safeReturnTo / ssoStartUrl", () => {
     expect(safeReturnTo("/bind/x?y=1")).toBe("/bind/x?y=1");
-    expect(safeReturnTo("//evil.example")).toBe("/chat");
-    expect(safeReturnTo("https://evil.example")).toBe("/chat");
-    expect(safeReturnTo("/\\evil")).toBe("/chat");
-    expect(safeReturnTo(null)).toBe("/chat");
+    expect(safeReturnTo("//evil.example")).toBe("/");
+    expect(safeReturnTo("https://evil.example")).toBe("/");
+    expect(safeReturnTo("/\\evil")).toBe("/");
+    expect(safeReturnTo(null)).toBe("/");
     expect(ssoStartUrl("a b", "/x")).toBe("/api/v1/auth/sso/a%20b/start?returnTo=%2Fx");
   });
 
-  it("loginPathFor: home (/chat, or / which redirects there) needs no returnTo", () => {
-    expect(loginPathFor("/chat")).toBe("/login");
+  it("loginPathFor: home (/) needs no returnTo", () => {
     expect(loginPathFor("/")).toBe("/login");
-    expect(loginPathFor("/chat?agent=a1")).toBe("/login?returnTo=%2Fchat%3Fagent%3Da1");
+    expect(loginPathFor("/?agent=a1")).toBe("/login?returnTo=%2F%3Fagent%3Da1");
     expect(loginPathFor("/chat/c1")).toBe("/login?returnTo=%2Fchat%2Fc1");
   });
 });

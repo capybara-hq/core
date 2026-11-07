@@ -896,7 +896,7 @@ describe("/connectors/install reads from the query cache", () => {
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     cleanup();
     await renderRouteWithCache(installPath(), BOTH_KINDS, { readiness: NOT_READY });
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
   });
 });
 

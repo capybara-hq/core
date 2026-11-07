@@ -6,6 +6,7 @@ import { useEffect, useId, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { type Agent, avatarValue } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
+import { newConversationPath } from "../../lib/routes";
 import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
 import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
@@ -142,7 +143,7 @@ export function AgentPage({
       {
         label: t("agents.page.startChat"),
         variant: "primary" as const,
-        href: `/chat?agent=${encodeURIComponent(agent.id)}`,
+        href: newConversationPath(agent.id),
       },
     ],
   };

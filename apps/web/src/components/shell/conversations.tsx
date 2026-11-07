@@ -24,6 +24,7 @@ import {
   moreConversationsQuery,
   moreGroupsQuery,
 } from "../../lib/query/shell";
+import { HOME_PATH, newConversationPath } from "../../lib/routes";
 
 /** The conversation id of a `/chat/<id>` route. */
 export function activeIdFrom(pathname: string): string | undefined {
@@ -170,7 +171,7 @@ export function noOrgConversations(pathname: string): SidebarConversations {
  * The filter (`q`, `state`) is sent to the kernel; the archived list loads `…/groups?archived=1`
  * and swaps the list in place. The archived count is the `archivedCount` of the shown answer (the
  * kernel counts it whatever the view). Rename, archive and delete call the kernel and invalidate
- * every view; deleting the open conversation goes to `/chat`.
+ * every view; deleting the open conversation goes to the new conversation (`/`).
  *
  * Paging is by cursor (`next` → `after`): a group that gets new activity between two pages can
  * come back on a later page, so pages are merged by agent id.
@@ -309,7 +310,7 @@ export function useConversationGroups(
   };
 
   // Group ＋ opens a new conversation with that agent picked; it is created on first send.
-  const onNew = (agentId: string) => router.push(`/chat?agent=${encodeURIComponent(agentId)}`);
+  const onNew = (agentId: string) => router.push(newConversationPath(agentId));
 
   // A row that left this view goes at once, from the cached first page and from the paged rows (a
   // merge keeps rows the fresh page lacks, so it would bring the row back); every view is then
@@ -345,7 +346,7 @@ export function useConversationGroups(
       await deleteConversation(orgId, id);
       dropRow(id);
       // The open conversation is gone: back to a new one.
-      if (activeIdFrom(pathnameRef.current) === id) router.push("/chat");
+      if (activeIdFrom(pathnameRef.current) === id) router.push(HOME_PATH);
     },
     invalidates,
   });

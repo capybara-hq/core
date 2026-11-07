@@ -975,7 +975,7 @@ describe("the conversation page (ConversationPage)", () => {
     },
   );
 
-  it("the open conversation deleted elsewhere goes to /chat", async () => {
+  it("the open conversation deleted elsewhere goes to / (a new conversation)", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${BASE}`]: () => json(200, CONV("c1", { title: "Kept" })),
@@ -983,7 +983,7 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat();
     await screen.findByText("hi");
     act(() => FakeEventSource.instances[0]?.emit("changed", { what: "deleted" }));
-    expect(router.push).toHaveBeenCalledWith("/chat");
+    expect(router.push).toHaveBeenCalledWith("/");
   });
 
   it("overlapping reads of the conversation: the latest request wins, not the latest answer (m7)", async () => {
@@ -1278,7 +1278,7 @@ describe("switching conversations", () => {
   });
 });
 
-/** The reads of `/chat` on the server. */
+/** The reads of `/` (the new conversation) on the server. */
 const NEW_CHAT = {
   "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
@@ -1290,14 +1290,14 @@ const NEW_CHAT = {
 const agentChip = (name: string) =>
   within(screen.getByRole("group", { name: "Choose an agent" })).getByRole("button", { name });
 
-describe("a new conversation (/chat)", () => {
+describe("a new conversation (/)", () => {
   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     const calls = stubApi({
       "POST /api/v1/orgs/o1/conversations": () =>
         json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
     });
-    const { calls: server } = await renderRouteWithCache("/chat?agent=ag2", NEW_CHAT);
+    const { calls: server } = await renderRouteWithCache("/?agent=ag2", NEW_CHAT);
     // the first paint is the server's: agents, the most recent agent and the models
     expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
     expect(server.map((c) => c.url)).toEqual(
@@ -1318,23 +1318,23 @@ describe("a new conversation (/chat)", () => {
     });
   });
 
-  it("the new conversation's status bar reads <login>@<slug>:~/chat with the time zone", async () => {
-    resetNavigation("/chat");
+  it("the new conversation's status bar reads <login>@<slug>:~ with the time zone", async () => {
+    resetNavigation("/");
     expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/chat", NEW_CHAT, {
+    const { container } = await renderRouteWithCache("/", NEW_CHAT, {
       session: { timeZone: "UTC+8" },
     });
     const bar = container.querySelector('[data-part="status-bar"]') as HTMLElement;
     expect((bar.querySelector('[data-part="status-bar-context"]') as HTMLElement).textContent).toBe(
-      "grant@acme:~/chat",
+      "grant@acme:~",
     );
     expect(bar.textContent).toContain("UTC+8");
   });
 
   it("without ?agent= the agent most recently talked to is picked, and the agents row changes it", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", {
+    await renderRouteWithCache("/", {
       ...NEW_CHAT,
       "GET /api/v1/orgs/o1/conversations/groups": () =>
         json(200, {
@@ -1358,11 +1358,11 @@ describe("a new conversation (/chat)", () => {
   });
 });
 
-describe("the first message from /chat (conversation send spec §2.1)", () => {
+describe("the first message from / (conversation send spec §2.1)", () => {
   const C9 = "/api/v1/orgs/o1/conversations/c9";
 
   async function startNew() {
-    resetNavigation("/chat");
+    resetNavigation("/");
     let answer: (r: Response) => void = () => {};
     let cmid = "";
     const calls = stubApi({
@@ -1375,7 +1375,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
       // the sidebar's groups read again after the create, and never answer here
       "GET /api/v1/orgs/o1/conversations/groups": () => new Promise<Response>(() => {}),
     });
-    const { client } = await renderRouteWithCache("/chat", NEW_CHAT);
+    const { client } = await renderRouteWithCache("/", NEW_CHAT);
     return { calls, client, answer: (r: Response) => answer(r), cmid: () => cmid };
   }
 
@@ -1494,18 +1494,18 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
 
 describe("the new conversation once the org can run", () => {
   it("with a model and an agent the composer shows as before", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/chat", NEW_CHAT);
+    const { container } = await renderRouteWithCache("/", NEW_CHAT);
     expect(agentChip("Echo agent")).toBeTruthy();
     expect(input()).toBeTruthy();
     expect(container.querySelector('[data-template="OnboardingPage"]')).toBeNull();
   });
 
   it("while the org is in setup, the page renders nothing (the frame draws the setup home)", async () => {
-    resetNavigation("/chat");
+    resetNavigation("/");
     expectNoFirstPaintFetch();
-    const { container, calls } = await renderRouteWithCache("/chat", NEW_CHAT, {
+    const { container, calls } = await renderRouteWithCache("/", NEW_CHAT, {
       readiness: { modelProvider: "none", agents: 0 },
     });
     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
@@ -1543,7 +1543,7 @@ describe("the conversation page in the app frame", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(router.push).not.toHaveBeenCalled();
     // the old org's conversation stays until the new document replaces it
     expect(screen.getByText("hi")).toBeTruthy();

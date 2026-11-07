@@ -24,6 +24,7 @@ import {
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { refreshUiViews } from "../../lib/query/ui";
+import { HOME_PATH } from "../../lib/routes";
 import { useStopUnderWay } from "../../lib/stop";
 import {
   type ChatState,
@@ -212,7 +213,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
       // conversation is gone, so the page goes to a new one (an archived one stays open).
       if (what === "archived" || what === "deleted") {
         invalidate(groups);
-        if (what === "deleted") router.push("/chat");
+        if (what === "deleted") router.push(HOME_PATH);
         return;
       }
       if (what === "selection") invalidate(c.row());

@@ -90,7 +90,9 @@ Each line is the rule you must not miss; the skill has the rest.
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
   `view.tsx`; one box is enough: never a box inside a box (`web-ui-box-in-box` and the jsdom guard
   `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
-  (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
+  (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
+  the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
+  2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible
   input needs a `DriftReason`. Run the zero-drift fixture tests before and after changing request

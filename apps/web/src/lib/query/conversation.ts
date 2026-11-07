@@ -470,7 +470,7 @@ export async function catchUpEvents(
  * The messages this tab sent to a conversation, by `clientMessageId`, with this tab's clock at the
  * send (`Date.now()`; per query client, in the browser): the working line and the composer's
  * running mode wait for their runs, at most 60 s from that time (conversation send spec §2.2;
- * never against the server's `createdAt`, which another clock wrote). It survives the `/chat` →
+ * never against the server's `createdAt`, which another clock wrote). It survives the `/` →
  * `/chat/<id>` handoff (the seed adds the first message); a send the kernel refused is removed
  * again. Never sent to the server.
  */
