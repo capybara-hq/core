@@ -5,10 +5,10 @@ Status: core part implemented on `feat/model-platform-core` (plan
 SDK kinds / `embed` / `ModelCallOptions`, kernel enablement and `ctx.models`, web model catalog and
 disabling, conformance and model-fake changes; the three plugins (§6) are not started. Error code
 added: `model.provider_not_found` (404). Routes added: `GET /api/v1/orgs/:orgId/models/catalog` and
-`PUT /api/v1/orgs/:orgId/models/:provider/disabled` (`org.models.manage`), and the platform's
-`PUT /api/v1/admin/models/:provider/disabled`; config added: `models.listTimeoutMs`,
-`models.embedTimeoutMs`. Design, 2026-11-07, waiting for review. Builds on the platform / org layering design
-(`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
+`PATCH /api/v1/orgs/:orgId/models/:provider/disabled` (`org.models.manage`), and the platform's
+`PATCH /api/v1/admin/models/:provider/disabled`, both with the body `{ disable, enable }`; config
+added: `models.listTimeoutMs`, `models.embedTimeoutMs`. Design 2026-11-07. Builds on the platform /
+org layering design (`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
 §5.5 (org keys through A's overridable fields and per-call effective config) were revised to it on
 2026-11-07. Re-checked against `main` at `76b32e10`.
 
@@ -196,8 +196,11 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
     purpose's kind, and an org's effective target must be enabled in that org; a deployment default
     that the org disabled counts as unconfigured for that org (`model.unconfigured`).
   - `ctx.models` (§5.4): enabled and of the right kind.
-- Writes: an org route setting the org's disabled ids of a provider (`org.models.manage`) and an
-  admin route setting the platform's (super admin), both audited, `@Transactional`, evicting cached
+- Writes: an org route changing the org's disabled ids of a provider (`org.models.manage`) and an
+  admin route changing the platform's (super admin). Each write is a delta `{ disable: string[],
+  enable: string[] }`: ids in neither list keep their stored state (a page never drops ids it does
+  not show, such as a platform-disabled model or one the provider stopped listing), and an id in
+  both is 400 `validation_failed`. Both are audited, `@Transactional`, evicting cached
   views after commit; bulk forms (disable a whole kind or publisher) are the builder's. Disabling a
   model that an agent or a purpose override uses is allowed; the response lists the affected agents
   and purposes (for a platform disable, across orgs) so the page can warn (the builder decides
@@ -408,7 +411,9 @@ Rulings made while building the core part (they refine the sections above):
 - Timeouts: `models.embedTimeoutMs` per embed batch, `models.listTimeoutMs` per provider list.
 - `usage.report` carries embedding usage with purpose `embedding` and no conversation fields; rows
   are in `model_usage`, delivered at least once (`report_failed_at` marks a row whose job gave up
-  after its last attempt); the sweep re-enqueues rows with `reported_at IS NULL` older than the
-  sweep window (30 s).
+  after its last attempt); each sweep re-enqueues the rows with neither `reported_at` nor
+  `report_failed_at` set whose `occurred_at` is in the bounded window `[watermark − 10 min, now −
+  30 s]` (`USAGE_SWEEP_OVERLAP_MS`, `USAGE_SWEEP_LAG_MS`), the same window as the `usage` events; a
+  row older than the window is not re-enqueued.
 - `ExtensionContext.models` is a required member; plugin test fakes need a models stub (run the
   plugins repository's typecheck before the release).
