@@ -33,9 +33,10 @@ import {
 import { purposeTargetOf } from "../models/purposes.controller.js";
 import {
   ModelPurposesService,
+  type PurposeListing,
   type PurposePut,
   PurposePutDto,
-  type PurposeView,
+  withDeclaredByNames,
 } from "../models/purposes.js";
 import { type Org, OrgsService } from "../orgs/orgs.service.js";
 import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
@@ -286,8 +287,8 @@ export class AdminController {
 
   /** 模型用途与部署默认映射（`override` 一律为 null；组织覆盖在组织侧接口）。 */
   @Get("model-purposes")
-  async getModelPurposes(): Promise<{ purposes: PurposeView[] }> {
-    return { purposes: await this.purposes.list() };
+  async getModelPurposes(): Promise<{ purposes: PurposeListing[] }> {
+    return { purposes: await withDeclaredByNames(await this.purposes.list(), this.displayNames) };
   }
 
   /** 设置一个用途的部署默认，或 `target: null` 清除。 */
@@ -296,15 +297,15 @@ export class AdminController {
     @CurrentPrincipal() principal: Principal,
     @Param("purpose") purpose: string,
     @ZBody(PurposePutDto) body: PurposePut,
-  ): Promise<{ purpose: PurposeView }> {
+  ): Promise<{ purpose: PurposeListing }> {
     const actor = requireUser(principal);
-    return {
-      purpose: await this.purposes.setDefault(
-        purpose,
-        purposeTargetOf(body),
-        actor.account.id,
-        patTokenId(actor),
-      ),
-    };
+    const view = await this.purposes.setDefault(
+      purpose,
+      purposeTargetOf(body),
+      actor.account.id,
+      patTokenId(actor),
+    );
+    const [listing] = await withDeclaredByNames([view], this.displayNames);
+    return { purpose: listing as PurposeListing };
   }
 }

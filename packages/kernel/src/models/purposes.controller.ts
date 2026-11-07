@@ -1,4 +1,5 @@
 import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -9,10 +10,11 @@ import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   ModelPurposesService,
+  type PurposeListing,
   type PurposePut,
   PurposePutDto,
   type PurposeTarget,
-  type PurposeView,
+  withDeclaredByNames,
 } from "./purposes.js";
 
 /** body 的目标（参数缺省为 `{}`）。 */
@@ -25,16 +27,21 @@ export const purposeTargetOf = (b: PurposePut): PurposeTarget | null =>
  */
 @Controller("api/v1/orgs/:orgId/model-purposes")
 export class ModelPurposesController {
-  constructor(@Inject(ModelPurposesService) private readonly purposes: ModelPurposesService) {}
+  constructor(
+    @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
+    @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+  ) {}
 
   @Get()
   @OrgAction("org.models.manage")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ purposes: PurposeView[] }> {
+  ): Promise<{ purposes: PurposeListing[] }> {
     requireUser(principal);
-    return { purposes: await this.purposes.list(org.orgId) };
+    return {
+      purposes: await withDeclaredByNames(await this.purposes.list(org.orgId), this.displayNames),
+    };
   }
 
   @Put(":purpose")
@@ -44,16 +51,16 @@ export class ModelPurposesController {
     @CurrentOrg() org: OrgContext,
     @Param("purpose") purpose: string,
     @ZBody(PurposePutDto) body: PurposePut,
-  ): Promise<{ purpose: PurposeView }> {
+  ): Promise<{ purpose: PurposeListing }> {
     const p = requireUser(principal);
-    return {
-      purpose: await this.purposes.setOrg(
-        org.orgId,
-        purpose,
-        purposeTargetOf(body),
-        p.account.id,
-        patTokenId(p),
-      ),
-    };
+    const view = await this.purposes.setOrg(
+      org.orgId,
+      purpose,
+      purposeTargetOf(body),
+      p.account.id,
+      patTokenId(p),
+    );
+    const [listing] = await withDeclaredByNames([view], this.displayNames);
+    return { purpose: listing as PurposeListing };
   }
 }

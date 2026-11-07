@@ -1,5 +1,6 @@
 import {
   type ContentBlock,
+  type LocalizedName,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
@@ -78,6 +79,27 @@ export interface PurposeView {
   default: PurposeTarget | null;
   override: PurposeTarget | null;
   effective: PurposeTarget | null;
+}
+
+/**
+ * A purpose as the purpose APIs return it: the view plus the declaring extension's display name
+ * (`null` for a kernel purpose, or an extension without one), so a page names the extension.
+ */
+export interface PurposeListing extends PurposeView {
+  declaredByName: LocalizedName | null;
+}
+
+/** {@link PurposeListing}s of `views`, the display names read in one call. */
+export async function withDeclaredByNames(
+  views: PurposeView[],
+  names: { many(names: string[]): Promise<Map<string, LocalizedName | null>> },
+): Promise<PurposeListing[]> {
+  const plugins = views.map((v) => v.declaredBy).filter((d) => d !== "kernel");
+  const found = await names.many(plugins);
+  return views.map((v) => ({
+    ...v,
+    declaredByName: v.declaredBy === "kernel" ? null : (found.get(v.declaredBy) ?? null),
+  }));
 }
 
 /** `PUT …/model-purposes/:purpose` 的 body：设映射，或 `target: null` 清除。 */
