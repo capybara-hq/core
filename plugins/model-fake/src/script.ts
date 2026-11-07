@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   type ContentBlock,
+  type ModelCallOptions,
   ModelError,
   type ModelErrorKind,
   type ModelInfo,
+  type ModelKind,
   type ModelParameter,
   type ModelProvider,
   type ModelRequest,
@@ -28,6 +30,13 @@ export interface FakeModelConfig {
   vision?: boolean | undefined;
   /** 声明支持文档输入（默认 false）。 */
   documents?: boolean | undefined;
+  /** What the model does (default chat). */
+  kind?: ModelKind | undefined;
+  publisher?: string | undefined;
+  /** Embedding output dimensions (default [8, 16]); the first is the default. */
+  dimensions?: number[] | undefined;
+  /** Most inputs per embed call (default 4). */
+  maxBatch?: number | undefined;
 }
 
 const CACHE_TTL_SECONDS = 300;
@@ -257,33 +266,72 @@ function scripted(req: ModelRequest): Plan {
   return std(`You said: ${text}`);
 }
 
+/** A deterministic vector of `dim` values in [-1, 1], seeded by the sha256 of the text. */
+function embedVector(text: string, dim: number): number[] {
+  const out: number[] = [];
+  for (let block = 0; out.length < dim; block++) {
+    const h = createHash("sha256").update(`${block}:${text}`).digest();
+    for (let i = 0; i + 1 < h.length && out.length < dim; i += 2) {
+      out.push((h.readUInt16BE(i) / 65535) * 2 - 1);
+    }
+  }
+  return out;
+}
+
 export interface FakeProviderOptions {
   kv: Kv;
   models?: readonly FakeModelConfig[];
+  /** Reads the models of a per-call config (`opts.config`); undefined keeps the setup models. */
+  modelsOf?: (config: unknown) => readonly FakeModelConfig[] | undefined;
   /** 测试注入；默认用可中止的 node:timers/promises 等待（单次请求内的本地等待，不是共享状态）。 */
   sleep?: Sleep;
 }
 
 export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   const sleep = opts.sleep ?? defaultSleep;
-  const configured =
-    opts.models !== undefined && opts.models.length > 0 ? opts.models : [{ id: "fake-1" }];
-  const infos: ModelInfo[] = configured.map((m) => ({
-    id: m.id,
-    displayName: m.id,
-    contextWindow: m.contextWindow ?? 32000,
-    maxOutputTokens: 4096,
-    capabilities: {
-      tools: true,
-      vision: m.vision ?? false,
-      documents: m.documents ?? false,
-      reasoning: false,
-      caching: true,
-      midConversationSystem: true,
-    },
-    ...(m.streamIdleTimeoutMs !== undefined ? { streamIdleTimeoutMs: m.streamIdleTimeoutMs } : {}),
-    parameters: parameters(),
-  }));
+  function infosOf(models: readonly FakeModelConfig[] | undefined): ModelInfo[] {
+    const configured = models !== undefined && models.length > 0 ? models : [{ id: "fake-1" }];
+    return configured.map((m) => {
+      const embedding = m.kind === "embedding";
+      const dims = m.dimensions ?? [8, 16];
+      return {
+        id: m.id,
+        displayName: m.id,
+        ...(m.kind !== undefined ? { kind: m.kind } : {}),
+        ...(m.publisher !== undefined ? { publisher: m.publisher } : {}),
+        ...(embedding
+          ? {
+              embedding: {
+                dimensions: dims,
+                defaultDimensions: m.dimensions?.[0] ?? 8,
+                maxInputTokens: 512,
+                maxBatch: m.maxBatch ?? 4,
+              },
+            }
+          : {}),
+        contextWindow: m.contextWindow ?? 32000,
+        maxOutputTokens: 4096,
+        capabilities: {
+          tools: true,
+          vision: m.vision ?? false,
+          documents: m.documents ?? false,
+          reasoning: false,
+          caching: true,
+          midConversationSystem: true,
+        },
+        ...(m.streamIdleTimeoutMs !== undefined
+          ? { streamIdleTimeoutMs: m.streamIdleTimeoutMs }
+          : {}),
+        parameters: parameters(),
+      };
+    });
+  }
+  const setupInfos = infosOf(opts.models);
+  /** The models for one call: the per-call config's list when present, else the setup list. */
+  function infosFor(call: ModelCallOptions | undefined): ModelInfo[] {
+    if (call?.config === undefined || opts.modelsOf === undefined) return setupInfos;
+    return infosOf(opts.modelsOf(call.config));
+  }
 
   /**
    * 可缓存的系统前缀：首次出现计为缓存写，再次出现计为缓存读（命中记录在 kv，TTL 300 秒）。
@@ -305,12 +353,36 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   }
 
   return {
-    async listModels() {
-      return infos.map((i) => structuredClone(i));
+    async listModels(call) {
+      return infosFor(call).map((i) => structuredClone(i));
     },
 
-    async *stream(req, { signal }): AsyncGenerator<ModelStreamEvent> {
-      if (!infos.some((i) => i.id === req.model)) {
+    async embed(req, call) {
+      if (call.signal.aborted) throw abortError();
+      const info = infosFor(call).find((i) => i.id === req.model && i.kind === "embedding");
+      if (info?.embedding === undefined) {
+        throw new ModelError("invalid_request", `Unknown embedding model "${req.model}"`);
+      }
+      const failure = /^fail:(\w+)/.exec(req.input[0] ?? "");
+      if (failure) {
+        throw new ModelError(failure[1] as ModelErrorKind, `scripted failure: ${failure[1]}`);
+      }
+      const dim = req.dimensions ?? info.embedding.defaultDimensions;
+      if (!info.embedding.dimensions.includes(dim)) {
+        throw new ModelError("invalid_request", `Unsupported dimensions ${dim}`);
+      }
+      if (req.input.length > info.embedding.maxBatch) {
+        throw new ModelError("invalid_request", "Too many inputs in one embed call");
+      }
+      return {
+        vectors: req.input.map((t) => embedVector(t, dim)),
+        usage: { inputTokens: req.input.reduce((n, t) => n + Math.ceil(t.length / 4), 0) },
+      };
+    },
+
+    async *stream(req, call): AsyncGenerator<ModelStreamEvent> {
+      const { signal } = call;
+      if (!infosFor(call).some((i) => i.id === req.model && (i.kind ?? "chat") === "chat")) {
         throw new ModelError("invalid_request", `Unknown model "${req.model}"`);
       }
       if (signal.aborted) throw abortError();
