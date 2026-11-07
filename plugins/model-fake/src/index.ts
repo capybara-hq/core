@@ -2,6 +2,7 @@ import {
   type ConfigUiHints,
   defineExtension,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
+  ModelError,
   orgAccess,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -85,7 +86,16 @@ export default defineExtension({
       createFakeProvider({
         kv: ctx.kv,
         ...(models !== undefined ? { models } : {}),
-        modelsOf: (config) => DeploymentConfig.parse(config ?? {}).models,
+        modelsOf: (config) => {
+          const parsed = DeploymentConfig.safeParse(config ?? {});
+          if (!parsed.success) {
+            throw new ModelError(
+              "invalid_request",
+              `Invalid model-fake config: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+            );
+          }
+          return parsed.data.models;
+        },
       }),
     );
   },

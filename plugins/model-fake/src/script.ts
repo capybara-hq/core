@@ -289,6 +289,17 @@ export interface FakeProviderOptions {
 
 export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   const sleep = opts.sleep ?? defaultSleep;
+  const ERROR_KINDS: readonly string[] = [
+    "rate_limited",
+    "overloaded",
+    "server",
+    "timeout",
+    "network",
+    "auth",
+    "invalid_request",
+    "context_overflow",
+    "aborted",
+  ] satisfies ModelErrorKind[];
   function infosOf(models: readonly FakeModelConfig[] | undefined): ModelInfo[] {
     const configured = models !== undefined && models.length > 0 ? models : [{ id: "fake-1" }];
     return configured.map((m) => {
@@ -330,7 +341,8 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
   /** The models for one call: the per-call config's list when present, else the setup list. */
   function infosFor(call: ModelCallOptions | undefined): ModelInfo[] {
     if (call?.config === undefined || opts.modelsOf === undefined) return setupInfos;
-    return infosOf(opts.modelsOf(call.config));
+    const models = opts.modelsOf(call.config);
+    return models === undefined ? setupInfos : infosOf(models);
   }
 
   /**
@@ -364,7 +376,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         throw new ModelError("invalid_request", `Unknown embedding model "${req.model}"`);
       }
       const failure = /^fail:(\w+)/.exec(req.input[0] ?? "");
-      if (failure) {
+      if (failure && ERROR_KINDS.includes(failure[1] as string)) {
         throw new ModelError(failure[1] as ModelErrorKind, `scripted failure: ${failure[1]}`);
       }
       const dim = req.dimensions ?? info.embedding.defaultDimensions;
