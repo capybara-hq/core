@@ -810,7 +810,6 @@ export interface ConnectorInstallInput {
 
 /** The org install body: template input by template id, the plugin's own extension's org config. */
 export interface OrgInstallBody {
-  version?: string;
   connectors?: Record<string, ConnectorInstallInput>;
   extensionConfig?: Record<string, unknown>;
 }

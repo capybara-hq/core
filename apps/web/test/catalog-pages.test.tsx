@@ -1197,7 +1197,6 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
       ),
     ).toBeTruthy();
     expect(switchInputs(calls)).toEqual({
-      version: "1.0.0",
       connectors: {
         gh: {
           name: "GitHub",
@@ -1250,7 +1249,6 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
       await user.click(screen.getByRole("button", { name: t.submit }));
       await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
       expect(switchInputs(calls)).toEqual({
-        version: "1.0.0",
         connectors: { docs: { slug: "docs", credential: { token: "mine" } } },
       });
       cleanup();
@@ -1348,7 +1346,6 @@ describe("/plugins/[itemId]/enable (WizardPage)", () => {
       ),
     );
     expect(switchInputs(calls)).toEqual({
-      version: "1.0.0",
       extensionConfig: { region: "eu" },
     });
   });
