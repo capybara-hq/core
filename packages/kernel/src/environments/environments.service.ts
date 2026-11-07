@@ -433,8 +433,8 @@ export class EnvironmentsService {
         this.db
           .selectFrom("environments")
           .select([
-            sql<string>`${orgId}::uuid`.as("org_id"),
-            sql<string>`${accountId}::uuid`.as("account_id"),
+            sql<string>`${orgId}::text`.as("org_id"),
+            sql<string>`${accountId}::text`.as("account_id"),
             "id",
           ])
           .where("id", "=", environmentId)

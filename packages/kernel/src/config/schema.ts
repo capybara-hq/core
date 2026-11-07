@@ -1334,7 +1334,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Most background Bash tasks (run_in_background) that may run at once in one environment, all its conversations and sub-agents included; a launch beyond it is refused",
+                  "Most background Bash tasks (run_in_background) that may run at once in one conversation, its sub-agents included (counted per root conversation, not per environment); a launch beyond it is refused",
               }),
             ),
           maxSeconds: z

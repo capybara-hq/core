@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
 import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
+import { isSyncMarkerEntry } from "../../../src/tools/builtins/sandbox/common.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -243,6 +244,15 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe("isSyncMarkerEntry", () => {
+  it("matches the marker file only, dots literal", () => {
+    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(true);
+    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json:1:x")).toBe(true);
+    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-syncXjson")).toBe(false);
+    expect(isSyncMarkerEntry("/workspace/attachments/c/Xcapybara-sync.json")).toBe(false);
   });
 });
 

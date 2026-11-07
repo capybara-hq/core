@@ -87,7 +87,7 @@ export const SANDBOX_RESTARTED_NOTICE =
   "The environment's instance was restarted; files are kept, running processes and /tmp are gone.";
 
 const BUSY_TEXT =
-  "The sandbox is busy with another command in this conversation; wait for it to finish and retry.";
+  "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
@@ -98,7 +98,8 @@ export function noSandboxError(): ToolError {
   return new ToolError(NO_SANDBOX_TEXT);
 }
 
-const PATH_BUSY_TEXT = "Another sub-agent is writing this file; wait a moment and retry.";
+const PATH_BUSY_TEXT =
+  "Another sub-agent or another conversation in this environment is writing this file; wait a moment and retry.";
 const ANONYMOUS_TEXT =
   "The sandbox is not available to anonymous IM senders; do the task without the sandbox, or ask the person to link their account and start a new conversation.";
 const ENV_NOT_FOUND_TEXT =
@@ -124,7 +125,9 @@ export const attachmentsDir = (rootConversationId: string): string =>
 export const syncMarkerPath = (rootConversationId: string): string =>
   `${attachmentsDir(rootConversationId)}/.capybara-sync.json`;
 const SYNC_MARKER_NAME = ".capybara-sync.json";
-const SYNC_MARKER_RE = new RegExp(`^${ATTACHMENTS_ROOT}/[^/]+/\\${SYNC_MARKER_NAME}(?=$|[:-])`);
+const SYNC_MARKER_RE = new RegExp(
+  `^${ATTACHMENTS_ROOT}/[^/]+/${SYNC_MARKER_NAME.replaceAll(".", "\\.")}(?=$|[:-])`,
+);
 /** Whether a path, or a Grep output line starting with one, belongs to a sync marker (hidden from Glob / Grep). */
 export const isSyncMarkerEntry = (pathOrLine: string): boolean => SYNC_MARKER_RE.test(pathOrLine);
 const MARKER_MAX_BYTES = 1024 * 1024;

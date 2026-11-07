@@ -23,6 +23,11 @@ export const CHANNEL_PHRASES = {
     zh: "没有找到名为「{name}」的环境。你的环境：\n{list}",
     en: "No environment named \u201c{name}\u201d. Your environments:\n{list}",
   },
+  /** `/env <name>` names an existing environment that is unavailable now (`{list}` as in envList). */
+  envUnavailable: {
+    zh: "环境「{name}」当前不可用（它的文件由未启用的沙箱提供方保存）。你的环境：\n{list}",
+    en: "The environment \u201c{name}\u201d is unavailable: its files are kept by a sandbox provider that is not active. Your environments:\n{list}",
+  },
   /** 私聊 `/env` 时此人没有可用环境（部署没有云沙箱）。 */
   envNone: {
     zh: "你目前没有可用的环境。",

@@ -649,6 +649,28 @@ describe("/env: the IM default environment", () => {
     }
   });
 
+  it("/env <name> for an unavailable environment says so", async () => {
+    const old = await newEnvironment("Old");
+    try {
+      // its files are kept by a provider that is not the current one
+      await sql`INSERT INTO capybara.environment_instances
+          (environment_id, org_id, provider, fs_handle, fs_status)
+        VALUES (${old}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
+      const text = await sendDm("env-11", "/env old");
+      expect(text).toContain("The environment \u201cOld\u201d is unavailable");
+      expect(text).toContain("- Lab");
+      expect(text).not.toContain("- Old");
+      const row = await db
+        .selectFrom("environment_defaults")
+        .select("environment_id")
+        .where("account_id", "=", ownerId)
+        .executeTakeFirst();
+      expect(row).toBeUndefined();
+    } finally {
+      await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/environments/${old}` });
+    }
+  });
+
   it("/env in a group is posted as a normal message", async () => {
     const before = (await threads()).length;
     const sent = im.sent.length;

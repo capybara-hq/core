@@ -341,7 +341,15 @@ export class ChannelInbound {
     const hit =
       usable.find((v) => v.name !== null && v.name.toLowerCase() === wanted) ??
       usable.find((v) => v.name === null && (wanted === "personal" || wanted === "个人环境"));
-    if (hit === undefined) return replyText(fill("envUnknown", { name, list }));
+    if (hit === undefined) {
+      const unavailable = items.find(
+        (v) => !v.available && v.name !== null && v.name.toLowerCase() === wanted,
+      );
+      if (unavailable !== undefined) {
+        return replyText(fill("envUnavailable", { name: unavailable.name as string, list }));
+      }
+      return replyText(fill("envUnknown", { name, list }));
+    }
     try {
       await this.environments.setImDefault(orgId, accountId, hit.id);
     } catch (err) {
