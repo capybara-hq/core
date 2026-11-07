@@ -18,6 +18,12 @@ export interface OperationContext {
   agentId: string;
   conversationId: string;
   runId: string | null;
+  /**
+   * The tool call being run (absent at confirmation time): what a result shown only on the web is
+   * keyed by, e.g. the generated password of `accounts.create`, read by the person who approved
+   * that call.
+   */
+  callId?: string;
   signal: AbortSignal;
 }
 
@@ -43,7 +49,8 @@ export interface OperationError {
  *
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
- * `plugin.needs_input` (input only a person enters on the web) and `agent.visibility_web_only`.
+ * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`, and
+ * `account.self` / `account.no_change` (disabling your own account, a status that is set already).
  */
 export type PrecheckResult =
   | { ok: true }
@@ -160,6 +167,24 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   { id: "requests", description: "Requests to admins: list yours, create one." },
   { id: "connectors", description: "Connectors and connector templates: list and read." },
   { id: "extensions", description: "Extensions in the org (state only) and extension points." },
+  {
+    id: "orgs",
+    description:
+      "This org (read, rename, members) and, for the super admin, every org and its limits.",
+  },
+  {
+    id: "accounts",
+    description: "Platform accounts (super admin): list, read, create, disable, enable.",
+  },
+  {
+    id: "admin",
+    description: "The admin console (super admin): dashboard totals and deployment settings.",
+  },
+  {
+    id: "models",
+    description:
+      "The platform's models (super admin): catalog and disabled list, prices, default model per purpose.",
+  },
 ];
 
 /**

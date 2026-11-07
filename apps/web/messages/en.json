@@ -44,6 +44,16 @@
     },
     "insecureOrigin": "If sign-in doesn't stick: this page is served over plain http from a host other than localhost, and browsers drop the session cookie here while it is marked Secure (the default). Open the app over HTTPS (or on localhost), or, for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env), and set CAPYBARA_PUBLIC_URL to this address, or attachment uploads and downloads fail."
   },
+  "changePassword": {
+    "title": "Set a new password",
+    "subtitle": "You signed in with an initial password. Choose your own to continue.",
+    "current": "Initial password",
+    "next": "New password",
+    "confirm": "Repeat the new password",
+    "mismatch": "The two new passwords differ.",
+    "tooShort": "Use at least 12 characters.",
+    "submit": "Save and continue"
+  },
   "setup": {
     "title": "Setup",
     "intro": "Create the first super admin. You will be signed in when it is done.",
@@ -98,12 +108,14 @@
       "refresh_invalid": "Your session is no longer valid. Please sign in again.",
       "refresh_race": "Your session was just updated. Please try again.",
       "csrf": "The request was rejected. Refresh the page and try again.",
-      "session_required": "This action needs a signed-in web session."
+      "session_required": "This action needs a signed-in web session.",
+      "password_change_required": "Set a new password first: you signed in with an initial password."
     },
     "account": {
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
-      "last_super_admin": "The last super admin cannot be revoked or deactivated."
+      "last_super_admin": "The last super admin cannot be revoked or deactivated.",
+      "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -1527,6 +1539,11 @@
     }
   },
   "approval": {
+    "initialPassword": {
+      "show": "Show the initial password",
+      "label": "Initial password of {login}",
+      "hint": "The platform generated it for the new account. It is shown only once; the account must change it at first sign-in."
+    },
     "title": "Approval required",
     "waiting": "Waiting",
     "tool": "Tool",

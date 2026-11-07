@@ -18,6 +18,23 @@ export interface AccountsTable {
   updated_at: Ts;
   /** 0064: the org the account last chose as current; a new session starts in it. */
   last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0090: the account must set its own password first (a generated initial password). */
+  must_change_password: Generated<boolean>;
+}
+
+/**
+ * 0090: a generated initial password sealed for the person who approved the account's creation,
+ * read once on the web (Platform tool spec §14.5 item 2).
+ */
+export interface AccountInitialPasswordsTable {
+  account_id: string;
+  recipient_account_id: string;
+  conversation_id: string;
+  call_id: string;
+  master_key_id: string;
+  ciphertext: Buffer;
+  expires_at: Date | string;
+  created_at: Ts;
 }
 
 export interface IdentitiesTable {
@@ -1143,6 +1160,7 @@ export interface ModelUsageTable {
 
 export interface KernelDatabase {
   accounts: AccountsTable;
+  account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
   orgs: OrgsTable;

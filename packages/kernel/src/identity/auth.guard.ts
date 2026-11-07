@@ -7,6 +7,7 @@ import { ApiTokenService } from "./api-tokens.js";
 import { ACCESS_COOKIE } from "./cookies.js";
 import {
   ALLOW_SERVICE_KEY,
+  PASSWORD_CHANGE_KEY,
   type Principal,
   PUBLIC_KEY,
   SESSION_ONLY_KEY,
@@ -85,6 +86,7 @@ export async function authorizeSuperAdmin(req: FastifyRequest, s: AuthServices):
   if (p.kind === "service") {
     throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
   }
+  if (p.account.mustChangePassword) throw passwordChangeRequired();
   if (!p.account.isSuperAdmin) throw new ApiError("forbidden", "Super admin required");
 }
 
@@ -104,6 +106,7 @@ export async function authenticateOrgUploader(
   if (resolved.principal.kind === "service") {
     throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
   }
+  if (resolved.principal.account.mustChangePassword) throw passwordChangeRequired();
   return resolved.principal;
 }
 
@@ -165,12 +168,22 @@ export class AuthGuard implements CanActivate {
     if (flag(SESSION_ONLY_KEY) && !(p.kind === "user" && p.via === "session")) {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
+    if (p.kind === "user" && p.account.mustChangePassword && !flag(PASSWORD_CHANGE_KEY)) {
+      throw passwordChangeRequired();
+    }
     if (flag(SUPER_ADMIN_KEY) && !(p.kind === "user" && p.account.isSuperAdmin)) {
       throw new ApiError("forbidden", "Super admin required");
     }
     return true;
   }
 }
+
+/** An account signed in with a generated initial password reaches nothing until it changes it. */
+const passwordChangeRequired = () =>
+  new ApiError(
+    "auth.password_change_required",
+    "Set a new password first: this account signed in with a generated initial password",
+  );
 
 function requireActive(account: Account): Account {
   if (account.status !== "active") {

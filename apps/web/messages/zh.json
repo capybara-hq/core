@@ -44,6 +44,16 @@
     },
     "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
   },
+  "changePassword": {
+    "title": "设置新密码",
+    "subtitle": "你是用初始密码登录的。请先设置自己的密码再继续。",
+    "current": "初始密码",
+    "next": "新密码",
+    "confirm": "再次输入新密码",
+    "mismatch": "两次输入的新密码不一致。",
+    "tooShort": "至少 12 个字符。",
+    "submit": "保存并继续"
+  },
   "setup": {
     "title": "初始化",
     "intro": "新建首个超级管理员账号，完成后将自动登录。",
@@ -98,12 +108,14 @@
       "refresh_invalid": "登录已失效，请重新登录。",
       "refresh_race": "登录状态刚刚更新，请重试。",
       "csrf": "请求被拒绝，请刷新页面后重试。",
-      "session_required": "这个操作需要网页登录会话。"
+      "session_required": "这个操作需要网页登录会话。",
+      "password_change_required": "请先设置新密码：你是用初始密码登录的。"
     },
     "account": {
       "login_taken": "用户名已被占用。",
       "not_found": "账号不存在。",
-      "last_super_admin": "不能撤销或停用最后一个超级管理员。"
+      "last_super_admin": "不能撤销或停用最后一个超级管理员。",
+      "initial_password_unavailable": "没有可显示的初始密码：已经显示过、已过期，或这个账号不是由你批准的调用创建的。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",
@@ -1515,6 +1527,11 @@
     }
   },
   "approval": {
+    "initialPassword": {
+      "show": "显示初始密码",
+      "label": "{login} 的初始密码",
+      "hint": "平台为新账号生成了这个密码。它只显示这一次；账号首次登录时必须修改。"
+    },
     "title": "需要审批",
     "waiting": "待处理",
     "tool": "工具",

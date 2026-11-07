@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { ADMIN_ROUTES } from "../admin/admin.schemas.js";
 import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
 import { ADMIN_CATALOG_ROUTES } from "../catalog/admin-catalog.schemas.js";
@@ -6,6 +7,7 @@ import { COMPONENT_SCOPE_ROUTES } from "../catalog/component-scope.schemas.js";
 import { MARKETPLACE_ROUTES } from "../catalog/marketplaces.schemas.js";
 import { ORG_CATALOG_ROUTES } from "../catalog/org-catalog.schemas.js";
 import { ORG_EXTENSION_ROUTES } from "../catalog/org-extension.schemas.js";
+import { ORG_ROUTES } from "../orgs/orgs.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
 
@@ -36,4 +38,7 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...CONNECTOR_ROUTES,
   ...COMPONENT_SCOPE_ROUTES,
   ...ORG_EXTENSION_ROUTES,
+  // Task 7: admin accounts, orgs, deployment settings, platform models
+  ...ADMIN_ROUTES,
+  ...ORG_ROUTES,
 ];

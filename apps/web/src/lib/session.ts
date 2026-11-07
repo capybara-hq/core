@@ -6,6 +6,8 @@ export interface Account {
   displayName: string;
   email: string | null;
   isSuperAdmin: boolean;
+  /** Signed in with a generated initial password: must set its own before anything else. */
+  mustChangePassword?: boolean;
 }
 
 export interface Membership {
@@ -41,6 +43,16 @@ export const login = (loginName: string, password: string) =>
 export const logout = () => apiFetch<void>("/api/v1/auth/logout", { method: "POST" });
 
 export const getMe = () => apiFetch<Me>("/api/v1/me");
+
+/** The path where an account with a generated initial password sets its own. */
+export const CHANGE_PASSWORD_PATH = "/change-password";
+
+/** Changes the signed-in account's password (the web session's other sessions are revoked). */
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  apiFetch<void>("/api/v1/me/password", {
+    method: "PUT",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
 
 /** Creates an organization owned by the current account. */
 export const createOrg = (name: string) =>
