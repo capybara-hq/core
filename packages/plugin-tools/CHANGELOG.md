@@ -1,5 +1,58 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.5
+
+### Minor Changes
+
+- 12fd552: Marketplaces list one entry per plugin. `plugin.json` `description` accepts `{ en, zh? }` as well as a string (English; read it with the SDK's `pluginDescription`), and marketplace entries accept an optional `displayName: { zh, en }`. `capybara-plugin marketplace --write` keeps one entry per public plugin at its current version, with `summary` from the localized description and `displayName` from `plugin.json`, replacing a plugin's entry when its version moves; `--check --base` replaces `marketplace-append-only` with `marketplace-version-decrease` (an entry's version only increases) and `marketplace-integrity` (a published version keeps its integrity). `capybara-plugin check` warns, without failing, when a public plugin's description has no `zh` (`release-description-zh`; findings may now be warnings). The kernel returns an entry's `displayName` (null without one) and searches it, and a single-plugin git marketplace takes the summary and display name from `plugin.json`; a catalog item keeps the English description. The market lists show the display name, else the name. model-fake gets a Chinese description.
+  
+  `--write` also refreshes a listed entry's `summary` and `displayName` from `plugin.json` (`marketplace-display-stale` in `--check`), and `marketplace-version-decrease` also fires when a plugin moves back to an older version a base in the older form lists. Catalog item views (admin and org) and the import review carry `descriptionZh` (the latest version's Chinese description, or null), and the plugin pages show the description in the UI language.
+  
+  Release order: release core and upgrade the deployed kernels before `capybara-hq/plugins` publishes
+  plugins whose `description` is an object (older kernels reject it) and before the official
+  marketplace drops older versions.
+
+### Patch Changes
+
+- 2a12327: Marketplace entries accept `deprecated: true | { reason? }` (SDK `MarketplaceEntry.deprecated`,
+  normalized by `marketplaceEntryDeprecation`; JSON Schema regenerated). A maintainer sets it by hand
+  on a published version's entry; `capybara-plugin marketplace --write` keeps it, and the `--base`
+  integrity rules ignore it. The kernel returns `deprecated` on marketplace entries, never reports a
+  deprecated version as newer or as an item's latest marketplace version, picks the newest stable
+  non-deprecated compatible version when an import names none, and refuses importing or requesting a
+  deprecated version with 409 `marketplace.entry_deprecated`. The market lists show the newest stable
+  version on each row (prereleases fold into 其他版本 unless no stable version can be imported) and
+  list deprecated versions under 其他版本 as 已废弃, with the reason, not importable.
+- Updated dependencies [49ae0b5]
+- Updated dependencies [f222ff8]
+- Updated dependencies [d423777]
+- Updated dependencies [0f383d7]
+- Updated dependencies [8f7a0a5]
+- Updated dependencies [da49ebd]
+- Updated dependencies [90c6125]
+- Updated dependencies [16225b1]
+- Updated dependencies [abc772e]
+- Updated dependencies [8ee4c6c]
+- Updated dependencies [2a12327]
+- Updated dependencies [12fd552]
+- Updated dependencies [3adad42]
+- Updated dependencies [9f554a3]
+- Updated dependencies [5ac4bba]
+- Updated dependencies [2321382]
+- Updated dependencies [cc21d5c]
+- Updated dependencies [a965a1a]
+- Updated dependencies [7278dec]
+- Updated dependencies [bdf5eba]
+- Updated dependencies [703c779]
+- Updated dependencies [77de995]
+- Updated dependencies [11f56fa]
+- Updated dependencies [927fad3]
+- Updated dependencies [7a1e1ae]
+- Updated dependencies [0e38b13]
+- Updated dependencies [26e8757]
+  - @capybara-hq/kernel@0.1.0-rc.5
+  - @capybara-hq/plugin-sdk@0.1.0-rc.3
+
 ## 0.1.0-rc.4
 
 ### Minor Changes

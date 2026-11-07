@@ -1,5 +1,178 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.6
+
+### Minor Changes
+
+- d423777: Agent templates: the 智能体 page has the tabs 智能体 and 模板 and shows both as cards
+  (`/agent-templates` redirects to `/agents?tab=templates`), the admin 智能体模板 list uses cards too.
+  A template card and the new template page (`/agents/templates/<id>`: the read view for members, the
+  editor for org admins) open 用它创建, a dialog with the 带入 / 待配置 / 不可用 preview; the new agent
+  shows its template and a 待配置 notice in Tools where an admin configures each connector (an existing
+  one, one more from the template, or the prefilled custom form) and a member sends or repeats a
+  request. Org admins save an agent as a template from its card or page, and the inbox shows
+  connector setup requests with the same configure dialog.
+- 2a12327: Marketplace entries accept `deprecated: true | { reason? }` (SDK `MarketplaceEntry.deprecated`,
+  normalized by `marketplaceEntryDeprecation`; JSON Schema regenerated). A maintainer sets it by hand
+  on a published version's entry; `capybara-plugin marketplace --write` keeps it, and the `--base`
+  integrity rules ignore it. The kernel returns `deprecated` on marketplace entries, never reports a
+  deprecated version as newer or as an item's latest marketplace version, picks the newest stable
+  non-deprecated compatible version when an import names none, and refuses importing or requesting a
+  deprecated version with 409 `marketplace.entry_deprecated`. The market lists show the newest stable
+  version on each row (prereleases fold into 其他版本 unless no stable version can be imported) and
+  list deprecated versions under 其他版本 as 已废弃, with the reason, not importable.
+- 9f554a3: Org members can read the org's 扩展 page: `GET /api/v1/orgs/:orgId/extensions` is the new action
+  `org.extensions.read` (member and up); a member gets each extension's state without its config, the
+  secrets' state, the config schema or the permission list, admins keep the full view. The page
+  hides every switch and config control for members.
+- 5ac4bba: Org admins upload plugins and share what their org owns (plugin scope phase 3, migration 0084).
+  
+  - An org admin uploads a plugin `.tgz` from the workspace 插件 page (`POST
+    /api/v1/orgs/:orgId/catalog/uploads/file`, then review and confirm). A package without an
+    extension installs at once, owned by the org; one with an extension waits until the super admin
+    confirms that exact package in 待确认 (or rejects it), and so does every later version that carries
+    an extension. Plugin and extension names stay deployment-global (`plugin.name_taken` names the
+    owner); names of bootstrap and marketplace plugins are reserved for org uploads
+    (`plugin.name_reserved`).
+  - Catalog items and platform components have an owner (平台 or an org). The owner org marks its own
+    plugins and skills 可共享; only shareable items can be shown to or associated with other orgs
+    (`catalog.not_shareable`), and turning it off keeps the orgs that use it. Shared items follow the
+    owner's versions, with inbox notices for the orgs using them.
+  - An owner deleting an item other orgs use, or an org being deleted, transfers it to the platform
+    with a notice in the platform inbox; org skills become platform rows when first shared, keeping
+    their ids, so agents and logs are unchanged (agent templates are not shareable until org-created
+    templates exist).
+  - 新建技能: `POST /api/v1/orgs/:orgId/skills` also takes `{ name, description, body }`, and the
+    workspace 技能 page creates a skill from text.
+  - The admin console shows owners, the share gate, org uploads in 待确认 and the new inbox kinds.
+- 2321382: A platform inbox for the super admin: `GET /api/v1/admin/inbox` (with `total`, and `GET /api/v1/admin/inbox/count` for the sidebar) lists the orgs' requests to the platform (`access` / `import`), plugins whose extension permissions wait for a confirmation, open plugin scope sync failures, including dependencies a platform update added that could not be installed (recorded per item and org in the new table `plugin_scope_sync_failures`, migration 0083, until a later sync of the pair does not fail) and the latest platform components migration run when it failed plugins or is stuck. The admin console gets a 收件箱 page (`/admin/inbox`) and a sidebar item with its count; each item links to the page where it is acted on.
+- a965a1a: Plugin scope: enterprise plugins have a scope (all, optional, named orgs), built-in and disabled states, and the org switch, requests (access, import, enable) and a scope sync worker replace the catalog policy, grants and the install-deployment step. Importing a plugin installs its extension; the admin plugin and extension pages and the workspace plugin and extension pages move accordingly.
+- 7278dec: Plugin scope phase 2: a plugin's skills, agent templates and connector templates are platform
+  components, stored once for the deployment (migration 0081: `platform_skills`,
+  `platform_agent_templates`, `platform_connector_templates` and their versions, files under
+  `deployment/platform/`) and resolved at read time in each org where they are on; an org install no
+  longer copies skills or agent templates. A component follows its plugin's scope or has its own
+  (`/api/v1/admin/components/*`, preview then confirm), org admins switch single components off or on
+  (`PUT /api/v1/orgs/:orgId/components/:kind/:id/switch`), and a super admin uploads a new component
+  version on its own. The worker job `platform-components-migrate` (migration 0082) links org copies
+  made by earlier installs to their platform components under their own ids (agent definitions and
+  conversation logs are not rewritten; a copy changed in the org is pinned to its version) and renames,
+  in its first run only, an org's own skill whose name a platform skill on in the org has, with an inbox
+  notice. The per-org plugin upgrade routes are removed: the super admin updates a platform plugin once
+  (`POST /api/v1/admin/catalog/items/:id/update/preview`, `PUT …/update` with `diffHash`), which moves
+  its extension, components and every org install; connectors follow their template through
+  `platform_template_id`, and an org creates connectors for added templates with
+  `POST /api/v1/orgs/:orgId/catalog/:itemId/connectors`. The admin console gets 技能, 连接器模板 and
+  智能体模板 pages with scope dialogs and version history, and the plugin detail's platform update
+  preview.
+  An org install or switch takes no `version` any more (400): an org installs the platform version, and
+  dependencies resolve to their platform version (refused when it does not satisfy the range). A
+  version-pinned org copy follows its platform component's availability (disable, switch-off, scope
+  removal, uninstall) and counts in the previews' affected agents. The marketplace import default and
+  the market row's version use one order.
+- 26e8757: Workspace platform components: the 技能 page lists the org's own skills and the platform skills offered to the org with their state and the org admin's switch (已启用 · 平台统一 for `all`), a new 智能体模板 page lists agent templates the same way, the plugin detail lists its components with per-component switches, and an installed plugin missing a connector offers 补充配置. The kernel adds `GET /orgs/:orgId/components`, serves a linked skill copy's detail as its platform skill, and names the missing connector templates in the org catalog detail. The agent editor treats linked copy ids as their platform skill or template; the inbox shows decided requests.
+
+### Patch Changes
+
+- 49ae0b5: Agents can select extension tools: the agent page's Tools section lists the tools of the extensions
+  enabled in the org (new `GET /api/v1/orgs/:orgId/tools/extensions`) and adds or removes their
+  references; a selected tool that is unavailable stays listed as unavailable with the reason.
+- e555e04: The agent map opens one sub-agent's summary (latest text, task, background tasks, tool calls newest
+  first, Stop while it runs) and its read-only transcript; an `Agent` call block names the child's
+  current tool and opens it in the map. A sub-agent's reports and its end show in the parent as notice
+  lines, and a parent's messages in a sub-agent's transcript as bubbles labelled with the sender.
+- 1556a45: The conversation page opens an agent map of the conversation's sub-agents (from the sub-agent
+  group's header and a title-bar icon), kept in the URL hash; the org sub-agent limits dialog sets the
+  nesting depth and counts dispatches and tokens over the whole tree since the person's latest message.
+- 266fc77: The agent page shows the same-provider fallback hint in the Model section, persistently and live
+  while editing, instead of in whichever section was just saved.
+- 5854ae0: Cards on the page ground: the design system's new `CardGrid` and `ObjectCard` (avatar or icon, the
+  name as the card's one link, a two-line description, a meta line, one primary and a menu; roving
+  focus by row; loading and empty shapes) and `ListPage variant="cards"`, for the agents page and the
+  template lists of plugin scope phase 4.
+- ff6d4d4: The agent map's entry moves from the conversation title bar into the composer: a chip
+  「N 个智能体」 / "N agents" after the effort picker and the quick actions, led by the status dot
+  while a sub-agent runs or waits, with the running count in its name. Long user messages fold to
+  eight lines with 展开 / 收起 ("Show more" / "Show less"), pending bubbles included.
+- 16225b1: `GET /api/v1/orgs/:orgId/connectors/kinds` lists the connector kinds whose extension is enabled in the org, with the plugin providing each. The connector install wizard offers only those kinds, and with none it points to Plugins instead of failing at the end.
+- abc772e: Switching on an extension whose org config has a required field that was never saved is refused
+  with the plain 400 `extension.config_invalid` and its field issues before the plugin installs
+  (no 502 `plugin.install_failed`); a `config` sent in the same PUT goes into the install. On the
+  扩展 page the switch of such an extension waits for the config (先填写组织级配置再启用), the
+  config form offers 保存并启用 (config and switch in one PUT), and a refused config marks the
+  form's fields.
+- 5ad753b: The 扩展 pages (workspace and admin console) are a list by capability: tabs 全部 / 模型 / 网页 /
+  连接器 / 沙箱 / 存储 / 工具与界面 with counts and a search, rows needing attention first, and a
+  details Sheet per extension with its config on top, its state and its permissions folded into one
+  line. The workspace switch, the config-first rule and every toast are kept.
+- 12fd552: Marketplaces list one entry per plugin. `plugin.json` `description` accepts `{ en, zh? }` as well as a string (English; read it with the SDK's `pluginDescription`), and marketplace entries accept an optional `displayName: { zh, en }`. `capybara-plugin marketplace --write` keeps one entry per public plugin at its current version, with `summary` from the localized description and `displayName` from `plugin.json`, replacing a plugin's entry when its version moves; `--check --base` replaces `marketplace-append-only` with `marketplace-version-decrease` (an entry's version only increases) and `marketplace-integrity` (a published version keeps its integrity). `capybara-plugin check` warns, without failing, when a public plugin's description has no `zh` (`release-description-zh`; findings may now be warnings). The kernel returns an entry's `displayName` (null without one) and searches it, and a single-plugin git marketplace takes the summary and display name from `plugin.json`; a catalog item keeps the English description. The market lists show the display name, else the name. model-fake gets a Chinese description.
+  
+  `--write` also refreshes a listed entry's `summary` and `displayName` from `plugin.json` (`marketplace-display-stale` in `--check`), and `marketplace-version-decrease` also fires when a plugin moves back to an older version a base in the older form lists. Catalog item views (admin and org) and the import review carry `descriptionZh` (the latest version's Chinese description, or null), and the plugin pages show the description in the UI language.
+  
+  Release order: release core and upgrade the deployed kernels before `capybara-hq/plugins` publishes
+  plugins whose `description` is an object (older kernels reject it) and before the official
+  marketplace drops older versions.
+- 593904e: One box is enough: inside a card, form card, dialog, sheet, inline card or property section the
+  design system groups with headings and hairlines instead of a second box. Tables, code blocks,
+  embeds and repeaters draw their unboxed form there by themselves; new `ItemListItem`,
+  `Subsection`, `Grid divided` and `Text variant="h3"`; the narrow properties sheet draws its
+  sections as hairline groups; loading shapes for item rows replace the card shapes in form cards.
+- cc21d5c: Plugin and component management acceptance fixes.
+  
+  - The org's offered components (`GET /api/v1/orgs/:orgId/components`) and a platform skill in the
+    org's skill library and detail carry their `owner` (the platform, or the org that owns it). The
+    workspace pages name the owner from it everywhere: 本组织 for the org's own upload, the owner
+    org's name for another org's shared item, 平台 only for the platform's.
+  - Row and page head actions show their pending state until the call settles; menus never draw an
+    empty group or a stray separator.
+  - Plugin notices (`upload_confirmed`, `upload_rejected`, `item_shared`,
+    `shared_item_updated`) carry the plugin's `displayName`; the
+    inboxes lead each row with the item's display name, keep its version whole beside it
+    (`v0.1.0`) and give the list column more room.
+  - Plugin and component details are one centred column (facts as a KeyValue, actions and 删除 in
+    the head, the license folded at the end); review and detail sections have real headings.
+  - The `/` skill menu on an agent with no invocable skills explains why and links editors to the
+    agent's skills.
+- 17fc2fe: Segmented controls in form fields (model parameters, extension config forms) fill the field with equal segments.
+- 11f56fa: Sub-agent depth, tree budget and per-conversation concurrency (agent map spec §6). New config
+  `subagents.maxDepth` (1–5, default 3, hot) with an org override `maxDepth` in
+  `subagentLimitOverrides`; `subagents.maxConcurrentPerRun` is renamed
+  `subagents.maxConcurrentPerConversation` (config, env var and override key) and counts the active
+  children of the parent conversation across its runs. Set `CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_CONVERSATION`
+  in place of `CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN`: the old env var and file key are ignored
+  (the default 4 applies). Stored org overrides are migrated to the new key. Dispatch and token caps count the whole tree on
+  its budget run (`runs.budget_run_id`, null for a person-triggered run). Migration 0074 adds
+  `conversations.subagent_depth`, `runs.budget_run_id`, `subagent_dispatches.budget_run_id` and
+  `subagent_dispatches.for_skill`.
+- 527d703: Toasts sit at the top center, newest on top, with a leading status icon instead of a color stripe,
+  and names in toast messages are quoted.
+- e18ee24: UI terms: the web app reads and sends the kernel's renamed `isSuperAdmin` / `superAdmin` /
+  `orgCreation: "super_admin"`. Chinese copy says 超级管理员 (was 企业管理员), 平台 for the deployment
+  layer (平台目录, 已启用 · 平台统一, 平台提供的插件), 自定义市场源 for a non-official marketplace,
+  智能体 for agent (nav 智能体, 新建智能体, 子智能体, 智能体模板), and the role names 组织所有者 /
+  组织管理员 / 组织成员 / 访客; English says Super admin, Platform, Custom marketplaces and Org owner /
+  Org admin / Org member / Guest. The CLI says "super admin" in `capybara admin create | grant |
+  revoke` output and help (`super admin already exists; skipped`, `super admin created`).
+- 694dba2: A conversation's `changed` frame that arrives while the page's first read of that part is still
+  on its way now reads it again. The properties panel could miss a background task started right
+  after the page read the empty list, until the task finished.
+- 83fec11: Form selects and the conversation composer (acceptance batch 3).
+  
+  - Every form select opens the design system's own list instead of the browser's popup: the
+    composer's anchored menu as a listbox, below the field (above it when the room below is short),
+    at least the field's width, capped in height, the selected option checked; a filter above ten
+    options; arrows, Enter, Space, Escape and typeahead; forms still submit and validate it.
+  - Space on a focused item of a filterable menu picks it.
+  - On a conversation the composer no longer repeats the agent: the title bar's path names it.
+  - The zh copy calls an agent's owner 所有者 everywhere (never 负责人).
+- 8ee4c6c: Sending while a reply streams posts an interjection placed where the run absorbs it, with no queue UI; a reloading or reconnecting stream, or a switch between running conversations, resumes the streaming reply without a gap or a duplicate.
+- da49ebd: Copy: the English UI says "org admin(s)" for the role everywhere, the site description reads
+  "Agent platform for organizations", and the Chinese settings hint says 组织管理员.
+- 47c4241: The workspace has no home page any more: the new conversation is the home. `/` redirects to `/chat`,
+  新会话 is the current nav item there, and sign-in, setup, an org switch, the not-found page and the
+  path's org scope all go to `/chat`. The sidebar reads 新会话 · 智能体 · 技能 · 连接器 · 更多; 技能 and
+  连接器 left the 更多 flyout, which keeps 插件, 扩展, 智能体模板, 渠道, 评测与运行 and 组织设置.
+
 ## 0.1.0-rc.5
 
 ### Patch Changes
