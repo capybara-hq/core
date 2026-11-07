@@ -11,6 +11,38 @@ function nativeAnchoring(): boolean {
 }
 
 /**
+ * The topmost item of the scroller's content that is at least partly visible, descending into a
+ * wrapper taller than the view (the thread's log, a list) for a steadier item; null when nothing
+ * measures (no layout).
+ */
+function topVisible(el: HTMLElement): HTMLElement | null {
+  const top = el.getBoundingClientRect().top;
+  let parent: Element | null = el.firstElementChild;
+  let found: HTMLElement | null = null;
+  while (parent) {
+    // the items stack top to bottom: the first whose bottom is below the view's top, by halving
+    const items = parent.children;
+    let lo = 0;
+    let hi = items.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if ((items[mid] as Element).getBoundingClientRect().bottom > top) hi = mid;
+      else lo = mid + 1;
+    }
+    let next: HTMLElement | null = null;
+    for (let i = lo; i < items.length && next === null; i++) {
+      const c = items[i] as HTMLElement;
+      if (c.getBoundingClientRect().height > 0) next = c;
+    }
+    if (next === null) break;
+    found = next;
+    if (next.children.length === 0 || next.getBoundingClientRect().height <= el.clientHeight) break;
+    parent = next;
+  }
+  return found;
+}
+
+/**
  * A thread that follows the newest message. The thread's scroll container is anchored at the
  * bottom by CSS (`flex-direction: column-reverse` around one content wrapper, so its scroll origin,
  * `scrollTop` 0, is the bottom): the first painted frame, server HTML before any script, already
@@ -18,7 +50,9 @@ function nativeAnchoring(): boolean {
  * without script. This hook adds what CSS cannot: within `FOLLOW_SLACK` of the bottom still counts
  * as following (the view snaps back to the bottom when content grows), and once the reader scrolls
  * further up the visible content stays still while new content arrives (browsers with scroll
- * anchoring do that themselves; elsewhere the hook keeps the distance from the top). Scrolling is
+ * anchoring do that themselves; elsewhere the hook keeps the topmost visible item where it was,
+ * which holds for content arriving below and for earlier history prepended above alike, and falls
+ * back to the distance from the top when nothing measures). Scrolling is
  * always instant (never smooth): a smooth scroll chases growing streamed content, and instant
  * scrolling also honors prefers-reduced-motion.
  *
@@ -37,17 +71,31 @@ export function useFollowBottom<T extends HTMLElement>(): (
     const range = () => el.scrollHeight - el.clientHeight;
     let following = true;
     let fromTop = range() - gap();
+    /** The topmost visible item and its offset from the scroller's top (no scroll anchoring). */
+    let anchor: HTMLElement | null = null;
+    let anchorAt = 0;
+    const offsetOf = (a: HTMLElement) =>
+      a.getBoundingClientRect().top - el.getBoundingClientRect().top;
     const remember = () => {
       following = gap() <= FOLLOW_SLACK;
       fromTop = range() - gap();
+      if (reversed && !anchoring && !following) {
+        anchor = topVisible(el);
+        anchorAt = anchor === null ? 0 : offsetOf(anchor);
+      } else anchor = null;
     };
     const onGrow = () => {
       if (following) {
         el.scrollTop = reversed ? 0 : el.scrollHeight;
       } else if (reversed && !anchoring) {
-        // No scroll anchoring: a reversed container keeps the distance from the bottom, so
-        // growth below would push what the reader looks at up; keep the distance from the top.
-        el.scrollTop = fromTop - range();
+        // No scroll anchoring: a reversed container keeps the distance from the bottom, so growth
+        // below would push what the reader looks at up while history prepended above leaves it
+        // still. Keep the topmost visible item where it was; without layout, the distance from
+        // the top.
+        if (anchor?.isConnected) {
+          const moved = offsetOf(anchor) - anchorAt;
+          if (moved !== 0) el.scrollTop += moved;
+        } else el.scrollTop = fromTop - range();
       }
       remember();
     };

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
+import { ThreadHistory, type ThreadHistoryProps } from "../conversation/thread-history";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
@@ -93,6 +94,11 @@ export type ConversationPageProps = {
   };
   /** The thread; it follows the bottom while the reader is at the bottom. */
   thread?: ReactNode;
+  /**
+   * The thread's top edge while its history loads in pages (`ThreadHistory`, §5.4 "Thread
+   * scrolling"): above the thread, absent when the whole history is shown without paging.
+   */
+  history?: ThreadHistoryProps;
   /**
    * The working line (§6.16.24) after the thread, where the run's first output will appear. The
    * page decides when (from the log and its pending messages); at most one per conversation.
@@ -197,6 +203,7 @@ export function ConversationPage({
   titleBar,
   newConversation,
   thread,
+  history,
   working,
   queue,
   composer,
@@ -304,6 +311,7 @@ export function ConversationPage({
             <LoadingThread />
           ) : (
             <>
+              {history ? <ThreadHistory {...history} /> : null}
               {thread}
               {/* kept mounted (its live region) once the page uses it */}
               {working !== undefined ? <WorkingLine active={working} /> : null}

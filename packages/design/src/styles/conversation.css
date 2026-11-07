@@ -457,6 +457,10 @@ button.cb-tool-line:focus-visible {
 .cb-run-divider-text > .cb-link-btn {
   margin-left: var(--cb-space-1);
 }
+/* A link alone on the line (the thread's "load earlier" edge, §5.4) has no "·" before it. */
+.cb-run-divider-text > .cb-link-btn:first-child {
+  margin-left: 0;
+}
 .cb-divider-rule {
   flex: 1 0 var(--cb-space-4);
   height: 1px;

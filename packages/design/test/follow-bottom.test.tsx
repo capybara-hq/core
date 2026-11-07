@@ -155,6 +155,85 @@ describe("useFollowBottom in a reversed scroller", () => {
   });
 });
 
+describe("useFollowBottom keeps the topmost visible item still without scroll anchoring", () => {
+  /**
+   * A laid-out reversed scroller (history paging spec §6): 40 px per <p> in one wrapper, a 100 px
+   * viewport at y 0; the content's top sits at -(range + scrollTop), so every <p> measures.
+   */
+  function mockMeasuredLayout() {
+    const tops = new WeakMap<Element, number>();
+    const range = (el: Element) => el.querySelectorAll("p").length * 40 - 100;
+    const scroller = () => document.querySelector('[data-testid="s"]') as HTMLElement;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return this.querySelectorAll("p").length * 40;
+    });
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(100);
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return tops.get(this) ?? 0;
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+      this: Element,
+      v: number,
+    ) {
+      tops.set(this, Math.min(0, Math.max(v, -range(this))));
+    });
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      const s = scroller();
+      const contentTop = -(range(s) + (tops.get(s) ?? 0));
+      const rect = (top: number, height: number) =>
+        ({ top, bottom: top + height, height, left: 0, right: 0, width: 0 }) as DOMRect;
+      if (this === s) return rect(0, 100);
+      if (this === s.firstElementChild) return rect(contentTop, range(s) + 100);
+      const i = [...s.querySelectorAll("p")].indexOf(this as HTMLParagraphElement);
+      return i < 0 ? rect(0, 0) : rect(contentTop + i * 40, 40);
+    });
+  }
+  function Thread({ before, n }: { before: number; n: number }) {
+    const ref = useFollowBottom<HTMLDivElement>();
+    return (
+      <div ref={ref} data-testid="s" style={{ display: "flex", flexDirection: "column-reverse" }}>
+        <div>
+          {Array.from({ length: before + n }, (_, i) => i - before).map((id) => (
+            // the items prepended above keep the others' keys
+            <p key={id}>m {id}</p>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  const scrollTo = (el: HTMLElement, top: number) => {
+    el.scrollTop = top;
+    el.dispatchEvent(new Event("scroll"));
+  };
+  const tick = () => new Promise((res) => setTimeout(res, 0));
+
+  it("history prepended above leaves the view where it was", async () => {
+    mockMeasuredLayout();
+    vi.stubGlobal("CSS", { supports: () => false });
+    const r = render(<Thread before={0} n={10} />);
+    const el = r.getByTestId("s");
+    scrollTo(el, -280); // 20 px from the top: m 0 half visible
+    r.rerender(<Thread before={5} n={10} />); // 200 px more above
+    await tick();
+    // a reversed scroller keeps the distance from the bottom: m 0 stays where it was
+    expect(el.scrollTop).toBe(-280);
+    vi.unstubAllGlobals();
+  });
+
+  it("content arriving below still leaves the view where it was", async () => {
+    mockMeasuredLayout();
+    vi.stubGlobal("CSS", { supports: () => false });
+    const r = render(<Thread before={0} n={10} />);
+    const el = r.getByTestId("s");
+    scrollTo(el, -200);
+    r.rerender(<Thread before={0} n={12} />);
+    await vi.waitFor(() => expect(el.scrollTop).toBe(-280));
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("useFollowBottom attaches again when the scroller is replaced", () => {
   it("the new conversation's center layout giving way to the thread still follows", async () => {
     vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
