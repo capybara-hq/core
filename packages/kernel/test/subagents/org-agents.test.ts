@@ -19,6 +19,7 @@ import {
   scriptRules,
 } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -195,7 +196,7 @@ const ANALYST_DEF = (over: Record<string, unknown> = {}) => ({
   name: "Data Analyst",
   instructions: `${ANALYST}, v1.`,
   model: SCRIPT,
-  tools: [{ kind: "connector", connectorId, tools: "all" }],
+  disabledTools: onlyBuiltins([{ kind: "connector", connectorId, tools: "all" }]),
   // its own ask on create
   toolPolicies: { mcp__mine__create: "ask" },
   subagents: { dispatchable: true },
@@ -283,10 +284,10 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: SCRIPT,
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "builtin", name: "Agent" },
           { kind: "connector", connectorId, tools: ["remove"] },
-        ],
+        ]),
         toolPolicies: { mcp__mine__remove: "deny" },
         subagents: {
           agents: [{ agentId: analystId, as: "analyst", description: "Answers data questions." }],
@@ -644,7 +645,7 @@ describe("the gates", () => {
           name: "Other",
           instructions: "x",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
           subagents: { agents: [{ agentId: hiddenId, as: "hidden", description: "Hidden." }] },
         },
         visibility: "private",
@@ -748,7 +749,7 @@ describe("follow-ups with SendMessage", () => {
     expect(finalText(first.events)).toBe("hello done");
     await patchAnalyst({
       definition: ANALYST_DEF({
-        tools: [{ kind: "connector", connectorId, tools: ["search"] }],
+        disabledTools: [...builtinsOff(), { kind: "connector", connectorId, tools: ["search"] }],
         toolPolicies: {},
       }),
     });
@@ -756,9 +757,10 @@ describe("follow-ups with SendMessage", () => {
     expect(finalText(events)).toBe("follow done");
     const [child] = await childrenOf(first.conv);
     const tasks = ofType(await eventsOf(db, child?.id as string), "user_message");
-    // the instructions stay v1 (frozen); the tools are what v2 still has
+    // the instructions stay v1 (frozen); what v2 turned off is off for the follow-up too
     expect(tasks.at(-1)?.payload.dispatch).toMatchObject({ kind: "message" });
-    expect(tasks.at(-1)?.payload.dispatch?.narrowed?.tools).toEqual([
+    expect(tasks.at(-1)?.payload.dispatch?.narrowed?.disabledTools).toEqual([
+      ...builtinsOff(),
       { kind: "connector", connectorId, tools: ["search"] },
     ]);
     await quiesce(first.conv);
@@ -796,10 +798,10 @@ describe("follow-ups with SendMessage", () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: SCRIPT,
-          tools: [
+          disabledTools: onlyBuiltins([
             { kind: "builtin", name: "Agent" },
             { kind: "connector", connectorId, tools: ["remove"] },
-          ],
+          ]),
           toolPolicies: { mcp__mine__remove: "deny" },
           subagents: { agents: [] },
         },
@@ -857,7 +859,7 @@ describe("follow-ups with SendMessage", () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
           subagents: { agents: [] },
         },
       },

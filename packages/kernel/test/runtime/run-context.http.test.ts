@@ -10,6 +10,7 @@ import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -73,7 +74,7 @@ beforeEach(async () => {
         description: "Answers HR policy questions.",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [],
+        disabledTools: builtinsOff(),
       },
       visibility: "org",
     },

@@ -15,6 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -124,7 +125,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [{ kind: "builtin", name: "Bash" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
       },
       visibility: "org",
     },

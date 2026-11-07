@@ -188,7 +188,7 @@ const simpleAgent = (org: string, name = "Lead") =>
     name,
     instructions: "Lead the work.",
     model: { provider: "model-fake", model: "fake-1" },
-    tools: [{ kind: "builtin", name: "Read" }],
+    disabledTools: [],
   });
 
 const saveAs = (as: Req, org: string, agentId: string, name: string, description = "Leads.") =>
@@ -261,7 +261,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         file: JSON.stringify({}),
       })
       .execute();
-    const fromTemplate = await seedConnector(orgA, {
+    await seedConnector(orgA, {
       name: "Kit",
       connector: "mcp",
       endpoint: { url: "https://kit.example.com/mcp" },
@@ -269,7 +269,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       tools: [{ name: "search", status: "enabled" }],
     });
     // hand-configured: userinfo, query, fragment and headers must never reach the template
-    const custom = await seedConnector(orgA, {
+    await seedConnector(orgA, {
       name: "Wiki",
       connector: "mcp",
       endpoint: {
@@ -287,8 +287,6 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       endpoint: { specText: "{}" },
       tools: [{ name: "op", status: "enabled" }],
     });
-    const gone = randomUUID();
-
     const s1 = await seedSkill(orgA, "report");
     const s2 = await seedSkill(orgA, "charts");
     const s3 = await seedSkill(orgA, "style");
@@ -329,14 +327,11 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         ],
         model: { provider: "model-fake", model: "fake-1" },
         modelParams: { effort: "high" },
-        tools: [
-          { kind: "builtin", name: "Bash" },
-          { kind: "builtin", name: "Agent" },
-          { kind: "plugin", plugin: "todo", name: "write" },
-          { kind: "connector", connectorId: fromTemplate, tools: ["search"] },
-          { kind: "connector", connectorId: custom, tools: "all" },
-          { kind: "connector", connectorId: openapi, tools: "all" },
-          { kind: "connector", connectorId: gone, tools: "all" },
+        // every connector of the org is on for the agent (tools default-on spec §3); a turned-off
+        // builtin and extension tool become the template's disallowedTools
+        disabledTools: [
+          { kind: "builtin", name: "Read" },
+          { kind: "plugin", plugin: "todo", tools: ["write"] },
         ],
         toolPolicies: {
           Bash: "ask",
@@ -430,7 +425,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       name: "lead",
       description: "Leads the team.",
       instructions: "# Lead\n\nLead the work.\n\n# Style\n\nBe brief.",
-      tools: ["Bash", "Agent", "plugin__todo__write"],
+      disallowedTools: ["Read", "plugin__todo__write"],
       toolPolicies: { Bash: "ask" },
       model: "standard",
       modelRef: "model-fake/fake-1",
@@ -438,7 +433,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       skills: ["report"],
       selectedSkills: ["charts", "style"],
       connectors: [
-        { template: platformTpl, tools: ["search"], policies: { search: "ask" } },
+        { template: platformTpl, policies: { search: "ask" } },
         {
           needs: {
             protocol: "mcp",
@@ -497,7 +492,6 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       expect.arrayContaining([
         { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
         { kind: "connector", name: "Inline", id: openapi, reason: "no_endpoint" },
-        { kind: "connector", name: gone, id: gone, reason: "unavailable" },
         {
           kind: "subagent_template",
           name: "missing-template",
@@ -511,7 +505,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         { kind: "subagent_inline", name: "helper", field: "effort", reason: "unsupported_field" },
       ]),
     );
-    expect(body.omitted).toHaveLength(8);
+    expect(body.omitted).toHaveLength(7);
 
     // no credential, header or secret query ever enters the stored template
     const stored = await db
@@ -978,7 +972,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
 
   it("save-as keeps a connector entry's tools and policy keys within the SDK limit", async () => {
     const names = Array.from({ length: 150 }, (_, i) => `t${String(i).padStart(3, "0")}`);
-    const conn = await seedConnector(orgA, {
+    await seedConnector(orgA, {
       name: "Big",
       connector: "mcp",
       endpoint: { url: "https://big.example.com/mcp" },
@@ -992,7 +986,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
       name: "Big",
       instructions: "Use the big connector.",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [{ kind: "connector", connectorId: conn, tools: "all" }],
+      disabledTools: [],
       toolPolicies,
     });
     const res = await saveAs(boss, orgA, agentId, "big");
@@ -1025,7 +1019,7 @@ describe("org agent templates", { timeout: 120_000 }, () => {
         modelParams: { effort: "turbo", "model-fake.style": "shout" },
         fallback: { provider: "model-fake", model: "fake-2" },
         fallbackParams: { effort: "low" },
-        tools: [{ kind: "builtin", name: "Agent" }],
+        disabledTools: [],
         skills: { orgSkills: [a, b, c, d] },
         subagents: {
           inline: [

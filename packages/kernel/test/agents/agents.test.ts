@@ -113,11 +113,11 @@ describe("AgentDefinitionSchema", () => {
       fallback: null,
       modelParams: {},
       fallbackParams: {},
-      tools: [],
+      disabledTools: [],
       toolPolicies: {},
     });
   });
-  it("拒绝空名、超长名、非标量参数值、非空 tools；不再有 effort 字段", () => {
+  it("refuses an empty or long name, non-scalar params and malformed disabledTools; no effort field", () => {
     const base = { model: { provider: "p", model: "m" } };
     expect(AgentDefinitionSchema.safeParse({ ...base, name: "" }).success).toBe(false);
     expect(AgentDefinitionSchema.safeParse({ ...base, name: "x".repeat(81) }).success).toBe(false);
@@ -128,9 +128,16 @@ describe("AgentDefinitionSchema", () => {
     expect(
       AgentDefinitionSchema.safeParse({ ...base, name: "a", fallbackParams: { x: null } }).success,
     ).toBe(false);
-    expect(AgentDefinitionSchema.safeParse({ ...base, name: "a", tools: ["x"] }).success).toBe(
-      false,
-    );
+    expect(
+      AgentDefinitionSchema.safeParse({ ...base, name: "a", disabledTools: ["x"] }).success,
+    ).toBe(false);
+    expect(
+      AgentDefinitionSchema.safeParse({
+        ...base,
+        name: "a",
+        disabledTools: [{ kind: "connector", connectorId: "c", tools: [] }],
+      }).success,
+    ).toBe(false);
     const ok = AgentDefinitionSchema.safeParse({
       ...base,
       name: "a",

@@ -18,6 +18,7 @@ import { createDb } from "../../src/db/pool.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -386,7 +387,7 @@ describe("删除与 agent 引用", { timeout: 60_000 }, () => {
     definition: {
       name: "Helper",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [],
+      disabledTools: builtinsOff(),
       skills: { orgSkills },
     },
     visibility: "org",

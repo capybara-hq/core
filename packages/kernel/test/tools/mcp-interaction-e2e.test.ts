@@ -14,6 +14,7 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { UNSUPPORTED_ELICITATION_NOTE } from "../../src/tools/elicitation.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -243,7 +244,7 @@ async function agentFor(connectorId: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "connector", connectorId, tools: "all" }],
+        disabledTools: onlyBuiltins([{ kind: "connector", connectorId, tools: "all" }]),
       },
       visibility: "org",
     },

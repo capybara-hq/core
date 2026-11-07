@@ -33,6 +33,7 @@ import type { StreamSink } from "../../src/runtime/model-call.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -110,7 +111,7 @@ const agent: AgentDefinition = {
   fallback: null,
   modelParams: {},
   fallbackParams: {},
-  tools: [],
+  disabledTools: builtinsOff(),
   toolPolicies: {},
 };
 

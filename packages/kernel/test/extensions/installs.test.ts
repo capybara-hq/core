@@ -31,6 +31,7 @@ import { createLogger } from "../../src/log.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { approvalsFor, blobsFor } from "../helpers/extensions.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -515,15 +516,15 @@ describe("启动时加载安装记录", () => {
 
     await loginUsers(k);
     const orgId = await createOrg(admin);
-    const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
-    expect((await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools).toEqual([]);
+    const quiet = { disabledTools: builtinsOff() };
+    expect((await k.app.get(ToolRegistry).forAgent(orgId, quiet)).tools).toEqual([]);
     const put = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/fake-tools-ui`,
       payload: { enabled: true },
     });
     expect(put.statusCode, put.body).toBe(200);
-    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
+    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, quiet)).tools;
     expect(tools.map((t) => t.key)).toEqual(["plugin__fake-tools-ui__write"]);
     await stopAll();
     const after = await db
@@ -883,8 +884,8 @@ describe("引导插件（取代内置插件）", () => {
     });
     expect(put.statusCode).toBe(409);
     expect(put.json().error.code).toBe("extension.required");
-    const ref = { kind: "plugin" as const, plugin: "fake-tools-ui", name: "write" };
-    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { tools: [ref] })).tools;
+    const tools = (await k.app.get(ToolRegistry).forAgent(orgId, { disabledTools: builtinsOff() }))
+      .tools;
     expect(tools.map((t) => t.key)).toEqual(["plugin__fake-tools-ui__write"]);
     expect((await k.app.get(ExtensionHost).enabledPlugins(orgId)).has("fake-tools-ui")).toBe(true);
     // The same package uploaded again is just the installed package (nothing new to approve)

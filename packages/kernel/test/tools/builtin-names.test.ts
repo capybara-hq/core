@@ -21,6 +21,7 @@ import {
   skillsCurrentText,
 } from "../../src/runtime/context/skills.js";
 import {
+  AGENT_BUILTIN_NAMES,
   AGENT_TOOL,
   BUILTIN,
   BUILTIN_TOOL_KINDS,
@@ -148,15 +149,10 @@ describe("builtin names", () => {
 
   it("the web copies name the builtins under their new names", () => {
     const agents = repoFile("apps/web/src/lib/agents.ts");
-    expect(arrayLiteral(agents, "BUILTIN_TOOLS")).toEqual([
-      BUILTIN.AskUserQuestion,
-      BUILTIN.ReadToolOutput,
-      BUILTIN.SkillWrite,
-      BUILTIN.WebSearch,
-      BUILTIN.WebFetch,
-      BUILTIN.Platform,
-      BUILTIN.CurrentTime,
-    ]);
+    // every builtin an agent can turn off, but Agent (the Sub-agents section switches it)
+    expect(arrayLiteral(agents, "BUILTIN_TOOLS")).toEqual(
+      AGENT_BUILTIN_NAMES.filter((n) => n !== AGENT_TOOL),
+    );
     for (const f of [
       "apps/web/src/lib/timeline.ts",
       "apps/web/src/components/AgentSubagents.tsx",

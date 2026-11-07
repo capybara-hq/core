@@ -22,6 +22,7 @@ import {
 import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -243,10 +244,12 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Write", "Bash"].map((name) => ({
-          kind: "builtin",
-          name,
-        })),
+        disabledTools: onlyBuiltins(
+          ["Agent", "Write", "Bash"].map((name) => ({
+            kind: "builtin",
+            name,
+          })),
+        ),
         toolPolicies: { Write: "ask" },
       },
       visibility: "org",

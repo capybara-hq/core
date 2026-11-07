@@ -18,6 +18,7 @@ import {
   setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { createOrg, enableExtensions } from "../helpers/runs.js";
 
 /**
@@ -459,10 +460,7 @@ describe("connectors and extensions", () => {
         name: "With connector",
         instructions: "Use the docs.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
-          { kind: "builtin", name: "Platform" },
-          { kind: "connector", connectorId: id, tools: "all" },
-        ],
+        disabledTools: builtinsOff("Platform"),
         toolPolicies: {},
         fallback: null,
         modelParams: {},
@@ -479,7 +477,11 @@ describe("connectors and extensions", () => {
         agentId: agent.agent.id,
       },
     )) as { tools: string[] };
-    expect(me.tools).toEqual(["Platform", ...enabled]);
+    expect(me.tools).toEqual(expect.arrayContaining(["Platform", ...enabled]));
+    expect(me.tools).not.toContain("Bash");
+    expect((me as unknown as { disabledTools: unknown[] }).disabledTools).toEqual(
+      builtinsOff("Platform"),
+    );
     expect(JSON.stringify(me)).not.toContain("connector:");
   });
 

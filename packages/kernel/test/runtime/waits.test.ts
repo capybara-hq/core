@@ -22,6 +22,7 @@ import {
 import { QuestionsService } from "../../src/tools/questions.service.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -140,10 +141,10 @@ async function createToolAgent(r: Req, org: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
-        ],
+        ]),
         // echo 需要审批；ask 默认放行（只请求用户输入）
         toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },

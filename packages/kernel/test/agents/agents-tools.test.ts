@@ -4,26 +4,19 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  type AgentDefinition,
-  AgentDefinitionSchema,
-  DEFAULT_AGENT_TOOLS,
-} from "../../src/agents/definition.js";
+import { type AgentDefinition, AgentDefinitionSchema } from "../../src/agents/definition.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
-import {
-  runModelStep,
-  TOOLS_AVAILABLE_AGAIN,
-  TOOLS_UNAVAILABLE_PREFIX,
-} from "../../src/runtime/model-call.js";
+import { runModelStep } from "../../src/runtime/model-call.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
@@ -139,53 +132,43 @@ const detailPaths = (res: { json(): unknown }): string[] =>
   (res.json() as { error: { details?: { path: string }[] } }).error.details?.map((d) => d.path) ??
   [];
 
-describe("agent 定义的工具", () => {
-  it("旧定义（tools: []、没有 toolPolicies）解析与读出都正常", async () => {
-    const parsed = AgentDefinitionSchema.parse({ name: "Old", model: MODEL, tools: [] });
-    expect(parsed.tools).toEqual([]);
+describe("agent definition tools (tools default-on spec §2)", () => {
+  it("a definition without disabledTools or toolPolicies parses and reads as nothing turned off", async () => {
+    const parsed = AgentDefinitionSchema.parse({ name: "Old", model: MODEL });
+    expect(parsed.disabledTools).toEqual([]);
     expect(parsed.toolPolicies).toEqual({});
 
-    const res = await createAgent({ tools: [] });
-    expect(res.statusCode, res.body).toBe(201);
-    const { agent } = res.json() as AgentRes;
-    expect(agent.definition.tools).toEqual([]);
-    // 模拟 M2 存下的版本：没有 toolPolicies 字段
-    await sql`UPDATE capybara.agent_versions
-      SET definition = definition - 'toolPolicies' WHERE agent_id = ${agent.id}`.execute(raw);
-    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
-    expect(got.statusCode).toBe(200);
-    expect((got.json() as AgentRes).agent.definition.tools).toEqual([]);
-  });
-
-  it("创建时省略 tools → 默认 AskUserQuestion + ReadToolOutput；修改时省略 tools 不注入默认值", async () => {
     const res = await createAgent({});
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
-    expect(agent.definition.tools).toEqual(DEFAULT_AGENT_TOOLS);
-    expect(agent.definition.toolPolicies).toEqual({});
-    const stored = await db
-      .selectFrom("agent_versions")
-      .select("definition")
-      .where("agent_id", "=", agent.id)
-      .executeTakeFirstOrThrow();
-    expect((stored.definition as unknown as AgentDefinition).tools).toEqual(DEFAULT_AGENT_TOOLS);
-
-    const patched = await req({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
-      payload: { definition: { name: "Helper", model: MODEL } },
-    });
-    expect(patched.statusCode, patched.body).toBe(200);
-    expect((patched.json() as AgentRes).agent.definition.tools).toEqual([]);
+    expect(agent.definition.disabledTools).toEqual([]);
+    // a version stored before toolPolicies, and one from before tools were on by default
+    await sql`UPDATE capybara.agent_versions
+      SET definition = (definition - 'toolPolicies' - 'disabledTools')
+        || '{"tools":[{"kind":"builtin","name":"AskUserQuestion"}]}'::jsonb
+      WHERE agent_id = ${agent.id}`.execute(raw);
+    const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` });
+    expect(got.statusCode).toBe(200);
+    const read = (got.json() as AgentRes).agent.definition;
+    expect(read.disabledTools).toEqual([]);
+    expect("tools" in read).toBe(false);
   });
 
-  it("引用存在的内置 / 插件 / 连接器工具并收紧策略 → 保存成功", async () => {
+  it("a request carrying the old tools list or a sub-agent filter is refused", async () => {
+    const old = await createAgent({ tools: [{ kind: "builtin", name: "AskUserQuestion" }] });
+    expect(old.statusCode).toBe(400);
+    const filter = await createAgent({ subagentTools: { deny: ["Bash"] } });
+    expect(filter.statusCode).toBe(400);
+  });
+
+  it("turns off builtins, extension tools and connector tools and tightens policies; stores the canonical list", async () => {
     const connectorId = await installConnector("docs");
     const res = await createAgent({
-      tools: [
+      disabledTools: [
+        { kind: "connector", connectorId, tools: ["write", "read", "write"] },
         { kind: "builtin", name: "AskUserQuestion" },
-        { kind: "plugin", plugin: "tools-probe", name: "echo" },
-        { kind: "connector", connectorId, tools: "all" },
+        { kind: "plugin", plugin: "tools-probe", tools: "all" },
+        { kind: "builtin", name: "AskUserQuestion" },
       ],
       toolPolicies: {
         mcp__docs__read: "ask",
@@ -194,104 +177,107 @@ describe("agent 定义的工具", () => {
       },
     });
     expect(res.statusCode, res.body).toBe(201);
-    expect((res.json() as AgentRes).agent.definition.toolPolicies).toEqual({
+    const def = (res.json() as AgentRes).agent.definition;
+    expect(def.disabledTools).toEqual([
+      { kind: "connector", connectorId, tools: ["read", "write"] },
+      { kind: "builtin", name: "AskUserQuestion" },
+      { kind: "plugin", plugin: "tools-probe", tools: "all" },
+    ]);
+    // a policy on a turned-off tool is kept (it applies again once the tool is back on)
+    expect(def.toolPolicies).toEqual({
       mcp__docs__read: "ask",
       mcp__docs__write: "deny",
       "plugin__tools-probe__echo": "deny",
     });
   });
 
-  it("引用不存在的连接器 / 其他组织的连接器 / 连接器里不存在的工具 → 400 validation_failed（path tools.<i>）", async () => {
+  it("a missing connector, another org's, a missing connector tool → 400 at disabledTools.<i>", async () => {
     const connectorId = await installConnector("docs");
     const missing = await createAgent({
-      tools: [
+      disabledTools: [
         { kind: "builtin", name: "AskUserQuestion" },
         { kind: "connector", connectorId: randomUUID(), tools: "all" },
       ],
     });
     expect(missing.statusCode).toBe(400);
     expect((missing.json() as { error: { code: string } }).error.code).toBe("validation_failed");
-    expect(detailPaths(missing)).toEqual(["tools.1"]);
+    expect(detailPaths(missing)).toEqual(["disabledTools.1"]);
 
     const otherOrg = await createOrg("Other");
     const foreign = await installConnector("theirs", otherOrg);
     const cross = await createAgent({
-      tools: [{ kind: "connector", connectorId: foreign, tools: "all" }],
+      disabledTools: [{ kind: "connector", connectorId: foreign, tools: "all" }],
     });
     expect(cross.statusCode).toBe(400);
-    expect(detailPaths(cross)).toEqual(["tools.0"]);
+    expect(detailPaths(cross)).toEqual(["disabledTools.0"]);
 
     const noTool = await createAgent({
-      tools: [{ kind: "connector", connectorId, tools: ["read", "nope"] }],
+      disabledTools: [{ kind: "connector", connectorId, tools: ["read", "nope"] }],
     });
     expect(noTool.statusCode).toBe(400);
-    expect(detailPaths(noTool)).toEqual(["tools.0"]);
+    expect(detailPaths(noTool)).toEqual(["disabledTools.0"]);
 
-    // 软删除的连接器同样视为不存在
+    // a soft-deleted connector does not exist either
     expect(
       (await req({ method: "DELETE", url: `/api/v1/orgs/${orgId}/connectors/${connectorId}` }))
         .statusCode,
     ).toBe(204);
     const deleted = await createAgent({
-      tools: [{ kind: "connector", connectorId, tools: "all" }],
+      disabledTools: [{ kind: "connector", connectorId, tools: "all" }],
     });
     expect(deleted.statusCode).toBe(400);
   });
 
-  it("不存在的内置工具 / 插件工具 → 400", async () => {
-    const builtin = await createAgent({ tools: [{ kind: "builtin", name: "rm_rf" }] });
-    expect(builtin.statusCode).toBe(400);
-    expect(detailPaths(builtin)).toEqual(["tools.0"]);
+  it("an unknown builtin, a registry-managed builtin and a missing extension tool → 400", async () => {
+    for (const name of ["rm_rf", "ToolSearch", "SendMessage"]) {
+      const builtin = await createAgent({ disabledTools: [{ kind: "builtin", name }] });
+      expect(builtin.statusCode, name).toBe(400);
+      expect(detailPaths(builtin)).toEqual(["disabledTools.0"]);
+    }
     const plugin = await createAgent({
-      tools: [{ kind: "plugin", plugin: "tools-probe", name: "missing" }],
+      disabledTools: [{ kind: "plugin", plugin: "tools-probe", tools: ["missing"] }],
     });
     expect(plugin.statusCode).toBe(400);
-    expect(detailPaths(plugin)).toEqual(["tools.0"]);
+    expect(detailPaths(plugin)).toEqual(["disabledTools.0"]);
+    const noExtension = await createAgent({
+      disabledTools: [{ kind: "plugin", plugin: "nope", tools: "all" }],
+    });
+    expect(noExtension.statusCode).toBe(400);
   });
 
-  it("toolPolicies 放宽（allow）→ 400；键不是该 agent 的工具 → 400（path toolPolicies.<key>）", async () => {
-    const connectorId = await installConnector("docs");
-    const loosen = await createAgent({
-      tools: [{ kind: "connector", connectorId, tools: "all" }],
-      toolPolicies: { mcp__docs__write: "allow" },
-    });
+  it("toolPolicies loosened (allow) → 400; a key that is no tool the agent could have → 400", async () => {
+    await installConnector("docs");
+    const loosen = await createAgent({ toolPolicies: { mcp__docs__write: "allow" } });
     expect(loosen.statusCode).toBe(400);
     expect(detailPaths(loosen)).toEqual(["definition.toolPolicies.mcp__docs__write"]);
 
     const unknown = await createAgent({
-      tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-      toolPolicies: { mcp__docs__write: "deny", AskUserQuestion: "ask" },
+      toolPolicies: { mcp__docs__nope: "deny", AskUserQuestion: "ask", mcp__other__x: "ask" },
     });
     expect(unknown.statusCode).toBe(400);
     expect(detailPaths(unknown)).toEqual([
-      "toolPolicies.mcp__docs__write",
-      "toolPolicies.AskUserQuestion",
+      "toolPolicies.mcp__docs__nope",
+      "toolPolicies.mcp__other__x",
     ]);
 
-    // PATCH 同样校验
-    const ok = await createAgent({ tools: [{ kind: "connector", connectorId, tools: ["read"] }] });
+    // PATCH checks too
+    const ok = await createAgent({});
     const { agent } = ok.json() as AgentRes;
     const patched = await req({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/agents/${agent.id}`,
       payload: {
-        definition: {
-          name: "Helper",
-          model: MODEL,
-          tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-          toolPolicies: { mcp__docs__write: "deny" },
-        },
+        definition: { name: "Helper", model: MODEL, toolPolicies: { mcp__docs__nope: "deny" } },
       },
     });
     expect(patched.statusCode).toBe(400);
-    expect(detailPaths(patched)).toEqual(["toolPolicies.mcp__docs__write"]);
+    expect(detailPaths(patched)).toEqual(["toolPolicies.mcp__docs__nope"]);
   });
 });
 
 describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => {
-  it("Platform:<op> keys are accepted only with Platform selected; a malformed one is refused", async () => {
+  it("Platform:<op> keys are accepted (Platform is a builtin every agent can have); a malformed one is refused", async () => {
     const withPlatform = await createAgent({
-      tools: [{ kind: "builtin", name: "Platform" }],
       toolPolicies: { "Platform:skills.create": "deny" },
     });
     expect(withPlatform.statusCode, withPlatform.body).toBe(201);
@@ -299,15 +285,14 @@ describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => 
       "Platform:skills.create": "deny",
     });
 
-    const without = await createAgent({
-      tools: [{ kind: "builtin", name: "AskUserQuestion" }],
+    // turned off, its policies are kept like any turned-off tool's
+    const off = await createAgent({
+      disabledTools: [{ kind: "builtin", name: "Platform" }],
       toolPolicies: { "Platform:skills.create": "deny" },
     });
-    expect(without.statusCode).toBe(400);
-    expect(detailPaths(without)).toEqual(["toolPolicies.Platform:skills.create"]);
+    expect(off.statusCode, off.body).toBe(201);
 
     const malformed = await createAgent({
-      tools: [{ kind: "builtin", name: "Platform" }],
       toolPolicies: { "Platform:BAD": "deny" },
     });
     expect(malformed.statusCode).toBe(400);
@@ -315,7 +300,6 @@ describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => 
 
     // an unknown operation id is kept: a removed operation's policy is harmless
     const gone = await createAgent({
-      tools: [{ kind: "builtin", name: "Platform" }],
       toolPolicies: { "Platform:gone-domain.do-it": "ask" },
     });
     expect(gone.statusCode, gone.body).toBe(201);
@@ -326,7 +310,6 @@ describe("Platform per-operation policy keys (Platform tool spec §6.2)", () => 
     // a domain without a verb, and another tool's prefix, are refused
     for (const key of ["Platform:skills", "Other:skills.create"]) {
       const refused = await createAgent({
-        tools: [{ kind: "builtin", name: "Platform" }],
         toolPolicies: { [key]: "deny" },
       });
       expect(refused.statusCode, key).toBe(400);
@@ -370,11 +353,19 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
       payload: EventPayload<T>;
     })[];
 
-  it("model_call.request.tools 记录按 key 排序的工具与指纹", async () => {
-    const connectorId = await installConnector("docs");
-    const res = await createAgent({
-      tools: [{ kind: "connector", connectorId, tools: ["write", "read"] }],
-    });
+  /** Every builtin and the connector extension's own `echo` off: only what a test adds is on. */
+  const quiet = () => [
+    ...builtinsOff(),
+    { kind: "plugin" as const, plugin: "mem-connector", tools: "all" as const },
+  ];
+
+  /** The keys `forAgent` resolves for `agent` now. */
+  const keysOf = async (agent: AgentDefinition) =>
+    (await k.app.get(ToolRegistry).forAgent(orgId, agent)).tools.map((t) => t.key);
+
+  it("model_call.request.tools records the tools by key with their spec hashes", async () => {
+    await installConnector("docs");
+    const res = await createAgent({ disabledTools: quiet() });
     const { agent } = res.json() as AgentRes;
     const convId = await conversation(agent.id, "hello");
     const r = await step(agent.definition, convId, randomUUID(), 1);
@@ -389,14 +380,77 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     expect(await ofType(convId, "reminder")).toEqual([]);
   });
 
-  it("引用的连接器被删除：写一条英文提醒、请求不带它的工具、本步照常完成；同样的提醒不逐步重复", async () => {
+  it("a builtin added after an agent was saved appears for it; a turned-off one stays off", async () => {
+    // a version stored before tools were on by default, without CurrentTime in its list
+    const res = await createAgent({ disabledTools: [{ kind: "builtin", name: "Platform" }] });
+    const { agent } = res.json() as AgentRes;
+    await sql`UPDATE capybara.agent_versions
+      SET definition = (definition - 'disabledTools')
+        || '{"tools":[{"kind":"builtin","name":"AskUserQuestion"}]}'::jsonb
+      WHERE agent_id = ${agent.id}`.execute(raw);
+    const read = (
+      (
+        await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agent.id}` })
+      ).json() as AgentRes
+    ).agent.definition;
+    const legacy = await keysOf(read);
+    expect(legacy).toContain("CurrentTime");
+    expect(legacy).toContain("Platform");
+    expect(legacy).toContain("AskUserQuestion");
+
+    const off = await keysOf(agent.definition);
+    expect(off).toContain("CurrentTime");
+    expect(off).not.toContain("Platform");
+  });
+
+  it("a connector the org adds later appears for every agent unless turned off", async () => {
+    const res = await createAgent({ disabledTools: quiet() });
+    const { agent } = res.json() as AgentRes;
+    expect(await keysOf(agent.definition)).toEqual([]);
     const connectorId = await installConnector("docs");
-    const res = await createAgent({
-      tools: [
-        { kind: "plugin", plugin: "tools-probe", name: "echo" },
+    expect(await keysOf(agent.definition)).toEqual(["mcp__docs__read", "mcp__docs__write"]);
+    const partly: AgentDefinition = {
+      ...agent.definition,
+      disabledTools: [
+        ...agent.definition.disabledTools,
+        { kind: "connector", connectorId, tools: ["write"] },
+      ],
+    };
+    expect(await keysOf(partly)).toEqual(["mcp__docs__read"]);
+    const whole: AgentDefinition = {
+      ...agent.definition,
+      disabledTools: [
+        ...agent.definition.disabledTools,
         { kind: "connector", connectorId, tools: "all" },
       ],
+    };
+    expect(await keysOf(whole)).toEqual([]);
+  });
+
+  it("an extension's tools appear once the org enables it; the org's per-tool switch wins", async () => {
+    const res = await createAgent({ disabledTools: quiet() });
+    const { agent } = res.json() as AgentRes;
+    expect(await keysOf(agent.definition)).toEqual([]);
+    const enable = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
+      payload: { enabled: true },
     });
+    expect(enable.statusCode, enable.body).toBe(200);
+    const on = await keysOf(agent.definition);
+    expect(on).toContain("plugin__tools-probe__echo");
+    // the org admin turns the tool off org-wide: no agent gets it, and the model is not told
+    await sql`INSERT INTO capybara.org_tool_switches (org_id, plugin, tool, enabled)
+      VALUES (${orgId}, 'tools-probe', 'echo', false)`.execute(raw);
+    const switched = await k.app.get(ToolRegistry).forAgent(orgId, agent.definition);
+    expect(switched.tools.map((t) => t.key)).not.toContain("plugin__tools-probe__echo");
+    expect(switched.unavailable).toEqual([]);
+    expect(switched.hidden?.some((h) => h.ref === "plugin__tools-probe__echo")).toBe(true);
+  });
+
+  it("tools the agent never asked for are never reported as unavailable: a deleted connector just goes", async () => {
+    const connectorId = await installConnector("docs");
+    const res = await createAgent({ disabledTools: quiet() });
     expect(res.statusCode, res.body).toBe(201);
     const { agent } = res.json() as AgentRes;
     expect(
@@ -409,45 +463,8 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const r = await step(agent.definition, convId, runId, 1);
     expect(r.aborted).toBe(false);
     expect(r.stopReason).toBe("end_turn");
-
-    const reminders = await ofType(convId, "reminder");
-    expect(reminders.map((e) => e.payload.text)).toEqual([
-      `${TOOLS_UNAVAILABLE_PREFIX}plugin__tools-probe__echo (Plugin tools-probe is not enabled in this organization), mcp__docs__* (App docs was deleted)`,
-    ]);
+    expect(await ofType(convId, "reminder")).toEqual([]);
     const [call] = await ofType(convId, "model_call");
     expect(call?.payload.request.tools).toEqual([]);
-    expect(call?.payload.request.reminderSeqs).toEqual([reminders[0]?.seq]);
-
-    // 下一步：不可用情况未变 → 不再写同样的提醒
-    await step(agent.definition, convId, runId, 2);
-    expect(await ofType(convId, "reminder")).toHaveLength(1);
-    expect(await ofType(convId, "assistant_message")).toHaveLength(2);
-  });
-
-  it("同一 run 内不可用工具全部恢复：写一条「已恢复」提醒，之后不重复", async () => {
-    const res = await createAgent({
-      tools: [{ kind: "plugin", plugin: "tools-probe", name: "echo" }],
-    });
-    const { agent } = res.json() as AgentRes;
-    const convId = await conversation(agent.id, "hello");
-    const runId = randomUUID();
-    await step(agent.definition, convId, runId, 1);
-    const enable = await req({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
-      payload: { enabled: true },
-    });
-    expect(enable.statusCode, enable.body).toBe(200);
-    await step(agent.definition, convId, runId, 2);
-    await step(agent.definition, convId, runId, 3);
-    const texts = (await ofType(convId, "reminder")).map((e) => e.payload.text);
-    expect(texts).toEqual([
-      `${TOOLS_UNAVAILABLE_PREFIX}plugin__tools-probe__echo (Plugin tools-probe is not enabled in this organization)`,
-      TOOLS_AVAILABLE_AGAIN,
-    ]);
-    const calls = await ofType(convId, "model_call");
-    expect(calls.at(-1)?.payload.request.tools?.map((t) => t.key)).toEqual([
-      "plugin__tools-probe__echo",
-    ]);
   });
 });

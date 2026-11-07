@@ -15,6 +15,7 @@ import { sentToRunningText } from "../../../src/tools/builtins/send-message.js";
 import type { ToolStepContext } from "../../../src/tools/pipeline.js";
 import type { ScriptRule } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../../helpers/http.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -107,7 +108,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     },

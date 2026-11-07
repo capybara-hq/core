@@ -8,6 +8,7 @@ import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { SsoFlow } from "../../src/identity/sso.js";
 import { DirectorySync } from "../../src/orgs/directory-sync.js";
 import { everythingProbe } from "../fixtures/plugins/everything/index.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -86,10 +87,10 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "everything", name: "hang" },
           { kind: "plugin", plugin: "everything", name: "polite" },
-        ],
+        ]),
       },
       visibility: "org",
     },

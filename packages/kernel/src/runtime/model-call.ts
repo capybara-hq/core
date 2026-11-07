@@ -399,7 +399,8 @@ async function runStep(
     // a skills catalog snapshot (Ruling M17; an empty one too) or a person's skill invocation in the
     // log → Skill is offered (see skillLoadOffered)
     const resolved = await deps.tools.forAgent(input.orgId, {
-      tools: input.agent.tools ?? [],
+      disabledTools: input.agent.disabledTools,
+      subagentTools: input.agent.subagentTools,
       subagents: input.agent.subagents,
       child:
         input.parent !== undefined || input.parentRunId !== undefined || input.subagent === true,

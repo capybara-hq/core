@@ -143,13 +143,8 @@ describe("Agent HTTP", () => {
       avatarUrl: null,
       modelParams: {},
       fallbackParams: {},
-      // no tools on create -> the default tools (Ruling P7; Platform tool spec §3; CurrentTime)
-      tools: [
-        { kind: "builtin", name: "AskUserQuestion" },
-        { kind: "builtin", name: "ReadToolOutput" },
-        { kind: "builtin", name: "Platform" },
-        { kind: "builtin", name: "CurrentTime" },
-      ],
+      // nothing turned off: every tool the org offers (tools default-on spec §2)
+      disabledTools: [],
       toolPolicies: {},
     });
     expect(created.agent.definition).not.toHaveProperty("effort");

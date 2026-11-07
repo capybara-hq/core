@@ -26,6 +26,7 @@ import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js"
 import { pinnedBlock } from "../../src/runtime/context/skills.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -259,7 +260,7 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
           name: "Builder",
           instructions: "Help build features.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [],
+          disabledTools: builtinsOff(),
           skills: {
             orgSkills: skills.map((s) => s.id),
             pinned: [ids["using-superpowers"]],

@@ -18,6 +18,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -168,11 +169,11 @@ beforeAll(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "builtin", name: "Agent" },
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
-        ],
+        ]),
         toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",

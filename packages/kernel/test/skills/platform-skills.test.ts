@@ -21,6 +21,7 @@ import { SkillInvoker } from "../../src/skills/invoke.js";
 import { skillVersionsById, usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -281,7 +282,7 @@ const definition = (orgSkills: string[], pinned?: string[]) => ({
   name: "Skilled",
   instructions: "Use skills.",
   model: { provider: "model-fake", model: "fake-1" },
-  tools: [{ kind: "builtin", name: "Bash" }],
+  disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
   skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
 });
 

@@ -19,6 +19,7 @@ import { CHANNEL_QUEUE_NAME, idempotencyKey } from "../../src/channels/outbound.
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { COLOR_FORM } from "../fixtures/plugins/mem-connector/index.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -129,10 +130,10 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
-        ],
+        ]),
         toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",
@@ -158,7 +159,7 @@ beforeAll(async () => {
         name: "Flaky",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-idle" },
-        tools: [],
+        disabledTools: builtinsOff(),
       },
       visibility: "org",
     },

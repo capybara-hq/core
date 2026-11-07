@@ -12,6 +12,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { channelLeaseKey } from "../../src/channels/supervisor.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
@@ -97,7 +98,7 @@ async function setup(roles: [string[], string[]], appId: string) {
       name: "Helper",
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [],
+      disabledTools: builtinsOff(),
     },
     visibility: "org",
   });

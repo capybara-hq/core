@@ -529,7 +529,8 @@ export class ToolPipeline {
           ctx.conversationId,
         );
         resolved = await this.deps.registry.forAgent(ctx.orgId, {
-          tools: ctx.agent.tools ?? [],
+          disabledTools: ctx.agent.disabledTools,
+          subagentTools: ctx.agent.subagentTools,
           skillLoad,
           subagents: ctx.agent.subagents,
           child: ctx.parent !== undefined,

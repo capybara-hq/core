@@ -6,6 +6,7 @@ import {
   type BuiltinTool,
   ToolRegistry,
 } from "../../src/tools/registry.js";
+import { noRowsDb } from "../helpers/disabled-tools.js";
 import { pipelineFor } from "../helpers/tools.js";
 
 const ORG_A = "org-a";
@@ -15,16 +16,17 @@ const probe = (
   unavailable: BuiltinTool["unavailable"],
   run: BuiltinTool["run"] = async () => ({ content: [{ type: "text", text: "ok" }] }),
 ): BuiltinTool => ({
-  spec: { name: "Probe", description: "A probe.", inputSchema: { type: "object" } },
+  // a builtin name agents have by default (tools default-on spec §4)
+  spec: { name: "CurrentTime", description: "A probe.", inputSchema: { type: "object" } },
   defaultPolicy: "allow",
   run,
   ...(unavailable !== undefined && { unavailable }),
 });
 
-// builtin-only definitions never read PG, so the registry runs without a database
+// the org has no connectors here, so the registry runs without a database
 const registryOf = (tool: BuiltinTool): ToolRegistry =>
   new ToolRegistry(
-    {} as never,
+    noRowsDb(),
     { tools: () => [], enabledPlugins: async () => new Set() },
     { list: () => [] },
     { list: () => [tool] },
@@ -32,9 +34,7 @@ const registryOf = (tool: BuiltinTool): ToolRegistry =>
     { offKeys: async () => new Set() },
   );
 
-const def = {
-  tools: [{ kind: "builtin" as const, name: "Probe" }],
-} as never;
+const def = { disabledTools: [] };
 
 describe("BuiltinTool.unavailable", () => {
   it("is awaited and receives the org id: unavailable for one org, resolved for another", async () => {
@@ -47,19 +47,21 @@ describe("BuiltinTool.unavailable", () => {
     );
     const a = await registry.forAgent(ORG_A, def);
     expect(a.tools).toEqual([]);
-    expect(a.unavailable).toEqual([
-      { ref: "Probe", reason: "Probe is not configured for this organization." },
+    // never asked for by the agent: explained only if the model names it (hidden)
+    expect(a.unavailable).toEqual([]);
+    expect(a.hidden).toEqual([
+      { ref: "CurrentTime", reason: "Probe is not configured for this organization." },
     ]);
     const b = await registry.forAgent(ORG_B, def);
-    expect(b.tools.map((t) => t.key)).toEqual(["Probe"]);
-    expect(b.unavailable).toEqual([]);
+    expect(b.tools.map((t) => t.key)).toEqual(["CurrentTime"]);
+    expect(b.hidden).toEqual([]);
     expect(seen).toEqual([ORG_A, ORG_B]);
   });
 
   it("still accepts a synchronous implementation", async () => {
     const registry = registryOf(probe(() => "nope"));
-    expect((await registry.forAgent(ORG_A, def)).unavailable).toEqual([
-      { ref: "Probe", reason: "nope" },
+    expect((await registry.forAgent(ORG_A, def)).hidden).toEqual([
+      { ref: "CurrentTime", reason: "nope" },
     ]);
   });
 });

@@ -12,7 +12,7 @@ import {
   type StopReason,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { AgentDefinitionSchema, AgentToolRef, ModelRef } from "../agents/definition.js";
+import { AgentDefinitionSchema, DisabledToolRef, ModelRef } from "../agents/definition.js";
 import { ORG_ROLES } from "../orgs/roles.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
@@ -345,13 +345,16 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            */
           kind: z.enum(["task", "message"]).optional(),
           /**
-           * A follow-up (`resume`, final review I1): the frozen tools and org skills intersected
-           * with the current version (`narrowFollowUp`); the child's run uses these instead of
-           * the frozen ones. Absent on a first dispatch and in older logs.
+           * A follow-up (`resume`, final review I1): the frozen and the current version's
+           * turned-off tools together, and the frozen org skills intersected with the current
+           * ones (`narrowFollowUp`); the child's run uses these instead of the frozen ones.
+           * Absent on a first dispatch and in older logs; logs from before tools were on by
+           * default carry an enabled `tools` list instead of `disabledTools` (read as no tool
+           * narrowing).
            */
           narrowed: z
             .object({
-              tools: z.array(AgentToolRef),
+              disabledTools: z.array(DisabledToolRef).optional(),
               skills: z
                 .object({ orgSkills: z.array(z.string()), pinned: z.array(z.string()).optional() })
                 .optional(),

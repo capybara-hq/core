@@ -76,12 +76,19 @@ describe("component scope predicates", () => {
   });
 
   it("definitionRefs reads selected, pinned and inline sub-agent skills, templates and connectors", () => {
-    const refs = definitionRefs({
-      tools: [{ kind: "connector", connectorId: "c1", tools: "all" }],
-      skills: { orgSkills: ["s1"], pinned: ["s2"] },
-      subagents: { templates: ["t1"], inline: [{ name: "x", skills: ["s3"] }] },
-    });
-    expect([...refs.connectors]).toEqual(["c1"]);
+    // every connector of the org is on unless turned off as a whole (tools default-on spec §6)
+    const refs = definitionRefs(
+      {
+        disabledTools: [
+          { kind: "connector", connectorId: "c2", tools: "all" },
+          { kind: "connector", connectorId: "c3", tools: ["one"] },
+        ],
+        skills: { orgSkills: ["s1"], pinned: ["s2"] },
+        subagents: { templates: ["t1"], inline: [{ name: "x", skills: ["s3"] }] },
+      },
+      ["c1", "c2", "c3"],
+    );
+    expect([...refs.connectors]).toEqual(["c1", "c3"]);
     expect([...refs.skills].sort()).toEqual(["s1", "s2", "s3"]);
     expect([...refs.templates]).toEqual(["t1"]);
     expect(definitionRefs(null).skills.size).toBe(0);

@@ -27,6 +27,7 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -158,10 +159,10 @@ beforeAll(async () => {
         name: "Waker",
         instructions: "Work in the background.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
-        ],
+        ]),
       },
       visibility: "org",
     },

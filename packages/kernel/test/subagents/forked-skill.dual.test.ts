@@ -19,6 +19,7 @@ import { Waits } from "../../src/runtime/waits.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -167,7 +168,7 @@ async function setup(k: TestKernel, req: Req): Promise<{ orgId: string; conv: st
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [],
+        disabledTools: builtinsOff(),
         skills: { orgSkills: [skill.id] },
       },
       visibility: "org",

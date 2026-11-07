@@ -15,7 +15,6 @@ import {
   type CheckedOrgAgent,
   childRunDefinition,
   effectiveDefinition,
-  intersectTools,
   narrowFollowUp,
   stricterPolicies,
 } from "../../../src/runtime/subagents/definition.js";
@@ -25,7 +24,9 @@ import {
   type RosterEntry,
   resolveRoster,
 } from "../../../src/runtime/subagents/roster.js";
+import { filterSubagentTools, type ResolvedTool } from "../../../src/tools/registry.js";
 import { truncateTables } from "../../helpers/db.js";
+import { builtinsOff } from "../../helpers/disabled-tools.js";
 import { accountsFor, orgsFor } from "../../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
@@ -374,21 +375,24 @@ describe("resolveRoster / findType", { timeout: 60_000 }, () => {
 });
 
 describe("effectiveDefinition", { timeout: 60_000 }, () => {
-  const parentTools = [
-    { kind: "builtin", name: "AskUserQuestion" },
-    { kind: "builtin", name: "ReadToolOutput" },
-    { kind: "builtin", name: "SkillWrite" },
-    { kind: "builtin", name: "Deliver" },
-    { kind: "builtin", name: "Bash" },
-    { kind: "builtin", name: "Agent" },
-  ];
+  /** The parent keeps these builtins on and turns the others off. */
+  const parentOff = builtinsOff(
+    "AskUserQuestion",
+    "ReadToolOutput",
+    "SkillWrite",
+    "Deliver",
+    "Bash",
+    "Agent",
+  );
+  /** Every child's key filter removes these (sub-agents spec §5.3). */
+  const REMOVED = ["AskUserQuestion", "Deliver", "SkillWrite"];
 
   it("general-purpose: the parent's definition minus the child-removed tools, nothing pinned", async () => {
     const s = await skill("brainstorming");
     const parent = def({
       instructions: "Lead instructions.",
       avatarUrl: "https://example.com/a.png",
-      tools: parentTools,
+      disabledTools: parentOff,
       toolPolicies: { Bash: "ask", SkillWrite: "deny" },
       modelParams: { effort: "low" },
       fallback: FAKE2,
@@ -406,11 +410,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       fallback: FAKE2,
       modelParams: { effort: "low" },
       fallbackParams: { effort: "high" },
-      tools: [
-        { kind: "builtin", name: "ReadToolOutput" },
-        { kind: "builtin", name: "Bash" },
-        { kind: "builtin", name: "Agent" },
-      ],
+      // the parent's turned-off tools, and the child-removed ones by key (tools default-on §4)
+      disabledTools: parentOff,
+      subagentTools: { deny: REMOVED },
       toolPolicies: { Bash: "ask", SkillWrite: "deny" },
       skills: { orgSkills: [s] },
       subagents: { inline: [inline("scout")] },
@@ -428,15 +430,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.definition.name).toHaveLength(80);
   });
 
-  it("inline: tools narrowed by key (connector all narrowed), disallowed removed, stricter policies", async () => {
-    const jira = await connector("jira", ["create", "delete", "search"]);
-    const wiki = await connector("wiki", ["read", "write"]);
+  it("inline: tools narrowed by key (an allowlist stays one), disallowed removed, stricter policies", async () => {
     const parent = def({
-      tools: [
-        ...parentTools,
-        { kind: "connector", connectorId: jira, tools: "all" },
-        { kind: "connector", connectorId: wiki, tools: ["read", "write"] },
-      ],
+      disabledTools: parentOff,
       toolPolicies: { mcp__jira__search: "ask", Bash: "ask", mcp__jira__create: "deny" },
       subagents: {
         inline: [
@@ -456,10 +452,11 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       },
     });
     const scout = await eff(parent, "scout");
-    expect(scout.definition.tools).toEqual([
-      { kind: "builtin", name: "Bash" },
-      { kind: "connector", connectorId: jira, tools: ["create", "search"] },
-    ]);
+    expect(scout.definition.disabledTools).toEqual(parentOff);
+    expect(scout.definition.subagentTools).toEqual({
+      allow: ["Bash", "mcp__jira__search", "mcp__jira__create", "AskUserQuestion", "nope"],
+      deny: REMOVED,
+    });
     expect(scout.definition.toolPolicies).toEqual({
       mcp__jira__search: "ask",
       Bash: "deny",
@@ -472,22 +469,32 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 
     const writer = await eff(parent, "writer");
     // no allowlist: the parent's Agent stays below maxDepth
-    expect(writer.definition.tools).toEqual([
-      { kind: "builtin", name: "ReadToolOutput" },
-      { kind: "builtin", name: "Agent" },
-      { kind: "connector", connectorId: jira, tools: ["create", "search"] },
-      { kind: "connector", connectorId: wiki, tools: ["read"] },
-    ]);
+    expect(writer.definition.subagentTools).toEqual({
+      deny: [...REMOVED, "mcp__wiki__write", "mcp__jira__delete", "Bash"],
+    });
   });
 
-  it("an untouched connector keeps tools: all; maxSteps takes the smaller limit", async () => {
-    const jira = await connector("jira", ["search"]);
-    const parent = def({
-      tools: [{ kind: "connector", connectorId: jira, tools: "all" }],
-      subagents: { inline: [inline("scout", { maxSteps: 5 })] },
-    });
+  it("the key filter narrows the resolved tools; TaskOutput / TaskStop follow Bash", () => {
+    const t = (key: string) => ({ key }) as ResolvedTool;
+    const all = ["Bash", "TaskOutput", "TaskStop", "Read", "Agent", "mcp__jira__search"].map(t);
+    const keys = (f: Parameters<typeof filterSubagentTools>[1]) =>
+      filterSubagentTools(all, f).map((x) => x.key);
+    expect(keys(undefined)).toEqual(all.map((x) => x.key));
+    expect(keys({ deny: ["Agent", "Bash"] })).toEqual(["Read", "mcp__jira__search"]);
+    expect(keys({ allow: ["Bash", "mcp__jira__search", "mcp__jira__create"] })).toEqual([
+      "Bash",
+      "TaskOutput",
+      "TaskStop",
+      "mcp__jira__search",
+    ]);
+    expect(keys({ allow: [], deny: [] })).toEqual([]);
+  });
+
+  it("a template without an allowlist leaves everything but the removed tools; maxSteps takes the smaller limit", async () => {
+    const parent = def({ subagents: { inline: [inline("scout", { maxSteps: 5 })] } });
     const r = await eff(parent, "scout");
-    expect(r.definition.tools).toEqual([{ kind: "connector", connectorId: jira, tools: "all" }]);
+    expect(r.definition.disabledTools).toEqual([]);
+    expect(r.definition.subagentTools).toEqual({ deny: REMOVED });
     expect(r.maxSteps).toBe(5);
   });
 
@@ -518,10 +525,8 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     ]);
   });
 
-  it("a template allowlist or deny key under a connector writes out its names, never all", async () => {
-    const jira = await connector("jira", ["search"]);
+  it("a template allowlist or deny key under a connector stays a key: a later tool never slips past", async () => {
     const parent = def({
-      tools: [{ kind: "connector", connectorId: jira, tools: "all" }],
       subagents: {
         inline: [
           // the allowlist covers every tool the connector has today
@@ -531,11 +536,13 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         ],
       },
     });
-    for (const type of ["scout", "writer"]) {
-      expect((await eff(parent, type)).definition.tools).toEqual([
-        { kind: "connector", connectorId: jira, tools: ["search"] },
-      ]);
-    }
+    expect((await eff(parent, "scout")).definition.subagentTools).toEqual({
+      allow: ["mcp__jira__search"],
+      deny: REMOVED,
+    });
+    expect((await eff(parent, "writer")).definition.subagentTools).toEqual({
+      deny: [...REMOVED, "mcp__jira__delete"],
+    });
   });
 
   it("stricterPolicies ignores values other than ask and deny", () => {
@@ -578,7 +585,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       maxSteps: 12,
     });
     const parent = def({
-      tools: parentTools,
+      disabledTools: parentOff,
       skills: { orgSkills: [tdd] },
       subagents: { templates: [t] },
     });
@@ -586,7 +593,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
     expect(r.template).toEqual({ source: "plugin", id: t, version: 2, plugin: "superpowers" });
     expect(r.definition.instructions).toBe("Body of implementer v2.");
     expect(r.definition.name).toBe("Lead › superpowers:implementer");
-    expect(r.definition.tools).toEqual([{ kind: "builtin", name: "ReadToolOutput" }]);
+    expect(r.definition.subagentTools).toEqual({ allow: ["ReadToolOutput"], deny: REMOVED });
     expect(r.definition.skills).toEqual({ orgSkills: [tdd], pinned: [tdd] });
     expect(r.warnings).toEqual([
       'The skill "superpowers:missing" was not pinned: the agent does not select it.',
@@ -664,10 +671,10 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         inline: [inline("digger")],
       };
       const a = await orgAgent(
-        def({ name: "Researcher", tools: [{ kind: "builtin", name: "Agent" }], subagents: own }),
+        def({ name: "Researcher", disabledTools: builtinsOff("Agent"), subagents: own }),
       );
       const parent = def({
-        tools: [{ kind: "builtin", name: "Agent" }],
+        disabledTools: builtinsOff("Agent"),
         subagents: {
           inline: [inline("scout")],
           agents: [{ agentId: a, as: "researcher", description: "Research." }],
@@ -675,42 +682,39 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       });
       const r = await eff(parent, "researcher");
       expect(r.definition.subagents).toEqual(own);
-      expect(r.definition.tools).toEqual([{ kind: "builtin", name: "Agent" }]);
+      expect(r.definition.disabledTools).toEqual(builtinsOff("Agent"));
+      expect(r.definition.subagentTools).toEqual({ deny: REMOVED });
     });
 
     it("a general-purpose child inherits the parent's roster", async () => {
       const sub = { general: true, inline: [inline("scout")] };
-      const parent = def({ tools: parentTools, subagents: sub });
+      const parent = def({ disabledTools: parentOff, subagents: sub });
       expect((await eff(parent, "general-purpose")).definition.subagents).toEqual(sub);
       // an inline template child dispatches from its parent's roster too
       expect((await eff(parent, "scout")).definition.subagents).toEqual(sub);
       // a parent without a block gives none (its children get general-purpose only)
       expect(
-        (await eff(def({ tools: parentTools }), "general-purpose")).definition,
+        (await eff(def({ disabledTools: parentOff }), "general-purpose")).definition,
       ).not.toHaveProperty("subagents");
     });
 
     it("Agent is removed at maxDepth only", async () => {
-      const parent = def({ tools: parentTools, subagents: { inline: [inline("scout")] } });
-      const names = (r: Awaited<ReturnType<typeof eff>>) =>
-        r.definition.tools.map((t) => (t as { name: string }).name);
+      const parent = def({ disabledTools: parentOff, subagents: { inline: [inline("scout")] } });
+      const denied = (r: Awaited<ReturnType<typeof eff>>) => r.definition.subagentTools?.deny;
       for (const childDepth of [1, 2]) {
         const r = await eff(parent, "general-purpose", undefined, { childDepth, maxDepth: 3 });
-        expect(names(r), `depth ${childDepth}`).toEqual(["ReadToolOutput", "Bash", "Agent"]);
+        expect(denied(r), `depth ${childDepth}`).toEqual(REMOVED);
       }
       const atMax = await eff(parent, "scout", undefined, { childDepth: 3, maxDepth: 3 });
-      expect(names(atMax)).toEqual(["ReadToolOutput", "Bash"]);
+      expect(denied(atMax)).toEqual([...REMOVED, "Agent"]);
       // maxDepth 1: no nesting at all
       const flat = await eff(parent, "general-purpose", undefined, { childDepth: 1, maxDepth: 1 });
-      expect(names(flat)).toEqual(["ReadToolOutput", "Bash"]);
+      expect(denied(flat)).toEqual([...REMOVED, "Agent"]);
       // an org agent's own Agent goes at the limit too
       const a = await orgAgent(
         def({
           name: "Researcher",
-          tools: [
-            { kind: "builtin", name: "Agent" },
-            { kind: "builtin", name: "Bash" },
-          ],
+          disabledTools: builtinsOff("Agent", "Bash"),
           subagents: { dispatchable: true },
         }),
       );
@@ -718,9 +722,15 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         subagents: { agents: [{ agentId: a, as: "researcher", description: "Research." }] },
       });
       const deep = await eff(withAgent, "researcher", undefined, { childDepth: 2, maxDepth: 2 });
-      expect(names(deep)).toEqual(["Bash"]);
+      expect(denied(deep)).toEqual([...REMOVED, "Agent"]);
       const shallow = await eff(withAgent, "researcher", undefined, { childDepth: 1, maxDepth: 2 });
-      expect(names(shallow)).toEqual(["Agent", "Bash"]);
+      expect(denied(shallow)).toEqual(REMOVED);
+      // a nested child keeps its parent's filter and adds its own
+      const nested = await eff(atMax.definition, "general-purpose", undefined, {
+        childDepth: 2,
+        maxDepth: 3,
+      });
+      expect(denied(nested)).toEqual([...REMOVED, "Agent"]);
     });
   });
 
@@ -772,18 +782,17 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 
     it("the agent's own definition with the parent's stricter policies on top", async () => {
       const jira = await connector("jira", ["search", "create"]);
+      const ownOff = [
+        ...builtinsOff("AskUserQuestion", "SkillWrite", "Bash"),
+        { kind: "connector" as const, connectorId: jira, tools: ["create"] },
+      ];
       const s = await skill("analysis");
       const agentDef = def({
         name: "Data Analyst",
         avatarUrl: "https://example.com/an.png",
         model: FAKE2,
         modelParams: { effort: "medium" },
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "builtin", name: "SkillWrite" },
-          { kind: "builtin", name: "Bash" },
-          { kind: "connector", connectorId: jira, tools: "all" },
-        ],
+        disabledTools: ownOff,
         toolPolicies: { mcp__jira__create: "ask", Bash: "deny" },
         skills: { orgSkills: [s], pinned: [s] },
         subagents: { dispatchable: true },
@@ -793,7 +802,7 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
         .get(ModelPurposesService)
         .setOrg(orgId, "subagent_fast", { model: FAKE1, params: {} }, owner.id);
       const parent = def({
-        tools: [{ kind: "builtin", name: "ReadToolOutput" }],
+        disabledTools: builtinsOff("ReadToolOutput"),
         toolPolicies: { mcp__jira__search: "deny", Bash: "ask", ReadToolOutput: "ask" },
         subagents: { agents: [{ agentId: a, as: "analyst", description: "Data questions." }] },
       });
@@ -802,10 +811,9 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
       expect(r.definition).toEqual({
         ...agentDef,
         instructions: "v3",
-        tools: [
-          { kind: "builtin", name: "Bash" },
-          { kind: "connector", connectorId: jira, tools: "all" },
-        ],
+        // its own tools, not met with the parent's; only the child-removed ones go (by key)
+        disabledTools: ownOff,
+        subagentTools: { deny: REMOVED },
         toolPolicies: {
           mcp__jira__create: "ask",
           Bash: "deny",
@@ -865,43 +873,44 @@ describe("effectiveDefinition", { timeout: 60_000 }, () => {
 });
 
 describe("follow-up narrowing (final review I1)", () => {
-  const conn = (connectorId: string, tools: "all" | string[]) =>
-    ({ kind: "connector", connectorId, tools }) as const;
-
-  it("keeps the refs the current version still has; a connector's all meets the names", () => {
-    const frozen = [
-      { kind: "builtin", name: "Read" } as const,
-      { kind: "builtin", name: "Write" } as const,
-      { kind: "plugin", plugin: "todo", name: "add" } as const,
-      conn("c1", "all"),
-      conn("c2", ["a", "b"]),
-      conn("c3", "all"),
-      conn("c4", ["a"]),
-    ];
-    const current = [
-      { kind: "builtin", name: "Read" } as const,
-      { kind: "plugin", plugin: "todo", name: "add" } as const,
-      conn("c1", ["x"]),
-      conn("c2", ["b", "c"]),
-      conn("c3", "all"),
-      conn("c4", ["z"]),
-    ];
-    expect(intersectTools(frozen, current)).toEqual([
-      { kind: "builtin", name: "Read" },
-      { kind: "plugin", plugin: "todo", name: "add" },
-      conn("c1", ["x"]),
-      conn("c2", ["b"]),
-      conn("c3", "all"),
-    ]);
+  it("turns off what either the frozen or the current version turns off (it can lose tools, never gain them)", () => {
+    const n = narrowFollowUp(
+      {
+        disabledTools: [
+          { kind: "builtin", name: "Write" },
+          { kind: "connector", connectorId: "c2", tools: ["a"] },
+        ],
+      },
+      {
+        disabledTools: [
+          { kind: "connector", connectorId: "c2", tools: ["c"] },
+          { kind: "plugin", plugin: "todo", tools: "all" },
+          { kind: "connector", connectorId: "c1", tools: "all" },
+        ],
+      },
+    );
+    expect(n).toEqual({
+      disabledTools: [
+        { kind: "builtin", name: "Write" },
+        { kind: "connector", connectorId: "c2", tools: ["a", "c"] },
+        { kind: "plugin", plugin: "todo", tools: "all" },
+        { kind: "connector", connectorId: "c1", tools: "all" },
+      ],
+    });
   });
 
   it("drops deselected org skills and the pinned ids among them; the agent's own pinned stay", () => {
     const n = narrowFollowUp(
-      { tools: [], skills: { orgSkills: ["o1", "o2"], pinned: ["o1", "own", "o2"] } },
-      { tools: [], skills: { orgSkills: ["o2", "o3"] } },
+      { disabledTools: [], skills: { orgSkills: ["o1", "o2"], pinned: ["o1", "own", "o2"] } },
+      { disabledTools: [], skills: { orgSkills: ["o2", "o3"] } },
     );
-    expect(n).toEqual({ tools: [], skills: { orgSkills: ["o2"], pinned: ["own", "o2"] } });
-    expect(narrowFollowUp({ tools: [] }, { tools: [] })).toEqual({ tools: [] });
+    expect(n).toEqual({
+      disabledTools: [],
+      skills: { orgSkills: ["o2"], pinned: ["own", "o2"] },
+    });
+    expect(narrowFollowUp({ disabledTools: [] }, { disabledTools: [] })).toEqual({
+      disabledTools: [],
+    });
   });
 
   it("a run's definition takes its trigger's narrowing; without one it is the frozen definition", () => {
@@ -909,12 +918,16 @@ describe("follow-up narrowing (final review I1)", () => {
       name: "C",
       instructions: "frozen",
       model: { provider: "p", model: "m" },
-      tools: [{ kind: "builtin", name: "a" }],
+      disabledTools: [{ kind: "builtin", name: "Bash" }],
       skills: { orgSkills: ["o1"], writePolicy: "ask" },
     });
     expect(childRunDefinition(frozen, undefined)).toBe(frozen);
-    const run = childRunDefinition(frozen, { tools: [], skills: { orgSkills: [] } });
-    expect(run).toMatchObject({ instructions: "frozen", tools: [] });
+    const off = [{ kind: "builtin" as const, name: "Read" }];
+    const run = childRunDefinition(frozen, { disabledTools: off, skills: { orgSkills: [] } });
+    expect(run).toMatchObject({ instructions: "frozen", disabledTools: off });
     expect(run.skills).toEqual({ orgSkills: [], writePolicy: "ask" });
+    // a narrowing logged before tools were on by default narrows only the skills
+    const old = childRunDefinition(frozen, { skills: { orgSkills: [] } });
+    expect(old.disabledTools).toEqual(frozen.disabledTools);
   });
 });

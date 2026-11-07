@@ -22,6 +22,7 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -174,7 +175,7 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [],
+        disabledTools: builtinsOff(),
         skills: { orgSkills: Object.values(skillIds) },
       },
       visibility: "org",

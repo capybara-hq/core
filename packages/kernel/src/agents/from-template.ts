@@ -20,16 +20,20 @@ import { invocationOf, PINNED_SKILLS_LIMITS } from "../skills/catalog.js";
 import { type SkillVersionRow, usableSkillVersions } from "../skills/usable.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import {
+  AGENT_BUILTIN_NAMES,
   AGENT_TOOL,
   BASH_COMPANION_TOOLS,
   BUILTIN,
   BUILTIN_TOOL_NAMES,
-  DEFAULT_AGENT_TOOLS,
 } from "../tools/builtin-names.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
   AgentDefinitionSchema,
-  type AgentToolRef,
+  builtinDisabled,
+  canonicalDisabledTools,
+  connectorToolDisabled,
+  type DisabledToolRef,
+  extensionToolDisabled,
   type InlineAgentTemplate,
   type ModelParams,
   type ModelRef,
@@ -66,8 +70,8 @@ export type PlanItemKind =
  * qualifies some carried ones:
  * - instruction_file: unavailable `invalid_name`, `duplicate`, `too_many`, `too_long` (the joined
  *   files exceed the agent's limit);
- * - tool: `default` (the template names no tools: the defaults of a new agent), `subagents`
- *   (`Agent` added because the template describes sub-agents); unavailable `plugin_unavailable`
+ * - tool (the template's `tools` allowlist): `subagents` (`Agent` kept on because the template
+ *   describes sub-agents, though its allowlist leaves it out); unavailable `plugin_unavailable`
  *   (its plugin is not enabled in the org or not loaded), `unknown_tool`, `connector_key` (a
  *   connector tool key: connectors carry over only through `connectors` entries);
  * - skill: `pinned`, `not_pinned_manual_only`, `not_pinned_too_large`, `subagent` (named only by an
@@ -425,36 +429,52 @@ export async function planFromTemplate(
   });
   if (t.maxSteps !== undefined) dropped.push("maxSteps");
 
-  // tools: builtin and plugin keys usable in the org (P4-5)
+  // tools (tools default-on spec §3): the new agent has every tool the org offers; the template
+  // turns off its `disallowedTools` and, with a `tools` allowlist, the builtins it does not list
+  // (extension and connector tools follow the org); its keys are listed for the preview (P4-5)
   const disallowed = new Set(t.disallowedTools ?? []);
-  const tools: AgentToolRef[] = [];
+  const disabled: DisabledToolRef[] = [];
   const builtinNames = new Set<string>(BUILTIN_TOOL_NAMES);
-  if (t.tools === undefined) {
-    for (const ref of DEFAULT_AGENT_TOOLS) {
-      if (ref.kind === "builtin" && !disallowed.has(ref.name)) {
-        tools.push(ref);
-        item("tool", ref.name, "carried", "default");
-      }
+  const agentBuiltins = new Set<string>(AGENT_BUILTIN_NAMES);
+  const offBuiltin = (name: string) => {
+    if (agentBuiltins.has(name) && !builtinDisabled(disabled, name)) {
+      disabled.push({ kind: "builtin", name });
     }
-  } else {
+  };
+  const offExtensionTool = (plugin: string, name: string) =>
+    disabled.push({ kind: "plugin", plugin, tools: [name] });
+  // a template that describes sub-agents keeps `Agent` (ruling P4-T3-5) unless it disallows it
+  const sub0 = t.subagents;
+  const describesSubagents =
+    sub0 !== undefined &&
+    ((sub0.types ?? []).length > 0 || (sub0.inline ?? []).length > 0 || sub0.general === true);
+  if (t.tools !== undefined) {
+    const listed = new Set<string>();
     for (const key of t.tools) {
       if (disallowed.has(key)) continue;
       const parsed = parseToolKey(key);
       if (parsed?.kind === "builtin" && builtinNames.has(parsed.name)) {
-        tools.push({ kind: "builtin", name: parsed.name });
+        listed.add(parsed.name);
         item("tool", key, "carried");
       } else if (parsed?.kind === "extension") {
         const ok =
           opts.enabledPlugins.has(parsed.plugin) &&
           opts.pluginTools.some((x) => x.plugin === parsed.plugin && x.name === parsed.tool);
-        if (ok) {
-          tools.push({ kind: "plugin", plugin: parsed.plugin, name: parsed.tool });
-          item("tool", key, "carried");
-        } else item("tool", key, "unavailable", "plugin_unavailable");
+        if (ok) item("tool", key, "carried");
+        else item("tool", key, "unavailable", "plugin_unavailable");
       } else if (parsed?.kind === "connector") {
         item("tool", key, "unavailable", "connector_key");
       } else item("tool", key, "unavailable", "unknown_tool");
     }
+    if (describesSubagents) listed.add(AGENT_TOOL);
+    // `TaskOutput` / `TaskStop` follow `Bash`
+    for (const name of AGENT_BUILTIN_NAMES) if (!listed.has(name)) offBuiltin(name);
+  }
+  for (const key of disallowed) {
+    const parsed = parseToolKey(key);
+    if (parsed?.kind === "builtin") offBuiltin(parsed.name);
+    else if (parsed?.kind === "extension") offExtensionTool(parsed.plugin, parsed.tool);
+    // a connector key is matched against the bound connectors below
   }
 
   // skills: by name against the org's usable skills (P4-5); every name gets its item
@@ -569,11 +589,14 @@ export async function planFromTemplate(
     // `disallowedTools` naming its tools narrows it (P4-5)
     const allowed = names.filter((n) => !disallowed.has(connectorToolKey(first.slug, n)));
     if (allowed.length === 0) {
+      // the connector is the org's, so it is on by default: its disallowed tools are turned off
+      const off = first.tools.filter((n) => disallowed.has(connectorToolKey(first.slug, n)));
+      if (off.length > 0 && !slugs.has(first.id)) {
+        disabled.push({ kind: "connector", connectorId: first.id, tools: off });
+      }
       item("connector", first.name, "unavailable", "disallowed");
       continue;
     }
-    const narrowed = allowed.length !== names.length;
-    const refTools: "all" | string[] = entry.tools === undefined && !narrowed ? "all" : allowed;
     for (const [name, p] of Object.entries(entry.policies ?? {})) {
       if (!allowed.includes(name)) {
         dropped.push(`connectors.${key}.policies.${name}`);
@@ -583,16 +606,18 @@ export async function planFromTemplate(
       const prev = connectorPolicies[k];
       if (prev === undefined || RANK[p] > RANK[prev]) connectorPolicies[k] = p;
     }
-    const existing = tools.find(
-      (r): r is Extract<AgentToolRef, { kind: "connector" }> =>
-        r.kind === "connector" && r.connectorId === first.id,
-    );
-    if (existing === undefined) {
-      tools.push({ kind: "connector", connectorId: first.id, tools: refTools });
-    } else if (existing.tools !== "all") {
-      existing.tools =
-        refTools === "all" ? "all" : [...new Set([...(existing.tools as string[]), ...refTools])];
+    // the bound connector's tools the entry leaves out (or the template disallows) are turned off;
+    // a second entry on the same connector turns on what it names (the union of the entries)
+    const prevOn = slugs.has(first.id)
+      ? first.tools.filter((n) => !connectorToolDisabled(disabled, first.id, n))
+      : [];
+    const on = new Set([...prevOn, ...allowed]);
+    const off = first.tools.filter((n) => !on.has(n));
+    for (let i = disabled.length - 1; i >= 0; i--) {
+      const r = disabled[i];
+      if (r?.kind === "connector" && r.connectorId === first.id) disabled.splice(i, 1);
     }
+    if (off.length > 0) disabled.push({ kind: "connector", connectorId: first.id, tools: off });
     slugs.set(first.id, first);
     item("connector", first.name, "carried", made.length > 1 ? "several" : undefined);
   }
@@ -682,30 +707,36 @@ export async function planFromTemplate(
     }
     if (inline.length > 0) out.inline = inline;
     subagents = out;
-    // a roster needs the `Agent` tool to be offered (ruling P4-T3-5), unless the template
-    // disallows it
+    // a roster needs the `Agent` tool (ruling P4-T3-5): it is on unless the template disallows
+    // it; a template whose allowlist leaves it out still gets it (kept on above)
     const describes = templateIds.length > 0 || inline.length > 0 || sub.general === true;
     if (
       describes &&
-      !disallowed.has(AGENT_TOOL) &&
-      !tools.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL)
+      t.tools !== undefined &&
+      !t.tools.includes(AGENT_TOOL) &&
+      !builtinDisabled(disabled, AGENT_TOOL)
     ) {
-      tools.push({ kind: "builtin", name: AGENT_TOOL });
       item("tool", AGENT_TOOL, "carried", "subagents");
     }
   }
 
-  // the tool keys the agent has, for policies and inline allowlists
+  // the tool keys the agent has (of those the template can name), for policies and inline
+  // allowlists: its builtins, the enabled extensions' tools and the bound connectors' tools, each
+  // unless turned off
   const keys = new Set<string>();
-  for (const r of tools) {
-    if (r.kind === "builtin") {
-      keys.add(r.name);
-      if (r.name === BUILTIN.Bash) for (const c of BASH_COMPANION_TOOLS) keys.add(c);
-    } else if (r.kind === "plugin") keys.add(extensionToolKey(r.plugin, r.name));
-    else {
-      const c = slugs.get(r.connectorId);
-      if (!c) continue;
-      for (const n of r.tools === "all" ? c.tools : r.tools) keys.add(connectorToolKey(c.slug, n));
+  for (const name of AGENT_BUILTIN_NAMES) {
+    if (builtinDisabled(disabled, name)) continue;
+    keys.add(name);
+    if (name === BUILTIN.Bash) for (const c of BASH_COMPANION_TOOLS) keys.add(c);
+  }
+  for (const x of opts.pluginTools) {
+    if (opts.enabledPlugins.has(x.plugin) && !extensionToolDisabled(disabled, x.plugin, x.name)) {
+      keys.add(extensionToolKey(x.plugin, x.name));
+    }
+  }
+  for (const c of slugs.values()) {
+    for (const n of c.tools) {
+      if (!connectorToolDisabled(disabled, c.id, n)) keys.add(connectorToolKey(c.slug, n));
     }
   }
   const toolPolicies: Record<string, "ask" | "deny"> = {};
@@ -732,7 +763,7 @@ export async function planFromTemplate(
     ...(instructions === undefined ? { instructionFiles: files } : { instructions }),
     fallback: null,
     fallbackParams: {},
-    tools,
+    disabledTools: canonicalDisabledTools(disabled),
     toolPolicies,
     ...((orgSkills.length > 0 || pinned.length > 0) && {
       skills: { orgSkills, ...(pinned.length > 0 && { pinned }) },

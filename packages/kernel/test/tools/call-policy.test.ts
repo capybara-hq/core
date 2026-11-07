@@ -26,6 +26,7 @@ import {
 } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import {
@@ -67,7 +68,7 @@ const agent: AgentDefinition = {
   fallback: null,
   modelParams: {},
   fallbackParams: {},
-  tools: [],
+  disabledTools: builtinsOff(),
   toolPolicies: {},
 };
 

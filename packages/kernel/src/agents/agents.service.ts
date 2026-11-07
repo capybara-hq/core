@@ -28,6 +28,8 @@ import {
 } from "./agent-lookup.js";
 import {
   type AgentDefinition,
+  canonicalDisabledTools,
+  type DisabledToolRef,
   normalizeStoredDefinition,
   type PendingConnector,
   paramIssues,
@@ -143,6 +145,11 @@ export function keepPendingConnectors(
     }
   }
   return next.length > 0 ? { ...rest, pendingConnectors: [...next] } : rest;
+}
+
+/** `definition` with `disabledTools` in its canonical form (tools default-on spec §2). */
+function withCanonicalTools(definition: AgentDefinition): AgentDefinition {
+  return { ...definition, disabledTools: canonicalDisabledTools(definition.disabledTools ?? []) };
 }
 
 /** Where an agent created from a template came from (ruling P4-8; set once, never versioned). */
@@ -355,7 +362,7 @@ export class AgentsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AgentLookup) private readonly lookup: AgentLookup,
-    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkRefs">,
+    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkDisabled">,
     /** 删除 agent 时取消它待处理的技能改动（T15）。 */
     @Inject(SkillChangesService)
     private readonly skillChanges: Pick<
@@ -381,13 +388,25 @@ export class AgentsService {
   ) {}
 
   /**
-   * 校验工具引用与工具策略：引用的内置 / 插件 / 连接器工具必须存在（见 `ToolRegistry.checkRefs`）；
-   * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
-   * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
+   * Checks the turned-off tools and the policies (tools default-on spec §2): `disabledTools` must
+   * name existing builtins, extensions and connectors (`ToolRegistry.checkDisabled`); `toolPolicies`
+   * keys must be tools the agent could have, on or off (values only tighten, by the schema); a
+   * sub-agent's key filter is never saved. Invalid → `validation_failed` at `disabledTools.<i>` /
+   * `toolPolicies.<key>` / `subagentTools`. The list is stored in canonical form.
    */
-  private async checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>> {
-    const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
+  private async checkTools(
+    orgId: string,
+    def: AgentDefinitionInput,
+    kept: readonly DisabledToolRef[] = [],
+  ): Promise<Set<string>> {
+    const { keys, issues } = await this.tools.checkDisabled(orgId, def.disabledTools ?? [], kept);
     const details = [...issues];
+    if (def.subagentTools !== undefined) {
+      details.push({
+        path: "subagentTools",
+        message: "subagentTools is set only on a sub-agent's definition at dispatch",
+      });
+    }
     for (const key of Object.keys(def.toolPolicies)) {
       if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
@@ -402,6 +421,26 @@ export class AgentsService {
       throw new ApiError("validation_failed", "Invalid tool references", details);
     }
     return keys;
+  }
+
+  /**
+   * The current version's `disabledTools` (empty for an agent that is not there: the update's own
+   * checks report that): entries kept from it are not re-checked, so a connector deleted or an
+   * extension uninstalled later never blocks other edits.
+   */
+  private async keptDisabled(orgId: string, agentId: string): Promise<DisabledToolRef[]> {
+    const row = await this.db.db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select("agent_versions.definition")
+      .where("agents.id", "=", agentId)
+      .where("agents.org_id", "=", orgId)
+      .executeTakeFirst();
+    return row === undefined ? [] : (normalizeStoredDefinition(row.definition).disabledTools ?? []);
   }
 
   /**
@@ -516,10 +555,12 @@ export class AgentsService {
       ...request,
       // run context spec §3.5: version 1 carries the description (the profile's when the
       // definition gives none)
-      definition: withDescription(
-        deriveInstructions(request.definition, null),
-        request.definition.description ?? request.profile?.description,
-        undefined,
+      definition: withCanonicalTools(
+        withDescription(
+          deriveInstructions(request.definition, null),
+          request.definition.description ?? request.profile?.description,
+          undefined,
+        ),
       ),
     };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
@@ -682,7 +723,9 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
     const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
-    const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
+    const toolKeys = patch.definition
+      ? await this.checkTools(orgId, patch.definition, await this.keptDisabled(orgId, agentId))
+      : null;
     const agent = await this.updateIn(
       orgId,
       agentId,
@@ -733,14 +776,16 @@ export class AgentsService {
         .executeTakeFirstOrThrow();
       // the prompt: instructionFiles give instructions; a save given neither keeps the current one
       const currentDefinition = normalizeStoredDefinition(current.definition);
-      const definition = withDescription(
-        keepPendingConnectors(
-          deriveInstructions(patch.definition, currentDefinition),
-          patch.definition.pendingConnectors,
-          currentDefinition.pendingConnectors,
+      const definition = withCanonicalTools(
+        withDescription(
+          keepPendingConnectors(
+            deriveInstructions(patch.definition, currentDefinition),
+            patch.definition.pendingConnectors,
+            currentDefinition.pendingConnectors,
+          ),
+          patch.definition.description,
+          currentDefinition.description,
         ),
-        patch.definition.description,
-        currentDefinition.description,
       );
       // the display copy follows every description the save gives (run context spec §3.5)
       if (patch.definition.description !== undefined) {

@@ -283,7 +283,10 @@ describe("prompt files over HTTP", () => {
     const tools = await req({
       method: "PATCH",
       url,
-      payload: { definition: { ...withoutFiles, tools: [] }, expectedVersion: 1 },
+      payload: {
+        definition: { ...withoutFiles, disabledTools: [{ kind: "builtin", name: "Platform" }] },
+        expectedVersion: 1,
+      },
     });
     expect(tools.statusCode).toBe(200);
     const v2 = (tools.json() as { agent: AgentJson }).agent;
@@ -294,7 +297,7 @@ describe("prompt files over HTTP", () => {
     const changed = await req({
       method: "PATCH",
       url,
-      payload: { definition: { ...withoutFiles, tools: [], instructions: "New text." } },
+      payload: { definition: { ...withoutFiles, disabledTools: [], instructions: "New text." } },
     });
     expect(changed.statusCode).toBe(200);
     const v3 = (changed.json() as { agent: AgentJson }).agent;

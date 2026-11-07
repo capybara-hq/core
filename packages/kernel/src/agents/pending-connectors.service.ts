@@ -11,7 +11,8 @@ import { AgentLookup, type AgentView, isAgentVisibleTo } from "./agent-lookup.js
 import { AgentsService } from "./agents.service.js";
 import {
   type AgentDefinition,
-  type AgentToolRef,
+  canonicalDisabledTools,
+  type DisabledToolRef,
   normalizeStoredDefinition,
 } from "./definition.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
@@ -154,22 +155,18 @@ export class PendingConnectorsService {
       const prev = toolPolicies[k];
       if (prev === undefined || RANK[p] > RANK[prev]) toolPolicies[k] = p;
     }
-    let merged = false;
-    const tools: AgentToolRef[] = def.tools.map((r) => {
-      if (r.kind !== "connector" || r.connectorId !== c.id || merged) return r;
-      merged = true;
-      if (r.tools === "all") return r;
-      return {
-        ...r,
-        tools: names === "all" ? "all" : [...new Set([...(r.tools as string[]), ...names])],
-      };
-    });
-    if (!merged) tools.push({ kind: "connector", connectorId: c.id, tools: names });
+    // tools are on by default (tools default-on spec §3): binding an entry that names some tools
+    // turns the connector's other tools off for this agent; one taking them all leaves it all on
+    const off = names === "all" ? [] : offered.filter((n) => !names.includes(n));
+    const disabledTools: DisabledToolRef[] = [
+      ...(def.disabledTools ?? []).filter((r) => r.kind !== "connector" || r.connectorId !== c.id),
+      ...(off.length > 0 ? [{ kind: "connector" as const, connectorId: c.id, tools: off }] : []),
+    ];
     const left = pending.filter((x) => x.key !== key);
     const { pendingConnectors: _old, ...rest } = def;
     const next: AgentDefinition = {
       ...rest,
-      tools,
+      disabledTools: canonicalDisabledTools(disabledTools),
       toolPolicies,
       ...(left.length > 0 && { pendingConnectors: left }),
     };

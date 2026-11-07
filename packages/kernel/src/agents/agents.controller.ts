@@ -27,30 +27,41 @@ import {
   type AgentView,
   type AgentWarning,
 } from "./agents.service.js";
-import {
-  AgentDefinitionSchema,
-  AgentToolRef,
-  DEFAULT_AGENT_TOOLS,
-  ModelRef,
-} from "./definition.js";
+import { AgentDefinitionSchema, ModelRef } from "./definition.js";
 import { AgentsFromTemplate, type TemplatePreview } from "./from-template.service.js";
 import { type AgentProfile, PRESET_IDS, ProfileInputSchema } from "./profile.js";
 
 const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
-/** 创建时未给 `tools` → 默认工具（Ruling P7）；修改请求不注入默认值，版本里总是存显式的 tools。 */
 /**
  * `instructions` has no default in a request: with `instructionFiles` the kernel derives it, and a
  * new agent given neither gets the `AGENTS.md` starter (`deriveInstructions`).
  */
 const RequestInstructions = z.string().max(100_000).optional();
+/**
+ * Fields a request may not carry (tools default-on spec §2): the old enabled list, and a
+ * sub-agent's key filter (written only at dispatch).
+ */
+const RequestOnly = {
+  tools: z
+    .undefined({
+      error: "tools was replaced by disabledTools: an agent has every tool unless it turns it off",
+    })
+    .optional(),
+  subagentTools: z
+    .undefined({ error: "subagentTools is set only on a sub-agent's definition at dispatch" })
+    .optional(),
+};
 /** Pending connectors come only from a template (ruling P4-6): a create request's are dropped. */
 const CreateDefinition = AgentDefinitionSchema.omit({ pendingConnectors: true }).extend({
   instructions: RequestInstructions,
-  tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
+  ...RequestOnly,
 });
-const UpdateDefinition = AgentDefinitionSchema.extend({ instructions: RequestInstructions });
+const UpdateDefinition = AgentDefinitionSchema.extend({
+  instructions: RequestInstructions,
+  ...RequestOnly,
+});
 
 const CreateBody = z
   .object({

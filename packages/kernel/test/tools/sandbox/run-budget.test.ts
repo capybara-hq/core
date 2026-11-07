@@ -14,6 +14,7 @@ import {
   runTimeLeftMs,
   searchTimeoutMs,
 } from "../../../src/tools/builtins/sandbox/index.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
@@ -143,7 +144,7 @@ describe("Bash 按运行剩下的时间收紧超时", { timeout: 90_000 }, () =>
           name: "Coder",
           instructions: "Use the sandbox.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "Bash" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
         },
         visibility: "org",
       },

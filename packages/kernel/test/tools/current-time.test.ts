@@ -1,6 +1,6 @@
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { BUILTIN, DEFAULT_AGENT_TOOLS } from "../../src/tools/builtin-names.js";
+import { AGENT_BUILTIN_NAMES, BUILTIN } from "../../src/tools/builtin-names.js";
 import { currentTimeTool, localTime } from "../../src/tools/builtins/current-time.js";
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
 
@@ -29,11 +29,11 @@ const textOf = (r: unknown) =>
   (r as { content: { type: string; text: string }[] }).content.map((c) => c.text).join("");
 
 describe("CurrentTime", () => {
-  it("is a read-only builtin, allowed by default, on for new agents", () => {
+  it("is a read-only builtin, allowed by default, on for every agent", () => {
     const { t } = tool();
     expect(t.spec.name).toBe(BUILTIN.CurrentTime);
     expect(t.defaultPolicy).toBe("allow");
-    expect(DEFAULT_AGENT_TOOLS).toContainEqual({ kind: "builtin", name: "CurrentTime" });
+    expect(AGENT_BUILTIN_NAMES).toContain("CurrentTime");
     expect(t.spec.description).toContain("Today's date is already in your context");
   });
 

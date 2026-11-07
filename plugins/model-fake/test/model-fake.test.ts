@@ -207,9 +207,19 @@ describe("model-fake", () => {
     const plain = complete(await run(mk(), req("hello", { tools, toolChoice: "none" })));
     expect(plain.stopReason).toBe("end_turn");
     expect(plain.content).toEqual([{ type: "text", text: "You said: hello" }]);
-    // auto / 缺省时照常调用第一个工具
+    // auto / absent: a single offered tool is called as usual
     const auto = complete(await run(mk(), req("hello", { tools, toolChoice: "auto" })));
     expect(auto.stopReason).toBe("tool_use");
+  });
+
+  it("an ordinary message with several tools offered gets an ordinary reply", async () => {
+    const tools = [
+      { name: "a", description: "d", inputSchema: { type: "object" } },
+      { name: "b", description: "d", inputSchema: { type: "object" } },
+    ];
+    const c = complete(await run(mk(), req("hello", { tools })));
+    expect(c.stopReason).toBe("end_turn");
+    expect(c.content).toEqual([{ type: "text", text: "You said: hello" }]);
   });
 
   it("declares tool support", async () => {

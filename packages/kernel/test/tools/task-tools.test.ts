@@ -19,6 +19,7 @@ import { taskReadScript } from "../../src/tools/builtins/sandbox/task-output.js"
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -189,19 +190,19 @@ describe("offered with Bash", () => {
   it("a definition naming only Bash gets TaskOutput and TaskStop; their policies validate", async () => {
     const c = await conversation();
     const registry = k.app.get(ToolRegistry);
-    const got = await registry.forAgent(c.orgId, { tools: [{ kind: "builtin", name: "Bash" }] });
+    const got = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Bash") });
     expect(got.tools.map((t) => t.key)).toEqual(["Bash", "TaskOutput", "TaskStop"]);
     // an explicit ref changes nothing
     const both = await registry.forAgent(c.orgId, {
-      tools: [
+      disabledTools: onlyBuiltins([
         { kind: "builtin", name: "TaskStop" },
         { kind: "builtin", name: "Bash" },
-      ],
+      ]),
     });
     expect(both.tools.map((t) => t.key).sort()).toEqual(["Bash", "TaskOutput", "TaskStop"]);
     expect(both.unavailable).toEqual([]);
     // without Bash they are not offered
-    const none = await registry.forAgent(c.orgId, { tools: [{ kind: "builtin", name: "Read" }] });
+    const none = await registry.forAgent(c.orgId, { disabledTools: builtinsOff("Read") });
     expect(none.tools.map((t) => t.key)).toEqual(["Read"]);
 
     // through the agents API: a policy for TaskStop with only Bash referenced is accepted
@@ -216,7 +217,7 @@ describe("offered with Bash", () => {
           name: "Runner",
           instructions: "Run things.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "Bash" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
           toolPolicies: { TaskStop: "ask" },
         },
         visibility: "org",

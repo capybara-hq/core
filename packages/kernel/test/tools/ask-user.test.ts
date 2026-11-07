@@ -16,6 +16,7 @@ import { askUserTool } from "../../src/tools/builtins/ask-user.js";
 import { validateInput } from "../../src/tools/validate.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -275,7 +276,7 @@ const ASK = `tool:AskUserQuestion:${JSON.stringify({
 })}`;
 
 describe("AskUserQuestion 端到端", () => {
-  it("an agent with the default tools: AskUserQuestion / ReadToolOutput / Platform / CurrentTime and no unavailable reminder; a question suspends, another replica's answer resumes", async () => {
+  it("an agent with nothing turned off: every builtin that can run here and no unavailable reminder; a question suspends, another replica's answer resumes", async () => {
     const agentId = await createDefaultAgent();
     const convId = await createConv(reqA, orgId, agentId);
     const { runId, questionId, event } = await askedQuestion(convId, ASK);
@@ -331,11 +332,15 @@ describe("AskUserQuestion 端到端", () => {
       },
     ]);
     const calls = ofType(evs, "model_call");
+    // no sandbox or web provider here: those builtins are not offered (and not reported)
     expect(calls[0]?.payload.request.tools?.map((t) => t.key).sort()).toEqual([
+      "Agent",
       "AskUserQuestion",
       "CurrentTime",
       "Platform",
       "ReadToolOutput",
+      "SendMessage",
+      "SkillWrite",
     ]);
     expect(
       ofType(evs, "reminder").filter((e) => e.payload.text.startsWith(TOOLS_UNAVAILABLE_PREFIX)),
@@ -385,7 +390,7 @@ describe("AskUserQuestion 端到端", () => {
     });
     expect(en.statusCode, en.body).toBe(200);
     const agentId = await createDefaultAgent({
-      tools: [{ kind: "plugin", plugin: "mem-connector", name: "ask" }],
+      disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "mem-connector", name: "ask" }]),
     });
     const convId = await createConv(reqA, orgId, agentId);
     const { questionId } = await askedQuestion(

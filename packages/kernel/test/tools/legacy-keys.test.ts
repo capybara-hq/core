@@ -270,10 +270,10 @@ describe("prompt files and the stored-definition tool key normalization", () => 
 
   it("normalizing the keys keeps the prompt files and the joined instructions", () => {
     const d = normalizeStoredDefinition(stored, scope);
-    expect(d.tools).toEqual([
-      { kind: "builtin", name: "AskUserQuestion" },
-      { kind: "connector", connectorId: "cn1", tools: "all" },
-    ]);
+    // the rc enabled list reads as nothing turned off (tools default-on spec §2); its connector
+    // ref still disambiguates the rc policy keys
+    expect((d as { tools?: unknown }).tools).toBeUndefined();
+    expect(d.disabledTools).toEqual([]);
     expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__tracker__find: "deny" });
     expect((d as { disallowedTools?: unknown }).disallowedTools).toEqual(["mcp__tracker__drop"]);
     expect(d.instructionFiles).toEqual(files);

@@ -17,6 +17,7 @@ import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -156,11 +157,11 @@ beforeAll(async () => {
         name: "Replayer",
         instructions: "Use tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
           { kind: "builtin", name: "Bash" },
-        ],
+        ]),
       },
       visibility: "org",
     },
@@ -795,7 +796,27 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       { name: "Edit", input: { file_path: "/workspace/z.txt", old_string: "a" }, content: "ok" },
     ]);
     await addCase(setId, c1, "legacy-edit");
+    // an rc case snapshot holds the rc definition: its enabled list named the extension tool (the
+    // evidence the rc key maps by; tools default-on spec §2 keeps reading it from snapshots)
+    const stored = await db
+      .selectFrom("agent_versions")
+      .select(["version", "definition"])
+      .where("agent_id", "=", agentId)
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow();
+    const setDefinition = (definition: unknown) =>
+      db
+        .updateTable("agent_versions")
+        .set({ definition: JSON.stringify(definition) })
+        .where("agent_id", "=", agentId)
+        .where("version", "=", stored.version)
+        .execute();
+    await setDefinition({
+      ...(stored.definition as Record<string, unknown>),
+      tools: [{ kind: "plugin", plugin: "tools-count", name: "count" }],
+    });
     await addCase(setId, c2, "legacy-ext");
+    await setDefinition(stored.definition);
     await addCase(setId, c3, "new-edit");
     const sandboxBefore = (await readFakeSandboxOps(root)).length;
     const run = await startRun(setId, {});

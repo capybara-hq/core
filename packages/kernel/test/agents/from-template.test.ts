@@ -8,6 +8,7 @@ import { loadTemplates } from "../../src/agents/templates.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { createOrg, enableExtensions, type Req } from "../helpers/runs.js";
 
 /**
@@ -360,13 +361,14 @@ describe("creating an agent from a template", () => {
     const d = agent.definition;
     expect(d.name).toBe("From tpl");
     expect(d.instructions).toBe("# AGENTS.md\n\nBe useful.\n\n# style.md\n\nBe brief.");
-    expect(d.tools).toEqual([
-      { kind: "builtin", name: "Bash" },
-      { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
-      { kind: "connector", connectorId: oneConn, tools: ["delete_all"] },
-      { kind: "connector", connectorId: firstMany, tools: "all" },
-      { kind: "builtin", name: "Agent" },
+    // tools are on by default (tools default-on spec §3): the allowlist turns off the builtins it
+    // does not list (Agent stays for the sub-agents), the bound connector its tools left out;
+    // extension tools and the other connectors follow the org
+    expect(d.disabledTools).toEqual([
+      ...builtinsOff("Bash", "Agent"),
+      { kind: "connector", connectorId: oneConn, tools: ["search"] },
     ]);
+    expect(firstMany).toBeTruthy();
     // policies only for the agent's tools; Read was disallowed, the nope plugin is unavailable;
     // the connector entry's policy lands on the bound connector's key
     expect(d.toolPolicies).toEqual({ Bash: "ask", mcp__one__delete_all: "deny" });
@@ -409,30 +411,32 @@ describe("creating an agent from a template", () => {
     expect(agent.visibility).toBe("private");
     expect(agent.currentVersion).toBe(1);
 
-    // pending connectors are model-invisible: the tools are exactly those `tools` implies
-    // (SendMessage comes with Agent; Bash is unavailable without a sandbox provider here)
+    // pending connectors are model-invisible; SendMessage comes with Agent; Bash cannot run
+    // without a sandbox provider here, so it is not offered (and not reported)
     const resolved = await env.k.app.get(ToolRegistry).forAgent(env.orgId, d);
-    expect(resolved.tools.map((t) => t.key).sort()).toEqual(
-      [
+    const keys = resolved.tools.map((t) => t.key);
+    expect(keys).toEqual(
+      expect.arrayContaining([
         "Agent",
         "SendMessage",
         "mcp__many-a__search",
+        "mcp__many-b__search",
         "mcp__one__delete_all",
         "plugin__fake-tools-ui__write",
-      ].sort(),
+      ]),
     );
-    expect(resolved.unavailable.map((u) => u.ref)).toEqual(["Bash"]);
+    expect(keys).not.toContain("mcp__one__search");
+    expect(keys).not.toContain("Read");
+    expect(keys).not.toContain("AskUserQuestion");
+    expect(resolved.unavailable).toEqual([]);
+    expect(resolved.hidden?.map((u) => u.ref)).toContain("Bash");
   });
 
-  it("binds nothing and adds no Agent tool for a plain template; tools default", async () => {
+  it("binds nothing and turns nothing off for a plain template", async () => {
     const id = await platformTemplate(tpl());
     const { agent, preview: p } = await createOk(env.mem, id);
-    expect(pick(p, "tool")).toEqual([
-      ["AskUserQuestion", "carried", "default"],
-      ["ReadToolOutput", "carried", "default"],
-      ["Platform", "carried", "default"],
-      ["CurrentTime", "carried", "default"],
-    ]);
+    expect(pick(p, "tool")).toEqual([]);
+    expect(agent.definition.disabledTools).toEqual([]);
     expect(agent.definition.pendingConnectors).toBeUndefined();
     expect(agent.definition.subagents).toBeUndefined();
     expect(agent.definition.instructions).toBe("Help.");
@@ -448,11 +452,9 @@ describe("creating an agent from a template", () => {
       { plugin: "crm", itemId },
     );
     const { agent } = await createOk(env.boss, id);
-    expect(agent.definition.tools).toContainEqual({
-      kind: "connector",
-      connectorId: conn,
-      tools: ["search"],
-    });
+    expect(agent.definition.disabledTools).toEqual([
+      { kind: "connector", connectorId: conn, tools: ["delete_all"] },
+    ]);
   });
 
   it("inline tools: absent = all, [] = none, all dropped = none (ruling P4-T3-8)", async () => {
@@ -889,7 +891,7 @@ describe("creating an agent from a template", () => {
     const gh = await connectorTemplate(itemId, "gh");
     await connector("gh", ["search"], gh);
     const nar = await connectorTemplate(itemId, "nar");
-    await connector("nar", ["x"], nar);
+    const narConn = await connector("nar", ["x"], nar);
     const old = await connectorTemplate(itemId, "old");
     const oldConn = await connector("old", ["read"], old);
     const gone = await connectorTemplate(itemId, "gone");
@@ -951,11 +953,13 @@ describe("creating an agent from a template", () => {
     expect(agent.definition.pendingConnectors).toEqual([
       { key: "connector-1", label: "GH", source: { template: gh }, tools: ["absent"] },
     ]);
-    expect(agent.definition.tools).toEqual([
-      { kind: "builtin", name: "Read" },
-      { kind: "connector", connectorId: oldConn, tools: "all" },
-      { kind: "builtin", name: "Agent" },
+    // the allowlist turns off the other builtins (Agent stays for the roster); the disallowed
+    // connector's tool is off; the connector made from a removed template stays all on
+    expect(agent.definition.disabledTools).toEqual([
+      ...builtinsOff("Read", "Agent"),
+      { kind: "connector", connectorId: narConn, tools: ["x"] },
     ]);
+    expect(oldConn).toBeTruthy();
     expect(pick(p, "subagent")).toEqual([
       ["crm:reviewer", "carried", null],
       ["crm:reviewer", "unavailable", "type_taken"],
@@ -987,9 +991,8 @@ describe("creating an agent from a template", () => {
       }),
     );
     const d = await createOk(env.mem, denied);
-    expect(d.agent.definition.tools.some((r) => r.kind === "builtin" && r.name === "Agent")).toBe(
-      false,
-    );
+    expect(d.agent.definition.disabledTools).toEqual([{ kind: "builtin", name: "Agent" }]);
+    expect(g.agent.definition.disabledTools).toEqual(builtinsOff("Read", "Agent"));
   });
 
   it("gives every name of one skill its item and leaves an oversized one unpinned", async () => {
@@ -1254,12 +1257,9 @@ describe("creating an agent from a template", () => {
       modelParams: { effort: "high", "model-fake.style": "shout" },
       fallback: { provider: "model-fake", model: "fake-1" },
       fallbackParams: { effort: "low" },
-      tools: [
-        { kind: "builtin", name: "Read" },
-        { kind: "builtin", name: "Agent" },
-        { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
-        { kind: "connector", connectorId: kit, tools: ["search"] },
-        { kind: "connector", connectorId: wiki, tools: "all" },
+      disabledTools: [
+        { kind: "builtin", name: "Bash" },
+        { kind: "connector", connectorId: kit, tools: ["fetch"] },
       ],
       toolPolicies: {
         Read: "ask",
@@ -1325,12 +1325,11 @@ describe("creating an agent from a template", () => {
     expect(d.model).toEqual(source.model);
     expect(d.modelParams).toEqual({ effort: "high" });
     expect(d.fallback).toBeNull();
-    // tools and policies; the template-made connector rebinds with its tools and policy
-    expect(d.tools).toEqual([
-      { kind: "builtin", name: "Read" },
-      { kind: "builtin", name: "Agent" },
-      { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
-      { kind: "connector", connectorId: kit, tools: ["search"] },
+    // turned-off tools and policies; the template-made connector rebinds with its tools and
+    // policy (its other tool off again)
+    expect(d.disabledTools).toEqual([
+      { kind: "builtin", name: "Bash" },
+      { kind: "connector", connectorId: kit, tools: ["fetch"] },
     ]);
     expect(d.toolPolicies).toEqual({
       Read: "ask",

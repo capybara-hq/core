@@ -86,10 +86,6 @@ const def = (over: Record<string, unknown> = {}): AgentDefinition =>
   AgentDefinitionSchema.parse({
     name: "Lead",
     model: { provider: "model-fake", model: "fake-1" },
-    tools: [
-      { kind: "builtin", name: "AskUserQuestion" },
-      { kind: "builtin", name: "ReadToolOutput" },
-    ],
     ...over,
   });
 
@@ -257,7 +253,7 @@ describe("agent definition subagents (save checks)", { timeout: 60_000 }, () => 
             subagents: {
               inline: [
                 inline("scout", {
-                  tools: ["Bash"],
+                  tools: ["mcp__nope__find"],
                   disallowedTools: ["Skill"],
                   toolPolicies: { ToolSearch: "deny" },
                 }),

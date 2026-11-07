@@ -5,7 +5,7 @@ import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import {
   AgentDefinitionSchema,
-  DEFAULT_AGENT_TOOLS,
+  DisabledToolRef,
   type ModelRef,
   SubagentsSchema,
 } from "../../agents/definition.js";
@@ -20,17 +20,6 @@ const Id = z.string().min(1).max(100);
 const Short = z.string().min(1).max(200);
 
 const Model = z.object({ provider: Short, model: Short }).strict();
-const ToolRef = z.union([
-  z.object({ kind: z.literal("builtin"), name: Short }).strict(),
-  z.object({ kind: z.literal("plugin"), plugin: Short, name: Short }).strict(),
-  z
-    .object({
-      kind: z.literal("connector"),
-      connectorId: Short,
-      tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
-    })
-    .strict(),
-]);
 const ToolPolicies = z.record(Short, z.enum(["ask", "deny"]));
 const Skills = z
   .object({
@@ -43,7 +32,11 @@ const Skills = z
 const Fields = {
   instructions: z.string().max(100_000),
   model: Model,
-  tools: z.array(ToolRef).max(200),
+  /**
+   * Tools turned off (tools default-on spec §8): an agent has every builtin, every tool of the
+   * extensions enabled in the org and every tool of the org's connectors except these.
+   */
+  disabledTools: z.array(DisabledToolRef).max(500),
   toolPolicies: ToolPolicies,
   skills: Skills,
   subagents: SubagentsSchema,
@@ -103,7 +96,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.get",
         description:
-          "Read one agent you can see with its full definition: instructions, model, tools, skills and sub-agents. Takes the agent id from agents.list.",
+          "Read one agent you can see with its full definition: instructions, model, the tools it turns off (disabledTools: an agent has every tool the org offers except these), tool policies, skills and sub-agents. Takes the agent id from agents.list.",
         input: z.object({ agentId: Id }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
@@ -117,7 +110,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create",
         description:
-          "Create a new private agent owned by you, with a name, a model and optionally instructions, tools, skills and sub-agents. Without tools it gets the default ones. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
+          'Create a new private agent owned by you, with a name, a model and optionally instructions, disabledTools, tool policies, skills and sub-agents. An agent has every tool the org offers (all built-in tools, the tools of the extensions on in the org and of the org\'s connectors) unless disabledTools turns it off: { kind: "builtin", name }, { kind: "plugin", plugin, tools: "all" | [names] } or { kind: "connector", connectorId, tools: "all" | [names] }. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.',
         input: z
           .object({
             definition: z
@@ -125,7 +118,7 @@ export class AgentsOperations implements OnModuleInit {
                 name: z.string().min(1).max(80),
                 instructions: Fields.instructions.optional(),
                 model: Fields.model,
-                tools: Fields.tools.optional(),
+                disabledTools: Fields.disabledTools.optional(),
                 toolPolicies: Fields.toolPolicies.optional(),
                 skills: Fields.skills.optional(),
                 subagents: Fields.subagents.optional(),
@@ -156,7 +149,7 @@ export class AgentsOperations implements OnModuleInit {
           const parsed = AgentDefinitionSchema.omit({ pendingConnectors: true }).parse({
             name: d.name,
             model: d.model,
-            tools: d.tools ?? structuredClone(DEFAULT_AGENT_TOOLS),
+            ...(d.disabledTools !== undefined && { disabledTools: d.disabledTools }),
             ...(d.toolPolicies !== undefined && { toolPolicies: d.toolPolicies }),
             ...(d.skills !== undefined && { skills: d.skills }),
             ...(d.subagents !== undefined && { subagents: d.subagents }),
@@ -178,7 +171,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
+          "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
         input: z
           .object({
             agentId: Id,
@@ -186,7 +179,7 @@ export class AgentsOperations implements OnModuleInit {
             name: z.string().min(1).max(80).optional(),
             instructions: Fields.instructions.optional(),
             model: Fields.model.optional(),
-            tools: Fields.tools.optional(),
+            disabledTools: Fields.disabledTools.optional(),
             toolPolicies: Fields.toolPolicies.optional(),
             skills: Fields.skills.optional(),
             subagents: Fields.subagents.optional(),
@@ -234,7 +227,7 @@ export class AgentsOperations implements OnModuleInit {
               ...(patch.name !== undefined && { name: patch.name }),
               ...(patch.instructions !== undefined && { instructions: patch.instructions }),
               ...(patch.model !== undefined && { model: patch.model as ModelRef }),
-              ...(patch.tools !== undefined && { tools: patch.tools }),
+              ...(patch.disabledTools !== undefined && { disabledTools: patch.disabledTools }),
               ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
               ...(patch.skills !== undefined && { skills: patch.skills }),
               ...(patch.subagents !== undefined && { subagents: patch.subagents }),

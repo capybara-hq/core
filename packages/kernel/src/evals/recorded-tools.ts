@@ -43,7 +43,8 @@ export interface RecordedCall {
  * - a connector: the tool definition the key was recorded with (`toolSpecs`, found by the specHash of
  *   its `tool_call_started` or its `model_call` tools / catalog entry) has `connectorData`;
  * - an extension: that definition exists without `connectorData` and its name is the key's tool
- *   part, or an agent definition names exactly that tool as a `{ kind: "plugin", plugin: x, name }` ref.
+ *   part, or an rc-era agent definition names exactly that tool as a `{ kind: "plugin", plugin: x, name }`
+ *   ref.
  */
 export function legacyScopeOf(s: CaseSnapshot): LegacyScope {
   const hashes = new Map<string, Set<string>>();
@@ -66,8 +67,16 @@ export function legacyScopeOf(s: CaseSnapshot): LegacyScope {
   const extensionNames = new Set<string>();
   const connectorSlugs = new Set<string>();
   const planted = new Set<string>();
+  // rc-era snapshots hold definitions from before tools were on by default: an enabled `tools`
+  // list of refs (tools default-on spec §2)
   for (const def of Object.values(s.definitions)) {
-    for (const t of def.tools) if (t.kind === "plugin") planted.add(`${t.plugin}__${t.name}`);
+    const refs = (def as { tools?: unknown }).tools;
+    if (!Array.isArray(refs)) continue;
+    for (const t of refs as { kind?: unknown; plugin?: unknown; name?: unknown }[]) {
+      if (t?.kind === "plugin" && typeof t.plugin === "string" && typeof t.name === "string") {
+        planted.add(`${t.plugin}__${t.name}`);
+      }
+    }
   }
   for (const [key, set] of hashes) {
     const i = key.indexOf("__");

@@ -10,7 +10,14 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { connectorToolKey, extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import type { AgentDefinition } from "../agents/definition.js";
+import {
+  type AgentDefinition,
+  builtinDisabled,
+  connectorToolDisabled,
+  type DisabledToolRef,
+  extensionToolDisabled,
+  type SubagentTools,
+} from "../agents/definition.js";
 import type { ToolView } from "../conversations/events.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -24,14 +31,13 @@ import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 import { SUBAGENT_LIMIT_DEFAULTS, subagentLimits } from "../runtime/subagents/limits.js";
 import { resolveRoster } from "../runtime/subagents/roster.js";
 import {
+  AGENT_BUILTIN_NAMES,
   AGENT_TOOL,
   BASH_COMPANION_TOOLS,
   BUILTIN,
-  BUILTIN_TOOL_NAMES,
   SEND_MESSAGE,
   SKILL_LOAD,
   SUBAGENT_HANDBACK,
-  SUBAGENT_MESSAGE_TOOLS,
   TOOL_SEARCH,
 } from "./builtin-names.js";
 import { agentToolSpec } from "./builtins/agent.js";
@@ -44,7 +50,7 @@ import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
 export { canonicalJson } from "./canonical-json.js";
 
-/** 保存 agent 时引用校验的问题（`path` 为 `tools.<i>`）。 */
+/** A problem of a saved definition's `disabledTools` (`path` is `disabledTools.<i>`). */
 export interface ToolRefIssue {
   path: string;
   message: string;
@@ -172,15 +178,6 @@ export interface CallPolicy {
   denyReason?: string;
 }
 
-/**
- * agent 定义里对工具的引用（Task 6 在 `AgentDefinitionSchema` 中落地同形的 zod schema）。
- * 连接器工具按连接器 id 引用，`tools: "all"` = 该连接器当前所有启用的工具。
- */
-export type AgentToolRef =
-  | { kind: "builtin"; name: string }
-  | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "connector"; connectorId: string; tools: "all" | readonly string[] };
-
 export type ToolPolicy = "allow" | "ask" | "deny";
 
 export interface ResolvedTool {
@@ -253,8 +250,11 @@ export interface AgentTools {
   tools: ResolvedTool[];
   unavailable: UnavailableTool[];
   /**
-   * `tools: "all"` 引用的连接器里未启用的工具（待复核 / 停用 / 已消失）及事实原因。不进 `unavailable`
-   * （那会让每步都写「工具不可用」提醒），只在模型点名调用时用来给事实说明（spec 6.3）。缺省视为空。
+   * Tools the agent would have that cannot be offered now, with the facts (a builtin with no
+   * sandbox, an extension that needs config or a tool the org switched off, a connector tool off,
+   * pending review or gone). Not in `unavailable` (that would remind the model every step of tools
+   * it never asked for, tools default-on spec §4); used only to explain a call the model makes by
+   * name (spec 6.3). Absent = empty.
    */
   hidden?: UnavailableTool[];
   /**
@@ -300,23 +300,21 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
 });
 
 /**
- * Tool registry: resolves the references in an agent definition into the tools available for this
- * run. Not cached (reads PG and the host live every time), so changes take effect right away across
- * replicas.
+ * Tool registry: resolves what an agent has for this run (tools default-on spec §4): everything
+ * the org offers minus the definition's `disabledTools`. Not cached (reads PG and the host live
+ * every time), so changes take effect right away across replicas.
  *
- * Availability:
- * - builtin: in `builtins`;
- * - extension tools: the extension is loaded and registered the tool, this org enabled the
- *   extension (`extension_org_configs.enabled`, spec 2.2 "installed at deployment level, enabled at
- *   org level"; required bootstrap plugins are enabled in every org, `enabled.ts`), and the
- *   extension's effective config for the org is valid (layering spec A §6) and the org did not
- *   turn the tool off (§7);
- * - connector tools: the connector belongs to this org, is not deleted or disabled, the connector is
- *   installed, the tool status is `enabled` and the key is valid.
- *   `tools: "all"` takes only enabled tools; disabled / pending-review ones count as deliberately
- *   turned off by an admin and are not reported; named tools report their reason one by one.
- * Only the first of a key is kept; the same source referenced twice is deduplicated silently,
- * different sources with the same key report a duplicate.
+ * What is offered:
+ * - builtins: every {@link AGENT_BUILTIN_NAMES} entry registered here that can run (`unavailable`
+ *   says why not), `TaskOutput` / `TaskStop` with `Bash`, `Agent` while its roster is not empty;
+ * - extension tools: every tool registered by an extension loaded on this replica and enabled in
+ *   the org (`extension_org_configs.enabled`; required bootstrap plugins are enabled in every org,
+ *   `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
+ *   org did not switch off (§7: the org's switch wins);
+ * - connector tools: every enabled tool of every live, active connector of the org whose
+ *   connector extension is installed, with a valid key.
+ * What cannot be offered goes to `hidden` with the reason; nothing is reported to the model as
+ * unavailable except two sources with one key (the first wins).
  */
 @Injectable()
 export class ToolRegistry {
@@ -424,101 +422,97 @@ export class ToolRegistry {
   }
 
   /**
-   * 保存 agent 时校验工具引用（只看「存在」，停用 / 待复核 / 插件未启用等运行时状态不拒绝，由 `forAgent` 报不可用）：
-   * - 内置：名字在 {@link BUILTIN_TOOL_NAMES} 中；
-   * - 插件：插件已加载且注册了该工具，key 合法；
-   * - 连接器：连接器属于本组织且未删除；点名的工具必须在连接器的工具快照中。
-   * 不同来源拼出同一个 key 也报出来（不截断、不猜）。
-   * 返回 `keys`：这些引用可能产生的全部工具 key（`"all"` 含连接器当前所有工具，不论状态），供校验 `toolPolicies`。
+   * Checks a definition's `disabledTools` on save (existence only): a builtin an agent can turn off
+   * ({@link AGENT_BUILTIN_NAMES}), an extension loaded here and the tools it registered, a live
+   * connector of the org and tools of its snapshot. An entry equal to one of `kept` (the current
+   * version's) is not re-checked: a connector deleted or an extension uninstalled later never
+   * blocks other edits. Returns `keys`: every tool key the agent could have, on or turned off (all
+   * its builtins, every loaded extension's tools, every tool of the org's live connectors in any
+   * status), the keys `toolPolicies` may use.
    */
-  async checkRefs(
+  async checkDisabled(
     orgId: string,
-    refs: readonly AgentToolRef[],
+    disabled: readonly DisabledToolRef[],
+    kept: readonly DisabledToolRef[] = [],
   ): Promise<{ keys: Set<string>; issues: ToolRefIssue[] }> {
     const issues: ToolRefIssue[] = [];
-    const owner = new Map<string, string>();
+    const keys = new Set<string>();
+    for (const name of AGENT_BUILTIN_NAMES) keys.add(name);
+    for (const name of BASH_COMPANION_TOOLS) keys.add(name);
     const pluginTools = this.host.tools();
-    const connectorIds = [
-      ...new Set(refs.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
-    ];
-    const apps = await this.loadConnectors(orgId, connectorIds);
-    const claim = (path: string, key: string, source: string) => {
-      const prev = owner.get(key);
-      if (prev === undefined) owner.set(key, source);
-      else if (prev !== source) {
-        issues.push({ path, message: `Tool key "${key}" is already used by another tool` });
-      }
-    };
-    refs.forEach((ref, i) => {
-      const path = `tools.${i}`;
+    for (const t of pluginTools) keys.add(extensionToolKey(t.plugin, t.spec.name));
+    const apps = await this.loadOrgConnectors(orgId, { includeDeleted: false });
+    for (const app of apps) for (const t of app.tools) keys.add(connectorToolKey(app.slug, t.name));
+    const builtins = new Set<string>(AGENT_BUILTIN_NAMES);
+    const keptJson = new Set(kept.map((r) => canonicalJson(r)));
+    disabled.forEach((ref, i) => {
+      const path = `disabledTools.${i}`;
+      if (keptJson.has(canonicalJson(ref))) return;
       if (ref.kind === "builtin") {
-        if (!(BUILTIN_TOOL_NAMES as readonly string[]).includes(ref.name)) {
+        if (!builtins.has(ref.name)) {
           const renamed = legacyKeySaveText(ref.name);
           issues.push({
             path,
             message:
-              renamed === null
-                ? `Built-in tool "${ref.name}" does not exist`
-                : `Built-in tool ${renamed}`,
+              renamed !== null
+                ? `Built-in tool ${renamed}`
+                : `"${ref.name}" is not a built-in tool an agent can turn off`,
           });
-          return;
-        }
-        claim(path, ref.name, `builtin:${ref.name}`);
-        // offered with Bash (see resolve), so their policies validate too
-        if (ref.name === BUILTIN.Bash) {
-          for (const c of BASH_COMPANION_TOOLS) claim(path, c, `builtin:${c}`);
         }
       } else if (ref.kind === "plugin") {
-        const key = extensionToolKey(ref.plugin, ref.name);
-        if (!pluginTools.some((x) => x.plugin === ref.plugin && x.spec.name === ref.name)) {
-          issues.push({ path, message: `Plugin tool "${key}" does not exist` });
+        const own = pluginTools.filter((x) => x.plugin === ref.plugin);
+        if (own.length === 0) {
+          issues.push({ path, message: `Extension "${ref.plugin}" has no tools` });
           return;
         }
-        const issue = toolKeyIssue(key);
-        if (issue) {
-          issues.push({ path, message: issue });
-          return;
+        if (ref.tools === "all") return;
+        for (const name of ref.tools) {
+          if (!own.some((x) => x.spec.name === name)) {
+            issues.push({
+              path,
+              message: `Extension tool "${extensionToolKey(ref.plugin, name)}" does not exist`,
+            });
+          }
         }
-        claim(path, key, `plugin:${ref.plugin}:${ref.name}`);
       } else {
-        const app = apps.get(ref.connectorId);
-        if (!app || app.deleted) {
+        const app = apps.find((a) => a.id === ref.connectorId);
+        if (!app) {
           issues.push({ path, message: `Connector "${ref.connectorId}" does not exist` });
           return;
         }
-        const names = ref.tools === "all" ? app.tools.map((t) => t.name) : [...new Set(ref.tools)];
-        for (const name of names) {
+        if (ref.tools === "all") return;
+        for (const name of ref.tools) {
           if (!app.tools.some((t) => t.name === name)) {
             issues.push({
               path,
               message: `Tool "${name}" does not exist in connector ${app.slug}`,
             });
-            continue;
           }
-          claim(path, connectorToolKey(app.slug, name), `connector:${app.id}:${name}`);
         }
       }
     });
-    return { keys: new Set(owner.keys()), issues };
+    return { keys, issues };
   }
 
   /**
-   * 解析 agent 引用的工具（见类注释），再判定是否启用 `ToolSearch`：组织设置 `toolSearch === "on"`，且
-   * 可用工具数 > `tools.searchThresholdTools` 或其定义的估算 token > `tools.searchThresholdTokens`。
-   * 启用时把内置 `ToolSearch` 追加到末尾。定义里显式引用的 `ToolSearch` 忽略（由这里按设置管理）。
-   * `skillLoad`：对话日志里有技能目录快照（`skills_catalog`，Ruling M17）→ 加入内置 `Skill`（始终完整加载）；
-   * 定义里显式引用的 `Skill` 同样忽略。
+   * Resolves what the agent has (see the class comment), then decides on `ToolSearch`: the org
+   * setting `toolSearch === "on"` and more than `tools.searchThresholdTools` tools or more than
+   * `tools.searchThresholdTokens` estimated definition tokens; when on, the builtin `ToolSearch` is
+   * appended. `skillLoad`: the log has a skills catalog snapshot (`skills_catalog`, Ruling M17) →
+   * the builtin `Skill` is added (always fully loaded).
    */
   async forAgent(
     orgId: string,
     def: {
-      tools: readonly AgentToolRef[];
+      disabledTools?: readonly DisabledToolRef[] | undefined;
+      /** A sub-agent's key filter (frozen at dispatch); registry-managed tools are not filtered. */
+      subagentTools?: SubagentTools | undefined;
       skillLoad?: boolean;
       /** The definition's sub-agent roster source: the `Agent` tool's description lists it. */
       subagents?: AgentDefinition["subagents"];
       /**
        * The run is a sub-agent's (it has a parent): it gets `SendMessage` (to reach its parent)
-       * and `SubagentHandback` whatever its definition names (agent map spec §4.2, §4.3).
+       * and `SubagentHandback` whatever its definition says (agent map spec §4.2, §4.3).
        */
       child?: boolean;
       /**
@@ -528,7 +522,9 @@ export class ToolRegistry {
       forkChild?: boolean;
     },
   ): Promise<AgentTools> {
-    const { tools, unavailable, hidden } = await this.resolve(orgId, def);
+    const resolved = await this.resolve(orgId, def);
+    const { unavailable, hidden } = resolved;
+    const tools = filterSubagentTools(resolved.tools, def.subagentTools);
     // `SendMessage` to an agent that has `Agent` (to reach its sub-agents) or a parent;
     // `SubagentHandback` to a sub-agent only; a fork invocation's child reports by its reply
     const toParent = def.child === true && def.forkChild !== true;
@@ -578,8 +574,12 @@ export class ToolRegistry {
 
   private async resolve(
     orgId: string,
-    def: { tools: readonly AgentToolRef[]; subagents?: AgentDefinition["subagents"] },
+    def: {
+      disabledTools?: readonly DisabledToolRef[] | undefined;
+      subagents?: AgentDefinition["subagents"];
+    },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
+    const disabled = def.disabledTools ?? [];
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
     const hidden: UnavailableTool[] = [];
@@ -598,155 +598,135 @@ export class ToolRegistry {
       }
     };
 
-    const [enabledPlugins, offKeys] = def.tools.some((r) => r.kind === "plugin")
-      ? await Promise.all([this.enabledPlugins(orgId), this.switches.offKeys(orgId)])
-      : [new Set<string>(), new Set<string>()];
-    const connectorIds = [
-      ...new Set(def.tools.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
-    ];
-    const apps = await this.loadConnectors(orgId, connectorIds);
-    const pluginTools = this.host.tools();
-    // one effective config read per extension and resolution, however many of its tools are named
-    const configured = new Map<string, Promise<boolean>>();
-    const configuredIn = (plugin: string): Promise<boolean> => {
-      let ok = configured.get(plugin);
-      if (!ok) {
-        ok = this.effective.get(orgId, plugin).then((e) => e.ok);
-        configured.set(plugin, ok);
+    // builtins
+    for (const name of AGENT_BUILTIN_NAMES) {
+      if (builtinDisabled(disabled, name)) continue;
+      const b = this.builtins.find((x) => x.spec.name === name);
+      if (!b) continue;
+      const why = (await b.unavailable?.({ orgId })) ?? null;
+      if (why !== null) {
+        hidden.push({ ref: name, reason: why });
+        continue;
       }
-      return ok;
-    };
-
-    for (const ref of def.tools) {
-      if (ref.kind === "builtin") {
-        if (ref.name === TOOL_SEARCH || ref.name === SKILL_LOAD) continue;
-        if (SUBAGENT_MESSAGE_TOOLS.has(ref.name)) continue;
-        const b = this.builtins.find((x) => x.spec.name === ref.name);
-        if (!b) {
-          unavailable.push({ ref: ref.name, reason: "Built-in tool does not exist" });
-          continue;
-        }
-        const why = (await b.unavailable?.({ orgId })) ?? null;
-        if (why !== null) {
-          unavailable.push({ ref: ref.name, reason: why });
-          continue;
-        }
-        // `Agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
-        // empty roster there is nothing to dispatch, so the tool is not offered at all
-        let spec = b.spec;
-        if (b.spec.name === AGENT_TOOL) {
-          const roster = await resolveRoster(this.db.db, orgId, { subagents: def.subagents });
-          if (roster.length === 0) continue;
-          spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
-        }
-        add(builtinTool(b, spec));
-        // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
-        if (b.spec.name === BUILTIN.Bash) {
-          for (const name of BASH_COMPANION_TOOLS) {
-            const c = this.builtins.find((x) => x.spec.name === name);
-            if (c && ((await c.unavailable?.({ orgId })) ?? null) === null)
-              add(builtinTool(c, c.spec));
+      // `Agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
+      // empty roster there is nothing to dispatch, so the tool is not offered at all
+      let spec = b.spec;
+      if (name === AGENT_TOOL) {
+        const roster = await resolveRoster(this.db.db, orgId, { subagents: def.subagents });
+        if (roster.length === 0) continue;
+        spec = agentToolSpec(roster, await this.maxConcurrentSubagents(orgId));
+      }
+      add(builtinTool(b, spec));
+      // `TaskOutput` and `TaskStop` come with an available `Bash` (background Bash spec §2)
+      if (name === BUILTIN.Bash) {
+        for (const companion of BASH_COMPANION_TOOLS) {
+          const c = this.builtins.find((x) => x.spec.name === companion);
+          if (c && ((await c.unavailable?.({ orgId })) ?? null) === null) {
+            add(builtinTool(c, c.spec));
           }
         }
-      } else if (ref.kind === "plugin") {
-        const key = extensionToolKey(ref.plugin, ref.name);
-        const t = pluginTools.find((x) => x.plugin === ref.plugin && x.spec.name === ref.name);
-        if (!t) {
-          unavailable.push({ ref: key, reason: "Plugin tool does not exist" });
-          continue;
+      }
+    }
+
+    // extension tools: the extensions enabled in the org
+    const pluginTools = this.host.tools();
+    if (pluginTools.length > 0) {
+      const [enabledPlugins, offKeys] = await Promise.all([
+        this.enabledPlugins(orgId),
+        this.switches.offKeys(orgId),
+      ]);
+      // one effective config read per extension and resolution, however many tools it has
+      const configured = new Map<string, Promise<boolean>>();
+      const configuredIn = (plugin: string): Promise<boolean> => {
+        let ok = configured.get(plugin);
+        if (!ok) {
+          ok = this.effective.get(orgId, plugin).then((e) => e.ok);
+          configured.set(plugin, ok);
         }
-        if (!enabledPlugins.has(ref.plugin)) {
-          unavailable.push({
-            ref: key,
-            reason: `Plugin ${ref.plugin} is not enabled in this organization`,
-          });
-          continue;
-        }
+        return ok;
+      };
+      for (const t of pluginTools) {
+        if (!enabledPlugins.has(t.plugin)) continue;
+        if (extensionToolDisabled(disabled, t.plugin, t.spec.name)) continue;
+        const key = extensionToolKey(t.plugin, t.spec.name);
         // the pipeline refuses such calls too (a resumed step), this keeps them from the model
         if (offKeys.has(key)) {
-          unavailable.push({ ref: key, reason: toolTurnedOffReason(key) });
+          hidden.push({ ref: key, reason: toolTurnedOffReason(key) });
           continue;
         }
-        if (!(await configuredIn(ref.plugin))) {
-          unavailable.push({ ref: key, reason: `Plugin ${ref.plugin} ${NEEDS_CONFIG_REASON}` });
+        if (!(await configuredIn(t.plugin))) {
+          hidden.push({ ref: key, reason: `Plugin ${t.plugin} ${NEEDS_CONFIG_REASON}` });
           continue;
         }
         const issue = toolKeyIssue(key);
         if (issue) {
-          unavailable.push({ ref: key, reason: issue });
+          hidden.push({ ref: key, reason: issue });
           continue;
         }
         add({
           key,
-          source: { kind: "plugin", plugin: ref.plugin, name: ref.name },
+          source: { kind: "plugin", plugin: t.plugin, name: t.spec.name },
           spec: t.spec,
           specHash: specHash(t.spec),
           defaultPolicy: t.spec.defaultPolicy ?? policyFromAnnotations(t.spec.annotations),
         });
-      } else {
-        const app = apps.get(ref.connectorId);
-        if (!app) {
-          unavailable.push({ ref: `app:${ref.connectorId}`, reason: "App does not exist" });
+      }
+    }
+
+    // connector tools: the org's live connectors
+    for (const app of await this.loadOrgConnectors(orgId, { includeDeleted: false })) {
+      if (
+        disabled.some(
+          (r) => r.kind === "connector" && r.connectorId === app.id && r.tools === "all",
+        )
+      ) {
+        continue;
+      }
+      const all = connectorToolKey(app.slug, "*");
+      if (app.status !== "active") {
+        hidden.push({ ref: all, reason: `App ${app.slug} is disabled` });
+        continue;
+      }
+      if (!this.findConnector(app.connector)) {
+        hidden.push({
+          ref: all,
+          reason: `Connector ${app.connector} for app ${app.slug} is not installed`,
+        });
+        continue;
+      }
+      for (const t of app.tools) {
+        if (connectorToolDisabled(disabled, app.id, t.name)) continue;
+        const key = connectorToolKey(app.slug, t.name);
+        // 远端已不再提供（漂移检测置停用并标记，见 drift.ts）
+        if (t.gone) {
+          hidden.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });
           continue;
         }
-        const all = connectorToolKey(app.slug, "*");
-        if (app.deleted) {
-          unavailable.push({ ref: all, reason: `App ${app.slug} was deleted` });
+        if (t.status === "disabled") {
+          hidden.push({ ref: key, reason: "Tool is disabled" });
           continue;
         }
-        if (app.status !== "active") {
-          unavailable.push({ ref: all, reason: `App ${app.slug} is disabled` });
+        if (t.status === "pending_review") {
+          hidden.push({ ref: key, reason: "Tool is pending review" });
           continue;
         }
-        if (!this.findConnector(app.connector)) {
-          unavailable.push({
-            ref: all,
-            reason: `Connector ${app.connector} for app ${app.slug} is not installed`,
-          });
+        const issue = toolKeyIssue(key);
+        if (issue) {
+          hidden.push({ ref: key, reason: issue });
           continue;
         }
-        const wanted =
-          ref.tools === "all"
-            ? app.tools
-            : ref.tools.map(
-                (name) =>
-                  app.tools.find((t) => t.name === name) ?? { name, missing: true as const },
-              );
-        // 「all」里未启用的工具不算 agent 点名要的，不进 unavailable（不提醒），只记进 hidden 备查
-        const notEnabled = ref.tools === "all" ? hidden : unavailable;
-        for (const t of wanted) {
-          const key = connectorToolKey(app.slug, t.name);
-          // 远端已不再提供（漂移检测置停用并标记，见 drift.ts）：与「没有这一行」同一个事实
-          if ("missing" in t || t.gone) {
-            notEnabled.push({ ref: key, reason: `Tool no longer exists in app ${app.slug}` });
-            continue;
-          }
-          if (t.status === "disabled") {
-            notEnabled.push({ ref: key, reason: "Tool is disabled" });
-            continue;
-          }
-          if (t.status === "pending_review") {
-            notEnabled.push({ ref: key, reason: "Tool is pending review" });
-            continue;
-          }
-          const issue = toolKeyIssue(key);
-          if (issue) {
-            unavailable.push({ ref: key, reason: issue });
-            continue;
-          }
-          add({
-            key,
-            source: {
-              kind: "connector",
-              connectorId: app.id,
-              name: t.name,
-              ...(t.source === "resources" && { resources: true as const }),
-            },
-            spec: t.spec,
-            specHash: t.specHash,
-            defaultPolicy: t.defaultPolicy,
-          });
-        }
+        add({
+          key,
+          source: {
+            kind: "connector",
+            connectorId: app.id,
+            name: t.name,
+            ...(t.source === "resources" && { resources: true as const }),
+          },
+          spec: t.spec,
+          specHash: t.specHash,
+          defaultPolicy: t.defaultPolicy,
+        });
       }
     }
     return { tools, unavailable, hidden };
@@ -774,79 +754,89 @@ export class ToolRegistry {
     return this.host.enabledPlugins(orgId);
   }
 
-  private async loadConnectors(
+  /** The org's connectors (live ones, sorted by slug) with their tool snapshots (by name). */
+  private async loadOrgConnectors(
     orgId: string,
-    ids: string[],
+    _opts: { includeDeleted: false },
   ): Promise<
-    Map<
-      string,
-      {
-        id: string;
-        slug: string;
-        connector: string;
-        status: "active" | "disabled";
-        deleted: boolean;
-        tools: {
-          name: string;
-          spec: ToolSpec;
-          specHash: string;
-          status: "enabled" | "disabled" | "pending_review";
-          defaultPolicy: ToolPolicy;
-          source: "connector" | "resources";
-          /** 远端已不再提供（`missing_since` 非空）。 */
-          gone: boolean;
-        }[];
-      }
-    >
+    {
+      id: string;
+      slug: string;
+      connector: string;
+      status: "active" | "disabled";
+      tools: {
+        name: string;
+        spec: ToolSpec;
+        specHash: string;
+        status: "enabled" | "disabled" | "pending_review";
+        defaultPolicy: ToolPolicy;
+        source: "connector" | "resources";
+        /** 远端已不再提供（`missing_since` 非空）。 */
+        gone: boolean;
+      }[];
+    }[]
   > {
-    const out = new Map();
-    if (ids.length === 0) return out;
-    // 软删除的连接器也读出来，只为给出「已删除」这个更准确的原因（slug 可能已被新连接器复用，按 id 区分）
     const apps = await this.db
       .selectFrom("connectors")
-      .select(["id", "slug", "connector", "status", "deleted_at"])
+      .select(["id", "slug", "connector", "status"])
       .where("org_id", "=", orgId)
-      .where("id", "in", ids)
+      .where("deleted_at", "is", null)
+      .orderBy("slug")
+      .orderBy("id")
       .execute();
-    const live = apps.filter((a) => a.deleted_at === null).map((a) => a.id);
-    const toolRows =
-      live.length === 0
-        ? []
-        : await this.db
-            .selectFrom("connector_tools")
-            .select([
-              "connector_id",
-              "name",
-              "spec",
-              "spec_hash",
-              "status",
-              "default_policy",
-              "source",
-              "missing_since",
-            ])
-            .where("connector_id", "in", live)
-            .orderBy("name")
-            .execute();
-    for (const a of apps) {
-      out.set(a.id, {
-        id: a.id,
-        slug: a.slug,
-        connector: a.connector,
-        status: a.status,
-        deleted: a.deleted_at !== null,
-        tools: toolRows
-          .filter((t) => t.connector_id === a.id)
-          .map((t) => ({
-            name: t.name,
-            spec: t.spec as ToolSpec,
-            specHash: t.spec_hash,
-            status: t.status,
-            defaultPolicy: t.default_policy,
-            source: t.source,
-            gone: t.missing_since !== null,
-          })),
-      });
-    }
-    return out;
+    if (apps.length === 0) return [];
+    const toolRows = await this.db
+      .selectFrom("connector_tools")
+      .select([
+        "connector_id",
+        "name",
+        "spec",
+        "spec_hash",
+        "status",
+        "default_policy",
+        "source",
+        "missing_since",
+      ])
+      .where(
+        "connector_id",
+        "in",
+        apps.map((a) => a.id),
+      )
+      .orderBy("name")
+      .execute();
+    return apps.map((a) => ({
+      id: a.id,
+      slug: a.slug,
+      connector: a.connector,
+      status: a.status,
+      tools: toolRows
+        .filter((t) => t.connector_id === a.id)
+        .map((t) => ({
+          name: t.name,
+          spec: t.spec as ToolSpec,
+          specHash: t.spec_hash,
+          status: t.status,
+          defaultPolicy: t.default_policy,
+          source: t.source,
+          gone: t.missing_since !== null,
+        })),
+    }));
   }
+}
+
+/**
+ * `tools` narrowed by a sub-agent's key filter (tools default-on spec §4): `deny` keys removed,
+ * and with `allow` only its keys kept. `TaskOutput` / `TaskStop` follow `Bash`, as they come with
+ * it. Without a filter the list is returned as it is.
+ */
+export function filterSubagentTools(
+  tools: ResolvedTool[],
+  filter: SubagentTools | undefined,
+): ResolvedTool[] {
+  if (filter === undefined) return tools;
+  const companions = new Set<string>(BASH_COMPANION_TOOLS);
+  const deny = new Set(filter.deny ?? []);
+  const allow = filter.allow === undefined ? null : new Set(filter.allow);
+  const keep = (key: string): boolean => !deny.has(key) && (allow === null || allow.has(key));
+  return tools.filter((t) => (companions.has(t.key) ? keep(BUILTIN.Bash) : keep(t.key)));
 }

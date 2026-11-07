@@ -175,7 +175,7 @@ type Plan =
   | { kind: "fail"; error: ModelError };
 
 /**
- * `toolChoice: "none"`：不得调用工具——工具调用计划改为说明文本（脚本指令）或按无工具回复（默认的「调用第一个工具」）。
+ * `toolChoice: "none"`：不得调用工具——工具调用计划改为说明文本（脚本指令）或按无工具回复（默认的「只有一个工具时调用它」）。
  */
 function plan(req: ModelRequest): Plan {
   const p = scripted(req);
@@ -262,9 +262,11 @@ function scripted(req: ModelRequest): Plan {
     return { kind: "text", text: words.join(" "), chunk: 64, delayMs: 0 };
   }
   if (hasToolResult) return std(`Tool result: ${result}`);
-  // 请求带了工具、且不是脚本指令：调用第一个工具（参数为空对象），让一致性套件能走通工具往返。
-  const first = req.tools[0];
-  if (first !== undefined) return { kind: "tool", name: first.name, input: {} };
+  // a request offering exactly one tool, with no script directive: call it with an empty input
+  // (the conformance suite's tool round trip). Agents have every tool by default (tools default-on
+  // spec), so with several tools an ordinary message gets an ordinary reply.
+  const only = req.tools.length === 1 ? req.tools[0] : undefined;
+  if (only !== undefined) return { kind: "tool", name: only.name, input: {} };
   return std(`You said: ${text}`);
 }
 

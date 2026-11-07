@@ -236,9 +236,8 @@ describe("改名后的路由与旧 agent 版本", () => {
     }
   }, 60_000);
 
-  it("已存版本里的 {kind:'app', appId}：读入规范化为 connector 形，能运行，工具 key 不变", async () => {
+  it("a stored version with {kind:'app', appId}: reads as nothing turned off, runs, the tool key is unchanged", async () => {
     const id = await install("kb");
-    // 新保存只写 connector 形；旧形仍可提交，存下来的是规范化后的 connector 形
     const created = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,
@@ -247,7 +246,6 @@ describe("改名后的路由与旧 agent 版本", () => {
           name: "Helper",
           instructions: "Be helpful.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "app", appId: id, tools: "all" }],
         },
         visibility: "org",
       },
@@ -259,9 +257,6 @@ describe("改名后的路由与旧 agent 版本", () => {
       .select("definition")
       .where("agent_id", "=", agentId)
       .executeTakeFirstOrThrow();
-    expect((stored.definition as { tools: unknown[] }).tools).toEqual([
-      { kind: "connector", connectorId: id, tools: "all" },
-    ]);
 
     // 模拟改名前存下的版本：直接把旧形写回库
     await db
@@ -276,9 +271,11 @@ describe("改名后的路由与旧 agent 版本", () => {
       .execute();
     const got = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agentId}` });
     expect(got.statusCode, got.body).toBe(200);
-    expect(
-      (got.json() as { agent: { definition: { tools: unknown[] } } }).agent.definition.tools,
-    ).toEqual([{ kind: "connector", connectorId: id, tools: "all" }]);
+    // an enabled list from before tools were on by default reads as nothing turned off
+    const read = (got.json() as { agent: { definition: Record<string, unknown> } }).agent
+      .definition;
+    expect(read.tools).toBeUndefined();
+    expect(read.disabledTools).toEqual([]);
 
     const convId = await createConv(req, orgId, agentId);
     await postMessage(req, orgId, convId, 'tool:mcp__kb__search:{"q":"x"}');
@@ -304,13 +301,10 @@ describe("改名后的路由与旧 agent 版本", () => {
     });
     const snap = readSnapshot(raw);
     const base = await caseBase(db, snap);
-    expect(base?.definition.tools).toEqual([
-      { kind: "connector", connectorId: docs, tools: "all" },
-      { kind: "connector", connectorId: priv, tools: ["search"] },
-    ]);
+    expect(base?.definition.disabledTools).toEqual([]);
     const resolved = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, base?.definition ?? { tools: [] });
+      .forAgent(orgId, base?.definition ?? { disabledTools: [] });
     const keys = resolved.tools.map((t) => t.key);
     expect(keys).toEqual(expect.arrayContaining(["mcp__fx_docs__search", "mcp__fx_priv__search"]));
     expect(JSON.stringify(resolved.unavailable)).not.toContain("undefined");
@@ -326,7 +320,6 @@ describe("改名后的路由与旧 agent 版本", () => {
           name: "Rc",
           instructions: "Be helpful.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "ToolSearch" }],
         },
         visibility: "org",
       },
@@ -354,10 +347,7 @@ describe("改名后的路由与旧 agent 版本", () => {
 
     // the candidate agent version of an eval run
     const candidate = await versionDefinition(db, agentId, 1);
-    expect(candidate?.tools).toEqual([
-      { kind: "builtin", name: "ToolSearch" },
-      { kind: "builtin", name: "AskUserQuestion" },
-    ]);
+    expect(candidate?.disabledTools).toEqual([]);
     expect(candidate?.toolPolicies).toEqual({ AskUserQuestion: "ask" });
     // an eval case whose snapshot recorded the rc definition
     const snap = readSnapshot({
@@ -367,10 +357,10 @@ describe("改名后的路由与旧 agent 版本", () => {
       definitions: { "1": rc },
     });
     const base = await caseBase(db, snap);
-    expect(base?.definition.tools).toEqual(candidate?.tools);
+    expect(base?.definition.disabledTools).toEqual(candidate?.disabledTools);
     const resolved = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, base?.definition ?? { tools: [] });
+      .forAgent(orgId, base?.definition ?? { disabledTools: [] });
     expect(resolved.tools.map((t) => t.key)).toContain("AskUserQuestion");
     expect(resolved.unavailable).toEqual([]);
 

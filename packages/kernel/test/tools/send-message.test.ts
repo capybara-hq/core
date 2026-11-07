@@ -27,6 +27,7 @@ import {
 import type { ToolStepContext } from "../../src/tools/pipeline.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -187,7 +188,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     },
@@ -385,7 +386,7 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
           name: "Lead",
           instructions: "Lead the work, edited.",
           model: { provider: "model-script", model: "script-1" },
-          tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+          disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
         },
       },
     });

@@ -13,6 +13,7 @@ import { fetchPage } from "../../src/tools/builtins/web/fetch.js";
 import { webSearchTool } from "../../src/tools/builtins/web/search.js";
 import { type OrgCall, orgCalls } from "../fixtures/plugins/orgcalls/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -247,7 +248,7 @@ describe("tools and hooks in a run", { timeout: 60_000 }, () => {
           name: "Prober",
           instructions: "Use tools.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "plugin", plugin: "orgcalls", name: "probe" }],
+          disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "orgcalls", name: "probe" }]),
         },
         visibility: "org",
       },

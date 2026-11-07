@@ -16,6 +16,7 @@ import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
@@ -121,7 +122,7 @@ async function bootstrap(platform: FakeChannelServer, appId: string) {
       name: "Helper",
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [{ kind: "plugin", plugin: "mem-connector", name: "echo" }],
+      disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "mem-connector", name: "echo" }]),
       toolPolicies: { "plugin__mem-connector__echo": "ask" },
     },
     visibility: "org",

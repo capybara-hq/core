@@ -22,6 +22,7 @@ import {
 } from "../../fixtures/plugins/model-script/index.js";
 import { eventLogFor, legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../../helpers/http.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -192,7 +193,7 @@ async function setup(req: Req): Promise<void> {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [{ kind: "builtin", name: "Agent" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
       },
       visibility: "org",
     },

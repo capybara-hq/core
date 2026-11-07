@@ -20,40 +20,101 @@ export const ModelParams = z.record(z.string(), z.union([z.string(), z.number(),
 export type ModelParams = z.infer<typeof ModelParams>;
 
 /**
- * 改名前（D17）保存的连接器引用 `{ kind: "app", appId, tools }` 规范化为 `{ kind: "connector", connectorId, tools }`
- * （C27：已存 agent 版本不改写，读入时规范化；新保存只写 connector 形）。其余值原样返回。
+ * A tool an agent turns off (tools default-on spec §2): agents have every builtin, every tool of
+ * the extensions enabled in the org and every tool of the org's connectors, minus these. A builtin
+ * by name; an extension's or a connector's tools by name, or `"all"` to turn it off as a unit
+ * (tools it gains later included). Connectors by id, so a renamed connector stays off.
  */
-export function normalizeToolRef(v: unknown): unknown {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
-  const r = v as Record<string, unknown>;
-  if (r.kind !== "app") return v;
-  const { kind: _kind, appId, ...rest } = r;
-  return { kind: "connector", connectorId: appId, ...rest };
+export const DisabledToolRef = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("builtin"), name: z.string().min(1).max(200) }).strict(),
+  z
+    .object({
+      kind: z.literal("plugin"),
+      plugin: z.string().min(1).max(200),
+      tools: z.union([z.literal("all"), z.array(z.string().min(1).max(256)).min(1).max(500)]),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("connector"),
+      connectorId: z.string().min(1).max(100),
+      tools: z.union([z.literal("all"), z.array(z.string().min(1).max(256)).min(1).max(500)]),
+    })
+    .strict(),
+]);
+export type DisabledToolRef = z.output<typeof DisabledToolRef>;
+
+/** Is builtin `name` turned off by `disabled`? */
+export const builtinDisabled = (
+  disabled: readonly DisabledToolRef[] | undefined,
+  name: string,
+): boolean => (disabled ?? []).some((r) => r.kind === "builtin" && r.name === name);
+
+/** Is tool `name` of extension `plugin` turned off by `disabled`? */
+export const extensionToolDisabled = (
+  disabled: readonly DisabledToolRef[] | undefined,
+  plugin: string,
+  name: string,
+): boolean =>
+  (disabled ?? []).some(
+    (r) =>
+      r.kind === "plugin" && r.plugin === plugin && (r.tools === "all" || r.tools.includes(name)),
+  );
+
+/** Is tool `name` of connector `connectorId` turned off by `disabled`? */
+export const connectorToolDisabled = (
+  disabled: readonly DisabledToolRef[] | undefined,
+  connectorId: string,
+  name: string,
+): boolean =>
+  (disabled ?? []).some(
+    (r) =>
+      r.kind === "connector" &&
+      r.connectorId === connectorId &&
+      (r.tools === "all" || r.tools.includes(name)),
+  );
+
+/**
+ * `disabled` in its canonical form: one entry per builtin, extension and connector (in first-seen
+ * order), names deduplicated and sorted, `"all"` absorbing names. Saving stores this form, so two
+ * lists that turn off the same tools compare equal.
+ */
+export function canonicalDisabledTools(disabled: readonly DisabledToolRef[]): DisabledToolRef[] {
+  const out: DisabledToolRef[] = [];
+  const merge = (cur: "all" | string[], add: "all" | string[]): "all" | string[] =>
+    cur === "all" || add === "all" ? "all" : [...new Set([...cur, ...add])].sort();
+  for (const r of disabled) {
+    if (r.kind === "builtin") {
+      if (!builtinDisabled(out, r.name)) out.push({ kind: "builtin", name: r.name });
+      continue;
+    }
+    const prev = out.find(
+      (x) =>
+        x.kind === r.kind &&
+        (r.kind === "plugin"
+          ? (x as { plugin?: string }).plugin === r.plugin
+          : (x as { connectorId?: string }).connectorId === r.connectorId),
+    ) as Extract<DisabledToolRef, { tools: unknown }> | undefined;
+    if (prev) prev.tools = merge(prev.tools, r.tools);
+    else out.push({ ...r, tools: r.tools === "all" ? "all" : [...new Set(r.tools)].sort() });
+  }
+  return out;
 }
 
 /**
- * agent 定义里对工具的引用：内置工具按名字；插件工具按插件名 + 工具名；连接器工具按连接器 id，
- * `tools: "all"` = 该连接器当前所有启用的工具。旧形 `{ kind: "app", appId }` 仍可解析（见 {@link normalizeToolRef}）。
+ * A sub-agent's tool filter by tool key (tools default-on spec §4): written only into a child's
+ * effective definition at dispatch (never accepted on save). `deny` removes keys (the child-removed
+ * tools, `Agent` at the depth limit, a template's `disallowedTools`); `allow`, when set, keeps only
+ * its keys (a template's `tools` allowlist). Registry-managed tools (`Skill`, `ToolSearch`,
+ * `SendMessage`, `SubagentHandback`) are not filtered.
  */
-export const AgentToolRef = z.preprocess(
-  normalizeToolRef,
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("builtin"), name: z.string().min(1) }).strict(),
-    z
-      .object({ kind: z.literal("plugin"), plugin: z.string().min(1), name: z.string().min(1) })
-      .strict(),
-    z
-      .object({
-        kind: z.literal("connector"),
-        connectorId: z.string().min(1),
-        tools: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
-      })
-      .strict(),
-  ]),
-);
-export type AgentToolRef = z.output<typeof AgentToolRef>;
-
-export { DEFAULT_AGENT_TOOLS } from "../tools/builtin-names.js";
+export const SubagentToolsSchema = z
+  .object({
+    allow: z.array(z.string().min(1).max(300)).max(500).optional(),
+    deny: z.array(z.string().min(1).max(300)).max(500).optional(),
+  })
+  .strict();
+export type SubagentTools = z.infer<typeof SubagentToolsSchema>;
 
 /** Roster names of inline templates and allowlisted org agents (the template name rule). */
 export const SUBAGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -184,11 +245,19 @@ export const AgentDefinitionSchema = z.object({
   modelParams: ModelParams.default({}),
   /** 兜底模型自己的参数（按兜底模型的声明校验）；兜底尝试只用这一份。 */
   fallbackParams: ModelParams.default({}),
-  /** 引用的工具（M2 保存的 `tools: []` 仍然合法）；保存时校验引用存在，运行时由注册表解析。 */
-  tools: z.array(AgentToolRef).default([]),
   /**
-   * 按工具 key 收紧策略（只能收紧：`ask` / `deny`，不接受 `allow`）；键必须是该 agent 引用的工具的 key。
-   * 较早保存的定义没有该字段，按空处理。
+   * The tools this agent turns off (tools default-on spec §2); everything else the org offers is
+   * on. Saved in canonical form ({@link canonicalDisabledTools}); checked on save.
+   */
+  disabledTools: z.array(DisabledToolRef).max(500).default([]),
+  /**
+   * A sub-agent's key filter, set only on a child's effective definition at dispatch (see
+   * {@link SubagentToolsSchema}); a save that carries it is refused.
+   */
+  subagentTools: SubagentToolsSchema.optional(),
+  /**
+   * Tightened policies by tool key (`ask` / `deny` only, never `allow`); keys are tools the agent
+   * could have (on or turned off). Older definitions without it read as empty.
    */
   toolPolicies: z.record(z.string(), z.enum(["ask", "deny"])).default({}),
   /**
@@ -213,7 +282,7 @@ export const AgentDefinitionSchema = z.object({
     })
     .strict()
     .optional(),
-  /** Sub-agents (phase C); offered only when the builtin `Agent` tool is in `tools`. */
+  /** Sub-agents (phase C); offered unless the builtin `Agent` tool is turned off. */
   subagents: SubagentsSchema.optional(),
   /**
    * Connectors still to configure (ruling P4-6), written only by creating from a template. No
@@ -233,14 +302,18 @@ interface OwnRefs {
 }
 
 /**
- * The connector slugs and extension names `definition`'s `tools` name: connector refs (through
- * `scope.connectorSlugById`), plugin refs, and current-format keys of a template's `tools`;
- * `inherited` (the parent agent's, for an inline template) is added.
+ * The connector slugs and extension names `definition` names: connector refs (through
+ * `scope.connectorSlugById`) and plugin refs of a frozen definition's `tools` or of
+ * `disabledTools`, and current-format keys of a template's `tools`; `inherited` (the parent
+ * agent's, for an inline template) is added.
  */
 function ownRefs(definition: Record<string, unknown>, scope: LegacyScope, inherited?: OwnRefs) {
   const connectors = new Set(inherited?.connectors);
   const extensions = new Set(inherited?.extensions);
-  const tools = Array.isArray(definition.tools) ? definition.tools : [];
+  const tools = [
+    ...(Array.isArray(definition.tools) ? definition.tools : []),
+    ...(Array.isArray(definition.disabledTools) ? definition.disabledTools : []),
+  ];
   for (const r of tools) {
     if (typeof r === "string") {
       const m = /^(mcp|plugin)__([^_].*?)__./.exec(r);
@@ -326,7 +399,10 @@ function policyKeys(v: unknown, scope: LegacyScope | undefined, own: OwnRefs | u
   return out;
 }
 
-/** An agent definition's `tools`: builtin refs by their current names (connector and plugin refs name tools, not keys). */
+/**
+ * A definition's `tools`: a template's allowlist of keys, or the refs of a definition frozen into
+ * history before tools were on by default (builtin refs by their current names).
+ */
 function toolRefs(v: unknown, scope: LegacyScope | undefined, own: OwnRefs | undefined): unknown {
   if (!Array.isArray(v)) return v;
   // template-shaped (`tools: string[]`): an allowlist
@@ -413,18 +489,38 @@ export function needsLegacyScope(definition: unknown): boolean {
 }
 
 /**
- * 库里读出的定义（`agent_versions.definition`，不经 zod 解析）：把改名前的 `{ kind: "app" }` 工具引用规范化为
- * connector 形（C27），and rc tool keys to current keys ({@link normalizeToolKeys}: builtins
- * always, `<x>__<tool>` keys with `scope`). Other fields are kept; without old forms the same
- * object is returned.
+ * A tool ref of a definition frozen into history (logs, eval case snapshots) before tools were on
+ * by default (tools default-on spec §2): `{ kind: "app", appId }` (before D17) reads as a
+ * connector ref. Other values are returned as they are.
+ */
+function normalizeToolRef(v: unknown): unknown {
+  if (!isRecord(v) || v.kind !== "app") return v;
+  const { kind: _kind, appId, ...rest } = v;
+  return { kind: "connector", connectorId: appId, ...rest };
+}
+
+/**
+ * A definition read from the database or from history (not parsed by zod): rc tool keys read as
+ * current keys ({@link normalizeToolKeys}: builtins always, `<x>__<tool>` keys with `scope`), and
+ * a definition from before tools were on by default (an enabled `tools` list, history only: the
+ * migration rewrote stored versions) reads as nothing turned off, which is what the migration
+ * writes (tools default-on spec §2, §3). Other fields are kept; without old forms the same object
+ * is returned.
  */
 export function normalizeStoredDefinition(def: unknown, scope?: LegacyScope): AgentDefinition {
-  let d = def as AgentDefinition;
-  const tools = (d as { tools?: unknown }).tools;
-  if (Array.isArray(tools) && tools.some((t) => (t as { kind?: unknown })?.kind === "app")) {
-    d = { ...d, tools: tools.map(normalizeToolRef) as AgentToolRef[] };
+  let d = def as Record<string, unknown>;
+  const tools = d.tools;
+  if (Array.isArray(tools) && tools.some((t) => isRecord(t) && t.kind === "app")) {
+    d = { ...d, tools: tools.map(normalizeToolRef) };
   }
-  return normalizeToolKeys(d, scope) as AgentDefinition;
+  d = normalizeToolKeys(d, scope) as Record<string, unknown>;
+  if ("tools" in d) {
+    const { tools: _enabled, ...rest } = d;
+    d = { ...rest, disabledTools: Array.isArray(d.disabledTools) ? d.disabledTools : [] };
+  } else if (!Array.isArray(d.disabledTools)) {
+    d = { ...d, disabledTools: [] };
+  }
+  return d as AgentDefinition;
 }
 
 /** 按模型声明严格校验一组参数，返回 `{ path: "<field>.<key>", message }[]`（评测候选也用它）。 */

@@ -24,6 +24,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import {
   catalogItemNamed,
   seedForkedSkill,
@@ -206,7 +207,7 @@ async function createAgent(skills: string[], templates: string[] = []): Promise<
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [],
+        disabledTools: builtinsOff(),
         skills: { orgSkills: skills },
         ...(templates.length > 0 && { subagents: { templates } }),
       },
@@ -711,7 +712,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: { provider: "model-script", model: "script-1" },
-          tools: [{ kind: "builtin", name: "Bash" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
           skills: { orgSkills: [narrow.id, general.id] },
           subagents: { templates: [template] },
         },
@@ -761,7 +762,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
             name: "Lead",
             instructions: "Lead the work.",
             model: { provider: "model-script", model: "script-1" },
-            tools: [{ kind: "builtin", name: "Bash" }],
+            disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
             skills: { orgSkills: skills },
             ...(subagents !== undefined && { subagents }),
           },
@@ -806,7 +807,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
             name: "Analyst",
             instructions: "Analyse.",
             model: { provider: "model-script", model: "script-1" },
-            tools: [{ kind: "builtin", name: "Bash" }],
+            disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
             subagents: { dispatchable: true },
           },
           visibility: "org",

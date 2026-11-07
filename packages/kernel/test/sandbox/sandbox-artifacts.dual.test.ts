@@ -35,6 +35,7 @@ import {
   fakeSandboxState,
   readFakeSandboxOps,
 } from "../fixtures/plugins/sandbox-fake/index.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -241,7 +242,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
         name: "Analyst",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: SANDBOX_TOOLS.map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(SANDBOX_TOOLS.map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     });

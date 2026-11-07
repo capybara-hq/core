@@ -32,6 +32,7 @@ import { sentToIdleText } from "../../src/tools/builtins/send-message.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -278,10 +279,12 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
           name: "Builder",
           instructions: INSTRUCTIONS,
           model: SCRIPT,
-          tools: ["Agent", "Bash", "Read", "Write", "Edit"].map((name) => ({
-            kind: "builtin",
-            name,
-          })),
+          disabledTools: onlyBuiltins(
+            ["Agent", "Bash", "Read", "Write", "Edit"].map((name) => ({
+              kind: "builtin",
+              name,
+            })),
+          ),
           skills: {
             orgSkills: [
               "subagent-driven-development",

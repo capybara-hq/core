@@ -23,6 +23,7 @@ import {
   UsageReporter,
   usageReportJobId,
 } from "../../src/runtime/usage-report.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -90,7 +91,9 @@ beforeAll(async () => {
         name: "Metered",
         instructions: "Use tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "hooks-probe", name: "probe_echo" }],
+        disabledTools: onlyBuiltins([
+          { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
+        ]),
       },
       visibility: "org",
     },

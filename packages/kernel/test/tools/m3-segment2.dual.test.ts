@@ -22,6 +22,7 @@ import { createDb } from "../../src/db/pool.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { notLoadedText } from "../../src/tools/builtins/tool-search.js";
 import { DRIFT_CONNECTOR_JOB } from "../../src/tools/drift.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -198,20 +199,22 @@ async function at(i: 0 | 1, method: string, path: string, body?: unknown): Promi
 }
 
 /**
- * `tools` 显式列出时，待复核 / 停用的工具在运行里写不可用提醒、调用得到「unavailable」说明；`"all"` 时
- * 它们直接不出现（调用得到 unknown tool）。
+ * An agent with every builtin off (tools default-on spec): it has every connector tool of the org;
+ * pending / disabled ones are not offered and a call naming one gets the "unavailable" facts.
  */
-async function createAgent(
-  i: 0 | 1,
-  connectorId: string,
-  tools: "all" | string[] = "all",
-): Promise<string> {
+async function createAgent(i: 0 | 1, connectorId: string): Promise<string> {
+  // the org's other connectors (earlier cases) turned off, so only this one counts toward the
+  // ToolSearch threshold
+  const list = await at(i, "GET", `${base}/connectors`);
+  const others = (list.json.connectors as { id: string }[])
+    .filter((c) => c.id !== connectorId)
+    .map((c) => ({ kind: "connector" as const, connectorId: c.id, tools: "all" as const }));
   const ag = await at(i, "POST", `${base}/agents`, {
     definition: {
       name: "Helper",
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [{ kind: "connector", connectorId, tools }],
+      disabledTools: [...builtinsOff(), ...others],
     },
     visibility: "org",
   });
@@ -386,7 +389,7 @@ describe("M3 第二段双副本验收", () => {
       createPet: "ask",
       getPet: "allow",
     });
-    const agentId = await createAgent(1, appJson.id, ["listPets", "createPet", "getPet"]);
+    const agentId = await createAgent(1, appJson.id);
     const conv = await Conv.create(0, agentId);
 
     // 只读工具：直接执行，注入 API key
@@ -515,7 +518,7 @@ describe("M3 第二段双副本验收", () => {
     });
     expect(app.status, JSON.stringify(app.json)).toBe(201);
     const connectorId = (app.json.connector as { id: string }).id;
-    const agentId = await createAgent(0, connectorId, ["search", "stats"]);
+    const agentId = await createAgent(0, connectorId);
     const conv = await Conv.create(1, agentId);
     const okSearch = await conv.run(0, "mcp__docs__search", { q: "cats" });
     expect(okSearch.result).toMatchObject({ isError: false, content: "found cats" });
@@ -547,9 +550,8 @@ describe("M3 第二段双副本验收", () => {
       isError: true,
       content: 'Tool "mcp__docs__search" is unavailable: Tool is pending review.',
     });
-    expect(ofType(pending.evs, "reminder").map((e) => e.payload.text)).toEqual([
-      "The following tools are unavailable in this run: mcp__docs__search (Tool is pending review)",
-    ]);
+    // the agent never asked for it by name (tools default-on spec §4): no reminder every step
+    expect(ofType(pending.evs, "reminder")).toEqual([]);
     expect(docsMcp.calls.length).toBe(callsBefore);
 
     // 在另一个副本批准 → 可用
@@ -561,7 +563,7 @@ describe("M3 第二段双副本验收", () => {
     expect(after.result).toMatchObject({ isError: false, content: "found dogs" });
 
     // ---- 路由变化（A21）：fetch 改由 fetch_v2 提供，名字与描述都没变 ----
-    const fetchAgent = await createAgent(1, connectorId, ["fetch"]);
+    const fetchAgent = await createAgent(1, connectorId);
     const fetching = await Conv.create(0, fetchAgent);
     const route = () => {
       const mark = docsMcp.calls.length;
@@ -626,7 +628,10 @@ describe("M3 第二段双副本验收", () => {
     });
     expect(bigMcp.calls).toEqual([]);
     const call1 = ofType(nl.evs, "model_call")[0]?.payload.request;
-    expect(call1?.catalog?.map((c) => c.key)).toEqual(WORDS.map((w) => `mcp__big__op_${w}`));
+    // the org's other connectors (earlier cases) are in the catalog too: every agent has them
+    expect(call1?.catalog?.map((c) => c.key).filter((k) => k.startsWith("mcp__big__"))).toEqual(
+      WORDS.map((w) => `mcp__big__op_${w}`),
+    );
     const sent1 = call1?.tools?.map((t) => t.key) ?? [];
     expect(sent1).toContain("ToolSearch");
     expect(sent1.filter((k) => k.startsWith("big__"))).toEqual([]);

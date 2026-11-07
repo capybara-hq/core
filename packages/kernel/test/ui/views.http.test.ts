@@ -17,6 +17,7 @@ import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
 import type { UiProbeState } from "../fixtures/plugins/ui-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
@@ -89,10 +90,10 @@ async function createToolAgent(req: Req, orgId: string): Promise<string> {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "plugin", plugin: "ui-probe", name: "probe" },
-        ],
+        ]),
       },
       visibility: "org",
     },

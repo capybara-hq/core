@@ -19,6 +19,7 @@ import { createDb } from "../../src/db/pool.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { MAINTENANCE_QUEUE_NAME, waitTimeoutJobId } from "../../src/runtime/waits.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -213,10 +214,10 @@ describe("M3 第一段双副本验收", () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "connector", connectorId: appJson.id, tools: "all" },
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
-        ],
+        ]),
       },
       visibility: "org",
     });
@@ -247,18 +248,16 @@ describe("M3 第一段双副本验收", () => {
       return { evs, result: ofType(evs, "tool_result").at(-1)?.payload };
     };
 
-    // ---- 1. fake-tools-ui 未启用：不可用提醒 + 调用得到明确错误（Ruling A5）----
+    // ---- 1. fake-tools-ui not enabled in the org: the agent does not have its tools (tools
+    // default-on spec §4), so a call names an unknown tool and nothing is reported each step ----
     await send(0, conv, "plugin__fake-tools-ui__write", ITEMS);
     const t1 = await finish();
     expect(t1.result).toMatchObject({
       toolKey: "plugin__fake-tools-ui__write",
       isError: true,
-      content:
-        'Tool "plugin__fake-tools-ui__write" is unavailable: Plugin fake-tools-ui is not enabled in this organization.',
     });
-    expect(ofType(t1.evs, "reminder").map((e) => e.payload.text)).toEqual([
-      "The following tools are unavailable in this run: plugin__fake-tools-ui__write (Plugin fake-tools-ui is not enabled in this organization)",
-    ]);
+    expect(String(t1.result?.content)).toMatch(/^Unknown tool "plugin__fake-tools-ui__write"/);
+    expect(ofType(t1.evs, "reminder")).toEqual([]);
     expect(ofType(t1.evs, "tool_call_started")).toEqual([]);
 
     // 启用后：默认 allow，直接执行，结果是清单渲染

@@ -9,7 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
-import type { AgentDefinition } from "../agents/definition.js";
+import { type AgentDefinition, builtinDisabled } from "../agents/definition.js";
 import type { EventPayload } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -291,11 +291,10 @@ export class SkillInvoker {
    * sub-agent's effective definition: the shell-injection line only when the sub-agent has
    * `Bash` (batch 3 review m1).
    */
-  async renderTask(a: {
-    orgId: string;
-    conversationId: string;
-    skill: InvocationRecord;
-  }): Promise<{ task: (child: Pick<AgentDefinition, "tools">) => string; warning?: string }> {
+  async renderTask(a: { orgId: string; conversationId: string; skill: InvocationRecord }): Promise<{
+    task: (child: Pick<AgentDefinition, "disabledTools" | "subagentTools">) => string;
+    warning?: string;
+  }> {
     const { skill } = a;
     const found = await findSkillVersion(this.db.db, a, { id: skill.id, source: skill.source });
     if (!found) {
@@ -316,7 +315,7 @@ export class SkillInvoker {
     });
     const inv = invocationOf(found.manifest);
     const others = found.manifest.files.some((f) => f.path !== SKILL_ENTRY_FILE);
-    const task = (child: Pick<AgentDefinition, "tools">) =>
+    const task = (child: Pick<AgentDefinition, "disabledTools" | "subagentTools">) =>
       renderSkillInvocation({
         name: skill.name,
         skillName: skill.name,
@@ -382,8 +381,17 @@ export class SkillInvoker {
   }
 }
 
-const hasBuiltin = (agent: Pick<AgentDefinition, "tools">, name: string): boolean =>
-  (agent.tools ?? []).some((t) => t.kind === "builtin" && t.name === name);
+/**
+ * Does the definition leave builtin `name` on (tools default-on spec §4): not turned off and not
+ * removed by a sub-agent's key filter. Whether it can run now (a sandbox) is not checked.
+ */
+const hasBuiltin = (
+  agent: Pick<AgentDefinition, "disabledTools" | "subagentTools">,
+  name: string,
+): boolean =>
+  !builtinDisabled(agent.disabledTools, name) &&
+  !(agent.subagentTools?.deny ?? []).includes(name) &&
+  (agent.subagentTools?.allow === undefined || agent.subagentTools.allow.includes(name));
 
 /** The skill's own body over the rendered limit: a 400 on `skill` naming the skill. */
 function tooLarge(name: string, render: () => string): void {
