@@ -23,6 +23,7 @@ import { KernelEventsModule } from "../events/kernel-events.js";
 import { GracefulShutdownModule } from "../lifecycle/graceful-shutdown.module.js";
 import { LockModule } from "../lock/lock.module.js";
 import { LoggingModule } from "../logging/logging.module.js";
+import { QueueModule } from "../queue/queue.module.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS, REDIS_SUBSCRIBER } from "../tokens.js";
 
 /** How long the CLI's Redis connection may take before a command fails (a publish only warns). */
@@ -126,7 +127,10 @@ export class KernelCliModule {
         ConfigModule.forRoot(config, opts.env !== undefined ? { env: opts.env } : {}),
         GracefulShutdownModule,
         DatabaseModule.forRoot(),
-        ...(opts.redis === false ? [] : [CliRedisModule, LockModule]),
+        // QueueModule's root gives the queues a command's modules register (the catalog's scope
+        // sync and maintenance queues) the configured Redis; without it BullMQ would connect to
+        // its default 127.0.0.1:6379
+        ...(opts.redis === false ? [] : [CliRedisModule, LockModule, QueueModule.forRoot()]),
         KernelEventsModule,
         ...opts.modules,
       ],
