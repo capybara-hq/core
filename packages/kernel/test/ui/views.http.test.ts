@@ -240,6 +240,8 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      // the effective deployment config (ui-probe declares none)
+      config: {},
       conversationId: convId,
       locale: "zh",
     });
@@ -358,6 +360,7 @@ describe("插件视图接口", () => {
       orgId,
       accountId: expect.any(String),
       role: "member",
+      config: {},
       locale: "en",
     });
     const withConv = await owner({
@@ -404,6 +407,7 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      config: {},
       conversationId: convId,
       locale: "zh",
       actionId: "toast",
@@ -586,6 +590,7 @@ describe("插件视图接口", () => {
       orgId,
       accountId: ownerId,
       role: "owner",
+      config: {},
       conversationId: convId,
       locale: "en",
       card: { callId: "call-1", key: "k1" },

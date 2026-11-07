@@ -35,8 +35,8 @@ export class OrgExtensionSwitch {
 
   /**
    * - `enabled` on an extension of one catalog plugin: that plugin's switch; off without `confirm`
-   *   returns the preview and its hash, with the hash uninstalls; an `all` or builtin plugin (any of
-   *   several source items) -> 409 `plugin.scope_locked`.
+   *   returns the preview and its hash, with the hash uninstalls; a builtin plugin (any of several
+   *   source items) -> 409 `plugin.scope_locked` (an `all` one may go off, layering spec §4).
    * - A required bootstrap plugin, a config-declared extension and one sourced from several items
    *   keep the direct write.
    * - `config` is always written directly, after the switch.
@@ -56,7 +56,7 @@ export class OrgExtensionSwitch {
     if (plan.kind === "locked") {
       throw new ApiError(
         "plugin.scope_locked",
-        "This plugin is on for every organization and cannot be switched off here",
+        "This plugin is built in: it is on for every organization and cannot be switched off here",
       );
     }
     if (plan.kind === "direct") {

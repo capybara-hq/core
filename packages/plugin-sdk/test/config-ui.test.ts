@@ -7,6 +7,7 @@ import {
   isSecret,
   type JsonSchema,
   type LocalizedName,
+  orgAccess,
   parsePluginManifest,
   type StaticExtensionManifest,
   secret,
@@ -575,5 +576,48 @@ describe("plugin.json extension.configSchemas", () => {
 
   it("rejects unknown keys", () => {
     expect(parsePluginManifest(manifest({ channel: {} }))).toHaveProperty("errors");
+  });
+});
+
+describe("x-org", () => {
+  const lv = (schema: z.ZodTypeAny, level: "deployment" | "org" | "connection" = "deployment") =>
+    problems(schema, level);
+
+  it("configJsonSchema emits x-org on the property and removes org", () => {
+    const js = configJsonSchema(
+      z.object({ k: orgAccess(secret(z.string()), "override"), h: z.string() }),
+    ) as unknown as Props;
+    expect(js.properties.k?.["x-org"]).toBe("override");
+    expect(js.properties.h?.["x-org"]).toBeUndefined();
+    expect(nodeKeys(js)).not.toContain("org");
+  });
+
+  it("accepts a valid deployment schema", () => {
+    expect(
+      lv(z.object({ a: orgAccess(z.string(), "override"), b: orgAccess(z.string(), "readonly") })),
+    ).toEqual([]);
+  });
+
+  it("rejects readonly on a secret field", () => {
+    const p = lv(z.object({ k: orgAccess(secret(z.string()), "readonly") }));
+    expect(p).toHaveLength(1);
+    expect(p[0]?.path).toBe("k");
+  });
+
+  it("rejects x-org on a nested node", () => {
+    const p = lv(z.object({ o: z.object({ n: orgAccess(z.string(), "override") }) }));
+    expect(p.map((x) => x.path)).toEqual(["o.n"]);
+  });
+
+  it("rejects an unknown value", () => {
+    const p = lv(z.object({ k: z.string().meta({ org: "bogus" }) }));
+    expect(p).toHaveLength(1);
+    expect(p[0]?.path).toBe("k");
+  });
+
+  it("rejects x-org at the org and connection levels", () => {
+    const schema = z.object({ k: orgAccess(z.string(), "override") });
+    expect(lv(schema, "org")).toHaveLength(1);
+    expect(lv(schema, "connection")).toHaveLength(1);
   });
 });

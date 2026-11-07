@@ -105,6 +105,7 @@ describe("extension tools over HTTP", () => {
             "status is pending, in_progress or completed. Test fixture only.",
           annotations: {},
           defaultPolicy: "allow",
+          switchedOff: false,
         },
       ],
     });

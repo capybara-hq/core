@@ -10,6 +10,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { LockService } from "../infra/lock/lock.service.js";
+import { type EffectiveConfig, NEEDS_CONFIG_REASON } from "./effective-config.js";
 import { ExtensionUnloadedError, type InflightTracker } from "./inflight.js";
 
 /** Default of `hooks.timeoutMs` (used when a host is built without kernel config, e.g. in tests). */
@@ -44,8 +45,8 @@ export type HookOutcome =
       cause: "deny" | "hook_error" | "timeout";
       detail?: string;
       /**
-       * R10: the hooks could not run at all (organization lookup or payload copy failed); `plugin` is
-       * only the first policy plugin on the mount, not the cause.
+       * R10: the hooks could not run at all (organization lookup, config read or payload copy
+       * failed); `plugin` is only the first policy plugin on the mount, not the cause.
        */
       preflight?: true;
       /**
@@ -53,7 +54,24 @@ export type HookOutcome =
        * approved, but is not loaded on this replica: the call fails closed without running any hook.
        */
       notLoaded?: true;
+      /**
+       * Layering spec A §6: `plugin` has a policy hook on this mount but its effective config is not
+       * valid in the organization, so it behaves as if not loaded: the call fails closed without
+       * running any policy hook.
+       */
+      needsConfig?: true;
     };
+
+/**
+ * Thrown by a `usage.report` handler wrapper (see {@link HookRegistry.handlers}) instead of calling
+ * a handler whose extension's effective config is not valid in the payload's organization.
+ */
+export class HookNeedsConfigError extends Error {
+  constructor(readonly plugin: string) {
+    super(`extension ${plugin} ${NEEDS_CONFIG_REASON}`);
+    this.name = "HookNeedsConfigError";
+  }
+}
 
 /** A hook a plugin instance registered through `ctx.hooks.on` (kept on the instance, like tools). */
 export interface RegisteredHook {
@@ -183,7 +201,12 @@ const clipDetail = (s: string): string => clipText(s, HOOK_DETAIL_MAX_CHARS);
  *    If a plugin the organization enabled is expected to run policy hooks on the mount (deployment
  *    state, `expectedPolicy`) but is not loaded on this replica, deny with a generic reason
  *    (`hook_error`, `notLoaded`) without running any policy hook (M-1: fail closed). Observe hooks
- *    of plugins that are not loaded are simply missing.
+ *    of plugins that are not loaded are simply missing. Then each enabled plugin with a hook on the
+ *    mount gets its effective config for the organization (layering spec A §6; one read per plugin
+ *    and call, failing like the lookup above). A plugin whose config is not valid behaves as one
+ *    that is not loaded: with a policy hook on the mount the call is denied (`hook_error`,
+ *    `needsConfig`) without running any policy hook, and its observe hooks are skipped. Every
+ *    hook is called with `{ config }` as its third argument.
  * 3. Policy hooks run serially by plugin name (registration order within a plugin), each limited
  *    by `hooks.timeoutMs` (read on every run, hot). `{ deny }`, an error or a timeout stops the chain
  *    and denies (`deny` / `hook_error` / `timeout`). A policy hook cut off by its instance being
@@ -216,6 +239,12 @@ export class HookRegistry {
        */
       expectedPolicy?(mount: PolicyHook): readonly string[];
       enabledPlugins(orgId: string): Promise<Set<string>>;
+      /**
+       * The effective deployment config of a plugin for an organization (`EffectiveConfigs.get`):
+       * passed to every hook call, and no hook of the plugin runs for the organization when it is
+       * not valid.
+       */
+      effectiveConfig(orgId: string, plugin: string): Promise<EffectiveConfig>;
       /** The warn-once markers (`lease`: set unless present, with a TTL). */
       locks: Pick<LockService, "lease">;
       config: () => { hooks: Pick<KernelConfig["hooks"], "timeoutMs"> };
@@ -249,14 +278,18 @@ export class HookRegistry {
 
   /**
    * `usage.report` handlers by plugin name (delivered by the usage queue, not by {@link run}); each
-   * call runs through the instance's `inflight.run`.
+   * call runs through the instance's `inflight.run` with the plugin's effective config for the
+   * payload's organization, and throws {@link HookNeedsConfigError} without calling the handler
+   * when that config is not valid (layering spec A §6).
    */
   handlers(mount: "usage.report"): { plugin: string; handler: HookHandler<"usage.report"> }[] {
     return this.entries(mount).map(({ src, hook }) => ({
       plugin: src.name,
       handler: (payload, signal) =>
         src.inflight.run(signal, async (s) => {
-          await hook.handler(payload, s);
+          const effective = await this.d.effectiveConfig(payload.orgId, src.name);
+          if (!effective.ok) throw new HookNeedsConfigError(src.name);
+          await hook.handler(payload, s, { config: effective.config });
         }),
     }));
   }
@@ -274,6 +307,8 @@ export class HookRegistry {
     let enabled: Set<string>;
     let frozen: HookPayloads[K];
     let missing: string[];
+    /** Effective config per enabled plugin with a hook here; null = not valid in the org. */
+    const configs = new Map<string, { config: unknown } | null>();
     try {
       const abort = abortOf(signal);
       try {
@@ -291,6 +326,18 @@ export class HookRegistry {
         return this.notLoadedDenial(mount, missing);
       }
       if (!all.some((e) => enabled.has(e.src.name))) return { allowed: true };
+      for (const name of new Set(all.map((e) => e.src.name).filter((n) => enabled.has(n)))) {
+        const abortCfg = abortOf(signal);
+        try {
+          const e = await Promise.race([
+            this.d.effectiveConfig(payload.orgId, name),
+            abortCfg.aborted,
+          ]);
+          configs.set(name, e.ok ? { config: e.config } : null);
+        } finally {
+          abortCfg.cleanup();
+        }
+      }
       // Cost: one clone + deep-freeze per call. The model.request payload carries no media bytes
       // (hookRequestOf, I-3), so it stays small. Freezing in place would freeze the logged object.
       // The clone is skipped when has() is false or no enabled plugin has a hook on this mount.
@@ -303,7 +350,7 @@ export class HookRegistry {
         // R10: no plugin ran; the named plugin is only the first policy plugin on this mount, so
         // the detail says so instead of blaming it
         const detail = clipDetail(
-          `Hooks could not run (organization lookup or payload copy failed) before any plugin was called; ${firstPolicy} is named only as the first policy plugin on ${mount}: ${raw}`,
+          `Hooks could not run (organization lookup, config read or payload copy failed) before any plugin was called; ${firstPolicy} is named only as the first policy plugin on ${mount}: ${raw}`,
         );
         this.d.log.warn("plugin hooks could not run; denying the call", {
           mount,
@@ -324,10 +371,22 @@ export class HookRegistry {
       }
       return { allowed: true };
     }
-    const active = all.filter((e) => enabled.has(e.src.name));
+    const active = all.filter((e) => enabled.has(e.src.name) && configs.get(e.src.name));
     const timeoutMs = this.d.config().hooks.timeoutMs;
+    // spec A §6: a policy plugin without a valid config in the org behaves as one not loaded
+    const needy = [
+      ...new Set(
+        all
+          .filter((e) => e.hook.mode === "policy" && configs.get(e.src.name) === null)
+          .map((e) => e.src.name),
+      ),
+    ];
     let outcome: HookOutcome =
-      missing.length > 0 ? this.notLoadedDenial(mount, missing) : { allowed: true };
+      missing.length > 0
+        ? this.notLoadedDenial(mount, missing)
+        : needy.length > 0
+          ? this.needsConfigDenial(mount, needy)
+          : { allowed: true };
     // policy hooks grouped per plugin (entries are sorted, so groups are contiguous)
     const groups: { src: HookSource; hooks: RegisteredHook[] }[] = [];
     for (const e of active) {
@@ -337,7 +396,8 @@ export class HookRegistry {
       else groups.push({ src: e.src, hooks: [e.hook] });
     }
     for (const g of outcome.allowed ? groups : []) {
-      const denied = await this.runPolicies(mount, g.src, g.hooks, frozen, signal, timeoutMs);
+      const call = configs.get(g.src.name) as { config: unknown };
+      const denied = await this.runPolicies(mount, g.src, g.hooks, frozen, call, signal, timeoutMs);
       if (denied) {
         outcome = denied;
         break;
@@ -346,8 +406,10 @@ export class HookRegistry {
     // observe hooks are resolved again now: if the plugin was upgraded while the policy hooks ran,
     // the current generation observes (the retiring one no longer accepts calls)
     for (const e of this.entries(mount)) {
-      if (e.hook.mode === "observe" && enabled.has(e.src.name)) {
-        this.dispatchObserve(mount, e.src, e.hook, frozen, signal);
+      const call = configs.get(e.src.name);
+      // no config read for it (not valid in the org, or a plugin that appeared meanwhile): skipped
+      if (e.hook.mode === "observe" && enabled.has(e.src.name) && call) {
+        this.dispatchObserve(mount, e.src, e.hook, frozen, call, signal);
       }
     }
     return outcome;
@@ -380,6 +442,22 @@ export class HookRegistry {
     };
   }
 
+  /**
+   * The layering spec A §6 denial: `needy` (sorted) are enabled policy plugins whose effective
+   * config is not valid in the organization. Generic model-visible reason, as for M-1.
+   */
+  private needsConfigDenial(mount: AvailableHook, needy: string[]): HookOutcome {
+    const plugin = needy[0] as string;
+    return {
+      allowed: false,
+      plugin,
+      reason: unavailableReason(plugin),
+      cause: "hook_error",
+      detail: `extension ${needy.join(", ")} declares a policy hook on ${mount} but ${NEEDS_CONFIG_REASON}; the call was denied without running any policy hook`,
+      needsConfig: true,
+    };
+  }
+
   /** Active entries of a mount point, sorted by plugin name (stable: registration order within). */
   private entries(mount: AvailableHook): { src: HookSource; hook: RegisteredHook }[] {
     return this.d
@@ -394,6 +472,7 @@ export class HookRegistry {
     src: HookSource,
     hooks: RegisteredHook[],
     payload: unknown,
+    call: { config: unknown },
     signal: AbortSignal,
     timeoutMs: number,
     rerun = false,
@@ -403,14 +482,14 @@ export class HookRegistry {
       if (signal.aborted) throw signal.reason;
       let r: CallResult;
       try {
-        r = await src.inflight.run(signal, (s) => this.call(hook, payload, s, timeoutMs));
+        r = await src.inflight.run(signal, (s) => this.call(hook, payload, call, s, timeoutMs));
       } catch (err) {
         if (signal.aborted) throw signal.reason;
         if (err instanceof ExtensionUnloadedError) {
           const cur = this.d.current(plugin);
           if (!rerun && cur && cur !== src) {
             const again = cur.hooks.filter((h) => h.mount === mount && h.mode === "policy");
-            return this.runPolicies(mount, cur, again, payload, signal, timeoutMs, true);
+            return this.runPolicies(mount, cur, again, payload, call, signal, timeoutMs, true);
           }
         }
         r = { kind: "error", message: errMsg(err) };
@@ -452,6 +531,7 @@ export class HookRegistry {
     src: HookSource,
     hook: RegisteredHook,
     payload: unknown,
+    call: { config: unknown },
     signal: AbortSignal,
   ): void {
     const plugin = src.name;
@@ -470,7 +550,9 @@ export class HookRegistry {
     this.observing.set(plugin, n + 1);
     void (async () => {
       try {
-        const r = await src.inflight.run(signal, (s) => this.call(hook, payload, s, timeoutMs));
+        const r = await src.inflight.run(signal, (s) =>
+          this.call(hook, payload, call, s, timeoutMs),
+        );
         if (r.kind === "error" || r.kind === "timeout") {
           await this.warnOnce(
             plugin,
@@ -498,6 +580,7 @@ export class HookRegistry {
   private async call(
     hook: RegisteredHook,
     payload: unknown,
+    call: { config: unknown },
     s: AbortSignal,
     timeoutMs: number,
   ): Promise<CallResult> {
@@ -512,7 +595,9 @@ export class HookRegistry {
         timer = setTimeout(() => resolve("timeout"), timeoutMs);
       });
       const handled = Promise.resolve()
-        .then(() => hook.handler(payload as HookPayloads[AvailableHook], ac.signal))
+        .then(() =>
+          hook.handler(payload as HookPayloads[AvailableHook], ac.signal, { config: call.config }),
+        )
         .then(
           (v) => ({ v }),
           (err: unknown) => ({ err }),

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { checkConfigForms } from "./config-forms.js";
 import { checkDeps } from "./deps.js";
 import { checkMigrations } from "./migrations.js";
+import { checkOrgOverride } from "./org-override.js";
 import { checkPluginPack } from "./plugin-pack.js";
 import { checkPluginPermissions } from "./plugin-permissions.js";
 import { checkPluginState } from "./plugin-state.js";
@@ -59,6 +60,7 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
     { name: "Extension permissions", run: () => checkPluginPermissions(plugins) },
     { name: "Plugin pack", run: () => checkPluginPack(plugins) },
     { name: "Config forms", run: () => checkConfigForms(plugins) },
+    { name: "Org override", run: () => checkOrgOverride(plugins) },
     {
       name: "Tool design",
       run: () => checkToolDesign([...(scope.toolDesignDirs ?? []), ...plugins]),

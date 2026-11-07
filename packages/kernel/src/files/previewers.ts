@@ -12,6 +12,7 @@ import { sql } from "kysely";
 import { ConversationFiles } from "../conversations/files.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { ExtensionHost } from "../extensions/host.js";
 import type { InflightTracker } from "../extensions/inflight.js";
 import { audit } from "../identity/audit.js";
@@ -51,6 +52,8 @@ interface PreviewerRegistryDeps {
   enabledPlugins(orgId: string): Promise<Set<string>>;
   files: Pick<ConversationFiles, "file">;
   storage: Pick<StorageService, "kernel">;
+  /** The effective deployment config of an extension for an org (layering spec A §6). */
+  effective: Pick<EffectiveConfigs, "get">;
   log: Pick<Logger, "warn">;
 }
 
@@ -115,6 +118,7 @@ export class PreviewerRegistry {
     @Inject(ExtensionHost) host: Pick<ExtensionHost, "list" | "enabledPlugins">,
     @Inject(ConversationFiles) files: Pick<ConversationFiles, "file">,
     @Inject(StorageService) storage: Pick<StorageService, "kernel">,
+    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Optional()
@@ -129,6 +133,7 @@ export class PreviewerRegistry {
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       files,
       storage,
+      effective,
       log,
     };
   }
@@ -258,13 +263,37 @@ export class PreviewerRegistry {
     return (await this.accepting(orgId, file)).map(item);
   }
 
+  /**
+   * The org's enabled previewers that take the file, each with its extension's effective config
+   * for the org. An extension whose effective config is not valid in the org (or cannot be read)
+   * previews nothing there (layering spec A §6): its previewers are left out, so the next one or a
+   * built-in takes the file.
+   */
   private async accepting(
     orgId: string,
     file: { name: string; contentType: string; size: number },
-  ): Promise<Loaded[]> {
-    return (await this.ordered(orgId)).filter(
+  ): Promise<(Loaded & { config: unknown })[]> {
+    const taking = (await this.ordered(orgId)).filter(
       (l) => !l.disabled && previewerAccepts(l.previewer, file),
     );
+    const configs = new Map<string, { config: unknown } | null>();
+    for (const plugin of new Set(taking.map((l) => l.plugin))) {
+      try {
+        const e = await this.d.effective.get(orgId, plugin);
+        configs.set(plugin, e.ok ? { config: e.config } : null);
+      } catch (err) {
+        this.d.log.warn("file previewer left out: cannot read its effective config", {
+          orgId,
+          plugin,
+          err,
+        });
+        configs.set(plugin, null);
+      }
+    }
+    return taking.flatMap((l) => {
+      const c = configs.get(l.plugin);
+      return c ? [{ ...l, config: c.config }] : [];
+    });
   }
 
   /**
@@ -312,6 +341,7 @@ export class PreviewerRegistry {
                 accountId: t.accountId,
                 conversationId: t.conversationId,
                 locale: t.locale,
+                config: l.config,
                 signal: s,
                 file: {
                   id: file.id,

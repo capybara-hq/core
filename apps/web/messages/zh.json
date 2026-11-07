@@ -209,7 +209,11 @@
       "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
       "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
       "package_too_large": "扩展包超过大小上限。",
-      "unavailable": "扩展当前不可用。"
+      "unavailable": "扩展当前不可用。",
+      "field_not_overridable": "这个字段不能由组织设置。",
+      "no_org_override": "本组织正在跟随平台的配置，没有自己的配置。",
+      "tool_not_found": "这个扩展没有这个工具",
+      "needs_config": "这个扩展需要先在本组织完成配置"
     },
     "bootstrap": {
       "download_failed": "无法从 npm registry 下载部署锁定的某个引导插件。请检查 registry（packages.npmRegistry），或把包放进引导目录。",
@@ -454,6 +458,7 @@
       "noExtensionTools": "本组织启用的扩展没有提供工具。",
       "extensionToolsUnreadable": "暂时读不到扩展工具列表，刷新页面重试。",
       "extensionToolUnavailable": "不可用：{reason}",
+      "extensionToolOffInOrg": "已在本组织关闭",
       "extensionNotEnabled": "扩展 {extension} 没有在本组织启用，或已卸载。",
       "extensionToolGone": "扩展 {extension} 不再提供这个工具。",
       "policiesLabel": "策略",
@@ -2011,7 +2016,7 @@
     "jsonHint": "填写 JSON 值。",
     "linesHint": "每行一项。",
     "hot": "即时生效",
-    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} other {只读}}",
+    "readonly": "{source, select, env {来自环境变量（只读）} file {来自配置文件（只读）} nacos {来自 Nacos（只读）} platform {平台配置} other {只读}}",
     "tristate": {
       "default": "默认",
       "on": "开",
@@ -2042,6 +2047,17 @@
       "maxItems": "最多 {limit} 项",
       "addOne": "至少添加一项",
       "invalid": "格式不正确"
+    },
+    "platformSet": "平台配置",
+    "secretState": {
+      "platform": "平台已配置",
+      "own": "本组织已配置",
+      "unset": "未配置"
+    },
+    "level": {
+      "hidden": "组织不可见",
+      "readonly": "组织只读",
+      "override": "组织可覆盖"
     }
   },
   "channels": {
@@ -2280,7 +2296,47 @@
       "provides": "扩展点"
     },
     "missingRequired": "缺少必填项：{fields}",
-    "listSep": "、"
+    "listSep": "、",
+    "toolSwitches": {
+      "title": "工具",
+      "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
+      "loadFailed": "无法读取工具。",
+      "retry": "重试",
+      "off": "已在本组织关闭",
+      "offTitle": "关闭 {tool}？",
+      "offAgents": "以下智能体正在使用这个工具，关闭后它们将无法使用：",
+      "offNoAgents": "没有智能体在使用这个工具。",
+      "offConfirm": "确认关闭",
+      "offCancel": "取消",
+      "stale": "使用这个工具的智能体在你确认前有变化，请重新确认。"
+    },
+    "overrides": {
+      "following": "跟随平台",
+      "followingHint": "在这里的修改只对本组织生效，不影响其他组织。",
+      "ownConfig": "本组织使用自己的配置",
+      "compare": "与平台对比",
+      "usePlatform": "使用平台配置",
+      "resetBody": "将删除本组织自己的配置（包括密钥），之后跟随平台的配置。",
+      "firstEdit": "修改后本组织将使用自己的配置，需要填写自己的密钥。",
+      "take": "采用平台值",
+      "platformConfigured": "平台已配置",
+      "orgConfigured": "本组织已配置",
+      "unconfigured": "未配置",
+      "compareHint": "逐项列出与平台不同的取值；密钥只显示是否已配置，不做比较。",
+      "same": "与平台的取值没有差别。",
+      "orgValue": "本组织：{value}",
+      "platformValue": "平台：{value}",
+      "title": "配置",
+      "save": "保存",
+      "saveLabel": "保存本组织的配置",
+      "cancel": "取消",
+      "saved": "已保存",
+      "taken": "已采用平台值",
+      "resetDone": "已改为跟随平台",
+      "saveInvalid": "配置不正确，请检查标出的字段。",
+      "loadFailed": "无法读取配置。",
+      "retry": "重试"
+    }
   },
   "identities": {
     "title": "IM 身份",
@@ -3154,7 +3210,8 @@
         "converging": "收敛中",
         "failed": "失败",
         "dependency": "依赖缺失",
-        "legacy_format": "需要重新打包"
+        "legacy_format": "需要重新打包",
+        "runningOrgsConfigure": "运行中 · 组织需各自配置（{count}）"
       },
       "replicas": {
         "consistent": "副本一致 {ok}/{n}",
@@ -3297,6 +3354,18 @@
         "next": "下一步",
         "back": "上一步",
         "cancel": "取消"
+      },
+      "orgCopies": {
+        "title": "组织自己的配置",
+        "hint": "这些组织不再跟随平台的配置。平台不能修改或删除它们；由各组织的管理员处理。",
+        "empty": "没有组织使用自己的配置。",
+        "since": "创建于",
+        "differing": "与平台不同：{fields}",
+        "noDiff": "取值与平台相同",
+        "set": "{path} 已配置",
+        "unset": "{path} 未配置",
+        "loadFailed": "无法读取组织的配置。",
+        "retry": "重试"
       }
     }
   },
@@ -3392,7 +3461,7 @@
   },
   "catalog": {
     "scope": {
-      "all": "全部组织启用",
+      "all": "全部组织",
       "optional": "组织自选",
       "named": "指定组织",
       "disabled": "已停用"
@@ -3519,7 +3588,7 @@
         },
         "componentsEmpty": "这个版本没有组件。",
         "orgsHint": {
-          "all": "全部组织启用：每个组织都在用，组织管理员不能关掉。",
+          "all": "全部组织：每个组织默认启用；组织管理员可以在本组织关掉。",
           "optional": "组织自选：{n} 个组织已启用。",
           "named": "指定组织：只有下面的组织能用。"
         },
@@ -3819,6 +3888,7 @@
       "meta": {
         "orgsUsing": "{n} 个组织在用",
         "named": "指定：{orgs}",
+        "allOff": "全部组织 · {n} 个组织已关闭",
         "components": {
           "extension": "{n} 个扩展",
           "skills": "{n} 个技能",
@@ -3838,7 +3908,7 @@
         "title": "设置 {name} 的范围",
         "scopeLabel": "范围",
         "hints": {
-          "all": "每个组织都启用，包括以后新建的；组织管理员不能关掉。",
+          "all": "每个组织默认启用，包括以后新建的；组织管理员可以在本组织关掉。",
           "optional": "默认不启用，由各组织管理员自己打开。",
           "named": "只在选中的组织里启用。"
         },
@@ -4300,6 +4370,7 @@
       "off": "未启用",
       "needs_config": "需要配置",
       "platform": "已启用 · 平台统一",
+      "platformDefault": "平台默认启用",
       "not_offered": "未开放，可申请",
       "requested": "已申请，等待处理",
       "unavailable": "平台已停用",
@@ -4485,7 +4556,7 @@
       "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。",
       "pluginStoppedNote": "它的插件已停用或删除，所以它在所有组织都不可用。",
       "orgsHint": {
-        "all": "全部组织启用：每个组织都在用，组织管理员不能关掉。",
+        "all": "全部组织：每个组织默认启用；组织管理员可以在本组织关掉。",
         "optional": "组织自选：{n} 个组织已启用。",
         "named": "指定组织：只有下面的组织能用。"
       },
@@ -4525,6 +4596,7 @@
       "on": "已启用",
       "off": "未启用",
       "platform": "已启用 · 平台统一",
+      "platformDefault": "平台默认启用",
       "pluginOff": "插件未启用"
     },
     "origin": {

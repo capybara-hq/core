@@ -16,6 +16,7 @@ import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
 import { pluginDisplayNames } from "./display-names.js";
 import { isLegacyBuiltinKey, LEGACY_BUILTINS, type LegacyBuiltin } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
+import { OrgToolSwitches } from "./org-tool-switches.js";
 import { policyFromAnnotations, ToolRegistry } from "./registry.js";
 
 /**
@@ -232,6 +233,11 @@ export interface ExtensionToolOffer {
   annotations: ToolAnnotations;
   /** The tool's default policy: its `defaultPolicy`, else derived from the annotations. */
   defaultPolicy: "allow" | "ask";
+  /**
+   * The org turned this tool off (layering spec A §7): still listed, so the form shows it as
+   * unavailable in the agents that selected it.
+   */
+  switchedOff: boolean;
 }
 
 /** One extension of {@link OrgExtensionTools} with its tools, in registration order. */
@@ -246,7 +252,8 @@ export interface ExtensionToolsOffer {
  * `GET /orgs/:orgId/tools/extensions`: the tools an agent of this org can reference by
  * `{kind:"plugin"}` and get at run time, grouped by extension: the extensions loaded on this
  * replica and enabled in the org (`enabled.ts`, through the host), each with the tools it
- * registered whose key is valid (`ToolRegistry.forAgent` reports the others unavailable).
+ * registered whose key is valid (`ToolRegistry.forAgent` reports the others unavailable); a tool
+ * the org turned off is listed with `switchedOff`.
  */
 @Injectable()
 export class OrgExtensionTools {
@@ -254,10 +261,14 @@ export class OrgExtensionTools {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ToolRegistry)
     private readonly registry: Pick<ToolRegistry, "extensionToolSpecs" | "enabledExtensions">,
+    @Inject(OrgToolSwitches) private readonly switches: Pick<OrgToolSwitches, "offKeys">,
   ) {}
 
   async list(orgId: string): Promise<ExtensionToolsOffer[]> {
-    const enabled = await this.registry.enabledExtensions(orgId);
+    const [enabled, off] = await Promise.all([
+      this.registry.enabledExtensions(orgId),
+      this.switches.offKeys(orgId),
+    ]);
     const groups = new Map<string, ExtensionToolOffer[]>();
     for (const t of this.registry.extensionToolSpecs()) {
       if (!enabled.has(t.plugin)) continue;
@@ -272,6 +283,7 @@ export class OrgExtensionTools {
         description: firstLine(t.spec.description),
         annotations: { ...(t.spec.annotations ?? {}) },
         defaultPolicy: t.spec.defaultPolicy ?? policyFromAnnotations(t.spec.annotations),
+        switchedOff: off.has(key),
       });
       groups.set(t.plugin, tools);
     }

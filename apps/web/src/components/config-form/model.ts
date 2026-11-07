@@ -201,6 +201,18 @@ export interface FieldMeta {
   secretKeys?: string[];
   /** Saving applies at once (no reload). */
   hot?: boolean;
+  /**
+   * What orgs may do with the field (the platform form's level tag): `hidden` (orgs never see it),
+   * `readonly` or `override`.
+   */
+  level?: "hidden" | "readonly" | "override";
+  /**
+   * The field shows the platform's value (an org form: a read-only field, or an overridable one
+   * while the org follows the platform), labelled as set by the platform.
+   */
+  platform?: { value?: unknown; set?: boolean };
+  /** An org form's secret: the platform's, this org's own, or not configured. Never a value. */
+  secretState?: "platform" | "own" | "unset";
 }
 
 type Obj = Record<string, unknown>;

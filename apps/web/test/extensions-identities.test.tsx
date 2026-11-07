@@ -505,6 +505,7 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
   it("still has dependents (extension.has_dependents): lists them and offers a forced disable", async () => {
     const calls = api({
       [`GET ${BASE}/extensions`]: () => json(200, { extensions: [CORE] }),
+      [`GET ${BASE}/extensions/core-dir/tools`]: () => json(200, { tools: [] }),
       [`PUT ${BASE}/extensions/core-dir`]: (c) =>
         (bodyOf(c) as { force?: boolean }).force
           ? json(200, { extension: { ...CORE, enabled: false } })

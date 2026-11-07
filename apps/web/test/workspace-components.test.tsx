@@ -211,6 +211,41 @@ describe("/skills: own and platform skills with their org state", () => {
     expect(within(await rowOf("notes")).getByText(C.state.on)).toBeTruthy();
   });
 
+  it("a platform-default skill reads 平台默认启用 with a working switch; a builtin one stays 平台统一", async () => {
+    const routes = skillRoutes({
+      [`GET ${ORG}/skills`]: () =>
+        json(200, {
+          skills: [
+            ...LIBRARY,
+            skill("p5", "ride", { origin: "platform", plugin: "docs", linkedIds: [] }),
+          ],
+        }),
+      [`GET ${ORG}/components?kind=skill`]: () =>
+        json(200, {
+          components: [
+            ...OFFERED,
+            component("p5", "ride", { on: true, switch: null, platformDefault: true }),
+          ],
+        }),
+      [`PUT ${ORG}/components/skill/p5/switch`]: () =>
+        json(200, { preview: { agents: [], connectorsKept: 0 }, confirm: "h5" }),
+    });
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/skills", routes);
+    const ride = await rowOf("ride");
+    expect(within(ride).getByText(en.orgComponents.state.platformDefault)).toBeTruthy();
+    expect(within(await rowOf("web")).getByText(en.orgComponents.state.platform)).toBeTruthy();
+    // the org may turn it off: 停用 is in the row's menu and sends the switch
+    const user = userEvent.setup();
+    await user.click(within(ride).getByRole("button", { name: /More actions|更多操作/ }));
+    await user.click(await screen.findByRole("menuitem", { name: C.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: C.switchOff.confirm }));
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.method === "PUT").map(bodyOf)[0]).toEqual({ enabled: false }),
+    );
+  });
+
   it("启用 shows its pending state and cannot be pressed again until the switch answers", async () => {
     let answer: () => void = () => {};
     const held = new Promise<void>((r) => {

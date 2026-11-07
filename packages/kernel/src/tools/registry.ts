@@ -12,6 +12,7 @@ import { connectorToolKey, extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { ToolView } from "../conversations/events.js";
+import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -38,6 +39,7 @@ import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
 import { legacyKeySaveText } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
+import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
 export { canonicalJson } from "./canonical-json.js";
@@ -254,9 +256,11 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  *
  * Availability:
  * - builtin: in `builtins`;
- * - extension tools: the extension is loaded and registered the tool, and this org enabled the
+ * - extension tools: the extension is loaded and registered the tool, this org enabled the
  *   extension (`extension_org_configs.enabled`, spec 2.2 "installed at deployment level, enabled at
- *   org level"; required bootstrap plugins are enabled in every org, `enabled.ts`);
+ *   org level"; required bootstrap plugins are enabled in every org, `enabled.ts`), and the
+ *   extension's effective config for the org is valid (layering spec A §6) and the org did not
+ *   turn the tool off (§7);
  * - connector tools: the connector belongs to this org, is not deleted or disabled, the connector is
  *   installed, the tool status is `enabled` and the key is valid.
  *   `tools: "all"` takes only enabled tools; disabled / pending-review ones count as deliberately
@@ -273,6 +277,13 @@ export class ToolRegistry {
     /** The installed connectors (`connector@1`, from the extension registry). */
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "list">,
     @Inject(BuiltinTools) private readonly builtinTools: Pick<BuiltinTools, "list">,
+    /**
+     * The extensions' effective config per org (layering spec A §6): an extension tool is
+     * unavailable in an org whose effective config is not valid.
+     */
+    @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
+    /** The org's switches of single extension tools (layering spec A §7). */
+    @Inject(OrgToolSwitches) private readonly switches: Pick<OrgToolSwitches, "offKeys">,
     /**
      * `tools.searchThreshold*` and the sub-agent limits. Absent (some tests): `ToolSearch` is never
      * offered and the sub-agent limits are the schema defaults.
@@ -537,14 +548,24 @@ export class ToolRegistry {
       }
     };
 
-    const enabledPlugins = def.tools.some((r) => r.kind === "plugin")
-      ? await this.enabledPlugins(orgId)
-      : new Set<string>();
+    const [enabledPlugins, offKeys] = def.tools.some((r) => r.kind === "plugin")
+      ? await Promise.all([this.enabledPlugins(orgId), this.switches.offKeys(orgId)])
+      : [new Set<string>(), new Set<string>()];
     const connectorIds = [
       ...new Set(def.tools.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : []))),
     ];
     const apps = await this.loadConnectors(orgId, connectorIds);
     const pluginTools = this.host.tools();
+    // one effective config read per extension and resolution, however many of its tools are named
+    const configured = new Map<string, Promise<boolean>>();
+    const configuredIn = (plugin: string): Promise<boolean> => {
+      let ok = configured.get(plugin);
+      if (!ok) {
+        ok = this.effective.get(orgId, plugin).then((e) => e.ok);
+        configured.set(plugin, ok);
+      }
+      return ok;
+    };
 
     for (const ref of def.tools) {
       if (ref.kind === "builtin") {
@@ -589,6 +610,15 @@ export class ToolRegistry {
             ref: key,
             reason: `Plugin ${ref.plugin} is not enabled in this organization`,
           });
+          continue;
+        }
+        // the pipeline refuses such calls too (a resumed step), this keeps them from the model
+        if (offKeys.has(key)) {
+          unavailable.push({ ref: key, reason: toolTurnedOffReason(key) });
+          continue;
+        }
+        if (!(await configuredIn(ref.plugin))) {
+          unavailable.push({ ref: key, reason: `Plugin ${ref.plugin} ${NEEDS_CONFIG_REASON}` });
           continue;
         }
         const issue = toolKeyIssue(key);

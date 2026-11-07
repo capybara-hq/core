@@ -170,7 +170,7 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       header: t("columns.status"),
       cell: (p) => (
         <Stack direction="row" gap={8} align="center">
-          <ExtensionStatusMark status={p.status} />
+          <ExtensionStatusMark status={p.status} orgsNeedingConfig={p.orgsNeedingConfig} />
           {p.sensitive && <Badge tone="warn">{t("sensitive")}</Badge>}
         </Stack>
       ),
@@ -358,6 +358,7 @@ function AdminExtensionSheet({
     drainSeconds,
     pending: plugin.status === "pending_config",
     enabled: plugin.configurable,
+    sheet: true,
     onChanged: () => {
       for (const queryKey of [adminExtensionsQuery().queryKey, ...extensionChangeKeys(orgId)])
         void qc.invalidateQueries({ queryKey });
@@ -386,13 +387,19 @@ function AdminExtensionSheet({
             {config.form}
           </Subsection>
         )}
+        {config.copies}
         <AdminExtensionOverview
           plugin={plugin}
           drainSeconds={drainSeconds}
           moving={moving}
           onUninstalled={onClose}
           place="sheet"
-          leadLine={<ExtensionStatusMark status={plugin.status} />}
+          leadLine={
+            <ExtensionStatusMark
+              status={plugin.status}
+              orgsNeedingConfig={plugin.orgsNeedingConfig}
+            />
+          }
           leadFacts={[
             {
               k: te("capabilitiesTitle"),

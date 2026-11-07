@@ -704,6 +704,8 @@ export async function assertOrgsExist(db: KernelSchemaDb, orgs: readonly string[
 export interface ItemScopeFacts {
   scopeOrgs: string[];
   enabledOrgs: number;
+  /** Orgs whose admin switched an `all` item off (0 for other scopes and builtin items). */
+  offCount: number;
   pending: boolean;
   /** The digest `confirm` takes (null unless pending and readable). */
   permissionsHash: string | null;
@@ -713,7 +715,14 @@ export interface ItemScopeFacts {
 
 /** The facts of a view that shows none of the scope facts, only the item's owner. */
 export function ownerOnlyFacts(owner: Owner): ItemScopeFacts {
-  return { scopeOrgs: [], enabledOrgs: 0, pending: false, permissionsHash: null, owner };
+  return {
+    scopeOrgs: [],
+    enabledOrgs: 0,
+    offCount: 0,
+    pending: false,
+    permissionsHash: null,
+    owner,
+  };
 }
 
 const NO_FACTS: ItemScopeFacts = ownerOnlyFacts(PLATFORM_OWNER);
@@ -803,6 +812,7 @@ export async function itemScopeFacts(
   items: {
     id: string;
     name: string;
+    scope: PluginScope;
     builtin: boolean;
     latest_version: string;
     owner_org_id: string | null;
@@ -819,6 +829,7 @@ export async function itemScopeFacts(
       {
         scopeOrgs: [],
         enabledOrgs: 0,
+        offCount: 0,
         pending: confirmations.get(i.id)?.pending ?? false,
         permissionsHash: confirmations.get(i.id)?.permissionsHash ?? null,
         owner: ownerOf(i.owner_org_id, owners),
@@ -847,6 +858,23 @@ export async function itemScopeFacts(
   for (const r of live) {
     const f = out.get(r.item_id);
     if (f) f.enabledOrgs = Number(r.n);
+  }
+  // the orgs that switched an `all` item off (layering spec §4): one grouped count for the page
+  const everywhere = items.filter((i) => i.scope === "all" && !i.builtin).map((i) => i.id);
+  if (everywhere.length > 0) {
+    const off = await db
+      .selectFrom("catalog_item_org_switches as s")
+      .innerJoin("orgs as o", "o.id", "s.org_id")
+      .select(["s.item_id", (eb) => eb.fn.countAll<string>().as("n")])
+      .where("s.item_id", "in", everywhere)
+      .where("s.enabled", "=", false)
+      .where("o.deleted_at", "is", null)
+      .groupBy("s.item_id")
+      .execute();
+    for (const r of off) {
+      const f = out.get(r.item_id);
+      if (f) f.offCount = Number(r.n);
+    }
   }
   if (items.some((i) => i.builtin)) {
     const orgs = await db
@@ -928,6 +956,7 @@ export function itemView(
     awaitingConfirmation: i.awaiting_confirmation,
     pendingVersion: i.pending_version,
     enabledOrgs: facts.enabledOrgs,
+    offCount: facts.offCount,
     pending: facts.pending,
     permissionsHash: facts.permissionsHash,
     latestVersion: i.latest_version,

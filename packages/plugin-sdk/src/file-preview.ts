@@ -47,6 +47,14 @@ export interface FilePreviewArgs {
    * rejects a file over the previewer's `maxBytes`. The extension never gets a storage key or URL.
    */
   read(): Promise<Uint8Array>;
+  /**
+   * The extension's effective deployment config for this org: the platform's deployment config
+   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+   * for work done for this org. Optional in the type so older extensions compile; the kernel
+   * always passes it.
+   */
+  config?: unknown;
 }
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;

@@ -103,6 +103,11 @@ export interface CatalogItemView {
   /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
   enabledOrgs: number;
   /**
+   * Orgs whose admin switched it off while its scope is `all` (layering spec §4: on in every org
+   * unless an org turned it off); 0 for other scopes and for builtin items.
+   */
+  offCount: number;
+  /**
    * Its extension waits for a person's confirmation: not installed on the deployment, its
    * permission set not covered by the approved snapshot, or (builtin) only approved by the
    * bootstrap step. Confirm with `POST items/:id/confirm`.

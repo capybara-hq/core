@@ -9,11 +9,13 @@ import { ApiClientError, configIssues } from "../lib/api";
 import type { ConfigIssue } from "../lib/json-schema";
 import { extensionConfigQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
+import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { ConfigForm, type ConfigFormState, type ConfigSecretEntry } from "./config-form/ConfigForm";
 import { deploymentBody, deploymentForm, reloads } from "./config-form/deployment";
 import { buildTree, fromDraft, isMissingIssue, toDraft } from "./config-form/model";
+import { ExtensionOrgCopies } from "./ExtensionOrgCopies";
 import { FormError } from "./form-error";
 
 interface Options {
@@ -25,6 +27,8 @@ interface Options {
   enabled?: boolean;
   /** The config was saved (the extension's state and the org's readiness may have changed). */
   onChanged(): void;
+  /** Drawn in a Sheet: the org copies are a divided region of their own. */
+  sheet?: boolean;
 }
 
 /** The deployment config's parts, for a page (stacked) or a Sheet (the save in its footer). */
@@ -35,6 +39,11 @@ export interface DeploymentConfigParts {
   form: ReactNode;
   /** The save action; `null` until the form is there. */
   save: ReactNode;
+  /**
+   * The orgs holding their own copy of the overridable fields (read only); `null` when the
+   * extension has no overridable field.
+   */
+  copies: ReactNode;
   /** Unsaved changes (a Sheet asks before closing). */
   dirty: boolean;
 }
@@ -64,6 +73,7 @@ export function useDeploymentConfig({
   pending = false,
   enabled = true,
   onChanged,
+  sheet = false,
 }: Options): DeploymentConfigParts {
   const te = useTranslations("admin.extensions");
   const t = useTranslations("admin.extensions.config");
@@ -100,10 +110,11 @@ export function useDeploymentConfig({
   const [busy, setBusy] = useState(false);
   const put = useAppMutation({
     fn: (v: Parameters<typeof putExtensionConfig>) => putExtensionConfig(...v),
-    invalidates: () => [],
+    // a platform change moves what each org copy differs in
+    invalidates: (v) => [keys.deployment().extensionOrgOverrides(v[0])],
   });
 
-  if (!enabled) return { notice: null, form: null, save: null, dirty: false };
+  if (!enabled) return { notice: null, form: null, save: null, copies: null, dirty: false };
   if (view === undefined) {
     const loading = read.error ? (
       <Stack gap={8}>
@@ -117,10 +128,10 @@ export function useDeploymentConfig({
     ) : (
       <Skeleton rows={4} />
     );
-    return { notice: null, form: loading, save: null, dirty: false };
+    return { notice: null, form: loading, save: null, copies: null, dirty: false };
   }
   if (!usable || form === null || tree === null || opened === null)
-    return { notice: null, form: null, save: null, dirty: false };
+    return { notice: null, form: null, save: null, copies: null, dirty: false };
 
   const current: Current = live.current ?? {
     value: opened.value,
@@ -168,6 +179,10 @@ export function useDeploymentConfig({
       setBusy(false);
     }
   };
+
+  const copies = view.fields.some((f) => f.org === "override") ? (
+    <ExtensionOrgCopies name={view.plugin} variant={sheet ? "divided" : "guide"} />
+  ) : null;
 
   return {
     notice:
@@ -221,6 +236,7 @@ export function useDeploymentConfig({
         </Button>
       </Stack>
     ),
+    copies,
     dirty: changed,
   };
 }
@@ -239,6 +255,7 @@ export function ExtensionDeploymentConfig(props: Options) {
           {parts.save}
         </Stack>
       )}
+      {parts.copies}
     </Stack>
   );
 }

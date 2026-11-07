@@ -18,6 +18,8 @@ import type { ConfigIssue } from "../lib/json-schema";
 import { ConfigForm } from "./config-form/ConfigForm";
 import { orgConfig, orgFormMeta } from "./config-form/org";
 import { FormError } from "./form-error";
+import { OrgOverrideSection } from "./OrgOverrideSection";
+import { OrgToolSwitches } from "./OrgToolSwitches";
 import { PermissionReview } from "./PermissionReview";
 import { PermissionSummary } from "./PermissionSummary";
 
@@ -37,14 +39,18 @@ export interface SaveError {
 /**
  * One extension of the org's 扩展 page in a right-side Sheet (spec §6.7: view or edit one object
  * without leaving the list). One status line on top (the missing required fields of a pending
- * config), then divided regions: 组织配置 (org admins: the form; 保存配置, and 保存并启用 while
+ * config), then divided regions: 配置 (org admins: the overridable deployment fields, following
+ * the platform or the org's own copy, with their own save); 组织配置 (org admins: the form;
+ * 保存配置, and 保存并启用 while
  * the extension is off, in the footer); 状态 (the state and capabilities, one-line hints, why a
  * switch was refused: a missing dependency, dependents that remain with 仍然停用, the kernel's
  * reason with a link to 插件; 立即同步 for an enabled directory-sync extension); 权限 (org admins:
- * folded into one line that opens the full blocks). Members get the 状态 region only.
+ * folded into one line that opens the full blocks); 工具 (the single-tool switches of an enabled
+ * extension; members read the states). Members get the 状态 and 工具 regions only.
  * The list page keeps the switch logic; this Sheet only reports the person's actions.
  */
 export function OrgExtensionSheet({
+  orgId,
   extension: plugin,
   label,
   canEdit,
@@ -53,6 +59,7 @@ export function OrgExtensionSheet({
   platform,
   unavailable,
   configForm,
+  overrides,
   needsConfig,
   locked,
   problem,
@@ -65,6 +72,7 @@ export function OrgExtensionSheet({
   onForceDisable,
   onSync,
 }: {
+  orgId: string;
   extension: OrgExtension;
   label: string;
   canEdit: boolean;
@@ -73,6 +81,8 @@ export function OrgExtensionSheet({
   platform: boolean;
   unavailable: boolean;
   configForm: boolean;
+  /** The extension has overridable deployment fields: the two-level form is shown (org admins). */
+  overrides: boolean;
   needsConfig: boolean;
   /** The switch is not the org's (platform-wide or not switchable): no 保存并启用. */
   locked: boolean;
@@ -95,6 +105,7 @@ export function OrgExtensionSheet({
     /** The fields the saved config is missing (read from the pristine form). */
     missing: string[];
   }>({ config: orgConfig(plugin.config), ok: true, dirty: false, missing: [] });
+  const [overridesDirty, setOverridesDirty] = useState(false);
   const directory = provides(plugin, "directory");
   const saveEnable = configForm && !plugin.enabled && !locked;
   return (
@@ -107,8 +118,8 @@ export function OrgExtensionSheet({
       meta={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
         .filter((x): x is string => x !== null)
         .join(" · ")}
-      width={configForm ? 720 : 480}
-      dirty={form.dirty}
+      width={configForm || overrides ? 720 : 480}
+      dirty={form.dirty || overridesDirty}
       {...(configForm
         ? {
             footer: (
@@ -138,7 +149,7 @@ export function OrgExtensionSheet({
           }
         : {})}
     >
-      {/* One status line, then the regions (spec §6.7): 组织配置, 状态, 权限 */}
+      {/* One status line, then the regions (spec §6.7): 配置, 组织配置, 状态, 工具, 权限 */}
       <Stack gap={16}>
         {canEdit && needsConfig && (
           <Callout tone="warn">
@@ -146,6 +157,11 @@ export function OrgExtensionSheet({
               ? t("missingRequired", { fields: form.missing.join(t("listSep")) })
               : t("configFirstHint")}
           </Callout>
+        )}
+        {overrides && (
+          <Subsection title={t("overrides.title")} variant="divided">
+            <OrgOverrideSection orgId={orgId} plugin={plugin.plugin} onDirty={setOverridesDirty} />
+          </Subsection>
         )}
         {configForm && (
           <Subsection title={t("configTitle")} variant="divided">
@@ -245,6 +261,9 @@ export function OrgExtensionSheet({
             </Stack>
           )}
         </Subsection>
+        {plugin.enabled && !unavailable && (
+          <OrgToolSwitches orgId={orgId} plugin={plugin.plugin} canEdit={canEdit} />
+        )}
         {canEdit && plugin.permissions.length > 0 && (
           <Subsection title={t("permissions")} variant="divided">
             <PermissionSummary groups={plugin.permissions}>

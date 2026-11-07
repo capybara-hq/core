@@ -54,6 +54,8 @@ export interface PlatformComponent {
   scope: PluginScope;
   /** The effective `named` list, sorted. */
   orgs: string[];
+  /** Orgs that switched an `all` component off (0 for other scopes). */
+  offCount?: number;
   disabled: boolean;
   /** Its plugin is disabled or deleted: off everywhere. */
   pluginStopped: boolean;
@@ -221,12 +223,14 @@ export interface OrgComponent {
   /** The org's own switch (null: never switched). */
   switch: boolean | null;
   on: boolean;
-  /** Its effective scope is `all`: on for every org, never switched off here (已启用 · 平台统一). */
+  /** Of a builtin plugin: on for every org, never switched off here (已启用 · 平台统一). */
   locked: boolean;
   /** A component following its plugin: the plugin is on in the org (true for its own scope). */
   pluginOn: boolean;
   /** An org admin may switch it now (not locked; its plugin on when it follows it). */
   switchable: boolean;
+  /** On by platform default: effective scope `all`, not builtin (平台默认启用; the org may turn it off). */
+  platformDefault?: boolean;
   /** The org's copies linked to it (older agents select them; absent from older kernels). */
   linkedIds?: string[];
   /** The platform, or the org that owns it (an org's upload; absent from older kernels). */

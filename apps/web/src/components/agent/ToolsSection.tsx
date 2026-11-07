@@ -114,7 +114,8 @@ type Group = {
  * (`tools: "all"`, its enabled tools now and later) when every enabled tool is ticked, else by
  * tool name; references it does not switch (the `Agent` tool of Sub-agents) and their policies
  * stay as saved. A selected extension tool the org cannot serve now (extension off or
- * uninstalled) stays listed and ticked as unavailable, with the reason; unticking it is the only
+ * uninstalled, or the tool switched off in the org) stays listed and ticked as unavailable, with
+ * the reason; unticking it is the only
  * way to drop it. A web tool (`WebSearch` / `WebFetch`) is listed only while its point has a
  * provider for the org (`GET …/extension-points/available`) or when the agent selected it, with a
  * hint when a selected one cannot be served now (web tools spec §3.4). Connectors a template
@@ -231,12 +232,14 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     readError: false,
     tools: ext.tools.map((tool) => {
       const key = extensionToolKey(ext.plugin, tool.name);
+      const checked = extensionSelected(key);
       return {
         key,
         // the declared title; an untitled tool alone in its extension goes by the extension
         label: tool.title ?? (ext.tools.length === 1 ? ext.displayName[lang] : tool.name),
-        checked: extensionSelected(key),
-        unavailable: null,
+        checked,
+        // a selected tool the org turned off stays ticked, marked like any unavailable one
+        unavailable: checked && tool.switchedOff === true ? t("form.extensionToolOffInOrg") : null,
       };
     }),
     onCheck: (keys, on) => checkExtension(ext.plugin, keys, on),

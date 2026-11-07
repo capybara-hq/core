@@ -82,6 +82,9 @@ Each line is the rule you must not miss; the skill has the rest.
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
 - **Config:** env prefix `CAPYBARA_`, nesting with `__`, env wins; extension deployment config may
   also live in PG (env > file / Nacos > PG > default); invalid extension config never fails startup.
+  A deployment field may carry an org level (`orgAccess(schema, "readonly" | "override")`, `x-org`;
+  no level = platform only, hidden): orgs follow the platform until they save a copy of the
+  overridable fields, and every org-bound extension call carries the effective config for the org.
   [adding-config](.agents/skills/adding-config/SKILL.md)
 - **Kernel:** standard Nest: `@Injectable` providers, one module each, explicit `@Inject` on every
   constructor parameter, config through `KernelConfigService`, DTOs via `createZodDto`
@@ -100,10 +103,15 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
   (required ones are `builtin`, the rest optional preinstalls, off in every org until switched on);
-  hooks observe or deny, never rewrite. [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
+  hooks observe or deny, never rewrite. An extension call made for an org carries `config`, the
+  effective config (platform deployment config plus the org's copy of overridable fields: never an
+  overridable platform secret, hidden secrets stay); an org whose effective config is invalid gets
+  no call (`needsConfig`); org admins may switch off single extension tools.
+  [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
-  `packages/kernel/src/net`. A platform item's scope (`all` / `optional` / `named`) decides where it
+  `packages/kernel/src/net`. A platform item's scope (`all` / `optional` / `named`; an org admin
+  may switch `all` off too, only built-in items are fixed) decides where it
   is on; its skills, agent templates and connector templates are platform components, one version per
   deployment, never copied into orgs; an org-owned item reaches another org only through the share
   gate (`owner_org_id IS NULL OR shareable`). An agent template describes a whole agent: any member
