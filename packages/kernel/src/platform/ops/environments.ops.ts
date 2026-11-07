@@ -29,7 +29,7 @@ function stateOf(e: EnvironmentView): { state: string; reason?: string; next?: s
     return {
       state: "files_lost",
       reason: "Its file system is gone at the provider.",
-      next: "Reset its files on the web (environments page) to use it again.",
+      next: "Wipe its files with environments.reset-files to use it again.",
     };
   }
   return { state: e.instance?.status ?? "ready" };
@@ -48,7 +48,7 @@ const row = (e: EnvironmentView) => ({
  * Environment operations of the `Platform` tool (environments design, phase 1): a person's own
  * cloud environments. Phase 1 has personal environments only, visible to their owner alone, so
  * these are `personal` writes. A cloud environment carries no credentials or device connection;
- * deleting one and resetting its files stay `human-only`.
+ * deleting one and wiping its files are `personal` writes that are never remembered.
  */
 @Injectable()
 export class EnvironmentsOperations implements OnModuleInit {
@@ -56,6 +56,14 @@ export class EnvironmentsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(EnvironmentsService) private readonly environments: EnvironmentsService,
   ) {}
+
+  /** The environment's name for a card; its id when it cannot be read. */
+  private label(ctx: { orgId: string; actorAccountId: string }, id: string): Promise<string> {
+    return orElse(
+      async () => named(labelOf(await this.environments.get(ctx.orgId, ctx.actorAccountId, id))),
+      id,
+    );
+  }
 
   onModuleInit(): void {
     this.registry.register([
@@ -102,7 +110,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.create",
         description:
-          "Create a personal cloud environment with a name (1-64 characters, unique among yours, case-insensitive). It is ready at once; its instance and files are made on first use. It needs a sandbox provider and is limited per person. Deleting one is done on the web.",
+          "Create a personal cloud environment with a name (1-64 characters, unique among yours, case-insensitive). It is ready at once; its instance and files are made on first use. It needs a sandbox provider and is limited per person. ",
         input: Name,
         example: { name: "Data analysis" },
         authz: { orgAction: "agents.use" },
@@ -115,7 +123,7 @@ export class EnvironmentsOperations implements OnModuleInit {
           },
           {
             code: "environment.limit_reached",
-            next: "You are at the limit: delete an environment you no longer need on the web (environments page), or use an existing one.",
+            next: "You are at the limit: delete an environment you no longer need with environments.delete, or use an existing one.",
           },
           {
             code: "environment.unavailable",
@@ -142,6 +150,92 @@ export class EnvironmentsOperations implements OnModuleInit {
             viaAgent("environments.create", ctx),
           );
           return { environment: row(e) };
+        },
+      }),
+      defineOperation({
+        id: "environments.delete",
+        description:
+          "Delete one of your environments, the default one included: its instance and ALL its files are destroyed after the response and cannot be recovered. Conversations bound to it keep pointing at it and their sandbox tools then fail. The person confirms every delete; it is never remembered. Takes the id from environments.list.",
+        input: EnvironmentId,
+        example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["DELETE /api/v1/orgs/:orgId/environments/:id"],
+        renames: { environmentId: "id" },
+        confirm: "personal",
+        // destructive: asked every time and never remembered
+        rememberable: false,
+        errors: [
+          {
+            code: "environment.not_found",
+            next: "Check the id with environments.list: you only see your own environments.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() => this.environments.get(ctx.orgId, ctx.actorAccountId, i.environmentId)),
+        summary: async (i, ctx) => {
+          const n = await this.label(ctx, i.environmentId);
+          return {
+            zh: `删除环境「${n}」：其中所有文件将被销毁且无法恢复`,
+            en: `Delete environment "${n}": all its files are destroyed and cannot be recovered`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.environments.remove(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.environmentId,
+            undefined,
+            viaAgent("environments.delete", ctx),
+          );
+          return { id: input.environmentId, deleted: true };
+        },
+      }),
+      defineOperation({
+        id: "environments.reset-files",
+        description:
+          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost. The person confirms every reset; it is never remembered. Takes the id from environments.list.",
+        input: EnvironmentId,
+        example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["POST /api/v1/orgs/:orgId/environments/:id/files/reset"],
+        renames: { environmentId: "id" },
+        confirm: "personal",
+        rememberable: false,
+        errors: [
+          {
+            code: "environment.not_found",
+            next: "Check the id with environments.list: you only see your own environments.",
+          },
+          {
+            code: "environment.unavailable",
+            next: {
+              orgAdmin:
+                "Its sandbox provider is no longer the current one: use another environment, or ask the super admin about the provider.",
+              member:
+                "Its sandbox provider is no longer the current one: use another environment, or ask an org admin.",
+            },
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.environments.checkReset(ctx.orgId, ctx.actorAccountId, i.environmentId),
+          ),
+        summary: async (i, ctx) => {
+          const n = await this.label(ctx, i.environmentId);
+          return {
+            zh: `清空环境「${n}」的文件：所有文件将被销毁且无法恢复`,
+            en: `Wipe the files of environment "${n}": all files are destroyed and cannot be recovered`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.environments.resetFiles(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.environmentId,
+            undefined,
+            viaAgent("environments.reset-files", ctx),
+          );
+          return { id: input.environmentId, reset: true };
         },
       }),
       defineOperation({

@@ -265,16 +265,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // environments (personal cloud environments, environments design phase 1)
   {
-    route: "DELETE /api/v1/orgs/:orgId/environments/:id",
-    category: "human-only",
-    reason: "Deletes an environment and its files",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/environments/:id/files/reset",
-    category: "human-only",
-    reason: "Wipes an environment's files to start with an empty workspace",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/tools",
     category: "internal",
     reason:

@@ -186,9 +186,11 @@ describe("environments", () => {
         .filter((id) => id.startsWith("environments.")),
     ).toEqual([
       "environments.create",
+      "environments.delete",
       "environments.get",
       "environments.list",
       "environments.rename",
+      "environments.reset-files",
     ]);
   });
 
@@ -268,6 +270,50 @@ describe("environments", () => {
     await expect(run("environments.get", { environmentId: id }, other)).rejects.toThrow(
       /environments\.list/,
     );
+  });
+});
+
+describe("environments: delete and reset files", () => {
+  it("asks every time, warns in the card, denies before it and audits the operation", async () => {
+    const ctx = ctxOf(ownerId);
+    await run("environments.list", {}, ctx);
+    const made = (await run("environments.create", { name: "Scratch" }, ctx)) as {
+      environment: { id: string };
+    };
+    const input = { environmentId: made.environment.id };
+    for (const id of ["environments.delete", "environments.reset-files"]) {
+      expect(await classOf(id, input, ctx)).toBe("personal");
+      expect(op(id).rememberable).toBe(false);
+      const sum = await op(id).summary?.(op(id).input.parse(input), ctx);
+      expect(sum?.en).toContain('"Scratch"');
+      expect(sum?.en).toContain("cannot be recovered");
+      expect(sum?.zh).toContain("无法恢复");
+    }
+    const other = ctxOf(memberId);
+    expect(await precheck("environments.delete", input, other)).toMatchObject({
+      ok: false,
+      code: "environment.not_found",
+    });
+    expect(await precheck("environments.reset-files", input, other)).toMatchObject({
+      ok: false,
+      code: "environment.not_found",
+    });
+    expect(await precheck("environments.reset-files", input, ctx)).toEqual({ ok: true });
+    await run("environments.reset-files", input, ctx);
+    expect((await audits("environment.files_reset"))[0]?.detail).toMatchObject({
+      via: "agent",
+      operation: "environments.reset-files",
+    });
+    await run("environments.delete", input, ctx);
+    expect((await audits("environment.deleted"))[0]?.detail).toMatchObject({
+      name: "Scratch",
+      via: "agent",
+      operation: "environments.delete",
+    });
+    expect(await precheck("environments.delete", input, ctx)).toMatchObject({
+      ok: false,
+      code: "environment.not_found",
+    });
   });
 });
 

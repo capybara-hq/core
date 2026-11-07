@@ -11,4 +11,6 @@ export const ENVIRONMENT_ROUTES: readonly RouteSchemas[] = [
     params: EnvironmentParams,
     body: EnvironmentNameBody,
   },
+  { route: "DELETE /api/v1/orgs/:orgId/environments/:id", params: EnvironmentParams },
+  { route: "POST /api/v1/orgs/:orgId/environments/:id/files/reset", params: EnvironmentParams },
 ];

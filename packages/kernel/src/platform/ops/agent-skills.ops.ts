@@ -104,7 +104,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.invocable-skills",
         description:
-          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, plugin, description, version and whether it is manual-only or runs as a sub-agent. Optionally pass a conversation of yours with that agent to include its trial drafts.",
+          "List the skills a person can invoke with / on an agent (its effective skills: org, platform and its own), by name: id, name, plugin, description, version Optionally pass a conversation of yours with that agent to include its trial drafts.",
         input: z
           .object({
             agentId: AgentId,
@@ -140,7 +140,6 @@ export class AgentSkillsOperations implements OnModuleInit {
             description: clip(s.description),
             version: s.version,
             ...(s.plugin !== undefined && { plugin: s.plugin }),
-            fork: s.fork,
           })),
         }),
       }),
@@ -218,6 +217,8 @@ export class AgentSkillsOperations implements OnModuleInit {
           "Read one skill change a shared agent proposed, as the inbox shows it: the agent, the skill name and description, the version it would become, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where you also decide it (agents never decide skill changes). Only the agent's owner and the person who asked can read it.",
         input: z.object({ changeId: SkillChangePathParams.shape.id }).strict(),
         example: { changeId: "6a1d3e5f-2b4c-4d70-8e91-0f2a4c6e8b13" },
+        // approvals.decide is stricter than the service (a plain-member requester is refused by
+        // the gate), on purpose
         authz: { orgAction: "approvals.decide" },
         mirrors: ["GET /api/v1/orgs/:orgId/skill-changes/:id"],
         renames: { changeId: "id" },

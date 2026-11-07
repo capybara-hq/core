@@ -216,6 +216,11 @@ export class EnvironmentsService {
     await this.assertNameFree(orgId, accountId, name);
   }
 
+  /** The refusals {@link resetFiles} would raise (not found, its provider not current), read only. */
+  async checkReset(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.access.usable(orgId, accountId, id);
+  }
+
   /** The refusals {@link rename} would raise, read without locks (see {@link checkCreate}). */
   async checkRename(orgId: string, accountId: string, id: string, name: string): Promise<void> {
     const before = await this.get(orgId, accountId, id);
@@ -279,7 +284,13 @@ export class EnvironmentsService {
    * sandbox tools then fail with `environment.not_found`.
    */
   @Transactional()
-  async remove(orgId: string, accountId: string, id: string, actorTokenId?: string): Promise<void> {
+  async remove(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
     await this.db
       .updateTable("environments")
@@ -298,7 +309,7 @@ export class EnvironmentsService {
       orgId,
       action: "environment.deleted",
       target: id,
-      detail: { name: before.name, isDefault: before.is_default },
+      detail: { name: before.name, isDefault: before.is_default, ...auditDetail },
     });
     afterCommit(async () => {
       try {
@@ -323,8 +334,9 @@ export class EnvironmentsService {
     accountId: string,
     id: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.recordReset(orgId, accountId, id, actorTokenId);
+    await this.recordReset(orgId, accountId, id, actorTokenId, auditDetail);
     await this.sandboxJobs.resetFiles(id);
   }
 
@@ -335,6 +347,7 @@ export class EnvironmentsService {
     accountId: string,
     id: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.access.usable(orgId, accountId, id);
     await audit(this.db.db, {
@@ -343,6 +356,7 @@ export class EnvironmentsService {
       orgId,
       action: "environment.files_reset",
       target: id,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 

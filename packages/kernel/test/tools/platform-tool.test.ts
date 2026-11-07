@@ -292,6 +292,7 @@ describe("browse, search, describe, read", () => {
       "approvals",
       "channels",
       "org-settings",
+      "environments",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");
