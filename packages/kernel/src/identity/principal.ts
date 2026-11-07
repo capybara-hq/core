@@ -23,6 +23,7 @@ export const PUBLIC_KEY = "capybara:auth:public";
 export const SESSION_ONLY_KEY = "capybara:auth:session-only";
 export const SUPER_ADMIN_KEY = "capybara:auth:super-admin";
 export const ALLOW_SERVICE_KEY = "capybara:auth:allow-service";
+export const PASSWORD_CHANGE_KEY = "capybara:auth:password-change";
 
 /**
  * 不要求凭据：无凭据时放行（principal 为 undefined）；带了有效凭据仍解析，无效凭据按无凭据处理。
@@ -36,6 +37,15 @@ export const SessionOnly = (): MethodDecorator => SetMetadata(SESSION_ONLY_KEY, 
 /** 仅超级管理员（user principal 且 `isSuperAdmin`）；否则 `forbidden`。 */
 export const SuperAdmin = (): MethodDecorator & ClassDecorator =>
   SetMetadata(SUPER_ADMIN_KEY, true);
+
+/**
+ * Reachable by an account that must change its generated initial password first
+ * (`Account.mustChangePassword`): the guard refuses every other route with
+ * `auth.password_change_required`. Only `GET /me` and `PUT /me/password` carry it (public routes
+ * such as logout are reachable anyway).
+ */
+export const AllowPendingPasswordChange = (): MethodDecorator =>
+  SetMetadata(PASSWORD_CHANGE_KEY, true);
 
 /**
  * 允许服务令牌（service principal）访问。默认拒绝：未标注的路由只接受 user principal，service → `forbidden`。

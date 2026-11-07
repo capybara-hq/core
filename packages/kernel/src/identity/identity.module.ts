@@ -7,6 +7,7 @@ import { ApiTokenService } from "./api-tokens.js";
 import { IdentityBinding } from "./binding.js";
 import { ExternalIdentities } from "./external.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
+import { InitialPasswords } from "./initial-passwords.js";
 import { SessionService } from "./sessions.js";
 import { SettingsService } from "./settings.js";
 import { SsoFlow } from "./sso.js";
@@ -32,6 +33,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     ExternalIdentities,
     IdentityBinding,
     SsoFlow,
+    InitialPasswords,
   ],
   exports: [
     AccountsModule,
@@ -42,6 +44,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     ExternalIdentities,
     IdentityBinding,
     SsoFlow,
+    InitialPasswords,
   ],
 })
 export class IdentityModule {}

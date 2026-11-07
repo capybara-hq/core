@@ -12,83 +12,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
   reason: string;
   issue?: string;
 }[] = [
-  // platform-admin
-  {
-    route: "GET /api/v1/admin/overview",
-    category: "later",
-    reason: "Platform dashboard totals an agent could read once admin reads are mirrored",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/accounts",
-    category: "human-only",
-    reason: "Lists every account with email addresses, a super admin console view",
-  },
-  {
-    route: "POST /api/v1/admin/accounts",
-    category: "human-only",
-    reason: "Creates a login account with an initial password",
-  },
-  {
-    route: "PATCH /api/v1/admin/accounts/:accountId",
-    category: "human-only",
-    reason: "Changes another account's status or super-admin flag",
-  },
-  {
-    route: "GET /api/v1/admin/orgs",
-    category: "later",
-    reason: "Platform-wide org listing an agent could read once admin reads are mirrored",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/settings",
-    category: "later",
-    reason: "Deployment settings read that an agent could mirror later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/admin/settings",
-    category: "later",
-    reason: "Deployment settings write that an agent could mirror later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/models",
-    category: "later",
-    reason: "Platform model catalog read that an agent could mirror later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/admin/models/:provider/disabled",
-    category: "later",
-    reason:
-      "Platform model disabled list write that an agent could mirror later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/model-prices",
-    category: "later",
-    reason: "Model price table read that an agent could mirror later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/admin/model-prices",
-    category: "later",
-    reason: "Model price write that an agent could mirror later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/model-purposes",
-    category: "later",
-    reason: "Platform default model per purpose, readable by an agent later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/admin/model-purposes/:purpose",
-    category: "later",
-    reason: "Platform default model per purpose, settable by an agent later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
+  // platform-admin: every route is an operation (Task 7)
   // extensions-admin
   {
     route: "GET /api/v1/admin/extensions",
@@ -851,6 +775,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // identity
+  {
+    route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",
+    category: "secret",
+    reason:
+      "Returns a generated initial password once, on the web, to the person who approved the account creation",
+  },
   { route: "POST /api/v1/auth/login", category: "human-only", reason: "Password login" },
   { route: "POST /api/v1/auth/refresh", category: "human-only", reason: "Rotates a refresh token" },
   { route: "POST /api/v1/auth/logout", category: "human-only", reason: "Ends the login session" },
@@ -964,9 +894,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // orgs
   {
     route: "POST /api/v1/orgs/:orgId/extensions/:extension/directory/sync",
-    category: "later",
-    reason: "Triggering a directory sync, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason: "Adds and removes org members from the directory; only an admin, by hand, starts it",
   },
   {
     route: "POST /api/v1/orgs/:orgId/invitations",
@@ -1000,21 +929,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "GET /api/v1/orgs",
-    category: "later",
-    reason: "Org list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId",
-    category: "later",
-    reason: "Org detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId",
-    category: "later",
-    reason: "Org profile edit, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "The web's org switcher across the caller's orgs; an agent works in its conversation's org (orgs.current)",
   },
   { route: "DELETE /api/v1/orgs/:orgId", category: "human-only", reason: "Deletes the whole org" },
   {
@@ -1026,12 +943,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/leave",
     category: "human-only",
     reason: "Removes the caller from the org",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/members",
-    category: "later",
-    reason: "Member list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
     route: "PATCH /api/v1/orgs/:orgId/members/:accountId",

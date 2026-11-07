@@ -420,6 +420,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId ?? null,
+        callId: ctx.callId,
         signal: ctx.signal,
       });
     } catch (e) {

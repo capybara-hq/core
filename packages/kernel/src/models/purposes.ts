@@ -286,10 +286,11 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
     if (target) await this.check(orgId, target, decl.kind);
-    await this.write(orgId, purpose, target, actor, actorTokenId);
+    await this.write(orgId, purpose, target, actor, actorTokenId, auditDetail);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
   }
@@ -302,6 +303,7 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     if (orgId === null) await this.adminLock.lockAndAuthorize(actor);
     else await this.orgLock.lockAndAuthorize(orgId, actor, "org.models.manage");
@@ -334,8 +336,18 @@ export class ModelPurposesService {
       ...(orgId !== null && { orgId }),
       action: "model.purpose_mapped",
       target: purpose,
-      detail: { scope: orgId === null ? "deployment" : "org", target },
+      detail: { scope: orgId === null ? "deployment" : "org", target, ...auditDetail },
     });
+  }
+
+  /**
+   * The checks {@link setDefault} runs before writing, read only: the purpose is declared
+   * (`model.purpose_unknown`) and a target is a callable model of the purpose's kind with valid
+   * params (`validation_failed`). For a confirmation shown before the write.
+   */
+  async checkDefault(purpose: string, target: PurposeTarget | null): Promise<void> {
+    const decl = this.find(purpose);
+    if (target) await this.check(null, target, decl.kind);
   }
 
   /** 设置（或 `null` 清除）部署默认；只有超级管理员（事务内复核）。 */
@@ -344,8 +356,10 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
     actor: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<PurposeView> {
-    return this.set(null, purpose, target, actor, actorTokenId);
+    return this.set(null, purpose, target, actor, actorTokenId, auditDetail);
   }
 
   /** 设置（或 `null` 清除）组织覆盖；事务内锁组织并复核 `org.models.manage`。 */
