@@ -8,6 +8,7 @@ import {
   SubagentTask,
   subagentDuration,
   subagentWaitingLabel,
+  ThreadHistory,
   useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -168,6 +169,9 @@ function ChildRecord({
         />
       }
     >
+      {child.history ? (
+        <ThreadHistory state={child.history.state} onLoadEarlier={child.history.loadEarlier} />
+      ) : null}
       <Thread
         live={false}
         orgId={orgId}

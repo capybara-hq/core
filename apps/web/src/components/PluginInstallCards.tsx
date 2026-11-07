@@ -5,7 +5,11 @@ import {
   Card,
   Dialog,
   formatDateTime,
+  ImpactPreview,
+  ItemList,
+  ItemListItem,
   Stack,
+  Subsection,
   Text,
   useTimeZone,
   versionLabel,
@@ -167,18 +171,22 @@ function InstallCard({
             </Text>
           )}
           {install.components.length > 0 && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {t("components")}
-              </Text>
-              {install.components.map((c) => (
-                <Text key={`${c.kind}:${c.ref}`} variant="small">
-                  {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${
-                    c.dropped ? t("dropped") : c.created ? t("created") : t("existing")
-                  }`}
-                </Text>
-              ))}
-            </Stack>
+            <Subsection title={t("components")} count={install.components.length}>
+              <ItemList label={t("components")}>
+                {install.components.map((c) => (
+                  <ItemListItem
+                    key={`${c.kind}:${c.ref}`}
+                    title={refName(c)}
+                    code={t(`componentKind.${c.kind}`)}
+                    meta={
+                      <Text variant="small" tone="muted">
+                        {c.dropped ? t("dropped") : c.created ? t("created") : t("existing")}
+                      </Text>
+                    }
+                  />
+                ))}
+              </ItemList>
+            </Subsection>
           )}
           {error !== undefined && <FormError message={error} />}
         </Stack>
@@ -225,32 +233,38 @@ function ReportCard({
         title={t("report.title", { name })}
         actions={<Button onClick={onDismiss}>{t("report.dismiss")}</Button>}
       >
-        <Stack gap={12}>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("report.removed")}
-            </Text>
-            {report.removed.length === 0 && <Text variant="small">{t("report.none")}</Text>}
-            {report.removed.map((c) => (
-              <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`− ${t(`componentKind.${c.kind}`)} ${refName(c)}`}
-              </Text>
-            ))}
-          </Stack>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("report.kept")}
-            </Text>
-            {report.kept.length === 0 && <Text variant="small">{t("report.none")}</Text>}
-            {report.kept.map((c) => (
-              <Text key={`${c.kind}:${c.ref}`} variant="small">
-                {`· ${t(`componentKind.${c.kind}`)} ${refName(c)} — ${
-                  t.has(`report.reason.${c.reason}`) ? t(`report.reason.${c.reason}`) : c.reason
-                }`}
-              </Text>
-            ))}
-          </Stack>
-        </Stack>
+        <ImpactPreview
+          empty={t("report.nothing")}
+          groups={[
+            {
+              id: "removed",
+              title: t("report.removed"),
+              items: report.removed.map((c) => ({
+                id: `${c.kind}:${c.ref}`,
+                title: refName(c),
+                code: t(`componentKind.${c.kind}`),
+              })),
+              empty: t("report.noneRemoved"),
+            },
+            {
+              id: "kept",
+              title: t("report.kept"),
+              items: report.kept.map((c) => ({
+                id: `${c.kind}:${c.ref}`,
+                title: refName(c),
+                code: t(`componentKind.${c.kind}`),
+                notes: [
+                  {
+                    text: t.has(`report.reason.${c.reason}`)
+                      ? t(`report.reason.${c.reason}`)
+                      : c.reason,
+                  },
+                ],
+              })),
+              empty: t("report.noneKept"),
+            },
+          ]}
+        />
       </Card>
     </section>
   );

@@ -52,8 +52,12 @@ export function useSelection(
   providers: ProviderModels[] | undefined,
   agent: Agent | undefined,
   selection: Selection | undefined,
+  /** A new conversation: the pick is its first message's, so the menus carry no "from the next
+   * message on" note (acceptance 2026-11-07). */
+  opts: { newConversation?: boolean } = {},
 ): SelectionView {
   const t = useTranslations("chat");
+  const nextNote = opts.newConversation ? {} : { note: t("nextMessage") };
   const [pending, setPending] = useState<PendingSwitch>({});
   // The picks that just went out, shown until the next conversation read (`base` is the selection
   // object they were sent against), so the picker does not flicker back to the old model (m6).
@@ -130,7 +134,7 @@ export function useSelection(
     label: t("pickModel"),
     value: label(model),
     groups,
-    note: t("nextMessage"),
+    ...nextNote,
     disabled: providers === undefined,
     onPick: pickModel,
   };
@@ -149,7 +153,7 @@ export function useSelection(
               })),
             },
           ],
-          note: t("nextMessage"),
+          ...nextNote,
           onPick: (id) => setPending((p) => ({ ...p, effort: id as Effort })),
         };
 

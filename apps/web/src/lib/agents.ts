@@ -412,6 +412,18 @@ export const createAgent = (
 export const getAgent = (orgId: string, agentId: string) =>
   apiFetch<{ agent: Agent }>(`${base(orgId)}/agents/${encodeURIComponent(agentId)}`);
 
+/** One saved version of an agent (newest first in the list). */
+export interface AgentVersionSummary {
+  version: number;
+  createdBy: string;
+  createdAt: string;
+}
+
+export const listAgentVersions = (orgId: string, agentId: string) =>
+  apiFetch<{ versions: AgentVersionSummary[] }>(
+    `${base(orgId)}/agents/${encodeURIComponent(agentId)}/versions`,
+  );
+
 /**
  * A definition as a save sends it: with `instructions` (the prompt files left out: the kernel keeps
  * them while it equals their join), or with `instructionFiles` and no `instructions` (the kernel

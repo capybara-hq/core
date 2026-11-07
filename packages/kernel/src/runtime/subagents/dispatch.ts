@@ -762,16 +762,19 @@ async function limitRefusal(
 ): Promise<string | null> {
   const limits = await subagentLimits(t, d.config, ctx.orgId);
   if (runDepth(ctx) >= limits.maxDepth) return texts.depthLimit(limits.maxDepth);
-  if (Number(tokensUsed) >= limits.maxTokensPerRun) {
+  // 0: no limit (the deployment config or the org's override)
+  if (limits.maxTokensPerRun > 0 && Number(tokensUsed) >= limits.maxTokensPerRun) {
     return texts.budget(limits.maxTokensPerRun);
   }
-  const total = await t
-    .selectFrom("subagent_dispatches")
-    .select(sql<string>`count(*)`.as("n"))
-    .where("budget_run_id", "=", budgetRunId)
-    .executeTakeFirstOrThrow();
-  if (Number(total.n) >= limits.maxDispatchesPerRun) {
-    return texts.tooManyDispatches(limits.maxDispatchesPerRun);
+  if (limits.maxDispatchesPerRun > 0) {
+    const total = await t
+      .selectFrom("subagent_dispatches")
+      .select(sql<string>`count(*)`.as("n"))
+      .where("budget_run_id", "=", budgetRunId)
+      .executeTakeFirstOrThrow();
+    if (Number(total.n) >= limits.maxDispatchesPerRun) {
+      return texts.tooManyDispatches(limits.maxDispatchesPerRun);
+    }
   }
   // every child conversation with an active run of any origin: a dispatch, a message it never
   // absorbed (a continuation run) or a wake run all hold its slot

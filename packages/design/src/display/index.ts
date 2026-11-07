@@ -66,6 +66,13 @@ export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export {
+  ImpactPreview,
+  type ImpactPreviewGroup,
+  type ImpactPreviewItem,
+  type ImpactPreviewNote,
+  type ImpactPreviewProps,
+} from "./impact-preview";
+export {
   ItemList,
   type ItemListInset,
   ItemListItem,

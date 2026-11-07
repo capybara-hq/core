@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import { CSRF } from "./support/chat";
-import { hydrated } from "./support/nav";
+import { HOME_URL, hydrated } from "./support/nav";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
 /** UI text comes from the zh message file, not hard-coded twice. */
@@ -88,9 +88,9 @@ const workSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-con
 
 const setupSidebar = (page: Page) => page.locator('[data-part="sidebar"][data-context="setup"]');
 
-/** Opens the account menu (the sidebar's account row) of the workspace shell. */
-async function openAccountMenu(page: Page): Promise<void> {
-  await workSidebar(page).locator('button[data-part="account"]').click();
+/** Opens the org switcher's menu (the top of the workspace shell's sidebar). */
+async function openOrgSwitcher(page: Page): Promise<void> {
+  await workSidebar(page).locator('[data-part="org-switcher"]').click();
 }
 
 test.afterEach(async ({ page }) => {
@@ -131,16 +131,15 @@ test("creating an org lands on its setup frame with the setup steps; its shell n
   await resetProbe(page);
   const name = `SSR org ${Date.now()}`;
 
-  await openAccountMenu(page);
-  await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
+  await openOrgSwitcher(page);
   await page.getByRole("menuitem", { name: zh.shell.createOrg }).click();
   const dialog = page.getByRole("dialog", { name: zh.home.createOrg.title });
   await dialog.getByRole("textbox", { name: zh.home.createOrg.nameLabel }).fill(name);
   await dialog.getByRole("button", { name: zh.home.createOrg.submit }).click();
 
-  // a fresh org has no agent: the setup frame, named after the new org, at home (`/chat`)
+  // a fresh org has no agent: the setup frame, named after the new org, at home (`/`)
   await expect(page.locator('[data-template="SetupPage"]')).toBeVisible();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(HOME_URL);
   await hydrated(page);
   const sidebar = setupSidebar(page);
   await expect(sidebar.locator('[data-part="org-switcher"]')).toHaveAttribute("title", name);
@@ -164,7 +163,7 @@ test("creating an org lands on its setup frame with the setup steps; its shell n
   expect(frames.filter((f) => f.org === ORG_NAME && f.context === "setup")).toEqual([]);
 });
 
-test("switching org from the account menu loads the other org's frame whole, at home (/chat)", async ({
+test("switching org from the account menu loads the other org's frame whole, at home (/)", async ({
   page,
 }) => {
   await installProbe(page);
@@ -183,10 +182,9 @@ test("switching org from the account menu loads the other org's frame whole, at 
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   await resetProbe(page);
 
-  await openAccountMenu(page);
-  await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
+  await openOrgSwitcher(page);
   await page.getByRole("menuitemradio", { name: otherName }).click();
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(HOME_URL);
   await expect(setupSidebar(page).first()).toBeVisible();
   await hydrated(page);
   await expect(setupSidebar(page).locator('[data-part="org-switcher"]')).toHaveAttribute(

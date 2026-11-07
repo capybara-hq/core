@@ -543,9 +543,9 @@ describe("ContextSection", () => {
 
   it("a total line (tokens with sub-agents) only when given", () => {
     const { unmount } = wrap(
-      <ContextSection ratio={10} model="m" connectors={[]} total="含子代理共 1,234 tokens" />,
+      <ContextSection ratio={10} model="m" connectors={[]} total="含子智能体共 1,234 tokens" />,
     );
-    const line = screen.getByText("含子代理共 1,234 tokens");
+    const line = screen.getByText("含子智能体共 1,234 tokens");
     expect(line.getAttribute("data-part")).toBe("context-total");
     unmount();
     wrap(<ContextSection ratio={10} model="m" connectors={[]} />);

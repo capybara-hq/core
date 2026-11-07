@@ -24,8 +24,8 @@ export type NavLevel = "guest" | "member" | "admin";
 /**
  * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
  * `primary` items follow New conversation (智能体, 技能, 连接器; there is no home page: the new
- * conversation is the home, and `/` redirects to `/chat`); `more` items sit in the 更多 flyout (then
- * the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
+ * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
+ * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
  * console is the entry above the account row, for super admins.
  */
@@ -144,13 +144,13 @@ const decode = (s: string) => {
 };
 
 /**
- * The nav item the route belongs to: the new conversation (`/chat`, the home) is New conversation
+ * The nav item the route belongs to: the new conversation (`/`, the home) is New conversation
  * (`new`), `/settings/*` is Organization settings, trajectories are Evals, an extension page
  * `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation (`/chat/<id>`) is
  * none (its sidebar row is current instead).
  */
 export function activeNavOf(pathname: string): string {
-  if (pathname === "/chat") return "new";
+  if (pathname === "/") return "new";
   if (under(pathname, "/chat")) return "";
   const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
   if (ext?.[1] !== undefined && ext[2] !== undefined)

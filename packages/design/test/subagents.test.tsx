@@ -376,7 +376,10 @@ describe("phase C shapes (sub-agents spec §14)", () => {
   it("subagent_finished statuses fold into the view's", () => {
     expect(subagentStatusOfFinish("completed")).toBe("completed");
     expect(subagentStatusOfFinish("aborted")).toBe("aborted");
-    for (const s of ["failed", "max_steps", "max_duration", "budget", "timed_out"] as const)
+    // a limit is not a failure: the child handed back what it had
+    for (const s of ["max_steps", "max_duration", "budget"] as const)
+      expect(subagentStatusOfFinish(s)).toBe("limit");
+    for (const s of ["failed", "timed_out"] as const)
       expect(subagentStatusOfFinish(s)).toBe("failed");
   });
 

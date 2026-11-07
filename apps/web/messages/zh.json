@@ -73,7 +73,7 @@
       "progress": "已完成 {done} / {total}",
       "later": "可以稍后再做",
       "laterHint": {
-        "channels": "在飞书或 Slack 里使用智能体。",
+        "channels": "在 IM 里使用智能体。",
         "members": "让同事加入这个组织。",
         "catalog": "从平台目录添加技能和连接器。",
         "connections": "连接你自己的账号，供智能体代你操作。"
@@ -447,15 +447,14 @@
       "toolsSectionHint": "智能体可以调用的工具。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
       "builtin": {
-        "AskUserQuestion": "向用户提问（AskUserQuestion）",
-        "ReadToolOutput": "读取存档的工具结果（ReadToolOutput）",
-        "SkillWrite": "编写技能（SkillWrite）",
-        "WebSearch": "搜索网页（WebSearch）",
-        "WebFetch": "读取网页（WebFetch）",
-        "Platform": "操作平台（Platform）"
+        "AskUserQuestion": "向用户提问",
+        "ReadToolOutput": "读取存档的工具结果",
+        "SkillWrite": "编写技能",
+        "WebSearch": "搜索网页",
+        "WebFetch": "读取网页",
+        "Platform": "操作平台"
       },
       "connectorsLabel": "连接器",
-      "connectorTools": "{name} 的全部工具",
       "noConnectors": "还没有安装连接器。",
       "extensionToolsLabel": "扩展工具",
       "noExtensionTools": "本组织启用的扩展没有提供工具。",
@@ -572,7 +571,28 @@
       },
       "webUnavailable": "本组织没有可用的网页提供方：需要组织管理员在扩展设置里启用并配置一个；如果已启用多个，则选择一个默认提供方。之后选中的网页工具才能使用。",
       "unavailableSkill": "不可用：{name}",
-      "unavailableSkillHint": "这些平台技能在本组织已停用，智能体运行时不会加载；组织管理员重新启用后即可恢复。取消勾选才会移除引用。"
+      "unavailableSkillHint": "这些平台技能在本组织已停用，智能体运行时不会加载；组织管理员重新启用后即可恢复。取消勾选才会移除引用。",
+      "groupsLabel": "扩展和连接器",
+      "groupKind": {
+        "extension": "扩展",
+        "connector": "连接器"
+      },
+      "groupSummary": "已启用 {on}/{total} 个工具",
+      "groupAsk": "{count} 个需审批",
+      "groupDeny": "{count} 个禁止",
+      "groupUnused": "未启用",
+      "groupUsed": "已启用",
+      "groupUnavailable": "有工具不可用",
+      "groupNoTools": "这里没有可用的工具。",
+      "noGroups": "本组织还没有提供工具的扩展或连接器。",
+      "configure": "配置",
+      "configureGroup": "配置 {name}",
+      "sheetTools": "{name} 的工具",
+      "sheetDone": "完成",
+      "sheetHint": "勾选智能体可以调用的工具；策略只能收紧。修改随本页的保存一起生效。",
+      "loadingTools": "正在读取工具…",
+      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。",
+      "connectorToolUnavailable": "不可用：这个工具已停用、待复核或已不在连接器里。"
     },
     "params": {
       "default": "默认",
@@ -873,7 +893,7 @@
       "description": "描述",
       "descriptionRequired": "请填写描述。",
       "carried": "提示词、模型、工具、技能、连接器（只记录需要哪些，不含凭据）、子智能体和快捷操作会写入模板，模板归本组织所有。",
-      "rosterLeftOut": "子智能体里的这些组织智能体不是模板，不会带入：",
+      "rosterLeftOut": "子智能体里的这些组织智能体不是模板，不会带入",
       "rosterLabel": "不会带入的组织智能体",
       "submit": "另存为模板",
       "close": "关闭",
@@ -923,7 +943,8 @@
         "fallback": "模板不记录备用模型及其参数",
         "empty_text": "{field, select, other {它的{field}只有空白，模板不能记录} none {它只有空白，模板不能记录}}",
         "other": "没有写入"
-      }
+      },
+      "carriedTitle": "将带入"
     },
     "templates": {
       "listLabel": "智能体模板",
@@ -1300,7 +1321,7 @@
       "title": "开始之前",
       "description": "还差几步才能开始对话。",
       "model": {
-        "description": "至少配置一个模型提供方（例如 openai-compatible 扩展），智能体才能回答。",
+        "description": "至少启用一个提供模型的扩展，智能体才能回答。",
         "askAdmin": "还没有可用的模型。模型由超级管理员在「管理 → 扩展」里配置。",
         "action": "去配置",
         "waiting": "等待超级管理员配置"
@@ -1320,6 +1341,7 @@
     },
     "greeting": {
       "sub": "选一个智能体开始",
+      "subOne": "和 {agent} 开始对话",
       "morning": ["早上好，{name}", "早，今天推进点什么？", "新的一天，从哪件事开始？"],
       "noon": ["中午好，{name}", "吃过了吗？有什么要交给我"],
       "afternoon": ["下午好，{name}", "下午我们推进什么？", "接着干？"],
@@ -1331,6 +1353,7 @@
       "report": "{name} 交回了报告",
       "note": "{name} 发来消息",
       "completed": "{name} 已完成",
+      "limit": "{name} 已达上限",
       "failed": "{name} 失败",
       "aborted": "{name} 已停止",
       "show": "查看",
@@ -1396,7 +1419,6 @@
   },
   "shell": {
     "noOrg": "选择组织",
-    "orgMenu": "切换组织",
     "createOrg": "新建组织…",
     "accountSettings": "个人设置",
     "noCurrentOrg": "当前没有组织，无法操作会话。"
@@ -1998,6 +2020,7 @@
     "advanced": "高级",
     "options": "选项",
     "add": "添加",
+    "addNamed": "添加{label}",
     "itemN": "第 {n} 项",
     "key": "键",
     "value": "值",
@@ -2032,7 +2055,9 @@
       "minLength": "至少 {limit} 个字符",
       "maxLength": "最多 {limit} 个字符",
       "minItems": "至少 {limit} 项",
-      "maxItems": "最多 {limit} 项"
+      "maxItems": "最多 {limit} 项",
+      "addOne": "至少添加一项",
+      "invalid": "格式不正确"
     },
     "platformSet": "平台配置",
     "secretState": {
@@ -2050,7 +2075,7 @@
     "title": "渠道",
     "new": "新建渠道",
     "empty": "还没有渠道连接。",
-    "emptyHint": "把 IM 机器人（如 Slack、飞书）接到一个智能体，大家就能在 IM 里和它对话。",
+    "emptyHint": "把 IM 机器人接到一个智能体，大家就能在 IM 里和它对话。",
     "columns": {
       "name": "名称",
       "plugin": "扩展",
@@ -2160,7 +2185,7 @@
     "enabled": "已启用",
     "disabled": "未启用",
     "unavailable": "不可用",
-    "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
+    "unavailableHint": "部署上当前不可用 · 组织的启用设置会保留",
     "enabledToast": "已启用「{plugin}」。",
     "disabledToast": "已停用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
@@ -2185,12 +2210,12 @@
       "network": "网络访问",
       "ui": "界面（视图 / 嵌入页面）"
     },
-    "configTitle": "组织级配置",
+    "configTitle": "组织配置",
     "save": "保存配置",
     "saveLabel": "保存 {plugin} 的配置",
     "saveAndEnable": "保存并启用",
     "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
-    "configFirstHint": "先填写组织级配置再启用。",
+    "configFirstHint": "先填写组织配置再启用",
     "configSaved": "「{plugin}」的配置已保存。",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
@@ -2236,7 +2261,7 @@
       }
     },
     "description": "本组织能用的扩展。组织级配置（例如本组织自己的 API Key）在这里填。",
-    "platformHint": "平台为所有组织统一启用了这个扩展，组织不能停用；组织级配置仍可在这里填写。",
+    "platformHint": "平台为所有组织启用 · 组织不能停用",
     "openPlugins": "去插件页查看或申请",
     "needsConfig": "待配置",
     "enableFailed": "启用失败",
@@ -2281,6 +2306,8 @@
       "publicRoutes": "公开路由",
       "provides": "扩展点"
     },
+    "missingRequired": "缺少必填项：{fields}",
+    "listSep": "、",
     "toolSwitches": {
       "title": "工具",
       "hint": "关闭某个工具后，本组织的所有智能体都不能再使用它。",
@@ -2488,7 +2515,8 @@
           "cancelled": "已取消",
           "pending": "待回答"
         },
-        "subagent": "子智能体"
+        "subagent": "子智能体",
+        "subagentTrajectory": "轨迹"
       },
       "hook": {
         "title": "被策略 hook 拦截",
@@ -2615,7 +2643,11 @@
       "from": "开始日期（含）",
       "to": "结束日期（不含）",
       "submit": "抽样",
-      "done": "加入 {added} 个用例，跳过 {skipped} 个。"
+      "done": "加入 {added} 个用例，跳过 {skipped} 个。",
+      "groups": {
+        "which": "数量与状态",
+        "when": "时间范围"
+      }
     },
     "case": {
       "title": "用例 · {title}"
@@ -2646,19 +2678,20 @@
       "start": "开始运行",
       "mode": "回放模式",
       "candidate": "候选",
-      "candidateHint": "各项不改表示沿用用例原来的设置。",
+      "candidateHint": "不改的项，每个用例用它当时记录的设置。",
       "version": "智能体版本",
-      "versionKeep": "沿用用例的版本",
+      "versionKeep": "各用例当时的版本",
+      "versionCurrent": "当前",
       "versionValue": "v{n}",
       "model": "模型",
-      "modelKeep": "沿用用例的模型",
+      "modelKeep": "各用例当时的模型",
       "params": "模型参数",
       "instructionsOverride": "覆盖指令",
       "instructions": "指令",
       "instructionsHint": "给模型看的系统指令，请用英文。",
       "judge": "LLM 评委",
-      "judgeHint": "评委（用途 eval 映射的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
-      "judgeUnmapped": "评委用途（eval）还没有映射模型，不能开评委。",
+      "judgeHint": "评委（模型用途里给评测评委配的模型）比较基线与候选，给出通过 / 不通过与理由；评委请求也计入 token。",
+      "judgeUnmapped": "还没有给评测评委配模型，不能开评委。",
       "judgeConfigure": "去配置模型用途",
       "tokenCap": "token 上限",
       "tokenCapHint": "留空用部署默认上限。达到上限后不再发新请求，运行记为「已达上限」。",
@@ -2767,7 +2800,8 @@
         "estimate": "运行前估算",
         "estimateValue": "请求 {model} + 评委 {judge} · token {tokens} · 成本 {cost}",
         "judgeShare": "其中评委",
-        "judgeShareValue": "{tokens} token · 成本 {cost}"
+        "judgeShareValue": "{tokens} token · 成本 {cost}",
+        "instructionsTitle": "指令覆盖"
       },
       "inspector": {
         "title": "结果详情",
@@ -2775,10 +2809,10 @@
         "status": "状态",
         "drift": "漂移",
         "error": "错误",
-        "textDiff": "回复文本差异（- 基线 / + 候选）",
-        "noTextDiff": "回复文本相同。",
+        "textDiff": "回复文本差异",
+        "noTextDiff": "回复文本相同",
         "toolDiff": "工具调用差异",
-        "noToolCalls": "两边都没有工具调用。",
+        "noToolCalls": "两边都没有工具调用",
         "toolKinds": {
           "same": "相同",
           "args_changed": "参数不同",
@@ -2789,7 +2823,6 @@
         "judge": "评委",
         "verdict": "结论",
         "score": "分数",
-        "reason": "理由",
         "judgeError": "评委没有给出结论：{reason}。",
         "unparseable": "评委回复无法解析",
         "label": "人工标注",
@@ -2799,7 +2832,12 @@
         "clear": "清除标注",
         "evalTrajectory": "查看评测会话轨迹",
         "diffCaption": "差异",
-        "driftSeparator": "、"
+        "driftSeparator": "、",
+        "summary": "概要",
+        "trajectory": "轨迹",
+        "textDiffHint": "- 基线 / + 候选",
+        "labelCurrent": "当前：{label}",
+        "labelNone": "还没有标注"
       }
     },
     "drift": {
@@ -2868,7 +2906,7 @@
       "title": "模型用途",
       "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
     },
-    "evalUnmapped": "评测用途 eval 还没有映射模型：评测不能开评委。",
+    "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",
     "capability": {
       "tools": "工具",
       "vision": "图片",
@@ -2877,20 +2915,23 @@
       "caching": "缓存"
     },
     "purpose": {
-      "declaredByKernel": "内核用途",
-      "declaredByPlugin": "扩展 {plugin}",
+      "declaredByPlugin": "来自 {plugin}",
       "pluginNote": "扩展调用模型尚未开放，可先配置。",
       "model": "模型",
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
-      "useDefault": "使用部署默认",
-      "deploymentDefault": "部署默认：{target}",
+      "useDefault": "使用部署默认（{target}）",
       "overridden": "已覆盖",
       "unavailable": "{target}（不可用）",
       "params": "参数",
       "save": "保存",
       "savedAll": "已保存 {n} 个用途。",
-      "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。"
+      "subagentHint": "按此档位派发的子智能体使用它。未设置时，子智能体使用派发它的智能体的模型。",
+      "hint": {
+        "eval": "评测的评委用它比较基线与候选，给出通过 / 不通过。未设置时，评测不能开评委。",
+        "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
+        "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。"
+      }
     }
   },
   "admin": {
@@ -3062,6 +3103,8 @@
       "hint": "留空的项使用部署默认，组织管理员在组织设置里只能查看；要管理组织内的设置，需要成为组织管理员。",
       "empty": "还没有组织。",
       "default": "默认",
+      "defaultValue": "默认（{value}）",
+      "unlimited": "不限制",
       "edit": "设置限额",
       "saved": "已保存",
       "columns": {
@@ -3070,34 +3113,42 @@
         "members": "成员",
         "runConcurrency": "运行并发",
         "cpu": "沙箱 CPU",
-        "memory": "沙箱内存"
+        "memory": "沙箱内存",
+        "subagentTokens": "子智能体 token"
       },
       "dialog": {
         "title": "「{name}」的限额",
         "runConcurrency": "运行并发上限",
-        "runConcurrencyHelp": "同时运行的会话数上限；留空使用部署默认。",
+        "runConcurrencyHelp": "同时运行的会话数上限。",
         "runConcurrencyInvalid": "请输入正整数，或留空使用部署默认。",
         "cpu": "沙箱 CPU（核）",
-        "cpuHelp": "0.25 到 64；留空使用部署默认。",
+        "cpuHelp": "0.25 到 64。",
         "cpuInvalid": "CPU 须在 0.25 到 64 之间。",
         "memory": "沙箱内存（MB）",
-        "memoryHelp": "256 到 262144 的整数；留空使用部署默认。",
+        "memoryHelp": "256 到 262144 的整数。",
         "memoryInvalid": "内存须是 256 到 262144 之间的整数。",
-        "newOnly": "沙箱限额只对之后新建的沙箱生效。",
-        "e2bNote": "E2B 沙箱不支持按组织设置 CPU 与内存：规格由 E2B 模板决定，这两项对 E2B 不生效（运行并发照常生效）。",
+        "newOnly": "只对之后新建的沙箱生效",
         "save": "保存",
         "subagentConcurrent": "每个对话同时运行的子智能体数",
-        "subagentConcurrentHelp": "1–20；留空使用部署默认（subagents.maxConcurrentPerConversation）。",
+        "subagentConcurrentHelp": "1–20。",
         "subagentConcurrentInvalid": "请输入 1 到 20 的整数。",
         "subagentDepth": "子智能体嵌套深度",
-        "subagentDepthHelp": "1–5，从对话的智能体往下数（1 表示子智能体不能再派发）；留空使用部署默认（subagents.maxDepth）。",
+        "subagentDepthHelp": "1–5，从对话的智能体往下数（1 表示子智能体不能再派发）。",
         "subagentDepthInvalid": "请输入 1 到 5 的整数。",
         "subagentDispatches": "每条消息的子智能体派发数",
-        "subagentDispatchesHelp": "1–500，从此人最近一条消息起整棵智能体树合计，含后续追问；留空使用部署默认。",
+        "subagentDispatchesHelp": "1–500，从此人最近一条消息起整棵智能体树合计，含后续追问。",
         "subagentDispatchesInvalid": "请输入 1 到 500 的整数。",
         "subagentTokens": "每条消息的子智能体 token 数",
-        "subagentTokensHelp": "至少 10,000，从此人最近一条消息起整棵智能体树合计；留空使用部署默认。",
-        "subagentTokensInvalid": "请输入不小于 10,000 的整数。"
+        "subagentTokensHelp": "至少 10,000，从此人最近一条消息起整棵智能体树合计。",
+        "subagentTokensInvalid": "请输入不小于 10,000 的整数。",
+        "groups": {
+          "run": "运行",
+          "sandbox": "沙箱",
+          "subagents": "子智能体"
+        },
+        "emptyDefault": "留空的项使用部署默认。",
+        "placeholder": "部署默认 {value}",
+        "unlimited": "不限制"
       }
     },
     "settings": {
@@ -3191,7 +3242,7 @@
           "source": "来源",
           "version": "版本",
           "desired": "期望状态",
-          "sha": "包 sha256"
+          "sha": "包"
         },
         "desired": {
           "enabled": "启用",
@@ -3205,12 +3256,6 @@
           "state": "状态",
           "reason": "原因",
           "heartbeat": "心跳"
-        },
-        "replicaState": {
-          "loaded": "已加载",
-          "failed": "失败",
-          "unloaded": "已卸下",
-          "pending": "待处理"
         },
         "failedReplica": "副本 {replica} 加载失败：{reason}。",
         "stillServing": "该副本仍在用 {version}。",
@@ -3226,18 +3271,18 @@
           "setup_failed": "扩展初始化（setup）失败",
           "migration_failed": "扩展迁移失败"
         },
-        "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
+        "converging": "各副本正在收敛到期望状态，页面会自动刷新",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
-        "requiredNote": "本部署的必需插件，由预装步骤从 npm 安装（版本与校验和已固定）。在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
-        "configNote": "这个扩展由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "requiredNote": "必需插件 · 不能停用或卸载",
+        "configNote": "由启动配置声明 · 不能在这里停用、升级或卸载",
         "actions": {
           "enable": "启用",
           "disable": "停用",
           "upgrade": "升级",
           "uninstall": "卸载"
         },
-        "uninstallNeedsDisable": "卸载前须先停用。",
+        "uninstallNeedsDisable": "卸载前须先停用",
         "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
         "disableConfirm": {
           "title": "停用「{name}」？",
@@ -3254,7 +3299,15 @@
           "disable": "已提交停用，各副本正在收敛。",
           "uninstall": "已卸载「{name}」。"
         },
-        "packageError": "扩展包读不到：{error}。"
+        "packageError": "扩展包读不到：{error}",
+        "replicaPending": "待处理",
+        "sections": {
+          "config": "部署配置",
+          "status": "状态",
+          "replicas": "副本",
+          "permissions": "权限"
+        },
+        "rawDetail": "原始错误"
       },
       "approve": {
         "title": "批准权限",
@@ -3274,19 +3327,19 @@
         }
       },
       "config": {
-        "none": "这个扩展没有部署级配置。",
-        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后扩展会重新加载（不重启）。",
-        "invalid": "配置不完整或不合法，扩展待配置。原因标在对应字段旁。",
-        "notValidated": "这个扩展当前没有加载：保存时不校验，加载时再校验。",
+        "none": "这个扩展没有部署级配置",
+        "hint": "灰色字段来自启动配置，只读",
+        "invalid": "配置不合法，原因标在对应字段旁",
+        "notValidated": "扩展当前未加载：保存时不校验，加载时再校验",
         "save": "保存配置",
-        "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
+        "saving": "正在保存，扩展重新加载最多约需 {seconds} 秒",
         "saved": "配置已保存。",
-        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改。",
-        "pendingMissing": "扩展待配置，还缺这些必填项：{fields}。",
+        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改",
+        "pendingMissing": "缺少必填项：{fields}",
         "listSep": "、",
-        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒。",
-        "appliesNow": "这些改动保存后立即生效。",
-        "noChanges": "还没有改动。"
+        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒",
+        "appliesNow": "这些改动保存后立即生效",
+        "noteSep": "；"
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",
@@ -3433,7 +3486,8 @@
       "file": "上传",
       "npm": "npm",
       "marketplace": "市场",
-      "git": "Git"
+      "git": "Git",
+      "bootstrap": "预装"
     },
     "newer": "有新版本",
     "iconAlt": "{name} 的图标",
@@ -3558,9 +3612,9 @@
         "disabledToast": "已停用「{name}」。",
         "disabledNote": "已在整个部署停用，范围保留；启用后按原范围恢复。",
         "notShareableNote": "该组织未开放共享：可以缩小范围或停用，不能向其他组织显示或关联给其他组织。",
-        "ownerNote": "它归 {org} 所有，新版本由该组织上传。",
         "awaitingNote": "它的第一个版本在待确认中等待超级管理员确认，确认前什么都不能用。",
-        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。"
+        "pendingVersionNote": "该组织上传的版本 {version} 在待确认中等待超级管理员确认。",
+        "ownerValue": "{org}（新版本由该组织上传）"
       },
       "review": {
         "title": "导入插件",
@@ -3576,9 +3630,6 @@
         "sourceNpmHint": "按包名（和版本）从 npm 仓库读取。",
         "fetch": "读取并审阅",
         "plugin": "{name} {version}",
-        "publisher": "发布者：{publisher}",
-        "package": "npm 包 {name}",
-        "license": "许可证 {license}",
         "action": {
           "install": "安装 {version}",
           "upgrade": "升级 {from} → {to}",
@@ -3610,9 +3661,7 @@
         "gitRefHelp": "可选；留空用远端 HEAD。",
         "gitPath": "目录",
         "gitPathHelp": "可选；插件在仓库里的目录（默认根目录）。",
-        "origin": "来源：{origin}",
         "provenance": "由 {workflow} 从 {repository}@{commit} 构建",
-        "provenanceNotChecked": "未核对来源证明（{reason}）",
         "provenanceMismatch": "来源证明里的仓库与这个 git 市场的仓库不一致。请确认这是你预期的包。",
         "buildVersion": "记为 {version}：{pluginVersion} 已在平台目录中，但内容不同。",
         "translation": {
@@ -3621,7 +3670,6 @@
           "summary": "按 Claude Code 插件读取：只接收 Capybara 支持的部分，其余每一项都列出原因。",
           "noManifest": "插件没有 .claude-plugin/plugin.json，按目录结构读取。",
           "claudeManifestIgnored": "插件同时有 .capybara-plugin/plugin.json 和 .claude-plugin/plugin.json：读取的是 Capybara 清单，Claude Code 的清单被忽略。",
-          "repository": "仓库：{repository}（来自插件声明，未核实）",
           "groupTitle": "{group}（{n}）",
           "groups": {
             "imported": "已导入",
@@ -3712,7 +3760,17 @@
         "scopeTitle": "范围",
         "olderThanDeployed": "低于已部署的版本，只加入目录，不改动部署。",
         "requestDefault": "按「{org}」的申请，默认只给这个组织。",
-        "namedNeedsOrg": "指定组织时至少选一个组织。"
+        "namedNeedsOrg": "指定组织时至少选一个组织。",
+        "facts": {
+          "package": "npm 包",
+          "publisher": "发布者",
+          "license": "许可证",
+          "repository": "仓库",
+          "repositoryValue": "{repository}（插件声明，未核实）",
+          "origin": "来源",
+          "provenance": "来源证明",
+          "provenanceNotChecked": "未核对（{reason}）"
+        }
       },
       "entries": {
         "title": "浏览市场",
@@ -3879,15 +3937,19 @@
         "ownerKept": "归属组织始终保留。"
       },
       "impact": {
-        "none": "没有组织会失去访问。",
-        "affected": "这些组织会失去访问，下面列出用到它的智能体：",
+        "none": "没有组织会失去访问",
         "agents": "智能体：{names}",
-        "noAgents": "没有智能体用到它。",
-        "connectorsKept": "它创建的 {count} 个连接器会保留，归该组织所有，凭据不变。",
-        "needsConfig": "这些组织要先填写它的组织配置：{orgs}",
-        "replaced": "这些组件有单独设置的范围，确认后改为跟随插件：{names}",
-        "conflicts": "下面的组织已有同名的技能，不能这样设置。先在那些组织改名或删掉同名技能：",
-        "conflictLine": "{org}：{name}"
+        "noAgents": "没有智能体用到它",
+        "connectorsKept": "它创建的 {count} 个连接器会保留，归该组织所有，凭据不变",
+        "replaced": "这些组件有单独设置的范围，确认后改为跟随插件",
+        "conflicts": "下面的组织已有同名的技能，不能这样设置。先在那些组织改名或删掉同名技能",
+        "groups": {
+          "affected": "会失去访问的组织",
+          "needsConfig": "要先填写组织配置",
+          "replaced": "改为跟随插件",
+          "conflicts": "名称冲突"
+        },
+        "conflictNote": "已有技能 {name}"
       },
       "disableDialog": {
         "title": "停用 {name}",
@@ -3930,7 +3992,8 @@
           "rejectTitle": "拒绝 {org} 上传的 {name}",
           "reasonHelp": "可选；上传的组织会看到。",
           "rejected": "已拒绝「{name}」。"
-        }
+        },
+        "grantsTitle": "将授予的权限"
       }
     },
     "org": {
@@ -4031,7 +4094,6 @@
         "title": "{name} 已卸载",
         "removed": "已移除",
         "kept": "已保留",
-        "none": "无",
         "reason": {
           "pre_existing": "安装前就有",
           "used_by_agents": "仍有智能体在用",
@@ -4041,7 +4103,10 @@
           "wanted_by_scope": "按自身范围仍启用",
           "org_owned": "保留为组织自有"
         },
-        "dismiss": "知道了"
+        "dismiss": "知道了",
+        "noneRemoved": "没有移除的组件",
+        "noneKept": "没有保留的组件",
+        "nothing": "没有组件变化"
       },
       "inProgress": "这个插件仍在安装或升级中，暂时不能改动。若已中断，超时后可在这里清理。",
       "dropped": "已不在插件中，仍被使用所以保留",
@@ -4098,23 +4163,29 @@
         "kept": "保留（仍被使用）"
       },
       "marksHint": "单独更新过的组件会改用插件的这个版本；有单独范围的组件保留它的范围。",
-      "pinned": "{name}：{orgs} 的副本固定在自己的版本上，确认后改用新版本。",
-      "keptLine": "{name} 不在新版本里，但仍有智能体在用，所以保留：{agents}",
-      "extension": "扩展 {from} → {to}，在用的组织一起更新：{orgs}",
-      "extensionNew": "这次更新会在部署上安装扩展 {to}，在用的组织：{orgs}",
       "extensionNoOrgs": "还没有组织",
       "needsApproval": "新版本要求更多权限：超级管理员确认之前，扩展保持待确认。",
-      "connectors": "{org}：这些连接器会按新模板更新：{names}",
-      "credentialsReset": "{org}：{names} 的认证方式变了，凭据会清空，需要重新填写。",
-      "needsConfig": "{org}：新增的连接器模板 {ids} 需要该组织填写地址和凭据。",
-      "none": "没有组件变化，只有版本号变化。",
+      "none": "没有组件变化，只有版本号变化",
       "confirm": "更新",
       "cancel": "取消",
       "done": "已把「{name}」更新到 {version}。",
       "stale": "更新的内容已变化，请再看一遍后确认。",
       "orgCount": "{count} 个组织",
       "otherOrgs": "其他 {count} 个组织",
-      "otherOrg": "另一个组织"
+      "otherOrg": "另一个组织",
+      "groups": {
+        "pinned": "改用新版本的副本",
+        "kept": "保留的组件",
+        "extension": "扩展",
+        "orgs": "受影响的组织"
+      },
+      "pinnedNote": "{orgs} 的副本固定在自己的版本上",
+      "keptNote": "不在新版本里，仍有智能体在用：{agents}",
+      "extensionInstall": "在部署上安装 {to}",
+      "extensionOrgs": "在用的组织一起更新：{orgs}",
+      "connectorsNote": "按新模板更新：{names}",
+      "credentialsResetNote": "认证方式变了，凭据会清空，需要重新填写：{names}",
+      "needsConfigNote": "新增的连接器模板需要填写地址和凭据：{ids}"
     },
     "errorDetail": {
       "host": "主机：{host}",
@@ -4188,7 +4259,7 @@
   "orgChooser": {
     "title": "选择组织",
     "titleNone": "新建组织",
-    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左下角的账户菜单里切换。",
+    "subtitle": "{name}，选择要进入的组织。下次登录会直接进入它，之后可以在左上角的组织切换器里切换。",
     "subtitleCreate": "你还不属于任何组织。新建一个组织开始使用。",
     "subtitleAsk": "你还不属于任何组织。",
     "listLabel": "你的组织",
@@ -4209,7 +4280,7 @@
     },
     "waiting": "组织还在配置中，组织管理员完成后你就能开始对话。",
     "refresh": "刷新",
-    "waitingDeployment": "需要超级管理员配置模型服务后才能继续。",
+    "waitingDeployment": "配置好后点刷新继续。",
     "steps": {
       "model": "配置模型",
       "agent": "新建智能体",
@@ -4347,13 +4418,14 @@
     "switchOff": {
       "title": "停用 {name}",
       "hint": "停用会移除这个插件为本组织创建、且别处没在用的组件；已有的和仍在使用的会保留。",
-      "agents": "这些智能体在用它的组件，停用后将无法再用：",
+      "agents": "受影响的智能体",
       "removed": "将移除",
       "kept": "保留",
-      "none": "无",
+      "none": "没有组件会被移除",
       "confirm": "停用",
       "cancel": "取消",
-      "stale": "要移除的内容已变化，请再看一遍后确认。"
+      "stale": "要移除的内容已变化，请再看一遍后确认。",
+      "uses": "停用后将无法再用：{names}"
     },
     "market": {
       "title": "市场",
@@ -4376,7 +4448,7 @@
       "chooseHint": "插件包（.tgz）；单个技能的 .zip 会上传到技能。",
       "drop": "把文件拖到这里",
       "reading": "正在读取「{name}」…",
-      "scope": "范围：仅本组织",
+      "scope": "范围",
       "shareable": "可共享",
       "newVersion": "这是本组织插件「{name}」的新版本，可共享沿用插件现在的设置。",
       "extensionNotice": "此插件包含扩展，扩展代码在平台内核进程中运行。超级管理员确认后才会启用。",
@@ -4388,7 +4460,8 @@
       "installed": "已上传「{name}」。",
       "updated": "已将「{name}」更新到 {version}。",
       "skillUploaded": "已上传技能「{name}」。",
-      "stale": "插件包的审阅已过期，请重新选择文件。"
+      "stale": "插件包的审阅已过期，请重新选择文件。",
+      "scopeOnly": "仅本组织"
     },
     "owned": {
       "title": "本组织的插件",
@@ -4401,7 +4474,7 @@
       "loading": "正在读取删除的影响…",
       "transferred": "其他组织仍在使用，删除后将转为平台所有：{orgs}",
       "removed": "删除后不可恢复",
-      "agents": "这些智能体会失去它：",
+      "agents": "会失去它的智能体",
       "stale": "删除的影响已变化，请再看一遍后确认。",
       "confirm": "删除",
       "cancel": "取消",

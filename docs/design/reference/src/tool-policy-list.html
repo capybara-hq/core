@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ToolPolicyList · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ToolPolicyList</h1>
+<p>Tools with their policy next to them (spec §6.36): one row per tool, the checkbox and its title on the left, the dense policy select on the right (disabled while the tool is unchecked), rows split by hairlines inside the one box; with select-all, the 「全选」 head row and the checked count, and the filter field above it in a Sheet.</p>
+<div class="r-blocks">
+<section data-ref-block="tool-policy-list-default" style="width:640px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">内置工具</div><div class="r-boxcard-body">
+  <div class="r-tool-policy" data-part="tool-policy-list">
+    <ul class="r-tool-policy-rows">
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">向用户提问</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">读取存档的工具结果</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">需审批</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-tool-policy-title" data-part="tool-policy-title">编写技能</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox" disabled><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">搜索网页</span></span><span class="r-tool-policy-note" data-part="tool-policy-note" data-tone="warn"><i data-icon="circle-alert" data-size="12"></i>不可用：本组织没有可用的网页提供方</span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">禁止</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+    </ul>
+  </div>
+  </div></section>
+</section>
+<section data-ref-block="tool-policy-list-select-all" style="width:480px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">Docs</div><div class="r-boxcard-body">
+  <div class="r-tool-policy" data-part="tool-policy-list">
+    <div class="r-tool-policy-search" data-part="tool-policy-search"><div class="r-input r-tp-search" data-step="dense" data-part="input"><i data-icon="search" data-size="14"></i><span class="r-faint">搜索工具</span></div></div>
+    <div class="r-tool-policy-all" data-part="tool-policy-all"><span class="r-tp-check"><span class="r-tp-box" data-state="mixed">–</span><span>全选</span></span><span class="r-tool-policy-count" data-part="tool-policy-count">2/4</span></div>
+    <ul class="r-tool-policy-rows">
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">Search documents</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="checked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="checked"><i data-icon="check" data-size="12"></i></span><span class="r-tool-policy-title" data-part="tool-policy-title">Create document</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox"><span class="r-select-value" data-part="input-control">需审批</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-tool-policy-title" data-part="tool-policy-title">Delete document</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox" disabled><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+      <li class="r-tool-policy-row" data-part="tool-policy-row" data-state="unchecked"><span class="r-tool-policy-text"><span class="r-tp-check"><span class="r-tp-box" data-state="unchecked"></span><span class="r-tool-policy-title" data-part="tool-policy-title">List folders</span></span></span><span class="r-tool-policy-select" data-part="tool-policy-select"><button class="r-input r-select-field" data-step="dense" data-part="select" role="combobox" disabled><span class="r-select-value" data-part="input-control">默认</span><i data-icon="chevron-down" data-size="14"></i></button></span></li>
+    </ul>
+  </div>
+  </div></section>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

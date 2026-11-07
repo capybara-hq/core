@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import type { CatalogItemVersion } from "../src/lib/catalog";
 
 /** 把嵌套文案展平为叶子 key 的点路径（有序）；非对象值都算叶子。 */
 function flattenKeys(value: unknown, prefix = ""): string[] {
@@ -84,5 +85,22 @@ describe("eval drift labels (final review m5)", () => {
   it.each(["zh", "en"])("%s labels every drift reason", (locale) => {
     const drift = (load(locale) as { evals: { drift: Record<string, string> } }).evals.drift;
     expect(REASONS.filter((r) => typeof drift[r] !== "string")).toEqual([]);
+  });
+});
+
+describe("plugin version sources (kernel CatalogVersionSource)", () => {
+  // `bootstrap` was missing: the admin plugin detail's 版本 tab threw MISSING_MESSAGE for a
+  // preinstalled plugin (acceptance 2026-11-07)
+  const SOURCES: CatalogItemVersion["source"][] = [
+    "file",
+    "npm",
+    "marketplace",
+    "git",
+    "bootstrap",
+  ];
+  it.each(["zh", "en"])("%s labels every version source", (locale) => {
+    const labels = (load(locale) as { catalog: { versionSource: Record<string, string> } }).catalog
+      .versionSource;
+    expect(SOURCES.filter((s) => typeof labels[s] !== "string")).toEqual([]);
   });
 });

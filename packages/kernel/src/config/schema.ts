@@ -1180,26 +1180,27 @@ export const KernelConfigSchema = z.object({
       maxDispatchesPerRun: z
         .number()
         .int()
-        .min(1)
+        .min(0)
         .max(500)
         .default(50)
         .meta(
           meta({
             hot: true,
             description:
-              "Sub-agents the whole tree under a person's message may dispatch in total, counted across every level (nested dispatches and SendMessage messages that restart an idle sub-agent included); later agent calls and such messages are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Sub-agents the whole tree under a person's message may dispatch in total, counted across every level (nested dispatches and SendMessage messages that restart an idle sub-agent included); later agent calls and such messages are refused. 0 means no limit. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
       maxTokensPerRun: z
         .number()
         .int()
-        .min(10_000)
+        .min(0)
+        .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
         .default(5_000_000)
         .meta(
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })
@@ -1286,7 +1287,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image for conversation sandboxes, used by the Docker sandbox extension (built from plugins/sandbox-docker/image of capybara-hq/plugins, e.g. by the compose sandbox profile; pre-pull it on every Docker node). The E2B extension ignores it and uses its own template setting",
+              "Image for conversation sandboxes, passed to the sandbox provider when it creates an instance (sandbox@1 create.image); a provider that builds instances from its own template may ignore it",
           }),
         ),
       lockWaitSeconds: z
@@ -1370,7 +1371,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "CPU cores for each sandbox; applies to sandboxes created after the change (E2B: set in the template)",
+                  "CPU cores for each sandbox; applies to sandboxes created after the change (a provider that sizes instances by its own template may not apply it)",
               }),
             ),
           memoryMb: z
@@ -1381,7 +1382,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (E2B: set in the template)",
+                  "Memory limit of each sandbox in MiB; applies to sandboxes created after the change (a provider that sizes instances by its own template may not apply it)",
               }),
             ),
           diskMb: z
@@ -1392,7 +1393,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (Docker: only with a volume driver that supports size; E2B: set by the template / plan)",
+                  "Disk limit of each sandbox in MiB; applies to sandboxes created after the change (a provider whose storage cannot be sized may not apply it)",
               }),
             ),
           maxCommandSeconds: z

@@ -14,6 +14,7 @@ import { canEditAgent, canUpdateOrg } from "../../../../lib/org-settings";
 import { agentQuery } from "../../../../lib/query/agents";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useWorkspace } from "../../../../lib/query/workspace";
+import { newConversationPath } from "../../../../lib/routes";
 import type { Me } from "../../../../lib/session";
 import NotFound from "../../not-found";
 
@@ -69,7 +70,7 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
   // save as template for org admins (a member owner's run history comes with the agent), and start chat (a static
   // link). Change owner does nothing until the agent is here.
   const admin = canUpdateOrg(me);
-  const chatHref = `/chat?agent=${encodeURIComponent(agentId)}`;
+  const chatHref = newConversationPath(agentId);
   // whether the viewer may change the agent is known only with it: members up see every section
   const editable = roleAtLeast(myRole(me), "member");
   const open = sectionOf(section, editable);

@@ -4,7 +4,8 @@
 - Status: built (see "Phase C as built" at the end); was: draft for maintainer review.
   **Amended by `2026-11-06-agent-map-design.md`** (background sub-agents): `Agent` dispatches in the
   background and `resume` is replaced by `SendMessage`; children hand back with `SubagentHandback`
-  and their reports and finishes reach the parent as `subagent_delivery` events that wake it; nesting
+  and their reports and finishes reach the parent as `subagent_delivery` events that wake it (a run
+  that handed back and completed delivers no finish, agent map spec decisions); nesting
   goes to `subagents.maxDepth` (default 3); concurrency is per conversation and the dispatch and token
   caps count per tree; the `subagents` wait remains only for `context: fork` skills. Where the two
   disagree, the newer spec wins.
@@ -276,7 +277,7 @@ followed by one status line:
 | `run_finished { reason: "completed" }` | `completed` | false | the final reply |
 | `run_finished { reason: "max_steps" }` (after the wrap-up call) | `stopped at the step limit; the reply may be partial` | false | the wrap-up reply |
 | `run_finished { reason: "max_duration" }` | `stopped at the time limit; the reply may be partial` | false | the last reply text, or `The sub-agent produced no reply before the time limit.` |
-| stopped because the parent run's sub-agent token budget ran out (§8.3) | `stopped: token budget used up` | true | the last reply text, if any |
+| stopped because the parent run's sub-agent token budget ran out (§8.3) | `stopped: token budget used up` | true | the budget wrap-up reply (its hand-back), else the last reply text, if any |
 | `run_aborted` by a person | `stopped by the user` | true | `The user stopped this sub-agent.` |
 | `run_aborted` by the parent's stop (only seen in logs; the parent is terminal) | — | true | `The run was stopped while this sub-agent was working; it was stopped too.` |
 | `run_aborted { detail: "wait_timeout" }`: stopped by the parent's sub-agents wait timeout (§7.2), the parent goes on (`subagent_finished.status` `timed_out`) | `timed out` | true | `stopped: the sub-agent wait timed out` |
@@ -722,8 +723,8 @@ that starts the next child when one finishes; refusing is simpler and the model 
 | Config (`subagents.*`, deployment; org overrides in the deployment setting `subagentLimitOverrides` (orgId → any of the three), like `runConcurrencyOverrides`) | Default | Bound |
 |---|---|---|
 | `maxConcurrentPerRun` | 4 | 1–20 |
-| `maxDispatchesPerRun` (new sub-agents and follow-ups) | 50 | 1–500 |
-| `maxTokensPerRun` (sum over the run's children, §8.3) | 5 000 000 | ≥ 10 000 |
+| `maxDispatchesPerRun` (new sub-agents and follow-ups) | 50 | 1–500, or 0: no limit |
+| `maxTokensPerRun` (sum over the run's children, §8.3) | 5 000 000 | ≥ 10 000, or 0: no limit |
 | child steps | template `maxSteps`, capped by `runtime.maxSteps` | |
 | child duration | `runtime.maxRunSeconds` per child run | |
 
@@ -741,10 +742,17 @@ acceptance plan is sized for it; long plans need a higher `runtime.maxSteps` (§
   fields, as evals count) to the **parent run's** `runs.subagent_tokens_used` with one
   `UPDATE … RETURNING`, right after its `usage` event is written.
 - Before each child model request, the child's step checks the parent counter against the cap
-  (fresh read, no cache). At or over the cap, the child run ends without another request, as
-  `run_finished { reason: "budget" }` (a new value of the enum, `completed` status), and the
-  parent's result says `stopped: token budget used up` (§4.4).
-  In-flight requests may overshoot by at most one request per active child (as evals).
+  (fresh read, no cache). At or over the cap, a child run that has made a step makes **one final
+  tool-less call** (the `max_steps` wrap-up mechanism, `toolChoice: "none"`, with the logged
+  reminder "The sub-agents' token budget is used up, so this is your last reply. …") so it hands
+  back what it found, then ends as `run_finished { reason: "budget" }` (a new value of the enum,
+  `completed` status); its wrap-up reply is the delivery's text and the parent's result says
+  `stopped: token budget used up` (§4.4) (acceptance 2026-11-07: children ended with nothing and
+  their research was lost). That call is the one allowed over the cap. A run stopped before its
+  first step (a wake of a tree already over its budget) has nothing new to report and ends at once.
+  In-flight requests may overshoot by at most one request per active child (as evals), plus each
+  child's one wrap-up.
+- `maxTokensPerRun` / `maxDispatchesPerRun` of 0 (deployment config or org override) mean no limit.
 - A dispatch when the counter is at or over the cap is refused (§4.5).
 - **Where usage shows**: each child's `usage` events stay in its own log (the single source of
   truth). The parent conversation's usage in the UI and API sums its own events plus those of its

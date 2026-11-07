@@ -93,6 +93,7 @@ const evalView = (over: Record<string, unknown> = {}) => ({
   kind: "chat",
   label: { zh: "评测评委", en: "Eval judge" },
   declaredBy: "kernel",
+  declaredByName: null,
   default: null,
   override: null,
   effective: null,
@@ -104,6 +105,7 @@ const pluginView = (over: Record<string, unknown> = {}) => ({
   kind: "chat",
   label: { zh: "摘要", en: "Summarize" },
   declaredBy: "notes",
+  declaredByName: { zh: "笔记", en: "Notes" },
   default: null,
   override: null,
   effective: null,
@@ -130,12 +132,23 @@ const actionRow = () =>
     })(),
   );
 
-/** A purpose's row (an ItemListItem, never a card): the row whose mono id is `purpose`. */
+/** The titles the stubbed purposes carry (both locales): rows are found by title, ids never show. */
+const PURPOSE_TITLES: Record<string, string[]> = {
+  eval: ["评测评委", "Eval judge"],
+  title: ["会话标题", "Conversation titles"],
+  "notes.summarize": ["摘要", "Summarize"],
+  subagent_fast: ["Sub-agent: fast"],
+  subagent_standard: ["Sub-agent: standard"],
+  subagent_capable: ["Sub-agent: capable"],
+};
+
+/** A purpose's row (an ItemListItem, never a card): the row titled with the purpose's label. */
 const purposeRow = (purpose: string): HTMLElement | null => {
-  const code = [...document.querySelectorAll('[data-part="item-list-code"]')].find(
-    (el) => el.textContent === purpose,
+  const titles = PURPOSE_TITLES[purpose] ?? [];
+  const title = [...document.querySelectorAll('[data-part="item-list-title"]')].find((el) =>
+    titles.includes(el.textContent ?? ""),
   );
-  return (code?.closest('[data-part="item-list-row"]') as HTMLElement | null) ?? null;
+  return (title?.closest('[data-part="item-list-row"]') as HTMLElement | null) ?? null;
 };
 
 const purposeBox = async (purpose: string) =>
@@ -309,11 +322,19 @@ describe("/admin/models（ListPage）", () => {
       expect((await purposeBox("eval")).getByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
       expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
+      // An extension's purpose names the extension by its display name
       expect(
-        plugin.getByText(fill(m.models.purpose.declaredByPlugin, { plugin: "notes" })),
+        plugin.getByText(
+          fill(m.models.purpose.declaredByPlugin, { plugin: locale === "zh" ? "笔记" : "Notes" }),
+        ),
       ).toBeTruthy();
       const ev = await purposeBox("eval");
       expect(ev.queryByText(m.models.purpose.pluginNote)).toBeNull();
+      // A kernel purpose has no source line, only what happens while it is unset
+      expect(ev.getByText(m.models.purpose.hint.eval)).toBeTruthy();
+      // Purpose ids are internal: never on the page
+      expect(document.querySelector('[data-part="item-list-code"]')).toBeNull();
+      expect(document.body.textContent).not.toContain("notes.summarize");
       // No save per purpose: the page has one ActionRow, shown once something changed
       expect(ev.queryByRole("button")).toBeNull();
       expect(document.querySelector('[data-part="action-row"]')).toBeNull();
@@ -481,6 +502,22 @@ describe("sub-agent model tiers on the purposes page", () => {
     }
     expect((await box("eval")).textContent).not.toContain(m.models.purpose.subagentHint);
   });
+
+  it.each(LOCALES)("the title purpose says what happens while it is unset (%s)", async (locale) => {
+    const m = msgs[locale];
+    resetNavigation("/settings/models");
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () =>
+        json(200, {
+          purposes: [
+            evalView({ purpose: "title", label: { zh: "会话标题", en: "Conversation titles" } }),
+          ],
+        }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
+    expect((await purposeBox("title")).getByText(m.models.purpose.hint.titles)).toBeTruthy();
+  });
 });
 
 describe("/settings/models（组织管理员）", () => {
@@ -513,8 +550,10 @@ describe("/settings/models（组织管理员）", () => {
       expect(current?.textContent).toBe(m.connections.nav.models);
       expect(current?.getAttribute("href")).toBe("/settings/models");
       const ev = await purposeBox("eval");
-      const defText = fill(m.models.purpose.deploymentDefault, { target: "alpha / Alpha Small" });
-      expect(ev.getByText(defText)).toBeTruthy();
+      // The deployment default rides on the select's default option, not a line of its own
+      const defText = fill(m.models.purpose.useDefault, { target: "alpha / Alpha Small" });
+      const select = () => ev.getByRole("combobox", { name: m.models.purpose.model });
+      expect(select().textContent).toContain(defText);
       expect(ev.queryByText(m.models.purpose.overridden)).toBeNull();
       expect(ev.queryByRole("button")).toBeNull();
       const user = userEvent.setup();
@@ -544,7 +583,7 @@ describe("/settings/models（组织管理员）", () => {
       expect(
         (ev.getByRole("combobox", { name: m.models.purpose.model }) as HTMLButtonElement).value,
       ).toBe("");
-      expect(ev.getByText(defText)).toBeTruthy();
+      expect(select().textContent).toContain(defText);
     },
   );
 
@@ -554,9 +593,9 @@ describe("/settings/models（组织管理员）", () => {
     await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByText(en.models.evalUnmapped)).toBeTruthy();
     const ev = await purposeBox("eval");
-    expect(
-      ev.getByText(fill(en.models.purpose.deploymentDefault, { target: en.models.purpose.unset })),
-    ).toBeTruthy();
+    expect(ev.getByRole("combobox", { name: en.models.purpose.model }).textContent).toContain(
+      fill(en.models.purpose.useDefault, { target: en.models.purpose.unset }),
+    );
   });
 
   it("设置导航：管理员看到「模型用途」", async () => {

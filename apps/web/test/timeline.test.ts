@@ -409,6 +409,16 @@ describe("buildTimeline", () => {
     });
   });
 
+  it("a tool set change (model-facing only) adds no entry", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "tools_changed", { step: 1, added: ["WebSearch"], removed: ["Agent"] }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual(
+      buildTimeline([user(1, "hi")], [], new Map(), "en"),
+    );
+  });
+
   it("drafts stream at the end: live thinking, then prose", () => {
     const out = buildTimeline(
       [],
@@ -1039,9 +1049,87 @@ describe("background sub-agents (agent map spec §5, §9.4)", () => {
       { subagentId: "ch1", name: "Scan docs", delivery: "report", text: "Docs are fine." },
       { delivery: "note", text: "Halfway there." },
       { delivery: "finished", status: "completed", text: "" },
-      { delivery: "finished", status: "failed", text: "out of steps" },
+      { delivery: "finished", status: "limit", text: "out of steps" },
       { delivery: "finished", status: "aborted" },
     ]);
+  });
+
+  it("a handed-back run's end shows once: from subagent_finished in a new log, with an old log's delivery", () => {
+    const delivery = (seq: number, payload: Record<string, unknown>) =>
+      ev(
+        seq,
+        "subagent_delivery",
+        {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          description: "Scan docs",
+          triggerAccountId: "a1",
+          text: "",
+          ...payload,
+        },
+        null,
+      );
+    const finished = (seq: number, status = "completed") =>
+      ev(
+        seq,
+        "subagent_finished",
+        {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          callId: "c1",
+          status,
+          toolCalls: 2,
+          durationMs: 10,
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        },
+        null,
+      );
+    const report = delivery(2, { kind: "report", text: "Docs are fine." });
+    const end = { kind: "delivery", delivery: "finished", name: "Scan docs", text: "" };
+    // new log: the completed run that handed back writes no finished delivery
+    const fresh = buildTimeline([user(1, "go"), report, finished(3)], [], new Map(), "en");
+    expect(kinds(fresh)).toEqual(["user", "delivery", "delivery"]);
+    expect(fresh[2]).toMatchObject({ ...end, subagentId: "ch1", status: "completed" });
+    // old log: subagent_finished, then the handed-back delivery: one end entry
+    const old = buildTimeline(
+      [
+        user(1, "go"),
+        report,
+        finished(3),
+        delivery(4, { kind: "finished", status: "completed", handedBack: true }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(kinds(old)).toEqual(["user", "delivery", "delivery"]);
+    expect(old[2]).toMatchObject({ ...end, status: "completed" });
+    // a failure after a handback still delivers (handedBack): one end entry, failed
+    const failed = buildTimeline(
+      [
+        user(1, "go"),
+        report,
+        finished(3, "failed"),
+        delivery(4, { kind: "finished", status: "failed", handedBack: true }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(kinds(failed)).toEqual(["user", "delivery", "delivery"]);
+    expect(failed[2]).toMatchObject({ ...end, status: "failed" });
+    // a run that never handed back gets its end only from its delivery
+    const plain = buildTimeline(
+      [
+        user(1, "go"),
+        finished(2),
+        delivery(3, { kind: "finished", status: "completed", text: "x" }),
+      ],
+      [],
+      new Map(),
+      "en",
+    );
+    expect(kinds(plain)).toEqual(["user", "delivery"]);
   });
 
   it("SendMessage and SubagentHandback are ordinary tool rows", () => {

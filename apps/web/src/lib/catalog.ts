@@ -299,7 +299,7 @@ export type PluginSourceFormat = "capybara" | "claude-code";
 
 export interface CatalogItemVersion {
   version: string;
-  source: "file" | "npm" | "marketplace" | "git";
+  source: "file" | "npm" | "marketplace" | "git" | "bootstrap";
   sourceRef: string;
   integrity: string | null;
   /** The content digest of the imported files (null for a version imported before phase A1). */

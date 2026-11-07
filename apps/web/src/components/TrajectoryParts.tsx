@@ -8,6 +8,7 @@ import {
   KeyValue,
   type MetricProps,
   Stack,
+  Subsection,
   Text,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
@@ -177,8 +178,13 @@ function RunDetail({
 /** Rows describing a policy hook denial (shared by step and tool details). */
 function useHookRows() {
   const t = useTranslations("trajectories.detail.hook");
-  return (d: TrajectoryHookDenial & { attempt?: number }): { k: ReactNode; v: ReactNode }[] => [
-    { k: t("title"), v: <Text tone="fail">{d.plugin}</Text> },
+  // `grouped`: the rows sit under a heading that already says 被策略 hook 拦截, so the extension
+  // is keyed by its own name
+  return (
+    d: TrajectoryHookDenial & { attempt?: number },
+    grouped = false,
+  ): { k: ReactNode; v: ReactNode }[] => [
+    { k: grouped ? t("plugin") : t("title"), v: <Text tone="fail">{d.plugin}</Text> },
     { k: t("cause"), v: t(`causes.${d.cause}`) },
     { k: t("reason"), v: d.reason },
     ...(d.attempt !== undefined ? [{ k: t("attempt"), v: String(d.attempt) }] : []),
@@ -273,6 +279,7 @@ export function ParentTrajectoryLink({ conversationId }: { conversationId: strin
 
 function ToolDetail({ call }: { call: TrajectoryToolCall }) {
   const t = useTranslations("trajectories.detail.tool");
+  const th = useTranslations("trajectories.detail.hook");
   const ts = useTranslations("subagents");
   const tc = useTranslations("chat");
   const hookRows = useHookRows();
@@ -286,50 +293,71 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
     },
   ];
   if (call.result?.isError) rows.push({ k: t("result"), v: <Text tone="fail">{t("error")}</Text> });
-  if (call.hookDenied !== undefined) rows.push(...hookRows(call.hookDenied));
   const sub = call.subagent;
-  if (sub !== undefined) {
-    rows.push(
-      {
-        k: t("subagent"),
-        v: (
-          <Link href={`/trajectories/${encodeURIComponent(sub.subagentId)}`}>
-            {`${sub.agentType} · ${sub.subagentId}`}
-          </Link>
-        ),
-      },
-      {
-        k: ts("status.label"),
-        v: sub.status === "running" ? tc("running") : ts(`status.${sub.status}`),
-      },
-    );
-  }
   const ap = call.approval;
-  if (ap !== null) {
-    rows.push(
-      { k: t("approvalRequested"), v: <DateTime value={ap.requestedAt} /> },
-      { k: t("decision"), v: t(`decisions.${ap.decision ?? "pending"}`) },
-      ...(ap.scope !== undefined ? [{ k: t("scope"), v: t(`scopes.${ap.scope}`) }] : []),
-      ...(ap.byAccountId !== null ? [{ k: t("by"), v: ap.byAccountId }] : []),
-      ...(ap.decidedAt !== null
-        ? [{ k: t("decidedAt"), v: <DateTime value={ap.decidedAt} /> }]
-        : []),
-    );
-  }
   const q = call.question;
-  if (q !== null) {
-    rows.push(
-      { k: t("asked"), v: <DateTime value={q.askedAt} /> },
-      { k: t("questionOutcome"), v: t(`questionOutcomes.${q.outcome ?? "pending"}`) },
-      ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
-    );
-  }
+  // The call's facts, then one titled group per kind it has (hook denial, sub-agent, approval,
+  // question), each only when there is something in it
   return (
     <Card title={t("title", { name: toolLabelText(toolLabelOfKey(call.toolKey)) })}>
       <Stack gap={12}>
         <IoBlock label="IN" text={pretty(call.input)} />
         <IoBlock label="OUT" text={call.result === null ? t("noResult") : call.result.content} />
         <KeyValue keyWidth="16ch" rows={rows} />
+        {call.hookDenied !== undefined && (
+          <Subsection title={th("title")}>
+            <KeyValue keyWidth="16ch" rows={hookRows(call.hookDenied, true)} />
+          </Subsection>
+        )}
+        {sub !== undefined && (
+          <Subsection title={t("subagent")}>
+            <KeyValue
+              keyWidth="16ch"
+              rows={[
+                {
+                  k: t("subagentTrajectory"),
+                  v: (
+                    <Link href={`/trajectories/${encodeURIComponent(sub.subagentId)}`}>
+                      {`${sub.agentType} · ${sub.subagentId}`}
+                    </Link>
+                  ),
+                },
+                {
+                  k: ts("status.label"),
+                  v: sub.status === "running" ? tc("running") : ts(`status.${sub.status}`),
+                },
+              ]}
+            />
+          </Subsection>
+        )}
+        {ap !== null && (
+          <Subsection title={t("approval")}>
+            <KeyValue
+              keyWidth="16ch"
+              rows={[
+                { k: t("approvalRequested"), v: <DateTime value={ap.requestedAt} /> },
+                { k: t("decision"), v: t(`decisions.${ap.decision ?? "pending"}`) },
+                ...(ap.scope !== undefined ? [{ k: t("scope"), v: t(`scopes.${ap.scope}`) }] : []),
+                ...(ap.byAccountId !== null ? [{ k: t("by"), v: ap.byAccountId }] : []),
+                ...(ap.decidedAt !== null
+                  ? [{ k: t("decidedAt"), v: <DateTime value={ap.decidedAt} /> }]
+                  : []),
+              ]}
+            />
+          </Subsection>
+        )}
+        {q !== null && (
+          <Subsection title={t("question")}>
+            <KeyValue
+              keyWidth="16ch"
+              rows={[
+                { k: t("asked"), v: <DateTime value={q.askedAt} /> },
+                { k: t("questionOutcome"), v: t(`questionOutcomes.${q.outcome ?? "pending"}`) },
+                ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
+              ]}
+            />
+          </Subsection>
+        )}
       </Stack>
     </Card>
   );

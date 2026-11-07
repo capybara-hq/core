@@ -14,7 +14,7 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 **Page = template + design components.** `apps/web` writes no styles: no `className`, `style`, `.css` or color literals; lay out with `Stack` / `Grid` / `Card` / `Text`, and colors come only from design tokens. When a component is missing, add it to the design package first (see "Adding a component or template" below); don't improvise one in a page.
 
-**Type, figures and details** (spec §2.2, §6.5, §6.17, §6.18). A sentence is prose: `Text variant="prose"` for hints, notes, descriptions and dialog bodies (field help, object descriptions, callouts and empty states already are); mono stays for ids, paths, numbers, versions and dates. A date is `<DateTime value={iso} />` (`YYYY-MM-DD HH:mm`, the relative age on hover) or `formatDateTime(iso, form, useTimeZone())` inside a string; never `toLocaleString`. Anything that reads the clock or the zone in render takes `useNow()` / `useTimeZone()` (`formatRelative(iso, locale, useNow())`, `untitledLabel(d, locale, useTimeZone())`, a running time `useNow(1000)`), never `Date.now()` / `new Date()`: they hydrate with the server render's clock (`DesignProvider` `clock`, set by the root layout) and switch to the browser's after, so a server-rendered time never fails hydration. A version is `versionLabel(v)` ("v0.1.0"), but request bodies keep the bare version. An `ObjectRow` mark is `{ text: <display name> }` (drawn as its upper-cased initial), never an icon for an object. Plain metadata (visibility, purpose ids) is meta or muted text, never a badge. `EmptyState` has two styles, `page` (the capybara) and `compact` (words only).
+**Type, figures and details** (spec §2.2, §6.5, §6.17, §6.18). A sentence is prose: `Text variant="prose"` for hints, notes, descriptions and dialog bodies (field help, object descriptions, callouts and empty states already are); mono stays for ids, paths, numbers, versions and dates. A date is `<DateTime value={iso} />` (`YYYY-MM-DD HH:mm`, the relative age on hover) or `formatDateTime(iso, form, useTimeZone())` inside a string; never `toLocaleString`. Anything that reads the clock or the zone in render takes `useNow()` / `useTimeZone()` (`formatRelative(iso, locale, useNow())`, `untitledLabel(d, locale, useTimeZone())`, a running time `useNow(1000)`), never `Date.now()` / `new Date()`: they hydrate with the server render's clock (`DesignProvider` `clock`, set by the root layout) and switch to the browser's after, so a server-rendered time never fails hydration. A version is `versionLabel(v)` ("v0.1.0"), but request bodies keep the bare version. An `ObjectRow` mark is `{ text: <display name> }` (drawn as its upper-cased initial), never an icon for an object. Plain metadata (visibility) is meta or muted text, never a badge; internal ids such as model purpose ids are never shown. `EmptyState` has two styles, `page` (the capybara) and `compact` (words only).
 
 **One box is enough** (spec §1 principle 7, §2.5; acceptance item AB). Inside a box (a `Card`, a
 `FormSection`'s card, a `Sheet`, a `Dialog`, an `InlineCard`, a `PropertySection`) group with
@@ -44,13 +44,13 @@ rendered DOM in tests.
 
 | Page | Template | Notes |
 |---|---|---|
-| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation `/chat` is the home, `/` redirects there) |
+| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation at `/` is the home; `/chat` redirects permanently to `/` with its query, maintainer decision 2026-11-07) |
 | Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
 | Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
+| The conversation page (`/` for a new one, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
 | Single run detail | `TracePage` | Span waterfall + detail |
 | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
@@ -73,7 +73,7 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - `ListPage` takes `listLabel` (the list's accessible name), `callout` (a `Callout` between the title row and the tabs) and `empty` (an `EmptyState`, drawn instead of the rows: loading failed, nothing yet, no match). Use these instead of drawing your own notices; an object list is a `ul` (role `list` / `listitem`), not a table.
 - A failure whose cause is raw system text (a kernel message, a network error) is an `ErrorDetail`: one sentence in the reader's language mapped from the error, the raw text behind its 「原始错误」 toggle; never the raw English inline. A button that navigates is a `LinkButton` (a link drawn as the button), never a bare text link among buttons.
 - Create forms and dialogs (spec §5.3, §6.7): a new object's page is `FormPage create` (focus on the first field, no 「没有未保存的修改」), and its primary is `disabled` until the form is valid; a dialog that asks for input starts on its first field by itself. When the prerequisite is missing (no channel extension for 新建渠道) draw only the `EmptyState` with the next step, never the form. A dialog that can only explain (退出组织 as the only owner) is not `danger`: one 「知道了」; a dialog whose next step lives elsewhere offers it as a `LinkButton` primary, never a disabled dead end. Picking a file is the `FilePicker` drop zone (spec §6.25), with card radios (`RadioGroup variant="card"` in a `Card`) to choose between sources.
-- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`): the cards have no save of their own; the page has one ActionRow that saves every changed purpose.
+- Model purposes (`components/PurposeEditor`, `usePurposeDrafts`): the rows have no save of their own; the page has one ActionRow that saves every changed purpose. A row shows the purpose's label (never its id); a kernel purpose has one muted hint saying what happens while it is unset, an extension's purpose 「来自 <display name>」; on the org page the deployment default rides on the select's default option 「使用部署默认（…）」.
 - `ObjectRow.action` is the row's most common action (a link when it has `href`), `menu` holds the rest; the menu button is named 更多操作.
 - A header's `path` comes from `usePagePath("org" | "home" | "admin", ...)`; `web-ui-page-path` rejects a page head without it.
 
@@ -111,7 +111,10 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Copy: "文件" / "files" for what an agent delivers, never "产出物" / "artifacts"; tool verbs per kind come from the design i18n (spec §7).
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
-- A new conversation (`/chat`) creates nothing on the kernel before the first send.
+- A new conversation (`/`) creates nothing on the kernel before the first send.
+- A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
+  reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
+  that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).
 
 Submit actions go in the ActionRow (built into `FormPage`, `WizardPage` etc.) and **must not** go in the PageHeader; at most one `variant: "primary"` per view, and at most 5 metrics (`PageHeader` throws in development and tests).
 
@@ -197,7 +200,7 @@ function Agents({ orgId }: { orgId: string }) {
   keeps a hydrated error from being read again on mount).
 - `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
   from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes home,
-  `/chat`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  `/`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
 - **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`

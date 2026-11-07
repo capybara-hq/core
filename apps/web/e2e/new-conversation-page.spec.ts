@@ -33,7 +33,7 @@ test("the new conversation page greets, a quick action fills the composer, and t
     account: { displayName: string };
   };
 
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   // one line of the time-of-day sets, with the person's name where the line has one
   const lines = Object.entries(zh.chat.greeting)
     .filter(([k]) => k !== "sub")
@@ -62,4 +62,21 @@ test("the new conversation page greets, a quick action fills the composer, and t
   await expect(users(page).filter({ hasText: "hello from a quick action" }).first()).toBeVisible();
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
   await expect(replies(page).last()).toHaveText(/hello from a quick action/, { timeout: 30_000 });
+});
+
+test("the old /chat redirects permanently to /, the new conversation, keeping its query", async ({
+  page,
+}) => {
+  await signIn(page);
+  const orgId = await currentOrg(page);
+  const agentId = await createAgent(page, orgId, "Cap moved");
+  // maintainer decision 2026-11-07: the new conversation is the home at `/`
+  const res = await page.request.get(`/chat?agent=${agentId}`, { maxRedirects: 0 });
+  expect(res.status()).toBe(308);
+  expect(new URL(res.headers().location ?? "", page.url()).pathname).toBe("/");
+  expect(new URL(res.headers().location ?? "", page.url()).search).toBe(`?agent=${agentId}`);
+  await page.goto(`/chat?agent=${agentId}`);
+  await expect(page).toHaveURL(new RegExp(`^https?://[^/]+/\\?agent=${agentId}$`));
+  await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
+  await expect(composer(page)).toBeVisible();
 });

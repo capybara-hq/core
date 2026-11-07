@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Dialog, Stack, Text, useToast } from "@capybara-hq/design";
+import { Button, Callout, Dialog, ImpactPreview, Stack, Text, useToast } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../lib/api";
@@ -111,11 +111,7 @@ export function OwnedItemDeleteDialog({
       }
     >
       <Stack gap={12}>
-        {notice !== undefined && (
-          <Text variant="prose" tone="warn">
-            {notice}
-          </Text>
-        )}
+        {notice !== undefined && <Callout tone="warn">{notice}</Callout>}
         {preview === null ? (
           error === undefined && (
             <Text variant="prose" tone="muted">
@@ -124,22 +120,24 @@ export function OwnedItemDeleteDialog({
           )
         ) : (
           <>
-            <Text variant="prose" {...(preview.outcome === "transferred" && { tone: "warn" })}>
-              {preview.outcome === "transferred"
-                ? t("transferred", { orgs: preview.orgs.map((o) => o.name).join(sep) })
-                : t("removed")}
-            </Text>
+            {preview.outcome === "transferred" ? (
+              <Callout tone="warn">
+                {t("transferred", { orgs: preview.orgs.map((o) => o.name).join(sep) })}
+              </Callout>
+            ) : (
+              <Text variant="prose">{t("removed")}</Text>
+            )}
             {preview.agents.length > 0 && (
-              <Stack gap={4}>
-                <Text variant="small" tone="warn">
-                  {t("agents")}
-                </Text>
-                {preview.agents.map((a) => (
-                  <Text key={a.id} variant="small">
-                    {`· ${a.name}`}
-                  </Text>
-                ))}
-              </Stack>
+              <ImpactPreview
+                empty=""
+                groups={[
+                  {
+                    id: "agents",
+                    title: t("agents"),
+                    items: preview.agents.map((a) => ({ id: a.id, title: a.name })),
+                  },
+                ]}
+              />
             )}
           </>
         )}

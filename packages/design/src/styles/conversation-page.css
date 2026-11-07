@@ -386,12 +386,22 @@ span.cb-title-btn {
 .cb-agents-chip.cb-btn {
   flex: none;
 }
-.cb-agents-chip-icon,
 .cb-agents-chip-count {
   display: none;
 }
+/* The mark that leads when nothing is active: the agent icon in the chip's own muted ink. */
 .cb-agents-chip-icon {
+  display: inline-flex;
   align-items: center;
+}
+/* The number is the chip's point: ink at 500, tabular; the words stay muted (spec §6.16.29). */
+.cb-agents-chip-number {
+  color: var(--cb-ink);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.cb-agents-chip-activity {
+  white-space: nowrap;
 }
 /* A picker's label gives way with an ellipsis when the row is short (a phone); the icon
  * buttons (＋, quick actions, send) keep their square. */
@@ -407,14 +417,12 @@ span.cb-title-btn {
   white-space: nowrap;
 }
 @media (max-width: 639px) {
-  .cb-agents-chip-label {
+  .cb-agents-chip-label,
+  .cb-agents-chip-activity {
     display: none;
   }
   .cb-agents-chip-count {
     display: inline;
-  }
-  .cb-agents-chip-icon {
-    display: inline-flex;
   }
 }
 .cb-picker[data-locked="true"] {
@@ -713,6 +721,17 @@ button.cb-property-row {
      composer's center line whether or not the thread scrolls (the composer is outside it). */
   scrollbar-gutter: stable both-edges;
 }
+/*
+ * The thread opens at its latest message (spec §5.4): the scroll container is a reversed column
+ * around its one content wrapper, so its scroll origin (scrollTop 0) is the bottom. The first
+ * painted frame, server HTML before any script, already shows the bottom, and content growing
+ * there stays in view. Only the wrapper is reversed against, never the items: reading and focus
+ * order stay top to bottom. useFollowBottom adds the follow slack and the no-anchoring fallback.
+ */
+.cb-conv-scroll:not([data-center="true"]) {
+  display: flex;
+  flex-direction: column-reverse;
+}
 .cb-conv-scroll[data-center="true"] {
   display: flex;
   align-items: center;
@@ -724,6 +743,14 @@ button.cb-property-row {
   gap: var(--cb-space-3);
   max-width: var(--cb-layout-chat);
   margin: 0 auto;
+}
+/* In the reversed column: as wide as before (auto side margins would shrink a flex item), and the
+   bottom auto margin keeps a short thread at the top while an overflowing one starts at the
+   bottom (auto margins take no negative free space). */
+.cb-conv-scroll > .cb-conv-thread {
+  flex: none;
+  width: 100%;
+  margin-bottom: auto;
 }
 .cb-conv-composer {
   flex: none;

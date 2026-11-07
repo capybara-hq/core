@@ -2,12 +2,13 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type {
-  AgentTreeNode,
-  ConversationEvent,
-  ConversationUsage,
-  SubagentToolRef,
-  SubagentView,
+import {
+  type AgentTreeNode,
+  type ConversationEvent,
+  type ConversationUsage,
+  fromStart,
+  type SubagentToolRef,
+  type SubagentView,
 } from "./conversations";
 import { retryOnMountOf } from "./query/client";
 import { agentTreeQuery, subagentsQuery, usageQuery } from "./query/conversation";
@@ -23,18 +24,29 @@ import { toolLabelOfKey, toolLabelText } from "./tool-label";
 /** A list status that is still going (the latest child run). */
 export const isActiveStatus = (s: string) => s === "queued" || s === "running" || s === "waiting";
 
-/** How many `subagent_*` events the log holds: the list is read again when it moves. */
-const subagentEventCount = (events: readonly ConversationEvent[]) =>
-  events.filter(
+/**
+ * The newest `subagent_*` event's seq (0 without one): the list is read again when it moves. A seq,
+ * not a count, so loading earlier pages of the log (history paging spec §5) reads nothing again.
+ */
+const lastSubagentEventSeq = (events: readonly ConversationEvent[]) =>
+  events.findLast(
     (e) =>
       e.type === "subagent_dispatched" ||
       e.type === "subagent_waiting" ||
       e.type === "subagent_finished",
-  ).length;
+  )?.seq ?? 0;
 
 /** Whether the conversation has dispatched a sub-agent (the agent map's entries show then). */
 export const dispatchedAny = (events: readonly ConversationEvent[]) =>
   events.some((e) => e.type === "subagent_dispatched");
+
+/**
+ * Whether the conversation may have sub-agents, so the server's lists are read: it dispatched one,
+ * or the cached window does not start at the log's beginning and a dispatch may be above it
+ * (history paging spec §5). What shows still waits for the log or the list to name one.
+ */
+export const mayHaveSubagents = (events: readonly ConversationEvent[]) =>
+  !fromStart(events) || dispatchedAny(events);
 
 /**
  * Invalidates `queryKey` when `count` moves after the first value (the first is what the cached
@@ -65,8 +77,8 @@ export function useSubagents(
 ): { views: SubagentView[] | undefined; refresh(): void } {
   const qc = useQueryClient();
   // scans of the log: once per events change, not per render (final review I3)
-  const dispatched = useMemo(() => dispatchedAny(events), [events]);
-  const count = useMemo(() => subagentEventCount(events), [events]);
+  const dispatched = useMemo(() => mayHaveSubagents(events), [events]);
+  const count = useMemo(() => lastSubagentEventSeq(events), [events]);
   // One options object (and key) per conversation, not per render: the effects below depend on the
   // key, and a new array each render re-ran them on every render, reading the list in a loop while
   // a waiting child had progress (AC5).
@@ -317,8 +329,8 @@ export function useAgentTree(
   { enabled, open }: { enabled: boolean; open: boolean },
 ): { root: AgentTreeNode | undefined; failed: boolean } {
   const qc = useQueryClient();
-  const dispatched = useMemo(() => dispatchedAny(events), [events]);
-  const count = useMemo(() => subagentEventCount(events), [events]);
+  const dispatched = useMemo(() => mayHaveSubagents(events), [events]);
+  const count = useMemo(() => lastSubagentEventSeq(events), [events]);
   // every agent's step: it moves whenever any agent of the tree makes progress
   const steps = useMemo(
     () =>
@@ -412,16 +424,21 @@ export function useAgentTree(
 }
 
 /**
- * The conversation's tokens with its sub-agents' (`GET …/usage`), read only once a sub-agent was
- * dispatched and again when one finishes (its usage is final then). Undefined otherwise.
+ * The conversation's tokens with its sub-agents' (`GET …/usage`), read only once a sub-agent may
+ * have been dispatched ({@link mayHaveSubagents}) and again when one finishes (its usage is final
+ * then). Undefined otherwise.
  */
 export function useUsageWithSubagents(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
 ): ConversationUsage | undefined {
-  const dispatched = useMemo(() => dispatchedAny(events), [events]);
-  const ends = useMemo(() => events.filter((e) => e.type === "subagent_finished").length, [events]);
+  const dispatched = useMemo(() => mayHaveSubagents(events), [events]);
+  // the newest end's seq: earlier pages loaded later read nothing again
+  const ends = useMemo(
+    () => events.findLast((e) => e.type === "subagent_finished")?.seq ?? 0,
+    [events],
+  );
   const query = usageQuery(orgId, conversationId);
   const usage = useQuery({
     ...query,

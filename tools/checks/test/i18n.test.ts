@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkDesignI18n, checkI18n, flattenKeys } from "../src/i18n.js";
+import { checkDesignI18n, checkI18n, checkSourceZh, flattenKeys } from "../src/i18n.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/i18n/${name}`, import.meta.url));
@@ -208,5 +208,29 @@ describe("checkDesignI18n", () => {
 
   it("the design system's zh strings pass", () => {
     expect(checkDesignI18n(designMessages)).toEqual([]);
+  });
+});
+
+describe("checkSourceZh", () => {
+  it("applies the zh word rules to zh: strings in source; en, tests and clean strings pass", () => {
+    const dir = fixture("source-zh");
+    const f = checkSourceZh([dir]);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["i18n-zh-subagent", 2],
+      ["i18n-zh-agent", 3],
+      ["i18n-zh-enterprise", 4],
+    ]);
+    expect(f.every((x) => x.file.endsWith("labels.ts"))).toBe(true);
+    expect(f[0]?.message).toContain("子智能体");
+  });
+
+  it("子代理 in a zh message -> i18n-zh-subagent", () => {
+    const d = dirWith({ "zh.json": '{"a":"子代理"}', "en.json": '{"a":"Sub-agent"}' });
+    expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-zh-subagent"]);
+  });
+
+  it("the kernel and SDK zh strings pass", () => {
+    const root = fileURLToPath(new URL("../../../packages", import.meta.url));
+    expect(checkSourceZh([join(root, "kernel/src"), join(root, "plugin-sdk/src")])).toEqual([]);
   });
 });

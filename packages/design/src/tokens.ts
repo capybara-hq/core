@@ -114,5 +114,6 @@ export const SIZES = {
     "head-tabs-content": 16,
     "head-content": 24,
     "card-min": 280,
+    "policy-select": 160,
   },
 } as const;

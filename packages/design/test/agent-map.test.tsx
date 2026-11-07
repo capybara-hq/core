@@ -73,7 +73,7 @@ describe("AgentMapTree (§6.16.28)", () => {
 
   it("status is a dot with an accessible label, no status word", () => {
     wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
-    const words = ["运行中", "等待", "完成", "失败", "已停止"];
+    const words = ["运行中", "等待", "完成", "已达上限", "失败", "已停止"];
     for (const n of nodes()) {
       const dot = n.querySelector('[data-part="agent-dot"]');
       expect(dot?.getAttribute("role")).toBe("img");
@@ -214,7 +214,7 @@ describe("AgentMapDialog (§6.16.28)", () => {
       </AgentMapDialog>,
     );
     const dialog = screen.getByRole("dialog", { name: "智能体图" });
-    expect(dialog.getAttribute("data-size")).toBe("1100");
+    expect(dialog.getAttribute("data-size")).toBe("tree");
     for (const [level, size] of [
       ["detail", "chat"],
       ["transcript", "chat"],
@@ -339,13 +339,23 @@ describe("AgentMapDialog (§6.16.28)", () => {
     expect(document.activeElement?.getAttribute("data-part")).toBe("agent-map-title");
   });
 
-  it("the dialog sizes include the agent map widths", () => {
+  it("the dialog follows its level's width: the tree as wide as its tree, levels 2 and 3 the column", () => {
     const overlays = readFileSync(
       resolve(import.meta.dirname, "../src/styles/overlays.css"),
       "utf8",
     );
-    expect(overlays).toContain('.cb-dialog[data-size="1100"]');
-    expect(overlays).toContain("width: min(1100px, calc(100vw - 32px));");
+    // The tree is as wide as its tree, between the levels 2 and 3 width and 1100 (acceptance
+    // 2026-11-07: a fixed 1100 left a two-column tree's dialog mostly empty); the canvas keeps
+    // the scrollbar's room, so a tall tree does not scroll sideways.
+    expect(overlays).not.toContain('.cb-dialog[data-size="1100"]');
+    const tree = rule('.cb-amap-dialog[data-size="tree"]');
+    expect(tree).toContain("width: max-content;");
+    expect(tree).toContain(
+      "min-width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));",
+    );
+    expect(tree).toContain("max-width: min(1100px, calc(100vw - 32px));");
+    expect(rule(".cb-amap-canvas")).toContain("overflow: auto;");
+    expect(rule(".cb-amap-canvas")).toContain("scrollbar-gutter: stable;");
     // Levels 2 and 3: the conversation's column plus the body padding and the border (AC2).
     expect(rule('.cb-amap-dialog[data-size="chat"]')).toContain(
       "width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));",
@@ -405,6 +415,20 @@ const detail = (o: DetailOverrides = {}, { stop = true } = {}) => (
 );
 
 describe("AgentDetail (§6.16.28, level 2)", () => {
+  it("the latest text renders as Markdown (headings, bold, tables), not raw marks", () => {
+    wrap(
+      detail({
+        latestText: "## 调研报告\n\n**未完成**\n\n| 字段 | 内容 |\n|---|---|\n| 版本 | v1.20.0 |",
+      }),
+    );
+    const latest = document.querySelector('[data-part="agent-latest"]') as HTMLElement;
+    expect(within(latest).getByRole("heading", { name: "调研报告" })).toBeTruthy();
+    expect(latest.querySelector("strong")?.textContent).toBe("未完成");
+    expect(within(latest).getByRole("table")).toBeTruthy();
+    expect(latest.textContent).not.toContain("##");
+    expect(latest.textContent).not.toContain("**");
+  });
+
   it("tool calls list newest first, the running one with a pulse and a clock", () => {
     wrap(detail());
     const section = screen.getByRole("region", { name: "工具调用 7" });

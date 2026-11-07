@@ -215,6 +215,12 @@ function toView(r: {
 /** The longest conversation title (characters, after trimming). */
 export const CONVERSATION_TITLE_MAX_CHARS = 120;
 
+/**
+ * How far back a `before` page of events reaches past its `limit` for the start of a turn (history
+ * paging spec §2); a longer run starts mid-run.
+ */
+export const EVENTS_TURN_EXTEND = 2000;
+
 /** A user message as posted (`POST …/messages`, or the first message of `POST /conversations`). */
 export interface UserMessageInput {
   text: string;
@@ -925,6 +931,23 @@ export class ConversationsService {
     await this.get(orgId, conversationId, viewerAccountId);
     this.kickRun(conversationId);
     return this.eventLog.readAfter(conversationId, afterSeq, limit);
+  }
+
+  /**
+   * The turn-aligned page of events before `beforeSeq` (`null`: the log's last page), with how
+   * many runs started before it ({@link EventLog.readTurnPageBefore}; history paging spec §2).
+   * Visibility as {@link get}; kicks a stalled run as {@link listEvents} does.
+   */
+  async listEventsBefore(
+    orgId: string,
+    conversationId: string,
+    viewerAccountId: string,
+    beforeSeq: number | null,
+    limit: number,
+  ): Promise<{ events: ConversationEvent[]; turnsBefore: number }> {
+    await this.get(orgId, conversationId, viewerAccountId);
+    this.kickRun(conversationId);
+    return this.eventLog.readTurnPageBefore(conversationId, beforeSeq, limit, EVENTS_TURN_EXTEND);
   }
 
   /**

@@ -218,6 +218,26 @@ describe("DataTable wrapping columns", () => {
   });
 });
 
+describe("DataTable fitting columns", () => {
+  it("a fit column is as wide as its content and never truncated; a wrap column takes the rest", () => {
+    const { container } = plain({
+      columns: [
+        { key: "id", header: "副本", cell: () => "MacBook-Pro.local", fit: true },
+        { key: "why", header: "原因", cell: () => "部署配置缺失或不合法", wrap: true },
+      ],
+    });
+    const th = screen.getByRole("columnheader", { name: "副本" });
+    expect(th.getAttribute("data-fit")).toBe("true");
+    const td = container.querySelector('td[data-fit="true"]');
+    expect(td?.textContent).toBe("MacBook-Pro.local");
+    expect(container.querySelector('td[data-wrap="true"]')?.getAttribute("data-fit")).toBeNull();
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    expect(css).toMatch(
+      /th\[data-fit="true"\],\s*\.cb-table-el td\[data-fit="true"\] \{\s*width: 1%;\s*max-width: none;\s*white-space: nowrap;/,
+    );
+  });
+});
+
 describe("DataTable wrapping lists", () => {
   it("a wrap column's string list is one no-break unit per item, so lines break only at 「 · 」", () => {
     const { container } = plain({

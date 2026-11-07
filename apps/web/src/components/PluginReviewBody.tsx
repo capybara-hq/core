@@ -70,73 +70,80 @@ export function PluginReviewBody({
   const provenance = review.provenance;
   // Provenance exists only for npm packages: an npm import or a marketplace entry from the registry
   const fromNpm = review.source.kind === "npm" || (detail !== undefined && "registry" in detail);
-  return (
-    <Stack gap={16}>
-      <Stack gap={4}>
-        <Stack direction="row" gap={8} align="center">
-          <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
-          {review.format === "claude-code" && <Badge>{tt("formatClaude")}</Badge>}
-          {review.sensitive && <Badge tone="warn">{tp("sensitive")}</Badge>}
-        </Stack>
-        {review.pluginVersion !== undefined && (
-          <Text variant="small" tone="warn">
-            {t("buildVersion", {
-              version: versionLabel(review.version),
-              pluginVersion: versionLabel(review.pluginVersion),
-            })}
-          </Text>
-        )}
-        <Text variant="small" tone="muted">
-          {[
-            ...(review.packageName !== null ? [t("package", { name: review.packageName })] : []),
-            ...(review.publisher !== "" ? [t("publisher", { publisher: review.publisher })] : []),
-            ...(review.license !== undefined ? [t("license", { license: review.license })] : []),
-          ].join(" · ")}
-        </Text>
-        {description !== "" && (
-          <Text variant="prose" tone="muted">
-            {description}
-          </Text>
-        )}
-        {review.repository !== undefined && (
-          // display only: never fetched or compared with the source
-          <Text variant="small" tone="muted">
-            {tt("repository", { repository: review.repository })}
-          </Text>
-        )}
-        {detail !== undefined && (
-          <Text variant="small" tone="muted">
-            {t("origin", { origin: origin(detail) })}
-          </Text>
-        )}
-        {provenance.checked ? (
-          // display only: the attestation's signatures are not verified
-          <Text variant="small" tone="muted">
-            {t("provenance", {
+  const facts: { k: string; v: string }[] = [
+    ...(review.packageName !== null ? [{ k: t("facts.package"), v: review.packageName }] : []),
+    ...(review.publisher !== "" ? [{ k: t("facts.publisher"), v: review.publisher }] : []),
+    ...(review.license !== undefined ? [{ k: t("facts.license"), v: review.license }] : []),
+    // display only: never fetched or compared with the source
+    ...(review.repository !== undefined
+      ? [
+          {
+            k: t("facts.repository"),
+            v: t("facts.repositoryValue", { repository: review.repository }),
+          },
+        ]
+      : []),
+    ...(detail !== undefined ? [{ k: t("facts.origin"), v: origin(detail) }] : []),
+    // display only: the attestation's signatures are not verified
+    ...(provenance.checked
+      ? [
+          {
+            k: t("facts.provenance"),
+            v: t("provenance", {
               repository: provenance.repository,
               commit: shortCommit(provenance.commit),
               workflow: provenance.workflow,
-            })}
+            }),
+          },
+        ]
+      : fromNpm
+        ? [
+            {
+              k: t("facts.provenance"),
+              v: t("facts.provenanceNotChecked", { reason: provenance.reason }),
+            },
+          ]
+        : []),
+  ];
+  return (
+    <Stack gap={16}>
+      {/* The head: the name with its marks, the description, the warnings as one notice, then
+          one facts block (package, publisher, license, repository, source, provenance) */}
+      <Stack gap={8}>
+        <Stack direction="row" gap={8} align="center">
+          <Text variant="h3">
+            {t("plugin", { name: review.name, version: versionLabel(review.version) })}
           </Text>
-        ) : (
-          fromNpm && (
-            <Text variant="small" tone="muted">
-              {t("provenanceNotChecked", { reason: provenance.reason })}
-            </Text>
-          )
-        )}
-        {review.provenanceWarning === "repository_mismatch" && (
-          <Text variant="small" tone="warn">
-            {t("provenanceMismatch")}
-          </Text>
-        )}
-        {review.claudeManifestIgnored === true && (
-          <Text variant="small" tone="muted">
-            {tt("claudeManifestIgnored")}
-          </Text>
-        )}
-        <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
+          {review.format === "claude-code" && <Badge>{tt("formatClaude")}</Badge>}
+          {review.sensitive && <Badge tone="warn">{tp("sensitive")}</Badge>}
+        </Stack>
+        {description !== "" && <Text variant="prose">{description}</Text>}
       </Stack>
+      {(review.pluginVersion !== undefined ||
+        review.provenanceWarning === "repository_mismatch") && (
+        <Callout tone="warn">
+          <Stack gap={4}>
+            {review.pluginVersion !== undefined && (
+              <span>
+                {t("buildVersion", {
+                  version: versionLabel(review.version),
+                  pluginVersion: versionLabel(review.pluginVersion),
+                })}
+              </span>
+            )}
+            {review.provenanceWarning === "repository_mismatch" && (
+              <span>{t("provenanceMismatch")}</span>
+            )}
+          </Stack>
+        </Callout>
+      )}
+      {facts.length > 0 && <KeyValue rows={facts} keyWidth="10ch" />}
+      {review.claudeManifestIgnored === true && (
+        <Text variant="small" tone="muted">
+          {tt("claudeManifestIgnored")}
+        </Text>
+      )}
+      <LicenseView text={review.licenseText} truncated={review.licenseTruncated === true} />
       {/* A warn Callout: the tinted bar on the import page, the warn line in the org's upload
           Dialog (it reads the box it sits in, spec §6.19) */}
       {mismatch !== null && (

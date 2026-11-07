@@ -48,8 +48,11 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       parseTimeZone(jar.get(TIME_ZONE_COOKIE)?.value) ??
       new Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
+  // suppressHydrationWarning: browser extensions (a page translator, a dark-mode helper) add
+  // attributes to <html> before React hydrates. It covers this element's own attributes only;
+  // lang and data-theme are decided here from the request, so the server and client agree.
   return (
-    <html lang={locale} data-theme={theme}>
+    <html lang={locale} data-theme={theme} suppressHydrationWarning>
       <head>
         <link
           rel="preload"

@@ -16,7 +16,7 @@ export type Session = {
   reload(): Promise<void>;
   /**
    * Makes `orgId` the current org (`null` clears it), tells the other tabs, then opens home (the
-   * new conversation, `/chat`) with a full navigation (ruling R4): the current page stays until
+   * new conversation, `/`) with a full navigation (ruling R4): the current page stays until
    * the new document arrives. Rejects when the kernel refuses (nothing navigates then).
    */
   switchOrg(orgId: string | null): Promise<void>;

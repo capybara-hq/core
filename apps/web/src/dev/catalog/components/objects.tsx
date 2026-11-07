@@ -100,11 +100,11 @@ export function ObjectsSection() {
             action={{ label: "新建智能体", icon: "plus", variant: "primary", onSelect: noop }}
           />
           <EmptyState
-            size="compact"
+            size="panel"
             text="还没有会话"
             action={{ label: "新会话", variant: "default", onSelect: noop }}
           />
-          <EmptyState size="compact" text="没有匹配的会话。" />
+          <EmptyState size="compact" text="没有匹配的结果。" />
         </Grid>
       </Row>
     </Section>

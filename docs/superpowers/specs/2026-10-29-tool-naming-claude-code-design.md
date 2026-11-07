@@ -413,6 +413,38 @@ Saving a definition writes new keys only; validation rejects an old key on write
 - Sub-agents: `subagent_started` freezes the child definition with old keys; a child that resumes
   after the upgrade resolves them the same way.
 
+### 9.1 Tool set changes mid-conversation (added 2026-11-07, acceptance)
+
+The tools are resolved on every step, so an extension switched on in the org (web tools, `todo`),
+a connector set up or a sub-agent roster added changes the next request's tool list while the
+history still holds the model's earlier "I have no such tool". Like Claude Code's system reminder:
+
+- **Event** `tools_changed { step, added, removed }` (tool names as the model sees them, sorted),
+  written by the step (`runtime/model-call.ts`, `runtime/context/tool-changes.ts`) after its
+  compaction and before its request, when the step's resolved set differs from the set the
+  conversation's previous request offered: the last `model_call`'s `tools` plus `catalog` keys
+  (with `ToolSearch` the catalog holds the deferred tools), then any `tools_changed` logged after
+  it. Never before a conversation's first request (its list is the baseline), never when
+  unchanged; a sub-agent's log follows the same rule on its own. Skipped as a baseline: a
+  `model_call` without recorded tools (older logs) and one whose tools were left out because its
+  model has no tool support. The wrap-up call writes one too (its request still carries the tools).
+- **Idempotency**: idem key `tools_changed:<run>:<step>:<hash of the new set>`; a retried step
+  finds its own change applied by the rule above and writes nothing.
+- **Rendering** (`build.ts`): a `role: "system"` message at its position: "Your tools changed. Now
+  available: … No longer available: … Use the current tool list; it replaces anything said earlier
+  in this conversation about which tools you have." **Compaction**: a change covered by the summary
+  is dropped (the request's tool list is current anyway); the compaction transcript keeps it as a
+  `System reminder:` line so the summary does not carry the stale claim forward.
+- A tool removed because it is unavailable (connector down, extension off) also gets the existing
+  "unavailable in this run" reminder with its reason; the two are not merged.
+- **Replay**: the event is in the log, so step replay renders it as recorded (the tool set of a step
+  replay is the recorded one, so it never contradicts the request); old logs have none and rebuild
+  byte for byte. **No `DriftReason`**: nothing is missing from a log that predates it (the
+  `tools_changed` DriftReason is unrelated: a baseline whose rebuilt tool sequence differs from the
+  record). A full-run replay seeds the events before the run, including earlier `model_call`s, and
+  runs the same step code: it writes a change exactly when the replay's resolved tools differ from
+  the seeded previous request (for example a candidate version with other tools).
+
 ## 10. Replay and evals
 
 - **Step replay** rebuilds tools from the recorded `model_call.tools` / `catalog` and

@@ -119,12 +119,12 @@ describe("the login layout's decisions before anything renders", () => {
     );
     await expect(
       loginAt(`/login?returnTo=${encodeURIComponent("https://evil.example")}`),
-    ).rejects.toThrow(/^REDIRECT \/chat$/);
+    ).rejects.toThrow(/^REDIRECT \/$/);
     // never back to a sign-in page (a loop); without a returnTo it goes home, the new conversation
     await expect(loginAt(`/login?returnTo=${encodeURIComponent("/login?x=1")}`)).rejects.toThrow(
-      /^REDIRECT \/chat$/,
+      /^REDIRECT \/$/,
     );
-    await expect(loginAt("/login")).rejects.toThrow(/^REDIRECT \/chat$/);
+    await expect(loginAt("/login")).rejects.toThrow(/^REDIRECT \/$/);
   });
 
   it("signed out, or the session read failing, renders the form", async () => {

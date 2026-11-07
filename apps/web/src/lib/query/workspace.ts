@@ -18,7 +18,7 @@ import { meQuery, readinessQuery } from "./shell";
  * read through the cache (prefetched by the layout, and `mine` never goes stale), so on a
  * navigation inside the app it answers on the first render. No current org is
  * `noOrg`; while the org is not ready, a page that is no setup route (no `setup`) goes home
- * (`/chat`, where the frame draws the setup home; `pending` until then); below `min` (default
+ * (`/`, where the frame draws the setup home; `pending` until then); below `min` (default
  * `guest`) it is `noAccess`. `pending` while `/me` or readiness has no answer yet. A readiness
  * failure other than a signed-out session throws, to the route's error boundary.
  */
