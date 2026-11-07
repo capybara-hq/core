@@ -293,6 +293,6 @@ export {
   type StorageSource,
 } from "./storage/storage.service.js";
 export {
-  SANDBOX_RECREATED_NOTICE,
+  SANDBOX_RESTARTED_NOTICE,
   SANDBOX_STARTED_NOTICE,
 } from "./tools/builtins/sandbox/common.js";

@@ -44,7 +44,8 @@ const SPEC: ToolSpec = {
     "filesystem. The working directory is /workspace; files persist between calls in the same " +
     "conversation, but background processes may not: when the sandbox is suspended after a period " +
     "without use they can be stopped and /tmp cleared, so keep results in files under /workspace. " +
-    "Files the user attached to the conversation are under /workspace/attachments, " +
+    "Files the user attached to the conversation are copied to /workspace/attachments/<conversation>/ " +
+    "(the result names the paths), " +
     "and skill files under /skills (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
     "long output is saved and can be paged with ReadToolOutput. A command that runs longer than " +

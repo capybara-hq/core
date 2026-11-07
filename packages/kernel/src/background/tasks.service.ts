@@ -3,9 +3,11 @@ import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
+import { ConversationEnvironments } from "../environments/conversation-environments.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { rootConversationOf } from "../runtime/subagents/child.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
@@ -67,6 +69,8 @@ export class BackgroundTasks {
     private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "findByIdem">,
     @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ConversationEnvironments)
+    private readonly environments: Pick<ConversationEnvironments, "forTool">,
   ) {}
 
   /**
@@ -149,6 +153,23 @@ export class BackgroundTasks {
   }
 
   /**
+   * Whether the task's environment may still be used by its conversation's owner (the access
+   * re-check every sandbox tool call makes); when it may not, the live read is skipped.
+   */
+  private async environmentUsable(orgId: string, taskConversationId: string): Promise<boolean> {
+    try {
+      await this.environments.forTool(
+        orgId,
+        await rootConversationOf(this.db.db, taskConversationId),
+      );
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError) return false;
+      throw e;
+    }
+  }
+
+  /**
    * The end of the task's output, at most `tail` bytes. Read live when the task's environment
    * instance runs (never resuming a suspended one); a finished task whose sandbox does not run answers
    * with the last lines its finished event kept. Anything else is
@@ -166,7 +187,8 @@ export class BackgroundTasks {
       task.sid !== null &&
       task.sandboxCreatedAt !== null &&
       task.environmentId !== null &&
-      this.sandbox.available
+      this.sandbox.available &&
+      (await this.environmentUsable(orgId, task.conversationId))
     ) {
       const createdAt = task.sandboxCreatedAt;
       // the person reading it acts in the task's conversation

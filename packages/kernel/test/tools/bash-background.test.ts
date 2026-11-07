@@ -16,6 +16,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
+import { SANDBOX_STARTED_NOTICE } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -259,9 +260,7 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
     expect(row).toBeDefined();
     if (!row) return;
     expect(row.id).toMatch(/^bt_[a-z2-7]{6}$/);
-    expect(textOf(r)).toBe(
-      `Sandbox started for this conversation (first use); the working directory is /workspace.\n\n${startedText(row.id, "Sleep a while")}`,
-    );
+    expect(textOf(r)).toBe(`${SANDBOX_STARTED_NOTICE}\n\n${startedText(row.id, "Sleep a while")}`);
     expect("isError" in r && r.isError).toBe(false);
     expect(row).toMatchObject({
       orgId: seed.orgId,

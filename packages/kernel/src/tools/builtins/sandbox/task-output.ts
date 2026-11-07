@@ -31,6 +31,7 @@ import {
   runTimeLeftMs,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
+  sandboxConversationOf,
   unavailableWhenNoSandbox,
 } from "./common.js";
 
@@ -94,6 +95,7 @@ export interface TaskEnv {
   store: NonNullable<SandboxToolDeps["background"]>;
   tasks: NonNullable<SandboxToolDeps["tasks"]>;
   ifRunning: SandboxService["ifRunning"];
+  environments: SandboxToolDeps["environments"];
 }
 
 /** The task tools' dependencies; throws the tool's error when they are missing. */
@@ -105,7 +107,12 @@ export function taskEnv(deps: SandboxToolDeps): TaskEnv {
       "Background tasks are not available here; use Bash without run_in_background instead.",
     );
   }
-  return { store: background, tasks, ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox) };
+  return {
+    store: background,
+    tasks,
+    ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
+    environments: deps.environments,
+  };
 }
 
 const notFound = (id: string): ToolError =>
@@ -126,6 +133,19 @@ export async function ownedTask(
   const task = await env.store.get(id);
   if (!task || task.conversationId !== ctx.conversationId) throw notFound(id);
   return task;
+}
+
+/**
+ * The per-call access re-check of every sandbox tool (`inSandbox`): the conversation's environment
+ * may still be used by its owner. The task tools read a task's own instance without `inSandbox`,
+ * so they check here first; errors become the tools' errors.
+ */
+export async function recheckEnvironment(env: TaskEnv, ctx: BuiltinCallContext): Promise<void> {
+  try {
+    await env.environments.forTool(ctx.orgId, sandboxConversationOf(ctx));
+  } catch (e) {
+    throw mapSandboxError(e);
+  }
 }
 
 /**
@@ -361,6 +381,7 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       const env = taskEnv(deps);
       let task = await ownedTask(env, ctx, task_id);
+      await recheckEnvironment(env, ctx);
       if (block && task.status === "running") {
         const wait = Math.max(
           0,

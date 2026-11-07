@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { BackgroundTaskFinisher } from "./finish.js";
 import { BackgroundTaskStopper } from "./stop.js";
@@ -16,7 +17,13 @@ import { BackgroundTasks } from "./tasks.service.js";
  * (`BackgroundTaskPollJob`) are the worker role's (`WorkerModule`).
  */
 @Module({
-  imports: [BackgroundStoreModule, SandboxModule, EventLogModule, ConversationAccessModule],
+  imports: [
+    BackgroundStoreModule,
+    SandboxModule,
+    EnvironmentsModule,
+    EventLogModule,
+    ConversationAccessModule,
+  ],
   providers: [BackgroundTaskFinisher, BackgroundTaskStopper, BackgroundTasks],
   exports: [BackgroundStoreModule, BackgroundTaskFinisher, BackgroundTaskStopper, BackgroundTasks],
 })

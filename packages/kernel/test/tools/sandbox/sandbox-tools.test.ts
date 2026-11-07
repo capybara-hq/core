@@ -19,6 +19,7 @@ import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js"
 import { createDb } from "../../../src/db/pool.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
+import { SANDBOX_RESTARTED_NOTICE } from "../../../src/tools/builtins/sandbox/common.js";
 import { removeFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -173,14 +174,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const conv = await sandboxConversation();
     const r = await call(conv, "Bash", { description: "Test step", command: "pwd && echo hi" }, 1);
     expect(r.isError).toBe(false);
-    expect(r.content).toMatch(/^Sandbox started/);
+    expect(r.content).toMatch(/^Environment started/);
     expect(r.content).toContain("/workspace\nhi");
     expect(r.content).toContain("[exit code: 0]");
     expect(r.display?.summary.en).toBeTruthy();
     expect(r.display?.summary.zh).toBeTruthy();
     // 第二次不再提示
     const r2 = await call(conv, "Bash", { description: "Test step", command: "echo again" }, 2);
-    expect(r2.content).not.toMatch(/Sandbox started/);
+    expect(r2.content).not.toMatch(/Environment started/);
     expect(r2.content).toContain("again");
   });
 
@@ -901,13 +902,18 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect((await eventsOf(db, conv2)).some((e) => e.type === "approval_requested")).toBe(false);
   });
 
-  it("conversation attachments appear under /workspace/attachments", async () => {
-    const conv = await sandboxConversation();
-    const bytes = Buffer.from("name,qty\napple,3\n");
+  /** Uploads a file as the owner and sends it with a message into the conversation's first turn `n`. */
+  async function sendWithAttachment(
+    conv: string,
+    name: string,
+    text: string,
+    bytes: Buffer,
+    n: number,
+  ): Promise<void> {
     const created = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "fruit.csv", contentType: "text/csv", size: bytes.length },
+      payload: { name, contentType: "text/csv", size: bytes.length },
     });
     expect(created.statusCode, created.body).toBe(201);
     const c = created.json() as {
@@ -930,34 +936,45 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const sent = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
-      payload: { text: "echo:got it", files: [c.id] },
+      payload: { text, files: [c.id] },
     });
     expect(sent.statusCode, sent.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 30_000);
+    await waitForTerminal(db, conv, n, 30_000);
+  }
+
+  /** A conversation's attachment directory: the first 12 hex digits of its id. */
+  const attDir = (conv: string) =>
+    `/workspace/attachments/${conv.replaceAll("-", "").slice(0, 12)}`;
+
+  it("conversation attachments appear under /workspace/attachments/<conversation>", async () => {
+    const conv = await sandboxConversation();
+    const dir = attDir(conv);
+    await sendWithAttachment(
+      conv,
+      "fruit.csv",
+      "echo:got it",
+      Buffer.from("name,qty\napple,3\n"),
+      1,
+    );
 
     const r = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
       2,
     );
     expect(r.content).toContain("apple,3");
-    expect(r.content).toContain("/workspace/attachments/fruit.csv");
+    expect(r.content).toContain(`${dir}/fruit.csv`);
     // 已同步过的不再提示
-    const r2 = await call(
-      conv,
-      "Bash",
-      { description: "Test step", command: "ls /workspace/attachments" },
-      3,
-    );
+    const r2 = await call(conv, "Bash", { description: "Test step", command: `ls ${dir}` }, 3);
     expect(r2.content).toContain("fruit.csv");
     expect(r2.content).not.toContain("Attachments copied");
     // 标记文件不出现在 glob / grep 结果里（它的内容含 fruit.csv）
     const g = await call(conv, "Glob", { pattern: "**" }, 4);
-    expect(g.content).toContain("/workspace/attachments/fruit.csv");
+    expect(g.content).toContain(`${dir}/fruit.csv`);
     expect(g.content).not.toContain(".capybara-sync.json");
     const gr = await call(conv, "Grep", { pattern: "fruit|apple", output_mode: "content" }, 5);
-    expect(gr.content).toContain("/workspace/attachments/fruit.csv:2:apple,3");
+    expect(gr.content).toContain(`${dir}/fruit.csv:2:apple,3`);
     expect(gr.content).not.toContain(".capybara-sync.json");
 
     // the instance is gone at the provider: rebuilt on the kept files, the model is told the
@@ -967,10 +984,65 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const r3 = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
       6,
     );
     expect(r3.content).not.toContain("Attachments copied");
     expect(r3.content).toContain("apple,3");
+    expect(r3.content).toContain(SANDBOX_RESTARTED_NOTICE);
+  });
+
+  it("attachments of two conversations do not collide", async () => {
+    const a = await sandboxConversation();
+    const b = await sandboxConversation();
+    expect(await envOf(a)).toBe(await envOf(b));
+    await sendWithAttachment(a, "a.txt", "echo:one", Buffer.from("from A\n"), 1);
+    await sendWithAttachment(b, "a.txt", "echo:two", Buffer.from("from B\n"), 1);
+    const ra = await call(
+      a,
+      "Bash",
+      { description: "Test step", command: `cat ${attDir(a)}/a.txt` },
+      2,
+    );
+    expect(ra.content).toContain("from A");
+    expect(ra.content).toContain(`${attDir(a)}/a.txt`);
+    const rb = await call(
+      b,
+      "Bash",
+      { description: "Test step", command: `cat ${attDir(b)}/a.txt` },
+      2,
+    );
+    expect(rb.content).toContain("from B");
+    expect(attDir(a)).not.toBe(attDir(b));
+    // both directories exist in the one file system
+    const ls = await call(
+      b,
+      "Bash",
+      { description: "Test step", command: "ls /workspace/attachments" },
+      3,
+    );
+    expect(ls.content).toContain(attDir(a).split("/").at(-1) as string);
+    expect(ls.content).toContain(attDir(b).split("/").at(-1) as string);
+  });
+
+  it("restart notice says files are kept", async () => {
+    const conv = await sandboxConversation();
+    await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "echo kept > /workspace/k.txt" },
+      1,
+    );
+    const row = await instanceOf(conv);
+    await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
+    const r = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "cat /workspace/k.txt" },
+      2,
+    );
+    expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
+    expect(SANDBOX_RESTARTED_NOTICE).toContain("files are kept");
+    expect(r.content).toContain("kept");
   });
 });

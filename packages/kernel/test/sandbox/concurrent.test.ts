@@ -14,6 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxLockLostError } from "../../src/sandbox/leases.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { syncMarkerPath } from "../../src/tools/builtins/sandbox/common.js";
 import { fileStateOf } from "../../src/tools/builtins/sandbox/file-state.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
@@ -606,7 +607,7 @@ describe("path leases in the sandbox tools", () => {
       config: { get: () => config },
     }).find((x) => x.spec.name === "Bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
-    expect(leased).toEqual(["/workspace/attachments/.capybara-sync.json"]);
+    expect(leased).toEqual([syncMarkerPath(conversationId)]);
     await t.run({ command: "true" }, callCtx());
     await t.run({ command: "true" }, callCtx());
     expect(leased).toHaveLength(1);

@@ -6,6 +6,7 @@ import {
   renderSkillInvocation,
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
+  skillDigest,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
@@ -241,6 +242,7 @@ export class SkillInvoker {
     const input = {
       name: a.name,
       skillName: found.skill.name,
+      digest: skillDigest(found.manifest.files),
       version: found.skill.version,
       body,
       invocation: inv,
@@ -249,7 +251,9 @@ export class SkillInvoker {
     };
     // a SKILL.md whose body alone renders over the limit can never be invoked: say so, rather than
     // "shorten the arguments"
-    tooLarge(found.skill.name, () => renderSkillBody(body, inv, "", found.skill.name));
+    tooLarge(found.skill.name, () =>
+      renderSkillBody(body, inv, "", found.skill.name, input.digest),
+    );
     const args = a.args.trim();
     const record: InvocationRecord = {
       id: found.skill.id,
@@ -320,6 +324,7 @@ export class SkillInvoker {
       renderSkillInvocation({
         name: skill.name,
         skillName: skill.name,
+        digest: skillDigest(found.manifest.files),
         version: skill.version,
         body,
         invocation: inv,

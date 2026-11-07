@@ -6,6 +6,8 @@ import {
   SKILL_ENTRY_FILE,
   SKILL_INVOCATION_LIMITS,
   SKILLS_SANDBOX_ROOT,
+  skillDigest,
+  skillSandboxDir,
   skillSandboxPath,
   ToolError,
   type ToolSpec,
@@ -35,27 +37,31 @@ import {
 } from "./sandbox/common.js";
 
 /**
- * 内置工具 `Skill`（M5 T14，Ruling M17）：按日志里最新一份技能目录快照把名字解析为 id 与版本，返回该版本
- * SKILL.md 的正文与文件清单（结果里写明版本）。技能带其他文件时把整个技能复制进本对话沙箱的 `/skills/<name>/`
- * （提供方以 root 写，命令用户只读）；没有沙箱提供方时只给正文，并说明脚本不可用。
+ * Builtin tool `Skill` (M5 T14, ruling M17): resolves the name against the latest skills catalog
+ * snapshot in the log to an id and version, and returns that version's SKILL.md body and file list
+ * (the result names the version). A skill with other files is copied whole into the conversation's
+ * environment at `/skills/<name>@<digest>/` (the provider writes as root, commands read only; the
+ * digest is {@link skillDigest} of the version's file manifest, so versions of one skill coexist in
+ * the shared file system). Without a sandbox provider only the body is given, with a note that
+ * scripts are unavailable.
  *
- * - 存储里读出的每个文件都按清单的 sha256 核对，不符即拒绝（不把被替换的内容给模型或放进沙箱）。
- * - 复制记录在内核控制的标记文件（每个技能一个，{@link skillMarkerPath}：`/skills/.capybara/<name>.json`，
- *   命令用户改不了）：`{ id, version, prefix, files, stale }`。新建 / 重建的沙箱、版本或来源前缀变化、同名换了技能时
- *   重新复制，否则跳过。
- * - agent 没有任何沙箱工具时不创建沙箱、不复制（模型也跑不了脚本），只给正文并说明。
- * - 可执行位：提供方写的文件一律不可执行（0644）。不扩展 `sandbox@1` 的 `writeFile`，而是在结果里告诉模型用解释器
- *   运行（`sh` / `python3` / `node`）：契约与两个提供方不变，技能包里的 shebang 脚本照样能跑，代价只是不能 `./x`。
- * - 旧版本多出的文件：`sandbox@1` 没有删除原语，命令用户也删不了 `/skills` 下的文件，所以新版本原地覆盖，
- *   旧版本独有的文件留在原处、记进标记的 `stale`，每次加载都在结果里列出「不属于当前版本、忽略它们」。
+ * - Every file read from storage is checked against the manifest's sha256; a mismatch is refused.
+ * - The copy is recorded in a kernel-controlled marker, one per skill version
+ *   ({@link skillMarkerPath}: `/skills/.capybara/<name>@<digest>.json`, commands cannot change it):
+ *   `{ digest, files }`. A present marker with the same digest skips the copy.
+ * - An agent without any sandbox tool creates no sandbox and copies nothing (the model could not
+ *   run the scripts), and is told so.
+ * - Executable bit: files the provider writes are never executable (0644). The result tells the model
+ *   to run scripts with an interpreter (`sh` / `python3` / `node`).
  */
 
 /**
  * 已复制进沙箱的技能的标记目录（内核控制：`/skills` 只有提供方以 root 能写；技能名不以 `.` 开头，不会撞名）。
  */
 export const SKILLS_MARKER_DIR = `${SKILLS_SANDBOX_ROOT}/.capybara`;
-/** 一个技能的标记文件。 */
-export const skillMarkerPath = (name: string): string => `${SKILLS_MARKER_DIR}/${name}.json`;
+/** The marker file of one skill version. */
+export const skillMarkerPath = (name: string, digest: string): string =>
+  `${SKILLS_MARKER_DIR}/${name}@${digest}.json`;
 const MARKER_MAX_BYTES = 256 * 1024;
 /** 结果里最多列出的文件数（其余只给数量）。 */
 const MAX_LISTED_FILES = 200;
@@ -70,9 +76,8 @@ const SPEC: ToolSpec = {
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
-    "files, they are copied read-only to /skills/<name>/ in this conversation's sandbox; run scripts " +
-    "there with an interpreter (sh, python3, node). Call it again when the skills list changes or " +
-    "the sandbox was recreated. Pass args when the task gives the skill arguments (they replace " +
+    "files, they are copied read-only to /skills/<name>@<version-id>/ in this environment; run scripts " +
+    "there with an interpreter (sh, python3, node). Call it again when the skills list changes. Pass args when the task gives the skill arguments (they replace " +
     "$ARGUMENTS and $1, $2… in the instructions). Do not use it for skills that are not in the list.",
   inputSchema: {
     type: "object",
@@ -126,36 +131,24 @@ export interface SkillLoadDeps extends SandboxToolDeps {
   eventLog: Pick<EventLog, "append" | "latestOfType" | "latestFileState">;
 }
 
-/** 标记文件里一个技能的记录。 */
+/** A skill version's record in its marker file. */
 interface MarkerEntry {
-  id: string;
-  version: number;
-  /**
-   * 复制来源的对象前缀：版本号相同但内容不同（被拒绝的试用草稿与之后的新草稿同号，T15）时据此重新复制。
-   * 旧标记没有这一项，按不一致处理（重新复制一次）。
-   */
-  prefix?: string;
+  digest: string;
   files: string[];
-  /** 更早版本留下、不属于当前版本的文件。 */
-  stale: string[];
 }
 
-const strings = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
-
-/** 解析一个技能的标记文件；坏的按没有处理（重新复制）。 */
+/** Parses a version's marker; a broken one counts as missing (the version is copied again). */
 function parseMarker(data: Uint8Array): MarkerEntry | undefined {
   try {
     const r = JSON.parse(new TextDecoder().decode(data)) as unknown;
     if (r === null || typeof r !== "object" || Array.isArray(r)) return undefined;
     const e = r as Record<string, unknown>;
-    if (typeof e.id !== "string" || typeof e.version !== "number") return undefined;
+    if (typeof e.digest !== "string") return undefined;
     return {
-      id: e.id,
-      version: e.version,
-      ...(typeof e.prefix === "string" && { prefix: e.prefix }),
-      files: strings(e.files),
-      stale: strings(e.stale),
+      digest: e.digest,
+      files: Array.isArray(e.files)
+        ? e.files.filter((x): x is string => typeof x === "string")
+        : [],
     };
   } catch {
     return undefined;
@@ -228,6 +221,8 @@ async function readVerified(
 interface LoadedVersion {
   entry: CatalogSkill;
   manifest: SkillManifest;
+  /** {@link skillDigest} of the manifest's files: names the version's directory and marker. */
+  digest: string;
   /** The version's source (the marker's `prefix`); `platform:<prefix>` for a platform version. */
   prefix: string;
   /** The key prefix of the files in {@link LoadedVersion.store}. */
@@ -238,34 +233,25 @@ interface LoadedVersion {
 }
 
 /**
- * 把技能整个复制到 `/skills/<name>/`（标记命中则跳过）。每个文件按清单核对后写入，全部写完才更新标记：
- * 中途失败下次整体重来。返回旧版本留下的文件。
+ * Copies the skill version whole to `/skills/<name>@<digest>/` (skipped when its marker matches).
+ * Every file is checked against the manifest before it is written; the marker is written last, so
+ * a failure midway means the next call starts over.
  */
-async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<{ stale: string[] }> {
-  const { name, id, version } = v.entry;
-  const markerPath = skillMarkerPath(name);
-  let cur: MarkerEntry | undefined;
-  if (!s.reset) {
-    const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
-    if (m && !m.truncated) cur = parseMarker(m.data);
-  }
-  if (cur && cur.id === id && cur.version === version && cur.prefix === v.prefix) {
-    return { stale: cur.stale };
-  }
+async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<void> {
+  const { name } = v.entry;
+  const markerPath = skillMarkerPath(name, v.digest);
+  const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+  const cur = m && !m.truncated ? parseMarker(m.data) : undefined;
+  if (cur?.digest === v.digest) return;
   for (const f of v.manifest.files) {
     const data =
       f.path === SKILL_ENTRY_FILE
         ? v.entryBytes
         : await readVerified(v.store, `${v.keyPrefix}${f.path}`, f, name, s.signal);
-    await s.p.writeFile(s.h, skillSandboxPath(name, f.path), data, s.signal);
+    await s.p.writeFile(s.h, skillSandboxPath(name, v.digest, f.path), data, s.signal);
   }
-  const files = v.manifest.files.map((f) => f.path);
-  const now = new Set(files);
-  const stale = cur ? [...new Set([...cur.stale, ...cur.files])].filter((p) => !now.has(p)) : [];
-  stale.sort();
-  const entry: MarkerEntry = { id, version, prefix: v.prefix, files, stale };
+  const entry: MarkerEntry = { digest: v.digest, files: v.manifest.files.map((f) => f.path) };
   await s.p.writeFile(s.h, markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
-  return { stale };
 }
 
 /** 本步可用的工具里是否有沙箱工具（没有时模型用不了复制进去的文件）。 */
@@ -548,7 +534,16 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const md = manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
       if (!md) throw new ToolError(integrityText(name));
       const mdBytes = await readVerified(store, `${keyPrefix}${md.path}`, md, name, ctx.signal);
-      const v: LoadedVersion = { entry, manifest, prefix, keyPrefix, store, entryBytes: mdBytes };
+      const digest = skillDigest(manifest.files);
+      const v: LoadedVersion = {
+        entry,
+        manifest,
+        digest,
+        prefix,
+        keyPrefix,
+        store,
+        entryBytes: mdBytes,
+      };
       let parsed: ReturnType<typeof parseSkillMd>;
       try {
         parsed = parseSkillMd(new TextDecoder("utf-8", { fatal: true }).decode(mdBytes), {
@@ -559,7 +554,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       }
       if ("errors" in parsed) throw new ToolError(integrityText(name));
 
-      const dir = `${SKILLS_SANDBOX_ROOT}/${name}/`;
+      const dir = `${skillSandboxDir(name, digest)}/`;
       const others = manifest.files.filter((f) => f.path !== SKILL_ENTRY_FILE);
       let notices: string[] = [];
       let filesText: string;
@@ -579,26 +574,22 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       } else {
         // the skill's marker is read, compared and written: one holder at a time per skill
         const r = await inSandbox(deps, ctx, (s) =>
-          withPathLease(deps, s, skillMarkerPath(v.entry.name), s.signal, (signal) =>
+          withPathLease(deps, s, skillMarkerPath(name, digest), s.signal, (signal) =>
             copySkill({ ...s, signal }, v),
           ),
         );
         notices = r.notices;
-        const stale =
-          r.value.stale.length > 0
-            ? `\nFiles left over from an earlier version (not part of this version; ignore them): ${r.value.stale.join(", ")}`
-            : "";
         filesText =
           `Skill files (copied to ${dir} in the sandbox, read-only):\n${fileList(manifest.files)}\n` +
           `Run scripts with an interpreter, e.g. \`sh ${dir}<script>.sh\`, \`python3 ${dir}<script>.py\` ` +
           "or `node`; the files are not executable, so `./script` does not work. Write outputs under " +
-          `/workspace, not ${SKILLS_SANDBOX_ROOT}.${stale}`;
+          `/workspace, not ${SKILLS_SANDBOX_ROOT}.`;
       }
       const invocation = invocationOf(manifest);
       const fork = invocation.fork;
       let instructions: string;
       try {
-        instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name);
+        instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name, digest);
       } catch (e) {
         if (!(e instanceof RangeError)) throw e;
         throw new ToolError(

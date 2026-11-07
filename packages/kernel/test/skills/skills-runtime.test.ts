@@ -104,7 +104,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.environment_instances, capybara.environments, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
@@ -278,15 +278,28 @@ const catalogs = async (convId: string) =>
 
 async function sandboxId(convId: string): Promise<string> {
   const row = await db
-    .selectFrom("sandboxes")
-    .select("handle")
-    .where("conversation_id", "=", convId)
+    .selectFrom("environment_instances")
+    .innerJoin(
+      "conversations",
+      "conversations.environment_id",
+      "environment_instances.environment_id",
+    )
+    .select("environment_instances.handle")
+    .where("conversations.id", "=", convId)
     .executeTakeFirstOrThrow();
   return (row.handle as { id: string }).id;
 }
 
+/** Where the fake provider keeps a file of the conversation's environment (`skills/…`, `workspace/…`). */
+async function sandboxFilePath(convId: string, path: string): Promise<string> {
+  const meta = JSON.parse(
+    await readFile(join(root, "instances", await sandboxId(convId), "meta.json"), "utf8"),
+  ) as { fileSystem: string };
+  return join(root, "filesystems", meta.fileSystem, path);
+}
+
 const sandboxFile = async (convId: string, path: string) =>
-  readFile(join(root, "instances", await sandboxId(convId), "fs", path), "utf8").catch(() => null);
+  readFile(await sandboxFilePath(convId, path), "utf8").catch(() => null);
 
 describe("skills at runtime", { timeout: 90_000 }, () => {
   it("catalog snapshot lists selected org skills + agent skills; Skill returns the body; unselected skills are invisible", async () => {
@@ -315,7 +328,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     expect(r.display?.summary.en).toContain("alpha");
     expect(r.display?.summary.zh).toContain("alpha");
     // 只有 SKILL.md：不创建沙箱
-    const boxes = await db.selectFrom("sandboxes").select("conversation_id").execute();
+    const boxes = await db.selectFrom("environment_instances").select("environment_id").execute();
     expect(boxes).toHaveLength(0);
 
     const snaps = await catalogs(conv);
@@ -373,7 +386,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     expect(await catalogs(conv)).toHaveLength(0);
   });
 
-  it("skills with scripts are copied to /skills/<name>/ and run with an interpreter; re-copied on version change and recreation", async () => {
+  it("skills with scripts are copied to /skills/<name>@<digest>/ and run with an interpreter; two versions coexist; a restart keeps the copies", async () => {
     const delta = await seedSkill({
       name: "delta",
       files: {
@@ -384,31 +397,38 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     });
     const agentId = await createSkillAgent([delta.id]);
     const conv = await createConv(owner, orgId, agentId);
+    const digestIn = (content: string): string =>
+      (/\/skills\/delta@([0-9a-f]{12})\//.exec(content) as RegExpExecArray)[1] as string;
 
     const r = await call(conv, "Skill", { skill: "delta" }, 1);
     expect(r.isError, r.content).toBe(false);
-    expect(r.content).toContain("/skills/delta/");
+    const d1 = digestIn(r.content);
+    const dir1 = `skills/delta@${d1}`;
+    expect(r.content).toContain(`/skills/delta@${d1}/`);
     expect(r.content).toContain("scripts/run.sh");
-    expect(r.content).toMatch(/\bsh \/skills\/delta\//);
-    expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v1");
-    expect(await sandboxFile(conv, "skills/delta/data/notes.txt")).toBe("notes");
+    expect(r.content).toMatch(/\bsh \/skills\/delta@[0-9a-f]{12}\//);
+    expect(await sandboxFile(conv, `${dir1}/scripts/run.sh`)).toBe("echo delta-v1");
+    expect(await sandboxFile(conv, `${dir1}/data/notes.txt`)).toBe("notes");
+    expect(await sandboxFile(conv, `skills/.capybara/delta@${d1}.json`)).toContain(
+      `"digest":"${d1}"`,
+    );
 
     const run = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "sh /skills/delta/scripts/run.sh" },
+      { description: "Test step", command: `sh /${dir1}/scripts/run.sh` },
       2,
     );
     expect(run.content).toContain("delta-v1");
 
-    // 同一版本再加载：标记命中，不重新复制（被改过的文件保持原样）
-    const p = join(root, "instances", await sandboxId(conv), "fs", "skills/delta/data/notes.txt");
+    // the same version again: the marker hits, nothing is copied again (a touched file stays)
+    const p = await sandboxFilePath(conv, `${dir1}/data/notes.txt`);
     await writeFile(p, "touched");
     const again = await call(conv, "Skill", { skill: "delta" }, 3);
     expect(again.isError).toBe(false);
-    expect(await sandboxFile(conv, "skills/delta/data/notes.txt")).toBe("touched");
+    expect(await sandboxFile(conv, `${dir1}/data/notes.txt`)).toBe("touched");
 
-    // 新版本：下一轮写新快照（提醒「已更新」），加载时复制新版本
+    // a new version: the next turn writes a new snapshot; it is copied beside the old one
     await seedSkill({
       name: "delta",
       skillId: delta.id,
@@ -420,18 +440,24 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     const v2 = await call(conv, "Skill", { skill: "delta" }, 4);
     expect(v2.content).toContain("version 2");
     expect(v2.content).toContain("(v2)");
-    // v1 独有的 data/notes.txt 留在原处，列为旧版本遗留（M18）
-    expect(v2.content).toMatch(/left over from an earlier version[^\n]*data\/notes\.txt/);
-    expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v2");
+    const d2 = digestIn(v2.content);
+    expect(d2).not.toBe(d1);
+    const dir2 = `skills/delta@${d2}`;
+    expect(await sandboxFile(conv, `${dir2}/scripts/run.sh`)).toBe("echo delta-v2");
+    // both versions and both markers coexist
+    expect(await sandboxFile(conv, `${dir1}/scripts/run.sh`)).toBe("echo delta-v1");
+    expect(await sandboxFile(conv, `skills/.capybara/delta@${d1}.json`)).toContain(d1);
+    expect(await sandboxFile(conv, `skills/.capybara/delta@${d2}.json`)).toContain(d2);
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills[0]?.version)).toEqual([1, 2]);
 
-    // 沙箱被销毁：重建后重新复制
+    // the instance is destroyed: the environment's files are kept, so the copies and markers are
+    // still there and nothing is copied again
     await removeFakeSandbox(root, await sandboxId(conv));
     const re = await call(conv, "Skill", { skill: "delta" }, 5);
     expect(re.isError, re.content).toBe(false);
-    expect(re.content).toContain("recreated");
-    expect(await sandboxFile(conv, "skills/delta/scripts/run.sh")).toBe("echo delta-v2");
+    expect(re.content).toContain("restarted");
+    expect(await sandboxFile(conv, `${dir2}/scripts/run.sh`)).toBe("echo delta-v2");
   });
 
   it("a deleted skill drops out of the next snapshot", async () => {
@@ -489,6 +515,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
           throw new Error("sandbox must not be used");
         },
       },
+      environments: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,
@@ -587,12 +614,15 @@ describe("Skill handler", { timeout: 60_000 }, () => {
         skillName: "same",
         version: 1,
         body,
+        digest: "000000000000",
         invocation: { model: true, user: true },
         args: "123 api",
         lines: {},
       });
       expect(person).toContain("Fix issue 123 in api");
-      expect(text).toContain(renderSkillBody(body, { model: true, user: true }, "123 api", "same"));
+      expect(text).toContain(
+        renderSkillBody(body, { model: true, user: true }, "123 api", "same", "000000000000"),
+      );
     });
   });
 
@@ -964,7 +994,9 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
     expect(after.isError, after.content).toBe(false);
     expect(after.content).toContain('Loaded skill "manual" (version 1).');
     expect(after.content).toContain("Manual body.");
-    expect(await sandboxFile(conv, "skills/manual/run.sh")).toBe("echo manual");
+    const manualDir = /\/skills\/manual@[0-9a-f]{12}\//.exec(after.content)?.[0] as string;
+    expect(manualDir).toBeTruthy();
+    expect(await sandboxFile(conv, `${manualDir.slice(1)}run.sh`)).toBe("echo manual");
 
     // another conversation of the same agent: nobody invoked it there
     const other = await createConv(owner, orgId, agentId);
@@ -1094,6 +1126,6 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
   });
 
   it("the Skill spec hash is pinned (it changes only with a reviewed rename of the tool or its parameters)", () => {
-    expect(specHash(skillLoadTool({} as never).spec)).toBe("78575374b49ee409");
+    expect(specHash(skillLoadTool({} as never).spec)).toBe("7bdc57e4c8e9ffa1");
   });
 });

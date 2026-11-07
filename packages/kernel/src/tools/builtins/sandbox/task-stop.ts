@@ -10,7 +10,14 @@ import {
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
 } from "./common.js";
-import { onTaskInstance, ownedTask, statusLine, type TaskEnv, taskEnv } from "./task-output.js";
+import {
+  onTaskInstance,
+  ownedTask,
+  recheckEnvironment,
+  statusLine,
+  type TaskEnv,
+  taskEnv,
+} from "./task-output.js";
 
 /** The time limit of reading a stopped task's last lines. */
 const TAIL_EXEC_TIMEOUT_MS = 10_000;
@@ -120,6 +127,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       const { task_id } = input as TaskStopInput;
       const env = taskEnv(deps);
       const task = await ownedTask(env, ctx, task_id);
+      await recheckEnvironment(env, ctx);
       if (task.status !== "running") {
         return ended(env, task, "had already finished", ctx.signal);
       }

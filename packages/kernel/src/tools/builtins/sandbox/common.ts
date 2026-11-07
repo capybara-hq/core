@@ -74,21 +74,17 @@ export interface SandboxSession {
   h: SandboxHandle;
   p: HeldProvider;
   signal: AbortSignal;
-  /**
-   * The files copied in before are gone, so markers must be ignored. Always false now: the
-   * environment's files outlive its instances, and lost files fail the call instead.
-   */
-  reset: boolean;
 }
 
 // ---- 模型可见文案（英文） ----
 
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒与调用结果）。 */
-/** 本对话第一次用沙箱。 */
+/** This conversation's first use of its environment. */
 export const SANDBOX_STARTED_NOTICE =
-  "Sandbox started for this conversation (first use); the working directory is /workspace.";
-/** 沙箱被重建（之前的实例已销毁或不在了）。 */
-export const SANDBOX_RECREATED_NOTICE = "Sandbox was recreated; previous files are gone.";
+  "Environment started (first use in this conversation); the working directory is /workspace, shared with the environment's other conversations.";
+/** A new instance came up on the environment's kept files. */
+export const SANDBOX_RESTARTED_NOTICE =
+  "The environment's instance was restarted; files are kept, running processes and /tmp are gone.";
 
 const BUSY_TEXT =
   "The sandbox is busy with another command in this conversation; wait for it to finish and retry.";
@@ -116,10 +112,21 @@ const ENV_FILES_LOST_TEXT =
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
-/** 沙箱里附件所在目录。 */
-export const ATTACHMENTS_DIR = "/workspace/attachments";
-/** 已同步附件的标记文件：`{ <附件 id>: <文件名> }`。 */
-export const SYNC_MARKER = `${ATTACHMENTS_DIR}/.capybara-sync.json`;
+/** The directory of attachments in the environment (each conversation has a subdirectory). */
+export const ATTACHMENTS_ROOT = "/workspace/attachments";
+/**
+ * One conversation's attachment directory: the first 12 hex digits of the root conversation's
+ * UUID, so conversations sharing an environment do not overwrite each other's files.
+ */
+export const attachmentsDir = (rootConversationId: string): string =>
+  `${ATTACHMENTS_ROOT}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
+/** The conversation's marker of synced attachments: `{ <attachment id>: <file name> }`. */
+export const syncMarkerPath = (rootConversationId: string): string =>
+  `${attachmentsDir(rootConversationId)}/.capybara-sync.json`;
+const SYNC_MARKER_NAME = ".capybara-sync.json";
+const SYNC_MARKER_RE = new RegExp(`^${ATTACHMENTS_ROOT}/[^/]+/\\${SYNC_MARKER_NAME}(?=$|[:-])`);
+/** Whether a path, or a Grep output line starting with one, belongs to a sync marker (hidden from Glob / Grep). */
+export const isSyncMarkerEntry = (pathOrLine: string): boolean => SYNC_MARKER_RE.test(pathOrLine);
 const MARKER_MAX_BYTES = 1024 * 1024;
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
@@ -260,11 +267,11 @@ export function assignAttachmentNames(
   used: ReadonlySet<string>,
 ): Map<string, string> {
   const taken = new Set(used);
-  taken.add(SYNC_MARKER.slice(ATTACHMENTS_DIR.length + 1));
+  taken.add(SYNC_MARKER_NAME);
   const out = new Map<string, string>();
   for (const a of items) {
     let base = sanitizeName(a.name);
-    if (validateSandboxPath(`${ATTACHMENTS_DIR}/${base}`).length > 0) {
+    if (validateSandboxPath(`${ATTACHMENTS_ROOT}/${base}`).length > 0) {
       base = `attachment-${a.id.slice(0, 8)}`;
     }
     let name = base;
@@ -302,8 +309,8 @@ function copyFailureReason(e: unknown): string {
 }
 
 /**
- * 把本对话已 ready 的附件复制到 `/workspace/attachments/<name>`，标记文件记下已复制的（不重复复制）。
- * `reset`（新建 / 重建的沙箱，文件已不在）时忽略标记文件全部重新复制。对象已不在的附件跳过（下次再试）。
+ * 把本对话已 ready 的附件复制到 `/workspace/attachments/<conversation>/<name>`（{@link attachmentsDir}），
+ * 标记文件记下已复制的（不重复复制）。对象已不在的附件跳过（下次再试）。
  * 每复制一个就更新标记文件：中途超时 / 中止，下次从停下的地方继续。
  * 单个附件失败（存储故障等）只跳过它并给出说明，不让工具调用失败；signal 已中止或实例已不在时照常抛出。
  * 返回本次复制的沙箱路径与失败说明。
@@ -312,26 +319,26 @@ async function syncAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
   s: SandboxSession,
-  reset: boolean,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
   const conv = sandboxConversationOf(ctx);
   const list = await deps.attachments.listForConversation(ctx.orgId, conv);
   if (list.length === 0) return none;
   // nothing to copy (the usual case): no path lease, so calls do not queue on the marker
-  if (!reset) {
-    const marker = await readSyncMarker(s);
-    if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
-  }
+  const marker = await readSyncMarker(s, conv);
+  if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
   // the sync marker is read, changed and written: one holder at a time
-  return withPathLease(deps, s, SYNC_MARKER, s.signal, (signal) =>
-    copyAttachments(deps, ctx, { ...s, signal }, reset, conv, list),
+  return withPathLease(deps, s, syncMarkerPath(conv), s.signal, (signal) =>
+    copyAttachments(deps, ctx, { ...s, signal }, conv, list),
   );
 }
 
 /** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
-async function readSyncMarker(s: SandboxSession): Promise<Record<string, string>> {
-  const m = await s.p.readFile(s.h, SYNC_MARKER, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
+async function readSyncMarker(s: SandboxSession, conv: string): Promise<Record<string, string>> {
+  const m = await s.p.readFile(s.h, syncMarkerPath(conv), {
+    maxBytes: MARKER_MAX_BYTES,
+    signal: s.signal,
+  });
   return m && !m.truncated ? parseMarker(m.data) : {};
 }
 
@@ -339,12 +346,11 @@ async function copyAttachments(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
   s: SandboxSession,
-  reset: boolean,
   conv: string,
   list: Awaited<ReturnType<SandboxToolDeps["attachments"]["listForConversation"]>>,
 ): Promise<{ copied: string[]; failures: string[] }> {
   const none = { copied: [], failures: [] };
-  let marker: Record<string, string> = reset ? {} : await readSyncMarker(s);
+  let marker: Record<string, string> = await readSyncMarker(s, conv);
   const pending = list.filter((a) => !Object.hasOwn(marker, a.id));
   if (pending.length === 0) return none;
   const names = assignAttachmentNames(pending, new Set(Object.values(marker)));
@@ -352,7 +358,7 @@ async function copyAttachments(
   const failures: string[] = [];
   for (const a of pending) {
     const name = names.get(a.id) as string;
-    const path = `${ATTACHMENTS_DIR}/${name}`;
+    const path = `${attachmentsDir(conv)}/${name}`;
     try {
       const opened = await deps.attachments.openForConversation(ctx.orgId, conv, a.id);
       if (!opened) continue;
@@ -369,7 +375,7 @@ async function copyAttachments(
     copied.push(path);
     const next = { ...marker, [a.id]: name };
     try {
-      await s.p.writeFile(s.h, SYNC_MARKER, utf8.encode(JSON.stringify(next)), s.signal);
+      await s.p.writeFile(s.h, syncMarkerPath(conv), utf8.encode(JSON.stringify(next)), s.signal);
       marker = next;
     } catch (e) {
       if (s.signal.aborted || isSandboxGoneError(e)) throw e;
@@ -422,11 +428,11 @@ export async function inSandbox<T>(
         actor: { accountId: ctx.accountId, conversationId: ctx.conversationId },
       },
       async (h, p, info, signal) => {
-        const s: SandboxSession = { environmentId, h, p, signal, reset: false };
+        const s: SandboxSession = { environmentId, h, p, signal };
         const notices: string[] = [];
-        if (info.restarted) notices.push(SANDBOX_RECREATED_NOTICE);
+        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
-        const { copied, failures } = await syncAttachments(deps, ctx, s, s.reset);
+        const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
         }

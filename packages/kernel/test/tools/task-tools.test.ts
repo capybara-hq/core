@@ -12,6 +12,8 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/backgroun
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
+import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -397,6 +399,26 @@ describe("TaskOutput", () => {
       }
     }
     expect((await store.get(t.id))?.status).toBe("running");
+  }, 60_000);
+});
+
+describe("the environment access re-check", () => {
+  it("TaskOutput and TaskStop check that the owner may still use the environment", async () => {
+    const c = await conversation();
+    const t = await start(ctxOf(c), "sleep 30");
+    const forTool = vi
+      .spyOn(k.app.get(ConversationEnvironments), "forTool")
+      .mockRejectedValue(new ApiError("environment.forbidden", "no longer allowed"));
+    for (const run of [output, stop]) {
+      const e = await run(c, { task_id: t.id, block: false }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(ToolError);
+      expect((e as Error).message).toContain("may no longer use its environment");
+    }
+    expect(forTool).toHaveBeenCalledWith(c.orgId, c.conversationId);
+    // nothing was read or stopped
+    expect((await store.get(t.id))?.status).toBe("running");
+    forTool.mockRestore();
+    expect(isError(await output(c, { task_id: t.id, block: false }))).toBe(false);
   }, 60_000);
 });
 

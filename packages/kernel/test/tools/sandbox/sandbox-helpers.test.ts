@@ -371,15 +371,15 @@ describe("attachment sync", () => {
     const text = r.content[0]?.text ?? "";
     expect(text).toContain("Attachment broken.csv could not be copied");
     expect(text).not.toContain("ECONNREFUSED");
-    expect(text).toContain("/workspace/attachments/ok.csv");
+    expect(text).toContain("/workspace/attachments/c/ok.csv");
     expect(text).toContain("hello");
     // 复制完 ok.csv 后立即写了标记文件
     expect(mem.writes).toEqual([
-      "/workspace/attachments/ok.csv",
-      "/workspace/attachments/.capybara-sync.json",
+      "/workspace/attachments/c/ok.csv",
+      "/workspace/attachments/c/.capybara-sync.json",
     ]);
     const marker = JSON.parse(
-      new TextDecoder().decode(mem.files.get("/workspace/attachments/.capybara-sync.json")),
+      new TextDecoder().decode(mem.files.get("/workspace/attachments/c/.capybara-sync.json")),
     );
     expect(marker).toEqual({ a2: "ok.csv" });
   });
@@ -477,13 +477,13 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
   it("a failed marker write still counts the file as copied; the marker keeps only saved entries", async () => {
     const r = rig({
       attachments: [{ id: "a1", name: "ok.csv" }],
-      failWrite: "/workspace/attachments/.capybara-sync.json",
+      failWrite: "/workspace/attachments/c/.capybara-sync.json",
     });
     r.files.set("/workspace/f.txt", new TextEncoder().encode("hi\n"));
     const out = r.text(await r.tool("Read").run({ file_path: "/workspace/f.txt" }, callCtx()));
-    expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/ok.csv");
+    expect(out).toContain("Attachments copied into the sandbox: /workspace/attachments/c/ok.csv");
     expect(out).not.toContain("could not be copied");
-    expect(r.files.has("/workspace/attachments/.capybara-sync.json")).toBe(false);
+    expect(r.files.has("/workspace/attachments/c/.capybara-sync.json")).toBe(false);
   });
 
   it("deliver rejects a bad name before reading or uploading anything", async () => {
@@ -554,7 +554,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig({
       exec: {
         exitCode: 2,
-        stdout: './attachments/.capybara-sync.json\u00001:{"a":"hit"}\n',
+        stdout: './attachments/c/.capybara-sync.json\u00001:{"a":"hit"}\n',
         stderr: "grep: ./secret: Permission denied",
       },
     });

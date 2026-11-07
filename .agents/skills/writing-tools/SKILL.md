@@ -208,9 +208,9 @@ the same transaction as the business rows.
   paused approval still carries is resolved from the run's own tools (and answered with a hint naming the new key); stored definitions are refused with a message
   naming the new key; migration 0063 rewrote stored grants, pending approvals and questions. `terms-tool-key` keeps old keys out of everything else.
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
-- Result prefix notices (English): on first use `Sandbox started for this conversation (first use)…`, on recreation
-  `Sandbox was recreated; previous files are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
-  `/workspace/attachments/`.
+- Result prefix notices (English): on first use `Environment started (first use in this conversation)…`, on a new instance
+  `The environment's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
+  `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id; the sync marker is per conversation).
 - Default policy is allow (the sandbox is isolated, D5); when the org setting `sandboxToolPolicy: "ask"` is set, bash / write / edit / deliver need approval,
   the setting is read **at the moment of execution**, and the read-only read / glob / grep are unaffected.
 - `Deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
@@ -240,7 +240,7 @@ the same transaction as the business rows.
   agent version at run start, written only when it differs from the previous one, Ruling M17). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
   fetches files strictly by `source`, and checks size and sha256. A `source` of the form `platform:<object prefix>` is a platform skill version (plugin scope
   phase 2, ruling D2) read from the `deployment/` store (`skillFileStore`); any other source is an org prefix under `kernel/<orgId>/`. `findSkillVersion` accepts a
-  platform version for the entry's own id or for the platform skill an org copy with that id links to (a linked copy keeps its id), and nothing once either is deleted. A skill with other files is copied into the sandbox at `/skills/<name>/` (read-only, scripts have no executable bit,
+  platform version for the entry's own id or for the platform skill an org copy with that id links to (a linked copy keeps its id), and nothing once either is deleted. A skill with other files is copied into the environment at `/skills/<name>@<digest>/` (the first 12 hex digits of the sha256 of the version's file manifest, so versions coexist; marker `/skills/.capybara/<name>@<digest>.json`; read-only, scripts have no executable bit,
   the result tells you to run them with `sh` / `python3`; files left by older versions are listed as ignorable, Ruling M18); when the agent has no sandbox tools only the body is returned.
   The first catalog goes into the system cache segment, and later changes are rendered at their position as English reminders (append-only), so a change reaches the model only at **the start of the next run**.
 - **Qualified names** (phase B, spec §9.3): `Skill` also accepts `<plugin>:<name>` (Claude Code's namespace syntax, e.g. `superpowers:brainstorming`). An exact name wins; otherwise the prefix must equal the skill's `plugin` in the snapshot (the catalog item it was installed from), else the usual "not in the skills catalog" error listing the names. The catalog shown to the model keeps plain names, and the tool definition is unchanged (`maxLength: 64`, so a longer qualified name is refused by the schema while the plain one works). Skill bodies are never rewritten.

@@ -27,7 +27,8 @@ import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { SANDBOX_LOCK_TTL_MS } from "../../src/sandbox/sandbox.service.js";
 import {
-  SANDBOX_RECREATED_NOTICE,
+  attachmentsDir,
+  SANDBOX_RESTARTED_NOTICE,
   SANDBOX_STARTED_NOTICE,
 } from "../../src/tools/builtins/sandbox/common.js";
 import {
@@ -55,7 +56,7 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
  * 4. the replica running a `Bash` call (a command longer than the lease TTL) is killed ->
  *    the survivor takes over the run (result unknown); the next call runs at once under a shared
  *    lease beside the dead replica's command and reuses the same instance, files kept, no
- *    "recreated" notice; once the dead replica's lease has expired (TTL 60 s), the next call finds
+ *    "restarted" notice; once the dead replica's lease has expired (TTL 60 s), the next call finds
  *    its holder record and kills only its command (`killTagged`, phase C);
  * 5. idle past the limit (last_used_at moved back) -> the maintenance job suspends it -> state
  *    suspended, instance stopped -> the next call resumes it transparently, files kept, no notice.
@@ -290,7 +291,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       description: "Test step",
       command:
         "mkdir -p /workspace/out && awk -F, 'NR>1{s+=$2} END{print \"total=\" s}' " +
-        "/workspace/attachments/fruit.csv | tee /workspace/out/summary.txt",
+        `${attachmentsDir(convId)}/fruit.csv | tee /workspace/out/summary.txt`,
     });
     const r2 = await finished(convId, 2);
     expect(r2.result.isError, r2.result.content).toBe(false);
@@ -374,7 +375,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const reuseMs = Date.now() - killedAt;
     expect(r4b.result.isError, r4b.result.content).toBe(false);
     expect(r4b.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
-    expect(r4b.result.content).not.toContain(SANDBOX_RECREATED_NOTICE);
+    expect(r4b.result.content).not.toContain(SANDBOX_RESTARTED_NOTICE);
     expect(r4b.result.content.startsWith(`${TOTAL}\n`)).toBe(true);
     expect(r4b.result.content).toContain("step4-started");
     expect(r4b.result.content).toContain("attachments");
@@ -438,7 +439,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const r5 = await finished(convId, 7);
     expect(r5.result.isError, r5.result.content).toBe(false);
     expect(r5.result.content).not.toContain(SANDBOX_STARTED_NOTICE);
-    expect(r5.result.content).not.toContain(SANDBOX_RECREATED_NOTICE);
+    expect(r5.result.content).not.toContain(SANDBOX_RESTARTED_NOTICE);
     expect(r5.result.content).toContain(TOTAL);
     expect(await shownState(survivor, convPath)).toBe("running");
     const c5 = await instanceOf(convId);
@@ -446,7 +447,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(c5.state).toBe("running");
     expect((await sandboxRow(convId)).handle).toEqual(row2.handle);
 
-    // 整个过程只创建过一个沙箱（不同于「重建」：没有 recreated 提示，实例 id 不变）
+    // 整个过程只创建过一个沙箱（不同于「重建」：没有 restarted 提示，实例 id 不变）
     expect((await readFakeSandboxOps(root)).filter(([op]) => op === "create")).toHaveLength(1);
     const notices = ofType(await eventsOf(db, convId), "tool_result").filter((e) =>
       e.payload.content.includes(SANDBOX_STARTED_NOTICE),
