@@ -1,6 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { EXTENSION_POINTS, type ExtensionPointInfo } from "@capybara-hq/plugin-sdk";
+import {
+  AGENT_TEMPLATE_FIELDS,
+  type AgentTemplateField,
+  EXTENSION_POINTS,
+  type ExtensionPointInfo,
+} from "@capybara-hq/plugin-sdk";
 import type { Finding } from "./source.js";
 
 /**
@@ -34,13 +39,18 @@ export const FIXED_TOPICS = [
 const REQUIRED_SECTIONS: Record<string, string> = {
   "plugin-format": "plugin-manifest",
   "connector-templates": "connector-template",
+  "agent-templates": "agent-template",
   extensions: "extension-points",
 };
 
 export interface AgentDocsOptions {
   /** The extension point table; default: the SDK's `EXTENSION_POINTS`. */
   points?: Record<string, ExtensionPointInfo>;
+  /** The agent template frontmatter keys; default: the SDK's `AGENT_TEMPLATE_FIELDS`. */
+  agentTemplateFields?: readonly AgentTemplateField[];
 }
+
+const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
 const SECTION_RE = /<!-- generated:([a-z0-9-]+) -->\n([\s\S]*?)<!-- \/generated -->/g;
 
@@ -80,7 +90,7 @@ function fieldTable(root: string, file: string): string {
 function pointsTable(points: Record<string, ExtensionPointInfo>): string {
   const rows = Object.entries(points).map(
     ([name, p]) =>
-      `| \`${name}\` | ${p.cardinality} | ${p.orgScoped ? "yes" : "no"} | ${p.description} |`,
+      `| \`${name}\` | ${p.cardinality} | ${p.orgScoped ? "yes" : "no"} | ${cell(p.description)} |`,
   );
   return [
     "| Extension point | Providers | Per org | What it is |",
@@ -93,7 +103,7 @@ function pointsTable(points: Record<string, ExtensionPointInfo>): string {
 function pointSummary(name: string, p: ExtensionPointInfo): string {
   return [
     `- Name: \`${name}\` (a ref is \`${name}@<major>\`)`,
-    `- ${p.description}`,
+    `- ${cell(p.description)}`,
     `- Providers: ${p.cardinality === "single" ? "one at a time" : "several"}${
       p.selection === "org-default" ? "; each org chooses its default" : ""
     }`,
@@ -109,9 +119,17 @@ function render(
   name: string,
   topic: string,
   points: Record<string, ExtensionPointInfo>,
+  templateFields: readonly AgentTemplateField[],
 ): string | null {
   if (name === "plugin-manifest") return fieldTable(root, "plugin.v1.schema.json");
   if (name === "connector-template") return fieldTable(root, "connector-template.v1.schema.json");
+  if (name === "agent-template") {
+    const rows = templateFields.map(
+      (f) =>
+        `| \`${f.name}\` | ${f.type} | ${f.required ? "yes" : "no"} | ${cell(f.description)} |`,
+    );
+    return ["| Field | Type | Required | Meaning |", "|---|---|---|---|", ...rows, ""].join("\n");
+  }
   if (name === "extension-points") return pointsTable(points);
   if (name === "extension-point") {
     const key = topic.replace(/^extension-points\//, "");
@@ -139,6 +157,7 @@ const lineAt = (text: string, index: number) => text.slice(0, index).split("\n")
 
 export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Finding[] {
   const points = opts.points ?? EXTENSION_POINTS;
+  const templateFields = opts.agentTemplateFields ?? AGENT_TEMPLATE_FIELDS;
   const dir = join(root, AGENT_DOCS_DIR);
   const findings: Finding[] = [];
   const add = (rule: string, file: string, line: number, message: string) =>
@@ -181,13 +200,26 @@ export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Findi
       const body = m[2] as string;
       const line = lineAt(text, m.index);
       seen.add(name);
-      const expected = render(root, name, id, points);
+      const expected = render(root, name, id, points, templateFields);
       if (expected === null) {
         add("agent-docs-stale", path, line, `unknown generated section "${name}" in topic "${id}"`);
         continue;
       }
       if (body === expected) continue;
       let missing = false;
+      if (name === "agent-template") {
+        for (const f of templateFields) {
+          if (!body.includes(`| \`${f.name}\` |`)) {
+            missing = true;
+            add(
+              "agent-docs-missing",
+              path,
+              line,
+              `agent template field "${f.name}" is absent from the table; run pnpm gen:agent-docs`,
+            );
+          }
+        }
+      }
       if (name === "plugin-manifest" || name === "connector-template") {
         const schema =
           name === "plugin-manifest"
@@ -229,6 +261,7 @@ export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Findi
 /** Rewrites every generated section the generator knows; returns the files that changed. */
 export function generateAgentDocs(root: string, opts: AgentDocsOptions = {}): string[] {
   const points = opts.points ?? EXTENSION_POINTS;
+  const templateFields = opts.agentTemplateFields ?? AGENT_TEMPLATE_FIELDS;
   const dir = join(root, AGENT_DOCS_DIR);
   const changed: string[] = [];
   for (const file of topicFiles(dir)) {
@@ -236,7 +269,7 @@ export function generateAgentDocs(root: string, opts: AgentDocsOptions = {}): st
     const path = join(dir, file);
     const text = readFileSync(path, "utf8");
     const next = text.replace(SECTION_RE, (all, name: string) => {
-      const body = render(root, name, id, points);
+      const body = render(root, name, id, points, templateFields);
       return body === null ? all : `<!-- generated:${name} -->\n${body}<!-- /generated -->`;
     });
     if (next !== text) {

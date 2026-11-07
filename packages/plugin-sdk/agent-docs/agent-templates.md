@@ -19,23 +19,25 @@ You are a careful researcher. ...
 
 ## Frontmatter
 
-| Field | Meaning |
-|---|---|
-| `name` | Required. `^[a-z0-9][a-z0-9-]{0,63}$`. The type name is `<plugin>:<name>`. |
-| `description` | Required. When to use it; at most 4096 characters. |
-| `tools` | Allowlist of tool keys (at most 200). Omitted = the parent's tools; `[]` = none. |
-| `disallowedTools` | Tool keys removed. |
-| `toolPolicies` | Tool key to `ask` or `deny`; can only tighten. |
-| `model` | `inherit` (default), `fast`, `standard` or `capable`: a purpose tier, never a model id. |
-| `effort` | `low`, `medium`, `high`, `xhigh` or `max`. |
-| `maxSteps` | Step limit; the kernel caps it. |
-| `skills` | Up to 3 skill names preloaded (pinned). |
-| `selectedSkills` | Up to 32 further skill names the agent may use. |
-| `connectors` | Up to 16 entries: `{ template, tools?, policies? }` for a connector template (`<id>` or `<plugin>:<id>`), or `{ needs: { protocol, endpoint, tools, label }, policies? }` for a described need. |
-| `subagents` | `{ general?, types?, inline? }`: the sub-agents in its roster (at most 16 types plus inline). |
-| `modelRef` | `provider/model`; set on org templates saved from an agent. |
-| `quickActions` | Up to 9 `{ title, body }` shortcuts. |
-| `instructionFiles` | Up to 20 `{ name, content }` files. |
+<!-- generated:agent-template -->
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | `^[a-z0-9][a-z0-9-]{0,63}$`; the type name is `<plugin>:<name>`. |
+| `description` | string | yes | When to use it; at most 4096 characters. |
+| `tools` | array of tool keys | no | Allowlist (at most 200); omitted = the parent's tools, `[]` = none. |
+| `disallowedTools` | array of tool keys | no | Tool keys removed (at most 200). |
+| `toolPolicies` | object | no | Tool key to `ask` or `deny`; can only tighten. |
+| `model` | `inherit` \| `fast` \| `standard` \| `capable` | no | A purpose tier, never a model id; default `inherit`. |
+| `effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | no | Reasoning effort. |
+| `maxSteps` | integer | no | Step limit; the kernel caps it. |
+| `skills` | array of skill names | no | At most 3, preloaded (pinned). |
+| `selectedSkills` | array of skill names | no | At most 32 further skills the agent may use. |
+| `connectors` | array of objects | no | At most 16: `{ template, tools?, policies? }` for a connector template (`<id>` or `<plugin>:<id>`), or `{ needs: { protocol, endpoint, tools, label }, policies? }` for a described need. |
+| `subagents` | object | no | `{ general?, types?, inline? }`: the sub-agents in its roster (at most 16 types plus inline). |
+| `modelRef` | string | no | `provider/model`; set on org templates saved from an agent. |
+| `quickActions` | array of objects | no | At most 9 `{ title, body }` shortcuts. |
+| `instructionFiles` | array of objects | no | At most 20 `{ name, content }` files. |
+<!-- /generated -->
 
 Unknown keys are ignored. The body is at most 100,000 characters.
 
