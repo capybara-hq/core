@@ -311,9 +311,29 @@ export interface ModelParameter {
   description?: { zh: string; en: string };
 }
 
+/** The kinds of model the kernel lists (`other` is a kind this kernel does not know). */
+export type ModelKind =
+  | "chat"
+  | "embedding"
+  | "rerank"
+  | "image_generation"
+  | "video_generation"
+  | "speech_to_text"
+  | "text_to_speech"
+  | "other";
+
 export interface ModelInfo {
   id: string;
   displayName: string;
+  /** Normalised by the kernel; an older kernel leaves it out (a chat model). */
+  kind?: ModelKind;
+  /** Who made the model (display only). */
+  publisher?: string;
+  description?: LocalizedName | string;
+  /** ISO date after which the model is retired. */
+  retiresAt?: string;
+  /** On the platform's list (admin view) or the org's own (catalog view); absent elsewhere. */
+  disabled?: boolean;
   /** 上下文窗口（token）；旧内核可能没有。 */
   contextWindow?: number;
   capabilities: { reasoning: boolean };
@@ -449,8 +469,11 @@ export const reassignAgentOwner = (orgId: string, agentId: string, accountId: st
     body: JSON.stringify({ accountId }),
   });
 
-export const listModels = (orgId: string) =>
-  apiFetch<{ providers: ProviderModels[] }>(`${base(orgId)}/models`);
+/** The org's enabled models, of one `kind` (the pickers ask for `chat`) or of every kind. */
+export const listModels = (orgId: string, kind?: ModelKind) =>
+  apiFetch<{ providers: ProviderModels[] }>(
+    `${base(orgId)}/models${kind === undefined ? "" : `?kind=${kind}`}`,
+  );
 
 /**
  * The avatar the design `Avatar` renders. Uploads and migrated external avatars go through the

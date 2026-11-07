@@ -249,10 +249,21 @@ export const attachmentLimitsQuery = (orgId: string) =>
     freshness: "orgConfig",
   });
 
-/** The org's models by provider (`{ providers }`, as the kernel answers). */
+/**
+ * The org's chat models by provider (`{ providers }`, as the kernel answers): what an agent, a
+ * conversation or a template can run, so every picker reads this one.
+ */
 export const modelsQuery = (orgId: string) =>
   defineQuery({
-    key: keys.org(orgId).models(),
+    key: keys.org(orgId).models("chat"),
+    fn: () => listModels(orgId, "chat"),
+    freshness: "orgConfig",
+  });
+
+/** The org's enabled models of every kind (the purposes pick by the purpose's kind). */
+export const allModelsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).models("all"),
     fn: () => listModels(orgId),
     freshness: "orgConfig",
   });

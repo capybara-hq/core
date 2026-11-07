@@ -11,7 +11,6 @@ import {
   ListPage,
   LoadingSubsection,
   Stack,
-  Subsection,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -20,6 +19,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
+import { ModelCatalog } from "../../../../components/ModelCatalog";
+import { useModelDisabling } from "../../../../components/ModelDisabling";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { usePagePath } from "../../../../components/shell/path";
@@ -165,6 +166,15 @@ function ModelsBody({
   const t = useTranslations("models");
   const qc = useQueryClient();
   const okProviders = data.providers.filter((p) => p.status === "ok");
+  // The platform's switches: a model off here is invisible to every org. The current org's lists
+  // (models, catalog) change with it.
+  const disabling = useModelDisabling({
+    scope: "platform",
+    invalidates: () => [
+      keys.deployment().adminModels(),
+      ...(orgId === null ? [] : [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()]),
+    ],
+  });
   // The answer is the saved purpose: it replaces that purpose in the cache (a functional update:
   // the ActionRow saves several purposes at once). The current org's purposes show the deployment
   // default, so they are read again.
@@ -188,7 +198,8 @@ function ModelsBody({
   });
   const body = (
     <>
-      {/* One card of providers (spec §6.6): each provider a flush Subsection over its table */}
+      {disabling.notice}
+      {/* One card of providers (spec §6.6): each provider a flush Subsection over its tables */}
       <FormSection
         id="providers"
         flush
@@ -198,7 +209,15 @@ function ModelsBody({
         {data.providers.length === 0 ? (
           <EmptyState size="compact" text={t("admin.noProviders")} />
         ) : (
-          data.providers.map((p) => <ProviderModels key={p.provider} provider={p} data={data} />)
+          data.providers.map((p) => (
+            <ProviderModels
+              key={p.provider}
+              provider={p}
+              data={data}
+              pending={disabling.pending}
+              onDisable={disabling.change}
+            />
+          ))
         )}
       </FormSection>
       <FormSection
@@ -220,7 +239,17 @@ function ModelsBody({
 }
 
 /** 一个供应商：一个 flush Subsection，标题 + 模型表（或列模型失败的错误）。 */
-function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: AdminModels }) {
+function ProviderModels({
+  provider: p,
+  data,
+  pending,
+  onDisable,
+}: {
+  provider: AdminProvider;
+  data: AdminModels;
+  pending: boolean;
+  onDisable(provider: string, previous: string[], next: string[]): void;
+}) {
   const t = useTranslations("models");
   const locale = useLocale();
   const providerName = extensionLabel(
@@ -247,22 +276,6 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
 
   const CAPS = ["tools", "vision", "documents", "reasoning", "caching"] as const;
   const columns: Column<AdminModelInfo>[] = [
-    {
-      key: "model",
-      header: t("admin.columns.model"),
-      // A minimum for the names (「deepseek/deepseek-chat」 is not cut to 「deepseek/dee」)
-      width: 240,
-      cell: (m) => (
-        <Stack gap={0}>
-          <Text>{m.displayName}</Text>
-          {m.displayName !== m.id ? (
-            <Text variant="small" tone="muted">
-              {m.id}
-            </Text>
-          ) : null}
-        </Stack>
-      ),
-    },
     {
       key: "capabilities",
       header: t("admin.columns.capabilities"),
@@ -320,70 +333,80 @@ function ProviderModels({ provider: p, data }: { provider: AdminProvider; data: 
 
   // The provider's id under its name when the name is not the id (plain metadata, mono muted);
   // a provider that failed to list its models shows its error there, in place of its table (a
-  // block: the message in body size, each detail on its own row).
+  // block: the message in body size, each detail on its own row); a provider the orgs configure
+  // themselves says so (no list: the platform has no config of its own to list with).
   const id = p.displayName ? p.provider : p.plugin !== p.provider ? p.plugin : undefined;
   const failed = p.status === "error";
+  const orgConfigured = p.status === "org_configured";
+  const idLine =
+    id !== undefined ? (
+      <Text variant="small" tone="muted">
+        {id}
+      </Text>
+    ) : null;
   const description = failed ? (
     <Stack gap={4}>
-      {id !== undefined ? (
-        <Text variant="small" tone="muted">
-          {id}
-        </Text>
-      ) : null}
+      {idLine}
       <FormError
         message={t("admin.providerError", { provider: providerName })}
         extra={p.error === undefined ? [] : [p.error]}
       />
     </Stack>
-  ) : id !== undefined ? (
-    <Text variant="small" tone="muted">
-      {id}
-    </Text>
-  ) : undefined;
+  ) : orgConfigured ? (
+    <Stack gap={4}>
+      {idLine}
+      <Text variant="small" tone="muted">
+        {t("catalog.orgsConfigure")}
+      </Text>
+    </Stack>
+  ) : (
+    (idLine ?? undefined)
+  );
 
   return (
-    <Subsection
-      variant="flush"
+    <ModelCatalog<AdminModelInfo>
+      provider={providerName}
       title={providerName}
-      {...(description !== undefined ? { description } : {})}
-    >
-      {failed ? null : (
-        <DataTable
-          label={providerName}
-          columns={columns}
-          rows={p.models}
-          rowKey={keyOf}
-          empty={{ title: t("admin.noModels") }}
-          rowMenu={(m) => [
-            {
-              label: t("admin.menu.editPrice"),
-              onSelect: () => setEditing(keyOf(m)),
-            },
-            ...(priceOf(m) === undefined
-              ? []
-              : [
-                  "separator" as const,
-                  {
-                    label: t("admin.menu.clearPrice"),
-                    danger: true,
-                    onSelect: () => void clear(m),
-                  },
-                ]),
-          ]}
-          expand={(m) =>
-            editing === keyOf(m) ? (
-              <PriceEditor
-                provider={p.provider}
-                model={m}
-                price={priceOf(m)}
-                onCancel={() => setEditing(undefined)}
-                onSaved={() => setEditing(undefined)}
-              />
-            ) : null
-          }
-        />
-      )}
-    </Subsection>
+      {...(description !== undefined && description !== null ? { description } : {})}
+      models={p.status === "ok" ? p.models : []}
+      failed={p.status !== "ok"}
+      pending={pending}
+      onChange={(next) =>
+        onDisable(
+          p.provider,
+          p.models.filter((m) => m.disabled === true).map((m) => m.id),
+          next,
+        )
+      }
+      columns={columns}
+      rowMenu={(m) => [
+        {
+          label: t("admin.menu.editPrice"),
+          onSelect: () => setEditing(keyOf(m)),
+        },
+        ...(priceOf(m) === undefined
+          ? []
+          : [
+              "separator" as const,
+              {
+                label: t("admin.menu.clearPrice"),
+                danger: true,
+                onSelect: () => void clear(m),
+              },
+            ]),
+      ]}
+      expand={(m) =>
+        editing === keyOf(m) ? (
+          <PriceEditor
+            provider={p.provider}
+            model={m}
+            price={priceOf(m)}
+            onCancel={() => setEditing(undefined)}
+            onSaved={() => setEditing(undefined)}
+          />
+        ) : null
+      }
+    />
   );
 }
 

@@ -1303,7 +1303,7 @@ describe("a new conversation (/chat)", () => {
     expect(server.map((c) => c.url)).toEqual(
       expect.arrayContaining([
         "/api/v1/orgs/o1/agents",
-        "/api/v1/orgs/o1/models",
+        "/api/v1/orgs/o1/models?kind=chat",
         "/api/v1/orgs/o1/conversations/groups",
         "/api/v1/orgs/o1/attachments/limits",
       ]),

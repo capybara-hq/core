@@ -20,6 +20,7 @@ import {
   encodeModel,
   type PurposeTarget,
   type PurposeView,
+  providersOfKind,
   targetIssues,
   targetName,
 } from "../lib/models";
@@ -217,7 +218,8 @@ function PurposeEditor({
 
   const options = [
     { value: "", label: scope === "deployment" ? t("unset") : t("useDefault") },
-    ...providers.flatMap((p) =>
+    // Only the models of the purpose's kind (a chat purpose never lists an embedding model)
+    ...providersOfKind(providers, view.kind).flatMap((p) =>
       p.models.map((m) => ({
         value: encodeModel({ provider: p.provider, model: m.id }),
         label: modelLabel({ name: p.provider, displayName: p.displayName }, m.displayName, lang),

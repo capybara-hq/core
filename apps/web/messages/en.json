@@ -2893,6 +2893,35 @@
       "save": "Save",
       "savedAll": "{n, plural, one {Saved # purpose.} other {Saved # purposes.}}",
       "subagentHint": "Used by sub-agents dispatched on this tier. When it is not set, they run on the model of the agent that dispatches them."
+    },
+    "catalog": {
+      "title": "Models",
+      "orgDescription": "The models this organization can use. A model that is off does not appear in agent and purpose pickers.",
+      "search": "Search models",
+      "publisher": "Publisher",
+      "allPublishers": "All publishers",
+      "turnAllOff": "Turn all off",
+      "turnAllOn": "Turn all on",
+      "retiring": "Retiring",
+      "following": "Following the platform",
+      "orgConfigured": "This org's configuration",
+      "orgsConfigure": "Orgs configure their own",
+      "configure": "Configure",
+      "enabled": "Enabled",
+      "none": "This provider has no models available.",
+      "noMatch": "No models match.",
+      "undo": "Undo",
+      "affected": "These agents or purposes use these models:"
+    },
+    "kind": {
+      "chat": "Chat",
+      "embedding": "Embedding",
+      "rerank": "Rerank",
+      "image_generation": "Image generation",
+      "video_generation": "Video generation",
+      "speech_to_text": "Speech to text",
+      "text_to_speech": "Text to speech",
+      "other": "Other"
     }
   },
   "admin": {

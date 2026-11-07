@@ -203,8 +203,11 @@ export const keys = {
         conversationId,
         before,
       ],
-      /** The org's models (by provider). */
-      models: (): readonly unknown[] => [...all, "models"],
+      /** The org's enabled models (by provider), of one kind (`all`: every kind). */
+      models: (kind?: string): readonly unknown[] =>
+        kind === undefined ? [...all, "models"] : [...all, "models", kind],
+      /** The org's model catalog: every provider with its models and the org's own switches. */
+      modelsCatalog: (): readonly unknown[] => [...all, "modelsCatalog"],
       /** The org's connectors. */
       connectors: (): readonly unknown[] => [...all, "connectors"],
       /** The connector kinds whose extension is enabled in the org (the install wizard). */

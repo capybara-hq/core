@@ -441,6 +441,8 @@ describe("one box is enough (acceptance item AB)", () => {
     stubApi({
       "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes());
     const ev = await purposeBox("eval");
@@ -468,6 +470,8 @@ describe("sub-agent model tiers on the purposes page", () => {
           ],
         }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     const box = (p: string) =>
@@ -488,6 +492,8 @@ describe("/settings/models（组织管理员）", () => {
     stubApi({
       "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes }),
       "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
       ...extra,
     });
 
