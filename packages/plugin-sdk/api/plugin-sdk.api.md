@@ -719,6 +719,25 @@ export interface EmbedClaims {
 }
 
 // @public
+export interface EmbeddingRequestHookPayload {
+    accountId?: undefined;
+    agentId?: undefined;
+    agentVersion?: undefined;
+    conversationId?: undefined;
+    dimensions?: number;
+    embeddingPurpose: string;
+    extension: string;
+    input: readonly string[];
+    inputType?: "query" | "document";
+    model: string;
+    orgId: string;
+    parent?: undefined;
+    provider: string;
+    purpose: "embedding";
+    runId?: undefined;
+}
+
+// @public
 export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
@@ -1452,6 +1471,16 @@ export interface ModelCallOptions {
 export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
 
 // @public
+export interface ModelCallRequestHookPayload extends HookScope {
+    attempt: number;
+    model: string;
+    provider: string;
+    purpose: ModelCallPurpose;
+    request: Readonly<HookModelRequest>;
+    step: number;
+}
+
+// @public
 export interface ModelEmbeddingInfo {
     defaultDimensions: number;
     dimensions: number[];
@@ -1573,14 +1602,7 @@ export interface ModelRequest {
 }
 
 // @public
-export interface ModelRequestHookPayload extends HookScope {
-    attempt: number;
-    model: string;
-    provider: string;
-    purpose: ModelCallPurpose;
-    request: Readonly<HookModelRequest>;
-    step: number;
-}
+export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
 
 // @public
 export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;

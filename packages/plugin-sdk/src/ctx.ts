@@ -104,7 +104,9 @@ export interface ExtensionModels {
    * Embeds `input` with the org's effective model for `purpose`. Rejects with `model.unconfigured`
    * when the purpose maps to no model the org can use, `validation_failed` for dimensions the model
    * lacks, and a `ModelError` when the provider fails (a result of the wrong count or dimension is a
-   * `ModelError` of kind `server`). Not retried by the kernel.
+   * `ModelError` of kind `server`). Not retried by the kernel. Each call fires the `model.request`
+   * hook first (`purpose: "embedding"`, every text of the call): when a policy hook denies it, the
+   * call rejects with an error whose `code` is `run.hook_denied`, and nothing is sent or billed.
    */
   embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
   /** The org's effective model for `purpose`, or null when it maps to no model the org can use. */

@@ -52,8 +52,9 @@ export interface HookScope {
 export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
 
 /**
- * What a reported model call was for: the {@link ModelCallPurpose} values, or `embedding` for an
- * embedding call an extension made through `ctx.models`.
+ * What a reported or requested model call was for: the {@link ModelCallPurpose} values, or
+ * `embedding` for an embedding call an extension made through `ctx.models` (`usage.report`, and
+ * `model.request` with {@link EmbeddingRequestHookPayload}; never `model.response`).
  */
 export type UsagePurpose = ModelCallPurpose | "embedding";
 
@@ -84,14 +85,15 @@ export type HookModelMessage =
 export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: HookModelMessage[] };
 
 /**
- * `model.request`: before a model call is sent. A policy hook may deny it. Fires once per attempt of a
- * step (`purpose: "step"`), once for each compaction call (`purpose: "compaction"`, `attempt` 1) and
+ * `model.request` of a chat model call (see {@link ModelRequestHookPayload}): once per attempt of a
+ * step (`purpose: "step"`), once for each compaction call (`purpose: "compaction"`, `attempt` 1),
  * once for each conversation title call (`purpose: "title"`, `runId` "", `step` 0, `attempt` 1; a
- * denial skips the title and is recorded only in the audit log).
+ * denial skips the title and is recorded only in the audit log) and once for each `WebFetch`
+ * extraction call (`purpose: "web_fetch"`).
  * `request` is the request as sent, except that images and documents are placeholders
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */
-export interface ModelRequestHookPayload extends HookScope {
+export interface ModelCallRequestHookPayload extends HookScope {
   purpose: ModelCallPurpose;
   step: number;
   attempt: number;
@@ -99,6 +101,47 @@ export interface ModelRequestHookPayload extends HookScope {
   model: string;
   request: Readonly<HookModelRequest>;
 }
+
+/**
+ * `model.request` of an embedding call an extension made through `ctx.models.embed`
+ * (`purpose: "embedding"`): fired once per `embed` call, before the first batch is sent, with every
+ * text of the call (the kernel splits them into batches afterwards). A call with no input sends
+ * nothing and fires nothing. There is no conversation: the conversation fields of a chat model call
+ * (`accountId`, `agentId`, `agentVersion`, `conversationId`, `runId`, `parent`, `step`, `attempt`,
+ * `request`) are absent. A policy denial makes `embed` reject (`run.hook_denied`); nothing is sent
+ * to the provider and no usage is recorded.
+ */
+export interface EmbeddingRequestHookPayload {
+  purpose: "embedding";
+  orgId: string;
+  /** The extension that called `ctx.models.embed`. */
+  extension: string;
+  /** The embedding purpose the extension called with (one it declared in `permissions.models`). */
+  embeddingPurpose: string;
+  provider: string;
+  model: string;
+  /** The texts of the call, in order (text only). */
+  input: readonly string[];
+  /** The dimensions the extension asked for, when it asked. */
+  dimensions?: number;
+  /** The input type the extension gave, when it gave one. */
+  inputType?: "query" | "document";
+  accountId?: undefined;
+  agentId?: undefined;
+  agentVersion?: undefined;
+  conversationId?: undefined;
+  runId?: undefined;
+  parent?: undefined;
+}
+
+/**
+ * `model.request`: before a model call is sent. A policy hook may deny it. Either a chat model call
+ * ({@link ModelCallRequestHookPayload}: steps, compaction, titles, `WebFetch`) or an extension's
+ * embedding call ({@link EmbeddingRequestHookPayload}, `purpose: "embedding"`); tell them apart by
+ * `purpose`. Handlers must accept the absent conversation fields of an embedding call (a policy
+ * hook that throws on one denies the call). Payloads carry no media bytes.
+ */
+export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
 
 /**
  * `model.response`: after a sent model call finished or failed, with its usage when known (step

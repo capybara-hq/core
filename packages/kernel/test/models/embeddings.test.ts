@@ -377,6 +377,7 @@ describe("permissions.models", () => {
         [{ purpose: PURPOSE, kind: "chat", label: { zh: "x", en: "x" } }],
         { orgId, purpose: PURPOSE, input: ["t1"] },
         new AbortController().signal,
+        undefined,
       ),
     );
     expect((e as ApiError).code).toBe("model.purpose_unknown");

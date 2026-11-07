@@ -37,6 +37,7 @@ import { audit } from "../identity/audit.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { OrgRole } from "../orgs/roles.js";
+import type { HookRunner } from "../runtime/hook-calls.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
 import {
@@ -73,6 +74,11 @@ export interface KernelDeps {
    * test): `ctx.models` calls reject.
    */
   models?: Pick<ModelEmbeddings, "embed" | "describe">;
+  /**
+   * The host's hook registry: `ctx.models.embed` fires `model.request` through it (spec B §5.4).
+   * Absent (a ctx built alone in a test): no hooks fire.
+   */
+  hooks?: HookRunner;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -377,7 +383,7 @@ export function createExtensionContext(
       ? {
           embed: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
-            return deps.models.embed(name, declaredModels, req, lifecycle.signal);
+            return deps.models.embed(name, declaredModels, req, lifecycle.signal, deps.hooks);
           },
           describe: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);

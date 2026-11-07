@@ -101,7 +101,9 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
   (required ones are `builtin`, the rest optional preinstalls, off in every org until switched on);
-  hooks observe or deny, never rewrite. An extension call made for an org carries `config`, the
+  hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
+  extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields), and policy
+  hooks fail closed. An extension call made for an org carries `config`, the
   effective config (platform deployment config plus the org's copy of overridable fields: never an
   overridable platform secret, hidden secrets stay); an org whose effective config is invalid gets
   no call (`needsConfig`); org admins may switch off single extension tools.

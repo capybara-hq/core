@@ -233,6 +233,12 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   for `embedding` (an SDK type change; handlers reading them must accept their absence). The job id
   and the sweeper cover the new table's rows (`eventId` = the row id), at least once as today. No
   conversation event. Cost uses the price table's input price.
+- Hooks (**decided, 2026-11-08**): each `embed` call fires `model.request` once, after the target
+  resolves and before the first batch is sent (`purpose: "embedding"`, the calling extension, its
+  embedding purpose, provider, model and every text of the call, no conversation fields), so policy
+  hooks (DLP) see text sent to embedding vendors like every other kernel model call; a policy
+  denial rejects with `run.hook_denied`, sends nothing, records no usage and writes one
+  `hook.denied` audit row. `model.response` does not fire for embeddings.
 - Not in scope: `ctx.models` for chat (no consumer yet).
 
 ### 5.5 Credentials and OAuth
@@ -415,5 +421,13 @@ Rulings made while building the core part (they refine the sections above):
   `report_failed_at` set whose `occurred_at` is in the bounded window `[watermark − 10 min, now −
   30 s]` (`USAGE_SWEEP_OVERLAP_MS`, `USAGE_SWEEP_LAG_MS`), the same window as the `usage` events; a
   row older than the window is not re-enqueued.
+- `ctx.models.embed` fires `model.request` (decided with the user 2026-11-08): the payload is a new
+  union member `EmbeddingRequestHookPayload` (`purpose: "embedding"`, `extension`,
+  `embeddingPurpose` for the declared purpose name, `input`, `dimensions?`, `inputType?`; the
+  conversation fields typed absent), so `ModelRequestHookPayload` becomes a union and handlers
+  narrow on `purpose` before reading `request`. Denials reject with the step's error
+  (`RunError("run.hook_denied")`, `Model request blocked by the "<plugin>" policy hook: <reason>`);
+  the audit row has no actor and targets the calling extension. The texts are copied once at the
+  start of the call, so the hooks see exactly what is sent; an empty call fires nothing.
 - `ExtensionContext.models` is a required member; plugin test fakes need a models stub (run the
   plugins repository's typecheck before the release).

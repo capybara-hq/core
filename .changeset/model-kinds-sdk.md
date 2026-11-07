@@ -12,3 +12,11 @@ splits batches by `maxBatch`, validates results, records a `model_usage` row per
 it through `usage.report` with purpose `embedding`. Each batch is limited by the new hot config
 `models.embedTimeoutMs`; `embed` takes an optional per-call `signal`. `capybara-plugin check` reports `ctx.models`
 without `permissions.models` as `perm-models` (was `perm-reserved`).
+
+`ctx.models.embed` fires the `model.request` hook once per call, before anything is sent, so policy
+hooks (DLP) see the texts sent to embedding vendors. `ModelRequestHookPayload` is now a union:
+`ModelCallRequestHookPayload` (steps, compaction, titles, `WebFetch`; the former interface) or
+`EmbeddingRequestHookPayload` (`purpose: "embedding"`, `orgId`, `extension`, `embeddingPurpose`,
+`provider`, `model`, `input`, `dimensions?`, `inputType?`, no conversation fields); narrow on
+`purpose` before reading `request`. A policy denial rejects the call with `run.hook_denied`, writes
+a `hook.denied` audit row and records no usage. `model.response` does not fire for embeddings.

@@ -220,8 +220,9 @@ An extension adding UI to the web app (right-panel tabs on the conversation page
 `ctx.hooks.on(mount, handler, { mode })`, only during `setup`, on mount points declared in
 `permissions.hooks` (and, for `mode: "policy"`, in `permissions.policyHooks`). Hooks observe or deny;
 they never rewrite a request or a result. They fire only for organizations that enabled the extension,
-only in chat conversations and in sub-agents' conversations, never in eval replays (the one exception
-is `usage.report`, below). Payloads are deep-frozen copies.
+only in chat conversations and in sub-agents' conversations, never in eval replays (the exceptions
+are `usage.report` and the `model.request` of an extension's embedding call, below). Payloads are
+deep-frozen copies.
 
 - **Registration.** The five mount points are `model.request`, `model.response`, `tool.preExecute`,
   `tool.postExecute` and `usage.report` (`HOOKS_AVAILABLE`); `session.*` and `agent.preStep` still
@@ -268,6 +269,21 @@ is `usage.report`, below). Payloads are deep-frozen copies.
   `hook_denied` event: it is not a run step). The payload's request carries **no media bytes and no attachment
   ids**: every image or document block is a placeholder
   `{ type: "media_omitted", kind, mediaType, size }`.
+- **`model.request` for embeddings.** An extension's `ctx.models.embed` call fires `model.request`
+  once per call, after the org's model is resolved and before the first batch is sent, so DLP sees
+  the texts sent to embedding vendors (`packages/kernel/src/models/embeddings.ts`). The payload is
+  an `EmbeddingRequestHookPayload`: `purpose: "embedding"`, `orgId`, the calling `extension`, its
+  `embeddingPurpose`, `provider`, `model`, `input` (every text of the call, before batching),
+  `dimensions?` / `inputType?` as the extension gave them, and **no conversation fields**
+  (`accountId`, `agentId`, `agentVersion`, `conversationId`, `runId`, `parent`, `step`, `attempt`,
+  `request` absent). `ModelRequestHookPayload` is the union of it and the chat call's
+  `ModelCallRequestHookPayload`: narrow on `purpose` before reading `request`, and accept the absent
+  fields (a policy hook that throws on them denies every embedding call). A denial (deny, error,
+  timeout, not loaded, needs config) makes `embed` reject with `code: "run.hook_denied"` (message
+  `Model request blocked by the "<plugin>" policy hook: <reason>`), sends nothing, records no usage
+  and writes one `hook.denied` audit row (no actor, `target` the calling extension,
+  `detail.purpose: "embedding"`); there is no `hook_denied` event. A call with no input fires
+  nothing. `model.response` does not fire for embeddings (usage goes through `usage.report`).
 - **`model.response`** fires after a sent call finished or failed (step attempts, compaction and
   title calls). It does **not** fire for a call the user aborted mid-stream, nor for a call that was never
   sent (denied, or failed before sending); pair it with `model.request` accordingly.

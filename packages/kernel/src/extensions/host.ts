@@ -630,20 +630,6 @@ export class ExtensionHost {
     @Inject(ModelEmbeddings) models: Pick<ModelEmbeddings, "embed" | "describe">,
   ) {
     const c = config.get();
-    this.deps = {
-      db: kdb.pool,
-      dbUrl: c.db.url,
-      connectTimeoutMs: c.db.connectTimeoutMs,
-      redis,
-      busSubscriber,
-      redisUrl: c.redis.url,
-      keyring,
-      embedTokens,
-      models,
-      locks,
-      runWorkers: c.roles.includes("worker"),
-      log,
-    };
     this.hooks = new HookRegistry({
       instances: () => this.registry.all(),
       current: (plugin) => this.registry.current(plugin),
@@ -654,6 +640,22 @@ export class ExtensionHost {
       config: () => ({ hooks: { timeoutMs: this.config.get().hooks.timeoutMs } }),
       log,
     });
+    this.deps = {
+      db: kdb.pool,
+      dbUrl: c.db.url,
+      connectTimeoutMs: c.db.connectTimeoutMs,
+      redis,
+      busSubscriber,
+      redisUrl: c.redis.url,
+      keyring,
+      embedTokens,
+      models,
+      // ctx.models.embed fires model.request through the same registry (spec B §5.4)
+      hooks: this.hooks,
+      locks,
+      runWorkers: c.roles.includes("worker"),
+      log,
+    };
     this.registry.onChange(() => {
       this.installedCache = undefined;
     });

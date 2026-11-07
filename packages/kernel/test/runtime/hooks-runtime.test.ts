@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type {
-  ModelRequestHookPayload,
+  ModelCallRequestHookPayload,
   ModelResponseHookPayload,
   ToolPostHookPayload,
 } from "@capybara-hq/plugin-sdk";
@@ -174,7 +174,7 @@ describe("model hooks", { timeout: 60_000 }, () => {
     const { conv, events } = await turn("echo:hello hooks");
     await countReaches("model.request", before + 1);
     // the step's request (the conversation's title call may come after it)
-    const seen = (await counts("step")).last["model.request"] as ModelRequestHookPayload;
+    const seen = (await counts("step")).last["model.request"] as ModelCallRequestHookPayload;
     const [call] = ofType(events, "model_call");
     expect(call).toBeDefined();
     expect(seen).toMatchObject({

@@ -13,6 +13,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
+import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -20,6 +21,8 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { embeddingDeniedAudit, type HookRunner } from "../runtime/hook-calls.js";
+import { modelDeniedText, RunError } from "../runtime/model-call.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { ModelPurposesService, type PurposeTarget } from "./purposes.js";
 
@@ -37,6 +40,12 @@ export const EMBED_MAX_INPUTS = 2048;
  * - resolves the org's effective target ({@link ModelPurposesService.resolve}: unmapped, or mapped
  *   to a model the org cannot use, is `model.unconfigured`) and the model in the org's view, enabled
  *   and of kind `embedding` ({@link ProviderRegistry.resolve}, bound to the org's effective config);
+ * - fires `model.request` once (`purpose: "embedding"`, every text of the call, no conversation
+ *   fields) through the host's hook registry before anything is sent; a policy denial (a deny, a
+ *   hook error or timeout, a policy extension not loaded here or without a valid config in the org)
+ *   writes one `hook.denied` audit row and rejects with `RunError("run.hook_denied")`, the error a
+ *   denied run step fails with: no provider call, no usage row. A call with no input sends nothing
+ *   and fires nothing;
  * - splits the input into batches of the model's `maxBatch`, calls the provider's `embed` once per
  *   batch in order with the extension's signal (plus the request's own `signal`), each batch
  *   limited by `models.embedTimeoutMs` (`ModelError("timeout")`), checks each result ({@link validateEmbedResult}: a
@@ -147,14 +156,21 @@ export class ModelEmbeddings {
     }
   }
 
-  /** `ctx.models.embed` for `plugin` (its declared purposes), aborted by `signal`. */
+  /**
+   * `ctx.models.embed` for `plugin` (its declared purposes), aborted by `signal`; `hooks` is the
+   * host's hook registry (`model.request`), absent only for a ctx built without a host (tests).
+   */
   async embed(
     plugin: string,
     declared: DeclaredModelPurposes,
-    req: ExtensionEmbedRequest,
+    request: ExtensionEmbedRequest,
     signal: AbortSignal,
+    hooks: HookRunner | undefined,
   ): Promise<ExtensionEmbedResult> {
-    checkRequest(req);
+    checkRequest(request);
+    // a copy, read once: the texts the hooks see are the texts sent, whatever the extension does
+    // with its own request object meanwhile
+    const req: ExtensionEmbedRequest = { ...request, input: request.input.slice() };
     await this.admit(plugin, declared, req.orgId, req.purpose);
     const t = await this.target(req.orgId, req.purpose);
     const dimensions = req.dimensions ?? t.info.defaultDimensions;
@@ -173,6 +189,7 @@ export class ModelEmbeddings {
     const size = Math.max(1, t.info.maxBatch);
     // the instance's signal (revocation) and the caller's own (e.g. its tool call aborted)
     const callSignal = req.signal ? AbortSignal.any([signal, req.signal]) : signal;
+    await this.checkHooks(hooks, plugin, req, model, callSignal);
     try {
       for (let i = 0; i < req.input.length; i += size) {
         callSignal.throwIfAborted();
@@ -209,6 +226,41 @@ export class ModelEmbeddings {
     }
     await this.record(plugin, req.orgId, req.purpose, model, inputTokens);
     return { vectors, model, dimensions };
+  }
+
+  /**
+   * `model.request` for an embed call (policy hooks may deny it). Rejects with the caller's abort
+   * reason when `signal` aborts while the hooks run (an abort is never a deny).
+   */
+  private async checkHooks(
+    hooks: HookRunner | undefined,
+    plugin: string,
+    req: ExtensionEmbedRequest,
+    model: { provider: string; id: string },
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!hooks?.has("model.request")) return;
+    const call = {
+      purpose: "embedding" as const,
+      orgId: req.orgId,
+      extension: plugin,
+      embeddingPurpose: req.purpose,
+      provider: model.provider,
+      model: model.id,
+      input: req.input,
+      ...(req.dimensions !== undefined && { dimensions: req.dimensions }),
+      ...(req.inputType !== undefined && { inputType: req.inputType }),
+    };
+    const verdict = await hooks.run("model.request", call, signal);
+    if (verdict.allowed) return;
+    await audit(this.kdb.db, embeddingDeniedAudit(call, verdict));
+    this.log.warn("embed call blocked by a policy hook", {
+      plugin,
+      orgId: req.orgId,
+      hookPlugin: verdict.plugin,
+      cause: verdict.cause,
+    });
+    throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
   }
 
   /** `ctx.models.describe` for `plugin`: null when the purpose maps to no model the org can use. */
