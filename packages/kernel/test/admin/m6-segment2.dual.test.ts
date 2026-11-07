@@ -32,7 +32,8 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * `extensionPermissions.autoApprove: false`；引导插件 fake-object-store（核心假扩展，SeaweedFS，起初没配）、配置声明的 model-fake 与
  * deploycfg；其余插件经后台安装。全部经 HTTP（「卡住工具调用」用测试连接锁表；匿名访客由渠道产生，这里直接建）。
  *
- * 1. 副本 A 上传打包好的 sandbox@1 假插件 v1（敏感）与假扩展 fake-tools-ui v1，副本 B 安装、批准、启用：两个副本都加载，不重启；
+ * 1. replica A uploads the packed sandbox@2 fake plugin v1 (sensitive) and the fake extension
+ *    fake-tools-ui v1, replica B installs, approves and enables them: both replicas load them, no restart;
  * 2. fake-tools-ui 的工具调用卡在处理函数里（锁住它写的表）时在 A 上升级到 v2（带扩展迁移）：迁移只执行一次；在途调用超过
  *    `drainSeconds` 按 `PLUGIN_UNLOADED_TOOL_ERROR` 中止；运行照常 `completed`；之后的调用落到 v2；
  * 3. 停用 fake-tools-ui：两个副本上都不可用；再启用：又可用；
