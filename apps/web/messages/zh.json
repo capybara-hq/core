@@ -44,7 +44,7 @@
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
+    "insecureOrigin": "当前通过不安全的 http 地址访问，登录后可能无法保持登录状态。请使用 HTTPS 地址访问，或联系管理员。"
   },
   "setup": {
     "title": "初始化",
@@ -3170,6 +3170,7 @@
       "saved": "部署设置已保存",
       "allow": "允许",
       "deny": "禁止",
+      "insecureOrigin": "你正在通过 http 从非 localhost 的地址访问控制台。会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它，用户登录后可能无法保持登录状态。请改用 HTTPS 访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。",
       "orgCreation": {
         "title": "谁能新建组织",
         "description": "限制后只有超级管理员能新建组织。",

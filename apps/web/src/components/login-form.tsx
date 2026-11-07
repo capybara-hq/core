@@ -1,12 +1,12 @@
 "use client";
 
-import { Button, Field, Input, Stack, Text } from "@capybara-hq/design";
+import { Button, Callout, Field, Input, Stack, Text } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { type AuthSource, type LoginErrorCode, ssoStartUrl } from "../lib/auth-sources";
 import { navigateBrowser } from "../lib/browser";
 import { useAppMutation } from "../lib/query/mutation";
-import { secureCookiesBlocked } from "../lib/secure-origin";
+import { useSecureCookiesBlocked } from "../lib/secure-origin";
 import { login } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -77,24 +77,14 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
 }
 
 /**
- * Shown when the page is served over plain http from a non-localhost host, where the browser drops
- * Secure session cookies. Worded as a condition ("if sign-in doesn't stick"): the page can't tell
- * whether the deployment turned auth.cookieSecure off. Renders nothing otherwise.
+ * Shown to everyone when the page is served over plain http from a non-localhost host, where the
+ * browser drops Secure session cookies. One sentence for people; the operator's details (the
+ * settings to change) live in the admin console and the docs. Renders nothing otherwise.
  */
 export function InsecureOriginNotice() {
   const t = useTranslations("login");
-  const [blocked, setBlocked] = useState(false);
-  useEffect(() => {
-    setBlocked(secureCookiesBlocked(window));
-  }, []);
-  if (!blocked) return null;
-  return (
-    <div role="status">
-      <Text variant="small" tone="warn">
-        {t("insecureOrigin")}
-      </Text>
-    </div>
-  );
+  if (!useSecureCookiesBlocked()) return null;
+  return <Callout tone="warn">{t("insecureOrigin")}</Callout>;
 }
 
 /** 第三方登录回跳带回的原因码 → 译文（只显示自己的文案，不回显身份源的任何文本）。 */
