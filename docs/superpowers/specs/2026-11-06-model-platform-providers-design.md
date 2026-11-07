@@ -1,6 +1,9 @@
 # Model platform providers: DeepSeek, Alibaba Bailian, Volcengine Ark
 
-Status: draft, 2026-11-06, on hold: waits for the platform / org layering design (`2026-11-06-platform-org-layering-notes.md`), which waits for the plugin-component-management branch. Sections 5.3 and 5.5 change under that design (org-level keys and config copies).
+Status: design, 2026-11-07, waiting for review. Builds on the platform / org layering design
+(`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
+§5.5 (org keys through A's overridable fields and per-call effective config) were revised to it on
+2026-11-07. Re-checked against `main` at `76b32e10`.
 
 Covers a contract change in core (model kinds, embeddings, org model
 enablement, `ctx.models`) and three new plugins in `capybara-hq/plugins`. The contract part lands
@@ -27,8 +30,9 @@ What the user wants:
    for OAuth). No model is typed by hand: **the plugin lists the platform's models** through the
    platform's API.
 3. The model list is **grouped by kind**: chat (LLM), embedding, speech, image / video.
-4. Because a platform lists so many models, **an org admin chooses which models the org enables**.
-   Agents, purposes and extensions of the org can only use enabled models.
+4. Because a platform lists so many models, **the platform and each org admin can disable models**
+   (everything else is enabled). Agents, purposes and extensions of the org can only use enabled
+   models.
 5. Embedding models must be **callable**, not only listed: a coming memory plugin (its own design,
    later) will use a platform's embedding models through the kernel. This is why a model provider
    offers more than one kind of model.
@@ -44,8 +48,11 @@ Goals
 - `model-provider@2` models carry a **kind**; the kernel, the API and the web group and filter by
   it. The kind set is open for later kinds.
 - `model-provider@2` gains an optional **`embed()`**; the kernel calls it for embedding models.
-- **Org model enablement**: a kernel feature for every provider (also `anthropic`, `openai`,
+- **Model disabling on two layers**: the platform and each org can disable models; everything not
+  disabled is usable. A kernel feature for every provider (also `anthropic`, `openai`,
   `openai-compatible`, `model-fake`), not only the platform plugins.
+- **Org keys**: an org can use its own key (and region, workspace, base URL) for a provider, through
+  A's overridable fields; model provider calls become org-bound.
 - **`ctx.models`** (reserved today, not callable) opens for embeddings: an extension embeds text
   through a purpose it declares in `permissions.models`.
 - Three plugins in `capybara-hq/plugins`: `deepseek`, `bailian`, `ark` (names: §6), each listing its
@@ -148,16 +155,28 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
 `ModelError("server")`-equivalent on a mismatch. Text only; multimodal embeddings (Ark
 `/embeddings/multimodal`) are a later addition.
 
-### 5.3 Org model enablement (kernel)
+### 5.3 Model disabling, platform and org (kernel)
 
-- New table (`capybara` schema, the builder names it) holding, per org and provider, the provider's
-  mode and the enabled model ids: mode `all` (every listed model is enabled, today's behavior) or
-  `selected` (only the listed ids). No row = `all`. So nothing changes for an org until its admin
-  acts; see §9 for the platform default.
-- Enforcement, one helper used everywhere (the builder places it next to `ProviderRegistry`):
+- **Default all enabled, disable on demand (decided):** every model a provider lists is usable
+  unless it is disabled. Models are disabled on two layers (decided):
+  - the **platform**: the super admin disables models for every org (an expensive video model);
+    a platform-disabled model is invisible to orgs;
+  - the **org**: an org admin disables models for the org, among those the platform left on.
+- Storage: a disabled list per (provider, model id) for the platform and per (org, provider, model
+  id) for orgs (`capybara` schema, the builder names the tables). No mode switch and no allowlist:
+  a model the provider lists later is enabled everywhere until someone disables it. Nothing changes
+  for an org until an admin acts.
+- Choosing models is not a config edit (A §5.4): disabling never creates an org config copy. The
+  disabled lists key on the model id, so they apply to whichever list the org sees: with the
+  platform's config or with its own copy (§5.5). A disabled id the org's list does not contain is
+  kept harmlessly.
+- Enforcement, one helper used everywhere (the builder places it next to `ProviderRegistry`); a
+  model is **enabled in an org** when the provider is on in the org (A §4), its effective config is
+  valid there (A §5.4a), it is in the org's list, and neither layer disabled it:
   - `GET /api/v1/orgs/:orgId/models` returns only enabled models, with `kind` and the new display
     fields, optional `?kind=` filter. A new `GET .../models/catalog` (org admins,
-    `org.models.manage`) returns every model with its enabled flag for the settings page.
+    `org.models.manage`) returns every model the platform left on, with the org's disabled flag, for
+    the settings page.
   - Agent save and the agent model picker: only enabled `chat` models.
   - Run time (`resolve` in the org's context): a model that was enabled when the agent was saved and
     is disabled now fails the run step with `agent.model_unavailable`, through the existing
@@ -166,12 +185,14 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
     purpose's kind, and an org's effective target must be enabled in that org; a deployment default
     that the org disabled counts as unconfigured for that org (`model.unconfigured`).
   - `ctx.models` (§5.4): enabled and of the right kind.
-- Writes: `PUT /api/v1/orgs/:orgId/models/:provider` with `{ mode, models? }`, `org.models.manage`,
-  audited, `@Transactional`, evicting the org's cached view after commit. Disabling a model that an
-  agent or a purpose override uses is allowed; the response lists the affected agents and purposes
-  so the page can warn before saving (the builder decides warn-before vs warn-after).
-- Deployment level is unchanged: the super admin's `/admin/models` shows every provider with
-  every model, grouped by kind.
+- Writes: an org route setting the org's disabled ids of a provider (`org.models.manage`) and an
+  admin route setting the platform's (super admin), both audited, `@Transactional`, evicting cached
+  views after commit; bulk forms (disable a whole kind or publisher) are the builder's. Disabling a
+  model that an agent or a purpose override uses is allowed; the response lists the affected agents
+  and purposes (for a platform disable, across orgs) so the page can warn (the builder decides
+  warn-before vs warn-after).
+- The super admin's `/admin/models` shows every provider with every model of the platform's list,
+  grouped by kind, with the platform disable toggles.
 
 ### 5.4 `ctx.models` for embeddings (SDK + kernel)
 
@@ -196,7 +217,38 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
 
 ### 5.5 Credentials and OAuth
 
-Each plugin's deployment config holds an `apiKey: secret()`. The kernel defines nothing for
+**Org keys (through A).** The three plugins mark their credentials and endpoint fields
+**overridable** (A §5.1-§5.2): `apiKey`, `region` / `baseUrl`, Bailian's `workspaceId`, Ark's
+`management` keys. So:
+
+- the platform may install a provider with or without a key (A §5.4a): without one, every org that
+  wants it enters its own, and orgs that follow the platform see 需要配置;
+- an org that follows the platform uses the platform's key; an org that edits gets its own copy,
+  whose secrets start empty, so it enters its own key in the same save (A §5.4); the platform's key
+  never reaches an org-chosen endpoint;
+- the existing plugins (`anthropic`, `openai`, `openai-compatible`) may opt in the same way in their
+  own releases; until they do, they keep today's deployment-only behaviour.
+
+**Org-bound provider calls (core).** A's §6 requires calls made for an org to carry the org's
+effective config; for model providers this is a `model-provider@2` change, additive:
+
+- `listModels`, `stream` and `embed` receive the org id and the effective config in their options
+  (names are the builder's). A provider that marks fields overridable reads them from there, not
+  from `ctx.config`; an older provider ignores them and keeps working with `ctx.config`.
+- `ProviderRegistry` gains the org dimension: `resolve` and the model lists take the org. The list
+  cache key already carries a config hash (`providers.ts`, `cache:capk:models:...:<configHash>`); it
+  becomes the hash of the effective config, so orgs following the platform share one cached list and
+  an org with its own key gets its own. The failure marker is keyed the same way.
+- Every model call already happens in an org's context (runs, titles, evals, purposes); the builder
+  confirms none is deployment-wide and passes the org through. The admin view (`/admin/models`)
+  lists with the platform config; when the platform left the key empty it shows the provider as
+  组织各自配置 with no list.
+- A provider whose effective config is invalid in an org offers no models there (A §5.4a); agents
+  using its models fail with `agent.model_unavailable` through the degradation ladder.
+- Usage records keep the org; whether the org's own key paid is not recorded in this work, and the
+  price table is applied as today **(designer's call;** a later change may mark it).
+
+**Credentials.** Each plugin's config holds an `apiKey: secret()`. The kernel defines nothing for
 OAuth: how a provider authenticates is the plugin's own code (the kernel at most stores its secrets
 and tokens), and none of the three platforms offers OAuth for model calls anyway (the OAuth login
 some tools offer for Qwen is Qwen Portal, a different product). Ark adds optional AK/SK for listing
@@ -205,14 +257,16 @@ some tools offer for Qwen is Qwen Portal, a different product). Ark adds optiona
 ### 5.6 Web
 
 - `/settings/models` (org admins) gains a models section before the purposes: one block per
-  provider (display name, mode switch "all models / selected models"), inside it the models grouped
-  by kind with counts, a search box, a publisher filter when the provider hosts several, and a
-  toggle per model; retiring models are marked. Built from design components and templates only
+  provider (display name; 跟随平台 or 本组织配置 per A, linking to the provider's config), inside it
+  the models grouped by kind with counts, a search box, a publisher filter when the provider hosts
+  several, and a switch per model (on unless disabled), with bulk off / on per kind and publisher;
+  retiring models are marked.
+- `/admin/models` gets the same block for the platform's disable toggles, grouped by kind.
+- Built from design components and templates only
   (`writing-web-ui`); a list of hundreds needs the design's table with filtering, and if no
   component fits, the design system change flow comes first.
 - Agent model picker: chat models only, grouped by provider and publisher.
 - Purpose editor: targets filtered by the purpose's kind (embedding purposes list embedding models).
-- `/admin/models`: grouped by kind.
 - New query keys, freshness classes and route-table entries as the query-cache rules require; i18n
   zh and en.
 
@@ -281,9 +335,12 @@ Plugin names (Claude's call, the user may rename): `deepseek`, `bailian`, `ark`;
 
 ## 7. Order of work
 
+0. Core: design A (scope `all` switchable, two-level config with overridable fields and the
+   per-call effective config, per-org tool switches), its own plan.
 1. Core: SDK kinds and `embed` (API snapshot, changeset bumping `@capybara-hq/plugin-sdk`),
    `model-fake` gains an embedding model and kinds so kernel tests have a provider.
-2. Core: org model enablement (table, enforcement, routes, web settings section).
+2. Core: model disabling on two layers and org-bound provider calls (§5.3, §5.5: tables,
+   enforcement, `ProviderRegistry` org dimension, routes, web settings sections).
 3. Core: `ctx.models.embed` / `describe`, usage, kind-filtered purposes.
 4. Release a core rc carrying the SDK.
 5. Plugins repository: `deepseek`, `bailian`, `ark` (independent of each other; Ark starts with the
@@ -301,11 +358,15 @@ share no code (each is self-contained; no shared package is introduced).
 ## 9. Decided with the user / open
 
 Decided with the user: three native plugins; API key credentials, OAuth is a plugin's own concern;
-model list from the platform, grouped by kind; org admins choose enabled models, as a kernel
-feature for every provider; embeddings callable for the memory plugin; prices out of scope;
+model list from the platform, grouped by kind; models disabled by the platform and by org
+admins, as a kernel feature for every provider; embeddings callable for the memory plugin; prices out of scope;
 provider plugins declare no purposes.
 
 Claude's calls (§5.4, §6): the memory plugin chooses its embedding model through a purpose it
 declares; plugin names; speech / image / video list-only.
 
-Open: the default for a platform provider in an org that never chose (§5.3 `all`).
+Decided 2026-11-07: every model is enabled by default and disabled on demand, on two layers
+(platform and org); choosing models is not a config edit; org keys come from A (the platform may
+leave the key empty, a copy never carries the platform's key).
+
+Open: none.
