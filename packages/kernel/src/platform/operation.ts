@@ -163,11 +163,13 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   { id: "skills", description: "The org's skill library: list, read, create, switch on or off." },
   {
     id: "agents",
-    description: "Agents in the org: list, read, create private ones, update those you may edit.",
+    description:
+      "Agents in the org: list, read, create private ones, update or delete those you may edit, versions, pending connectors, readiness.",
   },
   {
     id: "agent-templates",
-    description: "Agent templates: list, read, save an agent as a template.",
+    description:
+      "Agent templates: list, read, save an agent as a template, update, share or delete the org's own.",
   },
   {
     id: "plugins",
@@ -184,15 +186,19 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     description:
       "Requests to admins: list yours, create one; org admins list the members' pending ones; the super admin lists the platform's.",
   },
-  { id: "connectors", description: "Connectors and connector templates: list and read." },
+  {
+    id: "connectors",
+    description: "Connectors and connector templates: list and read, refresh tools, delete.",
+  },
   {
     id: "extensions",
     description:
-      "Extensions in the org (state, tool switches, extension point defaults) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
+      "Extensions in the org (state, tool switches, extension point defaults, file previewers) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
   },
   {
     id: "conversations",
-    description: "Your own conversations: list, read, rename, archive, delete, read their events.",
+    description:
+      "Your own conversations: list, read, rename, archive, delete, read their events, list and stop their background tasks.",
   },
   {
     id: "orgs",
@@ -210,7 +216,12 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "models",
     description:
-      "The org's model per purpose and the models it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
+      "The org's model per purpose, the models available and the ones it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
+  },
+  {
+    id: "evals",
+    description:
+      "Eval sets, their cases and runs, results and labels (org admins): replay a candidate model or prompt over real cases.",
   },
   {
     id: "inbox",

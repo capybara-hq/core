@@ -13,6 +13,16 @@ export const SaveAsTemplateBody = z
   })
   .strict();
 
+export const AgentTemplateShareableBody = z.object({ shareable: z.boolean() }).strict();
+export const AgentTemplateUpdateBody = z
+  .object({
+    /** The whole definition (the `AgentTemplate` shape), validated like a template file. */
+    definition: z.record(z.string(), z.unknown()),
+    /** The `version` the editor read; another one -> 409 `agent_template.version_conflict`. */
+    expectedVersion: z.number().int().min(1),
+  })
+  .strict();
+
 export const AGENT_TEMPLATE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/agent-templates" },
   { route: "GET /api/v1/orgs/:orgId/agent-templates/:id", params: AgentTemplateIdParams },
@@ -20,5 +30,20 @@ export const AGENT_TEMPLATE_ROUTES: readonly RouteSchemas[] = [
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/save-as-template",
     params: SaveAsAgentIdParams,
     body: SaveAsTemplateBody,
+  },
+  {
+    route: "PUT /api/v1/orgs/:orgId/agent-templates/:id",
+    params: AgentTemplateIdParams,
+    body: AgentTemplateUpdateBody,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/agent-templates/:id/delete-preview",
+    params: AgentTemplateIdParams,
+  },
+  { route: "DELETE /api/v1/orgs/:orgId/agent-templates/:id", params: AgentTemplateIdParams },
+  {
+    route: "PUT /api/v1/orgs/:orgId/agent-templates/:id/shareable",
+    params: AgentTemplateIdParams,
+    body: AgentTemplateShareableBody,
   },
 ];

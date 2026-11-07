@@ -15,4 +15,9 @@ export const ConnectorPathParams = z.object({ connectorId: z.string().min(1) });
 export const CONNECTOR_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/connectors" },
   { route: "GET /api/v1/orgs/:orgId/connectors/:connectorId", params: ConnectorPathParams },
+  { route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId", params: ConnectorPathParams },
+  {
+    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/refresh",
+    params: ConnectorPathParams,
+  },
 ];

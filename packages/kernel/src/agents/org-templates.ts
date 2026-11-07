@@ -818,6 +818,7 @@ export class OrgAgentTemplates {
     id: string,
     body: { definition: Record<string, unknown>; expectedVersion: number },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<AgentTemplateDetail> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "agents.manage");
@@ -854,7 +855,7 @@ export class OrgAgentTemplates {
           orgId,
           action: "agent_template.updated",
           target: id,
-          detail: { name: row.name, from: row.current_version, to: put.version },
+          detail: { name: row.name, from: row.current_version, to: put.version, ...auditDetail },
         });
       }
       return this.detail(orgId, id);
@@ -902,7 +903,7 @@ export class OrgAgentTemplates {
       orgId,
       action: "agent_template.updated",
       target: id,
-      detail: { name: row.name, platformId: row.link, from: p.current_version, to },
+      detail: { name: row.name, platformId: row.link, from: p.current_version, to, ...auditDetail },
     });
     return this.detail(orgId, id);
   }

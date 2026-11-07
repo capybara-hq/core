@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   CurrentPrincipal,
   type Principal,
@@ -10,47 +10,18 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
+  EvalAddCaseBody as AddCaseBody,
+  EvalSetCreateBody as CreateBody,
+  EvalSetPatchBody as PatchBody,
+  EvalSampleBody as SampleBody,
+} from "./evals.schemas.js";
+import {
   type EvalCaseDetail,
   type EvalCaseView,
   type EvalSetDetail,
   EvalSetsService,
   type EvalSetView,
 } from "./sets.service.js";
-
-const NAME = z.string().trim().min(1).max(200);
-const DESCRIPTION = z.string().max(2000);
-const RUBRIC = z.string().min(1).max(20_000);
-
-const CreateBody = z
-  .object({
-    agentId: z.string().min(1).max(100),
-    name: NAME,
-    description: DESCRIPTION.optional(),
-    rubric: RUBRIC.optional(),
-  })
-  .strict();
-
-const PatchBody = z
-  .object({
-    name: NAME.optional(),
-    description: DESCRIPTION.optional(),
-    rubric: RUBRIC.nullable().optional(),
-  })
-  .strict();
-
-const AddCaseBody = z
-  .object({ conversationId: z.string().min(1).max(100), runId: z.string().min(1).max(100) })
-  .strict();
-
-const SampleBody = z
-  .object({
-    from: z.iso.datetime({ offset: true }).optional(),
-    to: z.iso.datetime({ offset: true }).optional(),
-    count: z.number().int().min(1).max(50),
-    status: z.enum(["completed", "failed", "any"]).optional(),
-    minToolCalls: z.number().int().min(0).max(1000).optional(),
-  })
-  .strict();
 
 class CreateBodyDto extends createZodDto(CreateBody, "EvalSetCreateBody") {}
 class PatchBodyDto extends createZodDto(PatchBody, "EvalSetPatchBody") {}

@@ -12,7 +12,7 @@ import {
   type ProviderStatus,
 } from "../runtime/providers.js";
 
-const ModelsQuery = z.object({
+export const ModelsQuery = z.object({
   kind: z
     .enum([
       "chat",

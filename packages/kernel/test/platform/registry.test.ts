@@ -58,6 +58,7 @@ describe("PlatformOperations", () => {
       "approvals",
       "channels",
       "org-settings",
+      "evals",
     ]);
   });
 

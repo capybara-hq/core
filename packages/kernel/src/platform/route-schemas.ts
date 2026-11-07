@@ -3,6 +3,7 @@ import { ADMIN_ROUTES } from "../admin/admin.schemas.js";
 import { ADMIN_EXTENSION_ROUTES } from "../admin/extensions.schemas.js";
 import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
+import { BACKGROUND_ROUTES } from "../background/background.schemas.js";
 import { ADMIN_CATALOG_ROUTES } from "../catalog/admin-catalog.schemas.js";
 import { COMPONENT_SCOPE_ROUTES } from "../catalog/component-scope.schemas.js";
 import { MARKETPLACE_ROUTES } from "../catalog/marketplaces.schemas.js";
@@ -11,8 +12,10 @@ import { ORG_EXTENSION_ROUTES } from "../catalog/org-extension.schemas.js";
 import { ORG_PLUGIN_UPLOAD_ROUTES } from "../catalog/org-plugin-uploads.schemas.js";
 import { CHANNEL_ROUTES } from "../channels/channels.schemas.js";
 import { CONVERSATION_ROUTES } from "../conversations/conversations.schemas.js";
+import { EVAL_ROUTES } from "../evals/evals.schemas.js";
 import { EXTENSION_POINT_ROUTES } from "../extensions/point-defaults.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
+import { FILE_PREVIEWER_ROUTES } from "../files/previewers.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
@@ -61,4 +64,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   // Task 10: channels, org settings
   ...CHANNEL_ROUTES,
   ...ORG_SETTINGS_ROUTES,
+  // Task 11: evals, background tasks, file previewers
+  ...EVAL_ROUTES,
+  ...BACKGROUND_ROUTES,
+  ...FILE_PREVIEWER_ROUTES,
 ];
