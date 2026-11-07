@@ -14,6 +14,11 @@ export type OrgAccess = "readonly" | "override";
  * The author's promise for `override`: the extension reads the field from the per-call `config`
  * the kernel passes with each request, not from `ctx.config`, and the field may be absent from
  * `ctx.config` (the deployment value is the default, which an org may replace per call).
+ *
+ * The per-call config of an org that has its own copy still contains the platform's hidden
+ * (platform-only) secrets, which an org cannot set; it never contains an overridable platform
+ * secret. Never send a hidden secret to an endpoint taken from an overridable field: an org could
+ * point that endpoint at a server it controls.
  */
 export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess): T {
   return schema.meta({ ...(schema.meta() ?? {}), org: access }) as T;

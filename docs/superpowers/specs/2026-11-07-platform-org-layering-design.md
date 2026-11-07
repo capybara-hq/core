@@ -1,7 +1,13 @@
 # Platform and org layering: org switches for `all`, two-level extension config, tool switches
 
 - Date: 2026-11-07. Replaces the brainstorming notes `2026-11-06-platform-org-layering-notes.md`.
-- Status: design, waiting for review. Follows `2026-11-05-plugin-component-management-design.md`
+- Status: implemented (migration `0086_org_layering.sql`; plan `docs/superpowers/plans/2026-11-07-platform-org-layering.md`).
+  Error codes added: `extension.field_not_overridable` (400), `extension.no_org_override` (404),
+  `extension.needs_config` (409), `extension.tool_not_found` (404). Routes added:
+  `/api/v1/orgs/:orgId/extensions/:extension/overrides` (GET / PUT / DELETE), `…/overrides/take`,
+  `/api/v1/admin/extensions/:name/org-overrides`, `…/extensions/:extension/tools` (GET) and
+  `…/tools/:tool` (PUT). Rulings made during implementation are corrected in the text below.
+  Follows `2026-11-05-plugin-component-management-design.md`
   (phases 1-4 implemented, merged into `main` with PR #88; cited below as "PCM"), which it amends
   where noted. Re-checked against `main` at `76b32e10` (2026-11-07).
 - Unblocks: `2026-11-06-model-platform-providers-design.md` (design B), whose §5.3 and §5.5 build on
@@ -92,9 +98,10 @@ Rules:
    A new org starts with everything `all` on.
 4. Turning an `all` item off follows PCM §5 rule 8 for that org (the confirmation lists the org's
    agents that use it; at run time the item is absent).
-5. Dependencies (PCM §5 rule 9) are unchanged: turning a plugin on turns on what it needs; turning
-   off a dependency that an on plugin needs is refused with the dependents listed
-   **(designer's call**, as today for `named`).
+5. Dependencies (PCM §5 rule 9) are unchanged: turning a plugin on turns on what it needs. There is
+   no 409 for turning off a dependency an on plugin needs: the org's switch is recorded and the
+   dependency stays on (kept as used by another install) while an on plugin needs it, so rule 9
+   (dependencies available wherever the plugin is) holds, as today for `named`.
 6. Kernel today: `itemLocked = builtin || scope all` (`extensions/plugin-items.ts:50`), `switchPlan`'s
    `locked` (`extensions/org-config.ts:305-317`, 409 `plugin.scope_locked`), `setSwitch` /
    `uninstall` refusals (`catalog/org-catalog.service.ts:491-497,531-539`), `componentLocked`
@@ -137,6 +144,9 @@ deployment field read-only or overridable.
   allowed on top-level properties of the deployment schema only (**designer's call:** a level per
   nested field makes the copy and the diff hard to show; an author who needs finer control splits
   the object). `validateConfigUi` rejects `x-org` elsewhere.
+- The effective config of an org with a copy keeps platform-only hidden secrets (an org cannot set
+  them) and drops overridable platform secrets; an author must never send a hidden secret to an
+  endpoint taken from an overridable field (the `orgAccess` TSDoc says so).
 - A secret field may be `override` (an org's own key) or hidden. A secret marked `readonly` is
   rejected: the value can never be shown, so read-only would only say "configured", which the form
   shows anyway (§5.6).
@@ -293,8 +303,10 @@ org behave as on a replica where the extension is not loaded (observe hooks skip
 deny, AGENTS.md "Extension hooks") **(designer's call)**. The kernel reports this as the org
 extension's `needsConfig` state, which today only the web derives (`config-form/org.ts`).
 
-The effective config of an org with a copy never contains a platform secret (§5.4); while
-following, it contains the platform's values, secrets included, exactly as `ctx.config` does today.
+The effective config of an org with a copy never contains an overridable platform secret (§5.4);
+platform-only hidden secrets, which an org cannot set, stay in it, so an extension that needs one
+still works. An author must never send a hidden secret to an endpoint taken from an overridable
+field. While following, it contains the platform's values, secrets included, exactly as `ctx.config` does today.
 
 **Org-owned extensions (PCM phase 3; designer's call):** the platform layer of an extension an org
 uploaded is still the super admin's deployment config. The extension runs for the whole deployment
