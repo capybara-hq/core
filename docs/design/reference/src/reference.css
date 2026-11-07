@@ -3774,6 +3774,12 @@ textarea {
 .r-rep-foot {
   display: flex;
 }
+.r-rep-foot[data-part="repeater-foot"] {
+  margin-top: var(--cb-space-2);
+}
+.r-rep-body .r-rep-foot[data-part="repeater-foot"] {
+  margin-top: 0;
+}
 .r-rep[data-variant="rows"] .r-rep-list {
   gap: 0;
 }

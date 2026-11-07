@@ -1983,6 +1983,7 @@
     "options": "选项",
     "add": "添加",
     "itemN": "第 {n} 项",
+    "addNamed": "添加{label}",
     "key": "键",
     "value": "值",
     "jsonHint": "填写 JSON 值。",

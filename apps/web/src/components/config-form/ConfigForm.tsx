@@ -21,7 +21,15 @@ import {
   Textarea,
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactElement,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ConfigIssue, JsonSchema } from "../../lib/json-schema";
 import { FormError } from "../form-error";
 import {
@@ -30,12 +38,14 @@ import {
   type ConfigNode,
   type ConfigSecretEntry,
   type Draft,
+  enclosingItem,
   type FieldMeta,
   fromDraft,
   type IssueText,
   type ItemDraft,
   type ItemSecretNode,
   itemText,
+  itemTitle,
   mapIssues,
   type NodeProblem,
   newItemDraft,
@@ -100,6 +110,20 @@ export function ConfigForm({
   const [draft, setDraft] = useState(baseline);
   const metaRef = useRef(meta);
   metaRef.current = meta;
+  // Items added in this session: their missing values stay quiet until the field was left.
+  const fresh = useRef(new Set<string>());
+  const [seen, setSeen] = useState<ReadonlySet<string>>(new Set());
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const touch = useCallback((segs: readonly Segment[]) => {
+    const at = enclosingItem(draftRef.current, segs);
+    if (at === null || !fresh.current.has(at.key)) return;
+    setSeen((prev) => {
+      const id = `${at.key}|${at.rel}`;
+      if (prev.has(id)) return prev;
+      return new Set(prev).add(id);
+    });
+  }, []);
   const result = useMemo(
     () => fromDraft(tree, draft, { secretSet: (p) => metaRef.current[p]?.secretSet === true }),
     [tree, draft],
@@ -132,6 +156,8 @@ export function ConfigForm({
     disabled,
     value: result.value,
     messages: new Map(mapped.byNode),
+    fresh: fresh.current,
+    touch,
   };
   // Client problems: type and limit problems at once, missing values (an empty field, a list
   // without its items) once the person edited.
@@ -139,6 +165,10 @@ export function ConfigForm({
   for (const p of result.problems) {
     if (ctx.messages.has(p.id) || (pristine && (p.kind === "required" || p.kind === "minItems")))
       continue;
+    if ((p.kind === "required" || p.kind === "minItems") && !showRequired) {
+      const at = enclosingItem(draft, p.segments);
+      if (at !== null && fresh.current.has(at.key) && !seen.has(`${at.key}|${at.rel}`)) continue;
+    }
     ctx.messages.set(p.id, problemText(p));
   }
   function problemText(p: NodeProblem): string {
@@ -162,6 +192,10 @@ interface Ctx {
   value: unknown;
   /** Messages per node id: server issues, then client problems. */
   messages: Map<string, string>;
+  /** Keys of the items added since the form opened. */
+  fresh: Set<string>;
+  /** A field was left (or picked): its missing-value message may show. */
+  touch(segs: readonly Segment[]): void;
 }
 
 /**
@@ -407,7 +441,10 @@ function ScalarField({ node, draft, set, segs, ctx }: NodeProps & { node: Scalar
         <Select
           value={text}
           disabled={off}
-          onChange={(e) => set({ t: "text", text: e.target.value })}
+          onChange={(e) => {
+            set({ t: "text", text: e.target.value });
+            ctx.touch(segs);
+          }}
           options={[
             ...(text === "" || !(node.required && node.default === undefined)
               ? [{ value: "", label: t("none") }]
@@ -479,6 +516,7 @@ function ScalarField({ node, draft, set, segs, ctx }: NodeProps & { node: Scalar
           disabled={off}
           {...(node.placeholder !== undefined && { placeholder: node.placeholder })}
           onChange={(e) => set({ t: "text", text: e.target.value })}
+          onBlur={() => ctx.touch(segs)}
         />
       </NodeField>
     );
@@ -495,6 +533,7 @@ function ScalarField({ node, draft, set, segs, ctx }: NodeProps & { node: Scalar
         {...(node.placeholder !== undefined && { placeholder: node.placeholder })}
         {...(node.unit !== undefined && { suffix: node.unit })}
         onChange={(e) => set({ t: "text", text: e.target.value })}
+        onBlur={() => ctx.touch(segs)}
       />
     </NodeField>
   );
@@ -515,6 +554,7 @@ function JsonField({ node, draft, set, segs, ctx }: NodeProps) {
         value={draft.t === "text" ? draft.text : ""}
         disabled={isLocked(node, ctx)}
         onChange={(e) => set({ t: "text", text: e.target.value })}
+        onBlur={() => ctx.touch(segs)}
       />
     </NodeField>
   );
@@ -530,6 +570,7 @@ function LinesField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
         disabled={isLocked(node, ctx)}
         {...(node.placeholder !== undefined && { placeholder: node.placeholder })}
         onChange={(e) => set({ t: "text", text: e.target.value })}
+        onBlur={() => ctx.touch(segs)}
       />
     </NodeField>
   );
@@ -636,7 +677,7 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
         ctx={ctx}
       />
     );
-    const title = itemText(node.title, itemValue) || t("itemN", { n: i + 1 });
+    const title = itemTitle(node, itemValue) || t("itemN", { n: i + 1 });
     const subtitle = itemText(node.subtitle, itemValue);
     return {
       key: it.key,
@@ -653,7 +694,7 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
         label={node.label}
         variant={rows ? "rows" : "cards"}
         items={list}
-        addLabel={node.addLabel ?? t("add")}
+        addLabel={node.addLabel ?? (node.label ? t("addNamed", { label: node.label }) : t("add"))}
         disabled={off}
         {...(node.minItems !== undefined && { min: node.minItems })}
         {...(node.maxItems !== undefined && { max: node.maxItems })}
@@ -667,6 +708,7 @@ function ArrayField({ node, draft, set, segs, ctx }: NodeProps & { node: ArrayNo
         onAdd={(presetId) => {
           const preset = node.presets.find((p) => p.id === presetId);
           const added = { key: newItemKey(), draft: newItemDraft(node, preset?.values) };
+          ctx.fresh.add(added.key);
           set((prev) => ({ t: "array", items: [...itemsOf(prev), added] }));
         }}
         onRemove={(key) => {

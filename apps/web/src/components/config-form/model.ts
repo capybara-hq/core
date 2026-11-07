@@ -1072,6 +1072,29 @@ export function issueText(
   return { key: "invalid" };
 }
 
+/**
+ * The array item a node sits in (the nearest one): its key and the node's path inside it
+ * (`models.0.id` of endpoint `k`); null outside any array item.
+ */
+export function enclosingItem(
+  root: Draft,
+  segments: readonly Segment[],
+): { key: string; rel: string } | null {
+  let cur: Draft | undefined = root;
+  let found: { key: string; rel: string } | null = null;
+  for (let j = 0; j < segments.length && cur !== undefined; j++) {
+    const seg = segments[j] as Segment;
+    if (cur.t === "object") cur = cur.fields[String(seg)];
+    else if (cur.t === "array" && typeof seg === "number") {
+      const it: ItemDraft | undefined = cur.items[seg];
+      if (it === undefined) break;
+      found = { key: it.key, rel: segments.slice(j + 1).join(".") };
+      cur = it.draft;
+    } else break;
+  }
+  return found;
+}
+
 /** A server issue that only says a value is missing (the pending-config notice names these). */
 export function isMissingIssue(issue: ConfigIssue, value: unknown): boolean {
   if (issue.messageKey !== undefined) return false;
@@ -1137,6 +1160,26 @@ export function itemText(template: string | undefined, item: unknown): string {
       return typeof v === "string" || typeof v === "number" ? String(v) : "";
     })
     .trim();
+}
+
+/**
+ * An object item's title: the `x-ui` title template when it says something, else the value of its
+ * identifying field (`name`, else `id`, else the first required string field); blank when that
+ * field is empty (the caller falls back to "Item N").
+ */
+export function itemTitle(node: ArrayNode, item: unknown): string {
+  const fromTemplate = itemText(node.title, item);
+  if (fromTemplate !== "") return fromTemplate;
+  if (node.item.kind !== "object" || !isObj(item)) return "";
+  const strings = node.item.children.filter(
+    (c): c is ScalarNode => c.kind === "scalar" && c.type === "string" && c.options === undefined,
+  );
+  const field =
+    strings.find((c) => c.key === "name") ??
+    strings.find((c) => c.key === "id") ??
+    strings.find((c) => c.required);
+  const v = field === undefined ? undefined : item[field.key];
+  return typeof v === "string" ? v.trim() : "";
 }
 
 /** Reads a dot path of a value. */

@@ -7,6 +7,7 @@ import {
   fromDraft,
   isMissingIssue,
   issueText,
+  itemTitle,
   mapIssues,
   newItemDraft,
   nodeId,
@@ -343,5 +344,35 @@ describe("issueText: the kernel's issue texts in the page's words (one place)", 
     );
     expect(byNode.get(nodeId(["endpoints"]))).toBe("<addOne>");
     expect(form).toEqual(["nope: <invalid>"]);
+  });
+});
+
+describe("itemTitle", () => {
+  const arr = (props: Record<string, unknown>, required: string[] = []) =>
+    child(
+      buildTree(
+        {
+          type: "object",
+          properties: {
+            list: { type: "array", items: { type: "object", properties: props, required } },
+          },
+        },
+        "en",
+      ),
+      "list",
+    ) as ArrayNode;
+
+  it("is the name field, else id, else the first required string field; blank when empty", () => {
+    const str = { type: "string" };
+    expect(itemTitle(arr({ id: str, name: str }), { id: "i", name: "n" })).toBe("n");
+    expect(itemTitle(arr({ url: str, id: str }), { id: "i", url: "u" })).toBe("i");
+    expect(itemTitle(arr({ a: str, url: str }, ["url"]), { a: "x", url: "u" })).toBe("u");
+    expect(itemTitle(arr({ name: str }), { name: "  " })).toBe("");
+    expect(itemTitle(arr({ a: str }), { a: "x" })).toBe("");
+  });
+
+  it("the endpoints of the openai-compatible schema are titled by their name", () => {
+    const endpoints = child(buildTree(schema, "en"), "endpoints") as ArrayNode;
+    expect(itemTitle(endpoints, { name: "vllm" })).toBe("vllm");
   });
 });

@@ -315,4 +315,29 @@ describe("Repeater (spec §6.26)", () => {
     });
     expect(outerMove).toHaveBeenCalledWith("a", 1);
   });
+
+  it("names what it adds on the add button and keeps a nested list's add inside its item", () => {
+    const inner = (
+      <Repeater
+        label="Models"
+        addLabel="Add model"
+        items={[{ key: "m1", title: "m1", body: <span>m1</span> }]}
+        onAdd={() => {}}
+        onRemove={() => () => {}}
+      />
+    );
+    wrap(<Repeater {...base} items={[{ key: "a", title: "a", body: inner }]} />);
+    const outer = screen.getByRole("group", { name: "Endpoints" });
+    const nested = screen.getByRole("group", { name: "Models" });
+    const addOuter = within(outer).getByRole("button", { name: "Add endpoint" });
+    const addInner = within(nested).getByRole("button", { name: "Add model" });
+    // the nested add sits in the parent item's body, the outer one in the outer list's footer
+    const item = within(outer).getByRole("group", { name: "a" });
+    expect(item.contains(addInner)).toBe(true);
+    expect(item.contains(addOuter)).toBe(false);
+    expect(addOuter.closest('[data-part="repeater-foot"]')?.parentElement).toBe(outer);
+    expect(
+      addInner.closest('[data-part="repeater-foot"]')?.closest('[data-part="repeater-body"]'),
+    ).toBe(item.querySelector('[data-part="repeater-body"]'));
+  });
 });

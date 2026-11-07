@@ -1995,6 +1995,7 @@
     "options": "Options",
     "add": "Add",
     "itemN": "Item {n}",
+    "addNamed": "Add {label}",
     "key": "Key",
     "value": "Value",
     "jsonHint": "Enter a JSON value.",

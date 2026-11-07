@@ -80,7 +80,7 @@ describe("ConfigForm without hints", () => {
     expect(document.querySelector('[data-part="card"]')).toBeNull();
     // array of objects: a repeater with one item, never a JSON textarea
     const list = screen.getByRole("group", { name: "endpoints" });
-    const item = within(list).getByRole("group", { name: "Item 1" });
+    const item = within(list).getByRole("group", { name: "a" });
     expect((within(item).getByLabelText(/^name/) as HTMLInputElement).value).toBe("a");
     expect(within(list).getByRole("button", { name: /Add/ })).toBeTruthy();
     // union: JSON
@@ -105,6 +105,47 @@ describe("ConfigForm without hints", () => {
     expect(state.problems).toEqual([
       expect.objectContaining({ kind: "required", id: "endpoints/#0/name" }),
     ]);
+    // quiet on a fresh item until its field was left
+    expect(screen.queryByText(en.configForm.errors.required)).toBeNull();
+    await user.click(within(list).getByLabelText(/^name/));
+    await user.tab();
+    expect(screen.getByText(en.configForm.errors.required)).toBeTruthy();
+  });
+
+  it("an item's title follows its name field, else its id, and falls back to Item N", async () => {
+    draw(PLAIN, { region: "eu" });
+    const user = userEvent.setup();
+    const list = screen.getByRole("group", { name: "endpoints" });
+    await user.click(within(list).getByRole("button", { name: /Add/ }));
+    const item = within(list).getByRole("group", { name: "Item 1" });
+    await user.type(within(item).getByLabelText(/^name/), "vllm");
+    expect(within(list).getByRole("group", { name: "vllm" })).toBeTruthy();
+    await user.clear(within(list).getByLabelText(/^name/));
+    expect(within(list).getByRole("group", { name: "Item 1" })).toBeTruthy();
+  });
+
+  it("a save attempt (showRequired) shows the missing values of a fresh item", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <DesignProvider locale="en">
+          <ToastProvider>
+            <ConfigForm schema={PLAIN} value={{ region: "eu" }} onChange={() => {}} />
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Add endpoints" }));
+    expect(screen.queryByText(en.configForm.errors.required)).toBeNull();
+    rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <DesignProvider locale="en">
+          <ToastProvider>
+            <ConfigForm schema={PLAIN} value={{ region: "eu" }} showRequired onChange={() => {}} />
+          </ToastProvider>
+        </DesignProvider>
+      </NextIntlClientProvider>,
+    );
     expect(screen.getByText(en.configForm.errors.required)).toBeTruthy();
   });
 
@@ -254,6 +295,20 @@ describe("ConfigForm with the openai-compatible hints", () => {
     expect(within(models).getByRole("group", { name: "deepseek-reasoner" })).toBeTruthy();
     expect(within(models).getAllByRole("group", { name: "选项" }).length).toBe(2);
     expect(within(card).getByRole("button", { name: /添加模型/ })).toBeTruthy();
+  });
+
+  it("add buttons name what they add; the nested one sits inside its endpoint", () => {
+    draw(SCHEMA as JsonSchema, VALUE, {
+      locale: "zh",
+      meta: { apiKeys: { secretSet: true, secretKeys: ["deepseek"] } },
+    });
+    const list = screen.getByRole("group", { name: "端点" });
+    const card = within(list).getByRole("group", { name: "deepseek" });
+    const addModel = within(card).getByRole("button", { name: "添加模型" });
+    const addEndpoint = within(list).getByRole("button", { name: /^添加端点/ });
+    expect(card.contains(addModel)).toBe(true);
+    expect(card.contains(addEndpoint)).toBe(false);
+    expect(within(list).queryByRole("button", { name: "添加" })).toBeNull();
   });
 
   it("server issues land on their node: a model's checkbox, an endpoint's key, the form", () => {
