@@ -118,13 +118,20 @@ export function ToolsRead() {
   const t = useTranslations("agents.templatePage");
   const { definition } = useTemplatePage();
   const toolName = useToolName();
-  const tools = definition.tools ?? [];
   const policies = definition.toolPolicies ?? {};
   const disallowed = definition.disallowedTools ?? [];
+  // no allowlist: every tool the org offers (tools default-on spec §3), the policies' tools listed
+  const allOn = definition.tools === undefined;
+  const tools = allOn
+    ? Object.keys(policies).filter((k) => !disallowed.includes(k))
+    : (definition.tools ?? []);
   return (
     <TemplateSectionFrame>
       <FormSection id="tools" title={t("sections.tools")} flush>
         <ItemList label={t("tools.list")} inset="flush" empty={t("tools.none")}>
+          {allOn ? (
+            <ItemListItem key="all" title={t("tools.allOn")} meta={t("tools.allOnHint")} />
+          ) : null}
           {tools.map((key) => {
             const p = policies[key];
             return (

@@ -7,12 +7,10 @@ import {
   type ConversationEvent,
   type ConversationUsage,
   fromStart,
-  type SubagentToolRef,
   type SubagentView,
 } from "./conversations";
 import { retryOnMountOf } from "./query/client";
 import { agentTreeQuery, subagentsQuery, usageQuery } from "./query/conversation";
-import { extensionToolKey } from "./tool-key";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -452,17 +450,20 @@ export function useUsageWithSubagents(
 export const usageTotal = (u: ConversationUsage) =>
   u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheWriteTokens;
 
-/** A tool of a sub-agent's frozen definition as the task line names it. */
-export const subagentToolName = (r: SubagentToolRef): string =>
-  r.kind === "connector"
-    ? r.connectorId
-    : toolLabelText(
-        toolLabelOfKey(r.kind === "builtin" ? r.name : extensionToolKey(r.plugin, r.name)),
-      );
+/**
+ * The tools a sub-agent was offered, by key: its first model call's (a child has every tool of
+ * its parent's that its filter leaves, tools default-on spec §4); none before its first call.
+ */
+export function subagentToolKeys(events: readonly ConversationEvent[]): string[] {
+  for (const e of events) {
+    if (e.type === "model_call") return (e.payload.request?.tools ?? []).map((t) => t.key);
+  }
+  return [];
+}
 
 /** The tools of the task line: up to three names, then "+N". */
-export function toolsLine(tools: readonly SubagentToolRef[] | undefined, none: string): string {
-  const names = (tools ?? []).map(subagentToolName);
+export function toolsLine(keys: readonly string[], none: string): string {
+  const names = keys.map((k) => toolLabelText(toolLabelOfKey(k)));
   if (names.length === 0) return none;
   return names.length <= 3
     ? names.join(", ")

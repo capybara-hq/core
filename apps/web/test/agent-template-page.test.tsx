@@ -541,7 +541,7 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
   const save = (user: ReturnType<typeof userEvent.setup>) =>
     user.click(screen.getByRole("button", { name: TF.submit }));
 
-  it("工具: a picked extension tool the org turned off shows the switched-off reason", async () => {
+  it("工具: an extension tool the org turned off shows the switched-off reason", async () => {
     const r = live();
     r[`GET ${ORG}/agent-templates/t9`] = () =>
       json(
@@ -572,7 +572,7 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
       });
     stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=tools", r);
-    const group = await screen.findByRole("group", { name: "Todo" });
+    const group = await screen.findByRole("list", { name: "Todo" });
     expect(within(group).getByText(TF.extensionToolOffInOrg)).toBeTruthy();
   });
 
@@ -717,23 +717,28 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     expect(screen.queryByText(en.errors.agent_template.version_conflict)).toBeNull();
   });
 
-  it("工具: ticks and policies; an unticked tool's policy goes with it", async () => {
+  it("工具: everything starts on; unticking writes disallowedTools, policies sit on the rows", async () => {
     const r = live();
     const calls = stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=tools", r);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: TF.builtin.ReadToolOutput }));
-    await user.click(screen.getByRole("checkbox", { name: TF.builtin.AskUserQuestion }));
+    const read = await screen.findByRole("checkbox", { name: TF.builtin.ReadToolOutput });
+    // tools default-on: every box starts checked, the old allowlist notwithstanding
+    expect(read).toHaveProperty("checked", true);
+    expect(screen.getByRole("checkbox", { name: TF.builtin.Bash })).toHaveProperty("checked", true);
+    await user.click(read);
     await pickOption(
-      screen.getByRole("combobox", { name: TF.builtin.ReadToolOutput }),
+      screen.getByRole("combobox", { name: `Policy for ${TF.builtin.Platform}` }),
       TF.policy.deny,
       user,
     );
     await save(user);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const { definition } = lastPut(calls);
-    expect(definition.tools).toEqual(["ReadToolOutput"]);
-    expect(definition.toolPolicies).toEqual({ ReadToolOutput: "deny" });
+    // no allowlist is written; the template turns off what is unticked
+    expect(definition.tools).toBeUndefined();
+    expect(definition.disallowedTools).toEqual(["ReadToolOutput"]);
+    expect(definition.toolPolicies).toEqual({ AskUserQuestion: "ask", Platform: "deny" });
   });
 
   it("技能: at most 3 pinned, unticking a skill unpins it, the rest are selected", async () => {

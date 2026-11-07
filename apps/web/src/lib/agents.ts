@@ -12,26 +12,37 @@ import type { InstructionFile } from "./instruction-files";
 export type AgentVisibility = "private" | "org" | "members";
 
 /**
- * agent 引用的工具（与内核 `AgentToolRef` 对应）：内置工具按名字；插件工具按插件名 + 工具名；
- * 连接器工具按连接器 id，`tools: "all"` 为该连接器当前所有启用的工具。
+ * A tool the agent turns off (kernel `DisabledToolRef`, tools default-on spec §2): an agent has
+ * every builtin, every tool of the extensions on in the org and every tool of the org's connectors
+ * except these. A builtin by name; an extension's or a connector's tools by name, or `"all"` to
+ * turn it off as a unit (tools it gains later included).
  */
-export type AgentToolRef =
+export type DisabledToolRef =
   | { kind: "builtin"; name: string }
-  | { kind: "plugin"; plugin: string; name: string }
+  | { kind: "plugin"; plugin: string; tools: "all" | string[] }
   | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
 /** 收紧后的策略（只能收紧：`ask` / `deny`）。 */
 export type TightenedPolicy = "ask" | "deny";
 
 /**
- * 网页可选的内置工具（内核没有列出内置工具的接口；`ToolSearch` 与 `Skill` 由内核自动加入）。The web
- * tools (`WebSearch` / `WebFetch`) are offered only while their point has a provider
+ * The builtins the Tools section switches (the kernel's `AGENT_BUILTIN_NAMES` without `Agent`,
+ * which the Sub-agents section switches; `ToolSearch` and `Skill` are added by the kernel, and
+ * `TaskOutput` / `TaskStop` come with `Bash`). All are on unless turned off. The web tools
+ * (`WebSearch` / `WebFetch`) are listed only while their point has a provider, or when turned off
  * ({@link WEB_TOOL_POINTS}).
  */
 export const BUILTIN_TOOLS = [
   "AskUserQuestion",
   "ReadToolOutput",
   "SkillWrite",
+  "Bash",
+  "Read",
+  "Write",
+  "Edit",
+  "Glob",
+  "Grep",
+  "Deliver",
   "WebSearch",
   "WebFetch",
   "Platform",
@@ -41,7 +52,7 @@ export const BUILTIN_TOOLS = [
 /**
  * The builtin web tools and the extension point that serves each (web tools spec §3.4): the form
  * offers one only while `GET …/extension-points/available` reports its point available, or when
- * the agent already selected it.
+ * the agent turned it off.
  */
 export const WEB_TOOL_POINTS: Readonly<Record<string, string>> = {
   WebSearch: "web-search",
@@ -69,8 +80,8 @@ export interface AgentDefinitionInput {
   modelParams?: Record<string, ParamValue>;
   /** 兜底模型的参数；没有兜底模型时必须为空。 */
   fallbackParams?: Record<string, ParamValue>;
-  /** The tools; when absent on create the kernel fills the defaults (AskUserQuestion, ReadToolOutput, Platform, CurrentTime). */
-  tools?: AgentToolRef[];
+  /** The tools turned off; absent or `[]` = every tool the org offers (tools default-on spec). */
+  disabledTools?: DisabledToolRef[];
   /** 按工具 key 收紧策略。 */
   toolPolicies?: Record<string, TightenedPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
@@ -404,7 +415,7 @@ export const listAgents = (orgId: string) => apiFetch<{ agents: Agent[] }>(`${ba
 
 /**
  * What the create form sends: no `instructions` and no `instructionFiles` (the kernel then starts
- * the prompt from its default `AGENTS.md` template), no tools (the kernel's defaults apply).
+ * the prompt from its default `AGENTS.md` template), nothing turned off (every tool the org offers).
  */
 export type AgentCreateDefinition = Pick<AgentDefinitionInput, "name" | "model">;
 

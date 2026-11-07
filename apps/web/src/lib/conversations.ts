@@ -133,8 +133,11 @@ type EventBody =
         step: number;
         provider: string;
         model: string;
-        /** The user messages the request took in (absent in older logs). */
-        request?: { absorbedUpToSeq?: number };
+        /**
+         * The user messages the request took in (absent in older logs) and the tools it offered
+         * by key.
+         */
+        request?: { absorbedUpToSeq?: number; tools?: { key: string }[] };
       };
     }
   | {
@@ -329,7 +332,7 @@ type EventBody =
           version?: number;
           plugin?: string;
         };
-        definition: { name: string; tools?: SubagentToolRef[]; [key: string]: unknown };
+        definition: { name: string; [key: string]: unknown };
         maxSteps: number;
         warnings?: string[];
       };
@@ -435,12 +438,6 @@ export type SubagentEndStatus =
   | "aborted"
   | "timed_out"
   | "failed";
-
-/** A tool reference in a sub-agent's frozen definition (only what the child view shows). */
-export type SubagentToolRef =
-  | { kind: "builtin"; name: string }
-  | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
 /** Token usage summed over events (`GET .../usage`, a `subagent_finished`). */
 export interface ConversationUsage {

@@ -18,8 +18,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   type Agent,
-  type AgentToolRef,
   BUILTIN_TOOLS,
+  type DisabledToolRef,
   type TightenedPolicy,
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
@@ -28,8 +28,8 @@ import type { ExtensionToolsOffer } from "../../lib/extensions";
 import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
-import { connectorToolKey, extensionToolKey, parseToolKey } from "../../lib/tool-key";
-import { BUILTIN_SET, replaceToolRefs, sameJson, savedDefinition } from "./definition-parts";
+import { connectorToolKey, extensionToolKey } from "../../lib/tool-key";
+import { BUILTIN_SET, replaceDisabled, sameJson, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
   useDefinitionSave,
@@ -41,86 +41,86 @@ import { AgentSectionFrame, useAgentPage } from "./frame";
 import { PendingConnectorsNotice } from "./PendingConnectorsNotice";
 import { useSectionDraft } from "./useSectionDraft";
 
-/** The references this section switches: the listed builtins, extension tools, connectors. */
-const isSectionTool = (r: AgentToolRef) =>
-  (r.kind === "builtin" && BUILTIN_SET.has(r.name)) ||
-  r.kind === "plugin" ||
-  r.kind === "connector";
-
-type ExtensionRef = { plugin: string; name: string };
-/** A connector's pick: all its enabled tools (now and later), or the named ones. */
-type ConnectorPick = "all" | string[];
+/** A group's turned-off tools: all of it (as a unit, tools it gains later included), or names. */
+type GroupOff = "all" | string[];
 type Draft = {
+  /** The listed builtins turned off. */
   builtins: string[];
-  /** The selected extension tools (`{kind:"plugin"}` references), in saved order. */
-  extensionTools: ExtensionRef[];
-  /** The used connectors by id, in saved order. */
-  connectors: Record<string, ConnectorPick>;
+  /** The extensions with tools turned off, by extension name. */
+  extensions: Record<string, GroupOff>;
+  /** The connectors with tools turned off, by connector id. */
+  connectors: Record<string, GroupOff>;
   policies: Record<string, TightenedPolicy>;
 };
-const refKeyOf = (r: ExtensionRef) => extensionToolKey(r.plugin, r.name);
 const draftOf = (a: Agent): Draft => {
-  const tools = a.definition.tools ?? [];
-  const connectors: Record<string, ConnectorPick> = {};
-  for (const r of tools) {
-    if (r.kind !== "connector") continue;
-    const cur = connectors[r.connectorId];
-    connectors[r.connectorId] =
-      r.tools === "all" || cur === "all" ? "all" : [...new Set([...(cur ?? []), ...r.tools])];
+  const off = a.definition.disabledTools ?? [];
+  const extensions: Record<string, GroupOff> = {};
+  const connectors: Record<string, GroupOff> = {};
+  const merge = (cur: GroupOff | undefined, add: GroupOff): GroupOff =>
+    cur === "all" || add === "all" ? "all" : [...new Set([...(cur ?? []), ...add])];
+  for (const r of off) {
+    if (r.kind === "plugin") extensions[r.plugin] = merge(extensions[r.plugin], r.tools);
+    if (r.kind === "connector") {
+      connectors[r.connectorId] = merge(connectors[r.connectorId], r.tools);
+    }
   }
   return {
-    builtins: tools.flatMap((r) =>
-      r.kind === "builtin" && BUILTIN_SET.has(r.name) ? [r.name] : [],
-    ),
-    extensionTools: tools.flatMap((r) =>
-      r.kind === "plugin" ? [{ plugin: r.plugin, name: r.name }] : [],
-    ),
+    builtins: off.flatMap((r) => (r.kind === "builtin" && BUILTIN_SET.has(r.name) ? [r.name] : [])),
+    extensions,
     connectors,
     policies: { ...(a.definition.toolPolicies ?? {}) },
   };
 };
 const sorted = (xs: string[]) => [...xs].sort();
-/** A connector pick map in a comparable form (ids and names sorted). */
-const pickForm = (c: Record<string, ConnectorPick>) =>
+/** A group map in a comparable form (ids and names sorted). */
+const offForm = (c: Record<string, GroupOff>) =>
   Object.keys(c)
     .sort()
     .map((id) => [id, c[id] === "all" ? "all" : sorted(c[id] as string[])]);
+/** Is tool `name` turned off by a group's entry? */
+const isOff = (g: GroupOff | undefined, name: string) =>
+  g !== undefined && (g === "all" || g.includes(name));
 
 /** One tool of a group (an extension's or a connector's), as its row draws it. */
 type GroupTool = {
   /** The tool key (the `toolPolicies` key). */
   key: string;
+  /** The tool's name in its extension or connector. */
+  name: string;
   label: string;
   checked: boolean;
-  /** Why a checked tool cannot be used now. */
-  unavailable: string | null;
+  /** Why a checked tool cannot be used now (the org turned it off). */
+  note: string | null;
 };
 type Group = {
   id: string;
   kind: "extension" | "connector";
   name: string;
+  /** What the agent turned off of it (absent: all on). */
+  off: GroupOff | undefined;
+  /** The key prefix of its tools (`plugin__<p>__` / `mcp__<slug>__`), for its policies. */
+  prefix: string;
   /** The rows; null while a connector's tools are being read (or could not be read). */
   tools: GroupTool[] | null;
   readError: boolean;
-  onCheck(keys: string[], on: boolean): void;
+  onCheck(names: string[], on: boolean): void;
 };
 
 /**
- * 工具 Tools (agent profile design §3.2): every tool sits on one row with its policy next to it
+ * 工具 Tools (agent profile design §3.2; tools default-on spec §9): an agent has every tool the org
+ * offers unless it turns it off, so every checkbox means on / off and starts checked; unchecking
+ * writes the tool to `disabledTools`. Every tool sits on one row with its policy next to it
  * (`ToolPolicyList`, design spec §6.36): the builtins in the card, each extension enabled in the
- * org (`GET …/tools/extensions`, one `{kind:"plugin"}` reference per tool) and each active
- * connector as one row with a summary and 配置, which opens a Sheet with that group's tools. The
- * Sheet edits the section's draft; the section's action row saves it. Its save sends the saved
- * definition with only `tools` and `toolPolicies` changed. A connector is taken whole
- * (`tools: "all"`, its enabled tools now and later) when every enabled tool is ticked, else by
- * tool name; references it does not switch (the `Agent` tool of Sub-agents) and their policies
- * stay as saved. A selected extension tool the org cannot serve now (extension off or
- * uninstalled, or the tool switched off in the org) stays listed and ticked as unavailable, with
- * the reason; unticking it is the only
- * way to drop it. A web tool (`WebSearch` / `WebFetch`) is listed only while its point has a
- * provider for the org (`GET …/extension-points/available`) or when the agent selected it, with a
- * hint when a selected one cannot be served now (web tools spec §3.4). Connectors a template
- * needed and the org lacked come first, as the 待配置 notice (ruling P4-7).
+ * org (`GET …/tools/extensions`) and each active connector as one row with a summary (全部开启 /
+ * 已关闭 N 个 / 已关闭全部) and 配置, which opens a Sheet with that group's tools. Unchecking every
+ * tool of a group turns it off as a unit (`tools: "all"`, its tools now and later). The Sheet edits
+ * the section's draft; the section's action row saves it, sending the saved definition with only
+ * `disabledTools` and `toolPolicies` changed. Entries it does not switch (the `Agent` tool of
+ * Sub-agents, an extension or connector not offered now) and their policies stay as saved. A tool
+ * the org turned off stays listed with the reason. A web tool (`WebSearch` / `WebFetch`) is
+ * listed only while its point has a provider for the org (`GET …/extension-points/available`) or
+ * when the agent turned it off (web tools spec §3.4). Connectors a template needed and the org
+ * lacked come first, as the 待配置 notice (ruling P4-7).
  */
 export function ToolsSection() {
   return <WithFormData>{(data) => <ToolsEdit data={data} />}</WithFormData>;
@@ -138,8 +138,8 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
   const [open, setOpen] = useState<string | null>(null);
   // the connectors on offer: the active ones (none when the list could not be read)
   const apps = (data.connectors ?? []).filter((a) => a.status === "active");
-  // the connectors whose tools are read (cached): the used ones and every one opened since the
-  // section opened, so one switched off again still counts as managed when its policies drop
+  // the connectors whose tools are read (cached): those with tools turned off and every one opened
+  // since the section opened
   const [seen, setSeen] = useState<string[]>(Object.keys(saved.connectors));
   const seenIds = [...new Set([...seen, ...Object.keys(d.connectors)])];
   const details = useQueries({
@@ -155,7 +155,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     if (x?.data !== undefined) connectorDetails[id] = x.data;
     else if (x?.isError) detailFailed.add(id);
   });
-  // which web tools the org can serve now (unreadable: none is offered, saved ones stay listed)
+  // which web tools the org can serve now (unreadable: none is offered, turned-off ones stay)
   const pointsQ = availableExtensionPointsQuery(orgId);
   const points = useQuery({ ...pointsQ, retryOnMount: retryOnMountOf(pointsQ.queryKey) });
   const availablePoints: ReadonlySet<string> | undefined =
@@ -164,7 +164,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       : points.isError
         ? new Set()
         : undefined;
-  /** The builtins listed: a web tool only while its point has a provider, or once selected. */
+  /** The builtins listed: a web tool only while its point has a provider, or once turned off. */
   const listedBuiltins = BUILTIN_TOOLS.filter((name) => {
     const point = WEB_TOOL_POINTS[name];
     return (
@@ -174,20 +174,10 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       availablePoints?.has(point) === true
     );
   });
-  /** A selected web tool the org cannot serve now. */
-  const webUnavailable = d.builtins.some((name) => {
-    const point = WEB_TOOL_POINTS[name];
-    return point !== undefined && availablePoints !== undefined && !availablePoints.has(point);
-  });
-  // the tools of the extensions enabled in the org (unreadable: only the selected ones are listed)
+  // the tools of the extensions enabled in the org (unreadable: their entries stay as saved)
   const extQ = extensionToolsQuery(orgId);
   const extQuery = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
   const offers: ExtensionToolsOffer[] | undefined = extQuery.data?.extensions;
-  const offered = new Set(
-    (offers ?? []).flatMap((ext) =>
-      ext.tools.map((tool) => extensionToolKey(ext.plugin, tool.name)),
-    ),
-  );
   const lang = locale.startsWith("zh") ? "zh" : "en";
 
   const edit = (fn: (cur: Draft) => Draft) => {
@@ -195,164 +185,89 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     draft.set(fn);
   };
 
-  /** Why a selected extension tool cannot be used now; null while the offer is unknown. */
-  const unavailableReason = (r: ExtensionRef): string | null => {
-    if (offers === undefined || offered.has(refKeyOf(r))) return null;
-    const reason = offers.some((e) => e.plugin === r.plugin)
-      ? t("form.extensionToolGone", { extension: r.plugin })
-      : t("form.extensionNotEnabled", { extension: r.plugin });
-    return t("form.extensionToolUnavailable", { reason });
+  /**
+   * A group's entry after ticking / unticking `names` of its `listed` tool names: names it lists
+   * but this section does not (pending, gone) stay off; every listed tool off is the whole group.
+   */
+  const nextOff = (
+    cur: GroupOff | undefined,
+    listed: string[],
+    names: string[],
+    on: boolean,
+  ): GroupOff | undefined => {
+    const now = cur === "all" ? listed : (cur ?? []);
+    const next = on ? now.filter((n) => !names.includes(n)) : [...new Set([...now, ...names])];
+    if (listed.length > 0 && listed.every((n) => next.includes(n))) return "all";
+    return next.length === 0 ? undefined : next;
   };
-  const extensionSelected = (key: string) => d.extensionTools.some((x) => refKeyOf(x) === key);
-  /** Ticks or unticks extension tools (by key) of one extension. */
-  const checkExtension = (plugin: string, keys: string[], on: boolean) =>
+  const setGroup = (
+    field: "extensions" | "connectors",
+    id: string,
+    listed: string[],
+    names: string[],
+    on: boolean,
+  ) =>
     edit((cur) => {
-      const rest = cur.extensionTools.filter((x) => !keys.includes(refKeyOf(x)));
-      if (!on) return { ...cur, extensionTools: rest };
-      const added = keys.flatMap((k) => {
-        const p = parseToolKey(k);
-        return p?.kind === "extension" ? [{ plugin, name: p.tool }] : [];
-      });
-      // keep the saved order of those already ticked
-      const kept = cur.extensionTools.filter((x) => keys.includes(refKeyOf(x)));
-      return {
-        ...cur,
-        extensionTools: [
-          ...rest,
-          ...kept,
-          ...added.filter((a) => !kept.some((k) => refKeyOf(k) === refKeyOf(a))),
-        ],
-      };
+      const map = { ...cur[field] };
+      const next = nextOff(map[id], listed, names, on);
+      if (next === undefined) delete map[id];
+      else map[id] = next;
+      return { ...cur, [field]: map };
     });
 
-  /** The extension groups: the offered extensions, then selected tools no longer offered. */
-  const extensionGroups: Group[] = (offers ?? []).map((ext) => ({
-    id: `ext:${ext.plugin}`,
-    kind: "extension",
-    name: ext.displayName[lang],
-    readError: false,
-    tools: ext.tools.map((tool) => {
-      const key = extensionToolKey(ext.plugin, tool.name);
-      const checked = extensionSelected(key);
-      return {
-        key,
-        // the declared title; an untitled tool alone in its extension goes by the extension
-        label: tool.title ?? (ext.tools.length === 1 ? ext.displayName[lang] : tool.name),
-        checked,
-        // a selected tool the org turned off stays ticked, marked like any unavailable one
-        unavailable: checked && tool.switchedOff === true ? t("form.extensionToolOffInOrg") : null,
-      };
-    }),
-    onCheck: (keys, on) => checkExtension(ext.plugin, keys, on),
-  }));
-  const missing = [...saved.extensionTools, ...d.extensionTools]
-    .filter((r, i, all) => all.findIndex((x) => refKeyOf(x) === refKeyOf(r)) === i)
-    .filter((r) => !offered.has(refKeyOf(r)));
-  for (const r of missing) {
-    let g = extensionGroups.find((x) => x.id === `ext:${r.plugin}`);
-    if (!g) {
-      g = {
-        id: `ext:${r.plugin}`,
-        kind: "extension",
-        name: r.plugin,
-        readError: false,
-        tools: [],
-        onCheck: (keys, on) => checkExtension(r.plugin, keys, on),
-      };
-      extensionGroups.push(g);
-    }
-    const key = refKeyOf(r);
-    const checked = extensionSelected(key);
-    g.tools?.push({
-      key,
-      label: r.name,
-      checked,
-      unavailable: checked ? unavailableReason(r) : null,
-    });
-  }
+  /** The extension groups: the extensions enabled in the org. */
+  const extensionGroups: Group[] = (offers ?? []).map((ext) => {
+    const off = d.extensions[ext.plugin];
+    const listed = ext.tools.map((x) => x.name);
+    return {
+      id: `ext:${ext.plugin}`,
+      kind: "extension",
+      name: ext.displayName[lang],
+      off,
+      prefix: extensionToolKey(ext.plugin, ""),
+      readError: false,
+      tools: ext.tools.map((tool) => {
+        const checked = !isOff(off, tool.name);
+        return {
+          key: extensionToolKey(ext.plugin, tool.name),
+          name: tool.name,
+          // the declared title; an untitled tool alone in its extension goes by the extension
+          label: tool.title ?? (ext.tools.length === 1 ? ext.displayName[lang] : tool.name),
+          checked,
+          // the org turned it off: no agent gets it, whatever this agent says
+          note: checked && tool.switchedOff === true ? t("form.extensionToolOffInOrg") : null,
+        };
+      }),
+      onCheck: (names, on) => setGroup("extensions", ext.plugin, listed, names, on),
+    };
+  });
 
-  /** The enabled tool names of a connector (null while its tools are unknown). */
-  const enabledNames = (id: string): string[] | null => {
-    const c = connectorDetails[id];
-    return c ? c.tools.filter((x) => x.status === "enabled").map((x) => x.name) : null;
-  };
-  /** The names a connector pick ticks now. */
-  const pickedNames = (id: string): string[] => {
-    const p = d.connectors[id];
-    if (p === undefined) return [];
-    return p === "all" ? (enabledNames(id) ?? []) : p;
-  };
-  /** Ticks or unticks connector tools by name: every enabled tool ticked takes it whole. */
-  const checkConnector = (id: string, names: string[], on: boolean) => {
-    const all = enabledNames(id) ?? [];
-    edit((cur) => {
-      const p = cur.connectors[id];
-      const now = p === undefined ? [] : p === "all" ? all : p;
-      const next = on
-        ? [...now, ...names.filter((n) => !now.includes(n))]
-        : now.filter((n) => !names.includes(n));
-      const connectors = { ...cur.connectors };
-      if (next.length === 0) delete connectors[id];
-      else connectors[id] = all.length > 0 && all.every((n) => next.includes(n)) ? "all" : next;
-      return { ...cur, connectors };
-    });
-  };
   const connectorGroups: Group[] = apps.map((a) => {
     const c = connectorDetails[a.id];
-    const picked = pickedNames(a.id);
-    let tools: GroupTool[] | null = null;
-    if (c) {
-      const enabled = c.tools.filter((x) => x.status === "enabled");
-      tools = [
-        ...enabled.map((x) => ({
-          key: x.key,
-          label: x.title ?? x.name,
-          checked: picked.includes(x.name),
-          unavailable: null,
-        })),
-        // a tool named by the agent that is off, waiting for review or gone stays, ticked
-        ...picked
-          .filter((n) => !enabled.some((x) => x.name === n))
-          .map((n) => ({
-            key: connectorToolKey(c.slug, n),
-            label: c.tools.find((x) => x.name === n)?.title ?? n,
-            checked: true,
-            unavailable: t("form.connectorToolUnavailable"),
-          })),
-      ];
-    }
+    const off = d.connectors[a.id];
+    const enabled = c ? c.tools.filter((x) => x.status === "enabled") : [];
+    const listed = enabled.map((x) => x.name);
     return {
       id: `app:${a.id}`,
       kind: "connector",
       name: a.name,
-      tools,
+      off,
+      prefix: connectorToolKey(a.slug, ""),
+      tools: c
+        ? enabled.map((x) => ({
+            key: x.key,
+            name: x.name,
+            label: x.title ?? x.name,
+            checked: !isOff(off, x.name),
+            note: null,
+          }))
+        : null,
       readError: detailFailed.has(a.id),
-      onCheck: (keys, on) =>
-        checkConnector(
-          a.id,
-          keys.flatMap((k) => {
-            const p = parseToolKey(k);
-            return p?.kind === "connector" ? [p.tool] : [];
-          }),
-          on,
-        ),
+      onCheck: (names, on) => setGroup("connectors", a.id, listed, names, on),
     };
   });
   const groups = [...extensionGroups, ...connectorGroups];
   const openGroup = groups.find((g) => g.id === open) ?? null;
-
-  /**
-   * The referenced tool keys (for tightening): the builtins, the selected extension tools and the
-   * selected connectors' ticked tools.
-   */
-  const toolKeys = [
-    ...d.builtins,
-    ...d.extensionTools.map(refKeyOf),
-    ...Object.keys(d.connectors).flatMap((id) => {
-      const c = connectorDetails[id];
-      return c ? pickedNames(id).map((n) => connectorToolKey(c.slug, n)) : [];
-    }),
-  ];
 
   const setPolicy = (key: string, v: string) =>
     edit((cur) => {
@@ -366,7 +281,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     { value: "ask", label: t("form.policy.ask") },
     { value: "deny", label: t("form.policy.deny") },
   ];
-  /** A row's policy: the tightened one of a ticked tool, else the default. */
+  /** A row's policy: the tightened one of an on tool, else the default. */
   const policyOf = (key: string, checked: boolean) => (checked ? (d.policies[key] ?? "") : "");
   const rowsOf = (tools: GroupTool[]): ToolPolicyRow[] =>
     tools.map((x) => ({
@@ -374,20 +289,20 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       label: x.label,
       checked: x.checked,
       policy: policyOf(x.key, x.checked),
-      ...(x.unavailable !== null ? { note: { text: x.unavailable, tone: "warn" as const } } : {}),
+      ...(x.note !== null ? { note: { text: x.note, tone: "warn" as const } } : {}),
     }));
 
-  /** A group row's summary: 已启用 n/m 个工具 · k 个需审批. */
+  /** A group row's summary: 全部开启 / 已关闭 N 个 / 已关闭全部 · k 个需审批 · j 个禁止. */
   const summaryOf = (g: Group): string => {
-    if (g.tools === null) {
-      const used = g.kind === "connector" && d.connectors[g.id.slice(4)] !== undefined;
-      return used ? t("form.groupUsed") : t("form.groupUnused");
-    }
-    const on = g.tools.filter((x) => x.checked);
-    const asks = on.filter((x) => d.policies[x.key] === "ask").length;
-    const denies = on.filter((x) => d.policies[x.key] === "deny").length;
+    if (g.off === "all") return t("form.groupAllOff");
+    const off = g.off ?? [];
+    const onPolicies = Object.entries(d.policies).filter(
+      ([k]) => k.startsWith(g.prefix) && !off.includes(k.slice(g.prefix.length)),
+    );
+    const asks = onPolicies.filter(([, p]) => p === "ask").length;
+    const denies = onPolicies.filter(([, p]) => p === "deny").length;
     return [
-      t("form.groupSummary", { on: on.length, total: g.tools.length }),
+      off.length === 0 ? t("form.groupAllOn") : t("form.groupOff", { count: off.length }),
       ...(asks > 0 ? [t("form.groupAsk", { count: asks })] : []),
       ...(denies > 0 ? [t("form.groupDeny", { count: denies })] : []),
     ].join(" · ");
@@ -404,9 +319,6 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     tag: { label: t(`form.groupKind.${g.kind}`) },
     title: g.name,
     meta: summaryOf(g),
-    ...(g.tools?.some((x) => x.unavailable !== null)
-      ? { status: { label: t("form.groupUnavailable") } }
-      : {}),
     actions: (
       <Button
         density="dense"
@@ -420,39 +332,37 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
 
   const unsaved = [
     !sameJson(sorted(d.builtins), sorted(saved.builtins)),
-    !sameJson(sorted(d.extensionTools.map(refKeyOf)), sorted(saved.extensionTools.map(refKeyOf))),
-    !sameJson(pickForm(d.connectors), pickForm(saved.connectors)),
+    !sameJson(offForm(d.extensions), offForm(saved.extensions)),
+    !sameJson(offForm(d.connectors), offForm(saved.connectors)),
     !sameJson(d.policies, saved.policies),
   ].filter(Boolean).length;
 
   async function onSave() {
     if (save.pending) return;
-    const picked: AgentToolRef[] = [
+    const offered = new Set((offers ?? []).map((e) => e.plugin));
+    const active = new Set(apps.map((a) => a.id));
+    // the entries this section switches: the listed builtins, the offered extensions, the active
+    // connectors; anything else stays as saved
+    const managed = (r: DisabledToolRef) =>
+      r.kind === "builtin"
+        ? BUILTIN_SET.has(r.name)
+        : r.kind === "plugin"
+          ? offered.has(r.plugin)
+          : active.has(r.connectorId);
+    const next: DisabledToolRef[] = [
       ...d.builtins.map((name) => ({ kind: "builtin" as const, name })),
-      ...d.extensionTools.map((r) => ({ kind: "plugin" as const, plugin: r.plugin, name: r.name })),
-      ...Object.entries(d.connectors).map(([connectorId, tools]) => ({
-        kind: "connector" as const,
-        connectorId,
-        tools,
-      })),
+      ...Object.entries(d.extensions)
+        .filter(([plugin]) => offered.has(plugin))
+        .map(([plugin, tools]) => ({ kind: "plugin" as const, plugin, tools })),
+      ...Object.entries(d.connectors)
+        .filter(([id]) => active.has(id))
+        .map(([connectorId, tools]) => ({ kind: "connector" as const, connectorId, tools })),
     ];
-    // a policy of a tool this section manages goes with it; the others stay as saved
-    const managed = (k: string) => {
-      const p = parseToolKey(k);
-      return (
-        BUILTIN_SET.has(k) ||
-        p?.kind === "extension" ||
-        Object.values(connectorDetails).some(
-          (a) => a.tools.some((x) => x.key === k) || (p?.kind === "connector" && p.slug === a.slug),
-        )
-      );
-    };
     const r = await save.send({
       ...savedDefinition(agent),
-      tools: replaceToolRefs(agent.definition.tools ?? [], isSectionTool, picked),
-      toolPolicies: Object.fromEntries(
-        Object.entries(d.policies).filter(([k]) => toolKeys.includes(k) || !managed(k)),
-      ),
+      disabledTools: replaceDisabled(agent.definition.disabledTools ?? [], managed, next),
+      // a policy stays with its tool, on or off (it applies again once the tool is back on)
+      toolPolicies: d.policies,
     });
     if (r.saved) draft.reset();
   }
@@ -487,7 +397,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               policyOptions={policyOptions}
               disabled={save.pending}
               rows={listedBuiltins.map((name) => {
-                const checked = d.builtins.includes(name);
+                const checked = !d.builtins.includes(name);
                 return {
                   id: name,
                   label: t(`form.builtin.${name}`),
@@ -498,16 +408,13 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               onCheck={(name, on) =>
                 edit((cur) => ({
                   ...cur,
-                  builtins: on ? [...cur.builtins, name] : cur.builtins.filter((x) => x !== name),
+                  builtins: on
+                    ? cur.builtins.filter((x) => x !== name)
+                    : [...new Set([...cur.builtins, name])],
                 }))
               }
               onPolicy={setPolicy}
             />
-            {webUnavailable && (
-              <Text variant="prose" tone="muted">
-                {t("form.webUnavailable")}
-              </Text>
-            )}
           </Subsection>
           <Subsection variant="divided" title={t("form.groupsLabel")}>
             {extQuery.isError && (
@@ -554,8 +461,8 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
                   policyOptions={policyOptions}
                   disabled={save.pending}
                   rows={rowsOf(openGroup.tools)}
-                  onCheck={(key, on) => openGroup.onCheck([key], on)}
-                  onCheckAll={(keys, on) => openGroup.onCheck(keys, on)}
+                  onCheck={(key, on) => openGroup.onCheck(namesOf(openGroup, [key]), on)}
+                  onCheckAll={(keys, on) => openGroup.onCheck(namesOf(openGroup, keys), on)}
                   onPolicy={setPolicy}
                   search={openGroup.tools.length > 8}
                 />
@@ -567,3 +474,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     </AgentSectionFrame>
   );
 }
+
+/** The tool names of a group's rows by key. */
+const namesOf = (g: Group, keys: string[]): string[] =>
+  (g.tools ?? []).filter((x) => keys.includes(x.key)).map((x) => x.name);

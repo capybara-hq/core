@@ -193,7 +193,7 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
         name: "Shared writer",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "SkillWrite" }],
+        // every builtin is on by default (tools default-on), SkillWrite included
       },
       visibility: "org",
     },

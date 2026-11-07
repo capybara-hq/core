@@ -2,11 +2,10 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   currentOrg,
   designZh,
+  expectGroupAllOn,
   newAgent,
   OBJECT_ROW_MENU,
   openAgentSection,
-  saveSection,
-  takeAllGroupTools,
   zh,
 } from "./support/chat";
 import { selectOption } from "./support/select";
@@ -69,8 +68,7 @@ async function agentWithConnector(
 ): Promise<string> {
   const id = await newAgent(page, agentName);
   await openAgentSection(page, "tools");
-  await takeAllGroupTools(page, connectorName);
-  await saveSection(page);
+  await expectGroupAllOn(page, connectorName);
   return id;
 }
 
@@ -169,10 +167,10 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=tools$/);
   const agentId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1) ?? "");
 
-  // 4. the agent has no connector tools yet; the 待配置 notice names the connector
+  // 4. the 待配置 notice names the connector (the org's connector is on for the agent already:
+  // tools default-on)
   const notice = page.getByRole("list", { name: A.pending.listLabel });
   await expect(notice.getByText(connector)).toBeVisible();
-  await takeAllGroupTools(page, connector, false);
 
   // 5. the admin picks the existing connector and binds it: the notice goes, the tools appear
   await notice
@@ -189,11 +187,11 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   await bind.getByRole("button", { name: A.pending.bind, exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(notice).toBeHidden();
-  // the connector's row in the Tools section now says its tools are taken
+  // the connector's row in the Tools section: the bind left every tool the template names on
   const row = page.getByRole("listitem").filter({
     has: page.getByRole("button", { name: fill(A.form.configureGroup, { name: connector }) }),
   });
-  await expect(row).not.toContainText(A.form.groupUnused);
+  await expect(row).not.toContainText(A.form.groupAllOff);
 
   // the agent's page keeps its provenance, and the kernel agrees: no pending entry is left
   const orgId = await currentOrg(page);
@@ -201,12 +199,12 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   const body = (await res.json()) as {
     agent: {
       createdFrom?: { name: string };
-      definition: { pendingConnectors?: unknown[]; tools?: { kind: string }[] };
+      definition: { pendingConnectors?: unknown[]; disabledTools?: { kind: string }[] };
     };
   };
   expect(body.agent.createdFrom?.name).toBe(tpl);
   expect(body.agent.definition.pendingConnectors ?? []).toHaveLength(0);
-  expect(body.agent.definition.tools?.some((t) => t.kind !== "builtin")).toBe(true);
+  expect(Array.isArray(body.agent.definition.disabledTools)).toBe(true);
 });
 
 test("member: 用它创建 is private and sends a setup request -> the admin configures it from the inbox -> the request closes", async ({

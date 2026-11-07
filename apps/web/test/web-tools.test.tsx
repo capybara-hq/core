@@ -266,7 +266,7 @@ const available = (search: boolean, fetch: boolean) => () =>
     ],
   });
 
-const agentWith = (tools: unknown[]) => ({
+const agentWith = (disabledTools: unknown[]) => ({
   id: "ag1",
   orgId: "o1",
   ownerAccountId: "a1",
@@ -284,7 +284,7 @@ const agentWith = (tools: unknown[]) => ({
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools,
+    disabledTools,
     toolPolicies: {},
   },
 });
@@ -303,7 +303,7 @@ describe("agent page Tools section: web tools", () => {
   beforeEach(() => resetNavigation("/agents/ag1"));
 
   it.each(["zh", "en"] as const)(
-    "listed only when their point is available, unchecked until picked (%s)",
+    "listed only when their point is available, on by default; unticking turns it off (%s)",
     async (locale) => {
       const m = msgs[locale].agents.form;
       const tools = [{ kind: "builtin", name: "AskUserQuestion" }];
@@ -316,7 +316,7 @@ describe("agent page Tools section: web tools", () => {
       });
       await renderEditAgent({ section: "tools", locale });
       const search = await screen.findByRole("checkbox", { name: m.builtin.WebSearch });
-      expect(search).toHaveProperty("checked", false);
+      expect(search).toHaveProperty("checked", true);
       expect(screen.queryByRole("checkbox", { name: m.builtin.WebFetch })).toBeNull();
 
       const user = userEvent.setup();
@@ -324,16 +324,16 @@ describe("agent page Tools section: web tools", () => {
       await user.click(screen.getByRole("button", { name: m.submit }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
       const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
-        definition: { tools: unknown[] };
+        definition: { disabledTools: unknown[] };
       };
-      expect(body.definition.tools).toEqual([
+      expect(body.definition.disabledTools).toEqual([
         { kind: "builtin", name: "AskUserQuestion" },
         { kind: "builtin", name: "WebSearch" },
       ]);
     },
   );
 
-  it("an agent that selected WebFetch keeps it listed (with a hint) while no provider serves it", async () => {
+  it("an agent that turned WebFetch off keeps it listed, unticked, while no provider serves it", async () => {
     const m = en.agents.form;
     const tools = [
       { kind: "builtin", name: "AskUserQuestion" },
@@ -347,8 +347,7 @@ describe("agent page Tools section: web tools", () => {
     });
     await renderEditAgent({ section: "tools" });
     const fetch = await screen.findByRole("checkbox", { name: m.builtin.WebFetch });
-    expect(fetch).toHaveProperty("checked", true);
-    expect(await screen.findByText(m.webUnavailable)).toBeTruthy();
+    expect(fetch).toHaveProperty("checked", false);
     expect(screen.queryByRole("checkbox", { name: m.builtin.WebSearch })).toBeNull();
   });
 
@@ -384,10 +383,7 @@ describe("agent page Tools section: the CurrentTime builtin", () => {
         ...sessionRoutes(),
         [`GET ${ORG}/agents/ag1`]: () =>
           json(200, {
-            agent: agentWith([
-              { kind: "builtin", name: "AskUserQuestion" },
-              { kind: "builtin", name: "CurrentTime" },
-            ]),
+            agent: agentWith([{ kind: "builtin", name: "AskUserQuestion" }]),
           }),
         [`GET ${ORG}/models`]: () => json(200, MODELS),
         [`GET ${ORG}/extension-points/available`]: available(false, false),

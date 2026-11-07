@@ -67,7 +67,7 @@ const agent = (over: Record<string, unknown> = {}, definition: Record<string, un
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
+    disabledTools: [{ kind: "builtin", name: "AskUserQuestion" }],
     toolPolicies: {},
     pendingConnectors: PENDING,
     ...definition,
@@ -534,7 +534,7 @@ describe("the 待配置 notice (P4-7)", () => {
       definition: Record<string, unknown>;
     };
     expect(body.definition.pendingConnectors).toBeUndefined();
-    expect(body.definition.tools).toEqual([
+    expect(body.definition.disabledTools).toEqual([
       { kind: "builtin", name: "AskUserQuestion" },
       { kind: "builtin", name: "ReadToolOutput" },
     ]);

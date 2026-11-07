@@ -90,9 +90,10 @@ const agent = (over: Over = {}) => {
       fallback: null,
       modelParams: {},
       fallbackParams: {},
-      tools: [
+      // tools default-on: the agent turns off one builtin and one extension tool
+      disabledTools: [
         { kind: "builtin", name: "AskUserQuestion" },
-        { kind: "plugin", plugin: "todo", name: "write" },
+        { kind: "plugin", plugin: "todo", tools: ["write"] },
       ],
       toolPolicies: {},
       // a field the web does not know: every section's save sends it back as it is
@@ -376,7 +377,8 @@ describe("the agent page's sections with their own saves (agent profile design ย
     expect(patches(calls)[1]).toEqual({
       definition: {
         ...base,
-        tools: [...saved.definition.tools, { kind: "builtin", name: "SkillWrite" }],
+        // unticking a builtin that is on writes it off
+        disabledTools: [...saved.definition.disabledTools, { kind: "builtin", name: "SkillWrite" }],
       },
       expectedVersion: 1,
     });
@@ -397,7 +399,8 @@ describe("the agent page's sections with their own saves (agent profile design ย
     expect(patches(calls)[3]).toEqual({
       definition: {
         ...base,
-        tools: [...saved.definition.tools, { kind: "builtin", name: "Agent" }],
+        // the Agent tool is on by default: unticking it writes it off
+        disabledTools: [...saved.definition.disabledTools, { kind: "builtin", name: "Agent" }],
       },
       expectedVersion: 1,
     });
@@ -644,7 +647,9 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
 
 describe("the agent page renders on the server (web-SSR spec ยง6)", () => {
   const withConnector = () =>
-    agent({ definition: { tools: [{ kind: "connector", connectorId: "cn1", tools: "all" }] } });
+    agent({
+      definition: { disabledTools: [{ kind: "connector", connectorId: "cn1", tools: ["find"] }] },
+    });
   const connector = {
     id: "cn1",
     name: "Tracker",
@@ -668,7 +673,7 @@ describe("the agent page renders on the server (web-SSR spec ยง6)", () => {
     });
     expect(screen.getByRole("heading", { level: 1, name: "Helper" })).toBeTruthy();
     // the connector's row sums up its tools, read on the server
-    expect(screen.getByText("1 of 1 tools on")).toBeTruthy();
+    expect(screen.getByText("1 off")).toBeTruthy();
     // another section paints from what the first load prefetched
     await view.navigate("/agents/ag1?s=channels");
     expect(screen.getByRole("region", { name: en.agents.channels.title })).toBeTruthy();

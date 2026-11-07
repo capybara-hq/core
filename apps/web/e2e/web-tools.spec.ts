@@ -5,7 +5,6 @@ import {
   newAgent,
   openAgentSection,
   replies,
-  saveSection,
   startChat,
   toolGroup,
   zh,
@@ -95,7 +94,7 @@ test("web tools: two providers → default provider per point → WebFetch in th
     0,
   );
 
-  // 3. The agent's Tools section lists both web tools, not checked by default; select WebFetch
+  // 3. The agent's Tools section lists both web tools, on by default (tools default-on)
   await newAgent(page, "Web agent");
   await openAgentSection(page, "tools");
   const webSearch = page.getByRole("checkbox", {
@@ -106,10 +105,8 @@ test("web tools: two providers → default provider per point → WebFetch in th
     name: zh.agents.form.builtin.WebFetch,
     exact: true,
   });
-  await expect(webSearch).not.toBeChecked();
-  await expect(webFetch).not.toBeChecked();
-  await webFetch.check();
-  await saveSection(page);
+  await expect(webSearch).toBeChecked();
+  await expect(webFetch).toBeChecked();
 
   // 4. A WebFetch call asks first: the card shows the URL (a key argument) and one approve
   //    button per scope (once, this conversation, always)

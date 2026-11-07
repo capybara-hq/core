@@ -144,7 +144,6 @@ function childEvents(running = false): ConversationEvent[] {
         definition: {
           name: "Echo agent › general-purpose",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "Bash" }],
         },
         maxSteps: 20,
       },
@@ -482,7 +481,18 @@ describe("sub-agents on the conversation page", () => {
   });
 
   it("#subagent= opens the child read-only on the right; stop aborts the child", async () => {
-    const calls = api({ [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) });
+    // the tools line names what the child's first model call offered (tools default-on spec §4)
+    const offered = ev(
+      100,
+      "model_call",
+      { step: 1, provider: "model-fake", model: "fake-1", request: { tools: [{ key: "Bash" }] } },
+      "run-ch2",
+      "ch2",
+    );
+    const calls = api(
+      { [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch2" }) },
+      { child: [...childEvents(true), offered] },
+    );
     window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
     await renderChat();
     const user = userEvent.setup();

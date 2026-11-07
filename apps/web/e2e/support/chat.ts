@@ -91,19 +91,21 @@ export async function openAgentSection(
 }
 
 /**
- * In the agent page's 工具 section, takes every tool of the connector or extension `name`: its
- * row's 配置 opens the Sheet, 全选 ticks the tools, 完成 closes it (the section's save persists).
- * `on: false` checks that none is taken instead.
+ * In the agent page's 工具 section, checks that every tool of the connector or extension `name`
+ * is on (tools default-on: an agent has every tool the org offers): its row reads 全部开启, and its
+ * Sheet (配置) has 全选 ticked; 完成 closes it.
  */
-export async function takeAllGroupTools(page: Page, name: string, on = true): Promise<void> {
+export async function expectGroupAllOn(page: Page, name: string): Promise<void> {
   const f = zh.agents.form;
-  await page
-    .getByRole("button", { name: f.configureGroup.replace("{name}", name), exact: true })
-    .click();
+  const button = page.getByRole("button", {
+    name: f.configureGroup.replace("{name}", name),
+    exact: true,
+  });
+  await expect(page.getByRole("listitem").filter({ has: button })).toContainText(f.groupAllOn);
+  await button.click();
   const sheet = page.getByRole("dialog", { name });
   const all = sheet.getByRole("checkbox", { name: designZh("toolPolicy.selectAll"), exact: true });
-  if (on) await all.check();
-  else await expect(all).not.toBeChecked();
+  await expect(all).toBeChecked();
   await sheet.getByRole("button", { name: f.sheetDone, exact: true }).click();
   await expect(sheet).toBeHidden();
 }

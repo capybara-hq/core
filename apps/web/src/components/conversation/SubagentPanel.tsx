@@ -17,7 +17,7 @@ import { useMemo } from "react";
 import type { ConversationEvent, ModelRef } from "../../lib/conversations";
 import { conversationQuery } from "../../lib/query/conversation";
 import { useWhoWaits } from "../../lib/query/who-waits";
-import { toolsLine } from "../../lib/subagents";
+import { subagentToolKeys, toolsLine } from "../../lib/subagents";
 import {
   buildTimeline,
   latestModel,
@@ -187,7 +187,7 @@ function ChildRecord({
             agent={started?.definition.name ?? ""}
             {...(orgAgentId ? { agentHref: `/agents/${encodeURIComponent(orgAgentId)}` } : {})}
             model={model?.model ?? ""}
-            tools={toolsLine(started?.definition.tools, t("toolsNone"))}
+            tools={toolsLine(subagentToolKeys(child.events), t("toolsNone"))}
           />
         )}
       />
