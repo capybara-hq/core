@@ -480,3 +480,42 @@ In the acceptance session, by a checklist:
 - The sync check has a test that turns it red for each of the three failures: a missing operation; an
   operation whose fields differ from its route's; a removed route whose operation is still there.
 
+### 14.5 Answers to the builder check (2026-11-08)
+
+1. **Admin console data in full** **(decided, 2026-11-08)**. Admin-console operations return the same
+   data the admin console shows (accounts with login, name and email; orgs with name and member count;
+   the platform inbox), and run only through the super admin's own private agent (§6.1). The org admins
+   of the org that conversation lives in can read it in the trajectory viewer; that is accepted. Other
+   orgs' private **plugins** keep the phase-1 rule (counts only, refused for get / update).
+2. **Creating a user** **(decided, 2026-11-08)**. The agent passes no password. The kernel generates a
+   one-time initial password, the account must change it at first login, and the password is shown
+   only to the person, on the web, after they approve the card; the tool result the model receives
+   carries no password. The super-admin flag on create or update counts as a role change and stays off
+   **(designer's call)**.
+3. **What the sync check compares** **(designer's call)**. Inputs only; outputs come from the same
+   service methods the routes call, so they are not compared. Route body and query schemas move out of
+   the controllers into exported schema modules, and an operation builds its input from them
+   (`pick` / `omit` / `extend`). A runtime test in the checks suite compares each operation's input
+   JSON Schema with its mirrored route's body + query + path params: a field present in both must have
+   the same type; a route field the operation leaves out must be listed in the operation's `omits`; an
+   operation field the route lacks (e.g. `cursor`, a preview hash) must be listed in its `extras`.
+   Bounds may be stricter in the operation, never looser. The red fixtures cover a type mismatch, an
+   undeclared omission and an undeclared extra.
+4. **Not-loaded reasons in the org view** **(designer's call)**. `OrgExtensionView` gains the
+   deployment status and a reason (`needs_deployment_config`, `failed`, `dependency`,
+   `pending_approval`, `pending_migration`), derived like the admin view's; the org extensions API and
+   page show it (state and reason only, never config). Members and org admins see the reason and a
+   next step for their role; only super admins get the admin-console path.
+5. **Every `later` route is done in phase 2**, as an operation or a permanent exclusion
+   (`human-only` / `secret` / `transport` / `internal`) with a reason **(decided** in §14.2; the
+   end state is the **designer's call)**: afterwards the fence rejects the `later` category, so a new
+   route ships with its operation or a permanent exclusion. Delivered as a series of PRs by domain
+   from one plan **(designer's call)**.
+6. **Agent profile operations** are the last wave of this plan and start once the run-context work is
+   on `main` **(designer's call)**.
+7. **Error standard** **(designer's call)**. Enforced by a rule plus review: every operation's
+   `errors[]` entry has a `next` step, role-specific where the next step differs by role (keys
+   `superAdmin` / `orgAdmin` / `member`), and the tool maps an `ApiError` through the operation's
+   entry when one exists. `check:platform-ops` gains `platform-op-errors` for entries without `next`;
+   the acceptance and the final review check the wording.
+
