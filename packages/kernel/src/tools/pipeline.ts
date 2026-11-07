@@ -1178,6 +1178,8 @@ export class ToolPipeline {
         }
         const effective = await this.deps.effective.get(ctx.orgId, tool.source.plugin);
         if (!effective.ok) {
+          // unloaded or disabled since the step resolved its tools: the documented unloaded error
+          if (effective.notRunning) return { kind: "error", message: PLUGIN_UNLOADED_TOOL_ERROR };
           return { kind: "error", message: unavailableText(tool.key, NEEDS_CONFIG_REASON) };
         }
         config = { config: effective.config };

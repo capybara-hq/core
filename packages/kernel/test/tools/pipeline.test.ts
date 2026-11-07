@@ -24,6 +24,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { HookRegistry } from "../../src/extensions/hooks.js";
+import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { UNKNOWN_RESULT_TEXT } from "../../src/runtime/context/pairing.js";
@@ -793,6 +794,21 @@ describe("ToolPipeline.runStep", () => {
         content:
           'Tool "plugin__probe__ctx" is unavailable: needs configuration in this organization.',
       },
+    ]);
+  });
+
+  it("a plugin tool whose extension stopped running meanwhile gets the unloaded error, not needs-config", async () => {
+    effective = {
+      get: async () => ({
+        ok: false,
+        notRunning: true,
+        issues: [{ path: "", segments: [], message: "the extension is not running" }],
+      }),
+    };
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__ctx", input: {} }]);
+    expect(handlerCalls.ctx).toBeUndefined();
+    expect(resultsOf(evs)).toMatchObject([
+      { callId: "c1", isError: true, content: PLUGIN_UNLOADED_TOOL_ERROR },
     ]);
   });
 

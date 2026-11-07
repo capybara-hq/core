@@ -162,6 +162,16 @@ describe("a refined deployment schema", () => {
   });
 });
 
+describe("an extension not running on this replica", () => {
+  it("has no effective config, flagged notRunning (the pipeline answers the unloaded error)", async () => {
+    expect(await effective().get(orgId, "nosuchext")).toEqual({
+      ok: false,
+      notRunning: true,
+      issues: [{ path: "", segments: [], message: "the extension is not running" }],
+    });
+  });
+});
+
 describe("an overridable field wrapped in .default()", () => {
   it("is overridable end to end: the org view lists it and a save is accepted", async () => {
     const view = await owner({ method: "GET", url: ovUrl("orgwrapped") });

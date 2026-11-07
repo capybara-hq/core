@@ -43,7 +43,8 @@ export const overrideSecretKey = (plugin: string, path: string) =>
  */
 export type EffectiveConfig =
   | { ok: true; config: unknown; source: "platform" | "copy" }
-  | { ok: false; issues: ConfigIssue[] };
+  /** `notRunning`: the extension is not running on this replica (not a configuration problem). */
+  | { ok: false; issues: ConfigIssue[]; notRunning?: true };
 
 /** An org's stored copy: its non-secret values and its secrets by field dot path. */
 export interface StoredCopy {
@@ -185,13 +186,14 @@ export class EffectiveConfigs {
    * false` when it leaves a required overridable field empty (the host loaded it with those
    * fields optional, so that is the only way the full schema can refuse it). Copy: the platform's
    * raw config with the copy applied ({@link mergeCopy}), parsed once with the full schema. An
-   * extension not running on this replica -> `ok: false` with a root issue.
+   * extension not running on this replica -> `ok: false`, `notRunning`, with a root issue.
    */
   async get(orgId: string, plugin: string): Promise<EffectiveConfig> {
     const inst = this.registry.current(plugin);
     if (!inst) {
       return {
         ok: false,
+        notRunning: true,
         issues: [{ path: "", segments: [], message: "the extension is not running" }],
       };
     }
