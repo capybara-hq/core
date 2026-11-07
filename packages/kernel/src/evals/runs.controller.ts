@@ -1,6 +1,5 @@
 import { Controller, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
-import { z } from "zod";
-import { ModelRef } from "../agents/definition.js";
+import type { z } from "zod";
 import {
   CurrentPrincipal,
   type Principal,
@@ -11,6 +10,13 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
+  type EvalCandidateSchema as Candidate,
+  EvalRunEstimateBody as EstimateBody,
+  EvalLabelBody as LabelBody,
+  EvalRunResultsQuery as ResultsQuery,
+  EvalRunStartBody as StartBody,
+} from "./evals.schemas.js";
+import {
   type EvalEstimate,
   type EvalResultLight,
   type EvalResultView,
@@ -19,51 +25,6 @@ import {
   type EvalTokenCaps,
 } from "./runs.service.js";
 import type { EvalCandidate } from "./step-replay.js";
-
-const Candidate = z
-  .object({
-    agentVersion: z.number().int().min(1).optional(),
-    model: ModelRef.strict().optional(),
-    modelParams: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
-    instructions: z.string().max(100_000).optional(),
-  })
-  .strict();
-
-/** `tokenCap` 只校验类型，范围由服务判定（`eval.token_cap_invalid`）。 */
-const EstimateBody = z
-  .object({
-    mode: z.enum(["step", "run"]),
-    candidate: Candidate,
-    judge: z.boolean().default(false),
-    tokenCap: z.number().int().optional(),
-  })
-  .strict();
-
-const StartBody = EstimateBody;
-
-/**
- * `view=light`：不含内容块（结果表与轮询用，响应带 `asOf`）；缺省 `full`。`updatedSince`（ISO 时间）只取之后有变化的，
- * 轮询时传上一次的 `asOf`。
- */
-const ResultsQuery = z
-  .object({
-    after: z.string().max(100).optional(),
-    limit: z.coerce.number().int().min(1).max(200).default(50),
-    view: z.enum(["full", "light"]).default("full"),
-    updatedSince: z
-      .string()
-      .max(64)
-      .refine((v) => !Number.isNaN(Date.parse(v)), { message: "must be an ISO timestamp" })
-      .optional(),
-  })
-  .strict();
-
-const LabelBody = z
-  .object({
-    label: z.enum(["pass", "fail"]).nullable(),
-    note: z.string().max(2000).optional(),
-  })
-  .strict();
 
 /** 去掉 zod 输出里值为 undefined 的键（exactOptionalPropertyTypes）。 */
 function candidateOf(c: z.infer<typeof Candidate>): EvalCandidate {

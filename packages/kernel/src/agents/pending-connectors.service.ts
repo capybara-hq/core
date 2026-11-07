@@ -94,6 +94,7 @@ export class PendingConnectorsService {
     connectorId: string,
     actor: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<BindResult> {
     const t = this.kdb.db;
     const before = await this.agents.lockForWrite(orgId, agentId, actor);
@@ -194,7 +195,13 @@ export class PendingConnectorsService {
       orgId,
       action: "agent.pending_connector_bound",
       target: agentId,
-      detail: { key, connectorId: c.id, fromVersion: before.current_version, toVersion },
+      detail: {
+        key,
+        connectorId: c.id,
+        fromVersion: before.current_version,
+        toVersion,
+        ...auditDetail,
+      },
     });
     await this.requests.settleIn({
       orgId,
@@ -219,6 +226,7 @@ export class PendingConnectorsService {
     agentId: string,
     actor: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ id: string; created: boolean }> {
     const before = await this.agents.lockForWrite(orgId, agentId, actor);
     const def = await this.currentDefinition(agentId, before.current_version);
@@ -240,6 +248,7 @@ export class PendingConnectorsService {
       requestedBy: owner.owner_account_id,
       actor,
       actorTokenId,
+      ...(auditDetail !== undefined && { auditDetail }),
     });
     // the agent row is locked above, so the keys read there are still pending
     if (r === null) throw new Error(`agent ${agentId} lost its pending connectors under its lock`);

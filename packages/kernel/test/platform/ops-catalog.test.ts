@@ -116,8 +116,10 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => /^(plugins|marketplaces|requests|connectors|extensions)\./.test(id)),
     ).toEqual([
+      "connectors.delete",
       "connectors.get",
       "connectors.list",
+      "connectors.refresh",
       "connectors.set-template-enabled",
       "connectors.template-disable-preview",
       "connectors.templates",
@@ -129,7 +131,9 @@ describe("registration", () => {
       "extensions.point-availability",
       "extensions.point-defaults",
       "extensions.points",
+      "extensions.previewers",
       "extensions.set-point-default",
+      "extensions.set-previewers",
       "extensions.set-tool-enabled",
       "extensions.tool-disable-preview",
       "extensions.tools",

@@ -1,8 +1,11 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
+import { BackgroundModule } from "../background/background.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { FilesModule } from "../files/files.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
@@ -13,10 +16,12 @@ import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { BackgroundOperations } from "./ops/background.ops.js";
 import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
+import { EvalsOperations } from "./ops/evals.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
@@ -25,6 +30,7 @@ import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
+import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { PlatformModule } from "./platform.module.js";
@@ -54,6 +60,10 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   OrgPluginsOperations,
   ExtensionsAdminOperations,
   ModelsOperations,
+  // Task 11: evals, background tasks, file previewers
+  EvalsOperations,
+  BackgroundOperations,
+  PreviewersOperations,
 ] as const;
 
 /**
@@ -74,6 +84,9 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     IdentityModule,
     ModelsModule,
     ProvidersModule,
+    EvalsModule,
+    BackgroundModule,
+    FilesModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

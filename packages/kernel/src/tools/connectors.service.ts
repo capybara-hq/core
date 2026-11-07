@@ -1336,9 +1336,10 @@ export class ConnectorsService {
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
-    await this.removeIn(orgId, connectorId, actorAccountId, actorTokenId);
+    await this.removeIn(orgId, connectorId, actorAccountId, actorTokenId, undefined, auditDetail);
   }
 
   /**
@@ -1353,6 +1354,8 @@ export class ConnectorsService {
     actorAccountId: string | null,
     actorTokenId?: string,
     reason?: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const t = this.db;
     const app = await this.row(t, orgId, connectorId, true);
@@ -1374,7 +1377,7 @@ export class ConnectorsService {
       orgId,
       action: "connector.deleted",
       target: connectorId,
-      detail: { slug: app.slug, ...(reason !== undefined && { reason }) },
+      detail: { slug: app.slug, ...(reason !== undefined && { reason }), ...auditDetail },
     });
   }
 
@@ -1390,7 +1393,7 @@ export class ConnectorsService {
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
-    opts: { trigger?: "first_connect" } = {},
+    opts: { trigger?: "first_connect"; auditDetail?: Record<string, unknown> } = {},
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[]; changes: DriftChanges }> {
     const app = await this.row(this.db, orgId, connectorId);
     const auth = app.auth as unknown as ConnectorAuth;
@@ -1413,7 +1416,7 @@ export class ConnectorsService {
     connectorId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
-    opts: { trigger?: "first_connect" },
+    opts: { trigger?: "first_connect"; auditDetail?: Record<string, unknown> },
     rows: SnapshotRow[],
     issues: ToolIssue[],
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[]; changes: DriftChanges }> {
@@ -1444,7 +1447,7 @@ export class ConnectorsService {
       orgId,
       action: "connector.tools_refreshed",
       target: connectorId,
-      detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }) },
+      detail: { ...changes, ...(opts.trigger && { trigger: opts.trigger }), ...opts.auditDetail },
     });
     return {
       connector: await this.detail(t, orgId, connectorId, actorAccountId),

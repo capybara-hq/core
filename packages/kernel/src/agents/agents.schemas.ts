@@ -75,6 +75,15 @@ export const AgentFromTemplateBody = z
 /** `:agentId` as the routes take it (`@Param`). */
 export const AgentPathParams = z.object({ agentId: z.string().min(1) });
 
+/** `:agentId` and `:key` of a pending connector's bind route. */
+export const PendingConnectorParams = z.object({
+  agentId: z.string().min(1),
+  key: z.string().min(1),
+});
+export const PendingConnectorBindBody = z
+  .object({ connectorId: z.string().min(1).max(100) })
+  .strict();
+
 export const AGENT_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/agents" },
   { route: "GET /api/v1/orgs/:orgId/agents/:agentId", params: AgentPathParams },
@@ -89,4 +98,20 @@ export const AGENT_ROUTES: readonly RouteSchemas[] = [
     body: AgentFromTemplatePreviewBody,
   },
   { route: "POST /api/v1/orgs/:orgId/agents/from-template", body: AgentFromTemplateBody },
+  { route: "DELETE /api/v1/orgs/:orgId/agents/:agentId", params: AgentPathParams },
+  { route: "GET /api/v1/orgs/:orgId/agents/:agentId/versions", params: AgentPathParams },
+  {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/:key/bind",
+    params: PendingConnectorParams,
+    body: PendingConnectorBindBody,
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
+    params: AgentPathParams,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
+    params: AgentPathParams,
+  },
+  { route: "GET /api/v1/orgs/:orgId/readiness" },
 ];

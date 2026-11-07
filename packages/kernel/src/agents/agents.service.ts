@@ -788,8 +788,15 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    const cancelled = await this.softDeleteIn(orgId, agentId, actorAccountId, actorTokenId);
+    const cancelled = await this.softDeleteIn(
+      orgId,
+      agentId,
+      actorAccountId,
+      actorTokenId,
+      auditDetail,
+    );
     await this.skillChanges.finishCancel(orgId, cancelled);
   }
 
@@ -799,6 +806,7 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ) {
     const t = this.db.db;
     await this.lockForWrite(orgId, agentId, actorAccountId);
@@ -820,6 +828,7 @@ export class AgentsService {
       orgId,
       action: "agent.deleted",
       target: agentId,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
     // the agent row stays (soft delete), so its setup request is closed here (P4-T6-3)
     await this.setupRequests.settleIn({
