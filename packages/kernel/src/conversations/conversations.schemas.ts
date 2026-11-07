@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { CONVERSATION_TITLE_MAX_CHARS } from "./conversations.service.js";
+import { FILES_PAGE_MAX } from "./files.js";
 
 /** Shared by the list and groups queries: title search, run activity and the archived list. */
 export const searchFields = {
@@ -61,6 +62,17 @@ export const PatchBody = z
 
 export const IdParams = z.object({ id: z.string().min(1).max(100) });
 
+export const SubagentsQuery = z.object({
+  /** The previous page's last sub-agent id (`next`). */
+  after: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const FilesQuery = z.object({
+  after: z.string().min(1).max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(FILES_PAGE_MAX).default(50),
+});
+
 /** The conversation routes a Platform operation mirrors (spec §14, conversations). */
 export const CONVERSATION_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/conversations", query: ListQuery },
@@ -72,4 +84,14 @@ export const CONVERSATION_ROUTES: readonly RouteSchemas[] = [
   },
   { route: "PATCH /api/v1/orgs/:orgId/conversations/:id", params: IdParams, body: PatchBody },
   { route: "DELETE /api/v1/orgs/:orgId/conversations/:id", params: IdParams },
+  {
+    route: "GET /api/v1/orgs/:orgId/conversations/:id/subagents",
+    params: IdParams,
+    query: SubagentsQuery,
+  },
+  { route: "GET /api/v1/orgs/:orgId/conversations/:id/agent-tree", params: IdParams },
+  { route: "GET /api/v1/orgs/:orgId/conversations/:id/usage", params: IdParams },
+  { route: "GET /api/v1/orgs/:orgId/conversations/:id/files", params: IdParams, query: FilesQuery },
+  { route: "GET /api/v1/orgs/:orgId/conversations/:id/environment", params: IdParams },
+  { route: "POST /api/v1/orgs/:orgId/conversations/:id/abort", params: IdParams },
 ];

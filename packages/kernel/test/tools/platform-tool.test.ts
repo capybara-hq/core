@@ -63,6 +63,19 @@ const personalOp = defineOperation({
   },
 });
 
+const neverOp = defineOperation({
+  id: "conversations.delete",
+  description: "Delete one of your conversations.",
+  input: z.object({ conversationId: z.string().min(1).max(100) }),
+  example: { conversationId: "c1" },
+  authz: { orgAction: "org.read" },
+  mirrors: ["DELETE /api/v1/orgs/:orgId/conversations/:id"],
+  confirm: "personal",
+  rememberable: false,
+  summary: (i) => ({ zh: `删除 ${i.conversationId}`, en: `Delete ${i.conversationId}` }),
+  run: async () => ({ deleted: true }),
+});
+
 const orgOp = defineOperation({
   id: "skills.create",
   description: "Create an org skill from a name and a body.",
@@ -154,7 +167,7 @@ beforeEach(() => {
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
-  ops.register([listOp, personalOp, orgOp, targetedOp] as PlatformOperation[]);
+  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -261,6 +274,7 @@ describe("browse, search, describe, read", () => {
       "requests",
       "connectors",
       "extensions",
+      "conversations",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");
@@ -458,6 +472,21 @@ describe("callPolicy", () => {
       key: "Platform:skills.list",
       policy: "allow",
       remember: false,
+    });
+  });
+
+  it("a personal operation with rememberable false asks every time and is never remembered", async () => {
+    expect(
+      await policy({
+        action: "call",
+        operation: "conversations.delete",
+        params: { conversationId: "c1" },
+      }),
+    ).toEqual({
+      key: "Platform:conversations.delete",
+      policy: "ask",
+      remember: false,
+      summary: { zh: "删除 c1", en: "Delete c1" },
     });
   });
 

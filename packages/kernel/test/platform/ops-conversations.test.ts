@@ -101,13 +101,19 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => id.startsWith("conversations.")),
     ).toEqual([
+      "conversations.abort",
+      "conversations.agent-tree",
       "conversations.archive",
       "conversations.delete",
+      "conversations.environment",
       "conversations.events",
+      "conversations.files",
       "conversations.get",
       "conversations.list",
       "conversations.rename",
+      "conversations.subagents",
       "conversations.unarchive",
+      "conversations.usage",
     ]);
   });
 });
@@ -228,7 +234,9 @@ describe("delete", () => {
     await conversations.rename(env.orgId, conv.id, env.memId, "Old chat");
     const c = ctxOf(env.memId, agent);
     const input = { conversationId: conv.id };
-    expect(await classOf("conversations.delete", input, c)).not.toBe("personal");
+    expect(await classOf("conversations.delete", input, c)).toBe("personal");
+    expect(op("conversations.delete").rememberable).toBe(false);
+    expect(op("conversations.abort").rememberable).toBe(false);
     expect(await summarize("conversations.delete", input, c)).toEqual({
       zh: "删除对话「Old chat」",
       en: 'Delete conversation "Old chat"',
@@ -239,6 +247,35 @@ describe("delete", () => {
       conversationId: conv.id,
     });
     await expect(run("conversations.get", input, c)).rejects.toThrow();
+  });
+
+  it("refuses the run's root conversation also from a sub-agent's run", async () => {
+    const agent = await agentOf(env.memId);
+    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const child = randomUUID();
+    await env.db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: env.orgId,
+        agent_id: agent,
+        account_id: env.memId,
+        kind: "subagent",
+        parent_conversation_id: conv.id,
+        subagent_depth: 1,
+        title: "Child",
+      })
+      .execute();
+    const fromChild = ctxOf(env.memId, agent, child);
+    for (const id of ["conversations.delete", "conversations.abort"]) {
+      expect(await precheck(id, { conversationId: conv.id }, fromChild)).toMatchObject({
+        ok: false,
+        code:
+          id === "conversations.delete"
+            ? "conversation.delete_current"
+            : "conversation.abort_current",
+      });
+    }
   });
 
   it("refuses the conversation the run is in, and someone else's", async () => {
@@ -255,5 +292,56 @@ describe("delete", () => {
     expect(
       await precheck("conversations.delete", { conversationId: conv.id }, ctxOf(env.bossId, boss)),
     ).toMatchObject({ ok: false, code: "conversation.not_found" });
+  });
+});
+
+describe("conversation detail reads and abort", () => {
+  it("reads usage, sub-agents, the agent tree, files and the environment of my conversation", async () => {
+    const agent = await agentOf(env.memId);
+    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    const c = ctxOf(env.memId, agent);
+    const input = { conversationId: conv.id };
+    expect(await run("conversations.usage", input, c)).toEqual({
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+    expect(await run("conversations.subagents", input, c)).toEqual({ subagents: [], next: null });
+    expect(await run("conversations.files", input, c)).toEqual({ files: [], next: null });
+    expect(
+      (await run("conversations.agent-tree", input, c)) as { root: { id: string } },
+    ).toMatchObject({
+      root: { id: conv.id },
+    });
+    expect(await run("conversations.environment", input, c)).toHaveProperty("environment");
+  });
+
+  it("someone else's conversation is not found for each detail read", async () => {
+    const agent = await agentOf(env.bossId);
+    const theirs = await conversations.create(env.orgId, env.bossId, agent, {});
+    const c = ctxOf(env.memId, agent);
+    for (const id of [
+      "conversations.usage",
+      "conversations.subagents",
+      "conversations.files",
+      "conversations.agent-tree",
+      "conversations.environment",
+    ]) {
+      await expect(run(id, { conversationId: theirs.id }, c)).rejects.toThrow(
+        /conversations\.list/,
+      );
+    }
+  });
+
+  it("abort asks every time, names the target, and reports no active run", async () => {
+    const agent = await agentOf(env.memId);
+    const conv = await conversations.create(env.orgId, env.memId, agent, {});
+    await conversations.rename(env.orgId, conv.id, env.memId, "Busy chat");
+    const c = ctxOf(env.memId, agent);
+    const input = { conversationId: conv.id };
+    expect(await classOf("conversations.abort", input, c)).toBe("personal");
+    expect(await precheck("conversations.abort", input, c)).toEqual({ ok: true });
+    expect((await summarize("conversations.abort", input, c))?.en).toBe(
+      'Stop the active run in conversation "Busy chat"',
+    );
+    await expect(run("conversations.abort", input, c)).rejects.toThrow(/No run is active/);
   });
 });

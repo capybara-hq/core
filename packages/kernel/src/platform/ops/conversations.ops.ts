@@ -2,14 +2,20 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import {
   EventsQuery,
+  FilesQuery,
   IdParams,
   ListQuery,
   PatchBody,
+  SubagentsQuery,
 } from "../../conversations/conversations.schemas.js";
 import {
   ConversationsService,
   type ConversationView,
 } from "../../conversations/conversations.service.js";
+import { ConversationEnvironmentStatus } from "../../conversations/environment-status.js";
+import { ConversationFiles } from "../../conversations/files.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy } from "./errors.js";
@@ -40,7 +46,21 @@ export class ConversationsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
+    @Inject(ConversationFiles) private readonly files: ConversationFiles,
+    @Inject(ConversationEnvironmentStatus)
+    private readonly environment: ConversationEnvironmentStatus,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /**
+   * Whether `id` is the conversation this run belongs to: its ROOT (the Platform tool also runs in
+   * sub-agents, whose own id is not the person's conversation). Stopping or deleting it would end
+   * the very run that asked.
+   */
+  private async isRunsRoot(id: string, ctx: OperationContext): Promise<boolean> {
+    const root = await rootConversationOf(this.kdb.db, ctx.conversationId);
+    return id === root || id === ctx.conversationId;
+  }
 
   private titleOf(ctx: OperationContext, id: string): Promise<string> {
     return orElse(
@@ -278,6 +298,188 @@ export class ConversationsOperations implements OnModuleInit {
         run: (input, ctx) => this.setArchived(input.conversationId, false, ctx),
       }),
       defineOperation({
+        id: "conversations.usage",
+        description:
+          "Read the token usage of one of your conversations, its sub-agents included: input, output, cache read and cache write tokens. Takes the id from conversations.list.",
+        input: Id,
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/usage"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) => ({
+          usage: await this.conversations.usage(
+            ctx.orgId,
+            input.conversationId,
+            ctx.actorAccountId,
+          ),
+        }),
+      }),
+      defineOperation({
+        id: "conversations.subagents",
+        description:
+          "List the sub-agents one of your conversations dispatched, newest first: id, type, description, status, tool calls, times, usage and any pending approval or question ids. Pages by 50: pass the returned next as params.after.",
+        input: SubagentsQuery.pick({ after: true })
+          .extend({ conversationId: ConversationId })
+          .strict(),
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/subagents"],
+        // the page size is fixed at 50
+        omits: ["limit"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) =>
+          this.conversations.listSubagents(ctx.orgId, input.conversationId, ctx.actorAccountId, {
+            limit: PAGE,
+            ...(input.after !== undefined && { after: input.after }),
+          }),
+      }),
+      defineOperation({
+        id: "conversations.agent-tree",
+        description:
+          "Read the agent tree of one of your conversations: the conversation and every sub-agent below it with status, model, time, tokens and tool calls. Only a conversation you started, not a sub-agent's, has a tree.",
+        input: Id,
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/agent-tree"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations, not their sub-agents, have a tree.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) =>
+          this.conversations.agentTree(ctx.orgId, input.conversationId, ctx.actorAccountId),
+      }),
+      defineOperation({
+        id: "conversations.files",
+        description:
+          "List the files one of your conversations produced, newest first: id, name, state (available or removed), type, size and version. File contents are downloaded on the web. Pages by 50: pass the returned next as params.after.",
+        input: FilesQuery.pick({ after: true }).extend({ conversationId: ConversationId }).strict(),
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/files"],
+        // the page size is fixed at 50
+        omits: ["limit"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) => {
+          const out = await this.files.list(ctx.orgId, input.conversationId, ctx.actorAccountId, {
+            limit: PAGE,
+            ...(input.after !== undefined && { after: input.after }),
+          });
+          return {
+            files: out.files.map((f) => ({
+              id: f.id,
+              name: f.name,
+              state: f.status,
+              contentType: f.contentType,
+              size: f.size,
+              version: f.version,
+            })),
+            next: out.next,
+          };
+        },
+      }),
+      defineOperation({
+        id: "conversations.environment",
+        description:
+          "Read the environment one of your conversations works in and whether its instance is running or suspended; environment is null while the conversation has none. Takes the id from conversations.list.",
+        input: Id,
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/environment"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+        ],
+        confirm: "read",
+        run: async (input, ctx) => ({
+          environment: await this.environment.get(
+            ctx.orgId,
+            input.conversationId,
+            ctx.actorAccountId,
+          ),
+        }),
+      }),
+      defineOperation({
+        id: "conversations.abort",
+        description:
+          "Stop the run that is active in one of your other conversations (its sub-agents keep working; stopping a sub-agent's conversation stops it and those below it). Nothing happens if no run is active. The person confirms every stop; it is never remembered. The conversation you are working in cannot be stopped.",
+        input: Id,
+        example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["POST /api/v1/orgs/:orgId/conversations/:id/abort"],
+        renames: { conversationId: "id" },
+        errors: [
+          {
+            code: "conversation.not_found",
+            next: "Check the id with conversations.list: only your own conversations can be read or changed.",
+          },
+          {
+            code: "run.not_active",
+            next: "No run is active in that conversation: nothing to stop; check conversations.list for its state.",
+          },
+          {
+            code: "conversation.abort_current",
+            next: "This is the conversation you are running in: ask the person to stop it on the web, or stop a different one.",
+          },
+        ],
+        confirm: "personal",
+        rememberable: false,
+        precheck: async (i, ctx) => {
+          if (await this.isRunsRoot(i.conversationId, ctx)) {
+            return {
+              ok: false,
+              code: "conversation.abort_current",
+              message: "The conversation you are running in cannot be stopped from here.",
+            };
+          }
+          return precheckBy(() =>
+            this.conversations.get(ctx.orgId, i.conversationId, ctx.actorAccountId),
+          );
+        },
+        summary: async (i, ctx) => {
+          const t = await this.titleOf(ctx, i.conversationId);
+          return {
+            zh: `停止对话「${t}」中正在进行的运行`,
+            en: `Stop the active run in conversation "${t}"`,
+          };
+        },
+        run: async (input, ctx) => ({
+          stopped: true,
+          runId: await this.conversations.abort(
+            ctx.orgId,
+            input.conversationId,
+            ctx.actorAccountId,
+          ),
+        }),
+      }),
+      defineOperation({
         id: "conversations.delete",
         description:
           "Delete one of your conversations: a running run in it is stopped and the conversation disappears from every list. This cannot be undone from the tool. The person confirms every delete; it is never remembered. The conversation you are working in cannot be deleted.",
@@ -301,11 +503,10 @@ export class ConversationsOperations implements OnModuleInit {
           },
         ],
         confirm: "personal",
-        // a delete is destructive: `personal` in rights, but each one is asked, never remembered
-        // (the tool remembers only the class `personal`, so the target decides: `org` asks every time)
-        confirmFor: async () => "org",
+        // destructive: `personal` in rights, but each delete is asked and never remembered
+        rememberable: false,
         precheck: async (i, ctx) => {
-          if (i.conversationId === ctx.conversationId) {
+          if (await this.isRunsRoot(i.conversationId, ctx)) {
             return {
               ok: false,
               code: "conversation.delete_current",

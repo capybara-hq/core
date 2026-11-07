@@ -33,9 +33,11 @@ import {
 } from "./artifacts.js";
 import {
   EventsQuery,
+  FilesQuery,
   IdParams,
   ListQuery,
   PatchBody,
+  SubagentsQuery,
   searchFields,
 } from "./conversations.schemas.js";
 import {
@@ -47,12 +49,7 @@ import {
 } from "./conversations.service.js";
 import { ConversationEnvironmentStatus } from "./environment-status.js";
 import type { ConversationEvent } from "./events.js";
-import {
-  ConversationFiles,
-  FILE_CONTENT_MAX_BYTES,
-  FILES_PAGE_MAX,
-  type FileOutput,
-} from "./files.js";
+import { ConversationFiles, FILE_CONTENT_MAX_BYTES, type FileOutput } from "./files.js";
 import { ConversationOutputs, OUTPUT_PAGE_MAX_CHARS, type OutputPage } from "./outputs-read.js";
 import type { QueueItem, QueuePauseReason } from "./queue.js";
 import { ConversationQueue } from "./queue.service.js";
@@ -63,12 +60,6 @@ const GroupsQuery = z.object({
   /** The last group's agent id from the previous page (`next`). */
   after: z.string().min(1).max(100).optional(),
   ...searchFields,
-});
-
-const SubagentsQuery = z.object({
-  /** The previous page's last sub-agent id (`next`). */
-  after: z.string().min(1).max(100).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 /** `?keys=a,b`: 1–100 comma-separated tool keys of 1–200 characters each. */
@@ -83,11 +74,6 @@ const ToolsQuery = z.object({
 const OutputQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
-});
-
-const FilesQuery = z.object({
-  after: z.string().min(1).max(100).optional(),
-  limit: z.coerce.number().int().min(1).max(FILES_PAGE_MAX).default(50),
 });
 
 const FileContentQuery = z.object({

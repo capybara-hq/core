@@ -311,7 +311,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       key,
       policy: "ask",
       // org / platform writes are confirmed every time (spec §6.2)
-      remember: cls === "personal",
+      remember: cls === "personal" && op.rememberable !== false,
       summary,
     };
   }

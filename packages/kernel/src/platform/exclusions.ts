@@ -634,28 +634,14 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "POST /api/v1/orgs/:orgId/conversations",
     category: "internal",
-    reason: "Runs are started by the person: an agent does not open conversations for them",
+    reason:
+      "Starting a conversation starts a run the person must watch and own; an agent cannot open conversations on their behalf, and the web does it on first send",
   },
   {
     route: "GET /api/v1/orgs/:orgId/conversations/groups",
     category: "internal",
-    reason: "The sidebar's grouping of the same list; conversations.list covers it",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/subagents",
-    category: "internal",
     reason:
-      "Display data of the conversation page; the event log (conversations.events) has the sub-agent calls",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/agent-tree",
-    category: "internal",
-    reason: "Display data of the conversation page's agent map",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/usage",
-    category: "internal",
-    reason: "Display data of the conversation page's usage totals",
+      "The sidebar's per-agent grouping of the same rows; conversations.list with its agentId filter returns the same data",
   },
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/outputs/:outputId",
@@ -673,19 +659,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves artifact preview bytes",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/files",
-    category: "internal",
-    reason: "Display data of the conversation page's outputs panel; file bytes are transport",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/content",
     category: "transport",
     reason: "Serves sandbox file bytes",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/environment",
-    category: "internal",
-    reason: "Display data of the conversation page's environment panel",
   },
   // environments (personal cloud environments, environments design phase 1)
   {
@@ -725,48 +701,48 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/tools",
     category: "internal",
-    reason: "Display metadata for tool rows, never model-visible",
+    reason:
+      "Titles and key arguments for the web's tool rows, derived from the event log that conversations.events returns",
   },
   {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/messages",
     category: "internal",
     reason:
-      "Runs are started by the person: an agent does not send messages to another conversation",
+      "Sending a message to a conversation starts a run in the person's name; runs are started by the person, not by another run",
   },
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/queue",
     category: "internal",
-    reason: "Deprecated message queue, kept for older clients",
+    reason:
+      "Deprecated message queue the web no longer uses; leftover items drain until the table is dropped",
   },
   {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/queue",
     category: "internal",
-    reason: "Deprecated, behaves as sending a message, which stays with the person",
+    reason: "Deprecated alias of POST messages, which stays with the person",
   },
   {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/queue/resume",
     category: "internal",
-    reason: "Deprecated message queue, kept for older clients",
+    reason:
+      "Deprecated message queue the web no longer uses; leftover items drain until the table is dropped",
   },
   {
     route: "PATCH /api/v1/orgs/:orgId/conversations/:id/queue/:itemId",
     category: "internal",
-    reason: "Deprecated message queue, kept for older clients",
+    reason:
+      "Deprecated message queue the web no longer uses; leftover items drain until the table is dropped",
   },
   {
     route: "DELETE /api/v1/orgs/:orgId/conversations/:id/queue/:itemId",
     category: "internal",
-    reason: "Deprecated message queue, kept for older clients",
+    reason:
+      "Deprecated message queue the web no longer uses; leftover items drain until the table is dropped",
   },
   {
     route: "POST /api/v1/orgs/:orgId/conversations/:id/queue/:itemId/send",
     category: "internal",
-    reason: "Deprecated message queue; sending stays with the person",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/conversations/:id/abort",
-    category: "internal",
-    reason: "Stopping a run is the person's control on the conversation page",
+    reason: "Deprecated queue item send; sending a message stays with the person",
   },
   // evals
   {

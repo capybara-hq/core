@@ -90,6 +90,11 @@ export interface PlatformOperation<I = unknown> {
   loosens?: Readonly<Record<string, string>>;
   confirm: ConfirmClass;
   /**
+   * `false`: a confirmation is never remembered, whatever the class (a destructive personal write
+   * such as deleting a conversation). Static; absent: remembered only for the class `personal`.
+   */
+  rememberable?: false;
+  /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
    * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;
