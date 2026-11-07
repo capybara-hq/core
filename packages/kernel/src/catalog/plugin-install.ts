@@ -1306,7 +1306,7 @@ export class PluginInstaller {
     plan: InstallPlan,
     ctx: { parent?: string; via?: "scope" },
     f: { step: Step; code: string; done: Component[]; rollbackErrors: unknown[] },
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail },
   ): Promise<void> {
     const { itemId, version } = plan;
     const { step, code, done, rollbackErrors } = f;
@@ -1332,6 +1332,7 @@ export class PluginInstaller {
         rollbackErrors,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
         ...(ctx.via !== undefined && { via: ctx.via }),
+        ...opts.auditDetail,
       },
     });
   }

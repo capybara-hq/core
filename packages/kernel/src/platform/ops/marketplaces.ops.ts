@@ -68,13 +68,14 @@ export class MarketplacesOperations implements OnModuleInit {
       defineOperation({
         id: "marketplaces.list",
         description:
-          "List the marketplace sources of the platform (super admin): the official one and the custom ones, with whether each is enabled, its last refresh and how many entries it has.",
-        input: z.object({}).strict(),
+          "List the marketplace sources of the platform (super admin): the official one and the custom ones, with whether each is enabled, its last refresh and how many entries it has. Pages by 50: pass the returned next as params.cursor.",
+        input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/marketplaces"],
         confirm: "read",
-        run: async () => ({ marketplaces: (await this.marketplaces.list()).map(source) }),
+        run: async (input) =>
+          pageOf((await this.marketplaces.list()).map(source), startOf(input.cursor), PAGE),
       }),
       defineOperation({
         id: "marketplaces.entries",

@@ -8,7 +8,6 @@ import { PluginInstaller, uninstallPreviewHash } from "../../catalog/plugin-inst
 import { PlatformPluginUpdater } from "../../catalog/plugin-upgrade.js";
 import { OrgExtensionConfigs, type OrgExtensionView } from "../../extensions/org-config.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
-import { roleAtLeast } from "../../orgs/roles.js";
 import { defineOperation } from "../operation.js";
 import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
@@ -21,6 +20,14 @@ const Hash = z.string().min(1).max(200);
 
 /** Entries per page of the paged lists (the tool caps a bare list at 50). */
 const PAGE = 50;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const OTHER_ORG = "This plugin belongs to another org; use the admin console.";
+const LOCKED =
+  "This plugin is on for every org (or shipped with the platform) and cannot be switched off in one org.";
+/** The confirm value of switching off a plugin with nothing installed in the org. */
+const NOTHING_INSTALLED = "nothing-installed";
 
 export const NEEDS_INPUT =
   "This plugin needs configuration a person must enter; ask them to enable it on the 插件 page.";
@@ -79,14 +86,30 @@ export class PluginsOperations implements OnModuleInit {
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
-  private async isAdmin(orgId: string, accountId: string): Promise<boolean> {
-    const m = await this.kdb.db
-      .selectFrom("memberships")
-      .select("role")
-      .where("org_id", "=", orgId)
-      .where("account_id", "=", accountId)
+  /**
+   * Refuses a super-admin operation on an item another org owns: its results would describe that
+   * org's private plugin in this org's log (spec §6.1). Platform items and the org's own pass.
+   */
+  private async assertNotOtherOrgs(itemId: string, orgId: string): Promise<void> {
+    if (!UUID_RE.test(itemId)) return;
+    const row = await this.kdb.db
+      .selectFrom("catalog_items")
+      .select("owner_org_id")
+      .where("id", "=", itemId)
       .executeTakeFirst();
-    return m !== undefined && roleAtLeast(m.role, "admin");
+    if (row?.owner_org_id != null && row.owner_org_id !== orgId) throw new ToolError(OTHER_ORG);
+  }
+
+  /** How many live catalog items other orgs own (left out of the platform list). */
+  private async otherOrgItems(orgId: string): Promise<number> {
+    const r = await this.kdb.db
+      .selectFrom("catalog_items")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("deleted_at", "is", null)
+      .where("owner_org_id", "is not", null)
+      .where("owner_org_id", "!=", orgId)
+      .executeTakeFirstOrThrow();
+    return Number(r.n);
   }
 
   onModuleInit(): void {
@@ -108,7 +131,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.get",
         description:
-          "Read one plugin as this org sees it: its state, extension, connector templates (presets only, never credentials), dependencies, skills and agent templates. For an org admin and a plugin that is on and switchable, also the uninstall preview and its confirm value, which plugins.set-enabled takes to switch it off.",
+          "Read one plugin as this org sees it: its state, extension, connector templates (presets only, never credentials), dependencies, skills and agent templates.",
         input: z.object({ itemId: Id }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { orgAction: "catalog.read" },
@@ -120,19 +143,46 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) =>
           asToolError(async () => {
             const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
-            const out = { ...d, item: brief(d.item) };
+            return { ...d, item: brief(d.item) };
+          }),
+      }),
+      defineOperation({
+        id: "plugins.disable-preview",
+        description:
+          "Preview switching a plugin off in this org (org admins): what it would remove and which agents use it, and the confirm value plugins.set-enabled needs to switch it off. Show the preview to the person before switching off.",
+        input: z.object({ itemId: Id }).strict(),
+        example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
+        // the web previews through the switch route itself (no confirm); writes nothing here
+        authz: { orgAction: "org.extensions.manage" },
+        mirrors: [],
+        confirm: "read",
+        errors: [
+          { code: "catalog.item_not_found", next: "Check the plugin id with plugins.list." },
+        ],
+        run: async (input, ctx) =>
+          asToolError(async () => {
+            const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId);
+            if (!d.item.switchable) throw new ToolError(LOCKED);
             const live = d.item.installed;
-            if (live === null || !d.item.switchable) return out;
-            if (!(await this.isAdmin(ctx.orgId, ctx.actorAccountId))) return out;
+            if (live === null) {
+              return {
+                preview: null,
+                confirm: NOTHING_INSTALLED,
+                next: "Nothing is installed in the org, so switching off removes nothing; pass this confirm value.",
+              };
+            }
             const preview = await this.installer.previewUninstall(ctx.orgId, live.pluginInstallId);
-            return { ...out, uninstall: { preview, confirm: uninstallPreviewHash(preview) } };
+            return { preview, confirm: uninstallPreviewHash(preview) };
           }),
       }),
       defineOperation({
         id: "plugins.set-enabled",
         description:
-          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs configuration a person enters (connector credentials, extension config) is refused, so point the person to the 插件 page. Switching off a plugin that is on removes what it brought: pass confirm, the value plugins.get returned with the uninstall preview; without it the preview and its confirm value are returned and nothing changes.",
-        input: z.object({ itemId: Id, enabled: z.boolean(), confirm: Hash.optional() }).strict(),
+          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs configuration a person enters (connector credentials, extension config) is refused, so point the person to the 插件 page. Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
+        input: z.discriminatedUnion("enabled", [
+          z.object({ itemId: Id, enabled: z.literal(true) }).strict(),
+          z.object({ itemId: Id, enabled: z.literal(false), confirm: Hash }).strict(),
+        ]),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", enabled: true },
         // the route needs catalog.read; setSwitch requires an org admin (any of skills.manage,
         // connectors.manage, org.extensions.manage, all the admin role)
@@ -143,7 +193,7 @@ export class PluginsOperations implements OnModuleInit {
         errors: [
           {
             code: "plugin.switch_stale",
-            next: "The uninstall preview changed: read the plugin again with plugins.get and call again with the new confirm value.",
+            next: "The uninstall preview changed: call plugins.disable-preview again, show it, and call again with the new confirm value.",
           },
           {
             code: "plugin.scope_locked",
@@ -182,36 +232,29 @@ export class PluginsOperations implements OnModuleInit {
               ctx.orgId,
               ctx.actorAccountId,
               input.itemId,
-              input.enabled
-                ? { enabled: true }
-                : {
-                    enabled: false,
-                    ...(input.confirm !== undefined && { confirm: input.confirm }),
-                  },
+              input.enabled ? { enabled: true } : { enabled: false, confirm: input.confirm },
               undefined,
               viaAgent("plugins.set-enabled", ctx),
             );
             if (r.kind === "done") return { item: brief(r.item) };
-            return {
-              preview: r.preview,
-              confirm: r.confirm,
-              next: "Nothing changed. Show the person what switching off removes, then call again with this confirm value.",
-            };
+            // unreachable: confirm is required when switching off
+            return { preview: r.preview, confirm: r.confirm };
           }),
       }),
       defineOperation({
         id: "plugins.platform-list",
         description:
-          "List every plugin in the platform catalog (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Orgs are given as counts only. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform's plugins and this org's own (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Plugins other orgs own are only counted (otherOrgItems); orgs are given as counts. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/catalog/items"],
         confirm: "read",
-        run: async (input) => {
+        run: async (input, ctx) => {
           const p = await this.catalog.page({ limit: PAGE, offset: startOf(input.cursor) });
           return redactOrgs({
-            items: p.items,
+            items: p.items.filter((i) => i.owner.kind !== "org" || i.owner.orgId === ctx.orgId),
+            otherOrgItems: await this.otherOrgItems(ctx.orgId),
             next: p.nextOffset === null ? null : String(p.nextOffset),
           });
         },
@@ -231,8 +274,9 @@ export class PluginsOperations implements OnModuleInit {
             next: "Check the plugin id with plugins.platform-list.",
           },
         ],
-        run: async (input) =>
+        run: async (input, ctx) =>
           asToolError(async () => {
+            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
             const d = await this.catalog.get(input.itemId);
             return redactOrgs({
               item: d.item,
@@ -262,10 +306,11 @@ export class PluginsOperations implements OnModuleInit {
             next: "Check the plugin id and its versions with plugins.platform-get.",
           },
         ],
-        run: async (input) =>
-          asToolError(async () =>
-            redactOrgs(await this.updater.preview(input.itemId, input.version)),
-          ),
+        run: async (input, ctx) =>
+          asToolError(async () => {
+            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+            return redactOrgs(await this.updater.preview(input.itemId, input.version));
+          }),
       }),
       defineOperation({
         id: "plugins.update",
@@ -295,16 +340,17 @@ export class PluginsOperations implements OnModuleInit {
           en: `Update platform plugin ${i.itemId} to ${i.version}`,
         }),
         run: async (input, ctx) =>
-          asToolError(async () =>
-            redactOrgs(
+          asToolError(async () => {
+            await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+            return redactOrgs(
               await this.updater.update(
                 ctx.actorAccountId,
                 input.itemId,
                 { version: input.version, diffHash: input.diffHash },
                 { auditDetail: viaAgent("plugins.update", ctx) },
               ),
-            ),
-          ),
+            );
+          }),
       }),
     ]);
   }

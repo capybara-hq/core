@@ -4,6 +4,7 @@ import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/r
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
+import { Cursor, pageOf, startOf } from "./paging.js";
 
 const Note = z.string().max(1000);
 
@@ -38,15 +39,16 @@ export class RequestsOperations implements OnModuleInit {
       defineOperation({
         id: "requests.list-mine",
         description:
-          "List the requests you made in this org, pending and decided, newest first: what was asked (a plugin, a marketplace entry, an agent's connectors), the status and a rejection's reason.",
-        input: z.object({}).strict(),
+          "List the requests you made in this org, pending and decided, newest first: what was asked (a plugin, a marketplace entry, an agent's connectors), the status and a rejection's reason. Pages by 50: pass the returned next as params.cursor.",
+        input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "catalog.request" },
         mirrors: [],
         confirm: "read",
-        run: async (_input, ctx) => ({
-          requests: (await this.requests.listForRequester(ctx.orgId, ctx.actorAccountId)).map(view),
-        }),
+        run: async (input, ctx) => {
+          const mine = await this.requests.listForRequester(ctx.orgId, ctx.actorAccountId);
+          return pageOf(mine.map(view), startOf(input.cursor), 50);
+        },
       }),
       defineOperation({
         id: "requests.create",

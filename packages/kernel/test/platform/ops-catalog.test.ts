@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import type { OperationContext } from "../../src/platform/operation.js";
-import { NEEDS_INPUT } from "../../src/platform/ops/plugins.ops.js";
+import { NEEDS_INPUT, OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
 import { redactOrgs } from "../../src/platform/redact-orgs.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import {
@@ -104,6 +104,7 @@ describe("registration", () => {
       "marketplaces.add",
       "marketplaces.entries",
       "marketplaces.list",
+      "plugins.disable-preview",
       "plugins.get",
       "plugins.list",
       "plugins.platform-get",
@@ -179,11 +180,41 @@ describe("super admin operations (Review Focus 4)", () => {
     const item = await importSkill(env);
     await setScope(env, item, "named", [org2]);
     const list = await run("plugins.platform-list", {}, ctxOf(env.rootId));
-    expect(list).toMatchObject({ items: [{ id: item, scopeOrgs: { count: 1 } }], next: null });
+    expect(list).toMatchObject({
+      items: [{ id: item, scopeOrgs: { count: 1 } }],
+      otherOrgItems: 0,
+      next: null,
+    });
     const got = await run("plugins.platform-get", { itemId: item }, ctxOf(env.rootId));
     expect(got).toMatchObject({ item: { id: item, scopeOrgs: { count: 1 } } });
     for (const v of [list, got]) {
       expect(JSON.stringify(v)).not.toContain(org2);
+    }
+  });
+
+  it("another org's own plugin is only counted in platform-list and refused by platform-get and update", async () => {
+    const mine = await importSkill(env);
+    const theirs = await importSkill(env, { name: "beta-secret-tool" });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: org2 })
+      .where("id", "=", theirs)
+      .execute();
+    const list = (await run("plugins.platform-list", {}, ctxOf(env.rootId))) as {
+      items: { id: string }[];
+      otherOrgItems: number;
+    };
+    expect(list.items.map((i) => i.id)).toEqual([mine]);
+    expect(list.otherOrgItems).toBe(1);
+    expect(JSON.stringify(list)).not.toContain("beta-secret-tool");
+    for (const [id, input] of [
+      ["plugins.platform-get", { itemId: theirs }],
+      ["plugins.update-preview", { itemId: theirs, version: "1.0.0" }],
+      ["plugins.update", { itemId: theirs, version: "1.0.0", diffHash: "0".repeat(64) }],
+    ] as const) {
+      const e = await failure(run(id, input, ctxOf(env.rootId)));
+      expect(e.message).toBe(OTHER_ORG);
+      expect(e.message).not.toContain("beta-secret-tool");
     }
   });
 
@@ -223,9 +254,9 @@ describe("marketplaces", () => {
     )) as { marketplace: { id: string; name: string } };
     expect(out.marketplace.name).toBe("Team plugins");
     const list = (await run("marketplaces.list", {}, ctxOf(env.rootId))) as {
-      marketplaces: { id: string }[];
+      items: { id: string }[];
     };
-    expect(list.marketplaces.map((m) => m.id)).toContain(out.marketplace.id);
+    expect(list.items.map((m) => m.id)).toContain(out.marketplace.id);
     const rows = await audits("marketplace.added");
     expect(rows.find((r) => r.target === out.marketplace.id)?.detail).toMatchObject({
       via: "agent",
@@ -266,13 +297,19 @@ describe("plugins in the org", () => {
     expect(listed.items).toEqual([expect.objectContaining({ id: item, state: "on" })]);
     expect(listed.next).toBeNull();
 
-    // a member reads it without the uninstall preview; an org admin gets it with its confirm
-    const asMember = (await run("plugins.get", { itemId: item }, ctxOf(env.memId))) as object;
-    expect(asMember).not.toHaveProperty("uninstall");
-    const asAdmin = (await run("plugins.get", { itemId: item }, ctxOf(env.bossId))) as {
-      uninstall: { confirm: string };
+    // switching off needs confirm (schema), taken from plugins.disable-preview (org admins)
+    expect(
+      op("plugins.set-enabled").input.safeParse({ itemId: item, enabled: false }).success,
+    ).toBe(false);
+    expect(availability(op("plugins.disable-preview"), facts("member")).ok).toBe(false);
+    const got = await run("plugins.get", { itemId: item }, ctxOf(env.memId));
+    expect(got).toMatchObject({ item: { id: item, state: "on" } });
+    const preview = (await run("plugins.disable-preview", { itemId: item }, ctxOf(env.bossId))) as {
+      preview: { removed: unknown[] };
+      confirm: string;
     };
-    expect(asAdmin.uninstall.confirm).toMatch(/\S/);
+    expect(preview.confirm).toMatch(/\S/);
+    expect(preview.preview).toBeTruthy();
     const stale = await failure(
       run(
         "plugins.set-enabled",
@@ -283,7 +320,7 @@ describe("plugins in the org", () => {
     expect(stale.message).toContain("plugin.switch_stale");
     const off = await run(
       "plugins.set-enabled",
-      { itemId: item, enabled: false, confirm: asAdmin.uninstall.confirm },
+      { itemId: item, enabled: false, confirm: preview.confirm },
       ctxOf(env.bossId),
     );
     expect(off).toMatchObject({ item: { id: item, state: "off" } });
@@ -314,9 +351,9 @@ describe("requests", () => {
     )) as { request: { id: string; status: string } };
     expect(out.request.status).toBe("pending");
     const mine = (await run("requests.list-mine", {}, ctxOf(env.memId))) as {
-      requests: { id: string; kind: string; status: string; note: string }[];
+      items: { id: string; kind: string; status: string; note: string }[];
     };
-    expect(mine.requests).toEqual([
+    expect(mine.items).toEqual([
       expect.objectContaining({
         id: out.request.id,
         kind: "enable",
@@ -324,7 +361,11 @@ describe("requests", () => {
         note: "For the weekly report.",
       }),
     ]);
-    expect(await run("requests.list-mine", {}, ctxOf(env.bossId))).toEqual({ requests: [] });
+    expect(await run("requests.list-mine", {}, ctxOf(env.bossId))).toEqual({
+      items: [],
+      total: 0,
+      next: null,
+    });
     const [row] = await audits("catalog.requested");
     expect(row?.detail).toMatchObject({ via: "agent", operation: "requests.create" });
     // asked twice: the pending one is named
@@ -336,12 +377,16 @@ describe("requests", () => {
 });
 
 describe("connectors and extensions", () => {
-  it("connectors.get carries no credential", async () => {
+  it("connectors.get carries no credential, and only the public endpoint whatever the role", async () => {
     const item = await seedPlugin(env, { name: "with-gh", skills: [] });
+    const url = `${env.mcp.url}?tenant=acme-4711`;
     const on = await env.boss({
       method: "PUT",
       url: `/api/v1/orgs/${env.orgId}/catalog/${item}/switch`,
-      payload: { enabled: true, inputs: { connectors: { gh: tokenInput() } } },
+      payload: {
+        enabled: true,
+        inputs: { connectors: { gh: { ...tokenInput(), endpoint: { url } } } },
+      },
     });
     expect(on.statusCode, on.body).toBe(200);
     const list = (await run("connectors.list", {}, ctxOf(env.memId))) as {
@@ -355,30 +400,44 @@ describe("connectors and extensions", () => {
     expect(out.connector.auth).toEqual({ type: "bearer", ownership: "org" });
     expect(out.connector.credential).toEqual({ ownership: "org", status: "connected" });
     expect(out.connector.tools.length).toBeGreaterThan(0);
-    const json = JSON.stringify(out) + JSON.stringify(list);
+    const asAdmin = await run("connectors.get", { connectorId: id }, ctxOf(env.bossId));
+    const json = JSON.stringify(out) + JSON.stringify(list) + JSON.stringify(asAdmin);
     expect(json).not.toContain(MCP_TOKEN);
+    expect(json).not.toContain("tenant");
+    expect(json).not.toContain("/mcp");
+    expect(out.connector).toMatchObject({ endpoint: { url: `${new URL(url).origin}/…` } });
     expect(json).not.toMatch(/"(token|password|clientSecret|headers|connectorData)"/);
   });
 
   it("extensions.list is state only; extensions.points describes every point", async () => {
     const ext = (await run("extensions.list", {}, ctxOf(env.bossId))) as {
-      extensions: Record<string, unknown>[];
+      items: Record<string, unknown>[];
     };
-    expect(ext.extensions.length).toBeGreaterThan(0);
-    for (const e of ext.extensions) {
+    expect(ext.items.length).toBeGreaterThan(0);
+    for (const e of ext.items) {
       for (const k of ["config", "secrets", "orgConfigSchema", "permissions"]) {
         expect(e).not.toHaveProperty(k);
       }
     }
-    expect(ext.extensions.find((e) => e.plugin === "fake-connector")).toMatchObject({
+    expect(ext.items.find((e) => e.plugin === "fake-connector")).toMatchObject({
       enabled: true,
       provides: ["connector@1"],
     });
-    const points = (await run("extensions.points", {}, ctxOf(env.memId))) as {
-      points: { name: string; description: string; providers: string[] }[];
+    type Points = {
+      points: { name: string; description: string; providers?: string[]; hasProvider?: boolean }[];
     };
-    for (const p of points.points) expect(p.description).toMatch(/\S/);
-    expect(points.points.find((p) => p.name === "connector")?.providers).toContain(
+    expect(availability(op("extensions.points"), facts("guest")).ok).toBe(false);
+    // a member learns whether a point has a provider, never which extension
+    const asMember = (await run("extensions.points", {}, ctxOf(env.memId))) as Points;
+    for (const p of asMember.points) {
+      expect(p.description).toMatch(/\S/);
+      expect(p).not.toHaveProperty("providers");
+    }
+    expect(asMember.points.find((p) => p.name === "connector")?.hasProvider).toBe(true);
+    expect(JSON.stringify(asMember)).not.toContain("fake-connector");
+    // an org admin gets the providers' plugin names
+    const asAdmin = (await run("extensions.points", {}, ctxOf(env.bossId))) as Points;
+    expect(asAdmin.points.find((p) => p.name === "connector")?.providers).toContain(
       "fake-connector",
     );
   });
