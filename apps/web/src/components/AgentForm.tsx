@@ -244,7 +244,7 @@ export function useAgentForm(
   ).length;
 
   const sections = (
-    <form ref={formRef} onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
+    <form ref={formRef} method="post" onSubmit={onSubmit} onKeyDown={onKeyDown} noValidate>
       <Stack gap={16}>
         {error !== undefined && <FormError message={error} />}
         <FormSection

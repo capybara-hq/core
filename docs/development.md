@@ -86,6 +86,13 @@ pnpm dev:web          # i.e. pnpm --filter @capybara-hq/web dev, started through
 Open <http://localhost:3000> in a browser: the setup wizard creates the admin and org → create an agent (pick the model `model-fake/fake-1`) → chat. `model-fake` decides its reply from the message prefix: `echo:<text>` replies with the text unchanged, `slow:<milliseconds>:<text>` streams chunk by chunk slowly (handy for trying "Stop" and mid-run messages), and any other text gets `You said: …`.
 
 - **The kernel behind the web layer needs `http.trustProxy: 1`** (`CAPYBARA_HTTP__TRUST_PROXY=1`): `server.mjs` drops forwarded headers forged by the client and rewrites `x-forwarded-for` to the real peer address before passing the request to the kernel; the kernel must trust that one hop to get the real client IP (login rate limiting counts per IP). The web layer must be started through `server.mjs` (`pnpm dev:web` / `pnpm --filter @capybara-hq/web start`); running `next dev` / `next start` directly skips this step.
+- **Opening the dev web from another device** (a LAN address such as `http://192.168.3.52:3000`):
+  `next dev` serves its scripts only to localhost, so the page renders without client JS. List the
+  extra hosts in `CAPYBARA_WEB_DEV_ORIGINS` (comma-separated, e.g.
+  `CAPYBARA_WEB_DEV_ORIGINS=192.168.3.52 pnpm dev:web`; it feeds Next's `allowedDevOrigins`, read at
+  start, no effect on production builds). Without it the forms still work safely: every form posts
+  (`web-ui-form-method`), and sign-in and setup are completed server side by the proxy
+  (`apps/web/src/lib/form-post.ts`).
 - When the kernel is also exposed directly, don't use a hop count; use a list of trusted proxy addresses instead (such as `CAPYBARA_HTTP__TRUST_PROXY='["10.0.0.0/8"]'`), see [docs/config.md](config.md).
 
 Next you can invite members (`POST /api/v1/orgs/:orgId/invitations`) and manage members by role (`/api/v1/orgs/:orgId/members`); for how to write kernel APIs, see [.agents/skills/writing-kernel-api](../.agents/skills/writing-kernel-api/SKILL.md).

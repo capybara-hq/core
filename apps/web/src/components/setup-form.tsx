@@ -3,6 +3,7 @@
 import { Button, Field, Input, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type FormEvent, useState } from "react";
+import { ApiClientError } from "../lib/api";
 import { useAppMutation } from "../lib/query/mutation";
 import { completeSetup, type SetupInput } from "../lib/session";
 import { useErrorMessage } from "../lib/use-error-message";
@@ -11,12 +12,23 @@ import { FormError } from "./form-error";
 /**
  * The setup wizard's form: creates the first super admin (and optionally an org); on success
  * the kernel signs them in and `onSuccess` (the page) ends the cache's session and navigates.
+ * `initialError` is the error code of a native setup POST that failed (lib/form-post.ts).
  */
-export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
+export function SetupForm({
+  onSuccess,
+  initialError,
+}: {
+  onSuccess: () => void;
+  initialError?: string | undefined;
+}) {
   const t = useTranslations("setup");
   const errorMessage = useErrorMessage();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const [error, setError] = useState<string | undefined>(() =>
+    initialError === undefined
+      ? undefined
+      : errorMessage(new ApiClientError(400, initialError, initialError)),
+  );
   // A new session: the page drops the whole cache before it navigates, nothing to invalidate.
   const { mutateAsync: setUp } = useAppMutation({ fn: completeSetup, invalidates: () => [] });
 
@@ -45,7 +57,8 @@ export function SetupForm({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <form onSubmit={onSubmit}>
+    // method="post": without the client JS the proxy completes the setup (lib/form-post.ts).
+    <form method="post" onSubmit={onSubmit}>
       <Stack gap={16}>
         <Field label={t("loginLabel")} required help={t("loginHint")}>
           <Input name="login" required autoComplete="username" minLength={3} maxLength={64} />

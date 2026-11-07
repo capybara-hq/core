@@ -5,12 +5,24 @@ const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 /** pnpm monorepo 根目录（依赖都软链到根的 node_modules/.pnpm）。 */
 const monorepoRoot = new URL("../..", import.meta.url).pathname;
 
+/**
+ * Dev only: the hosts besides localhost that may load the dev server's scripts and HMR
+ * (`CAPYBARA_WEB_DEV_ORIGINS`, comma-separated, e.g. `192.168.3.52,dev.lan`). `next dev` blocks
+ * other origins, so a page opened over a LAN address renders without its client JS. `next build` /
+ * `next start` ignore `allowedDevOrigins`.
+ */
+const devOrigins = (process.env.CAPYBARA_WEB_DEV_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s !== "");
+
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   // The dev indicator would cover the sidebar's account row.
   devIndicators: false,
+  ...(devOrigins.length > 0 && { allowedDevOrigins: devOrigins }),
   transpilePackages: ["@capybara-hq/design"],
   turbopack: {
     root: monorepoRoot,

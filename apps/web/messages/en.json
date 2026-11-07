@@ -38,7 +38,9 @@
         "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
       },
       "auth": {
-        "account_disabled": "This account has been disabled."
+        "account_disabled": "This account has been disabled.",
+        "invalid_credentials": "Invalid username or password.",
+        "rate_limited": "Too many attempts. Please try again later."
       },
       "unknown": "Sign-in failed. Please try again."
     },

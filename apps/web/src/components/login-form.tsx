@@ -44,7 +44,9 @@ export function LoginForm({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <form onSubmit={onSubmit}>
+    // method="post": if the client JS did not load, the browser posts natively and the proxy signs
+    // in server side (lib/form-post.ts); the password never travels in a URL.
+    <form method="post" onSubmit={onSubmit}>
       <Stack gap={16}>
         <Field label={t("loginLabel")}>
           <Input
