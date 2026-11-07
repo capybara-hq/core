@@ -17,7 +17,9 @@ import {
   writeSnapshot,
 } from "./approvals.js";
 import { ExtensionBlobs } from "./blobs.js";
+import { ExtensionDeploymentConfigService } from "./deployment-config.js";
 import { ExtensionDisplayNames } from "./display-name.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsByOrg } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
@@ -121,6 +123,11 @@ export class ExtensionAdmin {
     @Inject(KERNEL_BUS) private readonly bus: PublishBus,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+    /** Which required overridable fields the platform left empty (spec A §5.4a). */
+    @Inject(ExtensionDeploymentConfigService)
+    private readonly deploymentConfig: ExtensionDeploymentConfigService,
+    /** How many orgs still need their own config for such an extension. */
+    @Inject(EffectiveConfigs) private readonly effectiveConfigs: EffectiveConfigs,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -371,6 +378,31 @@ export class ExtensionAdmin {
     return { ...cached, configurable: cached.set.config.deployment.length > 0 };
   }
 
+  /**
+   * For each configurable, readable extension whose platform config leaves required overridable
+   * fields empty (spec A §5.4a): the number of orgs still needing their own config. Extensions
+   * without overridable fields cost no read.
+   */
+  private async orgsNeedingConfig(subjects: Subject[]): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    for (const s of subjects) {
+      if (!s.configurable || s.broken !== undefined) continue;
+      try {
+        const missing = await this.deploymentConfig.orgMustConfigure(s.name);
+        if (missing.length > 0) {
+          out.set(s.name, await this.effectiveConfigs.countNeedingConfig(s.name));
+        }
+      } catch (err) {
+        // the list never fails for one extension's config; the field is then left out
+        this.log.warn("cannot tell whether orgs must configure the extension", {
+          plugin: s.name,
+          err,
+        });
+      }
+    }
+    return out;
+  }
+
   private async views(subjects: Subject[]): Promise<AdminExtensionView[]> {
     if (subjects.length === 0) return [];
     const names = subjects.map((s) => s.name);
@@ -386,6 +418,7 @@ export class ExtensionAdmin {
       .orderBy("replica_id")
       .execute();
     const items = await pluginItemsOf(this.db, names);
+    const needing = await this.orgsNeedingConfig(subjects);
     const counts = new Map(
       (
         await this.db
@@ -483,6 +516,7 @@ export class ExtensionAdmin {
         snapshot: snapshotView(snap),
         configurable: s.configurable,
         configValid,
+        ...(needing.has(s.name) && { orgsNeedingConfig: needing.get(s.name) as number }),
         removable: s.source === "install" && install?.required !== true,
         required: install?.required === true,
         ...scopeInfo,

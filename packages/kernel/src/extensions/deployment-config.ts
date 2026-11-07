@@ -50,6 +50,13 @@ import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
 import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "./lifecycle-topics.js";
 import { PluginDeploymentConfigLock } from "./locks.js";
+import {
+  type FieldLevel,
+  fieldLevels,
+  jsonSchemaFieldLevels,
+  missingOverridable,
+  relaxOverridable,
+} from "./org-levels.js";
 
 export {
   DEPLOYMENT_SECRETS_ORG,
@@ -84,6 +91,11 @@ export interface DeploymentConfigField {
    * (item names, not secret values; spec §4.3). Other secret fields report only `set`.
    */
   keys?: string[];
+  /**
+   * What orgs may do with the field (spec A §5.1, the level of its top-level key): `readonly` (they
+   * see it) or `override` (they may bring their own value); absent = hidden from orgs.
+   */
+  org?: "readonly" | "override";
 }
 
 /**
@@ -121,6 +133,11 @@ export interface DeploymentConfigView {
   validated: boolean;
   /** 校验失败的原因（只有路径与说明，不含值）。 */
   issues: ConfigIssue[];
+  /**
+   * The required `override` fields the platform left empty (spec A §5.4a): the extension still
+   * loads, and every org that follows the platform must configure them itself.
+   */
+  orgMustConfigure: string[];
 }
 
 /** 某字段 zod 叶子上的默认值（整份配置不合法、校验没能补上默认值时，视图仍按它显示）。 */
@@ -376,7 +393,8 @@ export class ExtensionDeploymentConfigService {
     applySecretEntries(next, secretEntries);
     const touched = new Set([...Object.keys(values), ...secretEntries.map((e) => e.path)]);
     if (info.schema) {
-      const r = (info.schema as z.ZodType).safeParse(
+      // overridable fields may stay empty on the platform (spec A §5.4a)
+      const r = relaxOverridable(info.schema as z.ZodTypeAny).safeParse(
         mergeDeploymentConfig(next, fileValue, fieldPaths),
       );
       if (!r.success) {
@@ -457,7 +475,8 @@ export class ExtensionDeploymentConfigService {
     let valid = true;
     let issues: ConfigIssue[] = [];
     if (info.schema) {
-      const r = (info.schema as z.ZodType).safeParse(raw);
+      // the load gate: overridable fields may stay empty (spec A §5.4a)
+      const r = relaxOverridable(info.schema as z.ZodTypeAny).safeParse(raw);
       if (r.success) effective = r.data;
       else {
         valid = false;
@@ -466,6 +485,7 @@ export class ExtensionDeploymentConfigService {
     }
     const formSchema = this.formSchemaOf(plugin, info);
     const hinted = formSchema ? hintedSecretPaths(formSchema) : new Set<string>();
+    const levels = levelsOf(info);
     const fields = info.fields.map((f): DeploymentConfigField => {
       const from = fieldSource(sources, f.path);
       let value = getPath(effective, f.path);
@@ -477,12 +497,14 @@ export class ExtensionDeploymentConfigService {
         if (value === undefined && d.has) value = d.value;
         source = value === undefined ? "unset" : "default";
       }
+      const level = levels.get(f.path.split(".")[0] as string);
       const base = {
         path: f.path,
         secret: f.secret,
         hot: f.hot,
         source,
         readonly: from !== undefined,
+        ...(level !== undefined && level !== "hidden" && { org: level }),
       };
       // a schema default (e.g. `secret(record).default({})`) is no secret anybody set
       const set = value !== undefined && source !== "default";
@@ -503,7 +525,26 @@ export class ExtensionDeploymentConfigService {
       valid,
       validated: info.schema !== undefined,
       issues,
+      orgMustConfigure: orgMustConfigureOf(info, raw, levels),
     };
+  }
+
+  /**
+   * The required `override` fields the platform left empty ({@link DeploymentConfigView}
+   * `orgMustConfigure`); reads nothing when the extension has no `override` field. Unknown to the
+   * deployment -> `extension.not_found`.
+   */
+  async orgMustConfigure(plugin: string): Promise<string[]> {
+    const info = await this.info(plugin);
+    const levels = levelsOf(info);
+    if (![...levels.values()].includes("override")) return [];
+    const stored = await this.readStored(plugin, info);
+    const raw = mergeDeploymentConfig(
+      stored,
+      this.fileConfig()[plugin],
+      info.fields.map((f) => f.path),
+    );
+    return orgMustConfigureOf(info, raw, levels);
   }
 
   /**
@@ -532,6 +573,30 @@ export class ExtensionDeploymentConfigService {
     const js = this.formSchemaOf(plugin, info);
     return js ? hintedSecretPaths(js) : new Set();
   }
+}
+
+/** The org level of each top-level key: from the zod schema, else the package's form schema. */
+function levelsOf(info: DeploymentSchemaInfo): Map<string, FieldLevel> {
+  return info.schema
+    ? fieldLevels(info.schema as z.ZodTypeAny)
+    : jsonSchemaFieldLevels(info.jsonSchema);
+}
+
+/**
+ * The required `override` keys `raw` leaves empty: by the zod schema, else (a static form schema)
+ * the `required` keys marked `override` that have no value.
+ */
+function orgMustConfigureOf(
+  info: DeploymentSchemaInfo,
+  raw: unknown,
+  levels: Map<string, FieldLevel>,
+): string[] {
+  if (info.schema) return missingOverridable(info.schema as z.ZodTypeAny, raw);
+  const required = (info.jsonSchema as { required?: unknown } | undefined)?.required;
+  if (!Array.isArray(required)) return [];
+  return [...levels]
+    .filter(([k, l]) => l === "override" && required.includes(k) && getPath(raw, k) === undefined)
+    .map(([k]) => k);
 }
 
 /**

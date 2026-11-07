@@ -76,6 +76,7 @@ import {
   setupInstance,
   warnUpgrades,
 } from "./instance.js";
+import { relaxOverridable } from "./org-levels.js";
 import { declaredDisplayName, permissionSetOfSection, readMigrationSql } from "./package.js";
 import {
   blockingKeys,
@@ -1515,7 +1516,9 @@ export class ExtensionHost {
       return undefined;
     }
     let config: unknown = raw;
-    const parsed = readConfig ? schema?.safeParse(raw) : undefined;
+    // the load gate (spec A §5.4a): overridable fields may stay empty on the platform, so
+    // `ctx.config` may lack them; hidden and read-only fields must be complete
+    const parsed = readConfig && schema ? relaxOverridable(schema).safeParse(raw) : undefined;
     if (a.source !== "install") this.configValidity.set(name, parsed?.success ?? true);
     if (decision.action === "pending") {
       // 待批准：不校验配置、不迁移、不 setup；配置合法时仍登记其中的密钥，避免日志泄露
@@ -1692,7 +1695,9 @@ export class ExtensionHost {
         configurable: schema !== undefined,
         configValid:
           this.configValidity.get(name) ??
-          (schema ? schema.safeParse(this.extensionConfig[name] ?? {}).success : true),
+          (schema
+            ? relaxOverridable(schema).safeParse(this.extensionConfig[name] ?? {}).success
+            : true),
         displayName: this.declaredDisplayNames.get(name) ?? null,
       };
     });
@@ -2099,7 +2104,7 @@ export class ExtensionHost {
         if (schema) {
           try {
             const raw = await this.rawConfigOf(plugin, schema);
-            this.configValidity.set(plugin, schema.safeParse(raw).success);
+            this.configValidity.set(plugin, relaxOverridable(schema).safeParse(raw).success);
           } catch (err) {
             this.log.warn("cannot read the stored deployment config of plugin", {
               plugin,
@@ -2121,7 +2126,7 @@ export class ExtensionHost {
         );
         return "invalid";
       }
-      const r = schema.safeParse(raw);
+      const r = relaxOverridable(schema).safeParse(raw);
       if (!r.success) {
         this.log.warn(
           "plugin deployment config changed but is invalid on this replica; keeping the current config",

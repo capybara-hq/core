@@ -10,6 +10,7 @@ import { ExtensionBlobs } from "./blobs.js";
 import { BootstrapService } from "./bootstrap.js";
 import { ExtensionDeploymentConfigService } from "./deployment-config.js";
 import { ExtensionDisplayNames } from "./display-name.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
@@ -48,6 +49,7 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     ExtensionDeploymentConfigService,
+    EffectiveConfigs,
     OrgExtensionConfigs,
     ExtensionPointDefaults,
     BootstrapService,
@@ -66,6 +68,7 @@ import { ReplicaStatusStore } from "./sources.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     ExtensionDeploymentConfigService,
+    EffectiveConfigs,
     OrgExtensionConfigs,
     ExtensionPointDefaults,
     BootstrapService,
