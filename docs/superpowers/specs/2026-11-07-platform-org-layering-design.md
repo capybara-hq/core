@@ -157,7 +157,8 @@ deployment field read-only or overridable.
   config handed to each org-bound call (§6), not from `ctx.config`. The SDK documentation and the
   `writing-extensions` skills say so; nothing checks it statically.
 - Changing a field's level in a new plugin version is allowed. A field that stops being `override`
-  drops out of every org copy at upgrade (the org then follows the platform for it); a field that
+  drops out of every org copy at upgrade (the org then follows the platform for it; the stored value
+  is ignored, not deleted); a field that
   becomes `override` is not in existing copies, so those orgs follow the platform for it until they
   edit it **(designer's call)**.
 
