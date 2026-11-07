@@ -233,6 +233,7 @@ export class SkillChangesService {
     skillId: string,
     accountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const cancelled = await this.deleteAgentSkillIn(
       orgId,
@@ -240,6 +241,7 @@ export class SkillChangesService {
       skillId,
       accountId,
       actorTokenId,
+      auditDetail,
     );
     await this.finishCancel(orgId, cancelled);
   }
@@ -526,6 +528,7 @@ export class SkillChangesService {
     skillId: string,
     accountId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<CancelledDrafts> {
     await this.keyShareOrg(orgId);
     const agent = await this.db
@@ -592,7 +595,7 @@ export class SkillChangesService {
       orgId,
       action: "skill.deleted",
       target: skillId,
-      detail: { name: r.name, agentId },
+      detail: { name: r.name, agentId, ...auditDetail },
     });
     return out;
   }

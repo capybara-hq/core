@@ -4,6 +4,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { FilesModule } from "../files/files.module.js";
@@ -16,6 +17,7 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
+import { AgentSkillsOperations } from "./ops/agent-skills.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
 import { ApprovalsOperations } from "./ops/approvals.ops.js";
@@ -25,6 +27,7 @@ import { ChannelsOperations } from "./ops/channels.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
+import { EnvironmentsOperations } from "./ops/environments.ops.js";
 import { EvalsOperations } from "./ops/evals.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
@@ -76,6 +79,9 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   EvalsOperations,
   BackgroundOperations,
   PreviewersOperations,
+  // Task 11b: environments, agent skills
+  EnvironmentsOperations,
+  AgentSkillsOperations,
 ] as const;
 
 /**
@@ -99,6 +105,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     InboxModule,
     ChannelsModule,
     EvalsModule,
+    EnvironmentsModule,
     BackgroundModule,
     FilesModule,
   ],

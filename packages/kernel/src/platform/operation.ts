@@ -243,6 +243,11 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
     description:
       "The org's settings (tool search, language, sandbox policy, the Platform tool switch): read and change.",
   },
+  {
+    id: "environments",
+    description:
+      "Your own cloud environments (the workspaces your conversations run in): list, read, create, rename. Deleting one or wiping its files is done on the web.",
+  },
 ];
 
 /**

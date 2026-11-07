@@ -265,30 +265,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // environments (personal cloud environments, environments design phase 1)
   {
-    route: "GET /api/v1/orgs/:orgId/environments",
-    category: "later",
-    reason: "The person's environments, an agent could list later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/environments",
-    category: "later",
-    reason: "Creates a personal cloud environment; an agent could do it later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/environments/:id",
-    category: "later",
-    reason: "One environment's details, an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/environments/:id",
-    category: "later",
-    reason: "Renames an environment; an agent could do it later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "DELETE /api/v1/orgs/:orgId/environments/:id",
     category: "human-only",
     reason: "Deletes an environment and its files",
@@ -538,33 +514,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // skills
   {
-    route: "GET /api/v1/orgs/:orgId/skill-changes/:id",
-    category: "later",
-    reason: "Skill change detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/skill-changes/:id/decide",
     category: "human-only",
     reason: "Decides a proposed skill change",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/skills",
-    category: "later",
-    reason: "Skills attached to an agent, readable later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId",
-    category: "later",
-    reason: "Detaching a skill from an agent, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills",
-    category: "later",
-    reason: "Invocable skill list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
     route: "POST /api/v1/orgs/:orgId/skills/uploads",

@@ -129,8 +129,9 @@ export class EnvironmentsService {
     accountId: string,
     input: { name: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EnvironmentView> {
-    const id = await this.insert(orgId, accountId, input.name, actorTokenId);
+    const id = await this.insert(orgId, accountId, input.name, actorTokenId, auditDetail);
     return this.get(orgId, accountId, id);
   }
 
@@ -140,6 +141,7 @@ export class EnvironmentsService {
     accountId: string,
     name: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<string> {
     const current = this.providers.current();
     if (!current) throw environmentUnavailable(null);
@@ -184,9 +186,42 @@ export class EnvironmentsService {
       orgId,
       action: "environment.created",
       target: id,
-      detail: { name },
+      detail: { name, ...auditDetail },
     });
     return id;
+  }
+
+  /**
+   * The refusals {@link create} would raise, read without locks or writes (a precheck before a
+   * confirmation card): no sandbox provider, the person's limit, a name already taken. Throws the
+   * same {@link ApiError}s; a race still ends in `create`'s own refusal.
+   */
+  async checkCreate(orgId: string, accountId: string, name: string): Promise<void> {
+    if (!this.providers.current()) throw environmentUnavailable(null);
+    const { n } = await this.db
+      .selectFrom("environments")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    const max = this.config.get().environments.maxPersonal;
+    if (Number(n) >= max) {
+      throw new ApiError(
+        "environment.limit_reached",
+        `You already have ${max} environments in this organization; delete one to create another`,
+      );
+    }
+    await this.assertNameFree(orgId, accountId, name);
+  }
+
+  /** The refusals {@link rename} would raise, read without locks (see {@link checkCreate}). */
+  async checkRename(orgId: string, accountId: string, id: string, name: string): Promise<void> {
+    const before = await this.get(orgId, accountId, id);
+    if (before.name?.toLowerCase() !== name.toLowerCase()) {
+      await this.assertNameFree(orgId, accountId, name);
+    }
   }
 
   /** Renames one of the person's live environments (the default too); see {@link create}. */
@@ -196,8 +231,9 @@ export class EnvironmentsService {
     id: string,
     name: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EnvironmentView> {
-    await this.renameIn(orgId, accountId, id, name, actorTokenId);
+    await this.renameIn(orgId, accountId, id, name, actorTokenId, auditDetail);
     return this.get(orgId, accountId, id);
   }
 
@@ -208,6 +244,7 @@ export class EnvironmentsService {
     id: string,
     name: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const before = await this.lockOwn(orgId, accountId, id);
     if (before.name === name) return;
@@ -231,7 +268,7 @@ export class EnvironmentsService {
       orgId,
       action: "environment.renamed",
       target: id,
-      detail: { from: before.name, to: name },
+      detail: { from: before.name, to: name, ...auditDetail },
     });
   }
 

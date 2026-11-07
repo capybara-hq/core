@@ -33,7 +33,30 @@ export const SkillPathParams = z.object({ id: z.string().min(1) });
 
 export const SkillShareableSchema = z.object({ shareable: z.boolean() }).strict();
 
+/** `:id` of `GET /skill-changes/:id` (taken as is). */
+export const SkillChangePathParams = z.object({ id: z.string().min(1).max(100) });
+/** `:agentId` of the agent's skills and invocable skills routes (taken as is). */
+export const AgentSkillsListParams = z.object({ agentId: z.string().min(1).max(100) });
+export const AgentSkillPathParams = AgentSkillsListParams.extend({
+  skillId: z.string().min(1).max(100),
+});
+/** `?conversationId=` of `GET /agents/:agentId/invocable-skills`. */
+export const InvocableSkillsQuerySchema = z
+  .object({ conversationId: z.string().min(1).max(100).optional() })
+  .strict();
+
 export const SKILL_ROUTES: readonly RouteSchemas[] = [
+  { route: "GET /api/v1/orgs/:orgId/skill-changes/:id", params: SkillChangePathParams },
+  { route: "GET /api/v1/orgs/:orgId/agents/:agentId/skills", params: AgentSkillsListParams },
+  {
+    route: "DELETE /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId",
+    params: AgentSkillPathParams,
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills",
+    params: AgentSkillsListParams,
+    query: InvocableSkillsQuerySchema,
+  },
   { route: "GET /api/v1/orgs/:orgId/skills" },
   { route: "GET /api/v1/orgs/:orgId/skills/:id", params: SkillPathParams },
   { route: "POST /api/v1/orgs/:orgId/skills", body: SkillCreateBody },

@@ -1,12 +1,13 @@
 import { Controller, Get, Header, Inject, Param } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { type InvocableSkill, SkillInvoker } from "./invoke.js";
+import { InvocableSkillsQuerySchema } from "./skills.schemas.js";
 
-const ListQuery = z.object({ conversationId: z.string().min(1).max(100).optional() }).strict();
+const ListQuery = InvocableSkillsQuerySchema;
 class InvocableSkillsQuery extends createZodDto(ListQuery, "InvocableSkillsQuery") {}
 
 /**
