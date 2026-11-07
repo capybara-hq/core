@@ -76,9 +76,10 @@ export interface KernelDeps {
   models?: Pick<ModelEmbeddings, "embed" | "describe">;
   /**
    * The host's hook registry: `ctx.models.embed` fires `model.request` through it (spec B §5.4).
-   * Absent (a ctx built alone in a test): no hooks fire.
+   * A required key, so no builder leaves policy hooks out by omission (fail closed by
+   * construction); only a ctx built alone in a test passes `undefined` (no hooks fire).
    */
-  hooks?: HookRunner;
+  hooks: HookRunner | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };

@@ -108,7 +108,7 @@ export interface ModelCallRequestHookPayload extends HookScope {
  * text of the call (the kernel splits them into batches afterwards). A call with no input sends
  * nothing and fires nothing. There is no conversation: the conversation fields of a chat model call
  * (`accountId`, `agentId`, `agentVersion`, `conversationId`, `runId`, `parent`, `step`, `attempt`,
- * `request`) are absent. A policy denial makes `embed` reject (`run.hook_denied`); nothing is sent
+ * `request`) are absent. A policy denial makes `embed` reject (`model.hook_denied`); nothing is sent
  * to the provider and no usage is recorded.
  */
 export interface EmbeddingRequestHookPayload {

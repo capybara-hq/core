@@ -106,7 +106,8 @@ export interface ExtensionModels {
    * lacks, and a `ModelError` when the provider fails (a result of the wrong count or dimension is a
    * `ModelError` of kind `server`). Not retried by the kernel. Each call fires the `model.request`
    * hook first (`purpose: "embedding"`, every text of the call): when a policy hook denies it, the
-   * call rejects with an error whose `code` is `run.hook_denied`, and nothing is sent or billed.
+   * call rejects with an error whose `code` is `model.hook_denied` (HTTP 403 if it escapes an
+   * extension route), and nothing is sent or billed.
    */
   embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
   /** The org's effective model for `purpose`, or null when it maps to no model the org can use. */

@@ -10,7 +10,8 @@ export function embedConsumer(): { ctx: ExtensionContext | undefined } {
 /**
  * Declares one embedding purpose (`embed-consumer.memory`, `permissions.models`): purpose targets
  * must be of the purpose's kind (model platform spec B §5.3), and `ctx.models.embed` / `describe`
- * accept only it (§5.4). The tool `remember` embeds its texts and describes the purpose's model.
+ * accept only it (§5.4). The tool `remember` (allowed by default) embeds its texts and describes the
+ * purpose's model; the route `POST /embed` (`{ orgId, input }`) embeds and lets errors escape.
  */
 export default defineExtension({
   name: "embed-consumer",
@@ -19,6 +20,7 @@ export default defineExtension({
   provides: [],
   permissions: {
     tools: ["remember"],
+    http: [{ method: "POST", path: "/embed" }],
     models: [
       {
         purpose: "embed-consumer.memory",
@@ -38,6 +40,7 @@ export default defineExtension({
           properties: { texts: { type: "array", items: { type: "string" } } },
           required: ["texts"],
         },
+        defaultPolicy: "allow",
       },
       async (input, call) => {
         const { texts } = input as { texts: string[] };
@@ -52,5 +55,10 @@ export default defineExtension({
         return { content: [{ type: "text", text }] };
       },
     );
+    ctx.http.route("POST", "/embed", async (req) => {
+      const { orgId, input } = (await req.json()) as { orgId: string; input: string[] };
+      const out = await ctx.models.embed({ orgId, purpose: "embed-consumer.memory", input });
+      return Response.json({ count: out.vectors.length });
+    });
   },
 });

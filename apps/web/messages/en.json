@@ -333,6 +333,7 @@
     "model": {
       "unconfigured": "No model is mapped to this purpose yet.",
       "purpose_unknown": "There is no such model purpose.",
+      "hook_denied": "An organization policy denied this model call",
       "provider_not_found": "No such model provider",
       "rate_limited": "The model provider is rate limiting.",
       "overloaded": "The model provider is overloaded.",

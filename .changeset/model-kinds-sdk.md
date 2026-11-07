@@ -18,5 +18,6 @@ hooks (DLP) see the texts sent to embedding vendors. `ModelRequestHookPayload` i
 `ModelCallRequestHookPayload` (steps, compaction, titles, `WebFetch`; the former interface) or
 `EmbeddingRequestHookPayload` (`purpose: "embedding"`, `orgId`, `extension`, `embeddingPurpose`,
 `provider`, `model`, `input`, `dimensions?`, `inputType?`, no conversation fields); narrow on
-`purpose` before reading `request`. A policy denial rejects the call with `run.hook_denied`, writes
-a `hook.denied` audit row and records no usage. `model.response` does not fire for embeddings.
+`purpose` before reading `request`. A policy denial rejects the call with the new error code
+`model.hook_denied` (403; an extension route that lets it escape answers 403, not 500), writes a
+`hook.denied` audit row and records no usage. `model.response` does not fire for embeddings.

@@ -81,7 +81,7 @@ export function toolsUnavailableReminder(unavailable: readonly UnavailableTool[]
 
 /**
  * `run_failed` message of a model request denied by a policy hook (user-facing, never model-visible);
- * also the message of the `run.hook_denied` error a denied `ctx.models.embed` call rejects with.
+ * also the message of the `model.hook_denied` error a denied `ctx.models.embed` call rejects with.
  */
 export const modelDeniedText = (plugin: string, reason: string) =>
   `Model request blocked by the "${plugin}" policy hook: ${reason}`;

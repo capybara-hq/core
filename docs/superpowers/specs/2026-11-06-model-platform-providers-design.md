@@ -237,7 +237,7 @@ Errors are `ModelError` with the existing kinds; no retries inside the extension
   resolves and before the first batch is sent (`purpose: "embedding"`, the calling extension, its
   embedding purpose, provider, model and every text of the call, no conversation fields), so policy
   hooks (DLP) see text sent to embedding vendors like every other kernel model call; a policy
-  denial rejects with `run.hook_denied`, sends nothing, records no usage and writes one
+  denial rejects with `model.hook_denied` (403), sends nothing, records no usage and writes one
   `hook.denied` audit row. `model.response` does not fire for embeddings.
 - Not in scope: `ctx.models` for chat (no consumer yet).
 
@@ -425,8 +425,11 @@ Rulings made while building the core part (they refine the sections above):
   union member `EmbeddingRequestHookPayload` (`purpose: "embedding"`, `extension`,
   `embeddingPurpose` for the declared purpose name, `input`, `dimensions?`, `inputType?`; the
   conversation fields typed absent), so `ModelRequestHookPayload` becomes a union and handlers
-  narrow on `purpose` before reading `request`. Denials reject with the step's error
-  (`RunError("run.hook_denied")`, `Model request blocked by the "<plugin>" policy hook: <reason>`);
+  narrow on `purpose` before reading `request`. Denials reject with the registered
+  `ApiError("model.hook_denied")` (403, so an escaped error is a 4xx, not a 500) carrying the
+  step's message (`Model request blocked by the "<plugin>" policy hook: <reason>`); uncaught, it
+  answers 403 from an extension route (generic message, nothing echoed to the unauthenticated
+  caller) and becomes the denial text in an extension tool's result;
   the audit row has no actor and targets the calling extension. The texts are copied once at the
   start of the call, so the hooks see exactly what is sent; an empty call fires nothing.
 - `ExtensionContext.models` is a required member; plugin test fakes need a models stub (run the

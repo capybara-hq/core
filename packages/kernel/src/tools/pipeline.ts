@@ -16,6 +16,7 @@ import type { AgentDefinition } from "../agents/definition.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ToolView, ToolViewSchema } from "../conversations/events.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { clipText } from "../extensions/hooks.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -1373,6 +1374,11 @@ export class ToolPipeline {
   /** 抛出的错误 → 给模型的结果：ToolError 的消息原样（插件约定为英文、可操作），其他只给错误类名。 */
   private thrown(key: string, e: unknown): ExecOutcome {
     if (e instanceof ToolError) return { kind: "error", message: e.message };
+    // an extension tool's ctx.models.embed denied by a policy hook (spec B §5.4): the model sees the
+    // deny text (sanitized reason), as for a denied tool call, not a generic failure
+    if (e instanceof ApiError && e.code === "model.hook_denied") {
+      return { kind: "error", message: e.message };
+    }
     // 提供工具的插件实例在调用进行中被撤销（停用 / 升级），排空时限到后中止（C17）
     if (e instanceof ExtensionUnloadedError) {
       this.deps.log.warn("tool call aborted: plugin unloaded", { toolKey: key, plugin: e.plugin });

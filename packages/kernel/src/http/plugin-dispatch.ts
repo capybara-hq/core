@@ -4,7 +4,7 @@ import type { Logger } from "@capybara-hq/plugin-sdk";
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import FindMyWay from "find-my-way";
 import type { Route } from "../ctx/create-ctx.js";
-import { errorBody } from "../errors.js";
+import { ApiError, ERROR_CODES, errorBody } from "../errors.js";
 import { ACCESS_COOKIE, REFRESH_COOKIE } from "../identity/cookies.js";
 import { codeForStatus, redactPath } from "./error.filter.js";
 
@@ -83,7 +83,10 @@ export function createPluginRouter(routes: Route[]): PluginRouter {
  * - `req.signal` aborts only when the client disconnects before the response is written (not on
  *   normal completion); long-lived handlers use it to unsubscribe;
  * - a throwing handler is logged (path redacted with `redactPath`) and returns 500 `internal` (the
- *   error message is not echoed).
+ *   error message is not echoed), except a `model.hook_denied` `ApiError` that escaped from
+ *   `ctx.models.embed` (an organization policy hook denied the call, spec B §5.4): a deliberate
+ *   outcome, not a failure, so it answers 403 `model.hook_denied` with a generic message (the
+ *   routes are unauthenticated: the policy extension's name and reason are not echoed).
  * - Fastify's own errors (a body over 1 MiB and so on) are mapped to the error envelope by the
  *   scope's error handler: 4xx by the common error code table (413 `payload_too_large`, 415
  *   `unsupported_media_type` and so on), 5xx are logged and return `internal`.
@@ -144,6 +147,15 @@ export async function registerPluginDispatch(
     try {
       res = await pluginHandler(webReq);
     } catch (err) {
+      if (err instanceof ApiError && err.code === "model.hook_denied") {
+        log.warn("plugin handler refused: a policy hook denied its model call", {
+          method: req.method,
+          path: redactPath(path),
+        });
+        return reply
+          .code(ERROR_CODES["model.hook_denied"])
+          .send(errorBody(err.code, "An organization policy denied this model call"));
+      }
       log.error("plugin handler failed", { method: req.method, path: redactPath(path), err });
       return reply.code(500).send(errorBody("internal", "Internal error"));
     }

@@ -22,7 +22,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { embeddingDeniedAudit, type HookRunner } from "../runtime/hook-calls.js";
-import { modelDeniedText, RunError } from "../runtime/model-call.js";
+import { modelDeniedText } from "../runtime/model-call.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { ModelPurposesService, type PurposeTarget } from "./purposes.js";
 
@@ -43,8 +43,8 @@ export const EMBED_MAX_INPUTS = 2048;
  * - fires `model.request` once (`purpose: "embedding"`, every text of the call, no conversation
  *   fields) through the host's hook registry before anything is sent; a policy denial (a deny, a
  *   hook error or timeout, a policy extension not loaded here or without a valid config in the org)
- *   writes one `hook.denied` audit row and rejects with `RunError("run.hook_denied")`, the error a
- *   denied run step fails with: no provider call, no usage row. A call with no input sends nothing
+ *   writes one `hook.denied` audit row and rejects with `ApiError("model.hook_denied")` (403) whose
+ *   message is the one a denied run step fails with: no provider call, no usage row. A call with no input sends nothing
  *   and fires nothing;
  * - splits the input into batches of the model's `maxBatch`, calls the provider's `embed` once per
  *   batch in order with the extension's signal (plus the request's own `signal`), each batch
@@ -260,7 +260,7 @@ export class ModelEmbeddings {
       hookPlugin: verdict.plugin,
       cause: verdict.cause,
     });
-    throw new RunError("run.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
+    throw new ApiError("model.hook_denied", modelDeniedText(verdict.plugin, verdict.reason));
   }
 
   /** `ctx.models.describe` for `plugin`: null when the purpose maps to no model the org can use. */

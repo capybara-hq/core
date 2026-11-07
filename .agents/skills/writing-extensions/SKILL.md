@@ -220,9 +220,9 @@ An extension adding UI to the web app (right-panel tabs on the conversation page
 `ctx.hooks.on(mount, handler, { mode })`, only during `setup`, on mount points declared in
 `permissions.hooks` (and, for `mode: "policy"`, in `permissions.policyHooks`). Hooks observe or deny;
 they never rewrite a request or a result. They fire only for organizations that enabled the extension,
-only in chat conversations and in sub-agents' conversations, never in eval replays (the exceptions
-are `usage.report` and the `model.request` of an extension's embedding call, below). Payloads are
-deep-frozen copies.
+in chat conversations and in sub-agents' conversations, and **never in eval replays** (embedding
+calls included: a replay makes none); `usage.report` and an extension's embedding `model.request`
+(below) also fire outside conversations. Payloads are deep-frozen copies.
 
 - **Registration.** The five mount points are `model.request`, `model.response`, `tool.preExecute`,
   `tool.postExecute` and `usage.report` (`HOOKS_AVAILABLE`); `session.*` and `agent.preStep` still
@@ -279,10 +279,14 @@ deep-frozen copies.
   `request` absent). `ModelRequestHookPayload` is the union of it and the chat call's
   `ModelCallRequestHookPayload`: narrow on `purpose` before reading `request`, and accept the absent
   fields (a policy hook that throws on them denies every embedding call). A denial (deny, error,
-  timeout, not loaded, needs config) makes `embed` reject with `code: "run.hook_denied"` (message
+  timeout, not loaded, needs config) makes `embed` reject with the `ApiError` `code: "model.hook_denied"` (403) (message
   `Model request blocked by the "<plugin>" policy hook: <reason>`), sends nothing, records no usage
   and writes one `hook.denied` audit row (no actor, `target` the calling extension,
-  `detail.purpose: "embedding"`); there is no `hook_denied` event. A call with no input fires
+  `detail.purpose: "embedding"`); there is no `hook_denied` event. Left uncaught, it answers 403
+  `model.hook_denied` from an extension route (`http/plugin-dispatch.ts`, generic message: routes
+  are unauthenticated, so the policy extension and its reason are not echoed), and from an
+  extension tool it becomes the tool result with the denial text (`tools/pipeline.ts`), never a 500
+  or a generic tool failure. A call with no input fires
   nothing. `model.response` does not fire for embeddings (usage goes through `usage.report`).
 - **`model.response`** fires after a sent call finished or failed (step attempts, compaction and
   title calls). It does **not** fire for a call the user aborted mid-stream, nor for a call that was never
