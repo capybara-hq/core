@@ -29,11 +29,14 @@ const ok = () => json(200, {});
 describe("plugin scope data layer: loaders call the kernel routes with the given bodies", () => {
   it("org switch: on with inputs, off preview then confirm", async () => {
     const calls = stubApi({ [`PUT /api/v1/orgs/${ORG}/catalog/i1/switch`]: ok });
-    await setOrgPluginSwitch(ORG, "i1", { enabled: true, inputs: { version: "1.0.0" } });
+    await setOrgPluginSwitch(ORG, "i1", {
+      enabled: true,
+      inputs: { extensionConfig: { region: "eu" } },
+    });
     await setOrgPluginSwitch(ORG, "i1", { enabled: false });
     await setOrgPluginSwitch(ORG, "i1", { enabled: false, confirm: "h" });
     expect(calls.map((c) => bodyOf(c))).toEqual([
-      { enabled: true, inputs: { version: "1.0.0" } },
+      { enabled: true, inputs: { extensionConfig: { region: "eu" } } },
       { enabled: false },
       { enabled: false, confirm: "h" },
     ]);

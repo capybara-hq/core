@@ -386,8 +386,8 @@ function Wizard({
   const submit = async () => {
     setSubmitting(true);
     setError(undefined);
+    // no version: an org always installs the platform version (ruling P2-17)
     const body: OrgInstallBody = {
-      version: item.latestVersion,
       ...(templates.length > 0 && {
         connectors: Object.fromEntries(
           templates.map((c) => [c.id, connectorInput(c, drafts[c.id] as TemplateDraft)]),
