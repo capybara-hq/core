@@ -30,8 +30,11 @@ const Scope = z.enum(["all", "optional", "named"]);
 const Orgs = z.array(z.string().min(1).max(128)).max(1000);
 const Hash = z.string().min(1).max(128);
 
-const exactlyOnePreviewTarget = (b: { scope?: unknown; disabled?: true | undefined; follow?: true | undefined }) =>
-  [b.scope !== undefined, b.disabled === true, b.follow === true].filter(Boolean).length === 1;
+const exactlyOnePreviewTarget = (b: {
+  scope?: unknown;
+  disabled?: true | undefined;
+  follow?: true | undefined;
+}) => [b.scope !== undefined, b.disabled === true, b.follow === true].filter(Boolean).length === 1;
 const orgsNeedScope = (b: { scope?: unknown; orgs?: unknown }) =>
   b.scope !== undefined || b.orgs === undefined;
 const scopeXorFollow = (b: { scope?: unknown; follow?: true | undefined }) =>

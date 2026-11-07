@@ -311,7 +311,7 @@ describe("skills.set-shareable and skills.delete", () => {
 });
 
 describe("plugins.components", () => {
-  it("lists platform components for the super admin without naming orgs", async () => {
+  it("lists platform components for the super admin as compact rows, orgs counted", async () => {
     const item = await importSkill(env, { name: "pdf-tools" });
     await setScope(env, item, "named", [org2]);
     const id = await skillComponent("pdf-tools");
@@ -328,7 +328,7 @@ describe("plugins.components", () => {
 });
 
 describe("platform component writes", () => {
-  it("previews and changes a scope, auditing it as the agent's and naming no org", async () => {
+  it("previews and changes a scope, auditing it as the agent's", async () => {
     const item = await importSkill(env, { name: "pdf-tools" });
     await setScope(env, item, "optional");
     const id = await skillComponent("pdf-tools");
@@ -418,12 +418,12 @@ describe("platform component writes", () => {
     expect(e.message).not.toContain(ORG2_NAME);
   });
 
-  it("a name clash that passes the precheck (a race) is refused without naming the other org", async () => {
+  it("a name clash that passes the precheck (a race) names the org, never its own skill", async () => {
     const item = await importSkill(env, { name: "pdf-tools" });
     await setScope(env, item, "named", [env.orgId]);
     const id = await skillComponent("pdf-tools");
     // the org's own skill is not offered the platform skill yet
-    await env.k.app.get(SkillsService).createFromText(org2, env.rootId, {
+    const own = await env.k.app.get(SkillsService).createFromText(org2, env.rootId, {
       name: "pdf-tools",
       description: "Use when testing.",
       body: "# Steps\n\n1. Test.",
@@ -433,13 +433,13 @@ describe("platform component writes", () => {
     const p = (await run("plugins.component-scope-preview", target, ctxOf(env.rootId))) as {
       scopeHash: string;
     };
-    // the operation runs without its precheck here: the service's own refusal must stay count-only
+    // the operation runs without its precheck here: the service's own refusal names the org
+    // (platform data, spec §14.5 item 1) and only counts that org's own clashing skill
     const e = await failure(
       run("plugins.set-component-scope", { ...target, scopeHash: p.scopeHash }, ctxOf(env.rootId)),
     );
-    expect(e.message).not.toContain(org2);
-    expect(e.message).not.toContain(ORG2_NAME);
-    expect(e.message).toContain("Other orgs already use");
+    expect(e.message).toContain(`"pdf-tools" is already used in org ${ORG2_NAME} (1 item(s)`);
+    expect(e.message).not.toContain(own.skill.id);
     const d = await failure(
       run(
         "plugins.set-component-disabled",
@@ -447,6 +447,6 @@ describe("platform component writes", () => {
         ctxOf(env.rootId),
       ),
     );
-    expect(d.message).not.toContain(ORG2_NAME);
+    expect(d.message).not.toContain(own.skill.id);
   });
 });

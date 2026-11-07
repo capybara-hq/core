@@ -11,6 +11,7 @@ import {
   componentScopeRules,
 } from "../../catalog/component-scope.schemas.js";
 import {
+  type ComponentScopePreview,
   ComponentScopeService,
   type ComponentTarget,
   type ComponentView,
@@ -20,7 +21,6 @@ import type { ComponentKind } from "../../catalog/component-state.js";
 import { PlatformComponents } from "../../catalog/platform-components.js";
 import { ApiError } from "../../errors.js";
 import { defineOperation, type OperationContext } from "../operation.js";
-import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
@@ -52,10 +52,25 @@ const REFUSED: Record<string, string> = {
 const OTHER_ORG_COMPONENT =
   "This component belongs to another org; its owner manages it, and the admin console shows it.";
 
-/** The refusal text of a name clash: a count, never the clashing orgs (spec section 6.1). */
+/** The refusal text of a name clash when the clashing orgs cannot be read again. */
 const CLASH = "Other orgs already use this component's name, so the change is refused.";
 
-/** A platform component as the super admin's list and writes show it: orgs only as counts. */
+/**
+ * The refusal text of a name clash, one part per org: the org is named (platform data, spec
+ * §14.5 item 1), the clashing skills, templates and plugins are counted, never named (they may be
+ * that org's own).
+ */
+const clashText = (cs: ComponentScopePreview["conflicts"]): string =>
+  cs.length === 0
+    ? CLASH
+    : `The change would offer a name twice, so it is refused: ${cs
+        .map(
+          (c) =>
+            `"${c.name}" is already used in org ${c.orgName} (${c.skills.length} item(s), ${c.plugins.length} plugin(s))`,
+        )
+        .join("; ")}`;
+
+/** A platform component as the super admin's list and writes show it: a compact row. */
 const brief = (c: ComponentView) => ({
   id: c.id,
   name: c.name,
@@ -157,10 +172,16 @@ export class ComponentsOperations implements OnModuleInit {
   }
 
   /**
-   * Runs a governance write; a name clash the service reports (it names the orgs) is rethrown
-   * as the count-only text, so a race past the precheck never puts another org in the log.
+   * Runs a governance write; a name clash the service reports (it names the clashing items, which
+   * may be another org's own) is rethrown with {@link clashText} of the current preview, so a race
+   * past the precheck never puts another org's private item in the log.
    */
-  private async countOnly<T>(write: () => Promise<T>): Promise<T> {
+  private async withoutItemNames<T>(
+    kind: ComponentKind,
+    id: string,
+    target: ComponentTarget,
+    write: () => Promise<T>,
+  ): Promise<T> {
     try {
       return await write();
     } catch (e) {
@@ -168,20 +189,39 @@ export class ComponentsOperations implements OnModuleInit {
         e instanceof ApiError &&
         (e.code === "plugin.skill_conflict" || e.code === "agent_template.name_taken")
       ) {
-        throw new ApiError(e.code, CLASH);
+        const conflicts = await orElse(
+          async () => (await this.components.preview(kind, id, target)).conflicts,
+          [] as ComponentScopePreview["conflicts"],
+        );
+        throw new ApiError(e.code, clashText(conflicts));
       }
       throw e;
     }
   }
 
-  /** What a scope change or disable would touch, as counts (no org is named). */
-  private async previewCounts(kind: ComponentKind, id: string, target: ComponentTarget) {
+  /**
+   * What a scope change or disable would touch, as the admin console shows it (orgs named, spec
+   * §14.5 item 1); each org's agents and the clashing items are counted (they are that org's own).
+   */
+  private async previewBrief(kind: ComponentKind, id: string, target: ComponentTarget) {
     const p = await this.components.preview(kind, id, target);
     return {
+      affected: p.affected.map((a) => ({
+        orgId: a.orgId,
+        orgName: a.orgName,
+        agents: a.agents.length,
+        connectorsKept: a.connectorsKept,
+      })),
       affectedOrgs: p.affected.length,
       affectedAgents: p.affected.reduce((n, a) => n + a.agents.length, 0),
       connectorsKept: p.affected.reduce((n, a) => n + a.connectorsKept, 0),
-      conflicts: p.conflicts.length,
+      conflicts: p.conflicts.map((c) => ({
+        orgId: c.orgId,
+        orgName: c.orgName,
+        name: c.name,
+        items: c.skills.length,
+        plugins: c.plugins.length,
+      })),
       scopeHash: p.scopeHash,
     };
   }
@@ -206,7 +246,7 @@ export class ComponentsOperations implements OnModuleInit {
       if (p.conflicts.length > 0) {
         throw new ApiError(
           kind === "skill" ? "plugin.skill_conflict" : "agent_template.name_taken",
-          CLASH,
+          clashText(p.conflicts),
         );
       }
     });
@@ -605,7 +645,7 @@ export class ComponentsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.components",
         description:
-          "List the platform's components of one kind (super admin): skills, agent templates or connector templates with their plugin, scope, disabled state and how many orgs they are on in. Orgs are given as counts only. Pages by 50: pass the returned next as params.cursor. Scope, disable and visibility are changed in the admin console.",
+          "List the platform's components of one kind (super admin): skills, agent templates or connector templates with their plugin, scope, disabled state and how many orgs they are on in (another org's own components are only counted). Pages by 50: pass the returned next as params.cursor. Scope, disable and visibility are changed in the admin console.",
         input: z.object({ kind: ComponentParams.shape.kind, cursor: Cursor.optional() }).strict(),
         example: { kind: "skill" },
         authz: { superAdmin: true },
@@ -624,16 +664,16 @@ export class ComponentsOperations implements OnModuleInit {
             scope: c.scope,
             onIn: c.onIn.length,
           }));
-          return redactOrgs({
+          return {
             ...pageOf(rows, startOf(input.cursor), PAGE),
             otherOrgComponents: all.length - visible.length,
-          });
+          };
         },
       }),
       defineOperation({
         id: "plugins.component-scope-preview",
         description:
-          "Preview a platform component's scope change, deployment-level disable or return to its plugin's scope (super admin): how many orgs and agents are affected, name clashes, and the scopeHash plugins.set-component-scope or plugins.set-component-disabled takes. Send exactly one of scope (with orgs for named), disabled: true or follow: true. Orgs are given as counts only; the admin console shows which.",
+          "Preview a platform component's scope change, deployment-level disable or return to its plugin's scope (super admin): the orgs affected (with how many agents in each), name clashes (the org named, its clashing items counted), and the scopeHash plugins.set-component-scope or plugins.set-component-disabled takes. Send exactly one of scope (with orgs for named), disabled: true or follow: true.",
         input: ComponentScopePreviewFields.extend({
           kind: ComponentParams.shape.kind,
           componentId: Id,
@@ -664,12 +704,12 @@ export class ComponentsOperations implements OnModuleInit {
         ],
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
-          const p = await this.previewCounts(
+          const p = await this.previewBrief(
             i.kind as ComponentKind,
             i.componentId,
             previewTarget(i),
           );
-          return redactOrgs(p);
+          return p;
         },
       }),
       defineOperation({
@@ -729,7 +769,7 @@ export class ComponentsOperations implements OnModuleInit {
           const n = await this.adminName(kind, i.componentId);
           const sc = scopeText(i);
           const p = await orElse(
-            () => this.previewCounts(kind, i.componentId, scopeTarget(i)),
+            () => this.previewBrief(kind, i.componentId, scopeTarget(i)),
             null,
           );
           const tail =
@@ -746,19 +786,23 @@ export class ComponentsOperations implements OnModuleInit {
         },
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
-          return redactOrgs({
+          return {
             component: brief(
-              await this.countOnly(() =>
-                this.components.setScope(
-                  ctx.actorAccountId,
-                  i.kind as ComponentKind,
-                  i.componentId,
-                  scopeBody(i),
-                  { auditDetail: viaAgent("plugins.set-component-scope", ctx) },
-                ),
+              await this.withoutItemNames(
+                i.kind as ComponentKind,
+                i.componentId,
+                scopeTarget(i),
+                () =>
+                  this.components.setScope(
+                    ctx.actorAccountId,
+                    i.kind as ComponentKind,
+                    i.componentId,
+                    scopeBody(i),
+                    { auditDetail: viaAgent("plugins.set-component-scope", ctx) },
+                  ),
               ),
             ),
-          });
+          };
         },
       }),
       defineOperation({
@@ -817,22 +861,26 @@ export class ComponentsOperations implements OnModuleInit {
         },
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
-          return redactOrgs({
+          return {
             component: brief(
-              await this.countOnly(() =>
-                this.components.setDisabled(
-                  ctx.actorAccountId,
-                  i.kind as ComponentKind,
-                  i.componentId,
-                  {
-                    disabled: i.disabled,
-                    ...(i.scopeHash !== undefined && { scopeHash: i.scopeHash }),
-                  },
-                  { auditDetail: viaAgent("plugins.set-component-disabled", ctx) },
-                ),
+              await this.withoutItemNames(
+                i.kind as ComponentKind,
+                i.componentId,
+                { disabled: i.disabled },
+                () =>
+                  this.components.setDisabled(
+                    ctx.actorAccountId,
+                    i.kind as ComponentKind,
+                    i.componentId,
+                    {
+                      disabled: i.disabled,
+                      ...(i.scopeHash !== undefined && { scopeHash: i.scopeHash }),
+                    },
+                    { auditDetail: viaAgent("plugins.set-component-disabled", ctx) },
+                  ),
               ),
             ),
-          });
+          };
         },
       }),
       defineOperation({
@@ -873,7 +921,7 @@ export class ComponentsOperations implements OnModuleInit {
         },
         run: async (i, ctx) => {
           await this.assertNotOtherOrgs(i.kind as ComponentKind, i.componentId, ctx.orgId);
-          return redactOrgs({
+          return {
             component: brief(
               await this.components.setShown(
                 ctx.actorAccountId,
@@ -883,7 +931,7 @@ export class ComponentsOperations implements OnModuleInit {
                 { auditDetail: viaAgent("plugins.set-component-shown", ctx) },
               ),
             ),
-          });
+          };
         },
       }),
       defineOperation({
