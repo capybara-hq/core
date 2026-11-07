@@ -26,8 +26,9 @@ class PendingConnectorBindBody extends createZodDto(BindBody, "PendingConnectorB
  *   admin+) -> 200 `{ agent, dropped }`: a new version with the connector's tools, the entry gone;
  * - `POST request` (same) -> 201 `{ request }` a new `connector_setup` request, 200 `{ request }`
  *   the pending one;
- * - `GET request` (`agents.use`, the agent visible to the reader) -> 200 `{ request }`: the latest
- *   `connector_setup` request of the agent, any status, or null.
+ * - `GET request` (`agents.use`; the service allows only the agent's owner or an org admin+:
+ *   another member who sees the agent -> 403 `forbidden`, anyone else 404 `agent.not_found`) ->
+ *   200 `{ request }`: the latest `connector_setup` request of the agent, any status, or null.
  */
 @Controller("api/v1/orgs/:orgId/agents/:agentId/pending-connectors")
 export class PendingConnectorsController {

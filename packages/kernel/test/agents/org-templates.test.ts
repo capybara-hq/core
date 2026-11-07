@@ -1011,6 +1011,81 @@ describe("org agent templates", { timeout: 120_000 }, () => {
     expect(capped.map((o) => o.name)).toEqual(names.slice(50, 100));
   });
 
+  it("save-as lists what a template cannot hold instead of failing or dropping it", async () => {
+    const a = await seedSkill(orgA, "one");
+    const b = await seedSkill(orgA, "two");
+    const c = await seedSkill(orgA, "three");
+    const d = await seedSkill(orgA, "four");
+    const agentId = await seedAgent(
+      orgA,
+      {
+        name: "Odd",
+        instructions: "Odd jobs.",
+        model: { provider: "model-fake", model: "fake-1" },
+        modelParams: { effort: "turbo", "model-fake.style": "shout" },
+        fallback: { provider: "model-fake", model: "fake-2" },
+        fallbackParams: { effort: "low" },
+        tools: [{ kind: "builtin", name: "Agent" }],
+        skills: { orgSkills: [a, b, c, d] },
+        subagents: {
+          inline: [
+            // whitespace only: no template can hold it, the rest of the save goes on
+            { name: "blank", description: "   ", instructions: "Do it." },
+            { name: "hollow", description: "Hollow.", instructions: " \n\t " },
+            {
+              name: "busy",
+              description: "Busy.",
+              instructions: "Work.",
+              skills: [a, b, c, d],
+            },
+          ],
+        },
+      },
+      [
+        { title: "Go", body: "Go now." },
+        { title: " ", body: "No title." },
+      ],
+    );
+    // the agent's own skill, named by an inline sub-agent only
+    const own = await seedSkill(orgA, "own-notes", agentId);
+    const row = await db
+      .selectFrom("agent_versions")
+      .select("definition")
+      .where("agent_id", "=", agentId)
+      .executeTakeFirstOrThrow();
+    const def = row.definition as { subagents: { inline: { skills?: string[] }[] } };
+    const busy = def.subagents.inline[2] as { skills: string[] };
+    busy.skills = [a, own, b, c, d];
+    await db
+      .updateTable("agent_versions")
+      .set({ definition: JSON.stringify(def) })
+      .where("agent_id", "=", agentId)
+      .execute();
+
+    const res = await saveAs(boss, orgA, agentId, "odd");
+    expect(res.statusCode, res.body).toBe(201);
+    const definition = res.json().template.definition as {
+      effort?: string;
+      subagents: { inline: { name: string; skills: string[] }[] };
+      quickActions: unknown[];
+    };
+    expect(definition.effort).toBeUndefined();
+    expect(definition.subagents.inline.map((x) => [x.name, x.skills])).toEqual([
+      ["busy", ["one", "two", "three"]],
+    ]);
+    expect(definition.quickActions).toEqual([{ title: "Go", body: "Go now." }]);
+    expect(res.json().omitted).toEqual([
+      { kind: "model_param", name: "effort", reason: "model_param" },
+      { kind: "model_param", name: "model-fake.style", reason: "model_param" },
+      { kind: "fallback_model", name: "model-fake/fake-2", reason: "fallback" },
+      { kind: "subagent_inline", name: "blank", field: "description", reason: "empty_text" },
+      { kind: "subagent_inline", name: "hollow", field: "instructions", reason: "empty_text" },
+      { kind: "skill", name: "own-notes", id: own, reason: "agent_skill" },
+      { kind: "skill", name: "four", id: d, reason: "limit" },
+      { kind: "quick_action", name: " ", reason: "empty_text" },
+    ]);
+  });
+
   it("the owner opens and edits its promoted template while switched off in its own org", async () => {
     const { id, pid, definition } = await sharedLead(boss, orgA, [orgA, orgB]);
     await db
