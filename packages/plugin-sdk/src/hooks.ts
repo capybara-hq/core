@@ -51,8 +51,11 @@ export interface HookScope {
  */
 export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
 
-/** What a reported model call was for (the same values as {@link ModelCallPurpose}). */
-export type UsagePurpose = ModelCallPurpose;
+/**
+ * What a reported model call was for: the {@link ModelCallPurpose} values, or `embedding` for an
+ * embedding call an extension made through `ctx.models`.
+ */
+export type UsagePurpose = ModelCallPurpose | "embedding";
 
 /**
  * An image or document of a `model.request` payload. Hook payloads never carry media bytes or
@@ -149,12 +152,18 @@ export interface UsageReportPayload {
    */
   purpose: UsagePurpose;
   orgId: string;
-  accountId: string;
-  agentId: string;
-  conversationId: string;
-  /** A sub-agent's calls report `chat`; `parent` tells them apart. */
-  conversationKind: "chat" | "eval";
-  runId: string;
+  /** Absent for `embedding`. */
+  accountId?: string;
+  /** Absent for `embedding`. */
+  agentId?: string;
+  /** Absent for `embedding`. */
+  conversationId?: string;
+  /** A sub-agent's calls report `chat`; `parent` tells them apart. Absent for `embedding`. */
+  conversationKind?: "chat" | "eval";
+  /** Absent for `embedding`. */
+  runId?: string;
+  /** The calling extension; set for `embedding`. */
+  extension?: string;
   /** Set when the call belongs to a sub-agent: where it was dispatched from. */
   parent?: HookParentScope;
   provider: string;
