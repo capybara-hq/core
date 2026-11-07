@@ -697,6 +697,23 @@ describe("超级管理员端点", () => {
     }
   });
 
+  it("GET /admin/orgs carries the deployment's defaults of the per-org limits", async () => {
+    const req = await session("admin");
+    const res = await req({ method: "GET", url: "/api/v1/admin/orgs" });
+    expect(res.statusCode).toBe(200);
+    const cfg = k.app.get(KernelConfigService).get();
+    expect((res.json() as { limitDefaults: unknown }).limitDefaults).toEqual({
+      runConcurrency: cfg.runtime.orgConcurrency,
+      sandbox: { cpu: cfg.sandbox.limits.cpu, memoryMb: cfg.sandbox.limits.memoryMb },
+      subagents: {
+        maxDepth: 3,
+        maxConcurrentPerConversation: 4,
+        maxDispatchesPerRun: 50,
+        maxTokensPerRun: 5_000_000,
+      },
+    });
+  });
+
   it("GET /admin/orgs：全部组织与成员数", async () => {
     const o1 = await orgs.create({ name: "One" }, user);
     const req = await session("admin");

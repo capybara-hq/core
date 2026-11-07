@@ -20,6 +20,7 @@ import {
   type DeploymentSettings,
   SettingsService,
 } from "../identity/settings.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
@@ -38,6 +39,7 @@ import {
 } from "../models/purposes.js";
 import { type Org, OrgsService } from "../orgs/orgs.service.js";
 import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
+import type { SubagentLimits } from "../runtime/subagents/limits.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
@@ -50,6 +52,20 @@ export interface AdminOverview {
   catalogRequestsPending: number;
   orgs: number;
   accounts: number;
+}
+
+/**
+ * The deployment's defaults of the per-org limits (with `GET /api/v1/admin/orgs`): what an
+ * organization without an override gets, from the live config. `subagents.maxDispatchesPerRun` and
+ * `maxTokensPerRun` of 0 mean no limit.
+ */
+export interface LimitDefaults {
+  /** `runtime.orgConcurrency`. */
+  runConcurrency: number;
+  /** `sandbox.limits.cpu` / `memoryMb`. */
+  sandbox: { cpu: number; memoryMb: number };
+  /** `subagents.*`. */
+  subagents: SubagentLimits;
 }
 
 const ListQuerySchema = z.object({
@@ -101,6 +117,7 @@ export class AdminController {
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -190,15 +207,32 @@ export class AdminController {
     return { account };
   }
 
-  /** 全部组织的元数据与成员数（不含成员明细）。 */
+  /**
+   * 全部组织的元数据与成员数（不含成员明细）, with the deployment's defaults of the limits an org
+   * can be given its own value of (the org limits dialog shows them for the values left empty).
+   */
   @Get("orgs")
-  async listOrgs(): Promise<{ orgs: (Org & { memberCount: number })[] }> {
-    return { orgs: await this.orgs.listAll() };
+  async listOrgs(): Promise<{
+    orgs: (Org & { memberCount: number })[];
+    limitDefaults: LimitDefaults;
+  }> {
+    return { orgs: await this.orgs.listAll(), limitDefaults: this.limitDefaults() };
   }
 
   @Get("settings")
   async getSettings(): Promise<DeploymentSettings> {
     return this.settings.get();
+  }
+
+  private limitDefaults(): LimitDefaults {
+    const cfg = this.config.get();
+    const { maxDepth, maxConcurrentPerConversation, maxDispatchesPerRun, maxTokensPerRun } =
+      cfg.subagents;
+    return {
+      runConcurrency: cfg.runtime.orgConcurrency,
+      sandbox: { cpu: cfg.sandbox.limits.cpu, memoryMb: cfg.sandbox.limits.memoryMb },
+      subagents: { maxDepth, maxConcurrentPerConversation, maxDispatchesPerRun, maxTokensPerRun },
+    };
   }
 
   @Put("settings")

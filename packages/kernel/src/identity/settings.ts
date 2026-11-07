@@ -36,14 +36,24 @@ export type SandboxLimitOverride = z.infer<typeof SANDBOX_LIMIT_OVERRIDE>;
 
 /**
  * One organization's sub-agent limits (sub-agents spec §8.2, agent map spec §6): any of the
- * `subagents.*` values, within the same bounds; the ones not given use the deployment's config.
+ * `subagents.*` values, within the same bounds (0 for dispatches or tokens: no limit); the ones not
+ * given use the deployment's config.
  */
 export const SUBAGENT_LIMIT_OVERRIDE = z
   .object({
     maxDepth: z.number().int().min(1).max(5).optional(),
     maxConcurrentPerConversation: z.number().int().min(1).max(20).optional(),
-    maxDispatchesPerRun: z.number().int().min(1).max(500).optional(),
-    maxTokensPerRun: z.number().int().min(10_000).optional(),
+    maxDispatchesPerRun: z
+      .number()
+      .int()
+      .max(500)
+      .refine((n) => n === 0 || n >= 1, "0 (no limit) or 1 to 500")
+      .optional(),
+    maxTokensPerRun: z
+      .number()
+      .int()
+      .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
+      .optional(),
   })
   .strict()
   .refine((o) => Object.values(o).some((v) => v !== undefined), {

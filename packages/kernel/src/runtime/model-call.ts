@@ -67,6 +67,18 @@ import type { UsageReporter } from "./usage-report.js";
 export const WRAP_UP_REMINDER =
   "Step limit reached. Do not call tools. Summarize what you found and what remains for the user.";
 
+/**
+ * The tail reminder of a sub-agent's final call once its tree used its token budget (model-visible,
+ * English; sub-agents spec §8.3): the child hands back what it found instead of ending with nothing.
+ */
+export const BUDGET_WRAP_UP_REMINDER =
+  "The sub-agents' token budget is used up, so this is your last reply. Do not call tools. " +
+  "Report what you found so far, with the sources and details that matter, and what remains " +
+  "unfinished.";
+
+/** Why a run makes its final, tool-less call: its step limit, or its tree's token budget. */
+export type WrapUpReason = "max_steps" | "budget";
+
 export { TOOLS_UNSUPPORTED_REMINDER } from "./context/reminders.js";
 
 /** 不可用工具提醒的前缀（模型可见，英文）。 */
@@ -319,26 +331,32 @@ type Runtime = KernelConfig["runtime"];
  * 模型看到的一切先写进日志（`model_call` / `reminder` / `compaction_summary`），请求可由日志还原。
  */
 export function runModelStep(deps: ModelStepDeps, input: ModelStepInput): Promise<ModelStepResult> {
-  return runStep(deps, input, false);
+  return runStep(deps, input, null);
 }
 
 /**
  * 单轮收尾：到达步数上限时调用一次。写入收尾 `reminder`（位于请求末尾）；照常带工具（历史里有工具调用时
  * 部分供应商要求请求声明工具，也保持缓存前缀稳定），但 `toolChoice: "none"`——模型只能回复文本。
  * 其余与 `runModelStep` 相同（幂等、降级、中止）。
+ *
+ * `reason: "budget"`: a sub-agent whose tree used its token budget makes this one call to hand back
+ * what it found (sub-agents spec §8.3); it is not stopped by the budget again (one call over).
  */
 export function runFinalWrapUp(
   deps: ModelStepDeps,
   input: ModelStepInput,
+  reason: WrapUpReason = "max_steps",
 ): Promise<ModelStepResult> {
-  return runStep(deps, input, true);
+  return runStep(deps, input, reason);
 }
 
 async function runStep(
   deps: ModelStepDeps,
   input: ModelStepInput,
-  wrapUp: boolean,
+  /** The final call's reason, or null for an ordinary step. */
+  wrapUpReason: WrapUpReason | null,
 ): Promise<ModelStepResult> {
+  const wrapUp = wrapUpReason !== null;
   const { conversationId, runId, step, signal, sink } = input;
   const existing = await findExisting(deps.eventLog, conversationId, runId, step);
   if (existing) {
@@ -407,8 +425,10 @@ async function runStep(
     const beforeCompaction = events.length;
     events = await maybeCompact(deps, input, events, runtime, tools);
     // a sub-agent checks its budget again after a compaction call, so the step's own request is
-    // not a second call over the cap (review M5; the loop checks before each step)
+    // not a second call over the cap (review M5; the loop checks before each step); the budget
+    // wrap-up is the one call allowed over it
     if (
+      wrapUpReason !== "budget" &&
       input.parentRunId !== undefined &&
       events.length !== beforeCompaction &&
       (await subagentBudgetUsedUp(
@@ -464,7 +484,15 @@ async function runStep(
       }
     }
 
-    const { outcome, ref } = await ladder(deps, input, events, runtime, tools, wrapUp, streamed);
+    const { outcome, ref } = await ladder(
+      deps,
+      input,
+      events,
+      runtime,
+      tools,
+      wrapUpReason,
+      streamed,
+    );
     // assistant_message 与 usage 同一次 append = 同一事务。
     const appended = await appendCounted(deps, input, [
       {
@@ -1056,13 +1084,17 @@ async function ladder(
   events: ConversationEvent[],
   runtime: Runtime,
   tools: StepTools,
-  wrapUp: boolean,
+  wrapUpReason: WrapUpReason | null,
   streamed: { text: string },
 ): Promise<{ outcome: StreamOutcome; ref: ModelRef }> {
   const { conversationId, runId, step, signal, sink, agent } = input;
-  const turnReminder = wrapUp
-    ? WRAP_UP_REMINDER
-    : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
+  const wrapUp = wrapUpReason !== null;
+  const turnReminder =
+    wrapUpReason === "budget"
+      ? BUDGET_WRAP_UP_REMINDER
+      : wrapUp
+        ? WRAP_UP_REMINDER
+        : turnLimitReminder(step, input.maxSteps ?? runtime.maxSteps);
   let evs = events;
   const rungs: { ref: ModelRef; fallback: boolean }[] = [
     { ref: agent.model, fallback: false },

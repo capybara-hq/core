@@ -25,6 +25,7 @@ import { createLogger } from "../../src/log.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
 import {
+  BUDGET_WRAP_UP_REMINDER,
   type ModelStepDeps,
   RunError,
   runFinalWrapUp,
@@ -861,7 +862,7 @@ describe("runModelStep", () => {
         await answer(filler(i));
       }
       await say("echo:after compaction");
-      const r = await runModelStep(deps, {
+      const input = {
         orgId,
         conversationId,
         runId,
@@ -872,12 +873,19 @@ describe("runModelStep", () => {
         signal: new AbortController().signal,
         sink: () => {},
         parentRunId,
-      });
+      };
+      const r = await runModelStep(deps, input);
       expect(r.budget).toBe(true);
       expect((await ofType("usage")).map((u) => u.payload.purpose ?? "step")).toEqual([
         "compaction",
       ]);
       expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(0);
+      // the loop then hands back in the budget wrap-up at the same step: the one call over the
+      // cap, with the budget reminder logged last
+      const w = await runFinalWrapUp(deps, input, "budget");
+      expect(w.budget).toBeUndefined();
+      expect((await ofType("assistant_message")).filter((e) => e.runId === runId)).toHaveLength(1);
+      expect((await ofType("reminder")).at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
     });
 
     it("摘要过短 → 写 compaction_failed（attempt 1），本步仍完成；下一轮因退避跳过；退避期满再失败 attempt 2", async () => {

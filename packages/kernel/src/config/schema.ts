@@ -1180,26 +1180,27 @@ export const KernelConfigSchema = z.object({
       maxDispatchesPerRun: z
         .number()
         .int()
-        .min(1)
+        .min(0)
         .max(500)
         .default(50)
         .meta(
           meta({
             hot: true,
             description:
-              "Sub-agents the whole tree under a person's message may dispatch in total, counted across every level (nested dispatches and SendMessage messages that restart an idle sub-agent included); later agent calls and such messages are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Sub-agents the whole tree under a person's message may dispatch in total, counted across every level (nested dispatches and SendMessage messages that restart an idle sub-agent included); later agent calls and such messages are refused. 0 means no limit. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
       maxTokensPerRun: z
         .number()
         .int()
-        .min(10_000)
+        .min(0)
+        .refine((n) => n === 0 || n >= 10_000, "0 (no limit) or at least 10,000")
         .default(5_000_000)
         .meta(
           meta({
             hot: true,
             description:
-              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. Organizations can be given their own value in subagentLimitOverrides",
+              "Tokens (input, output and cache) all sub-agents of the tree under a person's message may use together; at the cap running sub-agents stop and new dispatches are refused. 0 means no limit; otherwise at least 10,000. Organizations can be given their own value in subagentLimitOverrides",
           }),
         ),
     })
