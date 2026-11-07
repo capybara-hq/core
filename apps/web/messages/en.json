@@ -1334,6 +1334,7 @@
     },
     "greeting": {
       "sub": "Pick an agent to start",
+      "subOne": "Start a conversation with {agent}",
       "morning": [
         "Good morning, {name}",
         "Morning. What are we moving forward today?",

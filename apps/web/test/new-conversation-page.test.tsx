@@ -244,6 +244,9 @@ describe("the new conversation page (agent profile design §4)", () => {
     );
     await screen.findByRole("heading", { name: /Grant/ });
     expect(row()).toBeNull();
+    // nothing to choose: the line under the greeting names the agent instead of "pick one"
+    expect(screen.getByText("Start a conversation with Alpha")).toBeTruthy();
+    expect(screen.queryByText(en.chat.greeting.sub)).toBeNull();
     expect(await titles(userEvent.setup())).toEqual(["Summarize", "Translate"]);
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
   });

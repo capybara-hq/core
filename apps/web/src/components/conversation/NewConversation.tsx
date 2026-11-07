@@ -193,7 +193,17 @@ export function useNewConversationPage(
       ? { thread: <PendingBubbles items={pending.shown} />, working: true }
       : {
           newConversation: {
-            greeting: <Greeting text={greeting} sub={t("greeting.sub")} />,
+            greeting: (
+              <Greeting
+                text={greeting}
+                // one usable agent draws no row: nothing to choose, so the line names it
+                sub={
+                  usable.length === 1 && agent
+                    ? t("greeting.subOne", { agent: name })
+                    : t("greeting.sub")
+                }
+              />
+            ),
             agents: (
               <AgentRow
                 agents={rowItems}
