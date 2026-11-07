@@ -6,6 +6,7 @@ import { checkConfigDocs } from "../config-docs.js";
 import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
+import { checkPlatformOps } from "../platform-ops.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
@@ -19,7 +20,8 @@ import { root } from "./report.js";
 
 requireScanTargets();
 
-const checks: NamedCheck[] = [
+/** `pending`: registered but left out of the run until its rule is satisfied (Task 9 of the Platform tool plan removes it). */
+const checks: (NamedCheck & { pending?: boolean })[] = [
   // The plugin-scoped checks are @capybara-hq/plugin-tools' (`capybara-plugin check`), on core's scope.
   ...pluginChecks(corePluginScope()),
   { name: "Config docs", run: () => checkConfigDocs() },
@@ -50,6 +52,7 @@ const checks: NamedCheck[] = [
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },
+  { name: "Platform operations", pending: true, run: () => checkPlatformOps(root) },
   {
     name: "compose haproxy",
     run: () =>
@@ -60,7 +63,10 @@ const checks: NamedCheck[] = [
   },
 ];
 
-const failed = await runChecks(checks, root);
+const failed = await runChecks(
+  checks.filter((c) => !c.pending),
+  root,
+);
 if (failed > 0) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);

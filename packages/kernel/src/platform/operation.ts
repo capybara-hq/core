@@ -32,6 +32,12 @@ export interface PlatformOperation<I = unknown> {
   example: I;
   /** The route's authorization, or the role the service enforces (spec §9). */
   authz: OperationAuthz;
+  /**
+   * `"service-enforced"`: the service enforces a higher role than the mirrored route's decorator,
+   * so `authz` may name a stricter action (`check:platform-ops` requires its role to be at least
+   * the route's).
+   */
+  authzNote?: "service-enforced";
   /** The HTTP routes it corresponds to, e.g. `POST /api/v1/orgs/:orgId/skills`; [] when synthetic. */
   mirrors: readonly string[];
   confirm: ConfirmClass;
