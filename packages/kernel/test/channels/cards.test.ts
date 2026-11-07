@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   answerSummary,
+  approvalCard,
   approvalToolName,
   connectUrl,
   INPUT_PREVIEW_MAX,
@@ -136,5 +137,54 @@ describe("IM 卡片内容", () => {
     expect(k1).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(idempotencyKey("conversation-0123-4567-89ab-cdef-42")).toBe(k1);
     expect(idempotencyKey("conversation-0123-4567-89ab-cdef-43")).not.toBe(k1);
+  });
+});
+
+describe("a Platform confirmation card", () => {
+  const view = {
+    id: "ap1",
+    toolKey: "Platform:marketplaces.add",
+    toolName: "Platform",
+    connector: null,
+    extension: null,
+    agent: { id: "ag1", name: "Helper" },
+    input: { action: "call", operation: "marketplaces.add", params: { url: "https://x" } },
+    summary: { zh: "添加市场源 https://x", en: "Add marketplace source https://x" },
+    scopes: ["once"],
+    requestedFor: "a1",
+    expiresAt: "2026-11-07T12:00:00.000Z",
+    status: "pending",
+    decidedBy: null,
+    denyReason: null,
+    conversationPath: "/chat/c1",
+  };
+  const deps = (v: object) =>
+    ({
+      db: {} as never,
+      approvals: { describe: async () => v },
+    }) as never;
+
+  it("names the operation, leads with the summary in the card language and offers only once", async () => {
+    const zh = await approvalCard(deps(view), "ap1", "https://cap.example", "zh");
+    expect(zh).toMatchObject({
+      toolName: "Platform [marketplaces.add]",
+      scopes: ["once"],
+    });
+    expect(zh?.inputPreview.startsWith("添加市场源 https://x\n")).toBe(true);
+    expect(zh?.inputPreview).toContain('"operation":"marketplaces.add"');
+    const en = await approvalCard(deps(view), "ap1", "https://cap.example", "en");
+    expect(en?.inputPreview.startsWith("Add marketplace source https://x\n")).toBe(true);
+  });
+
+  it("a call without a summary shows the params alone and the scopes of the approval", async () => {
+    const plain = {
+      ...view,
+      toolKey: "Bash",
+      summary: null,
+      scopes: ["once", "session", "always"],
+    };
+    const card = await approvalCard(deps(plain), "ap1", "https://cap.example", "en");
+    expect(card?.scopes).toEqual(["once", "session", "always"]);
+    expect(card?.inputPreview.startsWith("{")).toBe(true);
   });
 });

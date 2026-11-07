@@ -46,8 +46,13 @@ const localTool = (key: string): string | undefined => {
   return p && p.kind !== "builtin" ? p.tool : undefined;
 };
 
+const PLATFORM_PREFIX = "Platform:";
+
 /** The label from the key alone (no display metadata): the slug or the extension name stands in. */
 export function toolLabelOfKey(key: string): ToolLabelParts {
+  // a Platform call is keyed `Platform:<operation>`
+  if (key.startsWith(PLATFORM_PREFIX))
+    return { name: "Platform", tool: key.slice(PLATFORM_PREFIX.length) };
   const p = parseToolKey(key);
   if (p?.kind === "connector") return { name: p.slug, tool: p.tool };
   if (p?.kind === "extension") return { name: p.plugin, tool: p.tool };

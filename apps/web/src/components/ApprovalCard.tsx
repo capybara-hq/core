@@ -223,7 +223,13 @@ export function ApprovalCard({
     }
   }
 
-  const tool = toolLabelText(info ? toolLabel(info, locale) : toolLabelOfKey(item.toolKey));
+  // a Platform call's approval is keyed `Platform:<operation>` (the conversation item's key is the tool's)
+  const platformKey = view?.toolKey?.startsWith("Platform:") ? view.toolKey : undefined;
+  const tool = toolLabelText(
+    info && platformKey === undefined
+      ? toolLabel(info, locale)
+      : toolLabelOfKey(platformKey ?? item.toolKey),
+  );
   const input =
     typeof item.input === "object" && item.input !== null && !Array.isArray(item.input)
       ? (item.input as Record<string, unknown>)
@@ -257,7 +263,8 @@ export function ApprovalCard({
     <div data-role="approval" data-approval-id={item.approvalId}>
       <ApprovalBlock
         tool={tool}
-        toolKey={item.toolKey}
+        toolKey={platformKey ?? item.toolKey}
+        {...(view?.summary ? { summary: view.summary[locale.startsWith("zh") ? "zh" : "en"] } : {})}
         input={input}
         keyArgs={info?.keyArgs ?? []}
         scopes={view ? scopesFor(view) : ["once"]}

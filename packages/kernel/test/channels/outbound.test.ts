@@ -699,6 +699,59 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
     await settled(conv);
   });
 
+  it("a scope the approval does not allow gets the invalid-action reply and changes nothing", async () => {
+    const chat = "dm-u-owner";
+    const known = (await eventsOf(db, conv)).filter((e) => e.type === "approval_requested").length;
+    im.push(connId, dm("scope-1", "u-owner", ECHO));
+    const evs = await waitFor(
+      async () => {
+        const a = (await eventsOf(db, conv)).filter((e) => e.type === "approval_requested");
+        return a.length > known ? a : null;
+      },
+      10_000,
+      "approval for the scope test",
+    );
+    const approvalId = (evs[evs.length - 1]?.payload as { approvalId: string } | undefined)
+      ?.approvalId as string;
+    const cardMsg = await waitFor(
+      async () =>
+        sentTo("cli_out", chat).find((s) => (cardOf(s) as { id?: string })?.id === approvalId),
+      10_000,
+      "approval card for the scope test",
+    );
+    await cardRecorded(db, cardMsg);
+    // as a Platform org operation is stored: once only
+    await db
+      .updateTable("approvals")
+      .set({ scopes: ["once"] })
+      .where("id", "=", approvalId)
+      .execute();
+    const n = im.sent.length;
+    im.push(
+      connId,
+      cardAction(
+        "scope-x",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "approve", scope: "always" },
+        cardMsg.target,
+      ),
+    );
+    const reply = await waitFor(async () => im.sent.slice(n)[0], 10_000, "invalid-action reply");
+    expect(reply.message.text).toBe("That action isn't valid here. Please handle it on the web.");
+    await sleep(300);
+    expect(await approvalStatus(approvalId)).toBe("pending");
+    im.push(
+      connId,
+      cardAction(
+        "scope-d",
+        "u-owner",
+        { cardKind: "approval", cardId: approvalId, action: "deny" },
+        cardMsg.target,
+      ),
+    );
+    await waitFor(async () => (await approvalStatus(approvalId)) === "denied", 10_000, "denied");
+  });
+
   it("Ruling A13：匿名访客只能处理自己话题里的卡片，且范围强制为仅此一次", async () => {
     const chat = "grp-anon";
     im.push(anonId, group("an1", "u-anon-a", ECHO, { chatId: chat }));

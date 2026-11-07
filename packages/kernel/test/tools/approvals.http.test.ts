@@ -400,6 +400,34 @@ describe("决定", () => {
     expect(await db.selectFrom("tool_grants").selectAll().execute()).toEqual([]);
   });
 
+  it("a remembered grant keyed Platform:<operation> is revoked over the URL-encoded key", async () => {
+    const key = "Platform:agents.create";
+    await db
+      .insertInto("tool_grants")
+      .values({
+        org_id: orgId,
+        account_id: initiator.account.id,
+        agent_id: agentId,
+        tool_key: key,
+        spec_hash: "hash-p",
+      })
+      .execute();
+    const url = `/api/v1/orgs/${orgId}/me/tool-grants/${agentId}/${encodeURIComponent(key)}`;
+    const mine = await initiator.req({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/me/tool-grants`,
+    });
+    expect((mine.json() as { grants: { toolKey: string }[] }).grants).toEqual([
+      expect.objectContaining({ toolKey: key }),
+    ]);
+    expect((await other.req({ method: "DELETE", url })).statusCode).toBe(204);
+    expect(await db.selectFrom("tool_grants").select("tool_key").execute()).toEqual([
+      { tool_key: key },
+    ]);
+    expect((await initiator.req({ method: "DELETE", url })).statusCode).toBe(204);
+    expect(await db.selectFrom("tool_grants").selectAll().execute()).toEqual([]);
+  });
+
   it("拒绝：不写授权，scope 为空", async () => {
     const a = await request();
     const res = await initiator.req({

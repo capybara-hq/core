@@ -85,6 +85,21 @@ export function inputPreview(input: unknown, redact: (s: string) => string = (s)
   return s.length <= INPUT_PREVIEW_MAX ? s : `${s.slice(0, INPUT_PREVIEW_MAX - 1)}…`;
 }
 
+/**
+ * The card's input line: the kernel-rendered summary of the call (Platform operations) in the
+ * card's language first, then the params; the card has no separate summary field.
+ */
+function previewWithSummary(
+  v: Pick<ApprovalView, "summary" | "input">,
+  locale: ChannelLocale,
+  redact?: (s: string) => string,
+): string {
+  const params = inputPreview(v.input, redact);
+  if (v.summary === null) return params;
+  const summary = redact ? redact(v.summary[locale]) : v.summary[locale];
+  return `${summary}\n${params}`;
+}
+
 /** 去掉末尾斜杠的 `http.publicUrl`；未配置返回 undefined。 */
 export function webBase(publicUrl: string | undefined): string | undefined {
   return publicUrl ? publicUrl.replace(/\/+$/, "") : undefined;
@@ -98,6 +113,8 @@ export const conversationUrl = (base: string, conversationId: string) =>
 export const connectUrl = (base: string, connectorId: string) =>
   `${base}/account/connections#connector-${encodeURIComponent(connectorId)}`;
 
+const PLATFORM_KEY_PREFIX = "Platform:";
+
 /**
  * The tool as the card names it (tool naming spec §7): a builtin by its name; a connector or
  * extension tool as `<display name> [<tool>]` (the connector's name, the plugin's display name in
@@ -107,6 +124,10 @@ export function approvalToolName(
   v: Pick<ApprovalView, "toolKey" | "toolName" | "connector" | "extension">,
   locale: ChannelLocale,
 ): string {
+  // a Platform call is keyed `Platform:<operation>`: the label names the operation
+  if (v.toolKey.startsWith(PLATFORM_KEY_PREFIX)) {
+    return `Platform [${v.toolKey.slice(PLATFORM_KEY_PREFIX.length)}]`;
+  }
   // `toolName` is already the connector's own name for its tool
   if (v.connector) return `${v.connector.name} [${v.toolName}]`;
   const parsed = parseToolKey(v.toolKey);
@@ -155,8 +176,9 @@ export async function approvalCard(
     // the label carries the source, so no separate appName (renderers would repeat it)
     toolName: approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
-    inputPreview: inputPreview(v.input, redact),
-    scopes: v.requestedFor === null ? ["once"] : ["once", "session", "always"],
+    inputPreview: previewWithSummary(v, locale, redact),
+    // the scopes the approval allows (the kernel stores them for per-call policies)
+    scopes: v.scopes,
     expiresAt: v.expiresAt,
     state: v.status,
     ...(decidedBy !== undefined && { decidedBy }),
