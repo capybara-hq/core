@@ -1,18 +1,14 @@
 import { fileURLToPath } from "node:url";
-import {
-  type ExtensionContext,
-  ExtensionPermissionError,
-  ModelError,
-} from "@capybara-hq/plugin-sdk";
+import { type ExtensionContext, ModelError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createExtensionContext } from "../../src/ctx/create-ctx.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ModelEmbeddings } from "../../src/models/embeddings.js";
+import { ModelUsageJobs } from "../../src/runtime/usage-report.js";
 import { embedConsumer } from "../fixtures/plugins/embed-consumer/index.js";
 import { embedProbe } from "../fixtures/plugins/model-embed-probe/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -65,6 +61,7 @@ beforeAll(async () => {
         extensionConfig: {
           "model-fake": { models: [{ id: "fake-1" }, { id: "fake-embed", kind: "embedding" }] },
         },
+        models: { embedTimeoutMs: 1500 },
       },
     ),
   );
@@ -92,6 +89,8 @@ beforeEach(async () => {
   s.calls = [];
   s.signals = [];
   s.wrongDimension = false;
+  s.hang = false;
+  s.aborted = 0;
 });
 
 const ctx = (): ExtensionContext => {
@@ -260,6 +259,78 @@ describe("ctx.models.embed", { timeout: 60_000 }, () => {
   });
 });
 
+describe("ctx.models.embed: time limits, aborts, the usage enqueue", { timeout: 60_000 }, () => {
+  it("a batch over models.embedTimeoutMs is aborted and fails with a timeout ModelError", async () => {
+    await map(PROBE);
+    embedProbe().hang = true;
+    const started = Date.now();
+    const e = await rejection(ctx().models.embed({ orgId, purpose: PURPOSE, input: texts(6) }));
+    expect(e).toBeInstanceOf(ModelError);
+    expect((e as ModelError).kind).toBe("timeout");
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    // the provider's call was aborted, the second batch never sent, nothing answered: no row
+    expect(embedProbe().aborted).toBe(1);
+    expect(embedProbe().calls).toHaveLength(1);
+    expect(await db.selectFrom("model_usage").selectAll().execute()).toEqual([]);
+  });
+
+  it("the request's own signal aborts the call mid-way: later batches are not sent", async () => {
+    await map(PROBE);
+    embedProbe().hang = true;
+    const ac = new AbortController();
+    const call = ctx().models.embed({
+      orgId,
+      purpose: PURPOSE,
+      input: texts(10),
+      signal: ac.signal,
+    });
+    await waitFor(async () => embedProbe().calls.length === 1, 5_000, "first batch sent");
+    ac.abort(new Error("tool call aborted"));
+    const e = await rejection(call);
+    expect((e as Error).message).toBe("tool call aborted");
+    expect(embedProbe().aborted).toBe(1);
+    expect(embedProbe().calls).toHaveLength(1);
+  });
+
+  it("an aborted request signal refuses the call before any batch", async () => {
+    await map(PROBE);
+    const ac = new AbortController();
+    ac.abort(new Error("gone"));
+    const e = await rejection(
+      ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t1"], signal: ac.signal }),
+    );
+    expect((e as Error).message).toBe("gone");
+    expect(embedProbe().calls).toEqual([]);
+  });
+
+  it("embed does not wait for the usage enqueue (a hanging or failing enqueue)", async () => {
+    await map(PROBE);
+    const jobs = k.app.get(ModelUsageJobs);
+    const original = jobs.enqueue;
+    let reached = 0;
+    try {
+      jobs.enqueue = () => {
+        reached++;
+        return new Promise<void>(() => {}); // never settles (Redis unreachable)
+      };
+      const out = await Promise.race([
+        ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t1"] }),
+        new Promise<"stuck">((r) => setTimeout(() => r("stuck"), 3_000)),
+      ]);
+      expect(out).not.toBe("stuck");
+      jobs.enqueue = async () => {
+        reached++;
+        throw new Error("redis down");
+      };
+      await ctx().models.embed({ orgId, purpose: PURPOSE, input: ["t2"] });
+      await waitFor(async () => reached === 2, 5_000, "both enqueues attempted");
+    } finally {
+      jobs.enqueue = original;
+    }
+    expect(await db.selectFrom("model_usage").selectAll().execute()).toHaveLength(2);
+  });
+});
+
 describe("ctx.models.describe", { timeout: 60_000 }, () => {
   it("returns the effective target with its embedding info, null when unmapped", async () => {
     expect(await ctx().models.describe({ orgId, purpose: PURPOSE })).toBeNull();
@@ -298,23 +369,6 @@ describe("ctx.models.describe", { timeout: 60_000 }, () => {
 });
 
 describe("permissions.models", () => {
-  it("an extension without permissions.models cannot use ctx.models", async () => {
-    const host = k.app.get(ExtensionHost) as unknown as {
-      deps: Parameters<typeof createExtensionContext>[0];
-    };
-    const c = createExtensionContext(
-      host.deps,
-      { name: "no-models", version: "0.1.0", sdk: "^0.1.0-rc.0", provides: [], setup() {} },
-      {},
-    );
-    try {
-      expect(() => c.models).toThrow(ExtensionPermissionError);
-      expect(Object.keys(c)).not.toContain("models");
-    } finally {
-      await c.close();
-    }
-  });
-
   it("the broker refuses a purpose of another kind declared by the same extension", async () => {
     const broker = k.app.get(ModelEmbeddings);
     const e = await rejection(

@@ -13,11 +13,15 @@ export interface EmbedProbeState {
   signals: boolean[];
   /** Answer with vectors of the wrong dimension (3). */
   wrongDimension: boolean;
+  /** Never answer: wait until the call's signal aborts, then reject with its reason. */
+  hang: boolean;
+  /** How many calls saw their signal abort. */
+  aborted: number;
 }
 
 export function embedProbe(): EmbedProbeState {
   const g = globalThis as { __embedProbe?: EmbedProbeState };
-  g.__embedProbe ??= { calls: [], signals: [], wrongDimension: false };
+  g.__embedProbe ??= { calls: [], signals: [], wrongDimension: false, hang: false, aborted: 0 };
   return g.__embedProbe;
 }
 
@@ -66,6 +70,18 @@ export default defineExtension({
         const s = embedProbe();
         s.calls.push(structuredClone(req));
         s.signals.push(opts.signal instanceof AbortSignal);
+        if (s.hang) {
+          await new Promise<never>((_, reject) => {
+            opts.signal.addEventListener(
+              "abort",
+              () => {
+                s.aborted++;
+                reject(opts.signal.reason);
+              },
+              { once: true },
+            );
+          });
+        }
         const dim = s.wrongDimension ? 3 : (req.dimensions ?? 8);
         return {
           vectors: req.input.map((t) => {

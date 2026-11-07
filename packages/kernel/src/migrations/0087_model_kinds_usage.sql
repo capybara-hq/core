@@ -18,8 +18,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS model_disabled_scope_key
   ON model_disabled ((coalesce(org_id, '')), provider, model);
 
 -- 0087, spec §5.4: model usage outside conversations (an extension's `ctx.models.embed` call). One
--- row per call; `reported_at` is set once the `usage.report` job for the row (eventId = id) is
--- enqueued, and the sweeper re-enqueues rows still null.
+-- row per call; `reported_at` is set once the `usage.report` job for the row (eventId = id) has
+-- nothing left to deliver (delivered, no subscriber, or a definite drop); `report_failed_at` once
+-- the job gave up after its last attempt. The sweeper re-enqueues recent rows where both are null.
 CREATE TABLE IF NOT EXISTS model_usage (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -29,8 +30,9 @@ CREATE TABLE IF NOT EXISTS model_usage (
   model text NOT NULL,
   input_tokens integer NOT NULL,
   occurred_at timestamptz NOT NULL DEFAULT now(),
-  reported_at timestamptz NULL
+  reported_at timestamptz NULL,
+  report_failed_at timestamptz NULL
 );
 CREATE INDEX IF NOT EXISTS model_usage_org_time ON model_usage (org_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS model_usage_unreported ON model_usage (occurred_at)
-  WHERE reported_at IS NULL;
+  WHERE reported_at IS NULL AND report_failed_at IS NULL;

@@ -67,6 +67,11 @@ export interface ExtensionEmbedRequest {
   /** One of the model's `embedding.dimensions`; the model's default when absent. */
   dimensions?: number;
   inputType?: "query" | "document";
+  /**
+   * Aborts this call (e.g. the tool call's `signal`); combined with `ctx.signal`. Batches not yet
+   * sent are not sent; batches already answered are still recorded as usage.
+   */
+  signal?: AbortSignal;
 }
 
 /** A `ctx.models.embed` result. */

@@ -78,6 +78,58 @@ const denials = async () =>
 const spec = (name: string): ToolSpec => ({ name, description: "Probe.", inputSchema: {} });
 const handler = async () => ({ content: [] });
 
+describe("ctx.models (permissions.models)", () => {
+  it("without permissions.models (or with an empty list) ctx.models throws and audits", async () => {
+    for (const permissions of [{}, { models: [] }]) {
+      const ctx = createExtensionContext(deps, mf({ permissions }), {});
+      expect(() => ctx.models).toThrow(ExtensionPermissionError);
+      expect(Object.keys(ctx)).not.toContain("models");
+      await ctx.close();
+    }
+    expect((await denials())[0]?.detail).toMatchObject({ item: "permissions.models" });
+  });
+
+  it("calls the broker with a frozen copy of the declared purposes and the instance signal", async () => {
+    const seen: { plugin: string; declared: unknown; signal: AbortSignal }[] = [];
+    const models = {
+      embed: async (plugin: string, declared: unknown, _req: unknown, signal: AbortSignal) => {
+        seen.push({ plugin, declared, signal });
+        return { vectors: [], model: { provider: "p", id: "m" }, dimensions: 8 };
+      },
+      describe: async () => null,
+    };
+    const declared = [
+      { purpose: "perm-test.memory", kind: "embedding" as const, label: { zh: "记", en: "M" } },
+    ];
+    const manifest = mf({ permissions: { models: declared } });
+    const ctx = createExtensionContext({ ...deps, models }, manifest, {});
+    // the extension changes its manifest object after approval: the ctx keeps the approved copy
+    declared.push({ purpose: "other.x", kind: "embedding", label: { zh: "x", en: "x" } });
+    await ctx.models.embed({ orgId: "o", purpose: "perm-test.memory", input: [] });
+    expect(seen[0]?.plugin).toBe("perm-test");
+    expect(seen[0]?.declared).toEqual([declared[0]]);
+    expect(Object.isFrozen(seen[0]?.declared)).toBe(true);
+    expect(seen[0]?.signal).toBe(ctx.signal);
+    await ctx.close();
+  });
+
+  it("without a broker (a ctx built alone) ctx.models calls reject", async () => {
+    const ctx = createExtensionContext(
+      deps,
+      mf({
+        permissions: {
+          models: [{ purpose: "perm-test.m", kind: "embedding", label: { zh: "m", en: "m" } }],
+        },
+      }),
+      {},
+    );
+    await expect(ctx.models.describe({ orgId: "o", purpose: "perm-test.m" })).rejects.toThrow(
+      /not available/,
+    );
+    await ctx.close();
+  });
+});
+
 describe("ctx 按权限清单构造", () => {
   it("未声明 secrets：访问抛 ExtensionPermissionError 并写审计（每个插件每项只记一次）", async () => {
     const ctx = createExtensionContext(deps, mf(), {});

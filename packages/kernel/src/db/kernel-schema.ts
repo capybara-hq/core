@@ -1063,6 +1063,8 @@ export interface ModelUsageTable {
   input_tokens: number;
   occurred_at: Ts;
   reported_at: TsNullable;
+  /** Set when the row's `usage.report` job gave up after its last attempt (the sweep skips it). */
+  report_failed_at: TsNullable;
 }
 
 export interface KernelDatabase {

@@ -161,7 +161,8 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   enqueues job `usage-model-<rowId>` (only while some plugin subscribes); the payload
  *   (`purpose: "embedding"`, `eventId` = the row id, the calling `extension`, no conversation fields)
  *   is read from the row when the job runs, and the row's `reported_at` is set once nothing is left
- *   to deliver. The sweep re-enqueues rows still unreported (see {@link sweep}).
+ *   to deliver; a job that gives up after its last attempt sets `report_failed_at`. The sweep
+ *   re-enqueues recent rows that are neither (see {@link sweep}).
  */
 @Injectable()
 export class UsageReporter {
@@ -258,8 +259,8 @@ export class UsageReporter {
   /**
    * One sweep (R13): re-enqueues the `usage` events created in `[watermark - overlap, now - lag]` in
    * pages, then advances the watermark to `now - lag`. With no subscriber it only advances. The first
-   * sweep starts at `now - lag - overlap`. Also re-enqueues every `model_usage` row still unreported
-   * that occurred before `now - lag` (spec B §5.4; no watermark: `reported_at` says what is left),
+   * sweep starts at `now - lag - overlap`. Also re-enqueues the `model_usage` rows of the same
+   * window that are neither reported nor given up (spec B §5.4),
    * or, with no subscriber, marks those rows reported (nobody to deliver to). Returns the number of
    * events and rows offered to the queue.
    */
@@ -322,7 +323,7 @@ export class UsageReporter {
         after = { at: last.at, conv: last.conversation_id, seq: String(last.seq) };
       }
     }
-    offered += await this.sweepModelUsage(to, subscribed);
+    offered += await this.sweepModelUsage(watermark, to, subscribed);
     await this.db
       .insertInto("usage_report_sweep")
       .values({ id: 1, watermark: sql<Date>`${to}::timestamptz` as unknown as Date })
@@ -336,8 +337,17 @@ export class UsageReporter {
     return offered;
   }
 
-  /** The `model_usage` half of {@link sweep}: rows unreported at or before `to`, oldest first. */
-  private async sweepModelUsage(to: string, subscribed: boolean): Promise<number> {
+  /**
+   * The `model_usage` half of {@link sweep}: rows neither reported nor given up that occurred in
+   * the same window as the events (`[watermark - overlap, to]`), oldest first. Bounded like the
+   * event sweep, so a row whose job failed for good is never offered again, even after its failed
+   * job left Redis (no repeated backlog, no second delivery to plugins already served).
+   */
+  private async sweepModelUsage(
+    watermark: string,
+    to: string,
+    subscribed: boolean,
+  ): Promise<number> {
     if (!subscribed) {
       await this.db
         .updateTable("model_usage")
@@ -354,6 +364,12 @@ export class UsageReporter {
         .selectFrom("model_usage")
         .select(["id", sql<string>`occurred_at::text`.as("at")])
         .where("reported_at", "is", null)
+        .where("report_failed_at", "is", null)
+        .where(
+          sql<boolean>`occurred_at >= ${watermark}::timestamptz - make_interval(secs => ${
+            USAGE_SWEEP_OVERLAP_MS / 1000
+          })`,
+        )
         .where(sql<boolean>`occurred_at <= ${to}::timestamptz`);
       if (after) {
         q = q.where(
@@ -408,8 +424,10 @@ export class UsageReporter {
       attempt: j.attemptsMade,
       error: err.message,
     };
-    if (final) this.log.error("usage report given up after retries", fields);
-    else this.log.warn("usage report attempt failed; retrying", fields);
+    if (final) {
+      this.log.error("usage report given up after retries", fields);
+      void this.markFailed(j.data);
+    } else this.log.warn("usage report attempt failed; retrying", fields);
   }
 
   /**
@@ -468,6 +486,21 @@ export class UsageReporter {
       .where("id", "=", data.usageId)
       .where("reported_at", "is", null)
       .execute();
+  }
+
+  /** A `model_usage` job gave up after its last attempt: the sweep never offers the row again. */
+  private async markFailed(data: UsageReportJob): Promise<void> {
+    if (data.usageId === undefined) return;
+    try {
+      await this.db
+        .updateTable("model_usage")
+        .set({ report_failed_at: sql<Date>`now()` as unknown as Date })
+        .where("id", "=", data.usageId)
+        .where("reported_at", "is", null)
+        .execute();
+    } catch (err) {
+      this.log.warn("cannot mark a model usage report as given up", { usageId: data.usageId, err });
+    }
   }
 
   /** The payload of one usage event, read from the log; null when the event no longer exists. */

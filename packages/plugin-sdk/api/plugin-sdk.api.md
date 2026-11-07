@@ -885,6 +885,7 @@ export interface ExtensionEmbedRequest {
     inputType?: "query" | "document";
     orgId: string;
     purpose: string;
+    signal?: AbortSignal;
 }
 
 // @public

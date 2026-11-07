@@ -134,6 +134,8 @@ export async function queryUsageSubscribers(
 @Injectable()
 export class ModelUsageJobs implements OnApplicationShutdown {
   private readonly unsubscribe: () => void;
+  /** Set at shutdown: a late event enqueues nothing (the sweep offers the row later). */
+  private closed = false;
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
@@ -152,6 +154,7 @@ export class ModelUsageJobs implements OnApplicationShutdown {
   }
 
   onApplicationShutdown(): void {
+    this.closed = true;
     this.unsubscribe();
   }
 
@@ -160,6 +163,7 @@ export class ModelUsageJobs implements OnApplicationShutdown {
    * enqueued (the sweep marks the row). Never throws: a failure only logs; the sweep catches up.
    */
   async enqueue(usageId: string): Promise<void> {
+    if (this.closed) return;
     try {
       if ((await queryUsageSubscribers(this.kdb.db)).size === 0) return;
       await this.queue.add(

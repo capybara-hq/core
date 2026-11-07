@@ -368,7 +368,10 @@ export function createExtensionContext(
     : undefined;
   // ctx.models: only with permissions.models; the broker accepts only the purposes declared there
   // with kind embedding (spec B §5.4), aborted by this instance's signal
-  const declaredModels = perms.models ?? [];
+  // a frozen copy: the approved manifest, not an object the extension could change later
+  const declaredModels = Object.freeze(
+    structuredClone(perms.models ?? []).map((m) => Object.freeze(m)),
+  );
   const modelsApi: ExtensionModels | undefined =
     declaredModels.length > 0
       ? {

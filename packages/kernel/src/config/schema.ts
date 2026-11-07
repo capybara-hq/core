@@ -1561,6 +1561,19 @@ export const KernelConfigSchema = z.object({
               "Time limit in milliseconds for one model provider's model list (listModels, which may page through a large platform catalog); a provider that exceeds it is treated as failing to list",
           }),
         ),
+      embedTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(600_000)
+        .default(60_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Time limit in milliseconds for one embed call to a model provider (one batch of an extension's ctx.models.embed); the call is aborted and fails with a timeout model error",
+          }),
+        ),
     })
     .prefault({} as never),
   hooks: z

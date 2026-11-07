@@ -23,6 +23,7 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "hooks.timeoutMs": () => {},
   // The provider registry reads the list time limit at every listModels call.
   "models.listTimeoutMs": () => {},
+  "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.

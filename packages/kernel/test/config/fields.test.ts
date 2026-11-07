@@ -34,6 +34,8 @@ describe("configFields", () => {
       "web.fetch.timeoutMs",
       "sandbox.maxConcurrentCommands",
       "evals.orgConcurrency",
+      "models.listTimeoutMs",
+      "models.embedTimeoutMs",
       "hooks.timeoutMs",
       "log.level",
     ]);

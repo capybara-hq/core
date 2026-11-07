@@ -906,6 +906,11 @@ describe("UsageReporter (standalone, own Valkey)", { timeout: 60_000 }, () => {
 describe("usage.report for model usage outside conversations (spec B §5.4)", {
   timeout: 60_000,
 }, () => {
+  // earlier cases move the shared watermark into the future: start each case from a fresh one
+  beforeEach(async () => {
+    await db.deleteFrom("usage_report_sweep").execute();
+  });
+
   async function usageRow(occurredAt?: Date): Promise<string> {
     const row = await db
       .insertInto("model_usage")
@@ -992,6 +997,69 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", {
     expect((await probeUsage([fresh]))[fresh]?.calls ?? 0).toBe(0);
     expect(await reportedAt(fresh)).toBeNull();
     await db.deleteFrom("model_usage").where("id", "=", fresh).execute();
+  });
+
+  it("the sweep leaves rows older than its window (like usage events)", async () => {
+    await probe({});
+    const old = await usageRow(new Date(Date.now() - 2 * 3600_000));
+    try {
+      expect(await k.app.get(UsageReporter).sweep()).toBe(0);
+      await sleep(500);
+      expect(await queue.getJob(modelUsageJobId(old))).toBeUndefined();
+      expect((await probeUsage([old]))[old]?.calls ?? 0).toBe(0);
+    } finally {
+      await db.deleteFrom("model_usage").where("id", "=", old).execute();
+    }
+  });
+
+  it("a job that gives up marks its row, and the sweep never offers it again", async () => {
+    const id = await usageRow(new Date(Date.now() - 2 * 60_000));
+    const r = usageReporterFor({
+      pool: raw,
+      redisUrl: rd2.url,
+      hooks: {
+        handlers: () =>
+          [
+            {
+              plugin: "x",
+              handler: async () => {
+                throw new Error("billing endpoint down");
+              },
+            },
+          ] as never,
+        has: () => true,
+      },
+      isActive: () => true,
+      subscribers: async () => new Set(["x"]),
+      config: () => k.app.get(KernelConfigService).get(),
+      log: createLogger("error", { write: () => {} }),
+      retry: { attempts: 2, backoffMs: 50 },
+    });
+    try {
+      r.startWorker();
+      await queue2.add(
+        "usage-report",
+        { usageId: id },
+        { jobId: modelUsageJobId(id), attempts: 2, backoff: { type: "fixed", delay: 50 } },
+      );
+      const failedAt = async () =>
+        (
+          await db
+            .selectFrom("model_usage")
+            .select("report_failed_at")
+            .where("id", "=", id)
+            .executeTakeFirst()
+        )?.report_failed_at ?? null;
+      await waitFor(async () => (await failedAt()) !== null, 10_000, "report_failed_at");
+      expect(await reportedAt(id)).toBeNull();
+      // the failed job leaves Redis (retention): the sweep must not create a fresh one
+      await (await queue2.getJob(modelUsageJobId(id)))?.remove();
+      await r.sweep();
+      expect(await queue2.getJob(modelUsageJobId(id))).toBeUndefined();
+    } finally {
+      await r.stop();
+      await db.deleteFrom("model_usage").where("id", "=", id).execute();
+    }
   });
 
   it("with no subscriber the sweep marks unreported rows without enqueueing", async () => {
