@@ -111,13 +111,18 @@ Anti-goals (a failure even if it works):
    「个人环境」 / "Personal", created on first need when a cloud sandbox extension is enabled. It is
    the picker's default until the person has used another one; then the last used environment is
    the default.
-8. **IM channel conversations** use the person's default environment (the IM message carries no
-   picker); `/env <name>` in a direct message changes it for the next new thread.
+8. **IM channel conversations** use the person's IM default environment (the IM message carries
+   no picker): the environment chosen with `/env <name>` in a direct message, else their default
+   personal environment. `/env <name>` applies to the next new thread (after `/new`); `/env` alone
+   lists the environments the person may use. Anonymous IM senders (no linked account) get no
+   environment, and their sandbox tools are unavailable.
 9. **No compatibility with per-conversation sandboxes** **(decided)**: nothing has been released
-   (AGENTS.md "Before 0.1.0"), so phase 1 replaces them outright. The migration drops the
-   `sandboxes` table; the instances and files of existing rc deployments are destroyed by a
-   one-off cleanup job (`destroyByName` on `cap-<conversationId>`, then the volumes), and their
-   conversations get the starter's default environment on their next sandbox tool call.
+   (AGENTS.md "Before 0.1.0"), so phase 1 replaces them outright. Kernel code stops using the
+   `sandboxes` table; a one-off cleanup job destroys every instance and file system it lists
+   (`destroyByName` and `destroyFileSystemByName` on `cap-<conversationId>`) and deletes the row.
+   The table itself is dropped by a later migration, after the cleanup has run everywhere (the
+   expand-then-contract rule of the writing-migrations skill). Existing conversations get the
+   owner's default environment on their next sandbox tool call.
 10. **Instance lifetime follows all sessions.** An environment's instance is suspended after
     `sandbox.limits.suspendAfterIdleMinutes` (10) with no command from any session, and resumed on
     the next one. `maxRunningMinutes` stays as the backstop. `destroyAfterInactiveDays` now destroys
@@ -126,9 +131,12 @@ Anti-goals (a failure even if it works):
 11. **Suspension ends the instance's processes** (as today); an environment says so in its detail
     page, so nobody expects a long-running server to survive 10 idle minutes. Keeping processes is
     the optional "memory retained" capability of §8.3 of the architecture design.
-12. **"The person who starts the conversation"** (§4.1 item 3) is the conversation's owner account.
-    A conversation continued by a background wake rule or a scheduled trigger acts for the
-    trigger's creator; an IM group thread acts for the person who started the thread. Access is
+12. **"The person who starts the conversation"** (§4.1 item 3) is the conversation's owner account
+    (`conversations.account_id`). A background wake continues the same conversation, so it uses
+    the same environment. In an IM group thread every sender already has a conversation of their
+    own (`channel_threads` is unique per account), so each works in their own environment. The
+    kernel has no scheduled triggers yet; when they arrive, a triggered conversation is owned by the
+    trigger's creator. Access is
     checked when the conversation is bound and again every time the kernel acquires the instance
     for a tool call (a cheap lookup next to the lease); losing access (removed from a project,
     left the org, environment deleted) fails sandbox tools with `environment.forbidden` /
@@ -154,9 +162,14 @@ moves sandbox-docker and sandbox-e2b in lockstep, and a kernel refuses a provide
 
 - `createFileSystem({ name, limits, signal }) -> FileSystemHandle` and
   `destroyFileSystem(fs, signal)`: the environment's files on their own. `name` is
-  `cap-env-<environmentId>`.
-- `create({ name, image, limits, fileSystem, signal }) -> SandboxHandle`: an instance attached to
-  that file system; `destroy(h)` drops the instance only.
+  `cap-env-<environmentId>`. `destroyFileSystemByName(name, signal)` removes the file system made
+  under that name when the kernel has no handle (a crash mid-create, the cleanup of §4.2 item 9).
+- `create({ name, image?, limits, fileSystem, signal }) -> SandboxHandle`: an instance attached to
+  that file system; `destroy(h)` and `destroyByName(name)` drop the instance only. Without
+  `image` the provider uses its own published image (§5.4). When the file system is gone, `create`
+  throws `FileSystemGoneError` (new in the SDK, duck-typed like `SandboxGoneError`) instead of
+  silently making an empty one: a Docker provider checks the volumes exist before mounting them,
+  because Docker would otherwise create empty ones.
 - `resume` / `suspend` / `exec` / `readFile` / `writeFile` / `stat` / `killAll` / `killTagged` as
   in `@1`.
 - **`concurrentExec` and `killTagged` are required** in `@2` **(designer's call)**: several
@@ -174,7 +187,13 @@ moves sandbox-docker and sandbox-e2b in lockstep, and a kernel refuses a provide
 The kernel's `SandboxService` keeps owning locks, leases, suspension and destruction; the lock key
 becomes the environment id instead of the conversation id. The sub-agent sharing rules
 (`sandbox.maxConcurrentCommands`, shared and exclusive leases, `killTagged`) apply to all sessions
-of the environment, with a per-session fair share of the concurrent commands.
+of the environment. A per-session fair share of the concurrent commands comes with the phase 3
+quotas: a personal environment's sessions all belong to one person.
+
+The SDK's extension point table gains the majors the kernel accepts (`sandbox`: `[2]`); the kernel
+refuses to load an extension that provides an unsupported major, with an error naming the plugin
+and the major to upgrade to. Today a stale provider loads and the sandbox silently becomes
+unavailable.
 
 ### 5.2 Docker
 
@@ -206,18 +225,28 @@ architecture design §8.3 ("recovery not tied to a node"). A paused sandbox that
 gone surfaces as `SandboxGoneError` from `resume`, and the environment shows its files as lost
 (`environment.files_lost`), never a silent empty workspace (§3 anti-goals).
 
-**Template.** The provider ignores `sandbox.image` and creates from a template. When the plugin's
-`template` setting is empty it builds one on first use from the published image (§5.4) with E2B's
-build API (`Template().fromImage(...)`, amd64), named after the image tag, and reuses it until the
-tag changes **(designer's call)**, so E2B credentials alone are enough (§3 goal 5).
+**Template.** The provider creates from a template. When the plugin's `template` setting is empty
+it builds one on first use from the image (`create`'s `image`, else its published image, §5.4)
+with E2B's template build API (the calls `Template().fromImage(...)` makes in the `e2b` SDK,
+amd64), aliased after the image tag, and reuses it until the tag changes **(designer's call)**, so
+E2B credentials alone are enough (§3 goal 5). The provider keeps its hand-written REST client (its
+README explains why it does not use the `e2b` package).
+
+**Limits on E2B** are fixed when the E2B sandbox is created, that is at `createFileSystem`. If E2B
+cannot change a paused sandbox's network rules, a later change of the org's egress setting reaches
+an existing E2B environment only when it is recreated; the provider README and the environment
+page say so.
 
 ### 5.4 Images are published
 
 The sandbox image and the egress proxy image are built and pushed by the plugins repository's
 release workflow to `ghcr.io/capybara-hq/capybara-sandbox` and
 `ghcr.io/capybara-hq/capybara-sandbox-egress`, multi-arch (amd64 and arm64), tagged with the
-sandbox-docker plugin's version **(designer's call)**. The kernel setting `sandbox.image` and the
-plugin's `egressProxyImage` default to those tags; the provider already pulls a missing image
+sandbox-docker plugin's version **(designer's call)**, by a workflow file of its own (the release
+workflow's job list is pinned by a check). The kernel setting `sandbox.image` loses its default:
+unset, the kernel passes no `image` and each provider uses the image published with its own
+version, so the kernel never has to know a plugin's version. The plugin's `egressProxyImage`
+defaults to the egress tag of its own version. The provider already pulls a missing image
 (`/images/create`, allowed by the socket proxy). The compose files keep their two build services
 only as the offline route (a deployment without registry access), behind a profile of its own.
 
@@ -326,18 +355,20 @@ Two kernel features assume one conversation owns the file system today. In an en
 **(designer's call)**:
 
 - **Attachments** go to `/workspace/attachments/<conversation>/<name>` (`<conversation>` is the
-  conversation id's first 12 characters), instead of `/workspace/attachments/<name>`
+  first 12 hex digits of the root conversation's UUID, hyphens removed), instead of
+  `/workspace/attachments/<name>`
   (`ATTACHMENTS_DIR`, `packages/kernel/src/tools/builtins/sandbox/common.ts`); the copy marker is
   kept per conversation as today.
-- **Skill files** go to `/skills/<name>@<digest12>/` (the skill's content digest), with markers at
+- **Skill files** go to `/skills/<name>@<digest12>/` (the first 12 hex digits of the sha256 of the
+  version's manifest file list, sorted by path, as `path size sha256` lines), with markers at
   `/skills/.capybara/<name>@<digest12>.json` (`packages/kernel/src/tools/builtins/skill-load.ts`),
   so two agents using different versions of one skill (an org-owned skill, a SkillWrite draft) do
   not overwrite each other. `/skills` stays read-only to commands.
 
 Both paths are model-visible (tool results and the Skill tool description). They change only for
-new tool calls; recorded events keep the old paths, so replays are unaffected. The plan runs the
-zero-drift fixture tests before and after, and adds a `DriftReason` if the tool description text
-changes (replay-evals skill).
+new tool calls; recorded events keep the old paths, and tool definitions are replayed from the
+snapshot by their recorded spec hash, so no `DriftReason` is needed (replay-evals skill). The plan
+runs the zero-drift fixture tests before and after.
 
 ## 8. Security
 
@@ -414,8 +445,10 @@ person's connected machine and its isolation level.
   (environment_id, account_id, role admin|member), `environment_machines` (connected: id,
   environment_id, credential hash, name, os, program_version, mode, session_isolation, last_seen,
   revoked_at), `conversations.environment_id`. The instance state the `sandboxes` table holds
-  today (status, generation, holders) moves to `environments` (or an `environment_instances` table
-  keyed by environment), and `sandboxes` is dropped (§4.2 item 9).
+  today (status, generation, handles) moves to an `environment_instances` table keyed by
+  environment, which also holds the file system handle; `environment_defaults` records the IM
+  default of §4.2 item 8; `sandboxes` is dropped later (§4.2 item 9). `environment_members` and
+  `environment_machines` arrive with the phases that use them.
 - Routes under `orgs/:orgId/environments` (list, create, get, patch, delete, members, machines,
   registration codes, activity) and the device authorization endpoints; `@OrgAction` gates per
   role.
