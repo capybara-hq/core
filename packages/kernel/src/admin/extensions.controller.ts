@@ -8,6 +8,7 @@ import {
   ExtensionDeploymentConfigService,
 } from "../extensions/deployment-config.js";
 import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js";
+import { type OrgOverrideSummary, OrgOverrides } from "../extensions/org-overrides.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
   CurrentPrincipal,
@@ -87,6 +88,7 @@ export class AdminExtensionsController {
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KernelConfigService) private readonly kernelConfig: KernelConfigService,
+    @Inject(OrgOverrides) private readonly orgOverrides: OrgOverrides,
   ) {}
 
   /**
@@ -115,6 +117,16 @@ export class AdminExtensionsController {
   @Get(":name/config")
   config(@Param("name") name: string): Promise<DeploymentConfigView> {
     return this.deploymentConfigs.view(name);
+  }
+
+  /**
+   * The orgs keeping their own copy of the extension's overridable config (spec A §5.7): when it
+   * was made, which non-secret fields differ from the platform, whether each secret is set; never
+   * a secret value. The super admin cannot edit or drop a copy.
+   */
+  @Get(":name/org-overrides")
+  async orgCopies(@Param("name") name: string): Promise<{ overrides: OrgOverrideSummary[] }> {
+    return { overrides: await this.orgOverrides.listForPlugin(name) };
   }
 
   /**

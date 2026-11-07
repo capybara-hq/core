@@ -1,8 +1,9 @@
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
-import { Controller, Get, Inject, Param, Put } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { OrgExtensionConfigs, type OrgExtensionView } from "../extensions/org-config.js";
+import { OrgOverrides, type OrgOverrideView } from "../extensions/org-overrides.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -27,6 +28,39 @@ const PutBody = z
   .strict();
 
 class OrgExtensionPutBody extends createZodDto(PutBody, "OrgExtensionPutBody") {}
+
+const OverrideSecretEntry = z
+  .object({
+    /** A secret record field of the copy some `x-ui.secrets[].path` names. */
+    path: z.string().min(1).max(256),
+    key: z.string().min(1).max(256),
+    /** A string sets the key, `null` removes it. */
+    value: z.string().max(65_536).nullable().optional(),
+    /** Moves the value at this key to `key` first. */
+    renameFrom: z.string().min(1).max(256).optional(),
+  })
+  .strict()
+  .refine((e) => e.value !== undefined || e.renameFrom !== undefined, {
+    message: "an entry needs value or renameFrom",
+  })
+  .refine((e) => e.key !== "__proto__" && e.renameFrom !== "__proto__", {
+    message: "__proto__ is not a valid key",
+  });
+
+const OverridesPut = z
+  .object({
+    /** Overridable field dot path -> new value (`null` clears); secret fields too. */
+    values: z.record(z.string().min(1).max(256), z.unknown()),
+    secretEntries: z.array(OverrideSecretEntry).max(200).optional(),
+  })
+  .strict();
+
+const OverridesTake = z
+  .object({ paths: z.array(z.string().min(1).max(256)).min(1).max(200) })
+  .strict();
+
+class OrgOverridesPutBody extends createZodDto(OverridesPut, "OrgOverridesPutBody") {}
+class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTakeBody") {}
 
 /**
  * One extension of the org list: the org view plus the plugin's display name and the extension
@@ -105,6 +139,76 @@ export class OrgExtensionConfigsController {
         provides: providesOf(r.view),
       },
     };
+  }
+}
+
+/**
+ * The org's two-level deployment config of an extension (spec A §5.3 to §5.6): following or a copy,
+ * the read-only and overridable fields (hidden ones are never sent), secrets as set or not.
+ */
+@Controller("api/v1/orgs/:orgId/extensions/:extension/overrides")
+export class OrgExtensionOverridesController {
+  constructor(@Inject(OrgOverrides) private readonly overrides: OrgOverrides) {}
+
+  @Get()
+  @OrgAction("org.extensions.manage")
+  view(
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+  ): Promise<OrgOverrideView> {
+    return this.overrides.view(org.orgId, extension);
+  }
+
+  /**
+   * Saves overridable fields; the first save makes the copy, which must be valid on its own (the
+   * org's own secrets in the same save). A read-only, hidden or unknown field -> 400
+   * `extension.field_not_overridable`; invalid -> 400 `extension.config_invalid`.
+   */
+  @Put()
+  @OrgAction("org.extensions.manage")
+  save(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+    @ZBody(OrgOverridesPutBody) body: z.infer<typeof OverridesPut>,
+  ): Promise<OrgOverrideView> {
+    const p = requireUser(principal);
+    return this.overrides.save(org.orgId, extension, body.values, body.secretEntries ?? [], {
+      accountId: p.account.id,
+      tokenId: patTokenId(p),
+    });
+  }
+
+  /** Drops the copy (its secrets too): the org follows the platform again. */
+  @Delete()
+  @OrgAction("org.extensions.manage")
+  reset(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+  ): Promise<OrgOverrideView> {
+    const p = requireUser(principal);
+    return this.overrides.reset(org.orgId, extension, {
+      accountId: p.account.id,
+      tokenId: patTokenId(p),
+    });
+  }
+
+  /** Takes the platform's current values of non-secret overridable fields into the copy. */
+  @Post("take")
+  @HttpCode(200)
+  @OrgAction("org.extensions.manage")
+  take(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("extension") extension: string,
+    @ZBody(OrgOverridesTakeBody) body: z.infer<typeof OverridesTake>,
+  ): Promise<OrgOverrideView> {
+    const p = requireUser(principal);
+    return this.overrides.take(org.orgId, extension, body.paths, {
+      accountId: p.account.id,
+      tokenId: patTokenId(p),
+    });
   }
 }
 

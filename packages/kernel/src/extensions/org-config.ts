@@ -27,9 +27,11 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configMessages, type JsonSchema, safeConfigFormSchema } from "./config-json-schema.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
+import { fieldLevels } from "./org-levels.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
 import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
@@ -69,6 +71,16 @@ export interface OrgExtensionView {
   catalogItem: { itemId: string; scope: PluginScope } | null;
   /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
   switchable: boolean;
+  /**
+   * The two-level deployment config (spec A §5.3, §5.4): `following` the platform, a `copy` of the
+   * overridable fields, or `none` (the extension has no overridable field, or is unavailable).
+   */
+  overrideState: "following" | "copy" | "none";
+  /**
+   * The org must configure the extension before it works here (spec A §6): its effective config
+   * is not valid, or a required org-only field is missing. Always false when unavailable.
+   */
+  needsConfig: boolean;
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -188,6 +200,8 @@ export class OrgExtensionConfigs {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Secret values handled (written or decrypted) are masked in the logs after the commit. */
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** The effective deployment config of each org (spec A §6): read for `needsConfig`. */
+    @Inject(EffectiveConfigs) private readonly effective: EffectiveConfigs,
   ) {}
 
   /** The kernel-schema handle of the current transaction. */
@@ -216,7 +230,36 @@ export class OrgExtensionConfigs {
       name: r.name,
       version: r.version,
     }));
-    return this.listSnapshot(orgId, installed);
+    return this.withLayers(orgId, await this.listSnapshot(orgId, installed));
+  }
+
+  /**
+   * Fills `overrideState` and the platform half of `needsConfig` (spec A §6) for the views of
+   * extensions with overridable fields (the others always run with the platform's config, which
+   * loaded valid). Reads the org's copy rows once and the effective config of each such extension.
+   */
+  private async withLayers(orgId: string, views: OrgExtensionView[]): Promise<OrgExtensionView[]> {
+    const layered = views.filter((v) => v.overrideState !== "none");
+    if (layered.length === 0) return views;
+    const copies = new Set(
+      (
+        await this.db
+          .selectFrom("extension_org_overrides")
+          .select("plugin")
+          .where("org_id", "=", orgId)
+          .where(
+            "plugin",
+            "in",
+            layered.map((v) => v.plugin),
+          )
+          .execute()
+      ).map((r) => r.plugin),
+    );
+    for (const v of layered) {
+      v.overrideState = copies.has(v.plugin) ? "copy" : "following";
+      if (!(await this.effective.get(orgId, v.plugin)).ok) v.needsConfig = true;
+    }
+    return views;
   }
 
   /** `REPEATABLE READ` read-only: the config rows and the secrets come from one snapshot. */
@@ -291,6 +334,8 @@ export class OrgExtensionConfigs {
           available: false,
           required: required.has(i.name),
           ...scopeFields(items.get(i.name), required.has(i.name)),
+          overrideState: "none",
+          needsConfig: false,
         }),
       );
     return [...views, ...unavailable];
@@ -344,7 +389,16 @@ export class OrgExtensionConfigs {
         `Extension ${plugin} has no organization config`,
       );
     }
-    return this.write(orgId, plugin, manifest, input, actorAccountId, actorTokenId, opts);
+    const view = await this.write(
+      orgId,
+      plugin,
+      manifest,
+      input,
+      actorAccountId,
+      actorTokenId,
+      opts,
+    );
+    return (await this.withLayers(orgId, [view]))[0] as OrgExtensionView;
   }
 
   @Transactional()
@@ -758,6 +812,12 @@ export class OrgExtensionConfigs {
       available: true,
       required,
       ...scopeFields(items, required),
+      overrideState: [...fieldLevels(m.config?.deployment).values()].includes("override")
+        ? "following"
+        : "none",
+      needsConfig:
+        schema !== undefined &&
+        orgConfigIncomplete(schema, config, (p) => setKeys.has(secretKey(m.name, p))),
     };
   }
 
@@ -787,6 +847,24 @@ export class OrgExtensionConfigs {
       .execute();
     return new Set(rows.map((r) => r.key));
   }
+}
+
+/**
+ * The stored org-only config does not satisfy the org schema (a required field missing): what the
+ * org form reports before any edit. A set secret is not decrypted here; issues on it or below it
+ * are ignored (it was validated when written).
+ */
+function orgConfigIncomplete(
+  schema: z.ZodTypeAny,
+  plain: Obj | null,
+  secretSet: (path: string) => boolean,
+): boolean {
+  const r = schema.safeParse(plain ?? {});
+  if (r.success) return false;
+  const secrets = secretPaths(schema).filter(secretSet);
+  return toIssues(r.error).some(
+    (i) => !secrets.some((p) => i.path === p || i.path.startsWith(`${p}.`)),
+  );
 }
 
 const requiredError = (plugin: string) =>

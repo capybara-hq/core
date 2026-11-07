@@ -604,7 +604,7 @@ function orgMustConfigureOf(
  * from `next` at its path, renamed, set or removed, and put back; an empty record is removed (the
  * field falls back to its default).
  */
-function applySecretEntries(next: Obj, entries: readonly SecretEntry[]): void {
+export function applySecretEntries(next: Obj, entries: readonly SecretEntry[]): void {
   for (const e of entries) {
     const cur = getPath(next, e.path);
     const rec: Record<string, unknown> = isObj(cur) ? { ...cur } : {};

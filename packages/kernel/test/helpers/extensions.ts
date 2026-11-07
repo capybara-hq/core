@@ -11,6 +11,7 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionBlobs } from "../../src/extensions/blobs.js";
+import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import type { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
@@ -178,5 +179,13 @@ export function orgConfigsFor(
     { list: async () => o.installed ?? [] } as unknown as ExtensionInstalls,
     new KernelEvents(quiet),
     quiet,
+    // no org copies here: every org runs with the platform's (loaded) config
+    {
+      get: async (_orgId: string, plugin: string) => ({
+        ok: true,
+        config: host.current(plugin)?.config,
+        source: "platform",
+      }),
+    } as unknown as EffectiveConfigs,
   );
 }
