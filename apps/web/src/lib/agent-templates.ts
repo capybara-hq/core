@@ -91,7 +91,7 @@ export const updateAgentTemplate = (
 
 /**
  * Something 另存为模板 left out (kernel `SaveAsOmission`): the kind of thing, its name, and why.
- * `field` names an inline sub-agent's setting the template has no place for.
+ * `field` names an inline sub-agent's setting the template has no place for, or its blank text.
  */
 export interface SaveAsOmission {
   kind:
@@ -102,6 +102,9 @@ export interface SaveAsOmission {
     | "connector"
     | "tool"
     | "tool_policy"
+    | "model_param"
+    | "fallback_model"
+    | "quick_action"
     | (string & {});
   name: string;
   id?: string;
@@ -115,6 +118,9 @@ export interface SaveAsOmission {
     | "limit"
     | "connector_tool"
     | "unsupported_field"
+    | "model_param"
+    | "fallback"
+    | "empty_text"
     | (string & {});
 }
 

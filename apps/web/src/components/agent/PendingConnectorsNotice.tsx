@@ -9,28 +9,72 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import type { Agent } from "../../lib/agents";
+import type { LocalizedName } from "../../lib/catalog";
 import { canManageConnectors } from "../../lib/connectors";
 import {
   entryOfPending,
   type PendingEntry,
   requestPendingConnectors,
 } from "../../lib/pending-connectors";
+import { orgCatalogItemQuery } from "../../lib/query/catalog";
 import { retryOnMountOf } from "../../lib/query/client";
+import { orgComponentsQuery } from "../../lib/query/components";
 import { setupRequestQuery } from "../../lib/query/from-template";
 import { inboxChangeKeys } from "../../lib/query/inbox";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useSession } from "../shell/session";
-import { PendingConnectorDialog, useEntrySource, useEntryTools } from "./PendingConnectorDialog";
+import {
+  PendingConnectorDialog,
+  useEntryLabel,
+  useEntrySource,
+  useEntryTools,
+} from "./PendingConnectorDialog";
 
 /** The agent's pending connectors as the notice and the dialog show them. */
 export const pendingEntriesOf = (agent: Agent): PendingEntry[] =>
   (agent.definition.pendingConnectors ?? []).map(entryOfPending);
+
+/**
+ * The entries with each template entry's display name (both languages) filled in from the
+ * connector templates: the org component names the template's catalog item and id, the item's
+ * detail its display name. Unreadable or unknown: the entry keeps its label.
+ */
+function useTemplateDisplayNames(orgId: string, entries: PendingEntry[]): PendingEntry[] {
+  const ids = entries.flatMap((e) => (e.source.kind === "template" ? [e.source.templateId] : []));
+  const compQ = orgComponentsQuery(orgId, { kind: "connector_template" });
+  const comps = useQuery({
+    ...compQ,
+    enabled: ids.length > 0,
+    retryOnMount: retryOnMountOf(compQ.queryKey),
+  });
+  const refs = ids.flatMap((id) => {
+    const c = comps.data?.components.find((x) => x.id === id);
+    return c?.itemId != null ? [{ id, itemId: c.itemId, name: c.name }] : [];
+  });
+  const itemIds = [...new Set(refs.map((r) => r.itemId))];
+  const items = useQueries({
+    queries: itemIds.map((itemId) => {
+      const q = orgCatalogItemQuery(orgId, itemId);
+      return { ...q, retryOnMount: retryOnMountOf(q.queryKey) };
+    }),
+  });
+  const names = new Map<string, LocalizedName>();
+  for (const r of refs) {
+    const tpl = items[itemIds.indexOf(r.itemId)]?.data?.templates.find((x) => x.id === r.name);
+    if (tpl?.displayName) names.set(r.id, tpl.displayName);
+  }
+  return entries.map((e) => {
+    if (e.source.kind !== "template") return e;
+    const displayName = names.get(e.source.templateId);
+    return displayName === undefined ? e : { ...e, source: { ...e.source, displayName } };
+  });
+}
 
 /**
  * The 待配置 notice of the Tools section (rulings P4-6, P4-7), for whoever may change the agent:
@@ -44,10 +88,11 @@ export const pendingEntriesOf = (agent: Agent): PendingEntry[] =>
 export function PendingConnectorsNotice({ orgId, agent }: { orgId: string; agent: Agent }) {
   const t = useTranslations("agents.pending");
   const { me } = useSession();
-  const entries = pendingEntriesOf(agent);
+  const entries = useTemplateDisplayNames(orgId, pendingEntriesOf(agent));
   const manager = canManageConnectors(me);
   const source = useEntrySource();
   const toolsOf = useEntryTools();
+  const labelOf = useEntryLabel();
   const [open, setOpen] = useState<string | null>(null);
   if (entries.length === 0) return null;
   return (
@@ -63,7 +108,7 @@ export function PendingConnectorsNotice({ orgId, agent }: { orgId: string; agent
           {entries.map((e) => (
             <ItemListItem
               key={e.key}
-              title={e.label}
+              title={labelOf(e)}
               marks={
                 <Text variant="small" tone="warn">
                   {t("state")}

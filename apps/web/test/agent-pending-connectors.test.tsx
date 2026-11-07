@@ -326,6 +326,64 @@ describe("the 待配置 notice (P4-7)", () => {
     expect(within(dialog).getByText(P.noCandidatesOff)).toBeTruthy();
   });
 
+  it("a template entry shows the template's display name in the person's language", async () => {
+    stubApi(
+      routes(agent(), {
+        [`GET ${ORG}/components?kind=connector_template`]: ok({
+          components: [
+            {
+              kind: "connector_template",
+              id: CT,
+              name: "gh",
+              description: null,
+              plugin: "crm",
+              itemId: ITEM,
+              version: "1",
+              scopeMode: "follow",
+              switch: null,
+              on: true,
+              locked: false,
+              pluginOn: true,
+              switchable: true,
+            },
+          ],
+        }),
+        [`GET ${ORG}/catalog/${ITEM}`]: ok({
+          item: { id: ITEM, name: "crm", displayName: null },
+          hasIcon: false,
+          extension: null,
+          templates: [
+            {
+              id: "gh",
+              // the entry's label is the kernel's snapshot ("GitHub"); the page reads the template
+              displayName: { zh: "代码仓库", en: "GitHub Enterprise" },
+              description: "",
+              plugin: "crm",
+              connector: "mcp",
+              endpoint: { url: "https://gh.example/mcp" },
+              editableEndpoint: [],
+              auth: { type: "none" },
+              ownership: null,
+            },
+          ],
+          dependencies: [],
+          skills: [],
+        }),
+      }),
+    );
+    await renderEditAgent({ me: as("admin", "boss"), section: "tools" });
+    const notice = await screen.findByRole("list", { name: P.listLabel });
+    expect(await within(notice).findByText("GitHub Enterprise")).toBeTruthy();
+    expect(
+      within(notice).getByText("Made from the connector template GitHub Enterprise"),
+    ).toBeTruthy();
+    const rows = within(notice).getAllByRole("listitem");
+    await userEvent
+      .setup()
+      .click(within(rows[0] as HTMLElement).getByRole("button", { name: P.configure }));
+    expect(await screen.findByRole("dialog", { name: "Configure GitHub Enterprise" })).toBeTruthy();
+  });
+
   it("a needs entry opens the custom connector form prefilled", async () => {
     stubApi(routes(agent(), { [`GET ${ORG}/connectors`]: ok({ connectors: [] }) }));
     await renderEditAgent({ me: as("admin", "boss"), section: "tools" });

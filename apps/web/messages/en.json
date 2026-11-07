@@ -889,14 +889,19 @@
         "skill": "Skill {name}",
         "connector": "Connector {name}",
         "tool": "Tool {name}",
-        "tool_policy": "Tool policy {name}"
+        "tool_policy": "Tool policy {name}",
+        "model_param": "Model parameter {name}",
+        "fallback_model": "Fallback model {name}",
+        "quick_action": "Quick action {name}"
       },
       "field": {
         "disallowedTools": "disallowed tools",
         "toolPolicies": "tool policies",
         "effort": "reasoning effort",
         "maxSteps": "max steps",
-        "tools": "tools"
+        "tools": "tools",
+        "description": "description",
+        "instructions": "instructions"
       },
       "reason": {
         "org_agent": "it is an organization agent, not a template",
@@ -907,6 +912,9 @@
         "limit": "it is over a template limit",
         "connector_tool": "it belongs to a connector the template does not carry",
         "unsupported_field": "templates have no place for its {field} setting",
+        "model_param": "templates record only the reasoning effort, no other model parameter",
+        "fallback": "templates record no fallback model or its parameters",
+        "empty_text": "{field, select, none {it is blank, which a template cannot hold} other {its {field} is blank, which a template cannot hold}}",
         "other": "left out"
       }
     },
@@ -1009,6 +1017,7 @@
         "connector_needs": "Needs a custom connector.",
         "connector_template_not_found": "The connector template doesn't exist or isn't available here.",
         "connector_disallowed": "The template disallows every tool of this connector.",
+        "connector_invalid_endpoint": "The address the template records is not a valid http(s) URL.",
         "subagent_type_not_found": "This organization has no such agent template.",
         "subagent_type_taken": "A sub-agent with this name already exists.",
         "subagent_too_many": "Too many sub-agents."

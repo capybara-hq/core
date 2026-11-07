@@ -189,6 +189,7 @@ export const ITEM_REASONS: Readonly<Record<PlanItemKind, readonly string[]>> = {
     "needs",
     "template_not_found",
     "disallowed",
+    "invalid_endpoint",
   ],
   subagent: ["type_not_found", "type_taken", "too_many"],
 };

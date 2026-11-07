@@ -46,20 +46,26 @@ import {
 } from "../CatalogInstallWizard";
 import { FormError } from "../form-error";
 
+/**
+ * An entry's name: a template entry's display name in the person's language when it is known (the
+ * request carries it; the agent page resolves it from the connector templates), else its label
+ * (the kernel's snapshot of the template's English display name, or a need's label).
+ */
+export function useEntryLabel(): (e: PendingEntry) => string {
+  const locale = useLocale();
+  return (e) =>
+    e.source.kind === "template" && e.source.displayName !== null
+      ? displayNameOf({ name: e.label, displayName: e.source.displayName }, locale)
+      : e.label;
+}
+
 /** How an entry's source reads: the connector template, or the protocol and endpoint it needs. */
 export function useEntrySource(): (e: PendingEntry) => string {
   const t = useTranslations("agents.pending");
-  const locale = useLocale();
+  const labelOf = useEntryLabel();
   return (e) =>
     e.source.kind === "template"
-      ? t("fromTemplateNamed", {
-          // the request names the template's display name; an agent's entry carries it as its
-          // label (the kernel labels template entries with the template's display name)
-          name:
-            e.source.displayName !== null
-              ? displayNameOf({ name: e.label, displayName: e.source.displayName }, locale)
-              : e.label,
-        })
+      ? t("fromTemplateNamed", { name: labelOf(e) })
       : t("needs", { protocol: e.source.protocol, endpoint: e.source.endpoint });
 }
 
@@ -133,6 +139,7 @@ export function PendingConnectorDialog({
   const toast = useToast();
   const source = useEntrySource();
   const toolsOf = useEntryTools();
+  const labelOf = useEntryLabel();
   const [bound, setBound] = useState<ReadonlySet<string>>(new Set());
   const [open, setOpen] = useState<string | undefined>(initialKey);
   const left = entries.filter((e) => !bound.has(e.key));
@@ -164,7 +171,7 @@ export function PendingConnectorDialog({
         entry={entry}
         onBack={single ? onClose : () => setOpen(undefined)}
         backLabel={single ? tc("cancel") : t("back")}
-        onBound={(dropped) => afterBind(entry.key, entry.label, dropped)}
+        onBound={(dropped) => afterBind(entry.key, labelOf(entry), dropped)}
       />
     );
   }
@@ -188,7 +195,7 @@ export function PendingConnectorDialog({
           {left.map((e) => (
             <ItemListItem
               key={e.key}
-              title={e.label}
+              title={labelOf(e)}
               meta={
                 <>
                   <Text variant="small" tone="muted">
@@ -233,6 +240,7 @@ function EntryDialog({
   const t = useTranslations("agents.pending");
   const source = useEntrySource();
   const toolsOf = useEntryTools();
+  const label = useEntryLabel()(entry);
   const connectorsQ = connectorsQuery(orgId);
   const connectors = useQuery({
     ...connectorsQ,
@@ -365,7 +373,7 @@ function EntryDialog({
       <TemplateCreate
         orgId={orgId}
         templateId={entry.source.templateId}
-        title={t("entryTitle", { name: entry.label })}
+        title={t("entryTitle", { name: label })}
         head={body}
         backLabel={backLabel}
         onBack={onBack}
@@ -382,7 +390,7 @@ function EntryDialog({
         if (!o) onBack();
       }}
       size={640}
-      title={t("entryTitle", { name: entry.label })}
+      title={t("entryTitle", { name: label })}
       footer={
         <>
           <Button variant="ghost" onClick={onBack}>

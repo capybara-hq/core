@@ -889,14 +889,19 @@
         "skill": "技能「{name}」",
         "connector": "连接器「{name}」",
         "tool": "工具「{name}」",
-        "tool_policy": "工具策略「{name}」"
+        "tool_policy": "工具策略「{name}」",
+        "model_param": "模型参数「{name}」",
+        "fallback_model": "备用模型「{name}」",
+        "quick_action": "快捷操作「{name}」"
       },
       "field": {
         "disallowedTools": "不允许的工具",
         "toolPolicies": "工具策略",
         "effort": "推理强度",
         "maxSteps": "最多步数",
-        "tools": "工具"
+        "tools": "工具",
+        "description": "描述",
+        "instructions": "提示词"
       },
       "reason": {
         "org_agent": "它是组织里的智能体，不是模板",
@@ -907,6 +912,9 @@
         "limit": "超出了模板的数量上限",
         "connector_tool": "它属于没有写入模板的连接器",
         "unsupported_field": "模板没有地方记录它的{field}设置",
+        "model_param": "模板只记录推理强度，不记录其他模型参数",
+        "fallback": "模板不记录备用模型及其参数",
+        "empty_text": "{field, select, other {它的{field}只有空白，模板不能记录} none {它只有空白，模板不能记录}}",
         "other": "没有写入"
       }
     },
@@ -1009,6 +1017,7 @@
         "connector_needs": "需要一个自建连接器。",
         "connector_template_not_found": "连接器模板不存在或在本组织不可用。",
         "connector_disallowed": "模板禁用了这个连接器的全部工具。",
+        "connector_invalid_endpoint": "模板记录的地址不是有效的 http(s) 地址。",
         "subagent_type_not_found": "本组织没有这个智能体模板。",
         "subagent_type_taken": "已有同名的子智能体。",
         "subagent_too_many": "子智能体数量超过上限。"
