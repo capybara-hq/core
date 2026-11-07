@@ -63,7 +63,7 @@ describe("接受邀请页（AuthPage）", () => {
       expect(accept.getAttribute("data-variant")).toBe("primary");
       await userEvent.setup().click(accept);
       // A new current org: the whole document is reloaded (ruling R4).
-      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
       expect(router.replace).not.toHaveBeenCalled();
       expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({});
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o9" });
@@ -101,7 +101,7 @@ describe("接受邀请页（AuthPage）", () => {
     await user.type(screen.getByLabelText(m.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(m.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: m.signup }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
     expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({
       login: "carol",
       password: "a-very-long-password",
@@ -146,7 +146,7 @@ describe("接受邀请页（AuthPage）", () => {
       expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
       expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
       await userEvent.setup().click(screen.getByRole("button", { name: en.invite.goHome }));
-      expect(router.replace).toHaveBeenCalledWith("/chat");
+      expect(router.replace).toHaveBeenCalledWith("/");
     },
   );
 });

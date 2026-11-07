@@ -22,7 +22,14 @@ import { FormError } from "./form-error";
  * platform and whether each secret is configured, never a value. Read only: the org admin
  * controls a copy.
  */
-export function ExtensionOrgCopies({ name }: { name: string }) {
+export function ExtensionOrgCopies({
+  name,
+  variant = "guide",
+}: {
+  name: string;
+  /** `divided`: a region of the extension's Sheet. */
+  variant?: "guide" | "divided";
+}) {
   const t = useTranslations("admin.extensions.orgCopies");
   const q = extensionOrgOverridesQuery(name);
   const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
@@ -74,7 +81,7 @@ export function ExtensionOrgCopies({ name }: { name: string }) {
     );
   }
   return (
-    <Subsection title={t("title")} description={t("hint")}>
+    <Subsection title={t("title")} description={t("hint")} variant={variant}>
       {body}
     </Subsection>
   );

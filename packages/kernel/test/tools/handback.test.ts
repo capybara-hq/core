@@ -10,6 +10,7 @@ import { normalizeStoredDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { SubagentDeliveries } from "../../src/runtime/subagents/deliveries.js";
 import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { renderSubagentDelivery } from "../../src/runtime/subagents/render.js";
 import { SubagentsService } from "../../src/runtime/subagents/subagents.service.js";
@@ -32,15 +33,14 @@ import {
   session,
   startKernel,
   type TestKernel,
-  waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { finishedDeliveries } from "../helpers/subagents.js";
+import { finishedDeliveries, subagentFinishes } from "../helpers/subagents.js";
 
 /**
  * Agent map spec §4.3, §4.5 (Task A6): `SubagentHandback` delivers a report to the parent and the
- * child keeps its turn; only sub-agents are offered it; a finish after a handback is delivered as
- * one status line. The parent run is made by hand (a `running` run no worker holds).
+ * child keeps its turn; only sub-agents are offered it; a run that handed back and completed
+ * delivers no finish (only `subagent_finished`, acceptance 2026-11-07). The parent run is made by hand (a `running` run no worker holds).
  */
 
 const fixture = (name: string) =>
@@ -171,7 +171,7 @@ async function parentRun(): Promise<{ conv: string; ctx: ToolStepContext }> {
   };
 }
 
-/** Dispatches the reporting child and waits for its finish delivery. */
+/** Dispatches the reporting child and waits for its finish (`subagent_finished`). */
 async function reported() {
   const { conv, ctx } = await parentRun();
   const out = await k.app.get(SubagentsService).dispatch({
@@ -180,7 +180,7 @@ async function reported() {
     input: { description: "Reporter", prompt: "hb-task: report back" },
   });
   if (out.kind !== "dispatched") throw new Error(out.content);
-  await finishedDeliveries(db, conv, 1);
+  await subagentFinishes(db, conv, 1);
   return { conv, childId: out.childConversationId, childRunId: out.childRunId };
 }
 
@@ -206,16 +206,6 @@ describe("SubagentHandback", { timeout: 90_000 }, () => {
         description: "Reporter",
         kind: "report",
         text: "REPORT: all good",
-        triggerAccountId: ownerId,
-      },
-      {
-        subagentId: childId,
-        childRunId,
-        description: "Reporter",
-        kind: "finished",
-        status: "completed",
-        text: "",
-        handedBack: true,
         triggerAccountId: ownerId,
       },
     ]);
@@ -302,19 +292,16 @@ describe("SubagentHandback", { timeout: 90_000 }, () => {
     expect(tools.tools.map((t) => t.key)).toEqual(["Read"]);
   });
 
-  it("finish after a handback renders the one-line finished delivery", async () => {
-    const { conv, childId } = await reported();
-    const finished = await waitFor(
-      async () =>
-        ofType(await eventsOf(db, conv), "subagent_delivery").find(
-          (d) => d.payload.kind === "finished",
-        ) ?? null,
-      20_000,
-      "the finished delivery",
-    );
-    expect(renderSubagentDelivery(finished.payload)).toBe(
-      `Sub-agent ${childId} ("Reporter") completed; its report was already delivered.`,
-    );
+  it("a run that handed back and completed delivers no finish: only subagent_finished", async () => {
+    const { conv, childId, childRunId } = await reported();
+    const events = await eventsOf(db, conv);
+    expect(
+      ofType(events, "subagent_finished").map((e) => [e.payload.childRunId, e.payload.status]),
+    ).toEqual([[childRunId, "completed"]]);
+    expect(ofType(events, "subagent_delivery").map((d) => d.payload.kind)).toEqual(["report"]);
+    // a second finisher (a stop, the sweep) writes nothing more
+    expect(await k.app.get(SubagentDeliveries).childFinished(childRunId)).toBe(false);
+    expect((await eventsOf(db, conv)).length).toBe(events.length);
     const report = ofType(await eventsOf(db, conv), "subagent_delivery").find(
       (d) => d.payload.kind === "report",
     );

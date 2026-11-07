@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
-import { hydrated } from "./nav";
+import { HOME_URL, hydrated } from "./nav";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 const zh = JSON.parse(
@@ -71,8 +71,8 @@ export async function signIn(
   page: Page,
   { org = true, agent = true }: { org?: boolean; agent?: boolean } = {},
 ): Promise<void> {
-  // the home: the new conversation (`/` redirects there too)
-  await page.goto("/chat");
+  // the home: the new conversation
+  await page.goto("/");
   const setupButton = page.getByRole("button", { name: zh.setup.submit });
   const loginButton = page.getByRole("button", { name: zh.login.submit, exact: true });
   await expect(setupButton.or(loginButton)).toBeVisible();
@@ -89,7 +89,7 @@ export async function signIn(
     await page.getByLabel(zh.login.passwordLabel).fill(PASSWORD);
     await page.getByRole("button", { name: zh.login.submit, exact: true }).click();
   }
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(HOME_URL);
   const chooser = page.getByRole("list", { name: zh.orgChooser.listLabel });
   const home = page.locator('[data-template="ConversationPage"]');
   // an org without an agent shows the setup layout instead of the shell
@@ -122,7 +122,7 @@ export async function signIn(
   await ensureAgent(page, orgId as unknown as string);
   if (changed || (await setup.isVisible())) {
     // a fresh page load reads readiness again: the org can run now
-    await page.goto("/chat");
+    await page.goto("/");
     await expect(home).toBeVisible();
   }
   // until hydration the sidebar draws two panels and nothing on the page answers a click yet

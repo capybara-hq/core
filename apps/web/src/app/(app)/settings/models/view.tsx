@@ -31,16 +31,16 @@ export default function OrgModelsView() {
 }
 
 /**
- * The purposes while they load, as PurposeEditor draws them: the kernel's five (eval, title and
- * the three sub-agent tiers), each a row with its small lines (who declares it, the deployment
- * default, and a sub-agent tier's hint) over the model select.
+ * The purposes while they load, as PurposeEditor draws them: the kernel's six (eval, title, web
+ * extraction and the three sub-agent tiers), each a row with its one hint (what happens while it
+ * is unset) over the model select (its default option names the deployment default).
  */
 const purposeRow = (lines: number) => ({
   lines,
   lineSize: "small" as const,
   field: { control: "select" as const },
 });
-const LOADING_PURPOSES = [2, 2, 3, 3, 3].map(purposeRow);
+const LOADING_PURPOSES = [1, 1, 1, 1, 1, 1].map(purposeRow);
 
 function OrgModels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");

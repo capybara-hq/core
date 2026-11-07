@@ -644,9 +644,10 @@ describe("the channel pages read from the query cache (web query cache spec §3)
   });
 
   it.each([
-    ["/channels", false],
+    // every channel page is a setup step (acceptance 2026-11-07): connecting a channel opens them
+    ["/channels", true],
     ["/channels/new", true],
-    ["/channels/ch1", false],
+    ["/channels/ch1", true],
   ] as const)(
     "%s: a member gets no access and nothing is read; no org renders nothing; setup",
     async (path, step) => {
@@ -666,7 +667,7 @@ describe("the channel pages read from the query cache (web query cache spec §3)
         await settle();
         expect(router.replace).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
       }
     },
   );

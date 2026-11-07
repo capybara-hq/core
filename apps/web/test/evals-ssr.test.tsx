@@ -155,6 +155,10 @@ const ROUTES: Routes = {
   [`GET ${SETS}`]: () => json(200, { sets: [SET] }),
   [`GET ${O}/agents`]: () => json(200, { agents: [AGENT] }),
   [`GET ${O}/agents/ag1`]: () => json(200, { agent: AGENT }),
+  [`GET ${O}/agents/ag1/versions`]: () =>
+    json(200, {
+      versions: [{ version: 3, createdBy: "u1", createdAt: "2026-11-07T13:30:00.000Z" }],
+    }),
   [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
   [`GET ${SETS}/s1/runs`]: () => json(200, { runs: [RUN()] }),
   [`GET ${O}/models`]: () => json(200, MODELS),
@@ -383,6 +387,8 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(fieldOptionLabels(model)).toContain("model-fake / Fake 1");
     const version = screen.getByRole("combobox", { name: E.wizard.version });
     expect(fieldOptionLabels(version)).toHaveLength(4);
+    // the versions' saved times come from the hydrated cache too
+    expect(fieldOptionLabels(version)[1]).toContain(`v3 · ${E.wizard.versionCurrent} · `);
     await settle();
     expect(browser).toEqual([]);
   });
@@ -680,7 +686,7 @@ describe("the gates (org admins)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
     },
   );
 });

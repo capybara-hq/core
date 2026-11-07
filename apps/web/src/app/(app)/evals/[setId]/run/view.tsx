@@ -5,6 +5,7 @@ import {
   Card,
   Field,
   FormSection,
+  formatDateTime,
   Input,
   KeyValue,
   RadioGroup,
@@ -13,6 +14,7 @@ import {
   Switch,
   Text,
   Textarea,
+  useTimeZone,
   WizardPage,
 } from "@capybara-hq/design";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -44,7 +46,7 @@ import {
   startEvalRun,
 } from "../../../../../lib/evals";
 import { labelLocale, modelLabel } from "../../../../../lib/extension-label";
-import { agentQuery } from "../../../../../lib/query/agents";
+import { agentQuery, agentVersionsQuery } from "../../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { modelsQuery } from "../../../../../lib/query/conversation";
 import { type EstimateBody, evalEstimateQuery, evalSetQuery } from "../../../../../lib/query/evals";
@@ -129,6 +131,13 @@ function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
   const models = usePageQuery(modelsQuery(orgId));
   const purposesQ = orgPurposesQuery(orgId);
   const purposes = useQuery({ ...purposesQ, retryOnMount: retryOnMountOf(purposesQ.queryKey) });
+  // A section read: without it the version options still list, only without their saved time
+  const versionsQ = agentVersionsQuery(orgId, agentId ?? "");
+  const versions = useQuery({
+    ...versionsQ,
+    enabled: agentId !== undefined,
+    retryOnMount: retryOnMountOf(versionsQ.queryKey),
+  });
   const reads = [set, agent, models];
   for (const r of reads) if (r.kind === "notFound") return <NotFound />;
   for (const r of reads) if (r.kind === "error") return <ErrorFrame reset={r.retry} />;
@@ -165,6 +174,9 @@ function RunWizardData({ orgId, setId }: { orgId: string; setId: string }) {
       set={set.data}
       agent={agent.data}
       providers={models.data.providers}
+      savedAt={
+        new Map((versions.data?.versions ?? []).map((v) => [v.version, v.createdAt] as const))
+      }
       purposes={
         purposes.data !== undefined ? purposes.data.purposes : purposes.error ? null : undefined
       }
@@ -191,12 +203,15 @@ function RunWizard({
   set,
   agent,
   providers,
+  savedAt,
   purposes,
 }: {
   orgId: string;
   set: EvalSetDetail;
   agent: Agent;
   providers: ProviderModels[];
+  /** Each version's saved time (empty while the versions load or when they could not be read). */
+  savedAt: ReadonlyMap<number, string>;
   /** `null` when they could not be read; `undefined` while they load. */
   purposes: PurposeView[] | null | undefined;
 }) {
@@ -204,6 +219,7 @@ function RunWizard({
   const t = useTranslations("evals");
   const tc = useTranslations("common");
   const locale = useLocale();
+  const timeZone = useTimeZone();
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const setHref = `/evals/${encodeURIComponent(set.id)}`;
@@ -324,6 +340,15 @@ function RunWizard({
   };
 
   const versions = Array.from({ length: agent.currentVersion }, (_, i) => agent.currentVersion - i);
+  // `v6 · 当前 · 2026-11-07 21:30`: the agent's current version is marked, the saved time follows
+  const versionLabel = (n: number) => {
+    const at = savedAt.get(n);
+    return [
+      t("wizard.versionValue", { n }),
+      ...(n === agent.currentVersion ? [t("wizard.versionCurrent")] : []),
+      ...(at !== undefined ? [formatDateTime(at, "full", timeZone)] : []),
+    ].join(" · ");
+  };
   const modelOptions = [
     { value: "", label: t("wizard.modelKeep") },
     ...providers.flatMap((p) =>
@@ -367,10 +392,7 @@ function RunWizard({
                 onChange={(e) => setVersion(e.target.value)}
                 options={[
                   { value: "", label: t("wizard.versionKeep") },
-                  ...versions.map((v) => ({
-                    value: String(v),
-                    label: t("wizard.versionValue", { n: v }),
-                  })),
+                  ...versions.map((v) => ({ value: String(v), label: versionLabel(v) })),
                 ]}
               />
             </Field>
@@ -480,10 +502,15 @@ function RunWizard({
             { k: t("wizard.summary.mode"), v: t(`mode.${mode}`) },
             {
               k: t("wizard.version"),
-              v:
-                version === "" ? t("wizard.versionKeep") : t("wizard.versionValue", { n: version }),
+              v: version === "" ? t("wizard.versionKeep") : versionLabel(Number(version)),
             },
-            { k: t("wizard.model"), v: ref === null ? t("wizard.modelKeep") : encode(ref) },
+            {
+              k: t("wizard.model"),
+              v:
+                ref === null
+                  ? t("wizard.modelKeep")
+                  : (modelOptions.find((o) => o.value === model)?.label ?? encode(ref)),
+            },
             {
               k: t("wizard.summary.judge"),
               v: judge ? t("wizard.summary.on") : t("wizard.summary.off"),

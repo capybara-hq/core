@@ -80,10 +80,17 @@ const SubagentsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-const EventsQuery = z.object({
-  after: z.coerce.number().int().min(0).default(0),
-  limit: z.coerce.number().int().min(1).max(500).default(500),
-});
+const EventsQuery = z
+  .object({
+    after: z.coerce.number().int().min(0).optional(),
+    /** The page before this seq, or the log's last page (`end`); exclusive with `after`. */
+    before: z.union([z.literal("end"), z.coerce.number().int().min(1)]).optional(),
+    limit: z.coerce.number().int().min(1).max(500).default(500),
+  })
+  .refine((q) => q.after === undefined || q.before === undefined, {
+    message: "after and before are exclusive",
+    path: ["before"],
+  });
 
 /** `?keys=a,b`: 1–100 comma-separated tool keys of 1–200 characters each. */
 const ToolsQuery = z.object({
@@ -413,7 +420,11 @@ export class ConversationsController {
     return { conversation: await this.conversations.get(org.orgId, id, p.account.id) };
   }
 
-  /** `after` 之后的事件（seq 升序，最多 `limit` 条）；客户端以最后一条的 seq 作为下一次的 `after`。 */
+  /**
+   * Events in ascending seq. `after`: those after it (at most `limit`; the client passes the last
+   * seq back as the next `after`). `before` (a seq, or `end` for the log's last page): the
+   * turn-aligned page before it, `{ events, turnsBefore }` (history paging spec §2).
+   */
   @Get(":id/events")
   @OrgAction("agents.use")
   async events(
@@ -421,10 +432,20 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZQuery(ConversationEventsQueryDto) q: z.infer<typeof EventsQuery>,
-  ): Promise<{ events: ConversationEvent[] }> {
+  ): Promise<{ events: ConversationEvent[]; turnsBefore?: number }> {
     const p = requireUser(principal);
+    if (q.before !== undefined) {
+      const before = q.before === "end" ? null : q.before;
+      return this.conversations.listEventsBefore(org.orgId, id, p.account.id, before, q.limit);
+    }
     return {
-      events: await this.conversations.listEvents(org.orgId, id, p.account.id, q.after, q.limit),
+      events: await this.conversations.listEvents(
+        org.orgId,
+        id,
+        p.account.id,
+        q.after ?? 0,
+        q.limit,
+      ),
     };
   }
 

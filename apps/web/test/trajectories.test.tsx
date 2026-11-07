@@ -448,8 +448,11 @@ describe("轨迹详情（TracePage）", () => {
       const detail = () => screen.getByRole("region", { name: m.detail.region });
       const user = userEvent.setup();
       await user.click(within(list).getByText("fixture [delete_item]"));
-      expect(within(detail()).getByText(m.detail.hook.title)).toBeTruthy();
-      expect(within(detail()).getByText("guard")).toBeTruthy();
+      // the hook denial is its own titled group under the call's facts, the extension keyed by name
+      const hook = within(detail()).getByRole("region", { name: m.detail.hook.title });
+      expect(within(hook).getByText(m.detail.hook.plugin, { selector: "dt" })).toBeTruthy();
+      expect(within(hook).getByText("guard")).toBeTruthy();
+      expect(within(detail()).queryByRole("region", { name: m.detail.tool.approval })).toBeNull();
       expect(within(detail()).getByText(m.detail.hook.causes.deny)).toBeTruthy();
       expect(within(detail()).getByText("not on weekends")).toBeTruthy();
       await user.click(within(list).getByText(m.detail.spans.step.replace("{n}", "1")));

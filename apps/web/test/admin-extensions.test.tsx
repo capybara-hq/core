@@ -250,8 +250,34 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
           .getAllByRole("link")
           .some((l) => l.getAttribute("href") === "/admin/extensions/demo"),
       ).toBe(true);
-      expect(within(sheet).getByText(m.stateTitle, { selector: "dt" })).toBeTruthy();
-      expect(within(sheet).getAllByText(p.detail.replicasTitle).length).toBeGreaterThan(0);
+      // 状态's first line is the state itself, no 状态 key repeating the heading
+      expect(within(sheet).queryByText(m.stateTitle, { selector: "dt" })).toBeNull();
+      const stateRegion = within(sheet).getByRole("region", { name: p.detail.sections.status });
+      expect(
+        stateRegion.querySelector('[data-part="subsection-body"]')?.firstElementChild?.textContent,
+      ).toContain(p.status.enabled);
+      // The regions (spec §6.7): no deployment config here, so 状态, 副本, 权限
+      expect(
+        within(sheet)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([
+        p.detail.sections.status,
+        p.detail.sections.replicas,
+        p.detail.sections.permissions,
+      ]);
+      const replicas = within(sheet).getByRole("table", { name: p.detail.replicasTitle });
+      // every replica runs the extension's version: no 版本 column; the heartbeat is relative
+      expect(
+        within(replicas)
+          .getAllByRole("columnheader")
+          .map((h) => h.textContent),
+      ).toEqual([
+        p.detail.replicaColumns.replica,
+        p.detail.replicaColumns.state,
+        p.detail.replicaColumns.reason,
+        p.detail.replicaColumns.heartbeat,
+      ]);
       expect(within(sheet).getByRole("button", { name: p.detail.actions.disable })).toBeTruthy();
       expect(
         within(sheet).getByRole("link", { name: p.detail.actions.upgrade }).getAttribute("href"),
@@ -259,6 +285,8 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       // Folded until opened
       const summary = within(sheet).getByRole("button", { expanded: false });
       expect(summary.textContent).toContain(`${m.category.tools} 1`);
+      // under the 权限 heading the line does not say 权限 again
+      expect(summary.textContent?.startsWith(m.permissions)).toBe(false);
       expect(summary.textContent).toContain(m.sensitive);
       expect(within(sheet).queryByText(p.approve.notApproved)).toBeNull();
       await user.click(summary);
@@ -268,6 +296,147 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       // One box (acceptance item AB): the Sheet holds rows and lines, never a card
       expect(sheet.querySelector('[data-part="card"]')).toBeNull();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it.each(LOCALES)(
+    "the Sheet of a pending required plugin: one notice, regions in order, one facts block, save in the footer (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const m = msgs[locale].extensions;
+      const cf = msgs[locale].configForm;
+      const view = plugin({
+        name: "openai-compatible",
+        displayName: { zh: "OpenAI Compatible", en: "OpenAI Compatible" },
+        installSource: "bootstrap",
+        required: true,
+        status: "pending_config",
+        configValid: false,
+        replicas: [
+          {
+            replicaId: "web-1-111-aaaaaa",
+            version: "1.0.0",
+            state: "pending",
+            reason: "config",
+            detail: null,
+            heartbeatAt: HEARTBEAT,
+          },
+        ],
+      });
+      const calls = stubApi({
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 30 }),
+        "GET /api/v1/admin/extensions/openai-compatible/config": () =>
+          json(200, {
+            plugin: "openai-compatible",
+            version: "1.0.0",
+            configurable: true,
+            schema: {
+              type: "object",
+              properties: {
+                endpoints: {
+                  type: "array",
+                  minItems: 1,
+                  items: {
+                    type: "object",
+                    properties: { name: { type: "string" }, baseUrl: { type: "string" } },
+                    required: ["name", "baseUrl"],
+                  },
+                },
+              },
+              required: ["endpoints"],
+            },
+            fields: [
+              { path: "endpoints", secret: false, hot: false, source: "unset", readonly: false },
+            ],
+            valid: false,
+            validated: true,
+            issues: [{ path: "endpoints", segments: ["endpoints"], message: "expected array" }],
+          }),
+        "PUT /api/v1/admin/extensions/openai-compatible/config": () =>
+          json(400, {
+            error: {
+              code: "extension.config_invalid",
+              message: "invalid",
+              details: [
+                {
+                  path: "endpoints.0.baseUrl",
+                  segments: ["endpoints", 0, "baseUrl"],
+                  message: "invalid url",
+                },
+              ],
+            },
+          }),
+      });
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByText("OpenAI Compatible", { selector: ".cb-cell-title-name" }),
+      );
+      const sheet = await screen.findByRole("dialog", { name: "OpenAI Compatible" });
+      await within(sheet).findByRole("group", { name: "endpoints" });
+      // 1. one warn line naming what is missing; no red line, no field error on the pristine form
+      const notice = within(sheet).getByText(
+        fill(p.config.pendingMissing, { fields: "endpoints" }),
+      );
+      expect(notice.closest('[data-part="callout"]')?.getAttribute("data-tone")).toBe("warn");
+      expect(sheet.querySelectorAll('[data-part="callout"]')).toHaveLength(1);
+      expect(within(sheet).queryByText(p.config.invalid)).toBeNull();
+      expect(within(sheet).queryByText("expected array")).toBeNull();
+      expect(within(sheet).queryByText(cf.errors.addOne)).toBeNull();
+      // 3. no read-only field: no read-only hint
+      expect(within(sheet).queryByText(p.config.hint)).toBeNull();
+      // the regions in order
+      expect(
+        within(sheet)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([
+        p.detail.sections.config,
+        p.detail.sections.status,
+        p.detail.sections.replicas,
+        p.detail.sections.permissions,
+      ]);
+      // 5. one facts block in one key column: no 标识 (the meta), 期望状态 only when it differs
+      const keys = [...sheet.querySelectorAll("dt")].map((d) => d.textContent);
+      expect(keys).toEqual([
+        m.capabilitiesTitle,
+        p.detail.fields.source,
+        p.detail.fields.version,
+        p.detail.fields.sha,
+      ]);
+      expect(within(sheet).getByText(SHA.slice(0, 16))).toBeTruthy();
+      // 6. the required note is one line; 7. 升级 is neutral
+      expect(within(sheet).getByText(p.detail.requiredNote)).toBeTruthy();
+      expect(
+        within(sheet)
+          .getByRole("link", { name: p.detail.actions.upgrade })
+          .getAttribute("data-variant"),
+      ).toBe("default");
+      // 8. the replica's state in the list's words, its reason whole (a wrap cell)
+      const replicas = within(sheet).getByRole("table", { name: p.detail.replicasTitle });
+      expect(within(replicas).getByText(p.status.pending_config)).toBeTruthy();
+      const reason = within(replicas).getByText(p.detail.replicaReason.config);
+      expect(reason.closest("[data-wrap]")?.getAttribute("data-wrap")).toBe("true");
+      // 4. the save is in the footer, enabled only with changes; no "no changes" text
+      const foot = sheet.querySelector(".cb-sheet-foot") as HTMLElement;
+      const save = within(foot).getByRole("button", { name: p.config.save }) as HTMLButtonElement;
+      expect(save.getAttribute("data-variant")).toBe("primary");
+      expect(save.disabled).toBe(true);
+      expect(within(sheet).queryAllByRole("button", { name: p.config.save })).toHaveLength(1);
+      const list = within(sheet).getByRole("group", { name: "endpoints" });
+      await user.click(within(list).getByRole("button", { name: new RegExp(cf.add) }));
+      await user.type(within(list).getByLabelText(/^name/), "vllm");
+      await user.type(within(list).getByLabelText(/^baseUrl/), "nope");
+      expect(save.disabled).toBe(false);
+      // what saving does is one quiet line beside the save, not a sentence in the form
+      const note = [p.config.appliesNow, p.config.willReload.split("{")[0] as string];
+      expect(note.some((n) => foot.textContent?.includes(n))).toBe(true);
+      // 2. a failed save: the field says it in the page's words, never the kernel's text
+      await user.click(save);
+      await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+      expect(await within(sheet).findByText(cf.errors.invalid)).toBeTruthy();
+      expect(within(sheet).queryByText("invalid url")).toBeNull();
+      expect(within(sheet).getByText(p.config.saveInvalid)).toBeTruthy();
     },
   );
 
@@ -472,12 +641,14 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       expect(screen.queryByText(p.detail.uninstallNeedsDisable)).toBeNull();
       const upgrade = screen.getByRole("link", { name: p.detail.actions.upgrade });
       expect(upgrade.getAttribute("href")).toBe("/admin/plugins/import");
-      // 升级 is a secondary button, never a browser-default blue link
-      expect(upgrade.getAttribute("data-variant")).toBe("secondary");
+      // 升级 is a neutral button (the accent is the save's), never a browser-default blue link
+      expect(upgrade.getAttribute("data-variant")).toBe("default");
       expect(upgrade.className).toContain("cb-btn");
-      // The bootstrap step installs from npm with pinned versions and checksums
-      expect(p.detail.requiredNote).toContain(
-        locale === "zh" ? "由预装步骤从 npm 安装（版本与校验和已固定）。" : "from npm",
+      // One quiet line, no trailing period
+      expect(p.detail.requiredNote).toBe(
+        locale === "zh"
+          ? "必需插件 · 不能停用或卸载"
+          : "Required plugin · cannot be disabled or uninstalled",
       );
       await user.click(
         screen.getByRole("tab", { name: new RegExp(`^${p.detail.tabs.permissions}`) }),
@@ -541,14 +712,27 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       const callout = alert.closest('[data-part="callout"]') as HTMLElement;
       expect(callout.getAttribute("data-tone")).toBe("fail");
       expect(callout.hasAttribute("data-framed")).toBe(false);
-      expect(screen.getAllByText(/connect ECONNREFUSED/).length).toBeGreaterThan(0);
+      // the raw text is one click away, never inline
+      expect(screen.queryByText(/connect ECONNREFUSED/)).toBeNull();
+      await userEvent.setup().click(screen.getByRole("button", { name: p.detail.rawDetail }));
+      expect(screen.getByText("connect ECONNREFUSED")).toBeTruthy();
       const serving = fill(p.detail.stillServing, { version: "v1.0.0" });
       expect(screen.getAllByText(serving).length).toBeGreaterThan(0);
       const replicas = screen.getByRole("table", { name: p.detail.replicasTitle });
       expect(within(replicas).getByText("web-1-111-aaaaaa")).toBeTruthy();
       expect(within(replicas).getByText("web-2-222-bbbbbb")).toBeTruthy();
-      expect(within(replicas).getByText(`${reason} · connect ECONNREFUSED`)).toBeTruthy();
+      // the reason column: the localized reason only; 副本 / 版本 / 状态 / 心跳 fit their content
+      expect(within(replicas).getByText(reason)).toBeTruthy();
+      expect(within(replicas).queryByText(/ECONNREFUSED/)).toBeNull();
       expect(within(replicas).queryByText(/setup_failed/)).toBeNull();
+      const heads = within(replicas).getAllByRole("columnheader");
+      expect(heads.map((h) => h.getAttribute("data-fit"))).toEqual([
+        "true",
+        "true",
+        "true",
+        null,
+        "true",
+      ]);
     },
   );
 
@@ -886,7 +1070,6 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     expect(
       (screen.getByRole("button", { name: p.config.save }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(screen.getByText(p.config.noChanges)).toBeTruthy();
     // back to "set, keep": Replace is offered again
     expect(
       screen.getByRole("button", { name: fill(sf.replaceLabel, { field: "token" }) }),
@@ -954,8 +1137,13 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
     expect(
       await screen.findByText(fill(p.config.pendingMissing, { fields: "endpoints" })),
     ).toBeTruthy();
-    // the view's issue sits on the repeater
-    expect(screen.getByText("expected array")).toBeTruthy();
+    // pristine and merely pending: the notice only, no red line and no field error (never the
+    // kernel's raw text)
+    expect(screen.queryByText("expected array")).toBeNull();
+    expect(screen.queryByText(p.config.invalid)).toBeNull();
+    expect(screen.queryByText(msgs.en.configForm.errors.addOne)).toBeNull();
+    // no startup-config field: no read-only hint
+    expect(screen.queryByText(p.config.hint)).toBeNull();
     const user = userEvent.setup();
     const list = screen.getByRole("group", { name: "endpoints" });
     await user.click(within(list).getByRole("button", { name: /Add/ }));

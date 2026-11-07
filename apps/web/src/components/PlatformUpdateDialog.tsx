@@ -3,9 +3,13 @@
 import {
   Badge,
   Button,
+  Callout,
   type Column,
   DataTable,
   Dialog,
+  ImpactPreview,
+  type ImpactPreviewGroup,
+  type ImpactPreviewNote,
   Stack,
   Text,
   useToast,
@@ -134,11 +138,7 @@ export function PlatformUpdateDialog({
       }
     >
       <Stack gap={12}>
-        {notice !== undefined && (
-          <Text variant="prose" tone="warn">
-            {notice}
-          </Text>
-        )}
+        {notice !== undefined && <Callout tone="warn">{notice}</Callout>}
         {preview === null ? (
           error === undefined && (
             <Text variant="prose" tone="muted">
@@ -214,109 +214,112 @@ export function PlatformUpdatePreviewBody({
 
   const changed = preview.components.filter((c) => c.change !== "same");
   const marked = preview.components.some((c) => c.updatedOnOwn || c.ownScope);
+  const pinned = preview.components.filter(
+    (c) => c.pinnedOrgs.length > 0 && c.change !== "removed",
+  );
+  const kept = preview.components.filter((c) => c.kept !== undefined && c.kept.length > 0);
+  const ext = preview.extension;
+  const extOrgs =
+    ext === null ? "" : ext.orgs.length === 0 ? t("extensionNoOrgs") : names(ext.orgs);
+  const componentHint = changed.length === 0 ? t("none") : marked ? t("marksHint") : undefined;
+  const groups: ImpactPreviewGroup[] = [
+    {
+      id: "components",
+      title: t("components"),
+      ...(componentHint !== undefined ? { description: componentHint } : {}),
+      ...(preview.components.length > 0
+        ? {
+            content: (
+              <DataTable
+                label={t("components")}
+                columns={columns}
+                rows={preview.components}
+                rowKey={(c) => `${c.kind}:${c.id ?? c.name}`}
+                state="ready"
+                framed={false}
+              />
+            ),
+          }
+        : {}),
+    },
+    {
+      id: "pinned",
+      title: t("groups.pinned"),
+      items: pinned.map((c) => ({
+        id: `${c.kind}:${c.name}`,
+        title: c.name,
+        code: t(`kind.${c.kind}`),
+        notes: [{ text: t("pinnedNote", { orgs: names(c.pinnedOrgs) }) }],
+      })),
+    },
+    {
+      id: "kept",
+      title: t("groups.kept"),
+      items: kept.map((c) => ({
+        id: `${c.kind}:${c.name}`,
+        title: c.name,
+        code: t(`kind.${c.kind}`),
+        notes: [
+          {
+            text: t("keptNote", {
+              agents: (c.kept ?? []).flatMap((k) => k.agents.map((a) => a.name)).join(sep),
+            }),
+          },
+        ],
+      })),
+    },
+    {
+      id: "extension",
+      title: t("groups.extension"),
+      items:
+        ext === null
+          ? []
+          : [
+              {
+                id: "extension",
+                title:
+                  ext.from === null
+                    ? t("extensionInstall", { to: optVersion(ext.to) })
+                    : t("versions", { from: versionLabel(ext.from), to: optVersion(ext.to) }),
+                notes: [{ text: t("extensionOrgs", { orgs: extOrgs }) }],
+              },
+            ],
+    },
+    {
+      id: "orgs",
+      title: t("groups.orgs"),
+      items: preview.connectorOrgs.map((o) => {
+        const reset = o.connectors.filter((c) => c.credentialsReset);
+        const updated = o.connectors.filter((c) => !c.credentialsReset);
+        const notes: ImpactPreviewNote[] = [];
+        if (updated.length > 0)
+          notes.push({
+            text: t("connectorsNote", { names: updated.map((c) => c.name).join(sep) }),
+          });
+        if (reset.length > 0)
+          notes.push({
+            text: t("credentialsResetNote", { names: reset.map((c) => c.name).join(sep) }),
+            tone: "warn",
+          });
+        if (o.needsConfig.length > 0)
+          notes.push({
+            text: t("needsConfigNote", { ids: o.needsConfig.join(sep) }),
+            tone: "warn",
+          });
+        return { id: o.orgId, title: one(o.orgId), notes };
+      }),
+    },
+  ];
   return (
     <>
+      {ext?.needsApproval === true && <Callout tone="warn">{t("needsApproval")}</Callout>}
       <Text>
         {t("versions", {
           from: optVersion(preview.from),
           to: versionLabel(preview.to),
         })}
       </Text>
-      {preview.components.length === 0 ? (
-        <Text variant="prose">{t("none")}</Text>
-      ) : (
-        <DataTable
-          label={t("components")}
-          columns={columns}
-          rows={preview.components}
-          rowKey={(c) => `${c.kind}:${c.id ?? c.name}`}
-          state="ready"
-          framed={false}
-        />
-      )}
-      {changed.length === 0 && preview.components.length > 0 && (
-        <Text variant="prose" tone="muted">
-          {t("none")}
-        </Text>
-      )}
-      {marked && (
-        <Text variant="small" tone="muted">
-          {t("marksHint")}
-        </Text>
-      )}
-      {preview.components
-        .filter((c) => c.pinnedOrgs.length > 0 && c.change !== "removed")
-        .map((c) => (
-          <Text key={`pin:${c.kind}:${c.name}`} variant="small">
-            {t("pinned", { name: c.name, orgs: names(c.pinnedOrgs) })}
-          </Text>
-        ))}
-      {preview.components
-        .filter((c) => c.kept !== undefined && c.kept.length > 0)
-        .map((c) => (
-          <Text key={`kept:${c.kind}:${c.name}`} variant="small">
-            {t("keptLine", {
-              name: c.name,
-              agents: (c.kept ?? []).flatMap((k) => k.agents.map((a) => a.name)).join(sep),
-            })}
-          </Text>
-        ))}
-      {preview.extension !== null && (
-        <Stack gap={4}>
-          <Text variant="prose">
-            {preview.extension.from === null
-              ? t("extensionNew", {
-                  to: optVersion(preview.extension.to),
-                  orgs:
-                    preview.extension.orgs.length === 0
-                      ? t("extensionNoOrgs")
-                      : names(preview.extension.orgs),
-                })
-              : t("extension", {
-                  from: versionLabel(preview.extension.from),
-                  to: optVersion(preview.extension.to),
-                  orgs:
-                    preview.extension.orgs.length === 0
-                      ? t("extensionNoOrgs")
-                      : names(preview.extension.orgs),
-                })}
-          </Text>
-          {preview.extension.needsApproval && (
-            <Text variant="prose" tone="warn">
-              {t("needsApproval")}
-            </Text>
-          )}
-        </Stack>
-      )}
-      {preview.connectorOrgs.map((o) => {
-        const reset = o.connectors.filter((c) => c.credentialsReset);
-        const kept = o.connectors.filter((c) => !c.credentialsReset);
-        return (
-          <Stack key={o.orgId} gap={4}>
-            {kept.length > 0 && (
-              <Text variant="small">
-                {t("connectors", {
-                  org: one(o.orgId),
-                  names: kept.map((c) => c.name).join(sep),
-                })}
-              </Text>
-            )}
-            {reset.length > 0 && (
-              <Text variant="small" tone="warn">
-                {t("credentialsReset", {
-                  org: one(o.orgId),
-                  names: reset.map((c) => c.name).join(sep),
-                })}
-              </Text>
-            )}
-            {o.needsConfig.length > 0 && (
-              <Text variant="small" tone="warn">
-                {t("needsConfig", { org: one(o.orgId), ids: o.needsConfig.join(sep) })}
-              </Text>
-            )}
-          </Stack>
-        );
-      })}
+      <ImpactPreview groups={groups} empty={t("none")} />
     </>
   );
 }

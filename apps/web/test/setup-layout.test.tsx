@@ -77,8 +77,8 @@ describe("setup layout scope", () => {
     expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
   });
 
-  it("not ready on /chat: the same setup home, never a composer", () => {
-    resetNavigation("/chat");
+  it("not ready on /: the same setup home, never a composer", () => {
+    resetNavigation("/");
     renderFrame();
     expect(screen.getByRole("heading", { level: 1, name: s.title })).toBeTruthy();
     expect(document.querySelector('[data-template="ConversationPage"]')).toBeNull();
@@ -108,7 +108,7 @@ describe("setup layout scope", () => {
     expect(workSidebar()).toBeNull();
     const home = setupSidebar()?.querySelector('[data-part="nav-item"]') as HTMLElement;
     expect(home.textContent).toBe("开始之前");
-    expect(home.getAttribute("href")).toBe("/chat");
+    expect(home.getAttribute("href")).toBe("/");
     expect(router.replace).not.toHaveBeenCalled();
   });
 
@@ -134,20 +134,23 @@ describe("setup layout scope", () => {
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" }),
     );
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
   });
 
   it("routes: home, steps, redirects and the admin console", () => {
-    // the setup home is the workspace's home, the new conversation; `/` is no page (next.config
-    // redirects it to `/chat` first), so the frame never sees it as home
-    expect(setupRouteOf("/chat")).toBe("home");
-    expect(setupRouteOf("/")).toBe("redirect");
+    // the setup home is the workspace's home, the new conversation at `/` (the old `/chat` is
+    // redirected there by next.config first, so the frame never sees it)
+    expect(setupRouteOf("/")).toBe("home");
+    expect(setupRouteOf("/chat")).toBe("redirect");
     for (const p of [
       "/settings/models",
       "/settings/members",
       "/agents/new",
       "/agents/a1",
       "/channels/new",
+      "/channels",
+      "/channels/ch1",
+      "/extensions",
       "/plugins",
       "/plugins/x",
       "/plugins/x/enable",
@@ -315,6 +318,22 @@ describe("the checklist by role", () => {
     go("/skills");
     shell.update(shellOf(ME, { readiness: READY }));
     expect(router.refresh).not.toHaveBeenCalled();
+  });
+
+  it("a navigation to a route that is no setup route goes home on the client, never refreshing into the server redirect", () => {
+    // acceptance 2026-11-07: refreshing /extensions ran the layout's redirect inside the refresh,
+    // which Next's router re-applied forever (a blank page navigating to / in a loop)
+    resetNavigation("/channels/new");
+    const view = renderFrame();
+    pathname.current = "/connectors";
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.replace).toHaveBeenCalledWith("/");
+    expect(router.refresh).not.toHaveBeenCalled();
+    // a setup step still refreshes
+    pathname.current = "/extensions";
+    view.update(shellOf(ME, { readiness: NOT_READY }));
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+    expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
   it("a super admin reaches the admin console from the setup sidebar", () => {

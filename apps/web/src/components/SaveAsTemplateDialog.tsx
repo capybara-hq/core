@@ -9,6 +9,7 @@ import {
   ItemListItem,
   LinkButton,
   Stack,
+  Subsection,
   Text,
   Textarea,
 } from "@capybara-hq/design";
@@ -222,23 +223,21 @@ export function SaveAsTemplateDialog({
             onChange={(e) => setDescription(e.target.value)}
           />
         </Field>
-        <Stack gap={4}>
-          <Text variant="prose" tone="muted">
-            {t("carried")}
-          </Text>
-          {roster.length > 0 ? (
-            <>
-              <Text variant="prose" tone="warn">
-                {t("rosterLeftOut")}
-              </Text>
-              <ItemList label={t("rosterLabel")}>
-                {roster.map((x) => (
-                  <ItemListItem key={x.agentId} title={nameOf(x.agentId, x.as)} code={x.as} />
-                ))}
-              </ItemList>
-            </>
-          ) : null}
-        </Stack>
+        <Subsection title={t("carriedTitle")} description={t("carried")} variant="divided" />
+        {roster.length > 0 ? (
+          <Subsection
+            title={t("rosterLabel")}
+            count={roster.length}
+            description={t("rosterLeftOut")}
+            variant="divided"
+          >
+            <ItemList label={t("rosterLabel")}>
+              {roster.map((x) => (
+                <ItemListItem key={x.agentId} title={nameOf(x.agentId, x.as)} code={x.as} />
+              ))}
+            </ItemList>
+          </Subsection>
+        ) : null}
         {otherError !== null ? <FormError message={otherError} /> : null}
       </Stack>
     </Dialog>

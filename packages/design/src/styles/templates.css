@@ -664,6 +664,11 @@ a.cb-object-name:hover {
 .cb-empty-state[data-size="page"] {
   padding-top: calc(var(--cb-space-8) * 2);
 }
+/* The narrow-area form (the sidebar's conversation list): the page look, smaller, space.8 above
+   and below, a small side padding for the 240 px sidebar. */
+.cb-empty-state[data-size="panel"] {
+  padding: var(--cb-space-8) var(--cb-space-2);
+}
 .cb-empty-state[data-size="compact"] {
   align-items: flex-start;
   gap: var(--cb-space-2);

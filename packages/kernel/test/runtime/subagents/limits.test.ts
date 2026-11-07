@@ -14,6 +14,7 @@ import type { ConversationEvent, EventPayload } from "../../../src/conversations
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
+import { BUDGET_WRAP_UP_REMINDER } from "../../../src/runtime/model-call.js";
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { StepLog } from "../../../src/runtime/step-log.js";
 import type { DispatchCommit } from "../../../src/runtime/subagents/dispatch.js";
@@ -70,6 +71,11 @@ const RULES: ScriptRule[] = [
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "big-" },
     reply: { text: "big done", usage: { inputTokens: 12_000 } },
+  },
+  {
+    // the final call once the budget is used up (BUDGET_WRAP_UP_REMINDER)
+    when: { systemIncludes: CHILD, systemMessageIncludes: "token budget is used up" },
+    reply: { text: "findings so far" },
   },
   {
     when: { systemIncludes: CHILD, lastUserIncludes: "loop-", assistantTurns: 0 },
@@ -419,8 +425,10 @@ describe("subagentLimits", () => {
       { maxConcurrentPerRun: 2 },
       { maxDepth: 0 },
       { maxDepth: 6 },
-      { maxDispatchesPerRun: 0 },
+      { maxDispatchesPerRun: -1 },
+      { maxDispatchesPerRun: 501 },
       { maxTokensPerRun: 9_999 },
+      { maxTokensPerRun: -1 },
       { other: 1 },
       {},
     ]) {
@@ -609,6 +617,15 @@ describe("tree budget", () => {
       kind: "limit",
       content: AGENT_REFUSALS.budget(20_000),
     });
+    // 0 means no limit: over both caps, the budget is not used up and dispatches go on
+    await override({
+      maxConcurrentPerConversation: 20,
+      maxDispatchesPerRun: 0,
+      maxTokensPerRun: 0,
+    });
+    expect(await subagentBudgetUsedUp(db, liveConfig(), orgId, root)).toBe(false);
+    expect((await dispatchFrom(child.conv, child.run)).out?.kind).toBe("written");
+    await override({ maxConcurrentPerConversation: 20, maxTokensPerRun: 20_000 });
     await db
       .updateTable("runs")
       .set({ subagent_tokens_used: sql<string>`0` })
@@ -631,16 +648,20 @@ describe("tokens", () => {
     await override({ maxTokensPerRun: 10_000 });
     const { conv, run, events } = await converse("SCENARIO over");
     expect(finalText(events)).toBe("parent done");
-    expect(Number(run.subagent_tokens_used)).toBe(12_005);
+    // the wrap-up request is the one allowed over the cap (15 tokens of the scripted reply)
+    expect(Number(run.subagent_tokens_used)).toBe(12_020);
     const [child] = await childRunsOf(db, conv);
     const cev = await eventsOf(db, child?.conversationId as string);
     expect(ofType(cev, "run_finished")[0]?.payload.reason).toBe("budget");
-    // no request after the cap
-    expect(ofType(cev, "model_call")).toHaveLength(1);
+    // after the cap only the one tool-less wrap-up request, with the budget reminder last
+    const calls = ofType(cev, "model_call");
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.payload.request.toolChoice).toBe("none");
+    expect(ofType(cev, "reminder").at(-1)?.payload.text).toBe(BUDGET_WRAP_UP_REMINDER);
     expect(ofType(events, "subagent_finished")[0]?.payload.status).toBe("budget");
-    // its finish reaches the parent as a delivery with what it replied before the cap
+    // its finish reaches the parent as a delivery with what it handed back in the wrap-up
     expect(ofType(events, "subagent_delivery").map((d) => d.payload)).toMatchObject([
-      { kind: "finished", status: "budget", text: "working" },
+      { kind: "finished", status: "budget", text: "findings so far" },
     ]);
   }, 60_000);
 

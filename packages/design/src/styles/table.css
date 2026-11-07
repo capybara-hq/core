@@ -170,6 +170,17 @@
   text-overflow: clip;
   overflow-wrap: break-word;
 }
+/* A fitting column (Column.fit, spec §6.6): as wide as its content, never an ellipsis. */
+.cb-table-el th[data-fit="true"],
+.cb-table-el td[data-fit="true"] {
+  width: 1%;
+  max-width: none;
+  white-space: nowrap;
+}
+.cb-table-el td[data-fit="true"] > .cb-table-cell {
+  max-width: none;
+  text-overflow: clip;
+}
 /* A wrap column's string list: each item with its separator is one unit; lines break between. */
 .cb-table-cell-list-item {
   white-space: nowrap;

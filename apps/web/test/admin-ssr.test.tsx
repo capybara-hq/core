@@ -253,7 +253,19 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/accounts": () =>
     json(200, { accounts: [ACCOUNT("a1", "Grant"), ACCOUNT("a2", "Alice")], next: "a2" }),
   "GET /api/v1/admin/orgs": () =>
-    json(200, { orgs: [{ id: "o2", slug: "beta", name: "Beta", memberCount: 4, createdAt: T }] }),
+    json(200, {
+      orgs: [{ id: "o2", slug: "beta", name: "Beta", memberCount: 4, createdAt: T }],
+      limitDefaults: {
+        runConcurrency: 10,
+        sandbox: { cpu: 1, memoryMb: 2048 },
+        subagents: {
+          maxDepth: 3,
+          maxConcurrentPerConversation: 4,
+          maxDispatchesPerRun: 50,
+          maxTokensPerRun: 5_000_000,
+        },
+      },
+    }),
   "GET /api/v1/admin/settings": () => json(200, SETTINGS),
   "GET /api/v1/admin/models": () => json(200, { providers: [], prices: [], currency: "EUR" }),
   "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
@@ -395,14 +407,14 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/admin/models: the purposes load as the kernel's five item rows", async () => {
+  it("/admin/models: the purposes load as the kernel's six item rows", async () => {
     const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/model-purposes");
     await vi.waitFor(() => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });
     expect(
       document.querySelectorAll('[data-part="loading-item-list"] > [data-part="loading-item-row"]'),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     await release();
   });
 

@@ -50,6 +50,10 @@ type EndKind = Exclude<LoopOutcome["kind"], "interrupted" | "suspended">;
  *   other, rendered short）；
  * - `lastStopReason`：最近一步模型调用的停止原因；
  * - `outcome`：图的结束方式（在决定结束的节点里写入，续跑已结束的图时直接读出，不依赖当前时间）。
+ * - `budgetWrapUp`: set when a sub-agent's tree used its token budget after the run made a step: the
+ *   run goes to the `wrapUp` node for one tool-less call that hands back what it found, then ends
+ *   with `budget` (sub-agents spec §8.3). Null otherwise (the step limit routes there by `step`; a channel cannot share the
+ *   node's name).
  *
  * 所有 channel 都是默认的 LastValue（不用实验性的 DeltaChannel，也没有子图）：
  * 每个 checkpoint 自带完整状态，`pruneToLatest` 之后仍能独立还原（R19）。
@@ -59,11 +63,18 @@ const LoopState = Annotation.Root({
   consumedUpToSeq: Annotation<number>(),
   lastStopReason: Annotation<StopReason | "aborted" | null>(),
   outcome: Annotation<EndKind | null>(),
+  budgetWrapUp: Annotation<boolean | null>(),
 });
 
 type State = typeof LoopState.State;
 
-const INITIAL: State = { step: 0, consumedUpToSeq: 0, lastStopReason: null, outcome: null };
+const INITIAL: State = {
+  step: 0,
+  consumedUpToSeq: 0,
+  lastStopReason: null,
+  outcome: null,
+  budgetWrapUp: null,
+};
 
 /**
  * prepare 节点在停机信号下抛出：本次 invoke 以它结束，checkpoint 停在 prepare 之前
@@ -100,7 +111,9 @@ class LoopSuspended extends Error {
  * worker 崩溃后由其他副本从最近的 checkpoint 续跑（spec 4.4、Review Focus 1）。
  *
  * 图：`prepare → model →（tool_use）tools → prepare …`；prepare 发现步数超过上限 → `wrapUp` → 结束；
- * prepare finding the deadline passed, or (a sub-agent's run) its parent's token budget used up → end;
+ * prepare finding the deadline passed → end; a sub-agent's run finding its tree's token budget used
+ * up → `wrapUp` (one tool-less call that hands back its findings) → end, or end at once when the
+ * run has made no step yet (nothing new to report);
  * 模型中止或正常结束 → 结束。`durability: "sync"`：每个节点的 checkpoint 在下一个节点开始前落库。
  *
  * 幂等：`runModelStep` / `runFinalWrapUp` 按 (runId, step) 幂等，续跑重新执行 model 节点时若回复已在日志里，
@@ -181,7 +194,9 @@ export class LangGraphLoop implements AgentLoop {
       if (timedOut()) return { outcome: "max_duration" };
       // a sub-agent stops before its next request once its tree used its token budget (spec §8.3,
       // agent map §6: on the budget run; fresh read, in-flight requests of others may overshoot by
-      // one each)
+      // one each). A run that made a step hands back what it found in one final tool-less call
+      // (one more over); a run stopped before its first step (a wake of a stopped tree) has
+      // nothing new to report and ends at once.
       if (
         ctx.parent !== undefined &&
         (await subagentBudgetUsedUp(
@@ -191,7 +206,7 @@ export class LangGraphLoop implements AgentLoop {
           ctx.parent.budgetRunId ?? (await budgetRunOf(deps.db, ctx.parent.runId)),
         ))
       ) {
-        return { outcome: "budget" };
+        return s.step > 0 ? { step: s.step + 1, budgetWrapUp: true } : { outcome: "budget" };
       }
       let consumed = s.consumedUpToSeq;
       // the run's first prepare (also when it runs again after a suspend on its fork's sub-agent)
@@ -219,7 +234,9 @@ export class LangGraphLoop implements AgentLoop {
     const model = async (s: State): Promise<Partial<State>> => {
       const r = await runModelStep(deps, input(s.step, s.consumedUpToSeq));
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
-      if (r.budget) return { outcome: "budget" };
+      // budget used up by a compaction call before the step's request: hand back in the wrap-up,
+      // at this step (it logged no request)
+      if (r.budget) return { budgetWrapUp: true };
       if (r.aborted) {
         return { lastStopReason: "aborted", outcome: timedOut() ? "max_duration" : "aborted" };
       }
@@ -264,11 +281,16 @@ export class LangGraphLoop implements AgentLoop {
     };
 
     const wrapUp = async (s: State): Promise<Partial<State>> => {
-      const r = await runFinalWrapUp(deps, input(s.step, s.consumedUpToSeq));
+      const budget = s.budgetWrapUp === true;
+      const r = await runFinalWrapUp(
+        deps,
+        input(s.step, s.consumedUpToSeq),
+        budget ? "budget" : "max_steps",
+      );
       await hooks.afterModelStep?.(ctx.runId, s.step, r);
       return {
         lastStopReason: r.aborted ? "aborted" : r.stopReason,
-        outcome: r.budget ? "budget" : r.aborted && !timedOut() ? "aborted" : "max_steps",
+        outcome: r.aborted && !timedOut() ? "aborted" : budget || r.budget ? "budget" : "max_steps",
       };
     };
 
@@ -283,14 +305,15 @@ export class LangGraphLoop implements AgentLoop {
         (s: State) => {
           // (aborted / completed: a fork invocation's run ended in its first prepare, phase D)
           if (s.outcome !== null) return END;
-          return s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
+          return s.budgetWrapUp === true || s.step > ctx.limits.maxSteps ? "wrapUp" : "model";
         },
         ["model", "wrapUp", END],
       )
-      .addConditionalEdges("model", (s: State) => (s.outcome === null ? "tools" : END), [
-        "tools",
-        END,
-      ])
+      .addConditionalEdges(
+        "model",
+        (s: State) => (s.budgetWrapUp === true ? "wrapUp" : s.outcome === null ? "tools" : END),
+        ["tools", "wrapUp", END],
+      )
       .addEdge("tools", "prepare")
       .addEdge("wrapUp", END)
       .compile({ checkpointer: this.saver });

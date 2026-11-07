@@ -28,6 +28,7 @@ import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { conversationGroupsQuery } from "../../lib/query/shell";
+import { HOME_PATH } from "../../lib/routes";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 import { useSession } from "../shell/session";
@@ -68,7 +69,7 @@ export function orderAgents(
 }
 
 /**
- * A new conversation (`/chat`, spec §5.2, agent profile design §4): the greeting, the agents row,
+ * A new conversation (`/`, the home, spec §5.2, agent profile design §4): the greeting, the agents row,
  * the selected agent's quick actions and the composer (no agent picker: the row picks). The agent
  * is `?agent=` when usable, else the one most recently talked to, else the first in the row's
  * order. The greeting is picked after mount (the server draws its same-height placeholder, so the
@@ -92,10 +93,10 @@ export function useNewConversationPage(
   const qc = useQueryClient();
   const errorMessage = useErrorMessage();
   const session = useSession();
-  const signature = useStatusSignature("/chat");
+  const signature = useStatusSignature(HOME_PATH);
   const agentsQ = agentsQuery(orgId);
-  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
-    ?.agents;
+  const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
+  const agents = agentsRead.data?.agents;
   const groupsQ = conversationGroupsQuery(orgId);
   const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) });
   // A failed groups read leaves no recent agent: the first one is picked.
@@ -135,7 +136,7 @@ export function useNewConversationPage(
     },
     invalidates: () => [],
   });
-  const selection = useSelection(providers, agent, undefined);
+  const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
   /** A failed create's draft, for the composer the new layout mounts again. */
   const [restore, setRestore] = useState<{ n: number; draft?: ComposerDraft }>({ n: 0 });
@@ -192,7 +193,17 @@ export function useNewConversationPage(
       ? { thread: <PendingBubbles items={pending.shown} />, working: true }
       : {
           newConversation: {
-            greeting: <Greeting text={greeting} sub={t("greeting.sub")} />,
+            greeting: (
+              <Greeting
+                text={greeting}
+                // one usable agent draws no row: nothing to choose, so the line names it
+                sub={
+                  usable.length === 1 && agent
+                    ? t("greeting.subOne", { agent: name })
+                    : t("greeting.sub")
+                }
+              />
+            ),
             agents: (
               <AgentRow
                 agents={rowItems}
@@ -203,6 +214,8 @@ export function useNewConversationPage(
             ),
           },
         }),
+    // the agents are on the way: the row's placeholder chips keep its box, so nothing moves
+    ...(!sent && agentsRead.isPending ? { loading: { agents: true } } : {}),
     composer: (
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}

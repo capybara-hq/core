@@ -1348,3 +1348,26 @@ a.cb-attachment:hover {
 .cb-subsection[data-variant="flush"] + .cb-subsection[data-variant="flush"] {
   border-top: 1px solid var(--cb-line-soft);
 }
+/* Divided: the regions of a Sheet's body, split by a hairline (no guide). */
+.cb-subsection[data-variant="divided"] ~ .cb-subsection[data-variant="divided"] {
+  padding-top: var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+
+/*
+ * ImpactPreview (spec §6.35): what a change would do, as divided subsections (§6.32) of rows
+ * (§6.33), space.4 apart; with nothing to show, one muted prose line.
+ */
+.cb-impact-preview {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-4);
+  min-width: 0;
+}
+.cb-impact-preview-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

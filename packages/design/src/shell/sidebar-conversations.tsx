@@ -310,7 +310,7 @@ export function Conversations({
       >
         {filtering ? (
           <EmptyState
-            size="compact"
+            size="panel"
             text={t("sidebar.noMatch")}
             action={{
               label: t("sidebar.clearFilter"),
@@ -319,10 +319,10 @@ export function Conversations({
             }}
           />
         ) : archivedList ? (
-          <EmptyState size="compact" text={t("sidebar.archivedEmpty")} />
+          <EmptyState size="panel" text={t("sidebar.archivedEmpty")} />
         ) : (
           <EmptyState
-            size="compact"
+            size="panel"
             text={t("sidebar.empty")}
             {...(newHref !== undefined
               ? { action: { label: t("sidebar.new"), variant: "default", href: newHref } }

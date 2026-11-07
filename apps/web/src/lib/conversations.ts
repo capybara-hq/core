@@ -153,6 +153,8 @@ type EventBody =
       };
     }
   | { type: "reminder"; payload: { step: number; text: string } }
+  /** The model's tool set changed since its previous request (model-facing; the UI shows nothing). */
+  | { type: "tools_changed"; payload: { step: number; added: string[]; removed: string[] } }
   | {
       type: "tool_call_started";
       payload: { step: number; callId: string; toolKey: string; specHash: string };
@@ -687,6 +689,31 @@ export const getConversation = (orgId: string, id: string) =>
 export const listEvents = (orgId: string, id: string, after: number, limit = EVENTS_PAGE) =>
   apiFetch<{ events: ConversationEvent[] }>(
     `${one(orgId, id)}/events?after=${after}&limit=${limit}`,
+  );
+
+/**
+ * Whether `events` (the cached window of a log) start at the log's beginning: seqs are allocated
+ * from 1 without gaps, so the first event has seq 1 (an empty log has nothing before it either).
+ */
+export const fromStart = (events: readonly ConversationEvent[]): boolean =>
+  events.length === 0 || (events[0] as ConversationEvent).seq === 1;
+
+/** How many events a page of history reads (the first paint's last page, each earlier page). */
+export const HISTORY_PAGE = 200;
+
+/**
+ * The turn-aligned page of events before `before` (`"end"`: the log's last page), with how many
+ * runs started before its first event (history paging spec §2; an older kernel's answer has no
+ * `turnsBefore`).
+ */
+export const listEventsBefore = (
+  orgId: string,
+  id: string,
+  before: number | "end",
+  limit = HISTORY_PAGE,
+) =>
+  apiFetch<{ events: ConversationEvent[]; turnsBefore?: number }>(
+    `${one(orgId, id)}/events?before=${before}&limit=${limit}`,
   );
 
 /** 读完 `after` 之后的全部事件（逐页）。 */

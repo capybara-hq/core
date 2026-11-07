@@ -128,18 +128,18 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   //    that the dependency stays, then removes crm
   await expect(page).toHaveURL(/\/plugins\/[0-9a-f-]{36}$/, { timeout: 60_000 });
   const card = page.getByRole("region", { name: "crm v1.0.0", exact: true });
-  await expect(
-    card.getByText(`· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.existing}`),
-  ).toBeVisible();
+  // the components are list rows (name, kind code, created / existing as meta)
+  const coreRow = card.getByRole("listitem").filter({ hasText: "crm-core" });
+  await expect(coreRow).toContainText(D.plugins.componentKind.plugin);
+  await expect(coreRow).toContainText(D.plugins.existing);
   // 停用 is in the head's ⋯ menu (destructive items)
   await page.getByRole("button", { name: OBJECT_ROW_MENU }).first().click();
   await page.getByRole("menuitem", { name: P.action.disable, exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(
-    dialog.getByText(
-      `· ${D.plugins.componentKind.plugin} crm-core — ${D.plugins.report.reason.pre_existing}`,
-    ),
-  ).toBeVisible();
+  // the impact preview keeps crm-core, with the reason as the row's note
+  const keptRow = dialog.getByRole("listitem").filter({ hasText: "crm-core" });
+  await expect(keptRow).toContainText(D.plugins.componentKind.plugin);
+  await expect(keptRow).toContainText(D.plugins.report.reason.pre_existing);
   await dialog.getByRole("button", { name: P.switchOff.confirm }).click();
   await expect(page.getByText(P.state.off, { exact: true }).first()).toBeVisible({
     timeout: 60_000,

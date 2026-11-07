@@ -327,7 +327,7 @@ services:
   # the egress proxy image, then exit.
   sandbox-image:
     profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#755d7575f62b56becbeda993e06df70ceaa4535f:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -335,7 +335,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#755d7575f62b56becbeda993e06df70ceaa4535f:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

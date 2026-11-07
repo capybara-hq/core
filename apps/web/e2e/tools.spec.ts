@@ -7,6 +7,7 @@ import {
   replies,
   saveSection,
   startChat,
+  takeAllGroupTools,
   toolGroup,
   zh,
 } from "./support/chat";
@@ -45,12 +46,7 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
   await newAgent(page, agentName);
   await openAgentSection(page, "tools");
-  await page
-    .getByRole("checkbox", {
-      name: zh.agents.form.connectorTools.replace("{name}", connectorName),
-      exact: true,
-    })
-    .check();
+  await takeAllGroupTools(page, connectorName);
   await saveSection(page);
   await startChat(page, agentName);
   return composer(page);
@@ -77,12 +73,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   // 2. 新建 agent，在 agent 页面的「工具」分组里引用该连接器的全部工具
   await newAgent(page, "Tool agent");
   await openAgentSection(page, "tools");
-  await page
-    .getByRole("checkbox", {
-      name: zh.agents.form.connectorTools.replace("{name}", "Fixture"),
-      exact: true,
-    })
-    .check();
+  await takeAllGroupTools(page, "Fixture");
   await saveSection(page);
 
   // 3. 开始对话：model-fake 按指令调用 destructive 工具 → 出现审批卡片，运行等人处理

@@ -72,7 +72,7 @@ type Update = (input: UpdateChannelInput) => Promise<ChannelConnection>;
  * not-found state. A change the kernel answers with the connection replaces it in the cache.
  */
 export default function ChannelView({ channelId }: { channelId: string }) {
-  const ws = useWorkspace({ min: "admin" });
+  const ws = useWorkspace({ min: "admin", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
   return <Channel key={channelId} orgId={ws.orgId} channelId={channelId} />;

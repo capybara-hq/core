@@ -76,7 +76,7 @@ function statusOf(s: AgentTreeNode["status"]): AgentMapStatus {
  * completed, the model as `provider / model` (with the providers' display names when given), an
  * untitled root as `untitled`. The tree reports a run that ended on its step, time or token limit
  * as `idle` (the run completed); `finishes` (the root's own children's latest
- * `subagent_finished`, which the stream shows as failed) corrects an ended node. A deeper agent's
+ * `subagent_finished`, which the stream shows as `limit`) corrects an ended node. A deeper agent's
  * end is only in its parent's log, which level 1 does not read: its node keeps the tree's word
  * until its level 2 (its own log) is open.
  */
@@ -275,7 +275,7 @@ function latestText(entries: readonly TimelineEntry[]): string {
   return "";
 }
 
-/** Run ends the stream shows as failed (`subagent_finished` with a limit's status). */
+/** Run ends on a limit: `limit` ("已达上限"), as the stream shows their `subagent_finished`. */
 const LIMIT_ENDS = new Set(["max_steps", "max_duration", "budget"]);
 
 /** What an agent's own log says of its status. */
@@ -293,7 +293,7 @@ export type LogWord =
 
 /** A terminal event's word, or null for any other event. */
 function endOf(e: ConversationEvent): AgentMapStatus | null {
-  if (e.type === "run_finished") return LIMIT_ENDS.has(e.payload.reason) ? "failed" : "completed";
+  if (e.type === "run_finished") return LIMIT_ENDS.has(e.payload.reason) ? "limit" : "completed";
   if (e.type === "run_failed") return "failed";
   if (e.type === "run_aborted") return "aborted";
   return null;

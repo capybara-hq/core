@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Callout,
   Card,
   type Column,
   DangerConfirm,
@@ -766,9 +767,9 @@ function ReviewTab({
           <Text tone="muted">{t("review.empty")}</Text>
         </Card>
       ) : (
-        <Text variant="prose" tone="muted">
-          {t("review.hint")}
-        </Text>
+        // A standing note about every tool below: the quiet info Callout first in the tab (spec
+        // §6.19), not a loose paragraph between the cards
+        <Callout tone="info">{t("review.hint")}</Callout>
       )}
       {pendingTools.map((tool) => {
         // 复核过且有新定义 → 对比当前（上次复核通过的）与新定义；从未复核过 → 新工具，只显示完整定义

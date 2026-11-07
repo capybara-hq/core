@@ -12,8 +12,8 @@ export type DialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   title: string;
-  /** 480 / 640 for ordinary dialogs; 760 / 1060 / 1100 are the agent map's levels (§6.7). */
-  size?: 480 | 640 | 760 | 1060 | 1100;
+  /** 480 / 640 for ordinary dialogs; 760 / 1060 wide ones (§6.7). */
+  size?: 480 | 640 | 760 | 1060;
   footer: ReactNode;
   /**
    * Where focus starts: by default the first field of the body when the dialog asks for input,

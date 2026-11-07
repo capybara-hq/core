@@ -44,7 +44,8 @@ export function DetailPage({
   children,
 }: {
   header: PageHeaderProps;
-  tabs: TabsProps;
+  /** The object's views; left out when it has one view (a tab row of one tab says nothing). */
+  tabs?: TabsProps | undefined;
   facts?: ReactNode;
   loading?: {
     facts?: boolean | FactsShape;
@@ -68,7 +69,7 @@ export function DetailPage({
           header={loading ? loadingHeader(header) : header}
           statsInHead
           loadingStats={loading?.stats ?? 0}
-          tabs={tabs}
+          {...(tabs !== undefined ? { tabs } : {})}
         />
       }
     >

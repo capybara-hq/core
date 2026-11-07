@@ -23,7 +23,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache, testQueryClient } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -122,7 +122,7 @@ async function pick(user: ReturnType<typeof userEvent.setup>, title: string) {
 }
 
 beforeEach(() => {
-  resetNavigation("/chat");
+  resetNavigation("/");
   vi.stubGlobal("EventSource", FakeEventSource);
   // 09:00 local: the morning set; the first line of it
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -141,7 +141,7 @@ afterEach(() => {
 describe("the new conversation page (agent profile design §4)", () => {
   it("the page shows a greeting for the bucket, the agents row and the first agent's quick actions", async () => {
     expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/chat", routes());
+    const { container } = await renderRouteWithCache("/", routes());
     // picked after mount: the morning's first line with the person's name
     expect(
       await screen.findByRole("heading", {
@@ -181,12 +181,26 @@ describe("the new conversation page (agent profile design §4)", () => {
     }
   });
 
+  it("the model and effort menus carry no 'from the next message' note: nothing was sent yet", async () => {
+    const { container } = await renderRouteWithCache("/", routes());
+    await screen.findByRole("heading", {
+      name: String(en.chat.greeting.morning[0]).replace("{name}", "Grant"),
+    });
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    const model = await within(bar).findByRole("button", {
+      name: new RegExp(`^${en.chat.pickModel}: `),
+    });
+    await userEvent.setup().click(model);
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    expect(screen.queryByText(en.chat.nextMessage)).toBeNull();
+  });
+
   it("selecting another agent switches the quick actions and the composer's agent", async () => {
     const calls = stubApi({
       [`POST ${ORG}/conversations`]: () =>
         json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
     });
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
@@ -208,21 +222,38 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ agentId: "ag1" });
   });
 
+  it("while the agents load, the row draws placeholder chips and nothing is interactive", async () => {
+    const { container } = await renderRouteEmptyCache("/", {
+      ...routes(),
+      [`GET ${ORG}/agents`]: () => new Promise<Response>(() => {}),
+    });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-part="agent-row"][data-loading="true"]')).toBeTruthy(),
+    );
+    const loading = container.querySelector('[data-part="agent-row"][data-loading="true"]');
+    expect(loading?.querySelectorAll('[data-part="agent-chip"]').length).toBe(3);
+    expect(within(loading as HTMLElement).queryAllByRole("button")).toEqual([]);
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+  });
+
   it("one usable agent: no row", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache(
-      "/chat",
+      "/",
       routes({ agents: [AGENTS.agents[0]] }, { groups: [], next: null }),
     );
     await screen.findByRole("heading", { name: /Grant/ });
     expect(row()).toBeNull();
+    // nothing to choose: the line under the greeting names the agent instead of "pick one"
+    expect(screen.getByText("Start a conversation with Alpha")).toBeTruthy();
+    expect(screen.queryByText(en.chat.greeting.sub)).toBeNull();
     expect(await titles(userEvent.setup())).toEqual(["Summarize", "Translate"]);
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
   });
 
   it("picking a quick action fills the composer; ⌘Z restores the previous text", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes());
+    await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.type(input(), "my draft");
     await pick(user, "Review");
@@ -259,7 +290,7 @@ describe("the new conversation page (agent profile design §4)", () => {
       el?.querySelector('[data-part="avatar"][data-kind="initial"]')?.textContent;
     // the new conversation's agents row (24)
     expectNoFirstPaintFetch();
-    await renderRouteWithCache("/chat", routes(plain, { groups: [], next: null }));
+    await renderRouteWithCache("/", routes(plain, { groups: [], next: null }));
     const chip = within(row() as HTMLElement).getByRole("button", { name: "echo agent" });
     expect(initialIn(chip)).toBe("E");
     expect(

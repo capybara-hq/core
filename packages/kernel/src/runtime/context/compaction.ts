@@ -3,6 +3,7 @@ import { renderBackgroundFinished } from "../../background/render.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { latestSummary } from "./build.js";
+import { toolsChangedText } from "./tool-changes.js";
 
 /** 压缩请求的标记：放在 system 中，便于识别（model-fake 据此返回摘要）。 */
 export const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
@@ -123,6 +124,10 @@ function transcriptLine(e: ConversationEvent): string | null {
     }
     case "reminder":
       return `System reminder: ${e.payload.text}`;
+    // a tool set change is a system message of the request (build.ts); kept in the transcript so
+    // the summary does not carry an earlier "I have no such tool" forward as current
+    case "tools_changed":
+      return `System reminder: ${toolsChangedText(e.payload)}`;
     // a finished background task is a system message of the request (build.ts)
     case "background_task_finished":
       return `System reminder: ${renderBackgroundFinished(e.payload)}`;
