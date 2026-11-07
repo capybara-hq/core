@@ -37,6 +37,7 @@ export class ExtensionsOperations implements OnModuleInit {
         example: {},
         authz: { orgAction: "org.extensions.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/extensions"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input, ctx) => {
           const views = await this.configs.list(ctx.orgId);

@@ -1,12 +1,14 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { SkillCreateFields, SkillPathParams } from "../../skills/skills.schemas.js";
 import { SkillsService } from "../../skills/skills.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
 
 const NoInput = z.object({}).strict();
-const SkillId = z.object({ skillId: z.string().min(1).max(100) }).strict();
+const SkillId = z.object({ skillId: SkillPathParams.shape.id.max(100) }).strict();
+const Create = SkillCreateFields.shape;
 
 /**
  * Skill library operations of the `Platform` tool (spec §7). The skill body can be long; `get`
@@ -40,6 +42,8 @@ export class SkillsOperations implements OnModuleInit {
         example: { skillId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" },
         authz: { orgAction: "skills.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/skills/:id"],
+        omits: ["id"],
+        extras: ["skillId"],
         confirm: "read",
         run: async (input, ctx) => asToolError(() => this.skills.get(ctx.orgId, input.skillId)),
       }),
@@ -47,12 +51,13 @@ export class SkillsOperations implements OnModuleInit {
         id: "skills.create",
         description:
           "Create an org skill from text: a name, a one-line description of when to use it, and the SKILL.md body. A skill of that name must not exist yet. Uploads of packages are done on the web.",
+        // the route's text form, its bounds tightened for the model (a SKILL.md up to 100k chars)
         input: z
           .object({
-            name: z.string().min(1).max(64),
-            description: z.string().min(1).max(1024),
-            body: z.string().min(1).max(100_000),
-            shareable: z.boolean().optional(),
+            name: Create.name.unwrap().max(64),
+            description: Create.description.unwrap(),
+            body: Create.body.unwrap().min(1).max(100_000),
+            shareable: Create.shareable,
           })
           .strict(),
         example: {
@@ -62,6 +67,8 @@ export class SkillsOperations implements OnModuleInit {
         },
         authz: { orgAction: "skills.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/skills"],
+        // packages are uploaded on the web
+        omits: ["uploadId"],
         confirm: "org",
         errors: [
           {

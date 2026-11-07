@@ -40,6 +40,13 @@ export interface PlatformOperation<I = unknown> {
   authzNote?: "service-enforced";
   /** The HTTP routes it corresponds to, e.g. `POST /api/v1/orgs/:orgId/skills`; [] when synthetic. */
   mirrors: readonly string[];
+  /**
+   * Fields of the mirrored route (body, query, path params but `:orgId`) the input leaves out, e.g.
+   * `uploadId` of `skills.create` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
+   */
+  omits?: readonly string[];
+  /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list, a renamed `skillId`. */
+  extras?: readonly string[];
   confirm: ConfirmClass;
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.

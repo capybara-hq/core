@@ -308,7 +308,8 @@ describe("agents", () => {
     expect(
       await summarize(
         "agents.create-from-template",
-        { templateId, name: "Copy", previewHash: "h" },
+        // the route's hash shape (the input is the route's schema), any value
+        { templateId, name: "Copy", previewHash: `${"0".repeat(64)}.${"0".repeat(16)}` },
         c,
       ),
     ).toEqual({

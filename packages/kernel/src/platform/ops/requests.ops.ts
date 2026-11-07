@@ -1,12 +1,15 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import {
+  CatalogItemPathParams,
+  CatalogMarketplaceRequestBody,
+  CatalogRequestBody,
+} from "../../catalog/org-catalog.schemas.js";
 import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/requests.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { asToolError, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-
-const Note = z.string().max(1000);
 
 /** A request as the requester reads it (no org name: it is this org's). */
 const view = (r: CatalogRequestView) => ({
@@ -55,11 +58,8 @@ export class RequestsOperations implements OnModuleInit {
         description:
           'Ask for a plugin: kind "enable" asks the org admins to switch on a plugin that is off in this org (members and up); kind "access" asks the super admin to offer this org a plugin it sees as not_offered (org admins). Take the plugin id and state from plugins.list. An optional note says why.',
         input: z
-          .object({
-            itemId: z.string().min(1).max(100),
-            kind: z.enum(["enable", "access"]),
-            note: Note.optional(),
-          })
+          .object({ itemId: CatalogItemPathParams.shape.itemId.max(100) })
+          .extend(CatalogRequestBody.shape)
           .strict(),
         example: {
           itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c",
@@ -110,14 +110,7 @@ export class RequestsOperations implements OnModuleInit {
         id: "requests.create-import",
         description:
           "Ask the super admin to import a plugin from a marketplace into the platform catalog (org admins, when the platform lets orgs browse): the marketplaceId, name and version from marketplaces.entries, and an optional note.",
-        input: z
-          .object({
-            marketplaceId: z.string().min(1).max(100),
-            name: z.string().min(1).max(214),
-            version: z.string().min(1).max(100),
-            note: Note.optional(),
-          })
-          .strict(),
+        input: CatalogMarketplaceRequestBody,
         example: { marketplaceId: "official", name: "github", version: "1.4.0" },
         authz: { orgAction: "catalog.decide" },
         mirrors: ["POST /api/v1/orgs/:orgId/marketplace-requests"],

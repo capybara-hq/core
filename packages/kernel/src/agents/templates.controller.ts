@@ -1,4 +1,3 @@
-import { AGENT_TEMPLATE_NAME_RE } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, Inject, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
@@ -17,18 +16,13 @@ import {
   type SaveAsOmission,
 } from "./org-templates.js";
 import { AgentTemplatesService, type AgentTemplateView } from "./templates.js";
+import {
+  AgentTemplateIdParams,
+  SaveAsAgentIdParams,
+  SaveAsTemplateBody,
+} from "./templates.schemas.js";
 
-const IdParams = z.object({ id: z.string().min(1).max(100) });
-const AgentIdParams = z.object({ agentId: z.string().min(1).max(100) });
 const ShareableBody = z.object({ shareable: z.boolean() }).strict();
-const SaveAsBody = z
-  .object({
-    /** The bare template name (the template name rule); unique in the org's usable set. */
-    name: z.string().regex(AGENT_TEMPLATE_NAME_RE),
-    /** When to use it (trimmed, as a template file's). */
-    description: z.string().trim().min(1).max(4096),
-  })
-  .strict();
 const UpdateBody = z
   .object({
     /** The whole definition (the `AgentTemplate` shape), validated like a template file. */
@@ -37,13 +31,16 @@ const UpdateBody = z
     expectedVersion: z.number().int().min(1),
   })
   .strict();
-class AgentTemplateIdParams extends createZodDto(IdParams, "AgentTemplateIdParams") {}
-class SaveAsAgentIdParams extends createZodDto(AgentIdParams, "SaveAsAgentIdParams") {}
+class AgentTemplateIdParamsDto extends createZodDto(
+  AgentTemplateIdParams,
+  "AgentTemplateIdParams",
+) {}
+class SaveAsAgentIdParamsDto extends createZodDto(SaveAsAgentIdParams, "SaveAsAgentIdParams") {}
 class AgentTemplateShareableBody extends createZodDto(
   ShareableBody,
   "AgentTemplateShareableBody",
 ) {}
-class SaveAsTemplateBody extends createZodDto(SaveAsBody, "SaveAsTemplateBody") {}
+class SaveAsTemplateBodyDto extends createZodDto(SaveAsTemplateBody, "SaveAsTemplateBody") {}
 class AgentTemplateUpdateBody extends createZodDto(UpdateBody, "AgentTemplateUpdateBody") {}
 
 const actorOpts = (p: ReturnType<typeof requireUser>) => {
@@ -83,7 +80,7 @@ export class AgentTemplatesController {
   async get(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(AgentTemplateIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(AgentTemplateIdParamsDto) params: z.infer<typeof AgentTemplateIdParams>,
   ): Promise<{ template: AgentTemplateDetail }> {
     requireUser(principal);
     return { template: await this.orgTemplates.detail(org.orgId, params.id) };
@@ -99,7 +96,7 @@ export class AgentTemplatesController {
   async update(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(AgentTemplateIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(AgentTemplateIdParamsDto) params: z.infer<typeof AgentTemplateIdParams>,
     @ZBody(AgentTemplateUpdateBody) body: z.infer<typeof UpdateBody>,
   ): Promise<{ template: AgentTemplateDetail }> {
     const p = requireUser(principal);
@@ -123,7 +120,7 @@ export class AgentTemplatesController {
   async deletePreview(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(AgentTemplateIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(AgentTemplateIdParamsDto) params: z.infer<typeof AgentTemplateIdParams>,
   ): Promise<OwnedSkillDeletePreview> {
     requireUser(principal);
     return this.owned.previewAgentTemplateDelete(org.orgId, params.id);
@@ -138,7 +135,7 @@ export class AgentTemplatesController {
   async remove(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(AgentTemplateIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(AgentTemplateIdParamsDto) params: z.infer<typeof AgentTemplateIdParams>,
   ): Promise<{ outcome: "transferred" | "removed" }> {
     const p = requireUser(principal);
     const outcome = await this.owned.deleteAgentTemplate(
@@ -160,7 +157,7 @@ export class AgentTemplatesController {
   async setShareable(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(AgentTemplateIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(AgentTemplateIdParamsDto) params: z.infer<typeof AgentTemplateIdParams>,
     @ZBody(AgentTemplateShareableBody) body: z.infer<typeof ShareableBody>,
   ): Promise<{ id: string; shareable: boolean }> {
     const p = requireUser(principal);
@@ -193,8 +190,8 @@ export class AgentSaveAsTemplateController {
   async saveAs(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(SaveAsAgentIdParams) params: z.infer<typeof AgentIdParams>,
-    @ZBody(SaveAsTemplateBody) body: z.infer<typeof SaveAsBody>,
+    @ZParam(SaveAsAgentIdParamsDto) params: z.infer<typeof SaveAsAgentIdParams>,
+    @ZBody(SaveAsTemplateBodyDto) body: z.infer<typeof SaveAsTemplateBody>,
   ): Promise<{ template: AgentTemplateDetail; omitted: SaveAsOmission[] }> {
     const p = requireUser(principal);
     return this.orgTemplates.saveAs(org.orgId, p.account.id, params.agentId, body, patTokenId(p));

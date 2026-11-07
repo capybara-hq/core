@@ -22,7 +22,8 @@ import {
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
- * - platform-op-orphan: a mirror or exclusion naming no route;
+ * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
+ *   operations and exclusion entries with it, spec §14.1 item 4);
  * - platform-op-describe: an operation without `description`, `example`, or (not `read`) `summary`;
  * - platform-op-literal: `mirrors` / `authz` that are not literals (the check cannot read them).
  */
@@ -305,6 +306,18 @@ function readRoles(file: string): Map<string, string> {
   return roles;
 }
 
+/** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
+export function kernelRoutes(root: string): Set<string> {
+  const keys = new Set<string>();
+  for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
+    if (isTest || !file.endsWith(".ts")) continue;
+    const p = parseFile(file);
+    if (isParseError(p)) continue;
+    for (const r of readRoutes(p, [])) keys.add(r.key);
+  }
+  return keys;
+}
+
 export function checkPlatformOps(root: string): Finding[] {
   const out: Finding[] = [];
   const src = join(root, KERNEL_SRC);
@@ -346,7 +359,7 @@ export function checkPlatformOps(root: string): Finding[] {
           file: op.file,
           line: op.line,
           rule: "platform-op-orphan",
-          message: `${op.id} mirrors \`${m}\`, which is no kernel route`,
+          message: `${op.id}: operation mirrors a route that does not exist: \`${m}\``,
         });
         continue;
       }
@@ -382,7 +395,7 @@ export function checkPlatformOps(root: string): Finding[] {
       out.push({
         ...at,
         rule: "platform-op-orphan",
-        message: `exclusion \`${e.route}\` is no kernel route`,
+        message: `exclusion names a route that does not exist: \`${e.route}\``,
       });
     }
     if (e.reason === undefined || e.reason.trim() === "") {

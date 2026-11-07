@@ -270,6 +270,15 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+export {
+  checkInputParity,
+  inputParity,
+  type ParityFinding,
+  type ParityOperation,
+} from "./platform/parity.js";
+export { PLATFORM_OPERATION_PROVIDERS } from "./platform/platform-ops.module.js";
+export { PlatformOperations } from "./platform/registry.js";
+export { ROUTE_SCHEMAS, type RouteSchemas } from "./platform/route-schemas.js";
 export { UNKNOWN_RESULT_TEXT } from "./runtime/context/pairing.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance-queue.js";

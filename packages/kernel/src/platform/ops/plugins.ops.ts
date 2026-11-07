@@ -1,8 +1,10 @@
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { CatalogIdPathParams, CatalogUpdateBody } from "../../catalog/admin-catalog.schemas.js";
 import { CatalogService } from "../../catalog/catalog.service.js";
 import type { OrgCatalogItem } from "../../catalog/catalog-content.js";
+import { CatalogItemPathParams } from "../../catalog/org-catalog.schemas.js";
 import { OrgCatalogService } from "../../catalog/org-catalog.service.js";
 import { PluginInstaller, uninstallPreviewHash } from "../../catalog/plugin-install.js";
 import { PlatformPluginUpdater } from "../../catalog/plugin-upgrade.js";
@@ -15,9 +17,13 @@ import { asToolError, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { localized } from "./summary.js";
 
-const Id = z.string().min(1).max(100);
-const Version = z.string().min(1).max(100);
-const Hash = z.string().min(1).max(200);
+/** An org catalog item id (`:itemId` of the org routes). */
+const ItemId = CatalogItemPathParams.shape.itemId.max(100);
+/** A platform catalog item id (`:id` of the admin routes), named `itemId` like the org's. */
+const PlatformItemId = CatalogIdPathParams.shape.id.max(100);
+const Version = CatalogUpdateBody.shape.version.max(100);
+/** The switch-off confirm: the uninstall preview's hash, or `nothing-installed`. */
+const Confirm = z.string().min(1).max(200);
 
 /** Entries per page of the paged lists (the tool caps a bare list at 50). */
 const PAGE = 50;
@@ -123,6 +129,7 @@ export class PluginsOperations implements OnModuleInit {
         example: {},
         authz: { orgAction: "catalog.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/catalog"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input, ctx) => {
           const all = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId);
@@ -133,7 +140,7 @@ export class PluginsOperations implements OnModuleInit {
         id: "plugins.get",
         description:
           "Read one plugin as this org sees it: its state, extension, connector templates (presets only, never credentials), dependencies, skills and agent templates.",
-        input: z.object({ itemId: Id }).strict(),
+        input: z.object({ itemId: ItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { orgAction: "catalog.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/catalog/:itemId"],
@@ -151,7 +158,7 @@ export class PluginsOperations implements OnModuleInit {
         id: "plugins.disable-preview",
         description:
           "Preview switching a plugin off in this org (org admins): what it would remove and which agents use it, and the confirm value plugins.set-enabled needs to switch it off. Show the preview to the person before switching off.",
-        input: z.object({ itemId: Id }).strict(),
+        input: z.object({ itemId: ItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         // the web previews through the switch route itself (no confirm); writes nothing here
         authz: { orgAction: "org.extensions.manage" },
@@ -181,8 +188,8 @@ export class PluginsOperations implements OnModuleInit {
         description:
           "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs configuration a person enters (connector credentials, extension config) is refused, so point the person to the 插件 page. Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
         input: z.discriminatedUnion("enabled", [
-          z.object({ itemId: Id, enabled: z.literal(true) }).strict(),
-          z.object({ itemId: Id, enabled: z.literal(false), confirm: Hash }).strict(),
+          z.object({ itemId: ItemId, enabled: z.literal(true) }).strict(),
+          z.object({ itemId: ItemId, enabled: z.literal(false), confirm: Confirm }).strict(),
         ]),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", enabled: true },
         // the route needs catalog.read; setSwitch requires an org admin (any of skills.manage,
@@ -190,6 +197,8 @@ export class PluginsOperations implements OnModuleInit {
         authz: { orgAction: "org.extensions.manage" },
         authzNote: "service-enforced",
         mirrors: ["PUT /api/v1/orgs/:orgId/catalog/:itemId/switch"],
+        // install inputs a person enters on the web (a plugin that needs them is refused)
+        omits: ["inputs"],
         confirm: "org",
         errors: [
           {
@@ -267,6 +276,9 @@ export class PluginsOperations implements OnModuleInit {
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/catalog/items"],
+        // paged by cursor; deleted items and the pending filter are the admin console's
+        omits: ["includeDeleted", "limit", "offset", "pending"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input, ctx) => {
           const p = await this.catalog.page({ limit: PAGE, offset: startOf(input.cursor) });
@@ -281,10 +293,12 @@ export class PluginsOperations implements OnModuleInit {
         id: "plugins.platform-get",
         description:
           "Read one platform catalog plugin (super admin): the item, its platform version and every version with its source. Orgs are given as counts only.",
-        input: z.object({ itemId: Id }).strict(),
+        input: z.object({ itemId: PlatformItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/catalog/items/:id"],
+        omits: ["id"],
+        extras: ["itemId"],
         confirm: "read",
         errors: [
           {
@@ -313,10 +327,12 @@ export class PluginsOperations implements OnModuleInit {
         id: "plugins.update-preview",
         description:
           "Preview updating a platform plugin to another imported version (super admin): every component's change, the extension step and the org connectors it touches, with the diffHash plugins.update takes. Orgs are given as counts only; the admin console shows which.",
-        input: z.object({ itemId: Id, version: Version }).strict(),
+        input: z.object({ itemId: PlatformItemId, version: Version }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", version: "1.2.0" },
         authz: { superAdmin: true },
         mirrors: ["POST /api/v1/admin/catalog/items/:id/update/preview"],
+        omits: ["id"],
+        extras: ["itemId"],
         confirm: "read",
         errors: [
           {
@@ -334,7 +350,13 @@ export class PluginsOperations implements OnModuleInit {
         id: "plugins.update",
         description:
           "Update a platform plugin to the version previewed (super admin), for every org at once: pass the version and the diffHash plugins.update-preview returned. A preview that is out of date is refused; preview again.",
-        input: z.object({ itemId: Id, version: Version, diffHash: Hash }).strict(),
+        input: z
+          .object({
+            itemId: PlatformItemId,
+            version: Version,
+            diffHash: CatalogUpdateBody.shape.diffHash,
+          })
+          .strict(),
         example: {
           itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c",
           version: "1.2.0",
@@ -342,6 +364,8 @@ export class PluginsOperations implements OnModuleInit {
         },
         authz: { superAdmin: true },
         mirrors: ["PUT /api/v1/admin/catalog/items/:id/update"],
+        omits: ["id"],
+        extras: ["itemId"],
         confirm: "platform",
         errors: [
           {

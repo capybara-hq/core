@@ -1,5 +1,6 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { MarketplaceAddBody, MarketplaceEntriesQuery } from "../../catalog/marketplaces.schemas.js";
 import {
   type MarketplaceEntryView,
   MarketplacesService,
@@ -73,6 +74,7 @@ export class MarketplacesOperations implements OnModuleInit {
         example: {},
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/marketplaces"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input) =>
           pageOf((await this.marketplaces.list()).map(source), startOf(input.cursor), PAGE),
@@ -83,14 +85,17 @@ export class MarketplacesOperations implements OnModuleInit {
           "Browse the plugins the enabled marketplaces offer (org admins, when the platform lets orgs browse): name, version, summary, whether it can be imported and whether it is in the catalog already. Filter by marketplaceId or a search text q. Pages by 50: pass the returned next as params.cursor. To get one imported, use requests.create-import.",
         input: z
           .object({
-            marketplaceId: z.string().min(1).max(100).optional(),
-            q: z.string().min(1).max(200).optional(),
+            marketplaceId: MarketplaceEntriesQuery.shape.sourceId,
+            q: MarketplaceEntriesQuery.shape.q.unwrap().min(1).optional(),
             cursor: Cursor.optional(),
           })
           .strict(),
         example: { q: "github" },
         authz: { orgAction: "catalog.decide" },
         mirrors: ["GET /api/v1/orgs/:orgId/marketplaces/entries"],
+        // `marketplaceId` is the route's `sourceId`, named as the entries and requests name it
+        omits: ["sourceId"],
+        extras: ["marketplaceId", "cursor"],
         confirm: "read",
         errors: [
           {
@@ -125,16 +130,12 @@ export class MarketplacesOperations implements OnModuleInit {
         id: "marketplaces.add",
         description:
           "Add a custom marketplace source to the platform (super admin): a name and an https URL of a marketplace.json, or a git repository (…/*.git or owner/repo) with an optional ref. Sources that need a token or mirrors are added on the web.",
-        input: z
-          .object({
-            name: z.string().min(1).max(100),
-            url: z.string().min(1).max(2000),
-            ref: z.string().min(1).max(200).optional(),
-          })
-          .strict(),
+        input: MarketplaceAddBody.pick({ name: true, url: true, ref: true }).strict(),
         example: { name: "Team plugins", url: "https://plugins.example.com/marketplace.json" },
         authz: { superAdmin: true },
         mirrors: ["POST /api/v1/admin/marketplaces"],
+        // the form is inferred from the URL; mirrors and a token are added on the web
+        omits: ["form", "mirrors", "token"],
         confirm: "platform",
         errors: [
           {

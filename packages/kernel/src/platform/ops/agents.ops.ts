@@ -2,6 +2,13 @@ import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
+import {
+  AgentCreateBody,
+  AgentFromTemplateBody,
+  AgentFromTemplatePreviewBody,
+  AgentPathParams,
+  AgentUpdateBody,
+} from "../../agents/agents.schemas.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import {
   AgentDefinitionSchema,
@@ -17,6 +24,7 @@ import { asToolError, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
 const Id = z.string().min(1).max(100);
+const AgentId = AgentPathParams.shape.agentId.max(100);
 const Short = z.string().min(1).max(200);
 
 const Model = z.object({ provider: Short, model: Short }).strict();
@@ -104,7 +112,7 @@ export class AgentsOperations implements OnModuleInit {
         id: "agents.get",
         description:
           "Read one agent you can see with its full definition: instructions, model, tools, skills and sub-agents. Takes the agent id from agents.list.",
-        input: z.object({ agentId: Id }).strict(),
+        input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/agents/:agentId"],
@@ -131,7 +139,8 @@ export class AgentsOperations implements OnModuleInit {
                 subagents: Fields.subagents.optional(),
               })
               .strict(),
-            visibility: z.string().max(40).optional(),
+            // only "private" passes; any other is refused with where to share it (WEB_ONLY)
+            visibility: AgentCreateBody.shape.visibility.optional(),
           })
           .strict(),
         example: {
@@ -143,6 +152,8 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents"],
+        // sharing and the avatar are set on the web
+        omits: ["memberIds", "profile"],
         confirm: "personal",
         summary: (i) => ({
           zh: `新建私有智能体「${i.definition.name}」`,
@@ -181,8 +192,8 @@ export class AgentsOperations implements OnModuleInit {
           "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
         input: z
           .object({
-            agentId: Id,
-            version: z.number().int().positive(),
+            agentId: AgentId,
+            version: AgentUpdateBody.shape.expectedVersion.unwrap(),
             name: z.string().min(1).max(80).optional(),
             instructions: Fields.instructions.optional(),
             model: Fields.model.optional(),
@@ -199,6 +210,19 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId"],
+        // flat: the definition's editable fields at the top, merged into the current definition;
+        // `version` is the route's `expectedVersion`, required here; visibility is the web's
+        omits: ["definition", "visibility", "memberIds", "expectedVersion"],
+        extras: [
+          "version",
+          "name",
+          "instructions",
+          "model",
+          "tools",
+          "toolPolicies",
+          "skills",
+          "subagents",
+        ],
         confirm: "personal",
         errors: [
           {
@@ -253,7 +277,7 @@ export class AgentsOperations implements OnModuleInit {
         id: "agents.preview-from-template",
         description:
           "Preview creating an agent from an agent template: what carries over, what is pending (connectors the org has not set up) or unavailable, the model that would be used, and a previewHash. agents.create-from-template needs that hash.",
-        input: z.object({ templateId: Id }).strict(),
+        input: AgentFromTemplatePreviewBody,
         example: { templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10" },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template/preview"],
@@ -265,14 +289,14 @@ export class AgentsOperations implements OnModuleInit {
         id: "agents.create-from-template",
         description:
           "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
-        input: z
-          .object({
-            templateId: Id,
-            name: z.string().min(1).max(80),
-            previewHash: z.string().min(1).max(100),
-            model: Model.optional(),
-            visibility: z.string().max(40).optional(),
-          })
+        input: AgentFromTemplateBody.pick({
+          templateId: true,
+          name: true,
+          previewHash: true,
+          visibility: true,
+        })
+          // the model with bounded strings (the route's are not)
+          .extend({ model: Model.optional() })
           .strict(),
         example: {
           templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10",
@@ -281,6 +305,8 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template"],
+        // a members agent and its avatar are set on the web
+        omits: ["members", "avatar"],
         confirm: "personal",
         errors: [
           {
