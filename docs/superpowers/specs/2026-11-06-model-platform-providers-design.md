@@ -1,6 +1,13 @@
 # Model platform providers: DeepSeek, Alibaba Bailian, Volcengine Ark
 
-Status: design, 2026-11-07, waiting for review. Builds on the platform / org layering design
+Status: core part implemented on `feat/model-platform-core` (plan
+`docs/superpowers/plans/2026-11-07-model-platform-core.md`, migration `0087_model_kinds_usage.sql`):
+SDK kinds / `embed` / `ModelCallOptions`, kernel enablement and `ctx.models`, web model catalog and
+disabling, conformance and model-fake changes; the three plugins (§6) are not started. Error code
+added: `model.provider_not_found` (404). Routes added: `GET /api/v1/orgs/:orgId/models/catalog` and
+`PUT /api/v1/orgs/:orgId/models/:provider/disabled` (`org.models.manage`), and the platform's
+`PUT /api/v1/admin/models/:provider/disabled`; config added: `models.listTimeoutMs`,
+`models.embedTimeoutMs`. Design, 2026-11-07, waiting for review. Builds on the platform / org layering design
 (`2026-11-07-platform-org-layering-design.md`, cited as "A"): §5.3 (two-layer model disabling) and
 §5.5 (org keys through A's overridable fields and per-call effective config) were revised to it on
 2026-11-07. Re-checked against `main` at `76b32e10`.
@@ -380,3 +387,28 @@ Decided 2026-11-07: every model is enabled by default and disabled on demand, on
 leave the key empty, a copy never carries the platform's key).
 
 Open: none.
+
+Rulings made while building the core part (they refine the sections above):
+
+- `ProviderRegistry.resolve` takes the expected kind: streaming needs `chat`, `embed` needs
+  `embedding`; another kind is refused (§5.1).
+- Model info is validated per model: an invalid entry is dropped, the rest of the list stays.
+- The list cache is per effective config: an org copy's key includes the org id (the config hash
+  masks secrets), orgs following the platform share the platform's key.
+- Org-level provider disabling enforces only an explicit org switch-off; a provider with no switch
+  state stays usable (optional preinstalls keep working). The switch-off read is an uncached PG read
+  per resolve. Platform deployment-default purposes still refuse `org_configured` providers.
+- When an agent's model no longer resolves (gone, disabled, provider not configured in the org) the
+  ladder goes straight to the fallback model; without one the run ends `run.model_unavailable`.
+  Titles, sub-agent tiers and `WebFetch` treat a mapped model that is gone as unmapped and fall back
+  to the conversation's model (§5.3).
+- `ctx.models` needs `permissions.models` (`perm-models`) and an org where the extension is enabled
+  (`extension.not_enabled`); purpose params are not sent to `embed`; batches answered before a later
+  batch fails are still recorded as usage.
+- Timeouts: `models.embedTimeoutMs` per embed batch, `models.listTimeoutMs` per provider list.
+- `usage.report` carries embedding usage with purpose `embedding` and no conversation fields; rows
+  are in `model_usage`, delivered at least once (`report_failed_at` marks a row whose job gave up
+  after its last attempt); the sweep re-enqueues rows with `reported_at IS NULL` older than the
+  sweep window (30 s).
+- `ExtensionContext.models` is a required member; plugin test fakes need a models stub (run the
+  plugins repository's typecheck before the release).

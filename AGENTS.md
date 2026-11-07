@@ -119,7 +119,12 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
-  kernel's. [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
+  kernel's. A model has a kind (`ModelInfo.kind`, absent = `chat`); only `chat` (`stream`) and
+  `embedding` (`embed`) are callable, other kinds are list-only. Models are enabled by default and
+  disabled on demand by the platform and per org (the kernel refuses a disabled model for agents,
+  purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
+  through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
+  recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
 - **Sandboxes:** abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
