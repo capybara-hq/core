@@ -1,6 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { ModelRef } from "../../agents/definition.js";
+import { ApiError } from "../../errors.js";
 import {
   EvalAddCaseBody,
   EvalCandidateSchema,
@@ -18,7 +19,9 @@ import {
 import { EvalRunsService, type EvalRunView } from "../../evals/runs.service.js";
 import { type EvalCaseView, EvalSetsService, type EvalSetView } from "../../evals/sets.service.js";
 import type { EvalCandidate } from "../../evals/step-replay.js";
-import { defineOperation, type OperationContext } from "../operation.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
@@ -57,9 +60,13 @@ const setRow = (s: EvalSetView) => ({
   createdAt: s.createdAt,
 });
 
-const caseRow = (c: EvalCaseView) => ({
+/**
+ * A case as a result shows it: a neutral label ("case 3"), never its title, which is an excerpt of
+ * the person's message and so conversation content.
+ */
+const caseRow = (c: EvalCaseView, n: number) => ({
   id: c.id,
-  name: c.title,
+  name: `case ${n}`,
   sourceConversationId: c.sourceConversationId,
   sourceRunId: c.sourceRunId,
   agentVersion: c.agentVersion,
@@ -106,7 +113,35 @@ export class EvalsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(EvalSetsService) private readonly sets: EvalSetsService,
     @Inject(EvalRunsService) private readonly runs: EvalRunsService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
+
+  /** The position of a case in its set, from 1 (0 when it is not there): the case's label. */
+  private async caseNo(ctx: OperationContext, setId: string, caseId: string): Promise<number> {
+    const set = await orElse(() => this.sets.get(ctx.orgId, setId), null);
+    return (set?.cases.findIndex((c) => c.id === caseId) ?? -1) + 1;
+  }
+
+  /** The set's eval-set row of the org, or the refusal the routes give. */
+  private setCheck(ctx: OperationContext, setId: string): Promise<PrecheckResult> {
+    return precheckBy(() => this.sets.get(ctx.orgId, setId));
+  }
+
+  /** Whether the set may take one more case (the configured maximum). */
+  private async roomCheck(ctx: OperationContext, setId: string): Promise<PrecheckResult> {
+    const found = await this.setCheck(ctx, setId);
+    if (!found.ok) return found;
+    const max = this.config.get().evals.maxCasesPerSet;
+    const set = await this.sets.get(ctx.orgId, setId);
+    return set.cases.length >= max
+      ? {
+          ok: false,
+          code: "eval.too_many_cases",
+          message: `The eval set already has ${max} cases, the most it can hold`,
+        }
+      : { ok: true };
+  }
 
   private setName(ctx: OperationContext, setId: string): Promise<string> {
     return orElse(async () => named((await this.sets.get(ctx.orgId, setId)).name), setId);
@@ -132,7 +167,7 @@ export class EvalsOperations implements OnModuleInit {
       defineOperation({
         id: "evals.get-set",
         description:
-          "Read one eval set with its cases (title, source conversation and run, agent version). The cases' content is read with evals.get-case.",
+          "Read one eval set with its cases, labelled case 1, case 2, ... (source conversation and run ids, agent version, replayable steps). Case titles and content are conversation content and are never returned; an org admin reads them on the web.",
         input: z.object({ setId: SetId }).strict(),
         example: { setId: "3b1f0c52-8d2a-4a57-9a43-6f1d2c9e7a10" },
         authz: { orgAction: "evals.manage" },
@@ -143,7 +178,7 @@ export class EvalsOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           const { cases, ...set } = await this.sets.get(ctx.orgId, input.setId);
-          return { set, cases: cases.map(caseRow) };
+          return { set, cases: cases.map((c, i) => caseRow(c, i + 1)) };
         },
       }),
       defineOperation({
@@ -165,6 +200,18 @@ export class EvalsOperations implements OnModuleInit {
             next: "Check the agent id with agents.list; an eval set belongs to one agent of this org.",
           },
         ],
+        precheck: async (i, ctx) => {
+          const a = await this.kdb.db
+            .selectFrom("agents")
+            .select("id")
+            .where("id", "=", i.agentId)
+            .where("org_id", "=", ctx.orgId)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst();
+          return a === undefined
+            ? { ok: false, code: "agent.not_found", message: "Agent not found" }
+            : { ok: true };
+        },
         summary: (i) => ({
           zh: `新建评测集「${named(i.name)}」（智能体 ${i.agentId}）`,
           en: `Create eval set "${named(i.name)}" for agent ${i.agentId}`,
@@ -205,6 +252,7 @@ export class EvalsOperations implements OnModuleInit {
         errors: [
           { code: "eval.set_not_found", next: "Check the eval set id with evals.list-sets." },
         ],
+        precheck: (i, ctx) => this.setCheck(ctx, i.setId),
         summary: async (i, ctx) => {
           const n = await this.setName(ctx, i.setId);
           return {
@@ -302,6 +350,64 @@ export class EvalsOperations implements OnModuleInit {
             next: "The run's snapshot is too large to store as a case.",
           },
         ],
+        precheck: async (i, ctx) => {
+          const found = await this.setCheck(ctx, i.setId);
+          if (!found.ok) return found;
+          const set = await this.sets.get(ctx.orgId, i.setId);
+          const conv = await this.kdb.db
+            .selectFrom("conversations")
+            .select(["agent_id", "kind"])
+            .where("id", "=", i.conversationId)
+            .where("org_id", "=", ctx.orgId)
+            .executeTakeFirst();
+          if (conv?.kind !== "chat" && conv?.kind !== "subagent") {
+            return {
+              ok: false,
+              code: "conversation.not_found",
+              message: "Conversation or run not found",
+            };
+          }
+          const sets = await this.kdb.db
+            .selectFrom("eval_sets")
+            .select("agent_id")
+            .where("id", "=", i.setId)
+            .executeTakeFirstOrThrow();
+          if (conv.agent_id !== sets.agent_id) {
+            return {
+              ok: false,
+              code: "eval.agent_mismatch",
+              message: "The run belongs to a different agent",
+            };
+          }
+          if (set.cases.some((c) => c.sourceRunId === i.runId)) {
+            return {
+              ok: false,
+              code: "eval.case_exists",
+              message: "That run is already a case of the eval set",
+            };
+          }
+          const run = await this.kdb.db
+            .selectFrom("runs")
+            .select("status")
+            .where("id", "=", i.runId)
+            .where("conversation_id", "=", i.conversationId)
+            .executeTakeFirst();
+          if (run === undefined) {
+            return {
+              ok: false,
+              code: "conversation.not_found",
+              message: "Conversation or run not found",
+            };
+          }
+          if (run.status === "running" || run.status === "queued") {
+            return {
+              ok: false,
+              code: "eval.run_not_finished",
+              message: "The run has not finished yet",
+            };
+          }
+          return this.roomCheck(ctx, i.setId);
+        },
         summary: async (i, ctx) => {
           const n = await this.setName(ctx, i.setId);
           return {
@@ -311,18 +417,15 @@ export class EvalsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => {
           const { setId, ...body } = input;
-          return {
-            case: caseRow(
-              await this.sets.addCase(
-                ctx.orgId,
-                ctx.actorAccountId,
-                setId,
-                body,
-                undefined,
-                viaAgent("evals.add-case", ctx),
-              ),
-            ),
-          };
+          const added = await this.sets.addCase(
+            ctx.orgId,
+            ctx.actorAccountId,
+            setId,
+            body,
+            undefined,
+            viaAgent("evals.add-case", ctx),
+          );
+          return { case: caseRow(added, await this.caseNo(ctx, setId, added.id)) };
         },
       }),
       defineOperation({
@@ -341,6 +444,7 @@ export class EvalsOperations implements OnModuleInit {
             next: "The set is full; remove a case with evals.remove-case or use another set.",
           },
         ],
+        precheck: (i, ctx) => this.roomCheck(ctx, i.setId),
         summary: async (i, ctx) => {
           const n = await this.setName(ctx, i.setId);
           return {
@@ -369,7 +473,7 @@ export class EvalsOperations implements OnModuleInit {
       defineOperation({
         id: "evals.get-case",
         description:
-          "Read one eval case with the trajectory restored from its snapshot (org admins only). The trajectory is a copy of someone's conversation: reading it is audited as a trajectory view.",
+          "Read one eval case's metadata (org admins): its label in the set, source conversation and run ids, agent version and how many steps can be replayed. The case's messages and trajectory are conversation content and are never returned; an org admin reads them on the web.",
         input: z.object({ setId: SetId, caseId: CaseId }).strict(),
         example: {
           setId: "3b1f0c52-8d2a-4a57-9a43-6f1d2c9e7a10",
@@ -385,20 +489,18 @@ export class EvalsOperations implements OnModuleInit {
             next: "Check the case id with evals.get-set.",
           },
         ],
-        run: async (input, ctx) =>
-          this.sets.getCase(
-            ctx.orgId,
-            ctx.actorAccountId,
-            input.setId,
-            input.caseId,
-            undefined,
-            viaAgent("evals.get-case", ctx),
-          ),
+        run: async (input, ctx) => {
+          const set = await this.sets.get(ctx.orgId, input.setId);
+          const i = set.cases.findIndex((c) => c.id === input.caseId);
+          const found = set.cases[i];
+          if (found === undefined) throw new ApiError("eval.case_not_found", "Eval case not found");
+          return { case: caseRow(found, i + 1) };
+        },
       }),
       defineOperation({
         id: "evals.remove-case",
         description:
-          "Remove one case from an eval set (org admins); its copied conversation content and its results are deleted.",
+          "Remove one case from an eval set (org admins); its copied conversation content and its results are deleted. Use the case id from evals.get-set.",
         input: z.object({ setId: SetId, caseId: CaseId }).strict(),
         example: {
           setId: "3b1f0c52-8d2a-4a57-9a43-6f1d2c9e7a10",
@@ -411,13 +513,21 @@ export class EvalsOperations implements OnModuleInit {
           { code: "eval.set_not_found", next: "Check the eval set id with evals.list-sets." },
           { code: "eval.case_not_found", next: "Check the case id with evals.get-set." },
         ],
+        precheck: async (i, ctx) => {
+          const found = await this.setCheck(ctx, i.setId);
+          if (!found.ok) return found;
+          return (await this.caseNo(ctx, i.setId, i.caseId)) === 0
+            ? { ok: false, code: "eval.case_not_found", message: "Eval case not found" }
+            : { ok: true };
+        },
         summary: async (i, ctx) => {
           const set = await orElse(() => this.sets.get(ctx.orgId, i.setId), null);
-          const title = named(set?.cases.find((c) => c.id === i.caseId)?.title ?? i.caseId);
+          const no = (set?.cases.findIndex((c) => c.id === i.caseId) ?? -1) + 1;
+          const label = no === 0 ? i.caseId : `case ${no}`;
           const n = named(set?.name ?? i.setId);
           return {
-            zh: `从评测集「${n}」移除用例「${title}」`,
-            en: `Remove case "${title}" from eval set "${n}"`,
+            zh: `从评测集「${n}」移除用例 ${label}`,
+            en: `Remove ${label} from eval set "${n}"`,
           };
         },
         run: async (input, ctx) => {
@@ -603,7 +713,7 @@ export class EvalsOperations implements OnModuleInit {
       defineOperation({
         id: "evals.list-results",
         description:
-          "List the results of one eval run without their content (org admins): state, judge verdict, your label, drift and error code per case step. Pages by 50: pass the returned next as params.after. Read one result's content with evals.get-result.",
+          "List the results of one eval run without their content (org admins): state, judge verdict, your label, drift and error code per case step. Pages by 50: pass the returned next as params.after. Read one result's scalar fields with evals.get-result.",
         input: EvalRunResultsQuery.pick({ after: true, limit: true })
           .extend({ runId: RunId, limit: z.number().int().min(1).max(50).default(50) })
           .strict(),
@@ -640,7 +750,7 @@ export class EvalsOperations implements OnModuleInit {
       defineOperation({
         id: "evals.get-result",
         description:
-          "Read one eval result in full (org admins only): the baseline and candidate output, the diff, the judge's verdict and your label. The content is replayed conversation content: reading it is audited.",
+          "Read one eval result without its content (org admins): status, judge status and verdict, your label and note, whether the tool calls matched, text similarity, drift reasons and the error code. The baseline and candidate outputs and the diff are conversation content and are never returned; an org admin reads them on the web.",
         input: z.object({ runId: RunId, resultId: ResultId }).strict(),
         example: {
           runId: "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
@@ -656,16 +766,35 @@ export class EvalsOperations implements OnModuleInit {
             next: "Check the result id with evals.list-results.",
           },
         ],
-        run: async (input, ctx) => ({
-          result: await this.runs.result(
+        run: async (input, ctx) => {
+          const r = await this.runs.result(
             ctx.orgId,
             ctx.actorAccountId,
             input.runId,
             input.resultId,
             undefined,
             viaAgent("evals.get-result", ctx),
-          ),
-        }),
+          );
+          const diff = (r.diff ?? {}) as { toolCallsMatch?: boolean; textSimilarity?: number };
+          const judge = (r.judge ?? {}) as { verdict?: string };
+          const error = (r.error ?? {}) as { code?: string };
+          return {
+            result: {
+              id: r.id,
+              caseId: r.caseId,
+              step: r.step,
+              state: r.status,
+              judgeStatus: r.judgeStatus,
+              verdict: judge.verdict ?? null,
+              label: r.label,
+              labelNote: r.labelNote,
+              toolCallsMatch: diff.toolCallsMatch ?? null,
+              textSimilarity: diff.textSimilarity ?? null,
+              drift: r.drift,
+              errorCode: error.code ?? null,
+            },
+          };
+        },
       }),
       defineOperation({
         id: "evals.cancel-run",
@@ -727,6 +856,20 @@ export class EvalsOperations implements OnModuleInit {
             next: "Check the result id with evals.list-results.",
           },
         ],
+        precheck: async (i, ctx) => {
+          const r = await this.kdb.db
+            .selectFrom("eval_results as r")
+            .innerJoin("eval_runs as er", "er.id", "r.run_id")
+            .innerJoin("eval_sets as es", "es.id", "er.set_id")
+            .select("r.id")
+            .where("r.id", "=", i.resultId)
+            .where("r.org_id", "=", ctx.orgId)
+            .where("es.deleted_at", "is", null)
+            .executeTakeFirst();
+          return r === undefined
+            ? { ok: false, code: "eval.result_not_found", message: "Eval result not found" }
+            : { ok: true };
+        },
         summary: (i) => ({
           zh:
             i.label === null

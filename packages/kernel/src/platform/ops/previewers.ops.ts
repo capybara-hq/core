@@ -67,6 +67,24 @@ export class PreviewersOperations implements OnModuleInit {
             next: "An item is not a previewer of an extension enabled in this org, or is listed twice; take plugin and id from extensions.previewers.",
           },
         ],
+        precheck: async (i, ctx) => {
+          const known = new Set(
+            (await this.previewers.list(ctx.orgId)).map((p) => `${p.plugin}/${p.id}`),
+          );
+          const seen = new Set<string>();
+          for (const x of i.items) {
+            const k = `${x.plugin}/${x.id}`;
+            if (!known.has(k) || seen.has(k)) {
+              return {
+                ok: false,
+                code: "validation_failed",
+                message: `${k} is not a previewer of an extension enabled in this organization, or is listed twice`,
+              };
+            }
+            seen.add(k);
+          }
+          return { ok: true };
+        },
         summary: (i) => {
           const off = i.items.filter((x) => x.disabled).map((x) => `${x.plugin}/${x.id}`);
           const first = i.items.slice(0, 3).map((x) => named(`${x.plugin}/${x.id}`));

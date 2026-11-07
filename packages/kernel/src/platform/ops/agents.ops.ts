@@ -23,11 +23,20 @@ import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { roleAtLeast } from "../../orgs/roles.js";
 import { ProviderRegistry } from "../../runtime/providers.js";
+import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
-import { type ConfirmClass, defineOperation, type OperationContext } from "../operation.js";
+import {
+  type ConfirmClass,
+  defineOperation,
+  type OperationContext,
+  type PrecheckResult,
+} from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
+import { roleOf } from "./role.js";
 import { named, orElse } from "./summary.js";
 
 const AgentId = AgentPathParams.shape.agentId.max(100);
@@ -90,7 +99,37 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(ProviderRegistry) private readonly providers: ProviderRegistry,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /**
+   * The edit rule the service enforces, read before the card: the agent is visible, and the actor
+   * owns it or is an org admin. Returns the agent too for the checks that follow.
+   */
+  private async editCheck(
+    agentId: string,
+    ctx: OperationContext,
+  ): Promise<PrecheckResult & { agent?: AgentView }> {
+    let agent: AgentView;
+    try {
+      agent = await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId);
+    } catch (e) {
+      const r = await precheckBy(() => Promise.reject(e));
+      if (!r.ok) return r;
+      throw e;
+    }
+    if (agent.ownerAccountId !== ctx.actorAccountId) {
+      const role = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
+      if (role === null || !roleAtLeast(role, "admin")) {
+        return {
+          ok: false,
+          code: "forbidden",
+          message: "Only the agent owner or an organization admin can modify it",
+        };
+      }
+    }
+    return { ok: true, agent };
+  }
 
   private agentName(ctx: OperationContext, agentId: string): Promise<string> {
     return orElse(
@@ -419,14 +458,22 @@ export class AgentsOperations implements OnModuleInit {
           },
         ],
         precheck: async (i, ctx) => {
-          if (i.agentId === ctx.agentId) {
+          // the run's agent is the root conversation's: a sub-agent runs under its parent's agent
+          const rootId = await rootConversationOf(this.kdb.db, ctx.conversationId);
+          const root = await this.kdb.db
+            .selectFrom("conversations")
+            .select("agent_id")
+            .where("id", "=", rootId)
+            .executeTakeFirst();
+          if (i.agentId === ctx.agentId || i.agentId === root?.agent_id) {
             return {
               ok: false,
               code: "agent.delete_current",
               message: "The agent you are running as cannot be deleted from here.",
             };
           }
-          return precheckBy(() => this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId));
+          const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
+          return check;
         },
         summary: async (i, ctx) => {
           const a = await orElse(
@@ -505,9 +552,7 @@ export class AgentsOperations implements OnModuleInit {
           },
         ],
         precheck: async (i, ctx) => {
-          const found = await precheckBy(() =>
-            this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId),
-          );
+          const { agent: _a, ...found } = await this.editCheck(i.agentId, ctx);
           if (!found.ok) return found;
           return precheckBy(() =>
             this.connectors.get(ctx.orgId, i.connectorId, ctx.actorAccountId),
@@ -563,6 +608,17 @@ export class AgentsOperations implements OnModuleInit {
             next: "Check the agent id with agents.list; only the owner or an org admin can request.",
           },
         ],
+        precheck: async (i, ctx) => {
+          const { agent, ...check } = await this.editCheck(i.agentId, ctx);
+          if (!check.ok || agent === undefined) return check;
+          return (agent.definition.pendingConnectors ?? []).length === 0
+            ? {
+                ok: false,
+                code: "agent.no_pending_connectors",
+                message: "The agent has no connectors waiting to be configured",
+              }
+            : { ok: true };
+        },
         summary: async (i, ctx) => {
           const n = await this.agentName(ctx, i.agentId);
           return {

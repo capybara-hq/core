@@ -232,7 +232,7 @@ export class ModelsOperations implements OnModuleInit {
               state: p.status,
               ...(p.error !== undefined && { reason: p.error.slice(0, 300) }),
               ...(p.status === "org_configured" && {
-                next: "The provider needs this org's own configuration; ask an org admin to set it up on the web.",
+                next: "The platform left this provider without a key, so this org needs its own: configure it on the org's models settings page of the web app.",
               }),
               models: p.models.map((m) => ({
                 id: m.id,

@@ -5,6 +5,7 @@ import {
   BackgroundTaskParams,
 } from "../../background/background.schemas.js";
 import { BackgroundTasks, type BackgroundTaskView } from "../../background/tasks.service.js";
+import { ApiError } from "../../errors.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { viaAgent } from "./errors.js";
@@ -88,6 +89,21 @@ export class BackgroundOperations implements OnModuleInit {
             next: "Check the task id with conversations.background-tasks; the task may be gone.",
           },
         ],
+        precheck: async (i, ctx) => {
+          try {
+            const tasks = await this.tasks.list(ctx.orgId, i.conversationId, ctx.actorAccountId);
+            return tasks.some((t) => t.id === i.taskId)
+              ? { ok: true }
+              : {
+                  ok: false,
+                  code: "background_task.not_found",
+                  message: "Background task not found",
+                };
+          } catch (e) {
+            if (e instanceof ApiError) return { ok: false, code: e.code, message: e.message };
+            throw e;
+          }
+        },
         summary: async (i, ctx) => {
           let label = i.taskId;
           try {

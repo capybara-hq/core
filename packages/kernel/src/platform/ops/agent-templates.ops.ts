@@ -261,8 +261,18 @@ export class AgentTemplatesOperations implements OnModuleInit {
             next: "Check the template id with agent-templates.list; this org cannot use that template.",
           },
         ],
-        precheck: (i, ctx) =>
-          precheckBy(() => this.owned.previewAgentTemplateDelete(ctx.orgId, i.templateId)),
+        precheck: async (i, ctx) => {
+          const found = await precheckBy(() => this.orgTemplates.detail(ctx.orgId, i.templateId));
+          if (!found.ok) return found;
+          const t = await this.orgTemplates.detail(ctx.orgId, i.templateId);
+          return t.owned
+            ? { ok: true }
+            : {
+                ok: false,
+                code: "catalog.not_owned",
+                message: "The org does not own this template",
+              };
+        },
         summary: async (i, ctx) => {
           const n = await this.templateName(ctx, i.templateId);
           return i.shareable

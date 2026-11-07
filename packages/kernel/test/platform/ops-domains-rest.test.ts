@@ -291,9 +291,19 @@ describe("evals", () => {
       { setId: set.id, conversationId: seeded.conversationId, runId: seeded.runId },
       c,
     )) as { case: { id: string; name: string } };
-    expect(added.case.name).toContain("refund window");
+    // the label is neutral: a title is an excerpt of the person's message
+    expect(added.case.name).toBe("case 1");
+    expect(JSON.stringify(added)).not.toContain("refund window");
     const [caseAudit] = await audits("eval.case_added");
     expect(caseAudit?.detail).toMatchObject({ via: "agent", operation: "evals.add-case" });
+    // a known failure is denied before the card
+    expect(
+      await precheck(
+        "evals.add-case",
+        { setId: set.id, conversationId: seeded.conversationId, runId: seeded.runId },
+        c,
+      ),
+    ).toMatchObject({ ok: false, code: "eval.case_exists" });
     await expect(
       run(
         "evals.add-case",
@@ -302,12 +312,17 @@ describe("evals", () => {
       ),
     ).rejects.toThrow(/already a case/);
 
-    const detail = (await run("evals.get-case", { setId: set.id, caseId: added.case.id }, c)) as {
-      trajectory: unknown[];
-    };
-    expect(detail.trajectory.length).toBeGreaterThan(0);
-    const [viewed] = await audits("trajectory.viewed");
-    expect(viewed?.detail).toMatchObject({ via: "agent", operation: "evals.get-case" });
+    // metadata only: no trajectory, no title, no message text, and no trajectory view is audited
+    const detail = await run("evals.get-case", { setId: set.id, caseId: added.case.id }, c);
+    expect(detail).toMatchObject({ case: { id: added.case.id, name: "case 1", agentVersion: 1 } });
+    expect(JSON.stringify(detail)).not.toMatch(/refund window|Thirty days|trajectory/);
+    expect(await audits("trajectory.viewed")).toEqual([]);
+    expect(
+      await summarize("evals.remove-case", { setId: set.id, caseId: added.case.id }, c),
+    ).toMatchObject({ en: expect.stringContaining('Remove case 1 from eval set "S"') });
+    expect(
+      await precheck("evals.remove-case", { setId: set.id, caseId: randomUUID() }, c),
+    ).toMatchObject({ ok: false, code: "eval.case_not_found" });
 
     const listed = (await run("evals.get-set", { setId: set.id }, c)) as {
       cases: { id: string }[];
@@ -412,9 +427,16 @@ describe("evals", () => {
     expect(results.items).toMatchObject([{ id: resultId, name: "step 0", state: "done" }]);
     expect(JSON.stringify(results)).not.toContain("secret candidate answer");
     const full = (await run("evals.get-result", { runId: finished, resultId }, c)) as {
-      result: { candidate: unknown };
+      result: Record<string, unknown>;
     };
-    expect(JSON.stringify(full.result.candidate)).toContain("secret candidate answer");
+    expect(full.result).toMatchObject({ id: resultId, state: "done", step: 0, drift: [] });
+    expect(JSON.stringify(full)).not.toContain("secret candidate answer");
+    expect(full.result).not.toHaveProperty("candidate");
+    expect(full.result).not.toHaveProperty("baseline");
+    expect(full.result).not.toHaveProperty("diff");
+    expect(
+      await precheck("evals.label-result", { resultId: randomUUID(), label: "pass" }, c),
+    ).toMatchObject({ ok: false, code: "eval.result_not_found" });
     const [seen] = await audits("eval.results_viewed");
     expect(seen?.detail).toMatchObject({ via: "agent", operation: "evals.list-results" });
 
@@ -484,10 +506,42 @@ describe("agents: delete, versions, readiness and pending connectors", () => {
       ok: false,
       code: "agent.delete_current",
     });
-    // a member may not delete another person's shared agent
+    // a member may not delete another person's shared agent: denied before the card
+    expect(
+      await precheck("agents.delete", { agentId: shared }, ctxOf(env.memId, mine)),
+    ).toMatchObject({ ok: false, code: "forbidden" });
     await expect(
       run("agents.delete", { agentId: shared }, ctxOf(env.memId, mine)),
     ).rejects.toThrow();
+    // a sub-agent runs under its parent's agent: that one stays too
+    const parent = await env.k.app
+      .get(ConversationsService)
+      .create(env.orgId, env.memId, shared, {});
+    const childId = randomUUID();
+    await env.db
+      .insertInto("conversations")
+      .values({
+        id: childId,
+        org_id: env.orgId,
+        agent_id: mine,
+        account_id: env.memId,
+        title: "Child",
+        kind: "subagent",
+        parent_conversation_id: parent.id,
+        subagent_type: "general-purpose",
+        subagent_depth: 1,
+      })
+      .execute();
+    expect(
+      await precheck(
+        "agents.delete",
+        { agentId: shared },
+        {
+          ...ctxOf(env.bossId, mine),
+          conversationId: childId,
+        },
+      ),
+    ).toMatchObject({ ok: false, code: "agent.delete_current" });
     expect(await summarize("agents.delete", { agentId: mine }, c)).toEqual({
       zh: "删除私有智能体「Helper」",
       en: 'Delete private agent "Helper"',
