@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import {
@@ -7,6 +8,7 @@ import {
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { resolveConfig } from "../../src/config/load.js";
@@ -314,6 +316,49 @@ describe("org copies of overridable config", () => {
     }
   });
 
+  it("an extension the org is not offered under plugin scope answers 404 on every override route", async () => {
+    const itemId = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "orglevels",
+        package_name: "@test/plugin-orglevels",
+        publisher: "Test",
+        description: "Test",
+        latest_version: "0.1.0",
+        scope: "named",
+      })
+      .execute();
+    await db
+      .insertInto("extension_catalog_sources")
+      .values({ plugin: "orglevels", item_id: itemId })
+      .execute();
+    await db
+      .insertInto("catalog_item_scope_orgs")
+      .values({ item_id: itemId, org_id: orgA })
+      .execute();
+    try {
+      expect((await owner({ method: "GET", url: ovUrl(orgA) })).statusCode).toBe(200);
+      for (const [method, url, payload] of [
+        ["GET", ovUrl(orgB), undefined],
+        ["PUT", ovUrl(orgB), { values: { baseUrl: "https://x.example", apiKey: OK } }],
+        ["DELETE", ovUrl(orgB), undefined],
+        ["POST", `${ovUrl(orgB)}/take`, { paths: ["baseUrl"] }],
+      ] as const) {
+        const r = await owner({ method, url, ...(payload && { payload }) });
+        expect(r.statusCode, `${method} ${url}`).toBe(404);
+        expect(r.json().error.code).toBe("extension.not_found");
+        secretBodies.push(r.body);
+      }
+      expect(await db.selectFrom("extension_org_overrides").selectAll().execute()).toEqual([]);
+    } finally {
+      await db.deleteFrom("catalog_item_scope_orgs").where("item_id", "=", itemId).execute();
+      await db.deleteFrom("extension_catalog_sources").where("item_id", "=", itemId).execute();
+      await db.deleteFrom("catalog_items").where("id", "=", itemId).execute();
+    }
+  });
+
   it("2. a first save that changes the endpoint but leaves the required secret empty is refused, naming it; nothing stored", async () => {
     const res = await save(orgA, { baseUrl: "https://o.example" });
     expect(res.statusCode, res.body).toBe(400);
@@ -377,7 +422,7 @@ describe("org copies of overridable config", () => {
       .where("org_id", "=", orgA)
       .where("key", "=", "plugin-override:orglevels:apiKey")
       .execute();
-    await k?.app.get(EffectiveConfigs).evict(orgA, "orglevels");
+    await effective().invalidate(orgA, "orglevels");
     const r = await effective().get(orgA, "orglevels");
     expect(r.ok).toBe(false);
     expect(JSON.stringify(r)).not.toContain(PK);
@@ -454,7 +499,18 @@ describe("org copies of overridable config", () => {
   });
 
   it("7. DELETE drops the copy and its secrets; the org follows the platform again; save, take and reset are audited", async () => {
+    // a read that started before the reset and caches its (old) copy after the reset committed:
+    // simulated by caching the copy now and writing that entry back after the reset
+    expect(await effective().get(orgA, "orglevels")).toMatchObject({ source: "copy" });
+    const redis = new Redis(rd.url);
+    const stale = new Map<string, string>();
+    for (const key of await redis.keys(`cache:effective-config:${orgA}:orglevels:*`)) {
+      stale.set(key, (await redis.get(key)) as string);
+    }
+    expect(stale.size).toBe(1);
     const res = await owner({ method: "DELETE", url: ovUrl(orgA) });
+    for (const [key, v] of stale) await redis.set(key, v, "EX", 300);
+    redis.disconnect();
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as OverrideView).state).toBe("following");
     expect(await effective().get(orgA, "orglevels")).toEqual({
@@ -488,6 +544,30 @@ describe("org copies of overridable config", () => {
     const again = await owner({ method: "DELETE", url: ovUrl(orgA) });
     expect(again.statusCode).toBe(404);
     expect(again.json().error.code).toBe("extension.no_org_override");
+  });
+
+  it("a first save whose key equals the platform's still audits the key as changed (no guess oracle)", async () => {
+    const res = await save(orgC, { baseUrl: "https://c.example", apiKey: PK });
+    expect(res.statusCode, res.body).toBe(200);
+    const row = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "extension.org_override_saved")
+      .where("org_id", "=", orgC)
+      .executeTakeFirstOrThrow();
+    expect(row.detail).toEqual({ changedPaths: ["apiKey", "baseUrl"] });
+    // a later save of the same key compares with the copy's own key only: unchanged
+    const same = await save(orgC, { apiKey: PK });
+    expect(same.statusCode, same.body).toBe(200);
+    const rows = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "extension.org_override_saved")
+      .where("org_id", "=", orgC)
+      .orderBy("at")
+      .execute();
+    expect(rows[1]?.detail).toEqual({ changedPaths: [] });
+    expect((await owner({ method: "DELETE", url: ovUrl(orgC) })).statusCode).toBe(200);
   });
 
   it("8. a platform without the overridable values: following orgs need config and are counted until they bring a copy", async () => {
@@ -562,11 +642,23 @@ describe("org copies of overridable config", () => {
     const a = await save(orgA, { baseUrl: "https://a.example", apiKey: SHORT });
     expect(a.statusCode, a.body).toBe(200);
     await deploy("orglevels-v2", "0.2.0");
-    // orgB's copy still holds baseUrl, which is now hidden: the platform's value applies
+    // orgB's copy still holds baseUrl, which is now hidden: the platform's value applies; the
+    // transforms of 0.2.0 ran exactly once (host "h!", tags split once)
     expect(await effective().get(orgB, "orglevels")).toEqual({
       ok: true,
       source: "copy",
-      config: { host: "h", limit: 5, baseUrl: "https://p3.example", apiKey: OK2 },
+      config: {
+        host: "h!",
+        tags: ["a", "b"],
+        limit: 5,
+        baseUrl: "https://p3.example",
+        apiKey: OK2,
+      },
+    });
+    expect(await effective().get(orgC, "orglevels")).toMatchObject({
+      ok: true,
+      source: "platform",
+      config: { host: "h!", tags: ["a", "b"] },
     });
     const vb = await getOverrides(orgB);
     expect(vb).toMatchObject({ state: "copy", valid: true });

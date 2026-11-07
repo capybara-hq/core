@@ -1,13 +1,13 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { z } from "zod";
 import { configFields } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { CacheService } from "../infra/cache/cache.service.js";
-import { Cacheable, CacheEvict } from "../infra/cache/cacheable.decorator.js";
+import { Cacheable } from "../infra/cache/cacheable.decorator.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { currentStore, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER, KEYRING } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -15,7 +15,7 @@ import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { deleteDeep, isObj, setDeep } from "./deployment-config-store.js";
 import { enabledExtensionsByOrg } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
-import { type FieldLevel, fieldLevels } from "./org-levels.js";
+import { type FieldLevel, fieldLevels, missingOverridable } from "./org-levels.js";
 
 type Obj = Record<string, unknown>;
 
@@ -123,6 +123,15 @@ export function mergeCopy(schema: z.ZodTypeAny, platform: unknown, copy: StoredC
 type CachedCopy = { copy: false } | { copy: true; sealed: string };
 
 const CACHE_KEY_INFO = "org-override-cache";
+/** Lifetime of a cached copy (seconds). */
+const COPY_TTL = 300;
+/**
+ * Lifetime of a generation token (seconds): far longer than {@link COPY_TTL}, so a copy cached
+ * under the token-less generation `"0"` has expired long before a token lapses back to `"0"`.
+ */
+const GENERATION_TTL = 86_400;
+/** The Redis key of the cache generation of (org, plugin); a copy write replaces it. */
+const generationKey = (orgId: string, plugin: string) => `effective-config-gen:${orgId}:${plugin}`;
 const IV_LEN = 12;
 const TAG_LEN = 16;
 
@@ -131,11 +140,14 @@ const TAG_LEN = 16;
  * config while the org follows it, or the platform's values with the org's copy applied to the
  * overridable fields. Every org-bound call takes its config from here.
  *
- * The platform half is this replica's running config (`ctx.config`, so a platform change reaches
- * following orgs as soon as the instance has it); the org half (the copy row and its secrets) is
- * read from PG and cached in Redis per (org, plugin) through `@Cacheable`, sealed with a key
- * derived from the master keyring so no secret sits in Redis in clear. Copy writes evict it after
- * their commit. No in-process state.
+ * Following orgs get this replica's running config (`ctx.config`), so a platform change reaches
+ * them as soon as the instance has it. For a copy, the platform's raw (unparsed) deployment config
+ * and the copy's raw values are merged and parsed once, so a schema transform runs exactly once.
+ * The org half (the copy row and its secrets) is cached in Redis through `@Cacheable`, sealed with
+ * a key derived from the master keyring so no secret sits in Redis in clear, under a per-(org,
+ * plugin) generation token that every copy write replaces after its commit: a read that started
+ * before the write can only cache under the old token, which nobody reads any more. No
+ * in-process state.
  */
 @Injectable()
 export class EffectiveConfigs {
@@ -154,10 +166,11 @@ export class EffectiveConfigs {
   }
 
   /**
-   * The effective config of `plugin` for `orgId`. Following: the platform's config validated with
-   * the full schema (a required overridable field the platform left empty -> `ok: false`). Copy:
-   * {@link mergeCopy} validated with the full schema. An extension not running on this replica ->
-   * `ok: false` with a root issue.
+   * The effective config of `plugin` for `orgId`. Following: the running platform config, `ok:
+   * false` when it leaves a required overridable field empty (the host loaded it with those
+   * fields optional, so that is the only way the full schema can refuse it). Copy: the platform's
+   * raw config with the copy applied ({@link mergeCopy}), parsed once with the full schema. An
+   * extension not running on this replica -> `ok: false` with a root issue.
    */
   async get(orgId: string, plugin: string): Promise<EffectiveConfig> {
     const inst = this.host.current(plugin);
@@ -175,15 +188,33 @@ export class EffectiveConfigs {
       return { ok: true, config: inst.config, source: "platform" };
     }
     const copy = await this.copyOf(orgId, plugin);
-    if (!copy) return validate(schema, inst.config, "platform");
+    if (!copy) {
+      const missing = missingOverridable(schema, inst.config);
+      if (missing.length === 0) return { ok: true, config: inst.config, source: "platform" };
+      return {
+        ok: false,
+        issues: missing.map((path) => ({
+          path,
+          segments: [path],
+          message: "required: the platform leaves it empty",
+        })),
+      };
+    }
     const values = Object.values(copy.secrets);
     if (values.length > 0) this.log.addOrgSecrets(values);
-    return validate(schema, mergeCopy(schema, inst.config, copy), "copy");
+    const raw = await this.host.rawDeploymentConfig(plugin);
+    const r = schema.safeParse(mergeCopy(schema, raw, copy));
+    return r.success
+      ? { ok: true, config: r.data, source: "copy" }
+      : { ok: false, issues: toIssues(r.error) };
   }
 
   /** The org's copy (decrypted), or undefined while it follows the platform. */
   async copyOf(orgId: string, plugin: string): Promise<StoredCopy | undefined> {
-    const cached = await this.cachedCopy(orgId, plugin);
+    // inside a transaction: no Redis, read what the transaction sees
+    if (currentStore()) return (await this.readCopy(orgId, plugin)) ?? undefined;
+    const gen = (await this.cacheService.get(generationKey(orgId, plugin))) ?? "0";
+    const cached = await this.cachedCopy(orgId, plugin, gen);
     if (!cached.copy) return undefined;
     const opened = this.open(orgId, plugin, cached.sealed);
     // sealed with a key no longer in the keyring: read through
@@ -192,13 +223,20 @@ export class EffectiveConfigs {
     return fresh ?? undefined;
   }
 
-  /** Evicts the cached copy of (org, plugin) after the caller's commit. */
-  @CacheEvict({ key: "effective-config:#{0}:#{1}" })
-  async evict(_orgId: string, _plugin: string): Promise<void> {}
+  /**
+   * Makes every cached copy of (org, plugin) unreachable: a new generation token, and the entry of
+   * the old one deleted. Call it after the write committed (`afterCommit`), never inside it.
+   */
+  async invalidate(orgId: string, plugin: string): Promise<void> {
+    const key = generationKey(orgId, plugin);
+    const old = (await this.cacheService.get(key)) ?? "0";
+    await this.cacheService.set(key, randomUUID(), GENERATION_TTL);
+    await this.cacheService.del(copyCacheKey(orgId, plugin, old));
+  }
 
-  /** Bypassed inside a transaction (a write reads its own rows). */
-  @Cacheable({ key: "effective-config:#{0}:#{1}", ttl: 300 })
-  private async cachedCopy(orgId: string, plugin: string): Promise<CachedCopy> {
+  /** Keyed by the generation token read just before the PG read. */
+  @Cacheable({ key: "effective-config:#{0}:#{1}:#{2}", ttl: COPY_TTL })
+  private async cachedCopy(orgId: string, plugin: string, _gen: string): Promise<CachedCopy> {
     const copy = await this.readCopy(orgId, plugin);
     return copy ? { copy: true, sealed: this.seal(orgId, plugin, copy) } : { copy: false };
   }
@@ -296,16 +334,6 @@ export class EffectiveConfigs {
   }
 }
 
-function validate(
-  schema: z.ZodTypeAny,
-  value: unknown,
-  source: "platform" | "copy",
-): EffectiveConfig {
-  const r = schema.safeParse(value);
-  return r.success
-    ? { ok: true, config: r.data, source }
-    : { ok: false, issues: toIssues(r.error) };
-}
-
-/** A top-level key of a dot path. */
-export const topKey = (path: string) => path.split(".")[0] as string;
+/** The cache key of a copy under a generation (the `@Cacheable` key of `cachedCopy`). */
+const copyCacheKey = (orgId: string, plugin: string, gen: string) =>
+  `effective-config:${orgId}:${plugin}:${gen}`;

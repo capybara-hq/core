@@ -6,8 +6,6 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { CacheService } from "../infra/cache/cache.service.js";
-import { CacheEvict } from "../infra/cache/cacheable.decorator.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -30,6 +28,7 @@ import {
 } from "./effective-config.js";
 import { ExtensionHost } from "./host.js";
 import type { ExtensionInstance } from "./instance.js";
+import { extensionVisibleTo } from "./org-config.js";
 import { type FieldLevel, fieldLevels } from "./org-levels.js";
 
 type Obj = Record<string, unknown>;
@@ -111,7 +110,6 @@ export class OrgOverrides {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(CacheService) readonly cacheService: CacheService,
     @Inject(KEYRING) private readonly keyring: Keyring,
     @Inject(ExtensionHost) private readonly host: ExtensionHost,
     /** The org row lock: re-checks `org.extensions.manage` under the lock. */
@@ -131,9 +129,21 @@ export class OrgOverrides {
     return { inst, schema, levels: fieldLevels(schema) };
   }
 
+  /**
+   * The running extension, for an org: one the org does not see under plugin scope (a `named`
+   * plugin without it) is answered like an unknown one, so its platform values never reach it.
+   */
+  private async runningFor(orgId: string, plugin: string): Promise<Running> {
+    const run = this.running(plugin);
+    if (!(await extensionVisibleTo(this.db, orgId, plugin))) {
+      throw new ApiError("extension.not_found", `Extension ${plugin} is not installed`);
+    }
+    return run;
+  }
+
   /** The org's view (read-only and overridable fields, the copy state and validity). */
   async view(orgId: string, plugin: string): Promise<OrgOverrideView> {
-    return this.render(orgId, this.running(plugin));
+    return this.render(orgId, await this.runningFor(orgId, plugin));
   }
 
   /**
@@ -144,7 +154,6 @@ export class OrgOverrides {
    * 400 `extension.field_not_overridable`; an invalid result (an empty required secret included)
    * -> 400 `extension.config_invalid`, nothing written. Audits `extension.org_override_saved`.
    */
-  @CacheEvict({ key: "effective-config:#{0}:#{1}" })
   async save(
     orgId: string,
     plugin: string,
@@ -152,7 +161,7 @@ export class OrgOverrides {
     secretEntries: readonly SecretEntry[],
     actor: Actor,
   ): Promise<OrgOverrideView> {
-    const run = this.running(plugin);
+    const run = await this.runningFor(orgId, plugin);
     const fields = new Map(
       (run.schema ? configFields(run.schema) : []).map((f) => [f.path, f.meta?.secret === true]),
     );
@@ -193,7 +202,7 @@ export class OrgOverrides {
     const t = this.db;
     await this.orgLock.lockFor(orgId, actor.accountId, "org.extensions.manage");
     const row = await this.lockedRow(orgId, plugin);
-    const platform = run.inst.config;
+    const platform = await this.host.rawDeploymentConfig(plugin);
     const prior: StoredCopy | undefined = row
       ? { config: structuredClone(row.config), secrets: await this.readSecrets(orgId, plugin) }
       : undefined;
@@ -221,10 +230,17 @@ export class OrgOverrides {
         else copy.secrets[e.path] = v;
       }
     }
-    const merged = this.validated(plugin, run, copy);
+    const merged = this.validated(plugin, run, platform, copy);
+    // a secret is compared only with the copy's own previous value, never with the platform's
+    // (an audit that said "unchanged" would tell the org its key equals the platform's, A §5.5);
+    // on a first save every touched secret counts as changed
     const before = prior ? mergeCopy(schema, platform, prior) : platform;
     const changed = [...new Set(touchedPaths(values, secretEntries))]
-      .filter((p) => !isDeepStrictEqual(getPath(before, p), getPath(merged, p)))
+      .filter((p) =>
+        fields.get(p)
+          ? !prior || !isDeepStrictEqual(prior.secrets[p], copy.secrets[p])
+          : !isDeepStrictEqual(getPath(before, p), getPath(merged, p)),
+      )
       .sort();
     await t
       .insertInto("extension_org_overrides")
@@ -253,8 +269,9 @@ export class OrgOverrides {
       detail: { changedPaths: changed },
     });
     const secretValues = Object.values(copy.secrets);
-    afterCommit(() => {
+    afterCommit(async () => {
       if (secretValues.length > 0) this.log.addOrgSecrets(secretValues);
+      await this.effective.invalidate(orgId, plugin);
     });
     return this.render(orgId, run);
   }
@@ -265,14 +282,13 @@ export class OrgOverrides {
    * `extension.field_not_overridable`; no copy -> 404 `extension.no_org_override`. Audits
    * `extension.org_override_taken`.
    */
-  @CacheEvict({ key: "effective-config:#{0}:#{1}" })
   async take(
     orgId: string,
     plugin: string,
     paths: string[],
     actor: Actor,
   ): Promise<OrgOverrideView> {
-    const run = this.running(plugin);
+    const run = await this.runningFor(orgId, plugin);
     const fields = new Map(
       (run.schema ? configFields(run.schema) : []).map((f) => [f.path, f.meta?.secret === true]),
     );
@@ -301,7 +317,7 @@ export class OrgOverrides {
       config: structuredClone(row.config),
       secrets: await this.readSecrets(orgId, plugin),
     };
-    const platform = run.inst.config;
+    const platform = await this.host.rawDeploymentConfig(plugin);
     const changed: string[] = [];
     for (const p of [...new Set(paths)]) {
       const v = getPath(platform, p);
@@ -309,7 +325,7 @@ export class OrgOverrides {
       if (v === undefined) deleteDeep(copy.config, p);
       else setDeep(copy.config, p, structuredClone(v));
     }
-    this.validated(plugin, run, copy);
+    this.validated(plugin, run, platform, copy);
     await t
       .updateTable("extension_org_overrides")
       .set({
@@ -328,6 +344,7 @@ export class OrgOverrides {
       target: plugin,
       detail: { changedPaths: changed.sort() },
     });
+    afterCommit(() => this.effective.invalidate(orgId, plugin));
     return this.render(orgId, run);
   }
 
@@ -335,9 +352,8 @@ export class OrgOverrides {
    * Drops the copy and every secret of it in one transaction; the org follows the platform again
    * (spec A §5.5). No copy -> 404 `extension.no_org_override`. Audits `extension.org_override_reset`.
    */
-  @CacheEvict({ key: "effective-config:#{0}:#{1}" })
   async reset(orgId: string, plugin: string, actor: Actor): Promise<OrgOverrideView> {
-    return this.writeReset(orgId, plugin, this.running(plugin), actor);
+    return this.writeReset(orgId, plugin, await this.runningFor(orgId, plugin), actor);
   }
 
   @Transactional()
@@ -365,6 +381,7 @@ export class OrgOverrides {
       action: "extension.org_override_reset",
       target: plugin,
     });
+    afterCommit(() => this.effective.invalidate(orgId, plugin));
     return this.render(orgId, run);
   }
 
@@ -395,6 +412,7 @@ export class OrgOverrides {
           (f) => f.meta?.secret !== true && levelOf(levels, f.path) === "override",
         )
       : [];
+    const platform = rows.length > 0 ? await this.host.rawDeploymentConfig(plugin) : undefined;
     const out: OrgOverrideSummary[] = [];
     for (const r of rows) {
       const keys = await this.secretKeys(r.org_id, plugin);
@@ -407,7 +425,7 @@ export class OrgOverrides {
         differing: plain
           .filter((f) => {
             const own = getPath(r.config, f.path);
-            return own !== undefined && !isDeepStrictEqual(own, getPath(inst?.config, f.path));
+            return own !== undefined && !isDeepStrictEqual(own, getPath(platform, f.path));
           })
           .map((f) => f.path),
         secrets: (secretPaths ?? [...held].sort()).map((path) => ({ path, set: held.has(path) })),
@@ -417,9 +435,9 @@ export class OrgOverrides {
   }
 
   /** The merged copy validated with the full schema; invalid -> 400 `extension.config_invalid`. */
-  private validated(plugin: string, run: Running, copy: StoredCopy): Obj {
+  private validated(plugin: string, run: Running, platform: unknown, copy: StoredCopy): Obj {
     const schema = run.schema as z.ZodTypeAny;
-    const merged = mergeCopy(schema, run.inst.config, copy);
+    const merged = mergeCopy(schema, platform, copy);
     const r = schema.safeParse(merged);
     if (!r.success) {
       throw new ApiError(
@@ -505,13 +523,19 @@ export class OrgOverrides {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const held = row ? new Set(await this.secretPathsHeld(orgId, run.inst.name)) : new Set();
-    const platform = run.inst.config;
+    // readonly values and secret state as the running instance has them (defaults applied, as
+    // the platform form shows); overridable values raw, as a copy stores and `take` copies them
+    const parsed = run.inst.config;
+    const raw = await this.host.rawDeploymentConfig(run.inst.name);
     const fields: OrgOverrideField[] = [];
     for (const f of run.schema ? configFields(run.schema) : []) {
       const level = levelOf(run.levels, f.path);
       if (level === "hidden") continue;
       const secret = f.meta?.secret === true;
-      const pv = getPath(platform, f.path);
+      const pv =
+        level === "override" && !secret
+          ? (getPath(raw, f.path) ?? getPath(parsed, f.path))
+          : getPath(parsed, f.path);
       const field: OrgOverrideField = {
         path: f.path,
         level,

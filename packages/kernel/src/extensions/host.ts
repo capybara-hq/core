@@ -2063,6 +2063,16 @@ export class ExtensionHost {
   }
 
   /**
+   * The raw (unparsed) deployment config of a running extension: the startup config merged with
+   * the PG values, as the host reads it before parsing (secrets included; never echo it). An org
+   * copy is applied to this and parsed once (layering spec A §6), so schema transforms are not
+   * run twice. Without a running instance, the stored values without a schema.
+   */
+  rawDeploymentConfig(plugin: string): Promise<unknown> {
+    return this.rawConfigOf(plugin, this.registry.current(plugin)?.manifest.config?.deployment);
+  }
+
+  /**
    * 本副本拿得到的插件清单里的部署级 schema（生效实例 → 配置声明 → 安装记录准备好的候选）；
    * 都没有返回 undefined（如未加载的安装记录：调用方改用包内静态清单）。
    */

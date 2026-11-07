@@ -222,8 +222,9 @@ export class OrgExtensionConfigs {
   }
 
   /**
-   * 列出所有已加载插件在该组织下的状态（按加载顺序）；无记录时 enabled=false、config=null。
-   * 之后是已安装但此刻没加载的插件（部署上停用等），`available: false`，按名字排序。
+   * The state of every loaded extension the org sees, in load order (no row: `enabled` false,
+   * `config` null), then the installed extensions not loaded right now (disabled on the deployment
+   * and the like) as `available: false`, sorted by name.
    */
   async list(orgId: string): Promise<OrgExtensionView[]> {
     const installed = (await this.installs.list()).map((r) => ({
@@ -297,14 +298,7 @@ export class OrgExtensionConfigs {
           .execute()
       ).map((r) => r.item_id),
     );
-    const seen = (name: string) => {
-      const of = items.get(name);
-      if (!of) return true;
-      return (
-        required.has(name) ||
-        of.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)))
-      );
-    };
+    const seen = (name: string) => required.has(name) || itemsVisible(items.get(name), listed);
     const views = loaded
       .filter((m) => seen(m.name))
       .map((m) =>
@@ -847,6 +841,49 @@ export class OrgExtensionConfigs {
       .execute();
     return new Set(rows.map((r) => r.key));
   }
+}
+
+/**
+ * Whether an org may see an extension with these live catalog items (`listed`: the items whose
+ * `named` list has the org): one visible item is enough; without an item (config-declared, or its
+ * items deleted) it is visible. A builtin item counts as `all`.
+ */
+function itemsVisible(
+  items: readonly ExtensionPluginItem[] | undefined,
+  listed: ReadonlySet<string>,
+): boolean {
+  if (!items) return true;
+  return items.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)));
+}
+
+/**
+ * Whether the org sees `plugin` in its extension list (a required bootstrap plugin always; else
+ * under its catalog items' scope, as {@link OrgExtensionConfigs.list} filters). `db` may be a
+ * transaction.
+ */
+export async function extensionVisibleTo(
+  db: KernelSchemaDb,
+  orgId: string,
+  plugin: string,
+): Promise<boolean> {
+  if ((await requiredExtensions(db)).has(plugin)) return true;
+  const items = (await pluginItemsOf(db, [plugin])).get(plugin);
+  if (!items) return true;
+  const listed = new Set(
+    (
+      await db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("org_id", "=", orgId)
+        .where(
+          "item_id",
+          "in",
+          items.map((i) => i.id),
+        )
+        .execute()
+    ).map((r) => r.item_id),
+  );
+  return itemsVisible(items, listed);
 }
 
 /**
