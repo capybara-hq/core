@@ -186,8 +186,15 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   a deleted environment (also a departing member's) is destroyed immediately, instance and file system, through the one-off maintenance job
   `sandbox-destroy-for` (producer `SandboxJobs.destroy(environmentIds)`, data `{ environmentIds }`, consumer `SandboxService.destroyEnvironment`).
 - **Legacy cleanup**: the one-off job `environments-legacy-cleanup` destroys every old per-conversation instance and file system (`destroyByName` and `destroyFileSystemByName` on `cap-<conversationId>`) listed in `sandboxes` and deletes the row; nothing else reads that table.
-- **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
-  an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
+- **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
+  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset the next use is a fresh start (`restarted: false`):
+  the seen key records `<created_at>:<file system id>`. A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
+- **Provider switch**: an environment whose files or instance belong to a provider that is not the current one cannot be used (`sandbox.unavailable`, nothing changes; its
+  files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
+  is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).
+- **Live environments only**: the instance row is created only for a live environment (`deleted_at IS NULL`) of the caller's org, with the environment's own `org_id`, and
+  the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyEnvironment` gets `environment.not_found` instead of bringing
+  the provider resources back. A row of another org is also reported as `environment.not_found`.
 - **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. A command timeout is also tightened to
   the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
   tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.

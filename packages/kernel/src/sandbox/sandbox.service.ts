@@ -148,6 +148,8 @@ interface Entered {
   lease: SandboxLease;
   handle: SandboxHandle;
   createdAt: number;
+  /** The id of the file system the instance runs on (a reset makes a new one). */
+  fsId: string;
   info: SandboxUseInfo;
 }
 
@@ -158,6 +160,10 @@ const opSignal = (lease: SandboxLease): AbortSignal =>
 /** The provider-side name of an environment's file system and instance. */
 export const environmentResourceName = (environmentId: string): string =>
   `cap-env-${environmentId}`;
+
+/** The environment is missing, deleted, or not in the caller's org (404; ids cannot be probed). */
+export const environmentNotFound = (): ApiError =>
+  new ApiError("environment.not_found", "This environment does not exist or was deleted.");
 
 /** The environment's file system is gone at the provider (409); never replaced silently. */
 export const environmentFilesLost = (): ApiError =>
@@ -545,22 +551,29 @@ export class SandboxService {
   }
 
   /**
-   * Records that `holder` uses the instance of `e` (`capk:sandbox-seen:<env>:<holder>`, its
-   * `created_at`, with a TTL of the inactivity destruction plus a day) and marks `e` restarted
-   * when the holder last used another instance. Best effort: a Redis error only logs.
+   * Records that `holder` uses the instance of `e` (`capk:sandbox-seen:<env>:<holder>` =
+   * `<created_at>:<file system id>`, with a TTL of the inactivity destruction plus a day). When the
+   * holder last used another instance on the same file system `e` is marked restarted; on another
+   * file system (the files were reset) it is not. Best effort: a Redis error only logs.
    */
   private async seenBy(environmentId: string, holder: string, e: Entered): Promise<Entered> {
     try {
       const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
+      const seen = `${e.createdAt}:${e.fsId}`;
       const prev = await this.redis.set(
         `capk:sandbox-seen:${environmentId}:${holder}`,
-        String(e.createdAt),
+        seen,
         "EX",
         ttl,
         "GET",
       );
-      if (prev !== null && prev !== String(e.createdAt) && !e.info.restarted) {
-        return { ...e, info: { fresh: e.info.fresh, restarted: true } };
+      if (prev !== null && prev !== seen) {
+        // `<createdAt>:<fsId>`: another file system (a reset) means a fresh start, not a restart on
+        // kept files; another instance on the same file system is a restart
+        const sameFiles = prev.slice(prev.indexOf(":") + 1) === e.fsId;
+        if (sameFiles !== e.info.restarted) {
+          return { ...e, info: { fresh: e.info.fresh, restarted: sameFiles } };
+        }
       }
     } catch (err) {
       this.log.warn("cannot record the sandbox instance a holder uses", {
@@ -654,12 +667,9 @@ export class SandboxService {
     return row;
   }
 
-  /** The instance row belongs to another org (the message names only the caller's org). */
-  private foreign(ctx: { orgId: string; environmentId: string }): ApiError {
-    return new ApiError(
-      "forbidden",
-      `Environment ${ctx.environmentId} does not belong to organization ${ctx.orgId}`,
-    );
+  /** The instance row belongs to another org: reported as not found, so ids cannot be probed. */
+  private foreign(_ctx: { orgId: string; environmentId: string }): ApiError {
+    return environmentNotFound();
   }
 
   /** Recorded running with the current provider, and not the instance found gone. */
@@ -732,6 +742,7 @@ export class SandboxService {
         lease,
         handle: row.handle,
         createdAt: row.created_at.getTime(),
+        fsId: row.fs_handle?.id ?? "",
         info: { fresh: false, restarted: false },
       };
     } catch (err) {
@@ -772,7 +783,13 @@ export class SandboxService {
       }
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
-      return { lease: shared, handle: s.handle, createdAt: s.createdAt, info: s.info };
+      return {
+        lease: shared,
+        handle: s.handle,
+        createdAt: s.createdAt,
+        fsId: s.fsId,
+        info: s.info,
+      };
     } catch (err) {
       await this.unregister(env, lease.token);
       // releases the lease in whatever kind it has now (also after a downgrade)
@@ -1204,22 +1221,48 @@ export class SandboxService {
   ): Promise<{
     handle: SandboxHandle;
     createdAt: number;
+    fsId: string;
     info: SandboxUseInfo;
     fence: Fence;
     resumed?: boolean;
   }> {
     const id = ctx.environmentId;
-    // a row made earlier (another use, the environments service) keeps its file system handle
+    // Only a live environment of the caller's org gets a row, with the environment's own org; a
+    // row made earlier (another use) keeps its file system handle.
     await this.db
       .insertInto("environment_instances")
-      .values({ environment_id: id, org_id: ctx.orgId, provider: p.plugin, status: "creating" })
+      .columns(["environment_id", "org_id", "provider", "status"])
+      .expression((eb) =>
+        eb
+          .selectFrom("environments")
+          .select((e) => [
+            "environments.id",
+            "environments.org_id",
+            e.val(p.plugin).as("provider"),
+            e.val("creating").as("status"),
+          ])
+          .where("environments.id", "=", id)
+          .where("environments.org_id", "=", ctx.orgId)
+          .where("environments.deleted_at", "is", null),
+      )
       .onConflict((oc) => oc.column("environment_id").doNothing())
       .execute();
+    // Under the lease: a use that waited behind destroyEnvironment (or raced a deletion) must not
+    // bring the environment's provider resources back.
+    const live = await this.db
+      .selectFrom("environments")
+      .select("id")
+      .where("id", "=", id)
+      .where("org_id", "=", ctx.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!live) throw environmentNotFound();
     const row = await this.db
       .selectFrom("environment_instances")
       .selectAll()
       .where("environment_id", "=", id)
-      .executeTakeFirstOrThrow();
+      .executeTakeFirst();
+    if (!row) throw environmentNotFound();
     if (row.org_id !== ctx.orgId) throw this.foreign(ctx);
     const fence = { gen: row.generation };
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
@@ -1235,12 +1278,13 @@ export class SandboxService {
     }
     const handle = row.handle;
     const createdAt = row.created_at.getTime();
+    const fsId = row.fs_handle?.id ?? "";
     if (handle && isInstance(row, gone) && row.status === "running") {
       const created = await this.create(ctx, p, held, row, fence, signal);
       return { ...created, info: { fresh: true, restarted: true }, fence };
     }
     if (handle && row.status === "running") {
-      return { handle, createdAt, info: { fresh: false, restarted: false }, fence };
+      return { handle, createdAt, fsId, info: { fresh: false, restarted: false }, fence };
     }
     if (handle && row.status === "suspended") {
       const r = await p.impl.resume(handle, signal);
@@ -1254,6 +1298,7 @@ export class SandboxService {
         return {
           handle,
           createdAt,
+          fsId,
           info: { fresh: false, restarted: false },
           fence,
           resumed: true,
@@ -1287,7 +1332,7 @@ export class SandboxService {
     row: Row,
     fence: Fence,
     signal: AbortSignal,
-  ): Promise<Instance> {
+  ): Promise<Instance & { fsId: string }> {
     const id = ctx.environmentId;
     const name = environmentResourceName(id);
     await this.fenced(held, id, fence, {
@@ -1378,7 +1423,7 @@ export class SandboxService {
       throw e;
     }
     this.log.info("sandbox created", { environmentId: id, provider: p.plugin });
-    return { handle, createdAt: createdAt.getTime() };
+    return { handle, createdAt: createdAt.getTime(), fsId: fs.id };
   }
 
   /**

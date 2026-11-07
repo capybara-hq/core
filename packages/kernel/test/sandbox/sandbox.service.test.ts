@@ -614,6 +614,37 @@ describe("destruction after inactivity", () => {
     expect(await ops("destroy")).toHaveLength(1);
   });
 
+  it("a use waiting behind destroyEnvironment does not resurrect the environment", async () => {
+    const s = service();
+    await use(s);
+    const g = gates();
+    const holder = s.withSandbox(
+      at(),
+      async () => {
+        g.entered();
+        await g.gate;
+      },
+      signal(),
+    );
+    await g.inside;
+    // the environments service soft-deletes, then the job destroys
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+    const destroying = s.destroyEnvironment(envId);
+    await new Promise((r) => setTimeout(r, 100));
+    // a late use waits behind the destroyer's intent
+    const late = use(s).catch((e: unknown) => e);
+    await new Promise((r) => setTimeout(r, 100));
+    g.release();
+    await holder;
+    await destroying;
+    const err = await late;
+    expect((err as ApiError).code).toBe("environment.not_found");
+    expect(await row()).toBeUndefined();
+    expect(await fakeFileSystems(root)).toEqual([]);
+    expect(await ops("create-fs")).toHaveLength(1);
+    expect(await ops("create")).toHaveLength(1);
+  });
+
   it("destroyEnvironment waits for a running command to finish", async () => {
     const s = service();
     await use(s);
@@ -697,7 +728,8 @@ describe("lost files", () => {
     expect((await ops("destroy-fs")).map((o) => o[1])).toEqual([oldFs]);
     const next = await readIn(s, "a.txt");
     expect(next.body).toBeNull();
-    expect(next.info.fresh).toBe(true);
+    // a fresh start on new files, not a restart on kept ones
+    expect(next.info).toEqual({ fresh: true, restarted: false });
     expect(await ops("create-fs")).toHaveLength(2);
     expect((await row())?.fs_status).toBe("ready");
   });
@@ -855,11 +887,33 @@ describe("锁的防护（fix round 1）", () => {
     await holder;
   });
 
-  it("记录属于别的组织：ApiError", async () => {
+  it("an environment of another org: environment.not_found", async () => {
     const s = service();
     await use(s);
     const err = await use(s, envId, await newOrg()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("environment.not_found");
+  });
+
+  it("a mismatched org cannot create an instance row", async () => {
+    const s = service();
+    const other = await newOrg();
+    const err = await use(s, envId, other).catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("environment.not_found");
+    expect((err as ApiError).status).toBe(404);
+    expect(await row()).toBeUndefined();
+    expect(await ops()).toEqual([]);
+    // the owner's org still gets its environment
+    expect((await use(s)).info.fresh).toBe(true);
+    expect((await row())?.org_id).toBe(orgId);
+  });
+
+  it("a deleted environment is not created", async () => {
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+    const err = await use(service()).catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("environment.not_found");
+    expect(await row()).toBeUndefined();
+    expect(await ops()).toEqual([]);
   });
 });
 
@@ -1202,7 +1256,7 @@ describe("锁的防护（fix round 2）", () => {
     await use(s);
     const other = await newOrg();
     const err = (await use(s, envId, other).catch((e: unknown) => e)) as ApiError;
-    expect(err.code).toBe("forbidden");
+    expect(err.code).toBe("environment.not_found");
     expect(err.message).not.toContain(orgId);
   });
 });
