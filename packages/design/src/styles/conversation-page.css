@@ -721,6 +721,17 @@ button.cb-property-row {
      composer's center line whether or not the thread scrolls (the composer is outside it). */
   scrollbar-gutter: stable both-edges;
 }
+/*
+ * The thread opens at its latest message (spec §5.4): the scroll container is a reversed column
+ * around its one content wrapper, so its scroll origin (scrollTop 0) is the bottom. The first
+ * painted frame, server HTML before any script, already shows the bottom, and content growing
+ * there stays in view. Only the wrapper is reversed against, never the items: reading and focus
+ * order stay top to bottom. useFollowBottom adds the follow slack and the no-anchoring fallback.
+ */
+.cb-conv-scroll:not([data-center="true"]) {
+  display: flex;
+  flex-direction: column-reverse;
+}
 .cb-conv-scroll[data-center="true"] {
   display: flex;
   align-items: center;
@@ -732,6 +743,14 @@ button.cb-property-row {
   gap: var(--cb-space-3);
   max-width: var(--cb-layout-chat);
   margin: 0 auto;
+}
+/* In the reversed column: as wide as before (auto side margins would shrink a flex item), and the
+   bottom auto margin keeps a short thread at the top while an overflowing one starts at the
+   bottom (auto margins take no negative free space). */
+.cb-conv-scroll > .cb-conv-thread {
+  flex: none;
+  width: 100%;
+  margin-bottom: auto;
 }
 .cb-conv-composer {
   flex: none;
