@@ -363,9 +363,12 @@ Decisions made while building, one per bullet (what, and why).
 - Read operations never prompt: a read's per-call policy is `allow` and is not a fixed ask. A read an
   agent tightened to `ask` (a `toolPolicies` entry on `Platform:<operation>`) asks once-only and no grant
   applies, like an org write.
-- The `later` exclusions point to per-domain tracking issues; for now each carries an inline
-  `TODO-platform-<domain>` literal as its `issue` (the check reads literals only), replaced by the real
-  issue URLs before the PR is merged.
+- The `later` exclusions all point to one tracking issue, core#91 ("Platform operations: remaining
+  routes", one section per domain), instead of one issue per domain (decided, 2026-11-08). The check
+  reads `issue` as a literal, so each entry carries the URL inline.
+- Routes added by platform / org layering, merged first, were classified when this branch merged
+  `main`: the org config copies (`…/extensions/:extension/overrides`, the admin `org-overrides`) are
+  `secret`, the per-org extension tool switches `later`.
 - One changeset, `.changeset/platform-tool.md`, describes the feature for the release notes, covering the
   kernel, web and design changes. `platform-agent-docs.md` stays separate because it is the only one that
   bumps `@capybara-hq/plugin-sdk`, and `platform-inbox.md` is the unrelated platform inbox for the super
