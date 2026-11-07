@@ -204,8 +204,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
-    category: "human-only",
-    reason: "Sends a setup request to the org admins on a person's behalf",
+    category: "later",
+    reason: "Sending a setup request to the org admins is not a decision; mirrored later",
+    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-agents",
   },
   {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
@@ -429,21 +430,19 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
-    category: "later",
-    reason: "Org install of a catalog item, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-org-catalog",
+    category: "secret",
+    reason:
+      "Install body carries connector credentials, client secrets and extension config entered by a person",
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
-    category: "later",
-    reason: "Creating connectors during install, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-org-catalog",
+    category: "secret",
+    reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",
-    category: "later",
-    reason: "Creating a connector from a template, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-org-catalog",
+    category: "secret",
+    reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
     route: "GET /api/v1/orgs/:orgId/plugin-installs",
@@ -480,9 +479,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
-    category: "later",
-    reason: "Org-level extension config, mirrored later with secret fields excluded",
-    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-org-catalog",
+    category: "secret",
+    reason: "Org extension config may hold secret fields",
   },
   // org-uploads
   {
@@ -889,8 +887,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   { route: "POST /api/v1/auth/logout", category: "human-only", reason: "Ends the login session" },
   {
     route: "GET /api/v1/me",
-    category: "human-only",
-    reason: "Returns the caller's account profile for the web session",
+    category: "internal",
+    reason:
+      "Account profile the web app loads for its own session; not an operation an agent needs",
   },
   {
     route: "PUT /api/v1/me/current-org",
@@ -919,8 +918,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "GET /api/v1/auth/sources",
-    category: "human-only",
-    reason: "Login source list shown on the sign-in page",
+    category: "internal",
+    reason: "Login source list the web sign-in page renders; no agent use",
   },
   {
     route: "GET /api/v1/auth/sso/:plugin/start",
@@ -1230,9 +1229,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/preview",
-    category: "later",
-    reason: "Connector install preview, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/TODO-platform-connectors",
+    category: "secret",
+    reason: "Preview body carries a connector credential entered by a person",
   },
   {
     route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
