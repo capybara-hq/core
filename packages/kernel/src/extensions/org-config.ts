@@ -114,7 +114,8 @@ type Obj = Record<string, unknown>;
 
 /**
  * The scope part of an org view: the extension's primary plugin and whether the org can switch it.
- * With several source items, one that is `all` or builtin locks the extension on (scope `all`).
+ * With several source items, a builtin one locks the extension on (scope `all`); an `all` one does
+ * not (layering spec §4).
  */
 function scopeFields(
   items: readonly ExtensionPluginItem[] | undefined,
@@ -299,8 +300,8 @@ export class OrgExtensionConfigs {
    * How an `enabled` write of this extension is handled: `direct` through {@link put} (a required
    * bootstrap plugin keeps `extension.required`; an extension without a live item is config-declared;
    * several live items keep the direct write, the strictest source rules applying), `locked` (a live
-   * item is `all` or builtin and the write switches off: `plugin.scope_locked`), or `item` (the single
-   * plugin whose org switch it is).
+   * item is builtin and the write switches off: `plugin.scope_locked`), or `item` (the single plugin
+   * whose org switch it is).
    */
   async switchPlan(
     plugin: string,

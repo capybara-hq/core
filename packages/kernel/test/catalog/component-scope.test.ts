@@ -184,13 +184,34 @@ describe("org component switches", { timeout: 60_000 }, () => {
     expect(await skillNames(env.orgId)).toEqual(["platform:pdf-tools"]);
   });
 
-  it("members cannot switch; a component of an `all` plugin or with its own `all` scope cannot be switched off", async () => {
+  it("members cannot switch; a component of an `all` plugin or with its own `all` scope can be switched off, of a builtin plugin not", async () => {
     const { itemId, skillId } = await crmInBoth();
     expect((await sw(env.orgId, env.mem, skillId, { enabled: false })).statusCode).toBe(403);
+    const offAndOn = async () => {
+      const p = await sw(env.orgId, env.boss, skillId, { enabled: false });
+      expect(p.statusCode, p.body).toBe(200);
+      const off = await sw(env.orgId, env.boss, skillId, {
+        enabled: false,
+        confirm: p.json().confirm,
+      });
+      expect(off.statusCode, off.body).toBe(200);
+      expect(off.json().component).toMatchObject({ on: false, switch: false, locked: false });
+      expect(await skillNames(env.orgId)).toEqual([]);
+      expect(await skillNames(org2)).toEqual(["platform:pdf-tools"]);
+    };
     await setScope(env, itemId, "all");
-    const locked = await sw(env.orgId, env.boss, skillId, { enabled: false });
-    expect(locked.statusCode).toBe(409);
-    expect(locked.json().error.code).toBe("plugin.scope_locked");
+    await offAndOn();
+    // the admin list counts the org that turned it off
+    const listed = async () => {
+      const r = await env.root({ method: "GET", url: "/api/v1/admin/components?kind=skill" });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { components: { id: string; offCount: number }[] }).components.find(
+        (c) => c.id === skillId,
+      );
+    };
+    expect(await listed()).toMatchObject({ offCount: 1 });
+    expect((await sw(env.orgId, env.boss, skillId, { enabled: true })).statusCode).toBe(200);
+    expect(await listed()).toMatchObject({ offCount: 0 });
     await setScope(env, itemId, "optional");
     const pv = await previewScope("skill", skillId, { scope: "all" });
     const put = await env.root({
@@ -199,11 +220,20 @@ describe("org component switches", { timeout: 60_000 }, () => {
       payload: { scope: "all", scopeHash: pv.scopeHash },
     });
     expect(put.statusCode, put.body).toBe(200);
-    expect(put.json()).toMatchObject({ scopeMode: "own", scope: "all" });
-    const locked2 = await sw(env.orgId, env.boss, skillId, { enabled: false });
-    expect(locked2.json().error.code).toBe("plugin.scope_locked");
+    expect(put.json()).toMatchObject({ scopeMode: "own", scope: "all", offCount: 0 });
+    await offAndOn();
+    expect(await listed()).toMatchObject({ offCount: 1 });
     const unknown = await sw(env.orgId, env.boss, "nope", { enabled: true });
     expect(unknown.statusCode).toBe(404);
+  });
+
+  it("a component of a builtin plugin cannot be switched off: 409 plugin.scope_locked", async () => {
+    const { itemId, skillId } = await crmInBoth();
+    await setBuiltin(env, itemId);
+    const locked = await sw(env.orgId, env.boss, skillId, { enabled: false });
+    expect(locked.statusCode).toBe(409);
+    expect(locked.json().error.code).toBe("plugin.scope_locked");
+    expect(await skillNames(env.orgId)).toEqual(["platform:pdf-tools"]);
   });
 
   it("switching a skill on where the org has its own skill of that name: 409 plugin.skill_conflict", async () => {
@@ -776,7 +806,7 @@ describe("the org component list and linked copies (Task 10)", { timeout: 60_000
   const list = (req: OrgEnv["boss"], query: string) =>
     req({ method: "GET", url: `/api/v1/orgs/${env.orgId}/components?${query}` });
 
-  it("lists offered components with their state; members read it; `all` is locked; a plugin that is off is not switchable", async () => {
+  it("lists offered components with their state; members read it; `all` is switchable, builtin locked; a plugin that is off is not switchable", async () => {
     const { itemId, skillId } = await crmInBoth();
     const other = await seedPlugin(env, { name: "docs", skills: ["notes"], templates: false });
     const notes = (
@@ -824,8 +854,15 @@ describe("the org component list and linked copies (Task 10)", { timeout: 60_000
     expect(off).toMatchObject({ id: skillId, on: false, switch: false, switchable: true });
     await sw(env.orgId, env.boss, skillId, { enabled: true });
     await setScope(env, itemId, "all");
+    expect(await pdf()).toMatchObject({ id: skillId, on: true, locked: false, switchable: true });
+    await setBuiltin(env, itemId);
     const locked = await pdf();
     expect(locked).toMatchObject({ id: skillId, on: true, locked: true, switchable: false });
+    await env.db
+      .updateTable("catalog_items")
+      .set({ builtin: false })
+      .where("id", "=", itemId)
+      .execute();
     // a component not offered to the org is not listed
     await setScope(env, other, "named", [org2]);
     expect(

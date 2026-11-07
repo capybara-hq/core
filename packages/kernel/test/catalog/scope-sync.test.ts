@@ -91,6 +91,17 @@ const skillsOnly = (name: string, deps?: { name: string; version: string }[]) =>
     ...(deps !== undefined && { dependencies: deps }),
   });
 
+/** The org's (env.orgId) switch of an item; null without a row. */
+async function switchOf(itemId: string): Promise<boolean | null> {
+  const row = await env.db
+    .selectFrom("catalog_item_org_switches")
+    .select("enabled")
+    .where("item_id", "=", itemId)
+    .where("org_id", "=", env.orgId)
+    .executeTakeFirst();
+  return row?.enabled ?? null;
+}
+
 async function switchRow(itemId: string, orgId: string, enabled: boolean): Promise<void> {
   await env.db
     .insertInto("catalog_item_org_switches")
@@ -129,6 +140,54 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
       30_000,
       "install in the new org",
     );
+  });
+
+  it("all: an org that switched it off stays off across a scope change and back; others and new orgs are on", async () => {
+    const itemId = await skillsOnly("all-off");
+    const orgB = await createOrg(env.root, "All B");
+    await setScope(env, itemId, "all");
+    await sync().enqueueItem(itemId);
+    await idle();
+    expect(await liveOrgs(itemId)).toEqual(expect.arrayContaining([env.orgId, orgB]));
+    // org A's admin switches it off (preview, then the confirmed uninstall)
+    const url = `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`;
+    const preview = await env.boss({ method: "PUT", url, payload: { enabled: false } });
+    expect(preview.statusCode, preview.body).toBe(200);
+    const off = await env.boss({
+      method: "PUT",
+      url,
+      payload: { enabled: false, confirm: preview.json().confirm },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(await liveOrgs(itemId)).not.toContain(env.orgId);
+    // a resync of the same scope leaves it off
+    await sync().enqueueItem(itemId);
+    await idle();
+    expect(await liveOrgs(itemId)).not.toContain(env.orgId);
+    await setScope(env, itemId, "optional");
+    await sync().enqueueItem(itemId);
+    await idle();
+    expect(await liveOrgs(itemId)).toEqual([]);
+    await setScope(env, itemId, "all");
+    await sync().enqueueItem(itemId);
+    await idle();
+    const live = await liveOrgs(itemId);
+    expect(live).not.toContain(env.orgId);
+    expect(live).toContain(orgB);
+    expect(
+      await env.db
+        .selectFrom("catalog_item_org_switches")
+        .select(["org_id", "enabled"])
+        .where("item_id", "=", itemId)
+        .execute(),
+    ).toEqual([{ org_id: env.orgId, enabled: false }]);
+    const orgC = await createOrg(env.root, "All C");
+    await waitFor(
+      async () => (await liveOrgs(itemId)).includes(orgC),
+      30_000,
+      "install in the new org",
+    );
+    expect(await liveOrgs(itemId)).not.toContain(env.orgId);
   });
 
   it("named [A, B] with B switched off: A installed, B and C not", async () => {
@@ -352,7 +411,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     await idle();
   });
 
-  it("a failed install of an all plugin can be cleaned up; a live one stays scope-locked", async () => {
+  it("a failed install of an all plugin can be cleaned up; a live one is removed like a switch-off", async () => {
     const itemId = await skillsOnly("all-failed");
     await setScope(env, itemId, "all");
     const failedId = randomUUID();
@@ -374,16 +433,28 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     expect(
       await env.db.selectFrom("plugin_installs").select("id").where("id", "=", failedId).execute(),
     ).toEqual([]);
-    // the sync installs it; that live install cannot be removed by the org
-    expect(await sync().syncPair(itemId, env.orgId)).toBe("installed");
+    // the cleanup is a switch-off (the org's switch row says off), so the sync leaves it off
+    // (layering spec §4) until an org admin switches it on
+    expect(await switchOf(itemId)).toBe(false);
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
+    const on = await env.boss({
+      method: "PUT",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+      payload: { enabled: true },
+    });
+    expect(on.statusCode, on.body).toBe(200);
     const live = await env.db
       .selectFrom("plugin_installs")
       .select("id")
       .where("item_id", "=", itemId)
       .where("org_id", "=", env.orgId)
       .executeTakeFirstOrThrow();
-    const locked = await del(live.id);
-    expect(locked.statusCode, locked.body).toBe(409);
-    expect(locked.json().error.code).toBe("plugin.scope_locked");
+    // the org may remove that live install, which writes its switch off again
+    const removed = await del(live.id);
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(await switchOf(itemId)).toBe(false);
+    expect(await liveOrgs(itemId)).not.toContain(env.orgId);
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
+    expect(await liveOrgs(itemId)).not.toContain(env.orgId);
   });
 });

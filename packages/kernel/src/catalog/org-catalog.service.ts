@@ -59,11 +59,12 @@ export type SwitchResult =
 
 /**
  * Organizations see the platform catalog with the plugin scope rules applied (plugin and component
- * management spec §5): a plugin is `all` (on in every org), `optional` (an org admin switches it on),
- * or `named` (offered to the listed orgs). Members get the list read-only; org admins switch a
- * plugin on (an install by {@link PluginInstaller}, with its dependencies; the union of the
- * component actions of the plugins it brings in is re-checked inside the org row lock) or off (an
- * uninstall, after a preview they confirm with its hash). Disabled item -> `plugin.disabled`; a
+ * management spec §5): a plugin is `all` (on in every org unless an org admin switched it off,
+ * layering spec §4), `optional` (an org admin switches it on), or `named` (offered to the listed
+ * orgs). Members get the list read-only; org admins switch a plugin on (an install by
+ * {@link PluginInstaller}, with its dependencies; the union of the component actions of the plugins
+ * it brings in is re-checked inside the org row lock) or off (an uninstall, after a preview they
+ * confirm with its hash). Disabled item -> `plugin.disabled`; a
  * dependency unresolved / disabled / in a cycle -> `catalog.dependency_*`; an extension or a
  * template's connector not on the deployment -> `catalog.not_deployed`. No in-process state.
  */
@@ -206,6 +207,7 @@ export class OrgCatalogService {
         newerInMarketplace: _newer,
         scopeOrgs: _scopeOrgs,
         enabledOrgs: _enabledOrgs,
+        offCount: _offCount,
         pending: _pending,
         shownToOthers: _shown,
         awaitingConfirmation,
@@ -248,10 +250,7 @@ export class OrgCatalogService {
         scope,
         builtin: i.builtin,
         state,
-        switchable:
-          state !== "not_offered" &&
-          state !== "awaiting_confirmation" &&
-          switchable({ scope, builtin: i.builtin }),
+        switchable: state !== "not_offered" && state !== "awaiting_confirmation" && switchable(i),
         notDeployed: latest !== undefined && undeployed.has(i.id),
         installed: a
           ? {
@@ -465,10 +464,10 @@ export class OrgCatalogService {
 
   /**
    * The org admin's switch of a plugin (`PUT catalog/:itemId/switch`). On: installs it (or just
-   * records the switch when it is installed already). Off: refused for `all` and builtin items
-   * (`plugin.scope_locked`); without `confirm` returns the uninstall preview and its hash, with the
-   * hash of the current preview uninstalls (a changed preview -> `plugin.switch_stale`). The switch
-   * row is written after the install / uninstall.
+   * records the switch when it is installed already). Off: refused for builtin items
+   * (`plugin.scope_locked`; an `all` one may go off, layering spec §4); without `confirm` returns
+   * the uninstall preview and its hash, with the hash of the current preview uninstalls (a changed
+   * preview -> `plugin.switch_stale`). The switch row is written after the install / uninstall.
    */
   async setSwitch(
     orgId: string,
@@ -490,10 +489,10 @@ export class OrgCatalogService {
       }
       return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
     }
-    if (!switchable({ scope: item.scope, builtin: item.builtin })) {
+    if (!switchable(item)) {
       throw new ApiError(
         "plugin.scope_locked",
-        "This plugin is on for every organization and cannot be switched off here",
+        "This plugin is built in: it is on for every organization and cannot be switched off here",
       );
     }
     const live = await this.liveInstall(orgId, itemId);
@@ -510,10 +509,10 @@ export class OrgCatalogService {
   }
 
   /**
-   * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: `all`
-   * and builtin items are refused (`plugin.scope_locked`) unless the install is not live (failed,
-   * or `installing`: the installer cleans up a stale one and refuses a fresh one), and the switch
-   * row is written false in the uninstall's transaction.
+   * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: builtin
+   * items are refused (`plugin.scope_locked`) unless the install is not live (failed, or
+   * `installing`: the installer cleans up a stale one and refuses a fresh one), and the switch row
+   * is written false in the uninstall's transaction (an `all` item then stays off in the org).
    */
   async uninstall(
     orgId: string,
@@ -532,10 +531,10 @@ export class OrgCatalogService {
       .executeTakeFirst();
     // A failed or stuck install is cleaned up whatever the scope (it is not on anyway)
     const live = row?.status === "installed" || row?.status === "upgrading";
-    if (row !== undefined && live && !switchable({ scope: row.scope, builtin: row.builtin })) {
+    if (row !== undefined && live && !switchable(row)) {
       throw new ApiError(
         "plugin.scope_locked",
-        "This plugin is on for every organization and cannot be uninstalled here",
+        "This plugin is built in: it is on for every organization and cannot be uninstalled here",
       );
     }
     return this.pluginInstaller.uninstall(

@@ -127,6 +127,11 @@ export interface ComponentView {
   version: string;
   /** The orgs it is on in now, sorted. */
   onIn: string[];
+  /**
+   * Orgs whose admin switched it off while its effective scope is `all` (layering spec §4); 0 for
+   * other scopes, builtin plugins and orgs' own rows.
+   */
+  offCount: number;
 }
 
 /** One version of a platform component (`GET admin/components/:kind/:id/versions`). */
@@ -149,7 +154,7 @@ export interface OrgComponentView {
   /** The org's switch (null: never switched). */
   switch: boolean | null;
   on: boolean;
-  /** Its effective scope is `all`: it cannot be switched off. */
+  /** Of a builtin plugin: it cannot be switched off (an `all` one can, layering spec §4). */
   locked: boolean;
 }
 
@@ -311,8 +316,9 @@ function switchHash(
  * orgs; each change that takes something away is previewed and confirmed with `scopeHash`
  * (recomputed under the component row lock; a difference -> 409 `plugin.scope_stale`), and one that
  * would offer a skill to an org whose own skill has its name is refused (409 `plugin.skill_conflict`).
- * An org admin switches one component on or off in the org (only that component, rule 5); `all` ->
- * 409 `plugin.scope_locked`; switching off something in use is previewed with its agents first.
+ * An org admin switches one component on or off in the org (only that component, rule 5); one of a
+ * builtin plugin -> 409 `plugin.scope_locked` (an `all` one may go off, layering spec §4); switching
+ * off something in use is previewed with its agents first.
  * Name clashes are checked for skills only: an org agent template always carries its plugin's
  * type, so one with a platform template's type is a copy of it. Components are resolved at read
  * time (skills/usable.ts, agents/templates.ts), so nothing is enqueued. Stateless, shared by every
@@ -417,6 +423,10 @@ export class ComponentScopeService {
           .filter((o) => this.on(c, st, o.id))
           .map((o) => o.id)
           .sort(),
+        offCount:
+          scope === "all" && plugin?.builtin !== true
+            ? orgs.filter((o) => switchOf(st, c.id, o.id) === false).length
+            : 0,
       };
     });
     const owned = await this.orgOwned(kind, orgs);
@@ -586,6 +596,7 @@ export class ComponentScopeService {
       shownToOthers: false,
       version: String(r.current_version),
       onIn: [r.org_id],
+      offCount: 0,
     }));
   }
 
@@ -696,9 +707,9 @@ export class ComponentScopeService {
    * The org admin's switch of one component (`PUT orgs/:orgId/components/:kind/:id/switch`): only
    * this component (rule 5). A component not offered to the org -> 404. On: refused while the
    * component or its plugin is disabled (`plugin.disabled`) or an own skill of the org has its name
-   * (`plugin.skill_conflict`, rule 10). Off: `all` -> `plugin.scope_locked`; while it is on, without
-   * `confirm` the preview (agents that use it) and its hash are returned, with the current hash the
-   * switch is written (a changed preview -> `plugin.switch_stale`).
+   * (`plugin.skill_conflict`, rule 10). Off: of a builtin plugin -> `plugin.scope_locked`; while it
+   * is on, without `confirm` the preview (agents that use it) and its hash are returned, with the
+   * current hash the switch is written (a changed preview -> `plugin.switch_stale`).
    */
   @Transactional()
   async setSwitch(
@@ -753,7 +764,7 @@ export class ComponentScopeService {
       if (componentLocked(c, p)) {
         throw new ApiError(
           "plugin.scope_locked",
-          "This component is on for every organization and cannot be switched off here",
+          "This component belongs to a built-in plugin: it is on for every organization and cannot be switched off here",
         );
       }
       if (on) {
