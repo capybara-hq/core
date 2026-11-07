@@ -1,7 +1,7 @@
 # Messages during a run, and live drafts that survive a reload
 
 - Date: 2026-11-07, during the phase 3 acceptance of the plugin and component management work.
-- Status: draft for review.
+- Status: implemented (plan `docs/superpowers/plans/2026-11-07-run-input-and-live-drafts.md`).
 - Amends: AGENTS.md "Runtime" (queued messages), the web conversation page (composer, timeline,
   stream), `docs/design/spec.md` (composer, conversation timeline).
 - Markers: **(decided)** is the maintainer's answer (2026-11-07); **(designer's call)** is decided here
