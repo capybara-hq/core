@@ -3,6 +3,7 @@ import {
   EXTENSION_POINTS,
   type ExtensionContext,
   type ExtensionManifest,
+  type ExtensionModels,
   ExtensionPermissionError,
   type ExtensionPointRef,
   ExtensionPointUnavailableError,
@@ -34,6 +35,7 @@ import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
 import type { LockService } from "../infra/lock/lock.service.js";
+import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
@@ -66,6 +68,11 @@ export interface KernelDeps {
   keyring: Keyring;
   /** Verifies embed tokens (`ctx.ui` embed requests; the one `EmbedTokens` provider). */
   embedTokens: Pick<EmbedTokens, "verify">;
+  /**
+   * The `ctx.models` broker (the one `ModelEmbeddings` provider). Absent (a ctx built alone in a
+   * test): `ctx.models` calls reject.
+   */
+  models?: Pick<ModelEmbeddings, "embed" | "describe">;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -295,7 +302,8 @@ export class LiveConfig {
  * `deploymentConfig` may be a {@link LiveConfig} (shared by the instance, replaceable in place);
  * otherwise a fixed value is wrapped.
  * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`;
- * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`; `http.route`
+ * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
+ *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
  *   only the method + path declared in `permissions.http`; `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` (during
  *   setup only); `ui.invalidate` sends a refresh over the kernel bus (namespace `kernel`), across
@@ -358,6 +366,22 @@ export function createExtensionContext(
         plugins: async () => [name],
       }).forPlugin(name)
     : undefined;
+  // ctx.models: only with permissions.models; the broker accepts only the purposes declared there
+  // with kind embedding (spec B §5.4), aborted by this instance's signal
+  const declaredModels = perms.models ?? [];
+  const modelsApi: ExtensionModels | undefined =
+    declaredModels.length > 0
+      ? {
+          embed: async (req) => {
+            if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
+            return deps.models.embed(name, declaredModels, req, lifecycle.signal);
+          },
+          describe: async (req) => {
+            if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
+            return deps.models.describe(name, declaredModels, req);
+          },
+        }
+      : undefined;
   const declaredRoutes = new Set((perms.http ?? []).map((r) => `${r.method} ${r.path}`));
   const declaredTools = new Set(perms.tools ?? []);
   const declaredHooks = new Set<string>(perms.hooks ?? []);
@@ -453,7 +477,7 @@ export function createExtensionContext(
     },
   } as ExtensionContext["extensionPoints"];
 
-  const ctx: Omit<KernelExtensionContext, "secrets" | "storage"> = {
+  const ctx: Omit<KernelExtensionContext, "secrets" | "storage" | "models"> = {
     kv: createKv(deps.redis, name),
     lock: {
       // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
@@ -709,8 +733,9 @@ export function createExtensionContext(
       return closing;
     },
   };
-  // 声明了 secrets / storage 时是普通属性；未声明时是不可枚举的抛错 getter——展开 / 打印 ctx 不会触发越权与审计
-  const gated = (key: "secrets" | "storage", api: unknown): void => {
+  // secrets / storage / models: a plain property when declared; otherwise a non-enumerable getter
+  // that throws, so spreading or printing ctx triggers no denial and no audit
+  const gated = (key: "secrets" | "storage" | "models", api: unknown): void => {
     if (api) {
       Object.assign(ctx, { [key]: api });
       return;
@@ -723,6 +748,7 @@ export function createExtensionContext(
   };
   gated("secrets", secretsApi);
   gated("storage", storageApi);
+  gated("models", modelsApi);
   return ctx as KernelExtensionContext;
 }
 

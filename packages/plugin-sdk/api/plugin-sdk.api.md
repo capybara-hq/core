@@ -846,6 +846,7 @@ export interface ExtensionContext {
         }): Promise<Lease | null>;
     };
     log: Logger;
+    models: ExtensionModels;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -878,6 +879,25 @@ export interface ExtensionContext {
 }
 
 // @public
+export interface ExtensionEmbedRequest {
+    dimensions?: number;
+    input: string[];
+    inputType?: "query" | "document";
+    orgId: string;
+    purpose: string;
+}
+
+// @public
+export interface ExtensionEmbedResult {
+    dimensions: number;
+    model: {
+        provider: string;
+        id: string;
+    };
+    vectors: number[][];
+}
+
+// @public
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
@@ -899,6 +919,23 @@ export interface ExtensionManifest {
 // @public
 export class ExtensionManifestError extends Error {
     constructor(plugin: string, message: string);
+}
+
+// @public
+export interface ExtensionModels {
+    describe(req: {
+        orgId: string;
+        purpose: string;
+    }): Promise<ExtensionModelTarget | null>;
+    embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+}
+
+// @public
+export interface ExtensionModelTarget {
+    embedding?: ModelEmbeddingInfo;
+    id: string;
+    kind: ModelKind;
+    provider: string;
 }
 
 // @public

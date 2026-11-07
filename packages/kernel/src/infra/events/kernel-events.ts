@@ -73,6 +73,12 @@ export interface KernelEventMap {
    * event is re-derived by the next `ensureRun` (a message, the end of a run, a page opening).
    */
   "background_task.finished": { conversationId: string };
+  /**
+   * An extension's `ctx.models.embed` call wrote a `model_usage` row (after the commit, spec B
+   * §5.4). The usage reporter enqueues its `usage.report` delivery; a lost event is re-derived by
+   * the usage sweep (rows whose `reported_at` is still null).
+   */
+  "model_usage.recorded": { id: string };
 }
 
 /** The payload's id for the failure log (`approvalId` / `questionId`, as the old hooks logged). */

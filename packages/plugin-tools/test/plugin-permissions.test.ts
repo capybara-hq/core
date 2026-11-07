@@ -21,7 +21,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     ["plugin-perm-tools", "perm-tools", 2],
     ["plugin-perm-capability", "perm-extension-point", 3],
     ["plugin-perm-storage", "perm-storage", 3],
-    ["plugin-perm-reserved", "perm-reserved", 1],
+    ["plugin-perm-models", "perm-models", 2],
     ["plugin-perm-ui", "perm-ui", 5],
     ["plugin-perm-ui-places", "perm-ui", 1],
     ["plugin-perm-hooks", "perm-hooks", 4],
@@ -43,7 +43,7 @@ describe("违规 fixture：每条规则一个，恰好报行尾标 FLAG 的那�
     expect(msg("plugin-perm-capability")).toContain("requires or optional");
     expect(msg("plugin-perm-ui")).toContain("permissions.ui.views");
     expect(msg("plugin-perm-storage")).toContain("permissions.storage");
-    expect(msg("plugin-perm-reserved")).toContain("ctx.models");
+    expect(msg("plugin-perm-models")).toContain("permissions.models");
     expect(msg("plugin-perm-hooks")).toContain("permissions.policyHooks");
   });
 });
@@ -74,7 +74,7 @@ describe("豁免注释只放行「无法静态确认」", () => {
       "perm-tools",
       "perm-extension-point",
       "perm-storage",
-      "perm-reserved",
+      "perm-models",
       "perm-ui",
     ]);
     expect(f.some((x) => x.message.includes("Cannot statically"))).toBe(false);

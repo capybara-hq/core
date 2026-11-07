@@ -174,7 +174,7 @@ describe("purpose list", () => {
     expect(views.map((v) => v.purpose)).toEqual([
       ...KERNEL,
       "model-eval.summarize",
-      "embed-consumer.index",
+      "embed-consumer.memory",
     ]);
     expect(find(views, "eval")).toEqual({
       purpose: "eval",
@@ -191,14 +191,14 @@ describe("purpose list", () => {
       declaredBy: "model-eval",
       effective: null,
     });
-    expect(find(views, "embed-consumer.index")).toMatchObject({
+    expect(find(views, "embed-consumer.memory")).toMatchObject({
       kind: "embedding",
       declaredBy: "embed-consumer",
     });
     expect((await list(admin, orgUrl())).map((v) => v.purpose)).toEqual([
       ...KERNEL,
       "model-eval.summarize",
-      "embed-consumer.index",
+      "embed-consumer.memory",
     ]);
   });
 });
@@ -319,8 +319,8 @@ describe("kinds and disabled models (spec B §5.3)", () => {
 
   it("a target's kind must equal the purpose's kind", async () => {
     for (const [req, url] of [
-      [ent, adminUrl("embed-consumer.index")],
-      [admin, orgUrl("embed-consumer.index")],
+      [ent, adminUrl("embed-consumer.memory")],
+      [admin, orgUrl("embed-consumer.memory")],
     ] as const) {
       const res = await req({ method: "PUT", url, payload: { target: FAKE_1 } });
       expect(res.statusCode, res.body).toBe(400);
@@ -330,10 +330,10 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     const chat = await admin({ method: "PUT", url: orgUrl("eval"), payload: { target: EMBED } });
     expect(chat.statusCode, chat.body).toBe(400);
     expect(chat.body).toContain("needs a chat model");
-    expect(await put(admin, orgUrl("embed-consumer.index"), EMBED)).toMatchObject({
+    expect(await put(admin, orgUrl("embed-consumer.memory"), EMBED)).toMatchObject({
       effective: EMBED,
     });
-    expect(await k.app.get(ModelPurposesService).resolve(orgId, "embed-consumer.index")).toEqual(
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "embed-consumer.memory")).toEqual(
       EMBED,
     );
   });

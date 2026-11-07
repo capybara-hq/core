@@ -27,9 +27,9 @@ import type { ModelRef } from "../agents/definition.js";
 import { ApiError } from "../errors.js";
 import { deploymentConfigHash } from "../extensions/config-hash.js";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
-import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { missingOverridable } from "../extensions/org-levels.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import { ExtensionStateModule } from "../extensions/state.module.js";
 import { CacheService } from "../infra/cache/cache.service.js";
 import { Cacheable } from "../infra/cache/cacheable.decorator.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -643,7 +643,7 @@ export class ProviderRegistry {
 
 /** The model provider registry (one instance; the models and agents domains read it). */
 @Module({
-  imports: [ExtensionsModule, ModelEnablementModule],
+  imports: [ExtensionStateModule, ModelEnablementModule],
   providers: [ProviderRegistry],
   exports: [ProviderRegistry],
 })

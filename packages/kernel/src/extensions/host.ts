@@ -40,6 +40,7 @@ import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, KEYRING, REDIS, REDIS_SUBSCRIBER } from "../infra/tokens.js";
 import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { ModelEmbeddings } from "../models/embeddings.js";
 import { packagePath } from "../packages/tgz.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
@@ -625,6 +626,8 @@ export class ExtensionHost {
      * org's point resolution (layering spec A §6).
      */
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
+    /** `ctx.models`: the embeddings broker (spec B §5.4). */
+    @Inject(ModelEmbeddings) models: Pick<ModelEmbeddings, "embed" | "describe">,
   ) {
     const c = config.get();
     this.deps = {
@@ -636,6 +639,7 @@ export class ExtensionHost {
       redisUrl: c.redis.url,
       keyring,
       embedTokens,
+      models,
       locks,
       runWorkers: c.roles.includes("worker"),
       log,

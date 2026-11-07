@@ -1,17 +1,9 @@
 import type { HookHandler, Logger, UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
-import {
-  DelayedError,
-  Job,
-  type JobsOptions,
-  type Queue,
-  UnrecoverableError,
-  type Worker,
-} from "bullmq";
+import { DelayedError, Job, type Queue, UnrecoverableError, type Worker } from "bullmq";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
-import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import {
   deepFreeze,
@@ -24,55 +16,41 @@ import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
-import { QueueModule } from "../infra/queue/queue.module.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { deliveryRowOfChildRun } from "./subagents/child.js";
+import {
+  modelUsageJobId,
+  queryUsageSubscribers,
+  USAGE_REPORT_ATTEMPTS,
+  USAGE_REPORT_BACKOFF_MS,
+  USAGE_REPORT_JOB,
+  USAGE_REPORT_QUEUE,
+  USAGE_REPORT_RETRY,
+  type UsageReportJob,
+  UsageReportJobsModule,
+  type UsageReportRetry,
+  usageReportJobId,
+  usageReportJobOpts,
+} from "./usage-report-jobs.js";
 
-/** Queue of `usage.report` deliveries (no `:` in the name). */
-export const USAGE_REPORT_QUEUE = "cap-kernel-usage-report";
+export {
+  ModelUsageJobs,
+  modelUsageJobId,
+  queryUsageSubscribers,
+  USAGE_REPORT_ATTEMPTS,
+  USAGE_REPORT_BACKOFF_MS,
+  USAGE_REPORT_QUEUE,
+  USAGE_REPORT_RETRY,
+  type UsageReportJob,
+  UsageReportJobsModule,
+  type UsageReportRetry,
+  usageReportJobId,
+} from "./usage-report-jobs.js";
 
-/** One job per `usage` event (no `:`: conversation ids are UUIDs, seq is a number). */
-export const usageReportJobId = (conversationId: string, seq: number) =>
-  `usage-${conversationId}-${seq}`;
-
-/** Job data: ids only (the payload is read from the event log when the job runs). */
-export interface UsageReportJob {
-  conversationId: string;
-  seq: number;
-  /** Plugins not yet succeeded; absent = every subscriber (decided on the first attempt). */
-  pending?: string[];
-  /**
-   * Targets dropped so far (plugin → why), accumulated across attempts (m-2): when the job would
-   * otherwise complete it fails naming them, and `pending` is then exactly these plugins, so a
-   * manual retry reaches only them (m-1). A later delivery to one of them removes it.
-   */
-  dropped?: Record<string, string>;
-}
-
-/** First attempt plus 5 retries (F11). */
-export const USAGE_REPORT_ATTEMPTS = 6;
-/** Retry backoff: 2 s, doubling (2, 4, 8, 16, 32 s). */
-export const USAGE_REPORT_BACKOFF_MS = 2000;
-/** The delivery retry policy of {@link UsageReporter}: attempts and the first exponential backoff. */
-export interface UsageReportRetry {
-  attempts: number;
-  backoffMs: number;
-}
-/** Optional provider: the {@link UsageReportRetry} instead of the defaults above (tests). */
-export const USAGE_REPORT_RETRY = Symbol("USAGE_REPORT_RETRY");
-/** Failed jobs (given up) are kept for inspection, at most {@link KEEP_FAILED_MAX} of them. */
-const KEEP_FAILED_S = 7 * 86_400;
-/** Upper bound on kept failed jobs (I-2): a long outage of a billing endpoint cannot grow Redis. */
-const KEEP_FAILED_MAX = 100_000;
 /** Warnings about a plugin that cannot take deliveries are logged at most once per this window. */
 const WARN_WINDOW_MS = 60_000;
-/**
- * Upper bound on kept finished jobs (Redis memory). At the default retention it only bites above
- * ~1.1 usage events per second sustained for a day; dedupe needs the jobs only for the sweeper overlap.
- */
-const KEEP_COMPLETED_MAX = 100_000;
 
 /** The sweeper's cron job name (no `:`; every minute, once across replicas). */
 export const USAGE_SWEEP_JOB = "usage-report-sweep";
@@ -87,49 +65,6 @@ export const USAGE_SWEEP_LAG_MS = 30_000;
  */
 export const USAGE_SWEEP_OVERLAP_MS = 10 * 60_000;
 const SWEEP_PAGE = 500;
-
-const JOB = "usage-report";
-
-/**
- * Plugins that subscribe to `usage.report` according to deployment state: an approved permission
- * snapshot that declares the `usage.report` hook, for a plugin the deployment still knows: an enabled
- * install, or a config-declared plugin with a replica status row that is not `unloaded`. With `orgId`, only plugins
- * the organization enabled (org config rows and required bootstrap plugins).
- */
-export async function queryUsageSubscribers(
-  db: KernelSchemaDb,
-  orgId?: string,
-): Promise<Set<string>> {
-  let q = db
-    .selectFrom("extension_permission_snapshots as s")
-    .select("s.plugin")
-    .where(sql<boolean>`s.permissions -> 'permissions' -> 'hooks' ? 'usage.report'`)
-    .where((eb) =>
-      eb.or([
-        eb.exists(
-          eb
-            .selectFrom("extension_installs as i")
-            .select(sql`1`.as("one"))
-            .whereRef("i.name", "=", "s.plugin")
-            .where("i.desired_state", "=", "enabled"),
-        ),
-        // config-declared plugins still declared (and not unloaded) on some replica; installs are
-        // covered by desired_state above (their replica rows linger as `unloaded` when disabled)
-        eb.exists(
-          eb
-            .selectFrom("extension_replica_status as r")
-            .select(sql`1`.as("one"))
-            .whereRef("r.plugin", "=", "s.plugin")
-            .where("r.source", "=", "config")
-            .where("r.state", "<>", "unloaded"),
-        ),
-      ]),
-    );
-  if (orgId !== undefined) {
-    q = q.where("s.plugin", "in", enabledExtensionsQuery(db, orgId));
-  }
-  return new Set((await q.execute()).map((r) => r.plugin));
-}
 
 /**
  * Of `plugins`, those that are **definitely** unservable right now (I-2, N-3): live replicas report
@@ -178,6 +113,12 @@ class Undeliverable extends Error {
   }
 }
 
+/** A job's identity: its `usage` event or its `model_usage` row. */
+const keyOf = (d: UsageReportJob): UsageReportJob =>
+  d.usageId !== undefined
+    ? { usageId: d.usageId }
+    : { conversationId: d.conversationId, seq: d.seq };
+
 /**
  * The next `pending` set (m-2 fence): plugins that failed now, narrowed to what the stored job data
  * still lists. A plugin another (stalled-over) execution already delivered never comes back.
@@ -210,11 +151,17 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  *   most 100 000. Each call runs through the instance's `inflight.run`, limited by `hooks.timeoutMs`;
  *   when this replica stops, in-flight calls are aborted and the job goes back to the queue without
  *   using up an attempt.
- * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`). Nothing is written to the event
- * log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
+ * Handlers must be idempotent by `eventId` (`<conversationId>/<seq>`, or a `model_usage` row id).
+ * Nothing is written to the event log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
  * as are conversation title calls (`purpose: "title"`, no run: `runId` is "") and `WebFetch`
  * extraction calls (`purpose: "web_fetch"`).
  * Single-step eval replays and judge requests log no usage: not reported (M7).
+ * - **Model usage outside conversations** (spec B §5.4): each `ctx.models.embed` call writes a
+ *   `model_usage` row; on its `model_usage.recorded` event `ModelUsageJobs` (`usage-report-jobs.ts`)
+ *   enqueues job `usage-model-<rowId>` (only while some plugin subscribes); the payload
+ *   (`purpose: "embedding"`, `eventId` = the row id, the calling `extension`, no conversation fields)
+ *   is read from the row when the job runs, and the row's `reported_at` is set once nothing is left
+ *   to deliver. The sweep re-enqueues rows still unreported (see {@link sweep}).
  */
 @Injectable()
 export class UsageReporter {
@@ -283,17 +230,8 @@ export class UsageReporter {
     return queryUsageSubscribers(this.db, orgId);
   }
 
-  private jobOpts(conversationId: string, seq: number): JobsOptions {
-    return {
-      jobId: usageReportJobId(conversationId, seq),
-      attempts: this.retry.attempts,
-      backoff: { type: "exponential", delay: this.retry.backoffMs },
-      removeOnComplete: {
-        age: this.config.get().hooks.usageReportKeepHours * 3600,
-        count: KEEP_COMPLETED_MAX,
-      },
-      removeOnFail: { age: KEEP_FAILED_S, count: KEEP_FAILED_MAX },
-    };
+  private jobOpts(jobId: string) {
+    return usageReportJobOpts(jobId, this.retry, this.config.get().hooks.usageReportKeepHours);
   }
 
   /**
@@ -307,7 +245,11 @@ export class UsageReporter {
     if (!this.hooks.has("usage.report")) return;
     try {
       if ((await this.subscribers()).size === 0) return;
-      await this.queue.add(JOB, { conversationId, seq }, this.jobOpts(conversationId, seq));
+      await this.queue.add(
+        USAGE_REPORT_JOB,
+        { conversationId, seq },
+        this.jobOpts(usageReportJobId(conversationId, seq)),
+      );
     } catch (err) {
       this.log.warn("cannot enqueue usage report", { conversationId, seq, err });
     }
@@ -316,7 +258,10 @@ export class UsageReporter {
   /**
    * One sweep (R13): re-enqueues the `usage` events created in `[watermark - overlap, now - lag]` in
    * pages, then advances the watermark to `now - lag`. With no subscriber it only advances. The first
-   * sweep starts at `now - lag - overlap`. Returns the number of events offered to the queue.
+   * sweep starts at `now - lag - overlap`. Also re-enqueues every `model_usage` row still unreported
+   * that occurred before `now - lag` (spec B §5.4; no watermark: `reported_at` says what is left),
+   * or, with no subscriber, marks those rows reported (nobody to deliver to). Returns the number of
+   * events and rows offered to the queue.
    */
   async sweep(opts: { now?: number } = {}): Promise<number> {
     // bounds and keyset as full-precision timestamp text (microseconds), computed with the DB clock
@@ -337,7 +282,8 @@ export class UsageReporter {
       .executeTakeFirst();
     const watermark = row?.watermark ?? to;
     let offered = 0;
-    if ((await this.subscribers()).size > 0) {
+    const subscribed = (await this.subscribers()).size > 0;
+    if (subscribed) {
       let after: { at: string; conv: string; seq: string } | undefined;
       for (;;) {
         let q = this.db
@@ -364,9 +310,9 @@ export class UsageReporter {
         if (page.length > 0) {
           await this.queue.addBulk(
             page.map((r) => ({
-              name: JOB,
+              name: USAGE_REPORT_JOB,
               data: { conversationId: r.conversation_id, seq: Number(r.seq) },
-              opts: this.jobOpts(r.conversation_id, Number(r.seq)),
+              opts: this.jobOpts(usageReportJobId(r.conversation_id, Number(r.seq))),
             })),
           );
           offered += page.length;
@@ -376,6 +322,7 @@ export class UsageReporter {
         after = { at: last.at, conv: last.conversation_id, seq: String(last.seq) };
       }
     }
+    offered += await this.sweepModelUsage(to, subscribed);
     await this.db
       .insertInto("usage_report_sweep")
       .values({ id: 1, watermark: sql<Date>`${to}::timestamptz` as unknown as Date })
@@ -386,6 +333,48 @@ export class UsageReporter {
         }),
       )
       .execute();
+    return offered;
+  }
+
+  /** The `model_usage` half of {@link sweep}: rows unreported at or before `to`, oldest first. */
+  private async sweepModelUsage(to: string, subscribed: boolean): Promise<number> {
+    if (!subscribed) {
+      await this.db
+        .updateTable("model_usage")
+        .set({ reported_at: sql<Date>`now()` as unknown as Date })
+        .where("reported_at", "is", null)
+        .where(sql<boolean>`occurred_at <= ${to}::timestamptz`)
+        .execute();
+      return 0;
+    }
+    let offered = 0;
+    let after: { at: string; id: string } | undefined;
+    for (;;) {
+      let q = this.db
+        .selectFrom("model_usage")
+        .select(["id", sql<string>`occurred_at::text`.as("at")])
+        .where("reported_at", "is", null)
+        .where(sql<boolean>`occurred_at <= ${to}::timestamptz`);
+      if (after) {
+        q = q.where(
+          sql<boolean>`(occurred_at, id) > (${after.at}::timestamptz, ${after.id}::uuid)`,
+        );
+      }
+      const page = await q.orderBy("occurred_at").orderBy("id").limit(SWEEP_PAGE).execute();
+      if (page.length > 0) {
+        await this.queue.addBulk(
+          page.map((r) => ({
+            name: USAGE_REPORT_JOB,
+            data: { usageId: r.id },
+            opts: this.jobOpts(modelUsageJobId(r.id)),
+          })),
+        );
+        offered += page.length;
+      }
+      const last = page.at(-1);
+      if (!last || page.length < SWEEP_PAGE) break;
+      after = { at: last.at, id: last.id };
+    }
     return offered;
   }
 
@@ -412,8 +401,9 @@ export class UsageReporter {
     const final = j.attemptsMade >= (j.opts.attempts ?? 1);
     const fields = {
       jobId: j.id,
-      conversationId: j.data.conversationId,
-      seq: j.data.seq,
+      ...(j.data.usageId !== undefined
+        ? { usageId: j.data.usageId }
+        : { conversationId: j.data.conversationId, seq: j.data.seq }),
       pending: j.data.pending,
       attempt: j.attemptsMade,
       error: err.message,
@@ -432,6 +422,52 @@ export class UsageReporter {
     const w = this.worker;
     this.worker = undefined;
     await w?.close().catch(() => {});
+  }
+
+  /** The payload of a job: a `usage` event's or a `model_usage` row's; null when it is gone. */
+  private payloadOfJob(data: UsageReportJob): Promise<UsageReportPayload | null> {
+    return data.usageId !== undefined
+      ? this.payloadOfUsage(data.usageId)
+      : this.payloadOf(data.conversationId, data.seq);
+  }
+
+  /**
+   * The payload of one `model_usage` row (spec B §5.4): purpose `embedding`, the calling extension,
+   * no conversation fields; `eventId` is the row id. Null when the row no longer exists.
+   */
+  private async payloadOfUsage(id: string): Promise<UsageReportPayload | null> {
+    const row = await this.db
+      .selectFrom("model_usage")
+      .select(["id", "org_id", "extension", "provider", "model", "input_tokens", "occurred_at"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (!row) return null;
+    return {
+      eventId: row.id,
+      purpose: "embedding",
+      orgId: row.org_id,
+      extension: row.extension,
+      provider: row.provider,
+      model: row.model,
+      usage: {
+        inputTokens: row.input_tokens,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      occurredAt: new Date(row.occurred_at).toISOString(),
+    };
+  }
+
+  /** A `model_usage` job is done (delivered, or nothing left to deliver to): marks the row. */
+  private async markReported(data: UsageReportJob): Promise<void> {
+    if (data.usageId === undefined) return;
+    await this.db
+      .updateTable("model_usage")
+      .set({ reported_at: sql<Date>`now()` as unknown as Date })
+      .where("id", "=", data.usageId)
+      .where("reported_at", "is", null)
+      .execute();
   }
 
   /** The payload of one usage event, read from the log; null when the event no longer exists. */
@@ -516,8 +552,7 @@ export class UsageReporter {
     const allowed = stored === undefined ? undefined : [...stored, ...Object.keys(storedDropped)];
     const keep = [...dropped].filter(([p]) => allowed === undefined || allowed.includes(p));
     const out: UsageReportJob = {
-      conversationId: j.data.conversationId,
-      seq: j.data.seq,
+      ...keyOf(j.data),
       pending: narrowPending(allowed, next),
       ...(keep.length > 0 && { dropped: Object.fromEntries(keep) }),
     };
@@ -527,20 +562,23 @@ export class UsageReporter {
 
   /** One delivery job (the `@Processor` of {@link USAGE_REPORT_QUEUE} calls it). */
   async process(j: Job<UsageReportJob>, token: string | undefined): Promise<void> {
-    const { conversationId, seq } = j.data;
-    const payload = await this.payloadOf(conversationId, seq);
-    if (payload === null) return; // conversation deleted meanwhile: nothing to report
+    const payload = await this.payloadOfJob(j.data);
+    // conversation (or org) deleted meanwhile: nothing to report
+    if (payload === null) return;
     const subscribers = await this.subscribers(payload.orgId);
     if (j.data.pending === undefined) {
       // first attempt: the targets come from deployment state, recorded so later attempts (on any
       // replica) deliver exactly the plugins that have not succeeded yet
       const targets = [...subscribers];
-      await j.updateData({ conversationId, seq, pending: targets });
+      await j.updateData({ ...keyOf(j.data), pending: targets });
       j.data.pending = targets;
     }
     // plugins the organization disabled meanwhile are dropped (not a failure)
     const targets = (j.data.pending ?? []).filter((p) => subscribers.has(p));
-    if (targets.length === 0) return;
+    if (targets.length === 0) {
+      await this.markReported(j.data);
+      return;
+    }
     const byPlugin = new Map<string, HookHandler<"usage.report">[]>();
     for (const h of this.hooks.handlers("usage.report")) {
       byPlugin.set(h.plugin, [...(byPlugin.get(h.plugin) ?? []), h.handler]);
@@ -617,6 +655,8 @@ export class UsageReporter {
     // m-1: pending = the dropped plugins only, so a manual retry reaches them and never the
     // plugins already served
     await this.writePending(j, [...allDropped.keys()], allDropped);
+    // delivered to every target still servable (a definite drop is final too): the row is done
+    await this.markReported(j.data);
     const traced = new Map([...allDropped].filter(([p]) => j.data.dropped?.[p] !== undefined));
     if (traced.size === 0) return;
     // N-3: a definite drop leaves a durable trace: the job ends failed (kept under the failed-job
@@ -709,8 +749,8 @@ export class UsageSweepJob {
  * on the worker role (`WorkerModule`).
  */
 @Module({
-  imports: [ExtensionsModule, QueueModule.registerQueue(USAGE_REPORT_QUEUE)],
+  imports: [ExtensionsModule, UsageReportJobsModule],
   providers: [UsageReporter],
-  exports: [UsageReporter],
+  exports: [UsageReporter, UsageReportJobsModule],
 })
 export class UsageReportModule {}
