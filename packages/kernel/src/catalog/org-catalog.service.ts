@@ -396,6 +396,7 @@ export class OrgCatalogService {
     itemId: string,
     body: OrgInstallInput,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<OrgInstallResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     await this.assertCanInstall(orgId, actor);
@@ -410,7 +411,11 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    const opts = { switchOn: true, ...(actorTokenId !== undefined && { actorTokenId }) };
+    const opts = {
+      switchOn: true,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(auditDetail !== undefined && { auditDetail }),
+    };
     if (item.disabled) throw pluginDisabled();
     // Dependencies resolved, extensions deployed, template connectors available
     await this.pluginInstaller.preflight(orgId, actor, itemId, version);
@@ -475,17 +480,21 @@ export class OrgCatalogService {
     itemId: string,
     body: { enabled: true; inputs?: OrgInstallInput } | { enabled: false; confirm?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<SwitchResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     await this.assertCanInstall(orgId, actor);
     const item = await this.visibleItem(orgId, itemId);
-    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
+    const opts = {
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(auditDetail !== undefined && { auditDetail }),
+    };
     if (body.enabled) {
       if (item.disabled) throw pluginDisabled();
       if ((await this.liveInstall(orgId, itemId)) !== undefined) {
         await this.recordSwitch(orgId, actor, itemId, true);
       } else {
-        await this.install(orgId, actor, itemId, body.inputs ?? {}, actorTokenId);
+        await this.install(orgId, actor, itemId, body.inputs ?? {}, actorTokenId, auditDetail);
       }
       return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
     }

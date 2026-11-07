@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_TEMPLATE_FIELDS,
   AGENT_TEMPLATE_LIMITS,
   AGENT_TEMPLATE_NAME_RE,
   type AgentTemplate,
@@ -388,5 +390,17 @@ describe("parseAgentTemplate: phase 4 fields (P4-1)", () => {
     expect(errorsOf(md(`${base}\nsubagents:\n  types: [a, a]`))).toEqual([
       expect.stringContaining("subagents.types"),
     ]);
+  });
+});
+
+describe("AGENT_TEMPLATE_FIELDS", () => {
+  it("lists exactly the frontmatter keys the parser reads", () => {
+    const source = readFileSync(new URL("../src/agent-template.ts", import.meta.url), "utf8");
+    const parserStart = source.indexOf("export function parseAgentTemplate");
+    expect(parserStart).toBeGreaterThan(0);
+    const read = new Set(
+      [...source.slice(parserStart).matchAll(/\bfm\.([A-Za-z]+)/g)].map((m) => m[1]),
+    );
+    expect([...read].sort()).toEqual(AGENT_TEMPLATE_FIELDS.map((f) => f.name).sort());
   });
 });

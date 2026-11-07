@@ -122,6 +122,111 @@ export const AGENT_TEMPLATE_LIMITS = {
   instructionFilesChars: 100_000,
 } as const;
 
+/** One frontmatter key of an agent template, for documentation (served to agents by `Platform`). */
+export interface AgentTemplateField {
+  name: string;
+  type: string;
+  required: boolean;
+  /** What it does, with its limit. */
+  description: string;
+}
+
+/** The frontmatter keys `parseAgentTemplate` reads (the body is the instructions). */
+export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[] = [
+  {
+    name: "name",
+    type: "string",
+    required: true,
+    description: "`^[a-z0-9][a-z0-9-]{0,63}$`; the type name is `<plugin>:<name>`.",
+  },
+  {
+    name: "description",
+    type: "string",
+    required: true,
+    description: "When to use it; at most 4096 characters.",
+  },
+  {
+    name: "tools",
+    type: "array of tool keys",
+    required: false,
+    description: "Allowlist (at most 200); omitted = the parent's tools, `[]` = none.",
+  },
+  {
+    name: "disallowedTools",
+    type: "array of tool keys",
+    required: false,
+    description: "Tool keys removed (at most 200).",
+  },
+  {
+    name: "toolPolicies",
+    type: "object",
+    required: false,
+    description: "Tool key to `ask` or `deny`; can only tighten.",
+  },
+  {
+    name: "model",
+    type: "`inherit` \\| `fast` \\| `standard` \\| `capable`",
+    required: false,
+    description: "A purpose tier, never a model id; default `inherit`.",
+  },
+  {
+    name: "effort",
+    type: "`low` \\| `medium` \\| `high` \\| `xhigh` \\| `max`",
+    required: false,
+    description: "Reasoning effort.",
+  },
+  {
+    name: "maxSteps",
+    type: "integer",
+    required: false,
+    description: "Step limit; the kernel caps it.",
+  },
+  {
+    name: "skills",
+    type: "array of skill names",
+    required: false,
+    description: "At most 3, preloaded (pinned).",
+  },
+  {
+    name: "selectedSkills",
+    type: "array of skill names",
+    required: false,
+    description: "At most 32 further skills the agent may use.",
+  },
+  {
+    name: "connectors",
+    type: "array of objects",
+    required: false,
+    description:
+      "At most 16: `{ template, tools?, policies? }` for a connector template (`<id>` or `<plugin>:<id>`), or `{ needs: { protocol, endpoint, tools, label }, policies? }` for a described need.",
+  },
+  {
+    name: "subagents",
+    type: "object",
+    required: false,
+    description:
+      "`{ general?, types?, inline? }`: the sub-agents in its roster (at most 16 types plus inline).",
+  },
+  {
+    name: "modelRef",
+    type: "string",
+    required: false,
+    description: "`provider/model`; set on org templates saved from an agent.",
+  },
+  {
+    name: "quickActions",
+    type: "array of objects",
+    required: false,
+    description: "At most 9 `{ title, body }` shortcuts.",
+  },
+  {
+    name: "instructionFiles",
+    type: "array of objects",
+    required: false,
+    description: "At most 20 `{ name, content }` files.",
+  },
+];
+
 /** The name rule of a template (the catalog item name rule). */
 export const AGENT_TEMPLATE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 

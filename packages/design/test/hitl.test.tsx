@@ -32,6 +32,22 @@ const pending = (over: Partial<ApprovalBlockProps> = {}): ApprovalBlockProps => 
 });
 
 describe("ApprovalBlock (§6.16.11)", () => {
+  it("shows the summary above the arguments, and nothing without one", () => {
+    const { container, rerender } = wrap(
+      <ApprovalBlock {...pending({ summary: "添加市场源 https://x" })} />,
+    );
+    const el = container.querySelector('[data-part="summary"]');
+    expect(el?.textContent).toBe("添加市场源 https://x");
+    const grid = container.querySelector('[data-part="kv"]') as Element;
+    expect(el?.compareDocumentPosition(grid)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    rerender(
+      <DesignProvider locale="zh">
+        <ApprovalBlock {...pending()} />
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-part="summary"]')).toBeNull();
+  });
+
   it("offers only the scopes the request allows", () => {
     wrap(<ApprovalBlock {...pending({ scopes: ["once"] })} />);
     expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();

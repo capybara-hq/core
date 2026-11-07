@@ -662,6 +662,7 @@ export class OrgAgentTemplates {
     agentId: string,
     meta: { name: string; description: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ template: AgentTemplateDetail; omitted: SaveAsOmission[] }> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actor, "agents.manage");
@@ -687,7 +688,12 @@ export class OrgAgentTemplates {
       orgId,
       action: "agent_template.created",
       target: put.id,
-      detail: { name: template.name, fromAgent: agentId, omitted: omitted.length },
+      detail: {
+        name: template.name,
+        fromAgent: agentId,
+        omitted: omitted.length,
+        ...auditDetail,
+      },
     });
     return { template: await this.detail(orgId, put.id), omitted };
   }

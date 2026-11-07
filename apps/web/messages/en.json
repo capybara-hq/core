@@ -178,7 +178,8 @@
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
-      "already_decided": "This approval has already been handled or has expired."
+      "already_decided": "This approval has already been handled or has expired.",
+      "scope_not_allowed": "This approval can only be allowed once."
     },
     "question": {
       "not_found": "The question does not exist or you cannot answer it.",
@@ -450,7 +451,8 @@
         "ReadToolOutput": "Read archived tool output",
         "SkillWrite": "Write skills",
         "WebSearch": "Search the web",
-        "WebFetch": "Read web pages"
+        "WebFetch": "Read web pages",
+        "Platform": "Use the platform"
       },
       "connectorsLabel": "Connectors",
       "noConnectors": "No connectors are installed.",
@@ -1975,6 +1977,15 @@
       "title": "IM language",
       "description": "Language of the fixed messages the bot sends in IM (link prompts, errors). Model replies are not translated.",
       "label": "IM language"
+    },
+    "platformTool": {
+      "title": "Platform tool",
+      "description": "How far the Platform tool goes in this org; each agent can narrow it further.",
+      "label": "Platform tool",
+      "help": "Agents use the Platform tool to learn about and operate the platform; every write needs the person's confirmation.",
+      "on": "On",
+      "read-only": "Read-only",
+      "off": "Off"
     },
     "sandbox": {
       "title": "Sandbox tools",

@@ -52,6 +52,7 @@ const approval = (id: string, over: Record<string, unknown> = {}) => ({
   agent: { id: "ag1", name: "Echo agent" },
   input: { id },
   requestedFor: "a1",
+  scopes: ["once", "session", "always"],
   approverRole: null,
   status: "pending",
   scope: null,
@@ -239,7 +240,10 @@ describe("收件箱（InboxPage）", () => {
   it("按角色升级的审批只有「仅本次」", async () => {
     await renderInbox({
       [LIST]: () =>
-        json(200, inbox([approval("a", { requestedFor: null, approverRole: "admin" })])),
+        json(
+          200,
+          inbox([approval("a", { requestedFor: null, scopes: ["once"], approverRole: "admin" })]),
+        ),
     });
     const scopes = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
     expect(within(scopes).getAllByRole("radio")).toHaveLength(1);

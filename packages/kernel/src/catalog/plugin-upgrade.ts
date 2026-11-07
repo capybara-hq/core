@@ -545,7 +545,7 @@ export class PlatformPluginUpdater {
     actor: string,
     itemId: string,
     input: { version: string; diffHash: string },
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> } = {},
   ): Promise<PlatformUpdateResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     return this.locked(itemId, () => this.updateLocked(actor, itemId, input, opts));
@@ -555,7 +555,7 @@ export class PlatformPluginUpdater {
     actor: string,
     itemId: string,
     input: { version: string; diffHash: string },
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> },
     owner?: OwnerMode,
     confirmPending?: string,
   ): Promise<PlatformUpdateResult> {
@@ -696,7 +696,7 @@ export class PlatformPluginUpdater {
     actor: string,
     itemId: string,
     input: { version: string; diffHash: string },
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; auditDetail?: Record<string, unknown> },
     pre: Pre,
     prepared: PreparedSync,
     owner?: OwnerMode,
@@ -880,6 +880,7 @@ export class PlatformPluginUpdater {
           id: c.id,
           credentialsReset: c.credentialsReset,
         })),
+        ...opts.auditDetail,
       },
     });
     const enqueue = [itemId, ...diff.dependencies];

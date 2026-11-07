@@ -1639,12 +1639,13 @@ States: `default`, `truncated`
 #### 6.16.11 Approval block
 
 - **Pending**: a floating card with an `accent` border, gap `space.3`, `role="group"`. Head: an `accent` dot, "需要你批准" / "Approval needed" (600), the tool (`small` `muted`: "<connector>: <title>", or the source and the localized name when the tool has no title) and then **always** the model-visible tool key (`small` `faint`, e.g. `acme_tickets__send_message`; it wraps rather than truncates). The key stays even without a title, because two sources can share a display name. Then **every** input argument as a key / value grid: the tool's `keyArgs` first, in their order, then the other properties in input order; values that are not strings as compact JSON; each value wraps and is capped at 3 lines; under the grid a `small` `muted` link "查看完整输入" / "Show full input" opens the whole input JSON read-only in place ("无参数" / "No arguments" when the input is empty). Then the actions (`default` step, gap `space.2`): "批准" / "Approve" (primary), "本会话内都批准" / "Approve for this conversation", "总是批准" / "Always approve" (default) — each only when the request allows `once` / `session` / `always` — and "拒绝…" / "Deny…" (default); at the right end a `small` `muted` note naming the rule that asked (the agent's tool policy, the connector's policy, a rule that always asks, the org's sandbox setting, the tool's default, or role escalation).
+- **Summary**: a call that carries a kernel-rendered summary (a Platform operation: what it does, in the UI language, from the operation and its params) shows it as one `small` line between the head and the argument grid; the key and every argument stay on screen below it. The summary is a convenience, never a substitute for the arguments.
 - **Why the key and every argument**: a tool's title (and its `keyArgs`) come from extension or connector code and a connector's title can change without drift review (it is display only). The person approving must see what the model actually calls: the reviewed key and the full input, so a misleading title can at most mislabel a call whose key and arguments are on screen.
 - **Deny with a reason**: "拒绝…" swaps the actions for a reason input ("拒绝原因（选填，会告诉模型）" / "Reason (optional, the model sees it)"), "拒绝" / "Deny" (danger), "取消" / "Cancel" (ghost) and the note "原因会写入会话，模型能看到" / "The reason goes into the conversation; the model sees it".
 - **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`.
 
 <!-- states: approval-block -->
-States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
+States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`
 
 <!-- size-table: approval-block -->
 | Part | State | Property | Value |
@@ -1661,6 +1662,7 @@ States: `pending`, `pending-once`, `deny-reason`, `approved`, `denied`
 | tool-key | pending | font-size | type.small |
 | tool-key | pending | color | color.faint |
 | button[data-variant=primary] | pending-once | height | control.default |
+| summary | pending-summary | font-size | type.small |
 | approval-block | deny-reason | border-top-color | color.accent |
 | button[data-variant=danger] | deny-reason | height | control.default |
 | tool-line | approved | height | row.dense |

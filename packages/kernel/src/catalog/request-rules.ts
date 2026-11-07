@@ -151,6 +151,8 @@ export async function assertPluginSourcesInstallable(
 /** The PAT recorded in the audit (when a personal access token made the call). */
 export interface RequestActorOpts {
   actorTokenId?: string;
+  /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
+  auditDetail?: Record<string, unknown>;
 }
 
 /**
