@@ -12,8 +12,8 @@ import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.j
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { SandboxLeases, SandboxLockLostError } from "../../src/sandbox/leases.js";
-import { type SandboxService, sandboxConfigWarnings } from "../../src/sandbox/sandbox.service.js";
+import { SandboxLockLostError } from "../../src/sandbox/leases.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fileStateOf } from "../../src/tools/builtins/sandbox/file-state.js";
 import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
@@ -24,11 +24,7 @@ import {
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import {
-  type SandboxServiceDeps,
-  sandboxLeasesFor,
-  sandboxServiceFor,
-} from "../helpers/sandbox.js";
+import { type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
  * Concurrent commands in one sandbox under shared leases (sub-agents spec §10, Task 4), on the
@@ -330,27 +326,6 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(after.files).toEqual(["0", "1", "2"]);
   });
 
-  it("a provider without concurrentExec gets cap 1", async () => {
-    withCap(6);
-    const { concurrentExec: _c, ...serial } = provider;
-    const s = service(() => serial);
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: serial })).toBe(1);
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: provider })).toBe(6);
-    const { killTagged: _k, ...half } = provider;
-    expect(s.effectiveCap({ plugin: "sandbox-fake", impl: half })).toBe(1);
-    expect(
-      sandboxConfigWarnings(config, "sandbox-fake", half).map((w) => w.message),
-    ).toContainEqual(expect.stringMatching(/concurrentExec.*killTagged/));
-    await run(s, "true");
-    await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.3")));
-    const xs = (await execIntervals()).slice(1).sort((a, b) => a.start - b.start);
-    for (let i = 1; i < xs.length; i++) {
-      expect((xs[i] as { start: number }).start).toBeGreaterThanOrEqual(
-        (xs[i - 1] as { end: number }).end,
-      );
-    }
-  });
-
   it("Review Focus 5: a suspended sandbox and three simultaneous first commands: one resume, then all three run", async () => {
     withCap(6);
     const s = service();
@@ -390,7 +365,7 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await redis.ttl(seen)).toBeGreaterThan(0);
   });
 
-  it("the sandbox conversation's keys carry TTLs while held", async () => {
+  it("the environment's keys carry TTLs while held", async () => {
     const s = service();
     const keys = await s.withSandbox(
       ctx(),
@@ -402,8 +377,6 @@ describe("concurrent commands (fake sandbox)", () => {
     );
     expect(keys.map(([k]) => k).sort()).toEqual(
       [
-        // the v2 busy marker: older replicas see a holder (spec §10.8)
-        `capk:sandbox-busy:${envId}`,
         `capk:sandbox-holders:${envId}`,
         // the instance this holder last used (final review m5)
         `capk:sandbox-seen:${envId}:${conversationId}`,
@@ -446,7 +419,7 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("with cap 1 a dead holder is still killed by tag when the provider can (a hot cap change may leave a sibling)", async () => {
+  it("with cap 1 a dead holder is killed by tag, never killAll", async () => {
     withCap(1);
     const s = service();
     await run(s, "true");
@@ -459,31 +432,41 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("a provider without killTagged does not killAll under a shared lease while a sibling is live", async () => {
+  it("resume from suspended kills leftovers once", async () => {
     withCap(3);
-    const { killTagged: _k, ...noTag } = provider;
-    const warns: string[] = [];
-    const quiet = { info() {}, warn: (m: string) => void warns.push(m) };
-    const s = service(() => noTag);
-    class SiblingArrives extends SandboxLeases {
-      override async claimDeadHolders(conv: string, token?: string) {
-        const r = await super.claimDeadHolders(conv, token);
-        const [t] = await redis.time();
-        await redis.zadd(`capk:sandbox-users:${conv}`, Number(t) * 1000 + 60_000, "sibling");
-        return r;
-      }
-    }
-    const s2 = service(() => noTag, {
-      log: quiet,
-      leases: sandboxLeasesFor({ redis, log: quiet, pollMs: 20 }, SiblingArrives),
-    });
+    const s = service();
     await run(s, "true");
-    await redis.hset(`capk:sandbox-holders:${envId}`, randomUUID(), Date.now() + 600_000);
+    const id = (await ops("create"))[0]?.[1] as string;
+    // a crashed holder: its tagged command still runs, its record is left, its lease is gone
+    const dead = randomUUID();
+    const left = provider.exec(
+      { id },
+      {
+        command: "sleep 30",
+        timeoutMs: 60_000,
+        maxOutputBytes: 10,
+        signal: signal(),
+        tag: dead,
+        actor: ctx().actor,
+      },
+    );
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
     await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
-    // a replica still on a larger cap takes a second shared lease right after this holder's
-    await run(s2, "true");
-    expect(await ops("kill-all")).toHaveLength(0);
-    expect(warns).toContainEqual(expect.stringMatching(/cannot kill/));
+    // the sweep gets the exclusive lease (no live lease) and suspends
+    expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
+    // three holders arrive at once: one resumes under the exclusive lease and kills everything
+    // before it downgrades; the dead holder's record is claimed then, so nobody kills it by tag
+    const out = await Promise.all([0, 1, 2].map(() => run(s, "echo ok")));
+    for (const o of out) expect(o.r.stdout).toBe("ok\n");
+    expect(await ops("resume")).toHaveLength(1);
+    expect(await ops("kill-all")).toEqual([["kill-all", id]]);
+    expect(await ops("kill-tagged")).toHaveLength(0);
+    expect(await left).toMatchObject({ exitCode: null });
+    expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([]);
+    // later uses of the running instance kill nothing more
+    await run(s, "true");
+    expect(await ops("kill-all")).toHaveLength(1);
+    expect(await ops("kill-tagged")).toHaveLength(0);
   });
 
   it("every tagged exec refreshes the holder's record", async () => {

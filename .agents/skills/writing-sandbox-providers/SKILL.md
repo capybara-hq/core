@@ -84,9 +84,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
-  The kernel calls it only where no other holder (any session of the environment) can be running a command (see "Takeover per holder" below): under the exclusive lease when it finds records of
-  crashed holders or an older kernel's busy marker, and right after
-  recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
+  The kernel calls it only where no other holder (any session of the environment) can be running a command (see "Takeover per holder" below): under the exclusive lease,
+  before the downgrade, right after recovering from `suspended` (an E2B pause preserves processes too). Crashed holders are killed by tag, never with `killAll`. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of an environment and their sub-agents share one instance, so the kernel calls
@@ -154,7 +153,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
   60 s (`SANDBOX_LOCK_TTL_MS`; the lease is a `LockService` shared lease, `tryShared` / `tryExclusive` in `infra/lock`, renewed every TTL/3 and lost at
   the deadline of decision R19 of the Nest kernel spec: send time of the last successful renewal + 2/3 TTL, which aborts that holder's signal); the holder records
-  and the `v2` busy marker `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
+  `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
   below `destroyAfterInactiveDays` + 1 day. A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
   intent (same token, so it can switch to shared under its own intent once someone else made the sandbox run); the exclusive holder makes it run and
   **downgrades** to a shared lease to run its own command (always release the view `downgrade` returned; any view's `release` releases the lease's current kind).
@@ -167,12 +166,12 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
 - **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<env>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
   refreshes the record before every `exec`, and deletes it **before** releasing its lease. Every acquirer claims records without a live lease (crashed
-  holders) atomically and kills their commands: `killTagged` under a shared lease (every provider has it), `killAll` only under the exclusive lease, where no other session of the environment can hold the instance
-  (the single-holder `killAll` path of `@1` is gone). The claim removes the records before the kill: an
-  acquirer that crashes in between leaves those commands to the in-sandbox time limit. The single marker `capk:sandbox-busy:<env>` of kernels before phase C
-  is still read, and claimed only by the caller holding the exclusive lease: it sends the next use down the exclusive path, which `killAll`s. Holders of this
-  kernel also write that marker with the value `v2` while any holder record exists (this kernel ignores `v2`), so a replica from before phase C that takes
-  the lock after a new holder crashed still kills the leftovers during a rolling upgrade. A sandbox just resumed from `suspended` is `killAll`ed too.
+  holders) atomically and kills only their commands with `killTagged` (every provider has it; other conversations of the environment may be running commands).
+  `killAll` runs only under the exclusive lease, before the downgrade, on an instance that acquirer just resumed from `suspended`: nobody else can hold
+  it, and that one call also covers the crashed holders' records it claims. A newly created instance has nothing to kill (records found then are only
+  claimed). The claim removes the records before the kill: an acquirer that crashes in between leaves those commands to the in-sandbox time limit.
+  There is no single-holder path and no single "sandbox in use" marker (the `capk:sandbox-busy:<env>` key of earlier kernels is neither read nor written);
+  the cap is always `sandbox.maxConcurrentCommands`.
 - **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
   serialized; the `Bash` description says other sub-agents may run commands at the same time.
@@ -192,6 +191,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Provider switch**: an environment whose files or instance belong to a provider that is not the current one cannot be used (`sandbox.unavailable`, nothing changes; its
   files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
   is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).
+  A row the old provider left mid-create (`status = 'creating'`, no file system recorded) is taken over by the current one, which first calls the old
+  provider's `destroyFileSystemByName` (it may have made the file system by name); with the old provider not loaded, or on failure, it only warns.
 - **Live environments only**: the instance row is created only for a live environment (`deleted_at IS NULL`) of the caller's org, with the environment's own `org_id`, and
   the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyEnvironment` gets `environment.not_found` instead of bringing
   the provider resources back. A row of another org is also reported as `environment.not_found`.

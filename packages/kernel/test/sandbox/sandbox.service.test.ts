@@ -18,11 +18,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import {
-  SANDBOX_BUSY_PREFIX,
-  SandboxLockLostError,
-  type SandboxService,
-} from "../../src/sandbox/sandbox.service.js";
+import { SandboxLockLostError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
   fakeFileSystems,
@@ -1092,6 +1088,42 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
   });
 });
 
+describe("provider switch during a create", () => {
+  const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
+  const name = () => `cap-env-${envId}`;
+
+  it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the environment over", async () => {
+    const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
+    const old = createFakeSandbox(oldRoot);
+    // the previous provider's create ended after createFileSystem, before the handle was written
+    await old.createFileSystem({
+      name: name(),
+      limits: { ...tiny, allowHosts: [] },
+      signal: signal(),
+    });
+    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+      VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
+    const s = service(undefined, undefined, {
+      lookup: (n) => (n === "sandbox-old" ? old : undefined),
+    });
+    const { info } = await use(s);
+    expect(info.fresh).toBe(true);
+    expect(await fakeFileSystems(oldRoot)).toEqual([]);
+    expect(await fakeFileSystems(root)).toHaveLength(1);
+    expect(await row()).toMatchObject({ provider: "sandbox-fake", fs_status: "ready" });
+    await rm(oldRoot, { recursive: true, force: true });
+  });
+
+  it("with the previous provider not loaded the takeover only warns that its file system may leak", async () => {
+    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+      VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
+    const { info } = await use(service());
+    expect(info.fresh).toBe(true);
+    expect(warned.some((w) => /may leak/.test(w))).toBe(true);
+    expect(await row()).toMatchObject({ provider: "sandbox-fake", fs_status: "ready" });
+  });
+});
+
 describe("扫描失败的排在后面（fix round 1）", () => {
   it("休眠失败记 sweep_failed_at，成功后清空", async () => {
     let fail = true;
@@ -1293,8 +1325,12 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
   });
 });
 
-describe("接手崩溃的前任（fix wave S2 I2）", () => {
-  const busyKey = () => `${SANDBOX_BUSY_PREFIX}${envId}`;
+describe("taking over from a crashed holder", () => {
+  /** A crashed holder's record: no lease, not expired. */
+  const deadHolder = async (tag = "dead-holder") => {
+    await redis.hset(`capk:sandbox-holders:${envId}`, tag, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
+  };
 
   it("a holder records itself in capk:sandbox-holders:<conv> (with a TTL) while it runs and removes the record after; a normal handover kills nothing", async () => {
     const s = service();
@@ -1310,51 +1346,40 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
     expect(seen.n).toBe(1);
     expect(seen.ttl).toBeGreaterThan(config.sandbox.limits.maxCommandSeconds * 1000);
     expect(await redis.hlen(holdersKey)).toBe(0);
-    // new holders no longer write the single marker of earlier kernels
-    expect(await redis.get(busyKey())).toBeNull();
+    // there is no single "sandbox in use" marker
+    expect(await redis.keys("capk:sandbox-busy:*")).toEqual([]);
     await use(s);
     expect(await ops("kill-all")).toHaveLength(0);
     expect(await ops("kill-tagged")).toHaveLength(0);
   });
 
-  it("拿到锁时前任的标记还在：先 killAll 杀掉前任遗留的命令，再执行 fn", async () => {
+  it("a crashed holder's record on a freshly created instance kills nothing and is claimed", async () => {
     const s = service();
-    const { h } = await use(s);
-    // 前任（已崩溃的副本）启动的命令：没有人再按超时杀它，也没有删标记
-    const left = provider?.exec(h, {
-      command: "sleep 30",
-      timeoutMs: 60_000,
-      maxOutputBytes: 100,
-      signal: signal(),
-      tag: "dead-holder",
-      actor: at().actor,
-    });
-    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
-    await waitForProc(h.id);
-    const started = Date.now();
-    const order: string[] = [];
-    await s.withSandbox(
-      at(),
-      async () => {
-        order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
-      },
-      signal(),
-    );
-    expect(order).toEqual(["fn after 1 kill-all"]);
-    expect(await left).toMatchObject({ exitCode: null, timedOut: false });
-    expect(Date.now() - started).toBeLessThan(5000);
-    expect(await redis.get(busyKey())).toBeNull();
-  });
-
-  it("前任的标记还在、但这次是新建的沙箱：不调 killAll", async () => {
-    const s = service();
-    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
+    await deadHolder();
     const { info } = await use(s);
     expect(info.fresh).toBe(true);
     expect(await ops("kill-all")).toHaveLength(0);
+    expect(await ops("kill-tagged")).toHaveLength(0);
+    expect(await redis.exists(`capk:sandbox-holders:${envId}`)).toBe(0);
   });
 
-  it("killAll 失败只记 warn，照常执行 fn", async () => {
+  it("a failing killTagged is only warned; fn still runs", async () => {
+    const base = createFakeSandbox(root);
+    const failing: SandboxProvider = {
+      ...base,
+      killTagged: async () => {
+        throw new Error("kill failed");
+      },
+    };
+    const s = service(() => failing);
+    await use(s);
+    await deadHolder();
+    const r = await s.withSandbox(at(), async () => "ran", signal());
+    expect(r).toBe("ran");
+    expect(warned).toContain("cannot kill leftover sandbox commands");
+  });
+
+  it("a failing killAll after a resume is only warned; fn still runs", async () => {
     const base = createFakeSandbox(root);
     const failing: SandboxProvider = {
       ...base,
@@ -1364,18 +1389,18 @@ describe("接手崩溃的前任（fix wave S2 I2）", () => {
     };
     const s = service(() => failing);
     await use(s);
-    await redis.set(busyKey(), "dead-holder", "PX", 60_000);
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
     const r = await s.withSandbox(at(), async () => "ran", signal());
     expect(r).toBe("ran");
     expect(warned).toContain("cannot kill leftover sandbox commands");
   });
 });
 
-describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
-  it("从 suspended 恢复：即使标记已过期，也先 killAll（暂停保留内存的提供方，前任的命令随恢复回来）", async () => {
+describe("a resume kills leftover commands", () => {
+  it("resume from suspended runs killAll before fn (a provider that keeps memory across a pause brings old commands back)", async () => {
     const s = service();
     const { h } = await use(s);
-    // 前任留下的命令（假沙箱的 suspend 与 E2B 暂停一样不结束进程），标记已按墙钟过期（不存在）
+    // a command an earlier holder left behind, with no holder record left
     const left = provider?.exec(h, {
       command: "sleep 30",
       timeoutMs: 60_000,
@@ -1386,7 +1411,6 @@ describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
     });
     await waitForProc(h.id);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
-    expect(await redis.get(`${SANDBOX_BUSY_PREFIX}${envId}`)).toBeNull();
     const order: string[] = [];
     await s.withSandbox(
       at(),
@@ -1397,7 +1421,7 @@ describe("恢复休眠的沙箱时清掉遗留命令（fix round 2）", () => {
     );
     expect(order).toEqual(["fn after 1 kill-all"]);
     expect(await left).toMatchObject({ exitCode: null, timedOut: false });
-    // 之后正常使用（运行中、没有标记）不再 killAll
+    // later uses of the running instance do not killAll again
     await use(s);
     expect(await ops("kill-all")).toHaveLength(1);
   });

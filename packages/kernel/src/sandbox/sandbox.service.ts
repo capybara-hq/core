@@ -49,7 +49,6 @@ import { type SandboxProviderEntry, SandboxProviders } from "./providers.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
-  SANDBOX_BUSY_PREFIX,
   SANDBOX_LOCK_PREFIX,
   SANDBOX_LOCK_TTL_MS,
   SandboxLockLostError,
@@ -184,17 +183,6 @@ export const isInstance = (
   row.handle !== null &&
   canonicalJson(row.handle) === canonicalJson(gone.handle) &&
   row.created_at.getTime() === gone.createdAt;
-
-/**
- * Concurrent commands a provider gets (spec §10.7): `max` when it declares both `concurrentExec`
- * and `killTagged`, else 1 (one call at a time, the behavior before phase C).
- */
-export function sandboxConcurrency(
-  impl: Pick<SandboxProvider, "concurrentExec" | "killTagged">,
-  max: number,
-): number {
-  return impl.concurrentExec === true && typeof impl.killTagged === "function" ? max : 1;
-}
 
 /**
  * `impl` with every `exec` labelled with the holder's tag (and `actor` when given); `before` runs
@@ -335,13 +323,15 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   `gone`, the instance was destroyed, or `fn` throws `SandboxGoneError` (retried once), a new
  *   instance is created on the kept files and `restarted` is true. Several holders hitting `gone`
  *   together rebuild once: the others find the new instance.
- * - **Takeover** (spec §10.5): every holder records itself in `capk:sandbox-holders:<env>` (again
- *   before each `exec`) and its commands carry its lease token as `tag`. An acquirer that finds a
- *   record without a live lease (a crashed holder) kills its commands: `killTagged` on the shared
- *   path, `killAll` under the exclusive lease (no live sibling can exist). The single marker
- *   `capk:sandbox-busy:<env>` of kernels before phase C sends the next use down the exclusive
- *   path, which `killAll`s. An instance just resumed from `suspended` is `killAll`ed too. Failures
- *   are only warned (the in-sandbox time limit is the backstop).
+ * - **Takeover** (spec §10.5; environments spec §4.2): every holder records itself in
+ *   `capk:sandbox-holders:<env>` (again before each `exec`) and its commands carry its lease token
+ *   as `tag`. An acquirer that finds a record without a live lease (a crashed holder) kills only
+ *   that holder's commands (`killTagged`): other conversations of the environment may be running
+ *   commands. `killAll` runs only under the exclusive lease, before the downgrade, on an instance
+ *   this holder just resumed from `suspended` (nobody else can hold it; a provider that keeps
+ *   memory across a pause brings old commands back); it also covers crashed holders' records,
+ *   which it claims. A freshly created instance has nothing to kill. Failures are only warned (the
+ *   in-sandbox time limit is the backstop).
  * - **Instance identity**: a holder that hits `gone` names the instance by its handle and the
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
@@ -379,9 +369,9 @@ export class SandboxService {
     return this.providers.current() !== undefined;
   }
 
-  /** Concurrent holders the provider gets ({@link sandboxConcurrency} with the current config). */
-  effectiveCap(p: SandboxProviderEntry): number {
-    return sandboxConcurrency(p.impl, this.config.get().sandbox.maxConcurrentCommands);
+  /** Concurrent holders of one environment (`sandbox.maxConcurrentCommands`, read at every use). */
+  private get cap(): number {
+    return this.config.get().sandbox.maxConcurrentCommands;
   }
 
   /**
@@ -439,7 +429,6 @@ export class SandboxService {
   ): Promise<IfRunningResult<T>> {
     const p = this.require();
     const env = environmentId;
-    const cap = this.effectiveCap(p);
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     for (;;) {
@@ -457,31 +446,29 @@ export class SandboxService {
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
-      if (!(await this.leases.legacyMarker(env))) {
-        const lease = await this.leases.tryShared(env, cap, token);
-        if (lease) {
-          const e = await this.asShared(
-            { orgId: row.org_id, environmentId: env },
-            p,
-            lease,
-            (r): r is Row & { handle: SandboxHandle } =>
-              this.usable(r, p, null) && isInstance(r, want),
-            signal,
-          );
-          if (e) {
-            try {
-              const impl = tagged<TaggedProvider>(p.impl, lease.token, undefined, () =>
-                this.register(env, lease.token),
-              );
-              const sig = AbortSignal.any([signal, lease.signal]);
-              return { kind: "ran", value: await fn(impl, e.handle, sig) };
-            } finally {
-              await this.leave(env, e);
-            }
+      const lease = await this.leases.tryShared(env, this.cap, token);
+      if (lease) {
+        const e = await this.asShared(
+          { orgId: row.org_id, environmentId: env },
+          p,
+          lease,
+          (r): r is Row & { handle: SandboxHandle } =>
+            this.usable(r, p, null) && isInstance(r, want),
+          signal,
+        );
+        if (e) {
+          try {
+            const impl = tagged<TaggedProvider>(p.impl, lease.token, undefined, () =>
+              this.register(env, lease.token),
+            );
+            const sig = AbortSignal.any([signal, lease.signal]);
+            return { kind: "ran", value: await fn(impl, e.handle, sig) };
+          } finally {
+            await this.leave(env, e);
           }
-          // the row changed between the check and the lease: classify it again
-          continue;
         }
+        // the row changed between the check and the lease: classify it again
+        continue;
       }
       if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
       await sleep(this.pollMs + Math.floor(Math.random() * this.pollMs), signal);
@@ -608,9 +595,9 @@ export class SandboxService {
 
   /**
    * Becomes a holder: loops until it has a shared lease on a running instance, or `sandbox.busy`.
-   * An instance recorded `running` (with the current provider, not the `gone` instance, and no
-   * legacy busy marker) is used under a shared lease; otherwise the exclusive lease (with intent)
-   * makes it run and is downgraded. One token serves both, so the waiter passes its own intent.
+   * An instance recorded `running` (with the current provider, not the `gone` instance) is used
+   * under a shared lease; otherwise the exclusive lease (with intent) makes it run and is
+   * downgraded. One token serves both, so the waiter passes its own intent.
    */
   private async enter(
     ctx: SandboxUseContext,
@@ -619,7 +606,6 @@ export class SandboxService {
     gone: Instance | null,
   ): Promise<Entered> {
     const env = ctx.environmentId;
-    const cap = this.effectiveCap(p);
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
     let intent = false;
@@ -627,8 +613,8 @@ export class SandboxService {
       for (;;) {
         if (signal.aborted) throw abortReason(signal);
         const row = await this.readRow(ctx);
-        if (this.usable(row, p, gone) && !(await this.leases.legacyMarker(env))) {
-          const lease = await this.leases.tryShared(env, cap, token);
+        if (this.usable(row, p, gone)) {
+          const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
             intent = false;
@@ -714,30 +700,9 @@ export class SandboxService {
         .where("environment_id", "=", env)
         .execute();
       await this.register(env, lease.token);
-      // a shared caller never claims an older kernel's busy marker (it holds no exclusive lease)
-      const dead = await this.claim(env);
-      if (dead.tags.length > 0) {
-        const sig = AbortSignal.any([signal, lease.signal]);
-        const impl = p.impl;
-        if (impl.killTagged) {
-          // by tag whenever the provider can, even with cap 1: while a hot change of
-          // maxConcurrentCommands spreads, a replica on a larger cap may have let a sibling in
-          await this.kill(
-            env,
-            "takeover",
-            async () => impl.killTagged?.(row.handle, dead.tags, sig),
-            sig,
-          );
-        } else if ((await this.leases.sharedCount(env)) <= 1) {
-          // cap 1 and this holder is alone: killing everything cannot hit a sibling
-          await this.killLeftovers(env, row.handle, p, sig, "takeover");
-        } else {
-          this.log.warn(
-            "cannot kill leftover sandbox commands: the provider has no killTagged and another holder is live; the in-sandbox time limit ends them",
-            { environmentId: env },
-          );
-        }
-      }
+      // other holders (any conversation of the environment) may be running: only the dead
+      // holders' own commands are killed
+      await this.killTagged(env, row.handle, p, await this.claim(env), signal, lease);
       return {
         lease,
         handle: row.handle,
@@ -755,7 +720,9 @@ export class SandboxService {
   /**
    * Under a just-taken exclusive lease: makes the instance run (file system, create / resume /
    * rebuild when the recorded instance is the one found gone), kills leftovers, then downgrades to
-   * a shared lease.
+   * a shared lease. Crashed holders' records are claimed here: on an instance just resumed from
+   * `suspended` one `killAll` covers them and anything else left (nobody else holds the instance),
+   * on a new instance there is nothing to kill, and on one that already ran their tags are killed.
    */
   private async asExclusive(
     ctx: SandboxUseContext,
@@ -768,16 +735,9 @@ export class SandboxService {
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
       const s = await this.ensure(ctx, p, lease, sig, gone);
-      const dead = await this.claim(env, lease.token);
-      if (!s.info.fresh && (s.resumed || dead.legacyMarker || dead.tags.length > 0)) {
-        await this.killLeftovers(
-          env,
-          s.handle,
-          p,
-          sig,
-          s.resumed && !dead.legacyMarker && dead.tags.length === 0 ? "resume" : "takeover",
-        );
-      }
+      const dead = await this.claim(env);
+      if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
+      else if (!s.info.fresh) await this.killTagged(env, s.handle, p, dead, signal, lease);
       if (s.resumed || s.info.fresh) {
         await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
       }
@@ -830,20 +790,28 @@ export class SandboxService {
       );
   }
 
-  /**
-   * Crashed holders' tags (claimed), and an older kernel's busy marker when `exclusiveToken` is
-   * the caller's exclusive lease; a Redis error counts as none.
-   */
-  private async claim(
-    env: string,
-    exclusiveToken?: string,
-  ): Promise<{ tags: string[]; legacyMarker: boolean }> {
+  /** Crashed holders' tags (claimed); a Redis error counts as none. */
+  private async claim(env: string): Promise<string[]> {
     try {
-      return await this.leases.claimDeadHolders(env, exclusiveToken);
+      return await this.leases.claimDeadHolders(env);
     } catch (err) {
       this.log.warn("cannot read sandbox holder records", { environmentId: env, err });
-      return { tags: [], legacyMarker: false };
+      return [];
     }
+  }
+
+  /** Kills the commands of crashed holders by their tags (`killTagged`); nothing without tags. */
+  private async killTagged(
+    env: string,
+    handle: SandboxHandle,
+    p: SandboxProviderEntry,
+    tags: string[],
+    signal: AbortSignal,
+    lease: SandboxLease,
+  ): Promise<void> {
+    if (tags.length === 0) return;
+    const sig = AbortSignal.any([signal, lease.signal]);
+    await this.kill(env, "takeover", () => p.impl.killTagged(handle, tags, sig), sig);
   }
 
   /** Runs one kill call: gone and abort are thrown, other failures only warned. */
@@ -1040,28 +1008,25 @@ export class SandboxService {
   }
 
   /**
-   * Taking over from an earlier holder: kills every command left in the instance (`killAll`). A
-   * gone instance (`SandboxGoneError`) and an abort are thrown (`withSandbox` rebuilds / ends);
-   * other failures are only warned.
+   * Under the exclusive lease (before the downgrade), on an instance just resumed from
+   * `suspended`: kills every command left in it (`killAll`), crashed holders' (`dead`, already
+   * claimed) included. Never on the shared path: other holders may be running commands. A gone
+   * instance (`SandboxGoneError`) and an abort are thrown (`withSandbox` rebuilds / ends); other
+   * failures are only warned.
    */
   private async killLeftovers(
     environmentId: string,
     handle: SandboxHandle,
     p: SandboxProviderEntry,
     signal: AbortSignal,
-    why: "takeover" | "resume",
+    dead: string[],
   ): Promise<void> {
-    const killAll = p.impl.killAll;
-    if (!killAll) {
-      if (why === "takeover") {
-        this.log.info(
-          "sandbox taken over from a holder that did not finish; provider cannot kill its commands",
-          { environmentId },
-        );
-      }
-      return;
-    }
-    await this.kill(environmentId, why, () => killAll.call(p.impl, handle, signal), signal);
+    await this.kill(
+      environmentId,
+      dead.length > 0 ? "takeover" : "resume",
+      () => p.impl.killAll(handle, signal),
+      signal,
+    );
   }
 
   /**
@@ -1276,6 +1241,16 @@ export class SandboxService {
     ) {
       throw otherProvider(row.provider);
     }
+    if (
+      row.provider !== null &&
+      row.provider !== p.plugin &&
+      row.fs_status === "none" &&
+      row.status === "creating"
+    ) {
+      // a create by the previous provider ended before its file system was recorded: that
+      // provider may have made it by name, and nothing else would ever destroy it
+      await this.dropUnrecordedFiles(id, row.provider, signal);
+    }
     const handle = row.handle;
     const createdAt = row.created_at.getTime();
     const fsId = row.fs_handle?.id ?? "";
@@ -1424,6 +1399,37 @@ export class SandboxService {
     }
     this.log.info("sandbox created", { environmentId: id, provider: p.plugin });
     return { handle, createdAt: createdAt.getTime(), fsId: fs.id };
+  }
+
+  /**
+   * Destroys the file system another provider may have made under the environment's name without
+   * the kernel recording it (`destroyFileSystemByName`; not there is success). That provider not
+   * loaded, or a failure, is only warned (the files may leak there) so the environment stays
+   * usable; an abort is thrown.
+   */
+  private async dropUnrecordedFiles(
+    id: string,
+    provider: string,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const old = this.providers.lookup(provider);
+    if (!old) {
+      this.log.warn(
+        "environment file system may have been made by a provider that is not loaded; it may leak",
+        { environmentId: id, provider },
+      );
+      return;
+    }
+    try {
+      await old.destroyFileSystemByName(environmentResourceName(id), signal);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      this.log.warn("cannot destroy the file system of the previous sandbox provider", {
+        environmentId: id,
+        provider,
+        err,
+      });
+    }
   }
 
   /**
