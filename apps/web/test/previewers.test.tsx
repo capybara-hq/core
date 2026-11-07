@@ -161,7 +161,7 @@ describe("reorder", () => {
   });
 });
 
-beforeEach(() => resetNavigation("/settings/extensions"));
+beforeEach(() => resetNavigation("/extensions"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -179,7 +179,7 @@ describe("org file previewers section", () => {
         return json(200, { items: items.map((i, n) => P(i.id, n, i.disabled)) });
       },
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
     const section = await screen.findByRole("region", { name: m.title });
     const user = userEvent.setup();
     await user.click(
@@ -215,7 +215,7 @@ describe("org file previewers section", () => {
       [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
       [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
     await screen.findByText(en.extensions.empty);
     expect(screen.queryByRole("region", { name: en.filePreviewers.title })).toBeNull();
   });

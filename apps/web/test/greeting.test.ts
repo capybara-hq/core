@@ -63,7 +63,7 @@ describe("greeting", () => {
         zh.chat.greeting[b].some((l) => l.includes("{name}")),
       );
     }
-    expect(zh.chat.greeting.sub).toBe("选一个 agent，或从常用任务开始");
-    expect(en.chat.greeting.sub).toBe("Pick an agent, or start from a common task");
+    expect(zh.chat.greeting.sub).toBe("选一个智能体开始");
+    expect(en.chat.greeting.sub).toBe("Pick an agent to start");
   });
 });

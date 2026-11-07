@@ -6,6 +6,7 @@ import {
   listAdminOrgs,
 } from "../admin";
 import { getAdminExtension, getExtensionConfig, listAdminExtensions } from "../admin-extensions";
+import { getPlatformInbox, getPlatformInboxCount } from "../admin-inbox";
 import {
   getCatalogItem,
   getStagedImport,
@@ -13,12 +14,13 @@ import {
   listDeploymentRequests,
   listMarketplaceEntries,
   listMarketplaces,
+  listPendingPlugins,
 } from "../catalog";
 import { getAdminModels, listAdminPurposes } from "../models";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
-// The admin console's reads (enterprise admins): deployment data, so their keys start with
+// The admin console's reads (super admins): deployment data, so their keys start with
 // `"deployment"` and they are fresh for `deployment` (web query cache spec §5).
 
 const d = () => keys.deployment();
@@ -26,6 +28,21 @@ const d = () => keys.deployment();
 /** The overview's four numbers. */
 export const adminOverviewQuery = () =>
   defineQuery({ key: d().adminOverview(), fn: () => getAdminOverview(), freshness: "deployment" });
+
+/**
+ * The super admin's inbox (`{ items, truncated }`): requests, permission confirmations, failed
+ * scope syncs and a migration run that needs a look. Moves on its own (orgs ask, syncs fail).
+ */
+export const adminInboxQuery = () =>
+  defineQuery({ key: d().adminInbox(), fn: () => getPlatformInbox(), freshness: "live" });
+
+/** How many items wait in the super admin's inbox (`{ total }`; the admin sidebar polls it). */
+export const adminInboxCountQuery = () =>
+  defineQuery({
+    key: d().adminInboxCount(),
+    fn: () => getPlatformInboxCount(),
+    freshness: "live",
+  });
 
 /** A page of accounts: the first (`after` omitted) or the one after a cursor ("Load more"). */
 export const adminAccountsQuery = (after?: string) =>
@@ -99,18 +116,21 @@ export const adminExtensionQuery = (name: string) =>
  * What an extension changing in an org (enabled, disabled, configured, installed or upgraded, on
  * the deployment or in the org) changes there besides the org's extensions list: its readiness (a
  * model provider enabled or configured), what the extensions bring (UI, pages, file previewers),
- * the models they provide and the purposes that map to them, and the default providers of the
- * `org-default` points (their candidates and whether a point has a provider now).
+ * the models they provide and the purposes that map to them, the connector kinds, and the default
+ * providers of the `org-default` points (their candidates and whether a point has a provider now)
+ * and the extension tools an agent can select.
  */
 export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] => {
   const k = keys.org(orgId);
   return [
     k.readiness(),
     k.contributions(),
+    k.connectorKinds(),
     k.extensionPages(),
     k.orgFilePreviewers(),
     k.extensionPointDefaults(),
     k.extensionPointsAvailable(),
+    k.extensionTools(),
     k.models(),
     k.orgPurposes(),
   ];
@@ -118,11 +138,13 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
 
 /**
  * What a change to an extension on the deployment changes besides the extension itself: the
- * overview's count, and in the current org (the only one cached) its extensions and
- * {@link orgExtensionChangeKeys}.
+ * overview's count, the super admin's inbox and its count (its permission confirmations), and in
+ * the current org (the only one cached) its extensions and {@link orgExtensionChangeKeys}.
  */
 export const extensionChangeKeys = (orgId: string | null): (readonly unknown[])[] => [
   keys.deployment().adminOverview(),
+  keys.deployment().adminInbox(),
+  keys.deployment().adminInboxCount(),
   ...(orgId === null ? [] : [keys.org(orgId).orgExtensions(), ...orgExtensionChangeKeys(orgId)]),
 ];
 
@@ -151,6 +173,14 @@ export const stagedImportQuery = (stagingId: string) =>
   defineQuery({
     key: d().stagedImport(stagingId),
     fn: () => getStagedImport(stagingId),
+    freshness: "deployment",
+  });
+
+/** The plugins waiting for a permission confirmation (`{ items }`). */
+export const pendingPluginsQuery = () =>
+  defineQuery({
+    key: d().catalogPending(),
+    fn: () => listPendingPlugins(),
     freshness: "deployment",
   });
 

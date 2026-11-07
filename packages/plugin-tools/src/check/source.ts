@@ -2,7 +2,21 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { type Comment, parseSync } from "oxc-parser";
 
-export type Finding = { file: string; line: number; rule: string; message: string };
+/**
+ * One finding of a check. `severity: "warning"` is printed but does not fail the check (only a
+ * few rules warn, e.g. `release-description-zh`); without it the finding is an error.
+ */
+export type Finding = {
+  file: string;
+  line: number;
+  rule: string;
+  message: string;
+  severity?: "warning";
+};
+
+/** The findings that fail a check (every finding that is not a warning). */
+export const errorsOf = (findings: Finding[]): Finding[] =>
+  findings.filter((f) => f.severity !== "warning");
 
 /** ESTree 节点（oxc-parser 的输出）。只声明本检查用到的公共字段。 */
 export interface Node {

@@ -3,7 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -18,6 +18,7 @@ import {
 } from "./approvals.js";
 import { ExtensionBlobs } from "./blobs.js";
 import { ExtensionDisplayNames } from "./display-name.js";
+import { enabledExtensionsByOrg } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { type ExtensionInstallRow, ExtensionInstalls } from "./installs.js";
 import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC, STALE_RECONCILE_PERIODS } from "./lifecycle.js";
@@ -33,6 +34,7 @@ import {
   permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
+import { itemLocked, pluginItemsOf } from "./plugin-items.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -92,7 +94,7 @@ function assertReadable(s: Subject): void {
 }
 
 /**
- * 部署级插件后台（企业管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
+ * 部署级插件后台（超级管理员）：列表 / 详情与网页批准权限（D8）。无状态，多副本共用；
  * 状态由 PG（安装记录、快照、各副本状态行）与本副本宿主（配置声明插件的清单）推出。
  */
 @Injectable()
@@ -105,8 +107,8 @@ export class ExtensionAdmin {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
@@ -125,9 +127,13 @@ export class ExtensionAdmin {
     return this.kdb.db;
   }
 
-  /** 全部插件（配置声明 → 安装记录，各自按名字）。 */
-  async list(): Promise<AdminExtensionView[]> {
-    const subjects = await this.subjects();
+  /**
+   * Every extension (config-declared, then install records, each by name). With `names`, only
+   * those: no other package is read, so a caller that needs a few items (the catalog's pending
+   * check) neither pays for nor logs about the packages of unrelated extensions.
+   */
+  async list(names?: ReadonlySet<string>): Promise<AdminExtensionView[]> {
+    const subjects = await this.subjects(undefined, names);
     return this.views(subjects);
   }
 
@@ -151,7 +157,20 @@ export class ExtensionAdmin {
   }
 
   /**
-   * Web approval: re-checks the enterprise admin under the lock, compares the reviewed package
+   * The review digest of a stored package (the `reviewHash` its extension would show once
+   * installed); null when the package cannot be read.
+   */
+  async packageReviewHash(sha256: string): Promise<string | null> {
+    try {
+      const { set, warnings } = await this.packageInfo(sha256);
+      return reviewHash(set, warnings);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Web approval: re-checks the super admin under the lock, compares the reviewed package
    * (`sha256`) and permission digest (`reviewHash`), writes the snapshot (source web) and the
    * `extension.permissions_approved` audit; after the commit publishes `kernel.plugins.changed` (a
    * failure only warns) and waits for one reconcile on this replica (other replicas converge through
@@ -161,13 +180,14 @@ export class ExtensionAdmin {
    *   recomputed now -> `extension.approval_stale`; a config-declared extension's `sha256` must be
    *   null (otherwise `validation_failed`);
    * - the snapshot already covers the current permission set (nothing to approve, F-N) ->
-   *   `extension.not_pending`.
+   *   `extension.not_pending`, except with `confirmBootstrap` when the snapshot is the bootstrap
+   *   step's (the catalog's confirm re-writes it with source web).
    */
   async approve(
     actor: string,
     name: string,
     body: ApproveBody,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; confirmBootstrap?: boolean } = {},
   ): Promise<AdminExtensionView> {
     const s = (await this.subjects(name))[0];
     if (!s)
@@ -190,7 +210,14 @@ export class ExtensionAdmin {
     if (s.install !== null && body.sha256 !== s.install.sha256) throw stale();
     if (body.reviewHash !== reviewHash(s.set, s.warnings)) throw stale();
 
-    await this.writeApproval(actor, name, s, opts.actorTokenId, stale);
+    await this.writeApproval(
+      actor,
+      name,
+      s,
+      opts.actorTokenId,
+      stale,
+      opts.confirmBootstrap === true,
+    );
 
     try {
       await this.bus.publish(PLUGINS_CHANGED_TOPIC, { plugin: name });
@@ -213,6 +240,7 @@ export class ExtensionAdmin {
     s: Subject,
     actorTokenId: string | undefined,
     stale: () => ApiError,
+    confirmBootstrap: boolean,
   ): Promise<void> {
     const db = this.db;
     await this.adminLock.lockAndAuthorize(actor);
@@ -229,7 +257,7 @@ export class ExtensionAdmin {
     }
     const snapRow = await db
       .selectFrom("extension_permission_snapshots")
-      .select(["version", "permissions"])
+      .select(["version", "permissions", "source"])
       .where("plugin", "=", name)
       .forUpdate()
       .executeTakeFirst();
@@ -237,7 +265,9 @@ export class ExtensionAdmin {
       version: snapRow.version,
       permissions: snapRow.permissions as PermissionSet,
     };
-    if (snapshotCovers(snap, s.set)) {
+    // `confirmBootstrap` (the catalog's confirm): a snapshot the bootstrap step wrote was never
+    // confirmed by a person, so a covered one is still taken over
+    if (snapshotCovers(snap, s.set) && !(confirmBootstrap && snapRow?.source === "bootstrap")) {
       throw new ApiError(
         "extension.not_pending",
         `Extension ${name} ${s.version} has no new permissions awaiting approval`,
@@ -253,10 +283,10 @@ export class ExtensionAdmin {
   }
 
   /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
-  private async subjects(only?: string): Promise<Subject[]> {
-    const declared = this.host
-      .declaredPlugins()
-      .filter((p) => only === undefined || p.name === only);
+  private async subjects(only?: string, names?: ReadonlySet<string>): Promise<Subject[]> {
+    const wanted = (name: string) =>
+      (only === undefined || name === only) && (names === undefined || names.has(name));
+    const declared = this.host.declaredPlugins().filter((p) => wanted(p.name));
     const taken = new Set(this.host.declaredPlugins().map((p) => p.name));
     const out: Subject[] = [...declared]
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -271,9 +301,7 @@ export class ExtensionAdmin {
         warnings: [],
       }));
     if (only !== undefined && out.length > 0) return out;
-    const rows = (await this.installs.list()).filter(
-      (r) => !taken.has(r.name) && (only === undefined || r.name === only),
-    );
+    const rows = (await this.installs.list()).filter((r) => !taken.has(r.name) && wanted(r.name));
     for (const r of rows) {
       let info: { set: PermissionSet; configurable: boolean; warnings: PackageWarning[] };
       try {
@@ -357,7 +385,27 @@ export class ExtensionAdmin {
       .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
       .orderBy("replica_id")
       .execute();
+    const items = await pluginItemsOf(this.db, names);
+    const counts = new Map(
+      (
+        await this.db
+          .selectFrom(enabledExtensionsByOrg(this.db).as("en"))
+          .innerJoin("orgs", "orgs.id", "en.org_id")
+          .select(["en.plugin", (eb) => eb.fn.countAll<string>().as("n")])
+          .where("orgs.deleted_at", "is", null)
+          .where("en.plugin", "in", names)
+          .groupBy("en.plugin")
+          .execute()
+      ).map((r) => [r.plugin, Number(r.n)] as const),
+    );
     return subjects.map((s) => {
+      const of = items.get(s.name);
+      const builtin = of?.some((i) => i.builtin) === true || s.install?.required === true;
+      const scopeInfo = {
+        scope: of?.[0] ? (builtin || of.some(itemLocked) ? ("all" as const) : of[0].scope) : null,
+        enabledOrgs: counts.get(s.name) ?? 0,
+        builtin,
+      };
       const replicas = rows.filter((r) => r.plugin === s.name);
       const snap = snapshots.get(s.name);
       const { added, removed } = diffPermissions(snap?.permissions, s.set);
@@ -395,6 +443,7 @@ export class ExtensionAdmin {
           configValid,
           removable: install?.required !== true,
           required: install?.required === true,
+          ...scopeInfo,
           installSource: install?.source ?? null,
           error: s.broken,
         };
@@ -432,6 +481,7 @@ export class ExtensionAdmin {
         configValid,
         removable: s.source === "install" && install?.required !== true,
         required: install?.required === true,
+        ...scopeInfo,
         installSource: install?.source ?? null,
       };
     });

@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import { HOME_PATH } from "./routes";
 
 /** 第三方登录的身份源（`GET /api/v1/auth/sources`）。 */
 export interface AuthSource {
@@ -33,19 +34,21 @@ export function parseLoginError(search: string): LoginErrorCode | null {
 }
 
 /**
- * 登录后回到的站内路径（`?returnTo=`）：只接受以单个 `/` 开头、同源、无反斜杠与控制字符的路径，
- * 否则回首页（防止被诱导跳到外站）。规则与内核的 `isSafeReturnPath` 一致。
+ * The site path to return to after signing in (`?returnTo=`): only a same-origin path starting with
+ * a single `/`, without backslashes or control characters; anything else (or nothing) goes home
+ * ({@link HOME_PATH}, so a lure cannot send the visitor off-site). The rules match the kernel's
+ * `isSafeReturnPath`.
  */
 export function safeReturnTo(raw: string | null | undefined): string {
-  if (raw === null || raw === undefined) return "/";
-  if (raw.length > 500 || !raw.startsWith("/") || raw.startsWith("//")) return "/";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拒绝控制字符
-  if (/[\\\u0000-\u001f\u007f]/.test(raw)) return "/";
+  if (raw === null || raw === undefined) return HOME_PATH;
+  if (raw.length > 500 || !raw.startsWith("/") || raw.startsWith("//")) return HOME_PATH;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what it rejects
+  if (/[\\\u0000-\u001f\u007f]/.test(raw)) return HOME_PATH;
   try {
     const base = "https://return.invalid";
-    return new URL(raw, base).origin === base ? raw : "/";
+    return new URL(raw, base).origin === base ? raw : HOME_PATH;
   } catch {
-    return "/";
+    return HOME_PATH;
   }
 }
 
@@ -53,9 +56,14 @@ export function safeReturnTo(raw: string | null | undefined): string {
 export const ssoStartUrl = (plugin: string, returnTo: string) =>
   `/api/v1/auth/sso/${encodeURIComponent(plugin)}/start?returnTo=${encodeURIComponent(returnTo)}`;
 
-/** 带回跳参数的登录页路径（不含语言前缀，交给 next-intl 的导航补上）。 */
+/**
+ * The sign-in page's path with its return path (no language prefix; next-intl's navigation adds
+ * it). Home (or `/`, which redirects there) needs no `returnTo`: sign-in goes home by default.
+ */
 export const loginPathFor = (returnTo: string) =>
-  returnTo === "/" ? "/login" : `/login?returnTo=${encodeURIComponent(returnTo)}`;
+  returnTo === "/" || returnTo === HOME_PATH
+    ? "/login"
+    : `/login?returnTo=${encodeURIComponent(returnTo)}`;
 
 /**
  * Where the sign-in page at `path` (path and query) sends a visitor who is already signed in: its
@@ -65,6 +73,6 @@ export function signedInTarget(path: string): string {
   const q = path.indexOf("?");
   const values = new URLSearchParams(q === -1 ? "" : path.slice(q + 1)).getAll("returnTo");
   const returnTo = safeReturnTo(values.length === 1 ? values[0] : undefined);
-  const target = returnTo.split(/[?#]/)[0] ?? "/";
-  return target === "/login" || target === "/setup" ? "/" : returnTo;
+  const target = returnTo.split(/[?#]/)[0] ?? HOME_PATH;
+  return target === "/login" || target === "/setup" ? HOME_PATH : returnTo;
 }

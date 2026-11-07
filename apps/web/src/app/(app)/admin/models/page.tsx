@@ -1,7 +1,7 @@
 import AdminModelsView from "./view";
 
 /**
- * `/admin/models` (enterprise admins): the providers with their models and prices, and the
+ * `/admin/models` (super admins): the providers with their models and prices, and the
  * purposes' default mapping. It reads nothing: the layout prefetches both on a first load
  * (`lib/query/routes.ts`).
  */

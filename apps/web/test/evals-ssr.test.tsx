@@ -9,6 +9,7 @@ import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { fieldOptionLabels } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -28,7 +29,7 @@ const T = "2026-10-22T08:00:00.000Z";
 const E = en.evals;
 const as = (role: string) => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const failing = () => json(500, { error: { code: "internal", message: "x" } });
@@ -214,7 +215,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/evals/new: a first render from the hydrated cache makes no browser read (the agents to choose from)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals/new", ROUTES);
-    const agent = screen.getByRole("combobox", { name: E.form.agentLabel }) as HTMLSelectElement;
+    const agent = screen.getByRole("combobox", { name: E.form.agentLabel }) as HTMLButtonElement;
     expect(agent.value).toBe("ag1");
     await settle();
     expect(browser).toEqual([]);
@@ -302,7 +303,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Delete the stale item")).toBeNull();
-    // the loaded shape: the head's three action slots, the cases table's header, the inspector
+    // the loaded shape: the head's three action slots, the facts block, the cases table's header
     const page = template("DetailPage") as HTMLElement;
     expect(page.querySelectorAll('[data-part="page-header-action-slots"] [data-box]')).toHaveLength(
       3,
@@ -311,9 +312,18 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     for (const h of Object.values(E.set.caseColumns))
       expect(within(page).getByText(h)).toBeTruthy();
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    expect(page.querySelector(".cb-body-inspector")).toBeNull();
+    expect(
+      page.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),
+    ).toHaveLength(3);
+    // the description's line is held over the rows, as the loaded facts put it first
+    expect(page.querySelector('[data-part="detail-facts"] [data-size="prose"]')).not.toBeNull();
     await release();
     expect(await screen.findByText("Delete the stale item")).toBeTruthy();
+    // loaded, the facts block keeps its three rows (agent, created, the default rubric)
+    expect(
+      document.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),
+    ).toHaveLength(3);
     // the agent is read once the set named it
     expect(await screen.findByText("Helper")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
@@ -370,9 +380,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/evals/s1/run", ROUTES);
     const model = screen.getByRole("combobox", { name: E.wizard.model });
-    expect(within(model).getByRole("option", { name: "model-fake / Fake 1" })).toBeTruthy();
+    expect(fieldOptionLabels(model)).toContain("model-fake / Fake 1");
     const version = screen.getByRole("combobox", { name: E.wizard.version });
-    expect(within(version).getAllByRole("option").length).toBe(4);
+    expect(fieldOptionLabels(version)).toHaveLength(4);
     await settle();
     expect(browser).toEqual([]);
   });
@@ -505,15 +515,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       if (template("DetailPage") === null) throw new Error("no page");
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
-    // the loaded shape: five stat slots under the head, the results table's header, and the
-    // inspector's hint (nothing is open yet)
+    // the loaded shape: five stat slots under the head and the results table's header, in one
+    // column (no inspector, no facts block: nothing is open yet)
     const page = template("DetailPage") as HTMLElement;
     expect(page.querySelectorAll('[data-part="stat-card"]')).toHaveLength(5);
     expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
     for (const h of Object.values(E.run.columns)) expect(within(page).getByText(h)).toBeTruthy();
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelector(".cb-body-inspector")).not.toBeNull();
-    expect(within(page).getByText(E.run.inspector.selectHint)).toBeTruthy();
+    expect(page.querySelector(".cb-body-inspector")).toBeNull();
+    expect(page.querySelector('[data-part="detail-facts"]')).toBeNull();
     expect(screen.queryByRole("table", { name: E.run.resultsLabel })).toBeNull();
     await release();
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
@@ -670,7 +680,7 @@ describe("the gates (org admins)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     },
   );
 });

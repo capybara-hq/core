@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Repeater</h1>
-<p>An array of objects in a config form: hairline item cards with title, subtitle, reorder and remove, or compact rows; an add button or a preset menu (spec §6.26).</p>
+<p>An array of objects in a config form: hairline item cards with title, subtitle, reorder and remove, or compact rows; inside a form card the items are divided rows (one box is enough); an add button or a preset menu (spec §6.26).</p>
 <div class="r-blocks">
 <section data-ref-block="repeater-default" style="width:720px" data-pad>
   <div class="r-rep" data-part="repeater"><ul class="r-rep-list">
@@ -91,6 +91,36 @@
   <div class="r-rep" data-part="repeater"><p class="r-rep-empty" data-part="repeater-empty">还没有端点。添加一个兼容 OpenAI 的服务即可开始。</p>
   <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加端点<i data-icon="chevron-down" data-size="14"></i></button></div>
   </div>
+</section>
+<section data-ref-block="repeater-divided" style="width:720px" data-pad>
+  <section class="r-form-section r-form-section-stacked"><div class="r-form-intro"><h2 class="r-h2">端点</h2></div><div class="r-form-card">
+  <div class="r-rep" data-part="repeater" data-variant="divided"><ul class="r-rep-list">
+    <li><div class="r-rep-item" data-part="repeater-item">
+      <div class="r-rep-head" data-part="repeater-head">
+        <span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span>
+        <span class="r-rep-titles"><span class="r-rep-title" data-part="repeater-title">deepseek</span><span class="r-rep-subtitle" data-part="repeater-subtitle">https://api.deepseek.com</span></span>
+        <span class="r-rep-actions"><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense"><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" data-part="repeater-remove"><i data-icon="trash-2" data-size="14"></i></button></span>
+      </div>
+      <div class="r-rep-body" data-part="repeater-body">
+        <div class="r-field"><span class="r-label">名称</span><input class="r-input" value="deepseek"></div>
+        <div class="r-field"><span class="r-label">接口地址</span><input class="r-input" value="https://api.deepseek.com"></div>
+      </div>
+    </div></li>
+    <li><div class="r-rep-item" data-part="repeater-item">
+      <div class="r-rep-head" data-part="repeater-head">
+        <span class="r-rep-handle"><i data-icon="grip-vertical" data-size="14"></i></span>
+        <span class="r-rep-titles"><span class="r-rep-title" data-part="repeater-title">qwen</span><span class="r-rep-subtitle" data-part="repeater-subtitle">https://dashscope.aliyuncs.com/compatible-mode/v1</span></span>
+        <span class="r-rep-actions"><button class="r-icon-btn" data-step="dense"><i data-icon="arrow-up" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" disabled><i data-icon="arrow-down" data-size="14"></i></button><button class="r-icon-btn" data-step="dense" data-part="repeater-remove"><i data-icon="trash-2" data-size="14"></i></button></span>
+      </div>
+      <div class="r-rep-body" data-part="repeater-body">
+        <div class="r-field"><span class="r-label">名称</span><input class="r-input" value="qwen"></div>
+        <div class="r-field"><span class="r-label">接口地址</span><input class="r-input" value="https://dashscope.aliyuncs.com/compatible-mode/v1"></div>
+      </div>
+    </div></li>
+  </ul>
+  <div class="r-rep-foot"><button class="r-btn" data-variant="default" data-step="dense" data-part="repeater-add"><i data-icon="plus" data-size="14"></i>添加端点<i data-icon="chevron-down" data-size="14"></i></button></div>
+  </div>
+  </div></section>
 </section>
 </div>
 </main>

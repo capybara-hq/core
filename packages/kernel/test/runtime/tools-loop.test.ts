@@ -33,6 +33,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableConnectorExtensions,
   eventsOf,
   postMessage,
   type Req,
@@ -342,6 +343,7 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
     };
     req = await session(k, "owner");
     orgId = await createOrg(req);
+    await enableConnectorExtensions(k, orgId);
   });
 
   it("连接器工具与插件工具各调用一次，模型拿到结果后结束", async () => {

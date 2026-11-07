@@ -1,7 +1,7 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: the pool carries no schema types
 import type { Kysely } from "kysely";
 import { SetupLock } from "../../src/admin/setup-lock.js";
-import { EnterpriseAdminLock } from "../../src/identity/enterprise-admin.js";
+import { SuperAdminLock } from "../../src/identity/super-admin.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { XactLock } from "../../src/infra/database/xact-lock.js";
@@ -13,7 +13,7 @@ export interface DatabaseHandles {
   txHost: TransactionHost;
   xactLock: XactLock;
   /** The lock providers over these handles (the same classes the application provides). */
-  adminLock: EnterpriseAdminLock;
+  adminLock: SuperAdminLock;
   setupLock: SetupLock;
 }
 
@@ -30,7 +30,7 @@ export function databaseHandles(pool: Kysely<any>, log: KernelLogger): DatabaseH
     db,
     txHost,
     xactLock,
-    adminLock: new EnterpriseAdminLock(db, xactLock, txHost),
+    adminLock: new SuperAdminLock(db, xactLock, txHost),
     setupLock: new SetupLock(xactLock, txHost),
   };
 }

@@ -472,6 +472,30 @@ describe("child cases", { timeout: 120_000 }, () => {
         subagentTemplate: { id: "tpl-1", version: 1 },
       }).drift,
     ).toEqual([]);
+    // plugin scope phase 2: the same id and version number from another source (an org copy
+    // linked to a platform template, or a pin back to the copy's own version) is a change
+    expect(
+      reconstructRequest(s, call.seq, {
+        model: info,
+        definition: { ...logged },
+        subagentTemplate: { id: "tpl-1", version: 1, platformTemplateId: "ptpl-1" },
+      }).drift,
+    ).toEqual(["subagent_changed"]);
+    (ev.payload as EventPayload<"subagent_started">).template.platformTemplateId = "ptpl-1";
+    expect(
+      reconstructRequest(s, call.seq, {
+        model: info,
+        definition: { ...logged },
+        subagentTemplate: { id: "tpl-1", version: 1, platformTemplateId: "ptpl-1" },
+      }).drift,
+    ).toEqual([]);
+    expect(
+      reconstructRequest(s, call.seq, {
+        model: info,
+        definition: { ...logged },
+        subagentTemplate: { id: "tpl-1", version: 1 },
+      }).drift,
+    ).toEqual(["subagent_changed"]);
   });
 
   it("a child case is added under the parent's agent; a step replay with an instruction candidate reports subagent_changed", async () => {

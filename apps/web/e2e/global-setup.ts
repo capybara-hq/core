@@ -425,6 +425,7 @@ function notesPlugin(version: string): Record<string, string> {
     ".capybara-plugin/plugin.json": JSON.stringify({
       schemaVersion: 1,
       name: "notes",
+      displayName: { zh: "笔记", en: "Notes" },
       version,
       publisher: "Acme",
       description: "Notes skills for e2e",

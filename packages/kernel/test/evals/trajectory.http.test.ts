@@ -123,8 +123,8 @@ beforeEach(async () => {
     "capybara.model_prices, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
-  const mk = async (login: string, enterpriseAdmin = false) =>
-    (await accounts.createLocal({ login, password: PW, displayName: login, enterpriseAdmin })).id;
+  const mk = async (login: string, superAdmin = false) =>
+    (await accounts.createLocal({ login, password: PW, displayName: login, superAdmin })).id;
   ownerId = await mk("owner");
   aliceId = await mk("alice");
   bobId = await mk("bob");
@@ -187,7 +187,7 @@ interface Detail {
 }
 
 describe("GET /orgs/:orgId/trajectories/:conversationId", () => {
-  it("负责人 200；非负责人成员 404；非成员的企业管理员 404；admin 200；每次 200 记一条审计", async () => {
+  it("负责人 200；非负责人成员 404；非成员的超级管理员 404；admin 200；每次 200 记一条审计", async () => {
     const before = await viewedCount();
     const a = await detail(alice, convBob);
     expect(a.statusCode, a.body).toBe(200);

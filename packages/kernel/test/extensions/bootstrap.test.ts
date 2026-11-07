@@ -89,8 +89,12 @@ async function boot(
   await k.start();
   return k;
 }
-/** A short `lock:bootstrap` TTL, so a run outlives it several times over. */
-const shortLock: KernelOverride[] = [{ provide: BOOTSTRAP_LOCK_TTL, useValue: 300 }];
+/**
+ * A short `lock:bootstrap` TTL, so a run outlives it several times over. It renews every 500 ms and
+ * gives up 1 s after its last good renewal: a loaded test worker's event-loop stalls stay far below
+ * that (300 ms failed on stalls of about 100 ms).
+ */
+const shortLock: KernelOverride[] = [{ provide: BOOTSTRAP_LOCK_TTL, useValue: 1_500 }];
 
 async function stopAll(): Promise<void> {
   while (kernels.length > 0) await kernels.pop()?.close();
@@ -136,7 +140,7 @@ async function loginAdmin(k: TestKernel): Promise<void> {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
 }
@@ -157,7 +161,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-describe("a fresh deployment", () => {
+describe("a fresh deployment", { timeout: 30_000 }, () => {
   let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
   let k: TestKernel;
   beforeAll(async () => {
@@ -242,6 +246,51 @@ describe("a fresh deployment", () => {
         },
       },
     ]);
+  });
+
+  it("the required entry's item is builtin, scope all and pending until a person confirms it", async () => {
+    const items = async () =>
+      (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json().items as {
+        id: string;
+        name: string;
+        builtin: boolean;
+        scope: string;
+        disabled: boolean;
+        pending: boolean;
+        permissionsHash: string | null;
+      }[];
+    const list = await items();
+    const alpha = list.find((i) => i.name === "alpha");
+    expect(alpha).toMatchObject({ builtin: true, scope: "all", disabled: false, pending: true });
+    expect(list.find((i) => i.name === "beta")).toMatchObject({
+      builtin: false,
+      pending: false,
+    });
+    const pending = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    expect(pending.json().items.map((i: { name: string }) => i.name)).toEqual(["alpha"]);
+    const stale = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: "0000000000000000" },
+    });
+    expect(stale.statusCode, stale.body).toBe(409);
+    expect(stale.json().error.code).toBe("extension.approval_stale");
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: alpha?.permissionsHash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ pending: false, builtin: true });
+    expect(await snapshot("alpha")).toMatchObject({ source: "web" });
+    const again = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${alpha?.id}/confirm`,
+      payload: { permissionsHash: alpha?.permissionsHash },
+    });
+    expect(again.json().error.code).toBe("extension.not_pending");
+    // the confirmed snapshot is kept by the next run
+    expect((await items()).find((i) => i.name === "alpha")?.pending).toBe(false);
   });
 
   it("a second run of the same manifest does nothing", async () => {
@@ -336,7 +385,7 @@ describe("a fresh deployment", () => {
   });
 });
 
-describe("a core upgrade (Review Focus 3)", () => {
+describe("a core upgrade (Review Focus 3)", { timeout: 30_000 }, () => {
   it("raises a pinned version, keeps a hand-upgraded plugin, clears required from a removed entry", async () => {
     await reset();
     const v1 = await fixture([
@@ -348,7 +397,7 @@ describe("a core upgrade (Review Focus 3)", () => {
     ]);
     let k = await boot(v1);
     await loginAdmin(k);
-    // The enterprise admin disables delta and uninstalls epsilon (both optional)
+    // The super admin disables delta and uninstalls epsilon (both optional)
     for (const [method, url] of [
       ["POST", "/api/v1/admin/extensions/delta/disable"],
       ["POST", "/api/v1/admin/extensions/epsilon/disable"],
@@ -357,7 +406,7 @@ describe("a core upgrade (Review Focus 3)", () => {
       const res = await admin({ method, url });
       expect(res.statusCode, `${method} ${url}: ${res.body}`).toBeLessThan(300);
     }
-    // The enterprise admin upgrades beta by hand above what core pins
+    // The super admin upgrades beta by hand above what core pins
     const beta12 = await lifePkg({ name: "beta", version: "1.2.0" });
     const up = await admin({
       method: "POST",
@@ -376,6 +425,12 @@ describe("a core upgrade (Review Focus 3)", () => {
 
     // The new core: alpha raised (with a new permission, pre-approved), beta still 1.0.0, gamma
     // gone, delta raised, epsilon unchanged, zeta new
+    // a required plugin the migration could have left disabled: the next run clears it
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("name", "=", "alpha")
+      .execute();
     const v2 = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.1.0", policy: true }) },
       { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
@@ -426,6 +481,18 @@ describe("a core upgrade (Review Focus 3)", () => {
         required: false,
       },
     ]);
+    // gamma left the manifest: no longer builtin, still scope all
+    expect(
+      await db
+        .selectFrom("catalog_items")
+        .select(["name", "builtin", "scope", "disabled"])
+        .where("name", "in", ["alpha", "gamma"])
+        .orderBy("name")
+        .execute(),
+    ).toEqual([
+      { name: "alpha", builtin: true, scope: "all", disabled: false },
+      { name: "gamma", builtin: false, scope: "all", disabled: false },
+    ]);
     expect(k.app.get(ExtensionHost).current("delta")).toBeUndefined();
     expect(k.app.get(ExtensionHost).current("epsilon")).toBeUndefined();
     expect(await snapshot("alpha")).toEqual({ version: "1.1.0", source: "bootstrap" });
@@ -448,7 +515,7 @@ describe("a core upgrade (Review Focus 3)", () => {
   });
 });
 
-describe("same version, different bytes", () => {
+describe("same version, different bytes", { timeout: 30_000 }, () => {
   it("keeps the installed package and warns naming the plugin", async () => {
     await reset();
     const v1 = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
@@ -488,7 +555,104 @@ describe("same version, different bytes", () => {
   });
 });
 
-describe("tampered and missing packages (Review Focus 2)", () => {
+describe("a pin whose name an organization holds", { timeout: 30_000 }, () => {
+  it("warns naming the plugin and the organization (P3-28)", async () => {
+    await reset();
+    // a later kernel release pins a plugin name an org uploaded meanwhile
+    await db.insertInto("orgs").values({ id: "org-held", slug: "held", name: "Held" }).execute();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: "00000000-0000-4000-8000-0000000000aa",
+        name: "omega",
+        package_name: "@held/omega",
+        publisher: "Held",
+        description: "omega",
+        latest_version: "1.0.0",
+        created_by: null,
+        owner_org_id: "org-held",
+      })
+      .execute();
+    const fx = await fixture([
+      { bytes: await lifePkg({ name: "omega", version: "1.0.0" }), required: false },
+    ]);
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const base = createLogger("error");
+    const logger = new Proxy(base, {
+      get(t, k, receiver) {
+        if (k === "warn") {
+          return (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, ...(fields !== undefined && { fields }) });
+          };
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+      },
+    });
+    await boot(fx, {}, logger);
+    // once per bootstrap attempt (the start retries a failed optional entry)
+    const held = warns.filter((w) => w.msg.includes("held by an organization"));
+    expect(held.length).toBeGreaterThan(0);
+    expect(new Set(held.map((w) => JSON.stringify(w))).size).toBe(1);
+    expect(held[0]).toEqual({
+      msg: expect.stringContaining("bootstrap:"),
+      fields: {
+        plugin: "omega",
+        version: "1.0.0",
+        required: false,
+        ownerOrgId: "org-held",
+        ownerOrg: "Held",
+        context: "BootstrapService",
+      },
+    });
+  });
+});
+
+describe("the confirm's catalog view during bootstrap", { timeout: 30_000 }, () => {
+  it("reads only the confirmed plugin's package: another unreadable package logs no admin-view warning", async () => {
+    await reset();
+    const v1 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
+      { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
+    ]);
+    await boot(v1);
+    await stopAll();
+    // beta's bytes are gone (as when the object store is not loaded yet during bootstrap)
+    const beta = await db
+      .selectFrom("extension_installs")
+      .select("sha256")
+      .where("name", "=", "beta")
+      .executeTakeFirstOrThrow();
+    await db.deleteFrom("extension_blobs").where("sha256", "=", beta.sha256).execute();
+    const v2 = await fixture([
+      { bytes: await lifePkg({ name: "alpha", version: "1.1.0" }) },
+      { bytes: await lifePkg({ name: "beta", version: "1.0.0" }) },
+    ]);
+    const warns: { msg: string; fields?: Record<string, unknown> }[] = [];
+    const base = createLogger("error");
+    const logger = new Proxy(base, {
+      get(t, k, receiver) {
+        if (k === "warn") {
+          return (msg: string, fields?: Record<string, unknown>) => {
+            warns.push({ msg, ...(fields !== undefined && { fields }) });
+          };
+        }
+        const v = Reflect.get(t, k);
+        return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+      },
+    });
+    const k = await boot(v2, {}, logger);
+    const r = (await audits("bootstrap.completed")).at(-1)?.detail as { results: unknown[] };
+    expect(r.results).toEqual([
+      { name: "alpha", action: "upgraded", version: "1.1.0" },
+      { name: "beta", action: "kept", version: "1.0.0" },
+    ]);
+    expect(k.app.get(ExtensionHost).current("alpha")?.manifest.version).toBe("1.1.0");
+    expect(warns.filter((w) => w.msg.includes("unreadable for the admin view"))).toEqual([]);
+  });
+});
+
+describe("tampered and missing packages (Review Focus 2)", { timeout: 30_000 }, () => {
   const tampered = async (): Promise<{ dir: string; manifest: BootstrapManifest }> => {
     const fx = await fixture([
       { bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) },
@@ -574,7 +738,9 @@ describe("tampered and missing packages (Review Focus 2)", () => {
   });
 });
 
-describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", () => {
+describe("obtaining the packages: offline directory, else npm (startup bootstrap spec)", {
+  timeout: 30_000,
+}, () => {
   let reg: FakeNpmRegistry | undefined;
   const tarballs = () => (reg?.requests ?? []).filter((r) => r.includes("/-/"));
   const npmFixture = async () =>
@@ -725,7 +891,7 @@ describe("obtaining the packages: offline directory, else npm (startup bootstrap
   });
 });
 
-describe("a declarative entry", () => {
+describe("a declarative entry", { timeout: 30_000 }, () => {
   afterAll(stopAll);
 
   it("goes to the catalog only, once the object store (a bootstrap plugin itself) has loaded", async () => {
@@ -777,7 +943,7 @@ describe("a declarative entry", () => {
   });
 });
 
-describe("config-declared names and the lock", () => {
+describe("config-declared names and the lock", { timeout: 30_000 }, () => {
   beforeEach(reset);
 
   it("an entry also declared in the config extensions list is kept: config wins, no install record", async () => {
@@ -792,44 +958,49 @@ describe("config-declared names and the lock", () => {
 
   it("a run longer than the lock's TTL keeps lock:bootstrap by renewal; another holder cannot take it", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    // the lock's TTL is 1.5 s (BOOTSTRAP_LOCK_TTL)
     const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
+    let running: Promise<unknown> | undefined;
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
           // the run outlives the TTL several times over
-          await new Promise((r) => setTimeout(r, 1_200));
+          await new Promise((r) => setTimeout(r, 6_000));
           return k.app.get(PluginImport).prepare(...a);
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>
           k.app.get(PluginImport).confirm(...a),
       };
-      const running = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
-      await new Promise((r) => setTimeout(r, 900));
+      const run = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
+      running = run;
+      // twice the TTL: the key is still there only because it was renewed
+      await new Promise((r) => setTimeout(r, 3_000));
       expect(await probe.exists("lock:bootstrap")).toBe(1);
       expect(await probe.set("lock:bootstrap", "other", "PX", 1_000, "NX")).toBeNull();
-      const r = await running;
+      const r = await run;
       expect(r.results).toEqual([{ name: "alpha", action: "installed", version: "1.0.0" }]);
       expect(await probe.exists("lock:bootstrap")).toBe(0);
     } finally {
+      // a failed assertion must not leave the run writing after the kernel closes
+      await running?.catch(() => {});
       probe.disconnect();
     }
   });
 
   it("a run that loses lock:bootstrap mid-run rejects naming the lock and records nothing as done", async () => {
     const fx = await fixture([{ bytes: await lifePkg({ name: "alpha", version: "1.0.0" }) }]);
-    // the lock's TTL is 300 ms (BOOTSTRAP_LOCK_TTL)
+    // the lock's TTL is 1.5 s (BOOTSTRAP_LOCK_TTL)
     const k = await boot(undefined, {}, createLogger("error"), shortLock);
     const probe = new Redis(rd.url);
     const bootstrap = k.app.get(BootstrapService);
     try {
       const imports = {
         prepare: async (...a: Parameters<PluginImport["prepare"]>) => {
-          // another holder takes the key while the run is busy: the next renewal fails
-          await probe.set("lock:bootstrap", "another-replica", "PX", 5_000);
-          await new Promise((r) => setTimeout(r, 600));
+          // another holder takes the key while the run is busy: the next renewal (500 ms) fails
+          await probe.set("lock:bootstrap", "another-replica", "PX", 10_000);
+          await new Promise((r) => setTimeout(r, 1_500));
           return k.app.get(PluginImport).prepare(...a);
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>

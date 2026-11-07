@@ -174,7 +174,7 @@ beforeAll(async () => {
       login: "owner",
       password: PW,
       displayName: "O",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   owner = await session(k, "owner");

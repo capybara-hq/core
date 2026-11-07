@@ -1,4 +1,7 @@
-import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import { Module } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveConfig } from "../../src/config/load.js";
@@ -7,6 +10,7 @@ import { AccountsModule, AccountsService } from "../../src/identity/accounts.js"
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA, migrate } from "../../src/index.js";
 import { openKernelCli, openKernelCliOverPool } from "../../src/infra/cli/kernel-cli.module.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
+import { QueueModule } from "../../src/infra/queue/queue.module.js";
 import { KERNEL_BUS, KERNEL_POOL, REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 
@@ -43,7 +47,7 @@ describe("openKernelCli", () => {
       for (const token of [REDIS, KERNEL_BUS, LockService]) {
         expect(() => app.get(token), String(token)).toThrow();
       }
-      expect(await app.get(AccountsService).countEnterpriseAdmins()).toBe(0);
+      expect(await app.get(AccountsService).countSuperAdmins()).toBe(0);
     } finally {
       await app.close();
     }
@@ -66,6 +70,38 @@ describe("openKernelCli", () => {
     await app.close();
     await expect(sql`select 1`.execute(pool)).rejects.toThrow();
   });
+});
+
+describe("openKernelCli queues", () => {
+  it("a queue a command's module registers uses the configured Redis, not BullMQ's default", async () => {
+    @Module({ imports: [QueueModule.registerQueue("cli-probe")] })
+    class ProbeModule {}
+    const rd = await startTestRedis();
+    const app = await openKernelCli(
+      resolveConfig(
+        {
+          db: { url: pgc.url },
+          redis: { url: rd.url },
+          masterKey: Buffer.alloc(32, 1).toString("base64"),
+        },
+        {},
+      ),
+      { logger: quiet, modules: [ProbeModule] },
+    );
+    try {
+      const queue = app.get<Queue>(getQueueToken("cli-probe"));
+      const want = new URL(rd.url);
+      expect(queue.opts.connection).toMatchObject({
+        host: want.hostname,
+        port: Number(want.port),
+      });
+      await queue.add("probe", {});
+      expect(await queue.count()).toBe(1);
+    } finally {
+      await app.close();
+      await rd.stop();
+    }
+  }, 120_000);
 });
 
 describe("openKernelCliOverPool", () => {

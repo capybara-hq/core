@@ -1,12 +1,35 @@
 import { type ConversationEvent, streamUrl } from "./conversations";
+import { LiveDrafts } from "./live-drafts";
+import { PersonWaits } from "./person-waits";
+import { fetchRunDrafts, type RunDraftSnapshot } from "./run-drafts";
 import { parseUiRefresh, type UiRefresh } from "./ui";
 
-/** SSE `event: delta` 帧：运行的流式增量（只是草稿，最终内容以日志中的 assistant_message 为准）。 */
+/**
+ * A streaming update of one step's draft (only a draft: the step's `assistant_message` in the log
+ * is the final content).
+ *
+ * - `text` / `thinking`: the SSE `event: delta` frame, `text` appended to that channel; `offset` is
+ *   the characters of that channel before it (per channel, from 0 at each step and `step_reset`).
+ * - `step_reset`: the step starts over (its draft is dropped).
+ * - `draft`: a step's draft so far, for each channel given (`text`, `thinking`; one left out is
+ *   kept). With `replace` it sets those channels (a channel starting over at offset 0); with
+ *   `resync` (an `event: draft` frame) a channel that is a prefix of what is shown keeps the longer
+ *   (the stored draft can lag the screen) and any other replaces it (a reset, a new attempt);
+ *   with neither, the longer wins (a draft read after a gap never shrinks what is shown). Produced by the stream opener's live drafts
+ *   (`lib/live-drafts.ts`, spec 2026-11-07-run-input-and-live-drafts §4).
+ */
 export interface StreamDelta {
   runId: string;
   step: number;
-  delta: "text" | "thinking" | "step_reset";
+  delta: "text" | "thinking" | "step_reset" | "draft";
   text?: string;
+  /** `draft` only: the step's thinking so far. */
+  thinking?: string;
+  offset?: number;
+  /** `draft` only: set the channels given instead of keeping the longer. */
+  replace?: boolean;
+  /** `draft` only: keep what is shown where the channel given is a prefix of it, else set it. */
+  resync?: boolean;
 }
 
 /** What `event: changed` names (kernel `CONVERSATION_CHANGES`). */
@@ -41,6 +64,11 @@ export interface SubagentProgress {
 
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
+  /**
+   * The drafts' updates, in stream order and without gaps or repeats: a delta the draft already
+   * holds is dropped, one that overlaps it is trimmed to what is new, and the deltas past a gap
+   * are held until a draft read covers them (then one `draft` replaces the step's draft).
+   */
   onDelta(d: StreamDelta): void;
   /** `event: subagent_progress`: one of this conversation's sub-agents made progress. */
   onSubagentProgress?(p: SubagentProgress): void;
@@ -63,6 +91,8 @@ const CLOSED = 2;
  * 打开会话事件流（`GET .../conversations/:id/stream?after=<seq>`，经同源代理）。
  * 断线时浏览器自动重连并带上 `Last-Event-ID`（内核优先于 `after` 使用它）；
  * 服务端发 `event: error` 帧后立即关闭，不再重连。返回关闭函数。
+ * Live drafts (`event: draft`, delta offsets) go through {@link LiveDrafts}: a reconnect resumes a
+ * streaming reply without a gap or a repeat.
  */
 export function openConversationStream(
   orgId: string,
@@ -72,8 +102,15 @@ export function openConversationStream(
 ): () => void {
   const es = new EventSource(streamUrl(orgId, conversationId, afterSeq));
   let closed = false;
+  const live = new LiveDrafts(
+    (d) => {
+      if (!closed) handlers.onDelta(d);
+    },
+    (runId) => fetchRunDrafts(orgId, conversationId, runId),
+  );
   const close = () => {
     closed = true;
+    live.close();
     es.close();
   };
   const parse = (e: Event): unknown => {
@@ -85,15 +122,29 @@ export function openConversationStream(
     }
   };
   es.addEventListener("open", () => {
-    if (!closed) handlers.onOpen?.();
+    if (closed) return;
+    live.reset();
+    handlers.onOpen?.();
   });
   es.addEventListener("event", (e) => {
     const data = parse(e);
-    if (!closed && data !== undefined) handlers.onEvent(data as ConversationEvent);
+    if (closed || data === undefined) return;
+    live.event(data as ConversationEvent);
+    handlers.onEvent(data as ConversationEvent);
+  });
+  es.addEventListener("draft", (e) => {
+    const d = parse(e) as Partial<RunDraftSnapshot & { runId: string }> | undefined;
+    if (closed || typeof d?.runId !== "string" || typeof d.step !== "number") return;
+    live.draft({
+      runId: d.runId,
+      step: d.step,
+      text: typeof d.text === "string" ? d.text : "",
+      thinking: typeof d.thinking === "string" ? d.thinking : "",
+    });
   });
   es.addEventListener("delta", (e) => {
     const data = parse(e);
-    if (!closed && data !== undefined) handlers.onDelta(data as StreamDelta);
+    if (!closed && data !== undefined) live.delta(data as StreamDelta);
   });
   es.addEventListener("changed", (e) => {
     const what = (parse(e) as { what?: unknown } | undefined)?.what;
@@ -202,28 +253,26 @@ function locate(events: ConversationEvent[], seq: number): { at: number; found: 
   return { at: lo, found: false };
 }
 
-/** 等人处理的开始 / 结束事件（`waiting` 不是终态：处理后运行继续）。 */
-const WAIT_START = new Set<ConversationEvent["type"]>(["approval_requested", "question_asked"]);
-const WAIT_END = new Set<ConversationEvent["type"]>(["approval_decided", "question_answered"]);
-
+/** The run in progress and whether it waits for a person (`waiting` is not terminal: it goes on). */
 function runPhase(events: ConversationEvent[]): { running: boolean; waiting: boolean } {
   let active: string | null = null;
-  let waiting = false;
+  const waits = new PersonWaits();
   for (const e of events) {
     if (e.type === "run_started") {
       active = e.runId;
-      waiting = false;
+      waits.clear();
     } else if (e.runId === null || e.runId !== active) {
     } else if (TERMINAL.has(e.type)) {
       active = null;
-      waiting = false;
-    } else if (WAIT_START.has(e.type)) {
-      waiting = true;
-    } else if (WAIT_END.has(e.type)) {
-      waiting = false;
+      waits.clear();
+    } else {
+      waits.apply(e);
     }
   }
-  return { running: active !== null && !waiting, waiting: active !== null && waiting };
+  return {
+    running: active !== null && !waits.waiting,
+    waiting: active !== null && waits.waiting,
+  };
 }
 
 function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState {
@@ -257,23 +306,50 @@ function mergeEvents(state: ChatState, incoming: ConversationEvent[]): ChatState
   };
 }
 
+/** A channel's text after a delta at `offset`: what it already holds is not added twice. */
+function appendAt(have: string, text: string, offset: number | undefined): string {
+  if (offset === undefined || offset >= have.length) return have + text;
+  return offset + text.length <= have.length ? have : have + text.slice(have.length - offset);
+}
+
 function applyDelta(state: ChatState, d: StreamDelta): ChatState {
   const key = stepKey(d.runId, d.step);
   if (state.finalized[key] || state.closedRuns[d.runId]) return state;
   const i = state.drafts.findIndex((x) => x.runId === d.runId && x.step === d.step);
-  if (d.delta === "step_reset") {
-    if (i < 0) return state;
-    return { ...state, drafts: state.drafts.filter((_, j) => j !== i) };
+  const without = () =>
+    i < 0 ? state : { ...state, drafts: state.drafts.filter((_, j) => j !== i) };
+  if (d.delta === "step_reset") return without();
+  let next: Draft;
+  if (d.delta === "draft") {
+    const prev = i >= 0 ? (state.drafts[i] as Draft) : undefined;
+    // a channel left out is kept; a merge never shrinks what is shown; a resync keeps what is
+    // shown when the stored draft is only behind it (a prefix), and replaces anything else
+    const pick = (have: string, got: string | undefined) => {
+      if (got === undefined) return have;
+      if (d.resync) return have.startsWith(got) ? have : got;
+      return !d.replace && got.length < have.length ? have : got;
+    };
+    next = {
+      runId: d.runId,
+      step: d.step,
+      text: pick(prev?.text ?? "", d.text),
+      thinking: pick(prev?.thinking ?? "", d.thinking),
+    };
+    if (next.text === "" && next.thinking === "") return without();
+    if (prev !== undefined && next.text === prev.text && next.thinking === prev.thinking)
+      return state;
+  } else {
+    const text = d.text ?? "";
+    if (text === "") return state;
+    const prev = i >= 0 ? (state.drafts[i] as Draft) : { ...d, text: "", thinking: "" };
+    next = {
+      runId: d.runId,
+      step: d.step,
+      text: d.delta === "text" ? appendAt(prev.text, text, d.offset) : prev.text,
+      thinking: d.delta === "thinking" ? appendAt(prev.thinking, text, d.offset) : prev.thinking,
+    };
+    if (i >= 0 && next.text === prev.text && next.thinking === prev.thinking) return state;
   }
-  const text = d.text ?? "";
-  if (text === "") return state;
-  const prev = i >= 0 ? (state.drafts[i] as Draft) : { ...d, text: "", thinking: "" };
-  const next: Draft = {
-    runId: d.runId,
-    step: d.step,
-    text: d.delta === "text" ? prev.text + text : prev.text,
-    thinking: d.delta === "thinking" ? prev.thinking + text : prev.thinking,
-  };
   const drafts =
     i >= 0 ? state.drafts.map((x, j) => (j === i ? next : x)) : [...state.drafts, next];
   return { ...state, drafts };
@@ -282,7 +358,9 @@ function applyDelta(state: ChatState, d: StreamDelta): ChatState {
 /**
  * 会话状态归约（纯函数）：
  * - 事件按 seq 合入，重复的忽略（乱序到达也按 seq 排列）；
- * - `delta` 累积到 `(runId, step)` 的流式草稿；`step_reset` 清空该步草稿；
+ * - `delta` 累积到 `(runId, step)` 的流式草稿；`step_reset` 清空该步草稿；a `draft` sets its channels
+ *   (`replace`), keeps a longer channel it is a prefix of (`resync`) or keeps the longer of each;
+ *   a delta with an `offset` adds only what the draft does not hold yet;
  *   该步的 `assistant_message` 到达后草稿被它替换，之后再到的增量忽略（回放期间排队的增量可能晚到）；
  * - 运行到终态后丢弃其草稿、忽略其增量；`run_started` 之后、终态之前 `running` 为 true。
  * 没有变化时返回原 state。

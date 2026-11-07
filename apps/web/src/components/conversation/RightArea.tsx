@@ -30,7 +30,7 @@ import {
 } from "../../lib/query/conversation";
 import { useAppMutation } from "../../lib/query/mutation";
 import { formatRightHash, parseRightHash, type RightTarget } from "../../lib/right-area";
-import { dispatchedAny, useAgentTree } from "../../lib/subagents";
+import { agentsSummary, dispatchedAny, useAgentTree } from "../../lib/subagents";
 import type { TimelineEntry, TimelineTool } from "../../lib/timeline";
 import { toolLabelText } from "../../lib/tool-label";
 import { type UiContributionItem, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
@@ -320,8 +320,9 @@ export function useRightAreaSlot(p: {
     return m;
   }, [p.events]);
   const openTask = useCallback((taskId: string) => open({ kind: "background", taskId }), [open]);
-  // The agent map (agent map spec §9): its entries show once a root conversation dispatched a
-  // sub-agent (a sub-agent conversation's page has none: the tree is its root's).
+  // The agent map (agent map spec §9): its entries (the sub-agent group's link and the composer's
+  // agents chip, AC3) show once a root conversation dispatched a sub-agent (a sub-agent
+  // conversation's page has none: the tree is its root's).
   const dispatched = useMemo(() => dispatchedAny(p.events), [p.events]);
   const hasSubagents = dispatched && p.root === true;
   const openMap = useCallback(() => open({ kind: "agents" }), [open]);
@@ -331,13 +332,12 @@ export function useRightAreaSlot(p: {
     [open],
   );
   const mapTarget = target?.kind === "agents" ? target : null;
-  const tree = useAgentTree(
-    p.orgId,
-    p.conversationId,
-    p.events,
-    p.progress,
-    mapTarget !== null && hasSubagents,
-  );
+  // read on a root conversation with sub-agents (the agents chip counts the whole tree), kept
+  // closer while the map is open
+  const tree = useAgentTree(p.orgId, p.conversationId, p.events, p.progress, {
+    enabled: hasSubagents,
+    open: mapTarget !== null && hasSubagents,
+  });
   // `#agents…` on a conversation without sub-agents, or on a sub-agent's page (a pasted link):
   // nothing to show, drop it
   const staleMap = p.eventsLoaded && p.root !== undefined && mapTarget !== null && !hasSubagents;
@@ -536,6 +536,20 @@ export function useRightAreaSlot(p: {
     [files],
   );
 
+  // The composer's agents chip (AC3): the whole tree (read above), the list, the log, progress.
+  const agents = useMemo(
+    () =>
+      hasSubagents
+        ? agentsSummary({
+            events: p.events,
+            views: p.subagents,
+            progress: p.progress,
+            tree: tree.root,
+          })
+        : undefined,
+    [hasSubagents, p.events, p.subagents, p.progress, tree.root],
+  );
+
   const agentMap =
     mapTarget !== null && hasSubagents ? (
       <AgentMap
@@ -571,17 +585,6 @@ export function useRightAreaSlot(p: {
           target?.kind === "panel" && target.plugin === c.plugin && target.contribution === c.id,
         onOpen: () => open({ kind: "panel", plugin: c.plugin, contribution: c.id }),
       })),
-      ...(hasSubagents
-        ? [
-            {
-              id: "agents",
-              label: t("agentMap"),
-              icon: "agent" as const,
-              pressed: mapTarget !== null,
-              onOpen: () => (mapTarget !== null ? closeMap() : openMap()),
-            },
-          ]
-        : []),
     ],
     properties: {
       pressed: target?.kind === "properties",
@@ -618,6 +621,7 @@ export function useRightAreaSlot(p: {
     ),
     ...(panelNode ? { panelNode } : {}),
     ...(agentMap ? { agentMap } : {}),
+    ...(agents !== undefined && agents.count > 0 ? { agents: { ...agents, onOpen: openMap } } : {}),
     ...(loading !== undefined ? { loading } : {}),
     onCloseRight: close,
     thread: {

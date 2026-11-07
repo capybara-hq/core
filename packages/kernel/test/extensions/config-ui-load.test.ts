@@ -48,7 +48,7 @@ describe("config UI hints: load-time validation, static schemas, issue message k
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     k = await startKernel(
       resolveConfig(

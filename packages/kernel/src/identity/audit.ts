@@ -8,7 +8,8 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 export async function audit(
   db: KernelSchemaDb,
   e: {
-    actorAccountId?: string;
+    /** The acting account; absent or null for the kernel itself (a job such as the scope sync). */
+    actorAccountId?: string | null;
     actorTokenId?: string;
     orgId?: string;
     action: string;

@@ -24,6 +24,7 @@ import {
   createAgent,
   createConv,
   createOrg,
+  enableConnectorExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -90,6 +91,8 @@ describe("release-candidate tool keys in stored data", () => {
     req = await session(k, "owner");
     orgA = await createOrg(req, "A");
     orgB = await createOrg(req, "B");
+    await enableConnectorExtensions(k, orgA);
+    await enableConnectorExtensions(k, orgB);
     docsId = await install(orgA, "docs");
     await install(orgB, "todo");
     // the deployment has an extension named `todo` (an rc key `todo__write` was its tool)

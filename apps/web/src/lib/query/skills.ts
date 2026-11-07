@@ -1,4 +1,4 @@
-import { getSkill, listSkills } from "../skills";
+import { getSkill, listSkills, previewSkillDelete } from "../skills";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -16,4 +16,12 @@ export const skillQuery = (orgId: string, skillId: string) =>
     key: keys.org(orgId).skill(skillId),
     fn: () => getSkill(orgId, skillId),
     freshness: "orgConfig",
+  });
+
+/** What deleting the org's skill does (read when the delete is asked for; it moves on its own). */
+export const skillDeletePreviewQuery = (orgId: string, skillId: string) =>
+  defineQuery({
+    key: keys.org(orgId).skillDeletePreview(skillId),
+    fn: () => previewSkillDelete(orgId, skillId),
+    freshness: "live",
   });

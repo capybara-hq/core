@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { parseSkillMd, SKILL_ENTRY_FILE, type SkillInvocation } from "@capybara-hq/plugin-sdk";
+import { parseSkillMd, SKILL_ENTRY_FILE } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import { assertItemInstallable } from "../catalog/requests.service.js";
+import { offeredNamed } from "../catalog/component-state.js";
+import { type Owner, PLATFORM_OWNER } from "../catalog/ownership.js";
+import { type OwnerVersion, PlatformComponents } from "../catalog/platform-components.js";
+import { assertItemInstallable } from "../catalog/request-rules.js";
 import {
   AttachmentsService,
   type CreatedAttachment,
@@ -14,14 +17,30 @@ import type { KernelSchemaDb, SkillManifest, SourceFormat } from "../db/kernel-s
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
+import { notifySharedUpdate } from "../inbox/org-notices.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { textBytesTokens } from "../runtime/context/tokens.js";
 import { StorageService } from "../storage/storage.service.js";
+import { buildSkillWrite } from "../tools/builtins/skill-write.js";
 import { invocationOf, PINNED_SKILLS_LIMITS } from "./catalog.js";
-import { readSkillPackage, type SkillPackageFile, storedInvocation } from "./package.js";
+import {
+  checkBuiltSkillFiles,
+  readSkillPackage,
+  type SkillPackageFile,
+  type SkillPackageInput,
+  skillManifest,
+} from "./package.js";
+import {
+  PLATFORM_SOURCE,
+  platformSkillsOn,
+  platformSource,
+  skillFileStore,
+  skillVersionsById,
+  usableSkills,
+} from "./usable.js";
 
 /** Where an org skill came from (spec §9.2): the org's own, or a catalog plugin at a version. */
 export type SkillSource = { kind: "org" } | { kind: "plugin"; name: string; version: string };
@@ -33,10 +52,13 @@ export interface SkillConflict {
 }
 
 /**
- * The live org skills named in `skillNames` whose provenance is not catalog item `itemId` (spec
- * §9.2, Decision 8): the org's own skills (`catalog_item_id` null: uploaded or written by an
- * agent) and the skills of other catalog items. A skill of the same item (a reinstall or upgrade)
- * is not a conflict. In the order of `skillNames`.
+ * The skills named in `skillNames` an org would see twice if catalog item `itemId` brought its
+ * skills (spec §9.2, Decision 8; rule 10 of the plugin scope spec): the org's own usable skills
+ * (`catalog_item_id` null: uploaded or written by an agent; unlinked, or pinned copies of another
+ * plugin's platform skill), org skills of other catalog items, and other plugins' platform skills
+ * on in the org. A skill of the same item (an org copy of it, linked or not) is not a conflict;
+ * an unpinned copy of another plugin's platform skill counts through that platform skill. In the
+ * order of `skillNames`.
  */
 export async function skillConflicts(
   db: KernelSchemaDb,
@@ -48,33 +70,93 @@ export async function skillConflicts(
   const rows = await db
     .selectFrom("skills as s")
     .leftJoin("catalog_items as i", "i.id", "s.catalog_item_id")
-    .select(["s.name", "s.catalog_item_id", "s.catalog_version", "i.name as item_name"])
+    .leftJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+    .select([
+      "s.name",
+      "s.catalog_item_id",
+      "s.catalog_version",
+      "i.name as item_name",
+      "p.catalog_item_id as platform_item_id",
+      "p.plugin_name as platform_plugin",
+    ])
     .where("s.org_id", "=", orgId)
     .where("s.scope", "=", "org")
     .where("s.deleted_at", "is", null)
     .where("s.name", "in", [...skillNames])
     .where((eb) =>
+      eb.or([eb("s.platform_skill_id", "is", null), eb("s.pinned_version", "is not", null)]),
+    )
+    .where((eb) =>
       eb.or([eb("s.catalog_item_id", "is", null), eb("s.catalog_item_id", "<>", itemId)]),
     )
+    .where((eb) =>
+      eb.or([eb("p.catalog_item_id", "is", null), eb("p.catalog_item_id", "<>", itemId)]),
+    )
     .execute();
-  const byName = new Map(rows.map((r) => [r.name, r]));
+  const byName = new Map<string, SkillSource>();
+  for (const r of rows) {
+    byName.set(
+      r.name,
+      r.catalog_item_id !== null
+        ? {
+            kind: "plugin",
+            name: r.item_name ?? r.catalog_item_id,
+            version: r.catalog_version ?? "",
+          }
+        : r.platform_plugin !== null
+          ? { kind: "plugin", name: r.platform_plugin, version: "" }
+          : { kind: "org" },
+    );
+  }
+  const platform = await db
+    .selectFrom("platform_skills as p")
+    .innerJoin("platform_skill_versions as v", (j) =>
+      j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+    )
+    .select(["p.id", "p.name", "p.plugin_name", "v.catalog_version"])
+    .where("p.deleted_at", "is", null)
+    .where("p.name", "in", [...skillNames])
+    .where((eb) =>
+      eb.or([eb("p.catalog_item_id", "is", null), eb("p.catalog_item_id", "<>", itemId)]),
+    )
+    .execute();
+  const on = await platformSkillsOn(
+    db,
+    orgId,
+    platform.map((p) => p.id),
+  );
+  for (const p of platform) {
+    if (!on.has(p.id) || byName.has(p.name)) continue;
+    byName.set(
+      p.name,
+      p.plugin_name !== null
+        ? { kind: "plugin", name: p.plugin_name, version: p.catalog_version ?? "" }
+        : { kind: "plugin", name: "platform", version: "" },
+    );
+  }
   const out: SkillConflict[] = [];
   for (const name of new Set(skillNames)) {
-    const r = byName.get(name);
-    if (!r) continue;
-    out.push({
-      skill: name,
-      source:
-        r.catalog_item_id === null
-          ? { kind: "org" }
-          : {
-              kind: "plugin",
-              name: r.item_name ?? r.catalog_item_id,
-              version: r.catalog_version ?? "",
-            },
-    });
+    const source = byName.get(name);
+    if (source) out.push({ skill: name, source });
   }
   return out;
+}
+
+/**
+ * 409 `plugin.skill_conflict` for a new org skill named like platform skills offered to the org
+ * (rule 10): one detail per platform skill, its plugin as the source.
+ */
+function platformNameTaken(name: string, offered: readonly { plugin: string | null }[]): ApiError {
+  const sources = offered.map((p) => ({
+    skill: name,
+    source: { kind: "plugin" as const, name: p.plugin ?? "platform", version: "" },
+  }));
+  const by = sources.map((s) => `plugin "${s.source.name}"`).join(", ");
+  return new ApiError(
+    "plugin.skill_conflict",
+    `Skill "${name}" is offered to this organization by ${by}; skill names are unique in an organization. Rename your skill and upload it again.`,
+    sources,
+  );
 }
 
 /** One line of the conflict message (spec §9.2). */
@@ -106,7 +188,7 @@ export interface SkillSummary {
   name: string;
   description: string;
   currentVersion: number;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
   /** The catalog item name the skill came from; null for the org's own (uploaded or written). */
@@ -123,6 +205,27 @@ export interface SkillSummary {
   manual: boolean;
   /** Phase D: the current version runs as a sub-agent when a person invokes it. */
   fork: boolean;
+  /**
+   * Phase 2: `platform` for a platform skill (deployment-owned, on in the org; not deletable or
+   * versioned by the org), `org` for the org's own.
+   */
+  origin: "org" | "platform";
+  /**
+   * A platform skill's owner (ruling P3-1): the platform, or the org whose upload it came from
+   * (absent on the org's own skills).
+   */
+  owner?: Owner;
+  /**
+   * The org's own skill is marked 可共享 by its org (plugin scope phase 3, ruling P3-6); false for
+   * platform skills and agents' skills.
+   */
+  shareable: boolean;
+  /**
+   * Phase 2, in the library list only: a platform skill's unpinned org copies linked to it (ruling
+   * B2). They resolve to this skill under their own ids, so an agent that selects one of them
+   * selects this skill.
+   */
+  linkedIds?: string[];
 }
 
 /** 技能的一个版本（含文件清单）。 */
@@ -130,7 +233,7 @@ export interface SkillVersionView {
   version: number;
   files: SkillManifest["files"];
   description: string;
-  createdBy: string;
+  createdBy: string | null;
   createdAt: Date;
 }
 
@@ -157,7 +260,8 @@ export interface UploadedSkill {
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
 
 /**
- * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能，
+ * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
+ * (or, phase 2, a platform skill on in the org: skills/usable.ts)，
  * 否则 `validation_failed`（path `skills.orgSkills.<i>`）；不可重复。调用方须已锁组织行（技能删除同样锁组织行，二者串行）。
  * `kept`：当前版本里已有的引用（保存时合法），修改时不再核对——技能之后被删也不挡住其他改动（运行时由 T14 忽略已删除的技能）。
  */
@@ -175,15 +279,12 @@ export async function assertOrgSkills(
   });
   const toCheck = [...seen].filter((id) => !kept.has(id));
   if (toCheck.length > 0) {
-    const found = await db
-      .selectFrom("skills")
-      .select("id")
-      .where("org_id", "=", orgId)
-      .where("scope", "=", "org")
-      .where("deleted_at", "is", null)
-      .where("id", "in", toCheck)
-      .execute();
-    const live = new Set([...kept, ...found.map((r) => r.id)]);
+    // The org's skills, its copies linked to a platform skill while that one is on in the org
+    // (as `assertPinnedSkills` sees them), and platform skills on in the org (phase 2)
+    const found = [...(await skillVersionsById(db, orgId, toCheck)).values()]
+      .filter((r) => r.scope === "org")
+      .map((r) => r.id);
+    const live = new Set([...kept, ...found]);
     ids.forEach((id, i) => {
       if (!live.has(id)) {
         details.push({
@@ -205,13 +306,14 @@ interface SummaryRow {
   name: string;
   description: string;
   current_version: number;
-  created_by: string;
+  created_by: string | null;
   created_at: Date;
   updated_at: Date;
   item_name: string | null;
   source_format: SourceFormat | null;
   suggest_pinned: boolean | null;
   manifest: SkillManifest | null;
+  shareable: boolean;
 }
 
 /** Why a pinned skill reference is refused (`agent.pinned_invalid` details). */
@@ -264,20 +366,14 @@ export async function assertPinnedSkills(
     }
     unique.push(id);
   }
-  const rows =
-    unique.length === 0
-      ? []
-      : await db
-          .selectFrom("skills as s")
-          .innerJoin("skill_versions as v", (j) =>
-            j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
-          )
-          .select(["s.id", "s.scope", "s.agent_id", "v.manifest"])
-          .where("s.org_id", "=", orgId)
-          .where("s.deleted_at", "is", null)
-          .where("s.id", "in", unique)
-          .execute();
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  // org and agent skills, org copies linked to a platform skill (its current version) and platform
+  // skills on in the org (phase 2)
+  const byId = new Map(
+    [...(await skillVersionsById(db, orgId, unique)).values()].map((r) => [
+      r.id,
+      { id: r.id, scope: r.scope, agent_id: r.agentId, manifest: r.manifest },
+    ]),
+  );
   const keptSet = new Set(kept);
   const selected = new Set(skills?.orgSkills ?? []);
   for (const id of unique) {
@@ -329,8 +425,60 @@ const summary = (r: SummaryRow): SkillSummary => {
     tokenEstimate: textBytesTokens(entryBytes),
     manual: inv.model === false,
     fork: inv.fork !== undefined,
+    origin: "org",
+    shareable: r.scope === "org" && r.shareable,
   };
 };
+
+/** Platform skills with the columns of {@link summary} (phase 2). */
+const platformSummaryQuery = (db: KernelSchemaDb) =>
+  db
+    .selectFrom("platform_skills as p")
+    .leftJoin("platform_skill_versions as v", (j) =>
+      j.onRef("v.skill_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+    )
+    .leftJoin("orgs as owner", "owner.id", "p.owner_org_id")
+    .select([
+      "p.id",
+      "p.name",
+      "p.description",
+      "p.current_version",
+      "p.created_at",
+      "p.updated_at",
+      "p.plugin_name",
+      "p.owner_org_id",
+      "owner.name as owner_name",
+      "v.source_format",
+      "v.suggest_pinned",
+      "v.manifest",
+    ])
+    .where("p.deleted_at", "is", null);
+
+const platformSummary = (
+  r: Awaited<ReturnType<ReturnType<typeof platformSummaryQuery>["executeTakeFirstOrThrow"]>>,
+): SkillSummary => ({
+  ...summary({
+    id: r.id,
+    scope: "org",
+    agent_id: null,
+    name: r.name,
+    description: r.description,
+    current_version: r.current_version,
+    created_by: null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+    item_name: r.plugin_name,
+    source_format: r.source_format,
+    suggest_pinned: r.suggest_pinned,
+    manifest: r.manifest,
+    shareable: false,
+  }),
+  origin: "platform",
+  owner:
+    r.owner_org_id === null
+      ? PLATFORM_OWNER
+      : { kind: "org", orgId: r.owner_org_id, name: r.owner_name ?? r.owner_org_id },
+});
 
 /**
  * Skills with their summary columns: the catalog item name (provenance) and the current version's
@@ -357,31 +505,14 @@ const summaryQuery = (db: KernelSchemaDb) =>
       "v.source_format",
       "v.suggest_pinned",
       "v.manifest",
+      "s.shareable",
     ]);
 
 /**
  * 技能库（M5 T13）：组织技能的上传（新技能或新版本）、列表、详情与软删除。
  * 字节在对象存储 `kernel/<orgId>/skills/<uploadId>/<path>`，元数据在 PG；无进程内状态，可多副本共用。
  */
-/** A validated skill package: its name, description, files and invocation. */
-interface SkillPackageInput {
-  name: string;
-  description: string;
-  files: SkillPackageFile[];
-  /** Phase D: stored in the manifest when it is not the default. */
-  invocation?: SkillInvocation;
-}
-
-/** The stored manifest of a skill package (the invocation only when it is not the default). */
-function skillManifest(pkg: SkillPackageInput): SkillManifest {
-  const invocation = pkg.invocation && storedInvocation(pkg.invocation);
-  return {
-    name: pkg.name,
-    description: pkg.description,
-    files: pkg.files.map(({ path, size, sha256 }) => ({ path, size, sha256 })),
-    ...(invocation !== undefined && { invocation }),
-  };
-}
+export { type SkillPackageInput, skillManifest } from "./package.js";
 
 @Injectable()
 export class SkillsService {
@@ -391,7 +522,50 @@ export class SkillsService {
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** The owner's new versions of a skill it promoted go to the platform row (ruling P3-4). */
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
   ) {}
+
+  /**
+   * Writes a package's files where its version will live: for a new version of a skill the org
+   * promoted (ruling P3-3: a live org skill of the name linked without a pin to a platform skill
+   * the org owns), the platform row's next version prefix in `deployment/` (ruling P3-4); else
+   * `kernel/<orgId>/<prefix>`. Returns the platform version prepared, if any. Never inside a
+   * transaction; the transaction checks that the skill is still promoted (and still at that
+   * version).
+   */
+  private async putVersionFiles(
+    orgId: string,
+    pkg: SkillPackageInput,
+    prefix: string,
+    catalog: boolean,
+  ): Promise<OwnerVersion | undefined> {
+    const promoted = catalog ? undefined : await promotedSkillNamed(this.db.db, orgId, pkg.name);
+    if (promoted !== undefined) return this.platform.prepareOwnerVersion(promoted, pkg.files);
+    await this.putFiles(orgId, prefix, pkg.files);
+    return undefined;
+  }
+
+  /**
+   * The summary of the org's skill `copyId` it promoted to `platformId`, as it serves now: the
+   * platform row's current version (ruling P3-4) under the org row's id, still the org's own.
+   */
+  private async promotedSummary(copyId: string, platformId: string): Promise<SkillSummary> {
+    const own = await summaryQuery(this.db.db).where("s.id", "=", copyId).executeTakeFirstOrThrow();
+    const p = await platformSummaryQuery(this.db.db)
+      .where("p.id", "=", platformId)
+      .executeTakeFirst();
+    if (!p) return summary(own);
+    return {
+      ...platformSummary(p),
+      id: copyId,
+      origin: "org",
+      plugin: own.item_name,
+      createdBy: own.created_by,
+      createdAt: own.created_at,
+      shareable: own.shareable,
+    };
+  }
 
   /** 登记一个技能包上传（预签名 POST，`application/zip`，≤ 50MB）；角色由路由的 `skills.manage` 把关。 */
   async createUpload(
@@ -399,7 +573,7 @@ export class SkillsService {
     accountId: string,
     input: { name: string; size: number },
   ): Promise<CreatedAttachment> {
-    // 部署设置 customSkills 为 deny：组织只能从企业目录安装技能（C22）
+    // 部署设置 customSkills 为 deny：组织只能从平台目录安装技能（C22）
     await assertCustomAllowed(this.db.db, "customSkills");
     return this.attachments.create(
       orgId,
@@ -423,6 +597,7 @@ export class SkillsService {
     actorAccountId: string,
     uploadId: string,
     actorTokenId?: string,
+    shareable?: boolean,
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = skillFilesPrefix(uploadId);
@@ -446,8 +621,25 @@ export class SkillsService {
     await assertCustomAllowed(this.db.db, "customSkills");
     const zip = await this.attachments.readSkillPackage(orgId, actorAccountId, uploadId);
     const pkg = await readSkillPackage(zip);
-    await this.putFiles(orgId, prefix, pkg.files);
-    return this.createUploadedVersionIn(orgId, actorAccountId, uploadId, pkg, prefix, actorTokenId);
+    // A skill the org promoted gets its version on the platform row (ruling P3-4). Its retry after
+    // a lost response is not recognized above (the lookup is by the org prefix): the consumed
+    // upload is refused and the owner sees the version in the library (accepted, review M6)
+    const owner = await this.putVersionFiles(orgId, pkg, prefix, false);
+    try {
+      return await this.createUploadedVersionIn(
+        orgId,
+        actorAccountId,
+        uploadId,
+        pkg,
+        prefix,
+        actorTokenId,
+        shareable,
+        owner,
+      );
+    } catch (e) {
+      if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
+      throw e;
+    }
   }
 
   /**
@@ -464,6 +656,8 @@ export class SkillsService {
     pkg: SkillPackageInput,
     prefix: string,
     actorTokenId: string | undefined,
+    shareable: boolean | undefined,
+    owner: OwnerVersion | undefined,
   ): Promise<UploadedSkill> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     await assertCustomAllowed(this.db.db, "customSkills");
@@ -471,11 +665,55 @@ export class SkillsService {
     return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
       prefix,
       ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(shareable !== undefined && { shareable }),
+      ...(owner !== undefined && { owner }),
     });
   }
 
   /**
-   * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与企业目录安装共用）：
+   * Creates an org skill from text (spec §14, P3-24): `SKILL.md` is built from the name,
+   * description and body ({@link buildSkillWrite}, the description a YAML string) and checked like
+   * an uploaded package. The same policy and name rules as an upload, except that a live org skill
+   * of that name is `skill.name_exists` (409) instead of a new version.
+   */
+  async createFromText(
+    orgId: string,
+    actorAccountId: string,
+    input: {
+      name: string;
+      description: string;
+      body: string;
+      shareable?: boolean;
+      actorTokenId?: string;
+    },
+  ): Promise<UploadedSkill> {
+    this.storage.assertAvailable();
+    await assertCustomAllowed(this.db.db, "customSkills");
+    const built = buildSkillWrite({
+      name: input.name,
+      description: input.description,
+      files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
+    });
+    if ("errors" in built) {
+      throw new ApiError(
+        "validation_failed",
+        `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
+        built.errors.map((message) => ({ path: "body", message })),
+      );
+    }
+    const pkg = checkBuiltSkillFiles(built.files);
+    const prefix = skillFilesPrefix(randomUUID());
+    await this.putFiles(orgId, prefix, pkg.files);
+    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+      prefix,
+      failIfExists: true,
+      ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
+      ...(input.shareable !== undefined && { shareable: input.shareable }),
+    });
+  }
+
+  /**
+   * 用一组已校验的技能文件创建组织技能或给同名技能新增版本（上传与平台目录安装共用）：
    * 1. 把文件写到 `kernel/<orgId>/<prefix>`（缺省 `skills/<新 id>/`）；
    * 2. 一个事务里：锁组织行并复核 `skills.manage`（目录安装：按条目策略复核），
    *    同名未删除的组织技能存在则 `current_version + 1`，否则新建；技能与版本都记下 `directory` 来源（没有则清空：
@@ -484,11 +722,16 @@ export class SkillsService {
    */
   async createVersionFromFiles(
     orgId: string,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync installing a plugin), no role check. */
+    actorAccountId: string | null,
     pkg: SkillPackageInput,
     opts: {
       prefix?: string;
       actorTokenId?: string;
+      /** The owner shares a new skill with other orgs (default false). */
+      shareable?: boolean;
+      /** A live org skill of the name is `skill.name_exists` instead of getting a new version. */
+      failIfExists?: boolean;
       /** Catalog provenance; `approvedBy` is the item whose policy approves it (default `itemId`). */
       catalog?: {
         itemId: string;
@@ -503,8 +746,17 @@ export class SkillsService {
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = opts.prefix ?? skillFilesPrefix(randomUUID());
-    await this.putFiles(orgId, prefix, pkg.files);
-    return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, opts);
+    const owner = await this.putVersionFiles(orgId, pkg, prefix, opts.catalog !== undefined);
+    try {
+      return await this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
+        ...opts,
+        ...(owner !== undefined && { owner }),
+      });
+    } catch (e) {
+      // the loser of two owner versions racing for one number: its objects go (ruling P3-45)
+      if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
+      throw e;
+    }
   }
 
   /** Writes a skill package's files to `kernel/<orgId>/<prefix>` (a few at a time). */
@@ -527,34 +779,89 @@ export class SkillsService {
   @Transactional()
   private async createVersionIn(
     orgId: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     pkg: { name: string; description: string },
     manifest: SkillManifest,
     prefix: string,
-    opts: Parameters<SkillsService["createVersionFromFiles"]>[3] & {},
+    opts: Parameters<SkillsService["createVersionFromFiles"]>[3] & {
+      /** The platform version {@link putVersionFiles} prepared (a skill the org promoted). */
+      owner?: OwnerVersion;
+    },
   ): Promise<UploadedSkill> {
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
+    await this.orgLock.lockFor(orgId, actorAccountId, "skills.manage");
     if (opts.catalog) {
       const c = opts.catalog;
       await assertItemInstallable(this.db.db, orgId, c.itemId, c.approvedBy ?? c.itemId);
     }
     const existing = await this.db
       .selectFrom("skills")
-      .select(["id", "current_version", "catalog_item_id"])
+      .select(["id", "current_version", "catalog_item_id", "platform_skill_id"])
       .where("org_id", "=", orgId)
       .where("scope", "=", "org")
       .where("name", "=", pkg.name)
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
+    if (existing && opts.failIfExists) {
+      throw new ApiError(
+        "skill.name_exists",
+        `A skill named "${pkg.name}" already exists in this organization. Choose another name.`,
+      );
+    }
+    // The org's own skill it promoted (ruling P3-3): its new version goes to the platform row and
+    // reaches every org using it (ruling P3-4); the files were written there before this
+    // transaction, for the platform version current then
+    const promoted =
+      existing && !opts.catalog
+        ? await promotedSkillNamed(this.db.db, orgId, pkg.name, existing.id)
+        : undefined;
+    if (promoted !== undefined || opts.owner !== undefined) {
+      if (existing === undefined || promoted === undefined || opts.owner?.platformId !== promoted) {
+        throw new ApiError(
+          "component.version_stale",
+          "The skill changed while this version was uploaded; upload it again",
+        );
+      }
+      const version = await this.platform.addOwnerVersionIn(opts.owner, manifest, actorAccountId);
+      await audit(this.db.db, {
+        actorAccountId,
+        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        orgId,
+        action: "skill.version_created",
+        target: existing.id,
+        detail: { name: pkg.name, version, files: manifest.files.length, platformId: promoted },
+      });
+      await notifySharedUpdate(
+        this.db.db,
+        { kind: "skill", id: promoted },
+        { name: pkg.name, from: String(version - 1), to: String(version) },
+      );
+      return {
+        skill: await this.promotedSummary(existing.id, promoted),
+        version,
+        created: false,
+      };
+    }
     // A catalog install never overwrites a skill of other provenance (spec §9.2; planning checks
     // it first, this closes the race with a skill created since)
     if (existing && opts.catalog && existing.catalog_item_id !== opts.catalog.itemId) {
       const conflicts = await skillConflicts(this.db.db, orgId, opts.catalog.itemId, [pkg.name]);
       if (conflicts.length > 0) throw skillConflictError(conflicts);
     }
+    // Rule 10 (plugin scope phase 2, ruling P2-3): a new org skill may not take the name of a
+    // platform skill offered to the org (on, or one an org admin could switch on)
+    if (!existing && !opts.catalog) {
+      const offered = await offeredNamed(this.db.db, orgId, "skill", pkg.name);
+      if (offered.length > 0) throw platformNameTaken(pkg.name, offered);
+    }
     const id = existing?.id ?? randomUUID();
     const version = (existing?.current_version ?? 0) + 1;
+    // An org's own version of a copy linked to a platform skill pins the copy to it (ruling P2-4):
+    // the org's change takes effect, and shows as individually updated later
+    const pin =
+      existing && existing.platform_skill_id !== null && !opts.catalog
+        ? { pinned_version: version }
+        : {};
     // 来源跟着最新版本走：目录安装记条目与版本，自定义上传清掉（内容已不是目录里的那份）
     const provenance = {
       catalog_item_id: opts.catalog?.itemId ?? null,
@@ -567,6 +874,7 @@ export class SkillsService {
           current_version: version,
           description: pkg.description,
           ...provenance,
+          ...pin,
           updated_at: sql`now()`,
         })
         .where("id", "=", id)
@@ -583,6 +891,7 @@ export class SkillsService {
           description: pkg.description,
           current_version: 1,
           created_by: actorAccountId,
+          ...(opts.shareable !== undefined && { shareable: opts.shareable }),
           ...provenance,
         })
         .execute();
@@ -628,7 +937,7 @@ export class SkillsService {
     orgId: string,
     skillId: string,
     version: number,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const row = await this.db
@@ -683,7 +992,7 @@ export class SkillsService {
   async softDeleteIn(
     orgId: string,
     skillId: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const r = await this.db
@@ -706,15 +1015,58 @@ export class SkillsService {
     return true;
   }
 
-  /** 组织技能库（`scope=org`、未删除），按名字排序。 */
+  /**
+   * The org skill library, sorted by name: the org's live `scope=org` skills except copies linked
+   * to a platform skill without a pin, and the platform skills on in the org (phase 2,
+   * `usableSkills`; `origin` tells them apart), each with the ids of those copies (`linkedIds`).
+   */
   async list(orgId: string): Promise<SkillSummary[]> {
-    const rows = await summaryQuery(this.db.db)
-      .where("s.org_id", "=", orgId)
-      .where("s.scope", "=", "org")
-      .where("s.deleted_at", "is", null)
-      .orderBy("s.name")
+    const usable = await usableSkills(this.db.db, orgId);
+    const orgIds = usable.filter((u) => u.origin === "org").map((u) => u.id);
+    const platformIds = usable.filter((u) => u.origin === "platform").map((u) => u.id);
+    // the org's own skills it promoted serving a newer platform version (ruling P3-4)
+    const promotedTo = new Map(
+      usable.flatMap((u) =>
+        u.origin === "org" &&
+        u.platformSkillId !== undefined &&
+        u.source.startsWith(PLATFORM_SOURCE)
+          ? [[u.id, u.platformSkillId] as const]
+          : [],
+      ),
+    );
+    const own =
+      orgIds.length === 0
+        ? []
+        : await Promise.all(
+            (
+              await summaryQuery(this.db.db).where("s.id", "in", orgIds).orderBy("s.name").execute()
+            ).map((r) => {
+              const to = promotedTo.get(r.id);
+              return to === undefined ? summary(r) : this.promotedSummary(r.id, to);
+            }),
+          );
+    if (platformIds.length === 0) return own;
+    const links = await this.db
+      .selectFrom("skills")
+      .select(["id", "platform_skill_id"])
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("pinned_version", "is", null)
+      .where("platform_skill_id", "in", platformIds)
+      .orderBy("id")
       .execute();
-    return rows.map(summary);
+    const linked = new Map<string, string[]>();
+    for (const l of links) {
+      const k = l.platform_skill_id as string;
+      linked.set(k, [...(linked.get(k) ?? []), l.id]);
+    }
+    const platform = (
+      await platformSummaryQuery(this.db.db).where("p.id", "in", platformIds).execute()
+    ).map((r) => ({ ...platformSummary(r), linkedIds: linked.get(r.id) ?? [] }));
+    return [...own, ...platform].sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : a.id < b.id ? -1 : 1,
+    );
   }
 
   /** 对该 agent 自动生效的技能（`scope=agent`、未删除），按名字排序。 */
@@ -729,15 +1081,40 @@ export class SkillsService {
     return rows.map(summary);
   }
 
-  /** 组织技能详情：各版本与文件清单。不存在 / 已删除 / 不是组织技能 → `skill.not_found`。 */
+  /**
+   * 组织技能详情：各版本与文件清单。不存在 / 已删除 / 不是组织技能 → `skill.not_found`。
+   * An org copy linked to a platform skill without a pin (ruling B2) serves the platform skill's
+   * content under its own id, so its detail is the platform skill's (its id, versions and body;
+   * 404 while that skill is off in the org); a pinned copy keeps its own (Task 10).
+   */
   async get(orgId: string, skillId: string): Promise<SkillDetail> {
+    const link = await this.db
+      .selectFrom("skills")
+      .select("platform_skill_id")
+      .where("id", "=", skillId)
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("deleted_at", "is", null)
+      .where("platform_skill_id", "is not", null)
+      .where("pinned_version", "is", null)
+      .executeTakeFirst();
+    if (link?.platform_skill_id) {
+      // the org's own skill it promoted is its own (ruling P3-3): its stored version while that is
+      // the platform's current one, else the platform's newer version under its id (ruling P3-4)
+      const served = (await skillVersionsById(this.db.db, orgId, [skillId])).get(skillId);
+      if (served?.origin !== "org") return this.getPlatform(orgId, link.platform_skill_id);
+      if (served.source.startsWith(PLATFORM_SOURCE)) {
+        const detail = await this.getPlatform(orgId, link.platform_skill_id);
+        return { ...detail, ...(await this.promotedSummary(skillId, link.platform_skill_id)) };
+      }
+    }
     const row = await summaryQuery(this.db.db)
       .where("s.id", "=", skillId)
       .where("s.org_id", "=", orgId)
       .where("s.scope", "=", "org")
       .where("s.deleted_at", "is", null)
       .executeTakeFirst();
-    if (!row) throw notFound();
+    if (!row) return this.getPlatform(orgId, skillId);
     const versions = await this.db
       .selectFrom("skill_versions")
       .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
@@ -758,6 +1135,42 @@ export class SkillsService {
     };
   }
 
+  /**
+   * A platform skill's detail (phase 2): only while it is on in the org, else `skill.not_found`.
+   * Its versions are the platform skill's.
+   */
+  private async getPlatform(orgId: string, skillId: string): Promise<SkillDetail> {
+    const usable = (await skillVersionsById(this.db.db, orgId, [skillId])).get(skillId);
+    if (usable?.origin !== "platform" || usable.platformSkillId !== skillId) throw notFound();
+    const row = await platformSummaryQuery(this.db.db)
+      .where("p.id", "=", skillId)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const versions = await this.db
+      .selectFrom("platform_skill_versions")
+      .select(["version", "manifest", "created_by", "created_at", "object_prefix"])
+      .where("skill_id", "=", skillId)
+      .orderBy("version", "desc")
+      .execute();
+    const current = versions.find((v) => v.version === row.current_version);
+    return {
+      ...platformSummary(row),
+      body: current
+        ? await this.readBody(orgId, {
+            manifest: current.manifest,
+            object_prefix: platformSource(current.object_prefix),
+          })
+        : null,
+      versions: versions.map((v) => ({
+        version: v.version,
+        description: v.manifest.description,
+        files: v.manifest.files,
+        createdBy: v.created_by,
+        createdAt: v.created_at,
+      })),
+    };
+  }
+
   /** 读某版本 SKILL.md 的正文（见 {@link SkillDetail.body}）；任何读取问题都返回 null，不让详情失败。 */
   private async readBody(
     orgId: string,
@@ -766,7 +1179,8 @@ export class SkillsService {
     const entry = v.manifest.files.find((f) => f.path === SKILL_ENTRY_FILE);
     if (!entry || entry.size > SKILL_BODY_MAX_BYTES) return null;
     try {
-      const got = await this.storage.kernel(orgId).get(`${v.object_prefix}${SKILL_ENTRY_FILE}`);
+      const { store, prefix } = skillFileStore(this.storage, orgId, v.object_prefix);
+      const got = await store.get(`${prefix}${SKILL_ENTRY_FILE}`);
       if (!got) return null;
       const text = new TextDecoder("utf-8", { fatal: true }).decode(
         await new Response(got.body).arrayBuffer(),
@@ -800,6 +1214,22 @@ export class SkillsService {
     actorTokenId: string | undefined,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
+    await this.deleteOrgSkillIn(orgId, skillId, actorAccountId, actorTokenId);
+  }
+
+  /**
+   * In the caller's transaction (`mandatory`: the caller holds the org row lock and checked
+   * `skills.manage`), soft-deletes an org-scope skill of the org: what {@link softDelete} writes
+   * (audit `skill.deleted`); missing or deleted -> `skill.not_found`. The owner delete of a
+   * promoted skill (`OwnedItems.deleteSkill`) calls it after its platform row was dealt with.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async deleteOrgSkillIn(
+    orgId: string,
+    skillId: string,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
     const r = await this.db
       .updateTable("skills")
       .set({ deleted_at: sql`now()`, updated_at: sql`now()` })
@@ -819,4 +1249,29 @@ export class SkillsService {
       detail: { name: r.name },
     });
   }
+}
+
+/**
+ * The platform skill the org's live org skill `name` was promoted to (ruling P3-3: linked without
+ * a pin to a live platform skill the org owns), else undefined. `id`: only that skill.
+ */
+async function promotedSkillNamed(
+  db: KernelSchemaDb,
+  orgId: string,
+  name: string,
+  id?: string,
+): Promise<string | undefined> {
+  let q = db
+    .selectFrom("skills as s")
+    .innerJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+    .select("p.id")
+    .where("s.org_id", "=", orgId)
+    .where("s.scope", "=", "org")
+    .where("s.name", "=", name)
+    .where("s.deleted_at", "is", null)
+    .where("s.pinned_version", "is", null)
+    .where("p.owner_org_id", "=", orgId)
+    .where("p.deleted_at", "is", null);
+  if (id !== undefined) q = q.where("s.id", "=", id);
+  return (await q.executeTakeFirst())?.id;
 }

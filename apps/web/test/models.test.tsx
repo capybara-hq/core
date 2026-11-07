@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,8 +8,9 @@ import { activeNavOf } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -19,7 +21,7 @@ const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
 const UNSAVED = { zh: "{n} 处未保存的修改", en: "{n} unsaved changes" } as const;
 /** `models.purpose.savedAll` for one purpose (ICU plural in en). */
 const SAVED_ONE = { zh: "已保存 1 个用途。", en: "Saved 1 purpose." } as const;
-const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isEnterpriseAdmin: false } };
+const NOT_ADMIN: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -128,12 +130,20 @@ const actionRow = () =>
     })(),
   );
 
+/** A purpose's row (an ItemListItem, never a card): the row whose mono id is `purpose`. */
+const purposeRow = (purpose: string): HTMLElement | null => {
+  const code = [...document.querySelectorAll('[data-part="item-list-code"]')].find(
+    (el) => el.textContent === purpose,
+  );
+  return (code?.closest('[data-part="item-list-row"]') as HTMLElement | null) ?? null;
+};
+
 const purposeBox = async (purpose: string) =>
   within(
     await vi.waitFor(() => {
-      const el = document.querySelector(`[data-purpose="${purpose}"]`);
+      const el = purposeRow(purpose);
       if (!el) throw new Error(`no purpose ${purpose}`);
-      return el as HTMLElement;
+      return el;
     }),
   );
 
@@ -295,6 +305,8 @@ describe("/admin/models（ListPage）", () => {
       });
       await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.models.evalUnmapped)).toBeTruthy();
+      // The eval row carries the warning (a warn line with its icon), not a line above the rows
+      expect((await purposeBox("eval")).getByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
       expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
       expect(
@@ -306,9 +318,10 @@ describe("/admin/models（ListPage）", () => {
       expect(ev.queryByRole("button")).toBeNull();
       expect(document.querySelector('[data-part="action-row"]')).toBeNull();
       const user = userEvent.setup();
-      await user.selectOptions(
+      await pickOption(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
+        user,
       );
       // 选中模型后出现它的参数（复用 ModelParams）
       const effort = ev.getByRole("radiogroup", { name: locale === "zh" ? "思考深度" : "Effort" });
@@ -342,9 +355,10 @@ describe("/admin/models（ListPage）", () => {
     await renderRouteWithCache("/admin/models", lastStubRoutes());
     const ev = await purposeBox("eval");
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       ev.getByRole("combobox", { name: en.models.purpose.model }),
       "alpha/alpha-large",
+      user,
     );
     await user.click(
       within(ev.getByRole("radiogroup", { name: "Effort" })).getByRole("radio", { name: "Low" }),
@@ -355,11 +369,86 @@ describe("/admin/models（ListPage）", () => {
     expect(actionRow().getByText(fill(UNSAVED.en, { n: 1 }))).toBeTruthy();
   });
 
-  it("非企业管理员：没有访问权限，不请求后台接口", async () => {
+  it("非超级管理员：没有访问权限，不请求后台接口", async () => {
     const calls = stubApi({});
     await renderRouteWithCache("/admin/models", lastStubRoutes(), { me: NOT_ADMIN });
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("one box is enough (acceptance item AB)", () => {
+  const noNested = () => expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+
+  it("/admin/models: the purposes are rows of one flush card; each provider a flush subsection over its unframed table", async () => {
+    adminRoutes();
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    await purposeBox("eval");
+    const purposes = document.getElementById("purposes") as HTMLElement;
+    const card = purposes.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    // rows, not cards: one flush ItemList holding a row per purpose
+    expect(card.querySelector('[data-part="card"]')).toBeNull();
+    const list = within(card).getByRole("list", { name: en.models.admin.purposes.title });
+    expect(list.getAttribute("data-inset")).toBe("flush");
+    expect(list.querySelectorAll(':scope > [data-part="item-list-row"]')).toHaveLength(2);
+    // the purpose's row is a group named by its title, the model select one of its fields
+    const row = screen.getByRole("group", { name: "Eval judge" });
+    expect(within(row).getByRole("combobox", { name: en.models.purpose.model })).toBeTruthy();
+    // the providers: a flush card, one flush subsection (an h3) per provider
+    const providers = document.getElementById("providers") as HTMLElement;
+    const pcard = providers.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(pcard.getAttribute("data-flush")).toBe("true");
+    const alpha = within(pcard).getByRole("region", { name: "alpha" });
+    expect(alpha.getAttribute("data-variant")).toBe("flush");
+    expect(within(alpha).getByRole("heading", { level: 3, name: "alpha" })).toBeTruthy();
+    expect(within(alpha).getByRole("table", { name: "alpha" })).toBeTruthy();
+    // the failed provider says so under its heading, with no table
+    const broken = within(pcard).getByRole("region", { name: "broken" });
+    // the error is a block under the heading: the message in body size, the detail on its own row
+    const alert = within(broken).getByRole("alert");
+    expect(alert.closest('[data-part="subsection-description"]')?.tagName).toBe("DIV");
+    const lines = [...alert.querySelectorAll(".cb-text")];
+    expect(lines.map((l) => l.getAttribute("data-variant"))).toEqual(["body", "small"]);
+    expect(lines[1]?.textContent).toBe(BROKEN.error);
+    expect(within(broken).queryByRole("table")).toBeNull();
+    noNested();
+  });
+
+  it("/admin/models while loading: the providers card holds a heading row over the table", async () => {
+    stubApi({
+      "GET /api/v1/admin/models": () => new Promise<Response>(() => {}),
+      "GET /api/v1/admin/model-purposes": () => new Promise<Response>(() => {}),
+    });
+    await renderRouteEmptyCache("/admin/models", lastStubRoutes());
+    const card = await vi.waitFor(() => {
+      const el = document.querySelector('#providers [data-part="form-card"]');
+      if (el === null) throw new Error("no loading card yet");
+      return el as HTMLElement;
+    });
+    expect(card.getAttribute("data-flush")).toBe("true");
+    const sub = card.querySelector('[data-part="subsection"]') as HTMLElement;
+    expect(sub.getAttribute("data-variant")).toBe("flush");
+    expect(
+      sub.querySelector('[data-part="subsection-title"] [data-part="skeleton-text"]'),
+    ).not.toBeNull();
+    expect(sub.querySelector('[data-part="table"]')).not.toBeNull();
+    noNested();
+  });
+
+  it("/settings/models: the purposes are rows of one flush card", async () => {
+    resetNavigation("/settings/models");
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    const ev = await purposeBox("eval");
+    expect(ev.getByText(en.models.evalUnmapped)).toBeTruthy();
+    const card = document.querySelector('#purposes [data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    expect(card.querySelector('[data-part="card"]')).toBeNull();
+    noNested();
   });
 });
 
@@ -383,7 +472,7 @@ describe("sub-agent model tiers on the purposes page", () => {
     await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
-        const el = document.querySelector(`[data-purpose="${p}"]`);
+        const el = purposeRow(p);
         if (!el) throw new Error(`no purpose ${p}`);
         return el;
       });
@@ -429,9 +518,10 @@ describe("/settings/models（组织管理员）", () => {
       expect(ev.queryByText(m.models.purpose.overridden)).toBeNull();
       expect(ev.queryByRole("button")).toBeNull();
       const user = userEvent.setup();
-      await user.selectOptions(
+      await pickOption(
         ev.getByRole("combobox", { name: m.models.purpose.model }),
         "alpha/alpha-large",
+        user,
       );
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
@@ -445,14 +535,14 @@ describe("/settings/models（组织管理员）", () => {
       // A state reads as muted text, never an accent badge
       expect(overridden.closest(".cb-badge")).toBeNull();
       // Restoring the default is choosing 「使用部署默认」 and saving
-      await user.selectOptions(ev.getByRole("combobox", { name: m.models.purpose.model }), "");
+      await pickOption(ev.getByRole("combobox", { name: m.models.purpose.model }), "", user);
       await user.click(actionRow().getByRole("button", { name: m.models.purpose.save }));
       await vi.waitFor(() =>
         expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({ target: null }),
       );
       await vi.waitFor(() => expect(ev.queryByText(m.models.purpose.overridden)).toBeNull());
       expect(
-        (ev.getByRole("combobox", { name: m.models.purpose.model }) as HTMLSelectElement).value,
+        (ev.getByRole("combobox", { name: m.models.purpose.model }) as HTMLButtonElement).value,
       ).toBe("");
       expect(ev.getByText(defText)).toBeTruthy();
     },

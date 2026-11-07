@@ -37,11 +37,23 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 ## Queued messages (UI refresh B)
 
-- A queued message (`POST …/queue`) lives in `capybara.conversation_queue`, not in the log: the model
-  has not seen it. It enters the log only when sent, as an ordinary `user_message` (author, text, the
-  `@` resource blocks read at queue time, file refs), written by `RunQueue.ensureRun` (one per run,
-  when the conversation is idle and the queue not paused) or by "send now". Replay therefore needs
-  nothing: the log holds exactly what the model saw, and an edit to a queued text never touches it.
+- There is no message queue for new input: a message sent during a run is logged at once as an
+  ordinary `user_message` and absorbed by the run's next step (or starts the next run).
+  `POST …/queue` is a deprecated alias of `…/messages` answering `{ event }`: it logs an ordinary
+  `user_message` at once and stores nothing. `capybara.conversation_queue` only holds leftover rows
+  queued by older versions, not in the log (the model has not seen them); each enters the log only
+  when sent, as an ordinary `user_message` (author, text, the `@` resource blocks read at queue time,
+  file refs), written by `RunQueue.ensureRun` (the dispatcher drains them one per run after each run,
+  when the conversation is idle and the queue not paused; a paused leftover queue drains only after
+  继续发送, `…/resume`) or by "send now". Their routes (`GET` / `PATCH` / `DELETE` / `…/send` /
+  `…/resume`) stay until the contract step drops the table. Replay therefore needs nothing: the log
+  holds exactly what the model saw, and an edit to a leftover's text never touches it.
+
+- Run input and live drafts (run input spec 2026-11-07): `POST …/queue` is now an alias of `…/messages`
+  and queues nothing new. A message sent during a run is an ordinary logged `user_message` that a
+  `model_call` absorbs (`absorbedUpToSeq`), so replay needs nothing. Live drafts (partial text and
+  thinking of the step in progress, Redis keys `capk:run-draft:*` plus the bus) are display only:
+  never in the log, never in a replay, no `DriftReason`; a resumed step resets its draft (`step_reset`).
 
 ## Model and effort switches (UI refresh B)
 
@@ -79,6 +91,16 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   pinned set or the map, an append-only system notice (full body of each new / changed entry, names of removed ones; pinned ids are left out
   of the "Updated skills" list); after compaction the current pinned set and map are restored with the catalog. Code:
   `runtime/context/skills.ts`, `runtime/context/claude-tools.ts`, `skills/catalog.ts` (`SkillsCatalogService.record`, `loadPinnedBodies`, `fitPinned`).
+- Platform skills (plugin scope phase 2): a snapshot entry's `source` is `platform:<object prefix>` for a platform skill version (read from
+  `deployment/`, `skills/usable.ts` `skillFileStore`); an org copy linked to its platform skill keeps its id in agent definitions and
+  snapshots and serves the platform's current version under that id, so linking or a platform update shows as one "Updated skills" notice
+  (no removed / new entries, no definition rewrite). Old snapshots keep their org prefixes and still load.
+- Promote on share (plugin scope phase 3, ruling P3-43): when an org skill is promoted to a platform skill, the owner's org row keeps its
+  id and serves its own stored version while it equals the platform's, so the owner's agents see the same id, version and content: no
+  "Updated skills" notice and no DriftReason. Other orgs' agents reference the platform id; an owner's later version reaches both as an
+  ordinary update. The zero-drift fixtures stay unchanged.
+- A skill renamed under its id (the platform components migration renames an org skill whose name a platform skill on in the org has)
+  is noticed as its old name removed and its new name added; no log before phase 2 holds such a change, so old logs render as before.
 - **Old logs render byte for byte as before**: a snapshot without `plugin` / `pinned` / `toolMap` means none, and a run on such a conversation
   writes no new snapshot or notice when nothing changed. The bodies and the map are in the log, so a baseline can never miss them and they
   need no drift reason of their own.
@@ -149,6 +171,9 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 - A plugin template child's case is compared with the template's **current** version (`currentTemplate`, the one DB read): once the
   plugin was upgraded after the case, any changed candidate (a model-only one too) reports `subagent_changed`, and an upgrade landing
   mid-run can give two cases of one run different answers.
+  The comparison also covers the content source (`subagent_started.template.platformTemplateId`, not model-visible; absent = the org's
+  own template): an org copy linked to a platform template, or a pin changing back, reports `subagent_changed` once even when the
+  version number happens to match.
 - **Child full-run replay** runs the logged definition with the candidate's model and params only, and the logged `maxSteps`; the
   run result's drift gets `subagent_changed` by the same rule (`subagentCaseChanged`).
 - **Trajectory**: an `Agent` call (or a `SendMessage` that restarted a child) carries `subagent: { subagentId, childRunId, agentType, resumed, status }` (`running` until its
@@ -245,7 +270,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
 
 - After `trajectories.read` (member and up), the service additionally checks "org admin or the agent's owner" (the owner is read live); eval replay conversations
   (`kind = 'eval'`) are visible only to org admins (Ruling S1-c). **No permission and does not exist both return 404** (`trajectory.not_found`).
-- Every view of trajectory details or eval case details writes the audit entry `trajectory.viewed`. Eval data has no export endpoint. Enterprise admins cannot read conversations by default.
+- Every view of trajectory details or eval case details writes the audit entry `trajectory.viewed`. Eval data has no export endpoint. Super admins cannot read conversations by default.
 - Latency is derived from event `created_at`, with no new event fields (C2): model latency = that step's `usage` - `model_call`, tool duration = `tool_result` -
   `tool_call_started`, approval wait = `approval_decided` - `approval_requested`. Cost is computed at read time from PG `model_prices` (per million tokens, currency =
   the deployment setting `priceCurrency`), is not written to the log, is labeled "estimated" in the UI, and shows "—" when there is no price.

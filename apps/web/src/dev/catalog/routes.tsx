@@ -42,6 +42,8 @@ export const CATALOG_ROUTES = [
  */
 export const REFERENCE_COMPONENTS = [
   "page-header",
+  // the head rhythm across the templates (spec §4.2, acceptance item S)
+  "head-rhythm",
   "status-bar",
   "action-row",
   "template-list",
@@ -55,6 +57,7 @@ export const REFERENCE_COMPONENTS = [
   "template-auth",
   "button",
   "input",
+  "select",
   "switch",
   "segmented",
   "table",
@@ -92,6 +95,8 @@ export const REFERENCE_COMPONENTS = [
   "no-access",
   "danger-zone",
   "secret-reveal",
+  // plugin and component management acceptance: the detail / review section
+  "content-section",
   // unslop fixes
   "error-detail",
   "file-picker",
@@ -101,8 +106,9 @@ export const REFERENCE_COMPONENTS = [
   "greeting",
   "agent-row",
   "quick-actions",
-  // the agent map (agent map spec §9)
+  // the agent map (agent map spec §9) and its entry in the composer (AC3)
   "agent-map",
+  "agents-chip",
   // agent avatars (agent profile design §2.3)
   "avatar",
   // config forms
@@ -111,6 +117,12 @@ export const REFERENCE_COMPONENTS = [
   "key-value-editor",
   // loading states
   "skeleton",
+  // one box is enough (acceptance item AB): the groupings inside a box
+  "item-list",
+  "subsection",
+  "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15)
+  "card-grid",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

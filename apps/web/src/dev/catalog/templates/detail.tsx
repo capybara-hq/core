@@ -38,7 +38,17 @@ const RUN_COLUMNS: Column<RecentRun>[] = [
   { key: "tokens", header: "TOKENS", align: "right", cell: (r) => r.tokens },
 ];
 
-/** Inspector：分组属性，组标题 small muted（spec §5.2）。 */
+/**
+ * The detail page's facts in the column (spec §5.2): one KeyValue of the object's properties in
+ * two columns.
+ */
+function DetailFacts() {
+  return (
+    <KeyValue columns={2} rows={DETAIL_PROPS.flatMap((g) => g.rows.map(([k, v]) => ({ k, v })))} />
+  );
+}
+
+/** The inbox's inspector: grouped properties, the group title small muted (spec §5.7). */
 export function DetailInspector() {
   return (
     <Stack gap={16}>
@@ -68,7 +78,6 @@ function DetailBody() {
   useStatusBar("v12 由 张琳 发布于 2 小时前");
   const [tab, setTab] = useState("summary");
   const [range, setRange] = useState("24h");
-  const [inspector, setInspector] = useState(true);
   return (
     <DetailPage
       header={{
@@ -94,10 +103,8 @@ function DetailBody() {
           },
         ],
       }}
-      tabs={{ label: "Agent 页内导航", items: DETAIL_TABS, value: tab, onChange: setTab }}
-      inspector={inspector ? <DetailInspector /> : undefined}
-      inspectorTitle="属性"
-      onInspectorClose={() => setInspector(false)}
+      tabs={{ label: "智能体页内导航", items: DETAIL_TABS, value: tab, onChange: setTab }}
+      facts={<DetailFacts />}
     >
       <Stack gap={16}>
         <Card

@@ -26,7 +26,6 @@ import {
   QuestionBlock,
   QueuedMessage,
   QueuePaused,
-  QuickActions,
   RunDivider,
   RunRow,
   Stack,
@@ -48,6 +47,7 @@ import {
   type FixtureFile,
   type FixtureTool,
   HITL_FIXTURE,
+  LONG_MESSAGE_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
@@ -168,6 +168,13 @@ function userBubbleBlocks(): ReactNode {
           sender={AGENT_MAP_FIXTURE.detail.spawnedBy.label}
         />
       </Block>
+      {/* AC4: clamped at layout.bubble-clamp with 展开 under it, and opened with 收起 */}
+      <Block id="user-bubble-long">
+        <UserBubble text={LONG_MESSAGE_FIXTURE.text} referenceLong />
+      </Block>
+      <Block id="user-bubble-expanded">
+        <UserBubble text={LONG_MESSAGE_FIXTURE.text} referenceLong defaultExpanded />
+      </Block>
     </>
   );
 }
@@ -233,7 +240,7 @@ function workingLineBlocks(): ReactNode {
   );
 }
 
-// ── New conversation: greeting, agents row, quick actions ───────────────────
+// ── New conversation: greeting, agents row (quick actions: in the composer) ──
 
 const NC = NEW_CONVERSATION_FIXTURE;
 
@@ -293,26 +300,6 @@ function agentRowBlocks(): ReactNode {
   );
 }
 
-function quickActionsBlocks(): ReactNode {
-  return (
-    <>
-      <Block id="quick-actions-default">
-        <QuickActions items={NC.quickActions} onPick={noop} />
-      </Block>
-      <Block
-        id="quick-actions-hover"
-        force={{ pseudo: ["hover"], selector: '[data-part="quick-action"]' }}
-      >
-        <QuickActions items={NC.quickActions} onPick={noop} />
-      </Block>
-      {/* room below the line for the menu, as the reference stages it */}
-      <RefBlock id="quick-actions-menu" width={W} height={160} pad>
-        <QuickActions items={NC.quickActions} onPick={noop} referenceOpen />
-      </RefBlock>
-    </>
-  );
-}
-
 // ── Run divider ─────────────────────────────────────────────────────────────
 
 function runDividerBlocks(): ReactNode {
@@ -341,7 +328,7 @@ function runDividerBlocks(): ReactNode {
       <Block id="run-divider-fallback">
         <RunDivider
           kind="fallback"
-          text={`所选模型 ${D.fallback.from} 已不可用，本条起改用 agent 的模型 ${D.fallback.to}`}
+          text={`所选模型 ${D.fallback.from} 已不可用，本条起改用智能体的模型 ${D.fallback.to}`}
         />
       </Block>
       <Block id="run-divider-notice">
@@ -1007,7 +994,6 @@ export const CONVERSATION_BLOCKS = {
   "working-line": workingLineBlocks,
   greeting: greetingBlocks,
   "agent-row": agentRowBlocks,
-  "quick-actions": quickActionsBlocks,
   "tool-group": toolGroupBlocks,
   "tool-row": toolRowBlocks,
   "diff-block": diffBlockBlocks,

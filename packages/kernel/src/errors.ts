@@ -14,7 +14,7 @@ export const ERROR_CODES = {
   rate_limited: 429,
   "account.login_taken": 409,
   "account.not_found": 404,
-  "account.last_enterprise_admin": 409,
+  "account.last_super_admin": 409,
   "auth.account_disabled": 403,
   "auth.required": 401,
   "auth.token_expired": 401,
@@ -72,12 +72,44 @@ export const ERROR_CODES = {
   "catalog.dependency_cycle": 409,
   "catalog.version_exists": 409,
   "catalog.item_not_found": 404,
+  /** An org-owned item its owner has not made shareable cannot be shown or associated (P3-16). */
+  "catalog.not_shareable": 409,
+  /** The owner org cannot be removed from its own item's list (P3-17). */
+  "catalog.owner_required": 409,
+  /**
+   * Only the org's own rows can be made shareable: not an agent's skill, not a copy linked to a
+   * platform item another owner has (P3-6).
+   */
+  "catalog.not_owned": 409,
+  /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
+  "catalog.item_pending": 409,
+  /** A super admin confirmation raced the item's removal (P3-21). */
+  "catalog.item_removed": 409,
+  /** What deleting an org's own plugin does changed since its preview (P3-19). */
+  "catalog.preview_stale": 409,
   "catalog.name_conflict": 409,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
+  "plugin.disabled": 409,
+  "plugin.scope_locked": 409,
+  "plugin.switch_stale": 409,
+  "plugin.builtin": 409,
+  "plugin.scope_stale": 409,
+  "component.not_found": 404,
+  "component.version_stale": 409,
+  /** A platform component offered to the org but off there (one more connector from a template). */
+  "component.off": 409,
   "catalog.approval_required": 403,
   "catalog.request_not_found": 404,
+  /** No open org notice with that id for an admin of the org (inbox). */
+  "inbox.notice_not_found": 404,
   "catalog.request_decided": 409,
+  /** A pending request of the same kind for the same item or entry exists (spec §5.1 rule 5). */
+  "catalog.request_pending": 409,
+  /** The item is not in the state the request kind asks to change (already offered, on, ...). */
+  "catalog.request_invalid": 409,
+  /** The deployment setting `orgMarketplaceBrowse` is off: no marketplace requests. */
+  "catalog.marketplace_browse_disabled": 409,
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
@@ -89,6 +121,7 @@ export const ERROR_CODES = {
   "marketplace.private_address": 422,
   "marketplace.redirect": 422,
   "marketplace.incompatible": 409,
+  "marketplace.entry_deprecated": 409,
   "marketplace.package_mismatch": 409,
   "marketplace.builtin": 409,
   "marketplace.git_failed": 502,
@@ -97,6 +130,10 @@ export const ERROR_CODES = {
   "marketplace.host_not_allowed": 403,
   "marketplace.path_unsupported": 422,
   "plugin.review_stale": 409,
+  "plugin.name_taken": 409,
+  "plugin.name_reserved": 409,
+  "plugin.dependency_unavailable": 409,
+  "plugin.extension_upload_pending": 501,
   "plugin.staging_not_found": 404,
   "plugin.install_failed": 502,
   "plugin.install_not_found": 404,
@@ -122,6 +159,27 @@ export const ERROR_CODES = {
   "agent.pinned_invalid": 400,
   /** `subagents` of an agent definition is refused (details: `{ reason, path, value? }`). */
   "agent.subagents_invalid": 400,
+  /** Creating from a template with a visibility other than `private` without `agents.manage`. */
+  "agent.visibility_forbidden": 403,
+  /** Creating from a template: the template or the org changed since the preview (P4-3). */
+  "agent.template_preview_stale": 409,
+  /** The agent has no pending connector with that key (ruling P4-6). */
+  "agent.pending_connector_not_found": 404,
+  /**
+   * The connector does not fit the pending entry (ruling P4-T6-1; details `[{ reason }]`:
+   * `template` another or no connector template, `protocol` another kind, `tools` none of the
+   * entry's tools, `not_synced` no tool snapshot yet: an OAuth connector to authorize first).
+   */
+  "agent.pending_connector_mismatch": 400,
+  /** Requesting connector setup for an agent with no pending connectors (ruling P4-T6-7). */
+  "agent.no_pending_connectors": 409,
+  /**
+   * An org template's bare name is a type the org can already use (spec §5 rule 10, ruling
+   * P4-9; details `[{ owner, templateId }]`, `owner` as `plugin.name_taken`'s).
+   */
+  "agent_template.name_taken": 409,
+  /** An org template was saved since the editor read it (`expectedVersion` is stale, P4-12). */
+  "agent_template.version_conflict": 409,
   "conversation.not_found": 404,
   "conversation.output_not_found": 404,
   "conversation.artifact_not_found": 404,
@@ -134,12 +192,15 @@ export const ERROR_CODES = {
   /** A sub-agent's conversation takes no messages from people (sub-agents spec §6.1). */
   "conversation.read_only": 409,
   "run.not_active": 409,
+  /** A run that is not one of the conversation's (the live draft route, spec 2026-11-07 §3.2). */
+  "run.not_found": 404,
   /** A background task that is not in this conversation (or its sub-agents), or does not exist. */
   "background_task.not_found": 404,
   /** The task's output cannot be read now (its sandbox is not running and no finish recorded it). */
   "background_task.output_unavailable": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,
+  "connector.kind_unavailable": 409,
   "connector.connect_failed": 502,
   "connector.tool_not_found": 404,
   "connector.tool_not_pending": 409,
@@ -181,6 +242,8 @@ export const ERROR_CODES = {
    * (`details: [{ reason: "not_found" }]`) or is hidden from the menu (`not_user_invocable`).
    */
   "skill.not_invocable": 400,
+  /** Creating a skill from text (P3-24, F18): an org-level skill with this name already exists in the org. */
+  "skill.name_exists": 409,
   "skill_change.not_found": 404,
   "skill_change.not_owner": 403,
   "skill_change.already_decided": 409,

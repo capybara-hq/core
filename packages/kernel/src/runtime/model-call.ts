@@ -96,9 +96,14 @@ const MAX_RETRY_AFTER_MS = 10_000;
 /** 读事件日志的分页大小。 */
 const READ_PAGE = 1000;
 
-/** 流式增量的出口（推给前端等订阅方）；`step_reset` 表示丢弃本步已推出的增量、重新开始。 */
+/**
+ * 流式增量的出口（推给前端等订阅方）；`step_reset` 表示丢弃本步已推出的增量、重新开始。
+ * `stream_end` (the step's model stream completed) and `step_end` (the step's `assistant_message`
+ * is logged) carry no delta: the run worker's sink writes and then clears the step's live draft on
+ * them (spec 2026-11-07 §3.2) and publishes neither.
+ */
 export type StreamSink = (delta: {
-  kind: "text" | "thinking" | "step_reset";
+  kind: "text" | "thinking" | "step_reset" | "stream_end" | "step_end";
   runId: string;
   step: number;
   text?: string;
@@ -329,7 +334,7 @@ async function runStep(
   input: ModelStepInput,
   wrapUp: boolean,
 ): Promise<ModelStepResult> {
-  const { conversationId, runId, step, signal } = input;
+  const { conversationId, runId, step, signal, sink } = input;
   const existing = await findExisting(deps.eventLog, conversationId, runId, step);
   if (existing) {
     // resumed after a crash between writing usage and enqueueing it: enqueue again (job id dedupes)
@@ -337,6 +342,8 @@ async function runStep(
       const u = await deps.eventLog.findByIdem(conversationId, idem.usage(runId, step));
       if (u) void deps.usageReport.enqueue(conversationId, u.seq);
     }
+    // a crash between the assistant_message and clearing its draft leaves one behind
+    sink({ kind: "step_end", runId, step });
     return existing;
   }
 
@@ -346,6 +353,13 @@ async function runStep(
   try {
     if (signal.aborted) throw new StepAborted();
     let events = await readAll(deps.eventLog, conversationId);
+    // an earlier execution of this run already sent this step (it streamed, then crashed or was
+    // handed over): this one starts at offset 0, so viewers drop that attempt's draft first
+    if (
+      events.some((e) => e.type === "model_call" && e.runId === runId && e.payload.step === step)
+    ) {
+      sink({ kind: "step_reset", runId, step });
+    }
     // sticky (M-4): a model.request denial already logged for this step (any attempt, e.g. a crash
     // after recording it) is final: fail the same way, before compaction or any model call. Read from
     // the events just loaded, so it costs no query (M-2).
@@ -451,6 +465,7 @@ async function runStep(
     const usageEvent = appended.find((e) => e.type === "usage");
     if (deps.usageReport && usageEvent)
       void deps.usageReport.enqueue(conversationId, usageEvent.seq);
+    sink({ kind: "step_end", runId, step });
     return {
       content: outcome.content,
       stopReason: outcome.stopReason,
@@ -471,6 +486,7 @@ async function runStep(
         payload: { step, content, stopReason: "aborted" },
       },
     ]);
+    sink({ kind: "step_end", runId, step });
     return { content, stopReason: "aborted", reused: false, aborted: true, usage: null };
   }
 }
@@ -1177,6 +1193,8 @@ async function ladder(
           }
         },
       );
+      // the draft's last write, before the assistant_message is logged
+      sink({ kind: "stream_end", runId, step });
       if (scope && deps.hooks) {
         fireObserve(
           deps.hooks,

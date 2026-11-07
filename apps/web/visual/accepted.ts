@@ -6,6 +6,10 @@
 export const ACCEPTED: string[] = [
   "button",
   "input",
+  // the form Select (maintainer decision R, 2026-11-07): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "select",
   "segmented",
   "switch",
   "filter-chip",
@@ -13,6 +17,11 @@ export const ACCEPTED: string[] = [
   "icon",
   "sidebar",
   "page-header",
+  // the head rhythm across the templates (spec §4.2 "Head rhythm", acceptance item S): blocks and
+  // size table in place, and head-rhythm.spec.ts compares the offsets across the blocks; no
+  // reference PNG (the blocks are the templates themselves, the reference-update workflow draws
+  // the templates' own pages)
+  "head-rhythm",
   "stat-cards",
   "status-bar",
   "action-row",
@@ -50,6 +59,9 @@ export const ACCEPTED: string[] = [
   "subagent-group",
   "title-bar",
   "composer",
+  // picker-menu: the anchored long-list state `long` (2026-11-07, issues N/N'/N'') has its block and
+  // size-table rows in place; its reference PNG and side-by-side review wait for the
+  // reference-update and visual-update workflows
   "picker-menu",
   // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
   "command-palette",
@@ -81,6 +93,10 @@ export const ACCEPTED: string[] = [
   // the agent map (agent map spec §9, plan Task B1): blocks and size table in place; the reference
   // PNGs and the side-by-side review wait for the reference-update and visual-update workflows
   "agent-map",
+  // the agents chip (acceptance item AC3) and the user bubble's long / expanded states (AC4):
+  // blocks and size tables in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "agents-chip",
   // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
   // and the side-by-side review wait for the reference-update and visual-update workflows
   "avatar",
@@ -97,6 +113,25 @@ export const ACCEPTED: string[] = [
   // workflows
   "background-task",
   "task-output-panel",
+  // plugin and component management acceptance (fix batch 1): blocks and size table in place;
+  // the reference PNGs and the side-by-side review wait for the reference-update workflow
+  "content-section",
+  // one box is enough (acceptance item AB, wave 1): the groupings inside a box. Blocks, size
+  // tables and the reference source are in place (also the new states repeater `divided`,
+  // template-settings `items` / `loading-items`, template-conversation `properties-sheet`); the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "item-list",
+  "subsection",
+  // the Callout adapts to the box it sits in (acceptance item AB, wave 2 fix round 1): states
+  // `warn`, `info`, `in-box`; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15): CardGrid and ObjectCard, and
+  // the List template's `cards` / `loading-cards`. Blocks, size tables and the reference source
+  // are in place; the reference PNGs and the side-by-side review wait for the reference-update
+  // and visual-update workflows
+  "card-grid",
 ];
 
 /**
@@ -130,7 +165,6 @@ export const LOADING_TEMPLATES: {
     name: "overview",
     pairs: [
       { loaded: "default", loading: "loading" },
-      { loaded: "main-side", loading: "loading-main-side" },
       { loaded: "keep", loading: "loading-keep" },
     ],
   },
@@ -162,6 +196,7 @@ export const LOADING_TEMPLATES: {
       { loaded: "default", loading: "loading" },
       { loaded: "radio-cards", loading: "loading-radio-cards" },
       { loaded: "cards", loading: "loading-cards" },
+      { loaded: "items", loading: "loading-items" },
     ],
   },
   {
@@ -221,6 +256,7 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
   thread: "the loaded turns' text length decides the height; the skeleton draws three fixed turns",
   table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
   card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
+  rail: "the inbox rail is as tall as its list: the fixture's items, or the loading list's own skeleton rows",
 };
 
 /**
@@ -246,8 +282,11 @@ export const LOADING_ALIASES: Record<string, string> = {
   "loading-field": "field",
   "loading-bubble": "bubble",
   "loading-key-value": "key-value",
-  "loading-group-card": "card",
   "loading-shaped-card": "card",
+  // item rows (spec §5.8 "Items", §6.33): the ItemList's own list and rows
+  "loading-item-list": "item-list",
+  "loading-item-group": "item-list",
+  "loading-item-row": "item-list-row",
   // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
   "page-header-action-slots > skeleton-box": "button",
   "loading-switch-row > skeleton-box": "switch",
@@ -277,7 +316,15 @@ export const DATA_ONLY_PARTS: Record<string, string> = {
   segment:
     "the loaded control kinds are page data; the loading field (loading-field) stands in for each field and its count is compared through `field`",
   "switch-knob": "the knob inside a loaded switch; the switch box itself is counted (`switch`)",
+  "select-label":
+    "an option label inside a loaded select (one per option, only the current one visible); the select itself is a loaded control kind, counted through `field`",
+  "bubble-body":
+    "the text box inside a loaded message bubble (it collapses a long user message); the loading bubble is one bar, compared as `bubble`",
   "field-error": "a validation message exists only for typed data",
+  "item-list-title":
+    "an item row's title text; the loading row's title line holds a bar (`item-list-head` is compared)",
+  "item-list-code":
+    "an item row's mono id is page data; the loading row's title line holds one bar for both",
   "action-row-unsaved":
     "an unsaved count the page cannot know yet; the loading action row has none (spec §5.3)",
   "action-row-errors":

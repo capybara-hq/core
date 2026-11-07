@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "title": "Agents",
+    "new": "New agent",
+    "sub": "Sub-agent finished",
+    "placeholder": "New conversation with {agent}",
+    "select": "{kind, select, agent {agent} other {connector}}",
+    "branch": "{kind, select, agent {this agent} other {connector}}",
+    "code": "agent_template and subagents are not the word agent",
+    "ok": "New agent"
+  }
+}

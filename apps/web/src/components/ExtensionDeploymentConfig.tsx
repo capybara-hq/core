@@ -142,6 +142,8 @@ function DeploymentConfigForm({
 
   return (
     <Stack gap={16}>
+      {/* The tinted bar on the extension's page, the warn line in the list's Sheet: the Callout
+          reads the box it sits in (spec §6.19) */}
       {pending && missing.length > 0 && (
         <Callout tone="warn">{t("pendingMissing", { fields: missing.join(t("listSep")) })}</Callout>
       )}

@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +15,7 @@ import {
   TRANSLATION_GROUPS,
 } from "../src/lib/catalog";
 import type { Me } from "../src/lib/session";
-import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, stubApi as stubApiOnly } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -23,13 +24,62 @@ import { NOT_READY } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 // The admin pages take their query and params from the address (a first load of that path)
-/** `/admin/catalog/import` with the address's query (a first load). */
-const importPath = () => `/admin/catalog/import${window.location.search}`;
-/** `/admin/marketplaces/entries` with the address's query (a first load). */
-const entriesPath = () => `/admin/marketplaces/entries${window.location.search}`;
-/** `/admin/catalog/<id>` (a first load). */
-const adminItemPath = () => `/admin/catalog/${encodeURIComponent(params.current.itemId ?? "")}`;
+/** `/admin/plugins/import` with the address's query (a first load). */
+const importPath = () => `/admin/plugins/import${window.location.search}`;
+/** `/admin/plugins/market` with the address's query (a first load). */
+const entriesPath = () => `/admin/plugins/market${window.location.search}`;
+/** `/admin/plugins/<id>` (a first load). */
+const adminItemPath = () => `/admin/plugins/${encodeURIComponent(params.current.itemId ?? "")}`;
 const params = { current: {} as Record<string, string> };
+/**
+ * The admin 插件 pages also read the head's counts (the pending plugins and requests), the items
+ * and the orgs: answered empty unless a test stubs them.
+ */
+const ADMIN_DEFAULTS: Routes = {
+  // The admin plugin detail's components table reads the platform components (its scope column)
+  "GET /api/v1/admin/components?kind=skill": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=connector_template": () => json(200, { components: [] }),
+  "GET /api/v1/admin/components?kind=agent_template": () => json(200, { components: [] }),
+  "GET /api/v1/admin/orgs": () => json(200, { orgs: [] }),
+  "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+  "GET /api/v1/admin/catalog/items?pending=true": () => json(200, { items: [], nextOffset: null }),
+  "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }),
+  // The org 插件 pages: the org's extensions (org admins; their config) and the marketplace
+  // entries (org admins; the 市场 tab)
+  "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+  "GET /api/v1/orgs/o1/marketplaces/entries": () => json(200, { items: [] }),
+  "GET /api/v1/orgs/o1/plugin-installs": () => json(200, { installs: [] }),
+  // The org plugin detail's components in the org (their switches)
+  "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+  // The plugin `INSTALL` is an install of (its detail page shows the installs)
+  "GET /api/v1/orgs/o1/catalog/11111111-1111-4111-8111-111111111111": () =>
+    json(200, {
+      item: orgItem({
+        name: "crm",
+        state: "on",
+        installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+      }),
+      hasIcon: false,
+      extension: null,
+      templates: [],
+      dependencies: [],
+      skills: [],
+    }),
+};
+const stubApi = (routes: Routes) =>
+  stubApiOnly({
+    ...ADMIN_DEFAULTS,
+    // a test's own item list also answers the unpaged reads
+    ...(routes["GET /api/v1/admin/catalog/items"] !== undefined &&
+    routes["GET /api/v1/admin/catalog/items?pending=true"] === undefined
+      ? {
+          "GET /api/v1/admin/catalog/items?pending=true": ADMIN_DEFAULTS[
+            "GET /api/v1/admin/catalog/items?pending=true"
+          ] as Routes[string],
+        }
+      : {}),
+    ...routes,
+  });
 vi.mock("next/navigation", () => ({
   useParams: () => params.current,
   redirect: (to: string) => {
@@ -41,19 +91,26 @@ vi.mock("next/navigation", () => ({
 }));
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
-/** `/catalog` as a first load: the layout prefetches from the latest `stubApi` routes. */
-const renderCatalog = (opts: RenderOpts = {}) =>
-  renderRouteWithCache("/catalog", lastStubRoutes(), opts);
-/** `/catalog/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
+/** `/plugins` as a first load: the layout prefetches from the latest `stubApi` routes. */
+const renderPlugins = (opts: RenderOpts = {}) =>
+  renderRouteWithCache("/plugins", lastStubRoutes(), opts);
+/** `/plugins/<id>` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderItem = (opts: RenderOpts = {}) =>
-  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
-/** `/catalog/<id>/install` as a first load: the layout prefetches from the latest `stubApi` routes. */
+  renderRouteWithCache(`/plugins/${params.current.itemId ?? ""}`, lastStubRoutes(), opts);
+/** `/plugins/<ID>` as a first load, where this org's installs of the plugin are shown. */
+const renderInstalls = (opts: RenderOpts = {}) => {
+  params.current = { itemId: ID };
+  return renderItem(opts);
+};
+/** `/plugins/<id>/enable` as a first load: the layout prefetches from the latest `stubApi` routes. */
 const renderInstall = (opts: RenderOpts = {}) =>
-  renderRouteWithCache(`/catalog/${params.current.itemId ?? ""}/install`, lastStubRoutes(), opts);
+  renderRouteWithCache(`/plugins/${params.current.itemId ?? ""}/enable`, lastStubRoutes(), opts);
 
 const msgs = { zh, en } as const;
 /** The design ErrorDetail's toggle (design i18n `errorDetail.raw`). */
 const RAW_ERROR = { zh: "原始错误", en: "Raw error" } as const;
+/** The design ObjectRow's menu trigger (design i18n `shell.moreActions`). */
+const RAW_MORE = { zh: "更多操作", en: "More actions" } as const;
 const LOCALES = ["zh", "en"] as const;
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
@@ -85,17 +142,33 @@ function orgItem(over: Record<string, unknown> = {}) {
     publisher: "Acme",
     displayName: null,
     description: "PDF helpers",
-    policy: "allow",
+    scope: "optional",
+    builtin: false,
+    disabled: false,
     latestVersion: "1.0.0",
     versions: ["1.0.0"],
     source: "file",
     updatedAt: "2026-10-22T00:00:00.000Z",
-    installable: "yes",
+    state: "off",
+    switchable: true,
+    notDeployed: false,
     installed: null,
     request: null,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
     ...over,
   };
 }
+
+/** The input the wizard sent with the switch (`PUT …/switch { enabled: true, inputs }`). */
+const switchInputs = (calls: { method: string; body: unknown }[]) => {
+  const b = bodyOf(calls.find((c) => c.method === "PUT") as Parameters<typeof bodyOf>[0]) as {
+    enabled: boolean;
+    inputs: unknown;
+  };
+  expect(b.enabled).toBe(true);
+  return b.inputs;
+};
 
 /** Lets pending reads and effects run (a read after mount would show up in the calls). */
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -123,127 +196,569 @@ async function renderHeld(path: string, routes: Routes, held: string) {
 
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-describe("/catalog: actions follow installable", () => {
+/** A row of the org 插件 list, found by its name link. */
+const rowOf = (list: HTMLElement, name: string) =>
+  within(list)
+    .getAllByRole("listitem")
+    .find((r) => within(r).queryByRole("link", { name }) !== null) as HTMLElement;
+/** The row's buttons and links other than its name and its menu trigger. */
+const actionsOf = (row: HTMLElement, name: string) =>
+  [...within(row).queryAllByRole("button"), ...within(row).queryAllByRole("link")]
+    .filter((e) => !e.hasAttribute("aria-haspopup"))
+    .map((e) => e.textContent ?? "")
+    .filter((label) => label !== name);
+const PREVIEW = {
+  installId: "i1",
+  name: "crm",
+  version: "1.0.0",
+  components: [{ kind: "skill", ref: "notes", created: true }],
+  kept: [{ kind: "extension", ref: "crm", reason: "pre_existing" }],
+  agents: [{ id: "a1", name: "Sales bot", uses: [{ kind: "skill", ref: "notes" }] }],
+};
+
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
+describe("/plugins: states and actions follow the scope and the switch", () => {
+  it.each(LOCALES)("org admins: each state and its action (%s)", async (locale) => {
+    const p = msgs[locale].plugins;
+    const items = [
+      orgItem({ id: "a", name: "off" }),
+      orgItem({
+        id: "b",
+        name: "builtin",
+        builtin: true,
+        scope: "all",
+        state: "on",
+        switchable: false,
+      }),
+      orgItem({ id: "c", name: "everyone", scope: "all", state: "on", switchable: false }),
+      orgItem({
+        id: "d",
+        name: "on",
+        state: "on",
+        installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+      }),
+      orgItem({
+        id: "e",
+        name: "offered",
+        scope: "named",
+        state: "not_offered",
+        switchable: false,
+      }),
+      orgItem({
+        id: "f",
+        name: "asked",
+        scope: "named",
+        state: "not_offered",
+        switchable: false,
+        request: { id: "r1", kind: "access", createdAt: "2026-10-22T00:00:00.000Z" },
+      }),
+      orgItem({
+        id: "g",
+        name: "needs",
+        state: "needs_config",
+        componentCounts: { extension: 0, skills: 0, connectorTemplates: 1, agentTemplates: 0 },
+      }),
+    ];
+    stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
+    await renderPlugins({ locale });
+    expect(template("ListPage")).not.toBeNull();
+    const list = await screen.findByRole("list", { name: p.title });
+    const row = (name: string) => rowOf(list, name);
+    expect(within(row("off")).getByText(p.state.off)).toBeTruthy();
+    expect(actionsOf(row("off"), "off")).toEqual([p.action.enable]);
+    // An `all` or builtin plugin: on for every org, no switch
+    for (const name of ["builtin", "everyone"]) {
+      expect(within(row(name)).getByText(p.state.platform)).toBeTruthy();
+      expect(actionsOf(row(name), name)).toEqual([]);
+    }
+    expect(within(row("builtin")).getByText(msgs[locale].catalog.admin.chips.builtin)).toBeTruthy();
+    expect(within(row("on")).getByText(p.state.on)).toBeTruthy();
+    // 停用 sits in the row's menu (a destructive action)
+    expect(actionsOf(row("on"), "on")).toEqual([]);
+    expect(within(row("on")).getByRole("button", { name: RAW_MORE[locale] })).toBeTruthy();
+    expect(within(row("offered")).getByText(p.state.not_offered)).toBeTruthy();
+    expect(actionsOf(row("offered"), "offered")).toEqual([p.action.request]);
+    expect(within(row("asked")).getByText(p.state.requested)).toBeTruthy();
+    expect(actionsOf(row("asked"), "asked")).toEqual([]);
+    expect(within(row("needs")).getByText(p.state.needs_config)).toBeTruthy();
+    // A plugin with connector templates asks for their input first
+    expect(
+      within(row("needs")).getByRole("link", { name: p.action.enable }).getAttribute("href"),
+    ).toBe("/plugins/g/enable");
+  });
+
+  it("启用 an optional plugin without input sends the switch { enabled: true }", async () => {
+    const p = zh.plugins;
+    let on = false;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ state: on ? "on" : "off", name: "notes" })] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () => {
+        on = true;
+        return json(200, { item: orgItem({ state: "on", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ enabled: true }),
+    );
+    expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
+  });
+
   it.each(LOCALES)(
-    "org admins: the row action and state follow installable (%s)",
+    "the owner follows the item's owner in the chip and the meta line: 本组织, another org, 平台 (%s)",
     async (locale) => {
-      const a = msgs[locale].catalog.org.action;
-      const st = msgs[locale].catalog.org.status;
+      const p = msgs[locale].plugins;
+      const c = msgs[locale].catalog;
       const items = [
-        orgItem({ id: "a", name: "yes-skill" }),
-        orgItem({ id: "b", name: "approval", installable: "needs_approval" }),
-        orgItem({ id: "c", name: "granted-tpl", installable: "granted" }),
-        orgItem({ id: "d", name: "off", installable: "disabled" }),
-        orgItem({ id: "e", name: "missing", installable: "not_deployed" }),
-        orgItem({
-          id: "f",
-          name: "done",
-          installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
-        }),
-        orgItem({
-          id: "g",
-          name: "asked",
-          installable: "needs_approval",
-          request: { id: "r1", stage: "deployment", status: "pending" },
-        }),
-        orgItem({
-          id: "h",
-          name: "old",
-          installed: { pluginInstallId: "i2", version: "1.0.0", upgradeAvailable: "1.1.0" },
-        }),
+        orgItem({ id: "a", name: "minutes", owner: { kind: "org", orgId: "o1", name: "Acme" } }),
+        orgItem({ id: "b", name: "shared", owner: { kind: "org", orgId: "o2", name: "Beta" } }),
+        orgItem({ id: "c", name: "plain", owner: { kind: "platform" } }),
       ];
       stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items }) });
-      await renderCatalog({ locale });
-      expect(template("ListPage")).not.toBeNull();
-      const list = await screen.findByRole("list", { name: msgs[locale].catalog.org.title });
-      const row = (name: string) =>
-        within(list)
-          .getAllByRole("listitem")
-          .find((r) => within(r).queryByRole("link", { name }) !== null) as HTMLElement;
-      const action = (name: string, label: string) =>
-        within(row(name)).getByRole("link", { name: label }).getAttribute("href");
-      // Installing goes through the wizard; requests and upgrades open the detail page.
-      expect(action("yes-skill", a.install)).toBe("/catalog/a/install");
-      expect(action("granted-tpl", a.install)).toBe("/catalog/c/install");
-      expect(action("approval", a.requestApproval)).toBe("/catalog/b");
-      expect(action("old", a.upgrade)).toBe("/catalog/h");
-      for (const name of ["off", "missing", "done", "asked"]) {
-        // Only the name link: no action button or link.
-        expect(within(row(name)).getAllByRole("link")).toHaveLength(1);
-      }
-      expect(within(row("off")).getByText(st.disabled)).toBeTruthy();
-      expect(within(row("missing")).getByText(st.not_deployed)).toBeTruthy();
-      expect(within(row("done")).getByText(fill(st.installed, { version: "v1.0.0" }))).toBeTruthy();
-      expect(within(row("asked")).getByText(st.requested)).toBeTruthy();
+      await renderPlugins({ locale });
+      const list = await screen.findByRole("list", { name: p.title });
+      const meta = (name: string) =>
+        rowOf(list, name).querySelector(".cb-object-meta")?.textContent ?? "";
+      const scope = c.scope.optional;
+      expect(within(rowOf(list, "minutes")).getByText(p.chips.ownUpload)).toBeTruthy();
+      expect(meta("minutes")).toContain(fill(p.meta.scope, { owner: c.owner.self, scope }));
+      expect(meta("minutes")).not.toContain(c.owner.platform);
+      expect(meta("shared")).toContain(fill(p.meta.scope, { owner: "Beta", scope }));
+      expect(within(rowOf(list, "shared")).queryByText(p.chips.ownUpload)).toBeNull();
+      expect(meta("plain")).toContain(fill(p.meta.scope, { owner: c.owner.platform, scope }));
     },
   );
 
-  it("tabs only when installed holds something different from all", async () => {
+  it("启用 shows its pending state and cannot be pressed again until the switch answers", async () => {
+    const p = zh.plugins;
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
+    let on = false;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, { items: [orgItem({ state: on ? "on" : "off", name: "notes" })] }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: async () => {
+        await held;
+        on = true;
+        return json(200, { item: orgItem({ state: "on", name: "notes" }) });
+      },
+    });
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    const button = within(rowOf(list, "notes")).getByRole("button", { name: p.action.enable });
+    await user.click(button);
+    await waitFor(() => expect(button.getAttribute("aria-busy")).toBe("true"));
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await user.click(button);
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await act(async () => answer());
+    expect(await within(rowOf(list, "notes")).findByText(p.state.on)).toBeTruthy();
+  });
+
+  it("停用 from the row menu shows the pending state on the menu button while the preview loads", async () => {
+    const p = zh.plugins;
+    let answer: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      answer = r;
+    });
     stubApi({
       [`GET ${ORG}/catalog`]: () =>
         json(200, {
           items: [
-            orgItem({ id: "a", name: "yes-skill" }),
             orgItem({
-              id: "f",
-              name: "done",
+              state: "on",
+              name: "crm",
               installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
             }),
           ],
         }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: async () => {
+        await held;
+        return json(200, { preview: PREVIEW, confirm: "h".repeat(64) });
+      },
     });
-    await renderCatalog();
+    await renderPlugins({ locale: "zh" });
+    const list = await screen.findByRole("list", { name: p.title });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: /Installed/ }));
-    expect(screen.queryByText("yes-skill")).toBeNull();
-    expect(screen.getByText("done")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /All/ }).textContent).toContain("2");
+    const more = within(rowOf(list, "crm")).getByRole("button", { name: RAW_MORE.zh });
+    await user.click(more);
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    await waitFor(() => expect(more.getAttribute("aria-busy")).toBe("true"));
+    expect((more as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => answer());
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    await waitFor(() => expect(more.getAttribute("aria-busy")).toBeNull());
   });
 
-  it("members: an installable item offers a request that opens the detail page", async () => {
-    const a = en.catalog.org.action;
-    stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
-    await renderCatalog({ me: MEMBER });
-    const link = await screen.findByRole("link", { name: a.request });
-    expect(link.getAttribute("href")).toBe(`/catalog/${ID}`);
-    expect(screen.queryByRole("link", { name: a.install })).toBeNull();
+  it("停用 shows what the switch-off takes away, the agents included, then confirms with its hash", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({
+              name: "crm",
+              state: "on",
+              installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
+            }),
+          ],
+        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: (c) =>
+        (bodyOf(c) as { confirm?: string }).confirm === undefined
+          ? json(200, { preview: PREVIEW, confirm: "h1" })
+          : json(200, { item: orgItem({ name: "crm", state: "off" }) }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    const user = userEvent.setup();
+    await user.click(within(rowOf(list, "crm")).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.action.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Sales bot/)).toBeTruthy();
+    expect(
+      within(dialog).getByText(`− ${en.catalog.plugins.componentKind.skill} notes`),
+    ).toBeTruthy();
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({
+        enabled: false,
+        confirm: "h1",
+      }),
+    );
+    expect(bodyOf(calls.filter((c) => c.method === "PUT")[0])).toEqual({ enabled: false });
+  });
+
+  it("members see the rows without switch actions; 申请启用 only on an optional plugin that is off", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [
+            orgItem({ id: "a", name: "off", switchable: false }),
+            orgItem({ id: "b", name: "builtin", builtin: true, scope: "all", state: "on" }),
+            orgItem({ id: "c", name: "on", state: "on" }),
+            orgItem({ id: "d", name: "offered", scope: "named", state: "not_offered" }),
+          ],
+        }),
+      [`POST ${ORG}/catalog/a/requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins({ me: MEMBER });
+    const list = await screen.findByRole("list", { name: p.title });
+    for (const name of ["builtin", "on", "offered"]) {
+      expect(actionsOf(rowOf(list, name), name)).toEqual([]);
+    }
+    expect(actionsOf(rowOf(list, "off"), "off")).toEqual([p.action.requestEnable]);
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "off")).getByRole("button", { name: p.action.requestEnable }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ kind: "enable" }),
+    );
+  });
+
+  it("org admins: 申请 asks for a plugin that is not offered (access)", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () =>
+        json(200, {
+          items: [orgItem({ name: "offered", scope: "named", state: "not_offered" })],
+        }),
+      [`POST ${ORG}/catalog/${ID}/requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const list = await screen.findByRole("list", { name: p.title });
+    await userEvent
+      .setup()
+      .click(within(rowOf(list, "offered")).getByRole("button", { name: p.action.request }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ kind: "access" }),
+    );
+  });
+
+  it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
+    const p = en.plugins;
+    const entry = {
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version: "1.2.0",
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    };
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [entry] }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    await user.click(within(list).getByRole("button", { name: p.action.requestImport }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+        marketplaceId: "official",
+        name: "jina",
+        version: "1.2.0",
+      }),
+    );
+    expect(await within(list).findByText(p.state.requested)).toBeTruthy();
+    cleanup();
+    vi.unstubAllGlobals();
+    // orgMarketplaceBrowse off: the entries route is a 404 and there is no 市场 tab
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(404, { error: { code: "not_found", message: "x" } }),
+    });
+    await renderPlugins();
+    await screen.findByRole("list", { name: p.title });
+    await settle();
+    expect(screen.queryByRole("tab", { name: new RegExp(p.tabs.market) })).toBeNull();
+  });
+
+  it.each(LOCALES)(
+    "org admins: a 市场 row shows the display name, else the name, and the summary in the UI language (%s)",
+    async (locale) => {
+      const p = msgs[locale].plugins;
+      const entry = (over: Record<string, unknown>) => ({
+        sourceId: "official",
+        sourceName: "Official",
+        name: "jina",
+        version: "1.2.0",
+        summary: { en: "Web tools", zh: "网页工具" },
+        displayName: { zh: "吉娜", en: "Jina" },
+        minKernel: null,
+        homepage: null,
+        permissions: null,
+        source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+        compatible: true,
+        importable: true,
+        adopted: null,
+        newerAvailable: false,
+        contentChanged: false,
+        ...over,
+      });
+      stubApi({
+        [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+        [`GET ${ORG}/marketplaces/entries`]: () =>
+          json(200, {
+            items: [
+              entry({}),
+              entry({ name: "exa", displayName: null, summary: { en: "Search" } }),
+            ],
+          }),
+      });
+      await renderPlugins({ locale });
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+      const list = await screen.findByRole("list", { name: p.market.title });
+      const jina = within(list)
+        .getByText(locale === "zh" ? "吉娜" : "Jina")
+        .closest("li") as HTMLElement;
+      expect(within(jina).getByText(locale === "zh" ? "网页工具" : "Web tools")).toBeTruthy();
+      const exa = within(list).getByText("exa").closest("li") as HTMLElement;
+      expect(within(exa).getByText("Search")).toBeTruthy();
+    },
+  );
+
+  it("org admins: the 市场 tab has one row per plugin, the latest version; 其他版本 requests an older one", async () => {
+    const p = en.plugins;
+    const entry = (version: string) => ({
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version,
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version, integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, { items: [entry("1.1.0"), entry("1.10.0"), entry("1.2.0")] }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    const tab = await screen.findByRole("tab", { name: new RegExp(p.tabs.market) });
+    expect(tab.textContent).toContain("1");
+    await user.click(tab);
+    const list = await screen.findByRole("list", { name: p.market.title });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByText(/v1\.10\.0/)).toBeTruthy();
+    await user.click(within(list).getByRole("button", { name: p.action.requestImport }));
+    await waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ version: "1.10.0" }),
+    );
+    expect(await within(list).findByText(p.state.requested)).toBeTruthy();
+    // the older versions are in the row's menu
+    await user.click(within(list).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.market.otherVersions }));
+    const older = await screen.findByRole("menuitem", {
+      name: fill(p.market.requestVersion, { version: "v1.2.0" }),
+    });
+    expect(
+      screen.getByRole("menuitem", { name: fill(p.market.requestVersion, { version: "v1.1.0" }) }),
+    ).toBeTruthy();
+    older.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "POST").at(-1))).toMatchObject({
+        version: "1.2.0",
+      }),
+    );
+  });
+
+  it("org admins: a deprecated version reads 已废弃 in 其他版本 and cannot be requested; prereleases fold there", async () => {
+    const p = en.plugins;
+    const entry = (version: string, deprecated: { reason: string | null } | null = null) => ({
+      sourceId: "official",
+      sourceName: "Official",
+      name: "jina",
+      version,
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version, integrity: "sha512-x" } },
+      deprecated,
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    });
+    const calls = stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, {
+          items: [entry("2.0.0", { reason: "use 1.x" }), entry("1.1.0-rc.0"), entry("1.0.0")],
+        }),
+      [`POST ${ORG}/marketplace-requests`]: () => json(201, { request: { id: "r1" } }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    expect(within(list).getByText(/v1\.0\.0/)).toBeTruthy();
+    await user.click(within(list).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: p.market.otherVersions }));
+    const gone = await screen.findByRole("menuitem", {
+      name: fill(p.market.deprecatedReason, { version: "v2.0.0", reason: "use 1.x" }),
+    });
+    expect(gone.getAttribute("aria-disabled")).toBe("true");
+    expect(
+      screen.getByRole("menuitem", {
+        name: fill(p.market.requestVersion, { version: "v1.1.0-rc.0" }),
+      }),
+    ).toBeTruthy();
+    gone.focus();
+    await user.keyboard("{Enter}");
+    await settle();
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("members get no 市场 tab and read no entries", async () => {
+    const calls = stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }) });
+    await renderPlugins({ me: MEMBER });
+    await screen.findByRole("list", { name: en.plugins.title });
+    await settle();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(calls.some((c) => c.url.includes("marketplaces"))).toBe(false);
   });
 });
 
-describe("/catalog: dependency errors", () => {
-  it("asking for approval when a dependency cannot be resolved names it (409 catalog.dependency_unresolved)", async () => {
-    params.current = { itemId: "b" };
-    stubApi({
-      [`GET ${ORG}/catalog/b`]: () =>
-        json(200, {
-          item: orgItem({ id: "b", installable: "needs_approval" }),
-          hasIcon: false,
-          extension: null,
-          templates: [],
-          dependencies: [],
-          skills: [],
-        }),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/b/install`]: () =>
-        json(409, {
-          error: {
-            code: "catalog.dependency_unresolved",
-            message: "x",
-            details: [{ dependency: "crm-core", range: "^1.0.0" }],
-          },
-        }),
+describe("/extensions: the switch follows the plugin", () => {
+  const EXT = {
+    plugin: "crm",
+    displayName: null,
+    version: "1.0.0",
+    enabled: true,
+    configurable: false,
+    config: null,
+    secrets: [],
+    permissions: [],
+    orgConfigSchema: null,
+    catalogItem: { itemId: ID, scope: "optional" },
+    switchable: true,
+  };
+
+  it("switching an extension off shows the plugin's switch-off preview, then confirms with its hash", async () => {
+    const p = en.plugins;
+    const calls = stubApi({
+      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [EXT] }),
+      [`PUT ${ORG}/extensions/crm`]: (c) =>
+        (bodyOf(c) as { confirm?: string }).confirm === undefined
+          ? json(200, { preview: PREVIEW, confirm: "h1" })
+          : json(200, { extension: { ...EXT, enabled: false } }),
+      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
     });
-    await renderItem();
-    await userEvent
-      .setup()
-      .click(await screen.findByRole("button", { name: en.catalog.org.action.requestApproval }));
-    expect(await screen.findByText(`${en.errors.catalog.dependency_unresolved}`)).toBeTruthy();
-    expect(
-      screen.getByText(
-        `${fill(en.catalog.components.errorDependency, { dependency: "crm-core ^1.0.0" })}`,
-      ),
-    ).toBeTruthy();
+    await renderRouteWithCache("/extensions", lastStubRoutes());
+    expect(template("ListPage")).not.toBeNull();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "Enable crm" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Sales bot/)).toBeTruthy();
+    expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: p.switchOff.confirm }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((c) => c.method === "PUT")[1])).toEqual({
+        enabled: false,
+        confirm: "h1",
+      }),
+    );
   });
+
+  it.each(LOCALES)(
+    "an extension of an `all` plugin reads 已启用 · 平台统一 and its switch is read-only (%s)",
+    async (locale) => {
+      const calls = stubApi({
+        [`GET ${ORG}/extensions`]: () =>
+          json(200, {
+            extensions: [{ ...EXT, catalogItem: { itemId: ID, scope: "all" }, switchable: false }],
+          }),
+        [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+        [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      expect(await screen.findByText(msgs[locale].plugins.state.platform)).toBeTruthy();
+      const toggle = screen.getByRole("switch");
+      expect(
+        toggle.hasAttribute("disabled") || toggle.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+      await userEvent.setup().click(toggle);
+      expect(calls.some((c) => c.method === "PUT")).toBe(false);
+    },
+  );
 });
 
 const extension = (over: Record<string, unknown> = {}) => ({
@@ -311,7 +826,7 @@ const REVIEW = {
   reviewHash: "h1",
 };
 
-describe("/admin/catalog/import (WizardPage)", () => {
+describe("/admin/plugins/import (WizardPage)", () => {
   it.each(LOCALES)("the review lists agent templates with tier and tools (%s)", async (locale) => {
     const c = msgs[locale].catalog.components;
     stubApi({
@@ -358,7 +873,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
   });
 
   it.each(LOCALES)(
-    "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash, deployExtension } (%s)",
+    "one review: extension action and sensitive items, skills, templates, resolved and unresolved dependencies; confirm needs the sensitive ack and posts { reviewHash } (%s)",
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const c = msgs[locale].catalog.components;
@@ -393,32 +908,49 @@ describe("/admin/catalog/import (WizardPage)", () => {
           fill(c.dependencyUnresolved, { name: "crm-extra", range: "^2.0.0" }),
         ),
       ).toBeTruthy();
-      // The address names the staged import (a reload comes back to this review)
-      expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st1");
+      // One box (acceptance item AB): the extension is a subsection whose permissions are rows,
+      // the templates are rows; no card holds another box
+      const sub = within(ext).getByRole("region", { name: REVIEW.extension.name });
+      expect(sub.getAttribute("data-part")).toBe("subsection");
+      expect(
+        within(
+          within(sub).getByRole("region", {
+            name: fill(msgs[locale].extensions.permissionsLabel, { plugin: REVIEW.extension.name }),
+          }),
+        ).getByRole("list", { name: msgs[locale].extensions.permissions }),
+      ).toBeTruthy();
+      expect(within(templates).getByRole("list", { name: c.templates })).toBeTruthy();
+      expect(document.querySelector('[data-part="card"]')).toBeNull();
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+      // The address names the staged import (a reload comes back to this review), written in place:
+      // no router navigation, which would remount the wizard under a step taken meanwhile
+      expect(window.location.pathname + window.location.search).toBe(
+        "/admin/plugins/import?staging=st1",
+      );
+      expect(router.replace).not.toHaveBeenCalled();
       await user.click(screen.getByRole("button", { name: w.next }));
 
       const confirm = screen.getByRole("button", { name: r.confirm }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(true);
-      // Not deployed by default: says the extension is only recorded in the catalog
-      expect(screen.getByText(r.deployOff)).toBeTruthy();
-      await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
+      // Confirming always installs the extension on the deployment: no choice any more
       expect(screen.getByText(r.deployOn)).toBeTruthy();
       expect(confirm.disabled).toBe(true);
       await user.click(screen.getByRole("checkbox", { name: r.ack }));
       expect(confirm.disabled).toBe(false);
       await user.click(confirm);
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
       expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
         reviewHash: "h1",
-        deployExtension: true,
+        // the confirm step's default scope (no request asked for it)
+        scope: "optional",
       });
     },
   );
 
-  it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with deployExtension false", async () => {
+  it("?staging=<id>: shows the review prepared on another page; a plugin without an extension confirms with the review hash only", async () => {
     const r = en.catalog.admin.review;
     const review = { ...REVIEW, extension: undefined, sensitive: false, dependencies: [] };
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st2");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st2");
     const calls = stubApi({
       "GET /api/v1/admin/catalog/imports/st2": () =>
         json(200, {
@@ -432,26 +964,36 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const ext = await screen.findByRole("region", { name: en.catalog.components.extension });
     expect(within(ext).getByText(en.catalog.components.extensionNone)).toBeTruthy();
+    // The section's title is a heading; the empty line under it is the muted secondary text
+    expect(
+      within(ext).getByRole("heading", { name: en.catalog.components.extension }).tagName,
+    ).toBe("H2");
+    expect(
+      within(ext).getByText(en.catalog.components.extensionNone).getAttribute("data-part"),
+    ).toBe("content-section-empty");
     // The marketplace's permission mismatch comes with the staged review
     expect(screen.getByText(fill(r.mismatchMissing, { keys: "tools, secrets" }))).toBeTruthy();
     expect(screen.getByText(fill(r.mismatchExtra, { keys: "storage" }))).toBeTruthy();
+    // on the import page (no box around the review) the mismatch is the tinted warn callout
+    const mismatch = screen.getByText(r.mismatch).closest('[data-part="callout"]') as HTMLElement;
+    expect(mismatch.getAttribute("data-tone")).toBe("warn");
+    expect(mismatch.hasAttribute("data-framed")).toBe(false);
     // Prepared elsewhere: no way back to the source step
     expect(screen.queryByRole("button", { name: en.admin.extensions.wizard.back })).toBeNull();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
     expect(screen.getByText(r.noExtension)).toBeTruthy();
-    expect(screen.queryByRole("checkbox", { name: r.deployExtension })).toBeNull();
     await user.click(screen.getByRole("button", { name: r.confirm }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
+      scope: "optional",
     });
   });
 
   it("?staging=<id> expired or confirmed: says so; starting over shows the source step", async () => {
     const r = en.catalog.admin.review;
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=gone");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=gone");
     stubApi({
       "GET /api/v1/admin/catalog/imports/gone": () =>
         json(404, { error: { code: "plugin.staging_not_found", message: "x" } }),
@@ -463,12 +1005,12 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: r.restart }));
     expect(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) })).toBeTruthy();
     expect(screen.queryByText(r.gone)).toBeNull();
-    expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import");
+    expect(router.replace).toHaveBeenCalledWith("/admin/plugins/import");
   });
 
   it("a failed deploy after confirm shows the code, the message and the note, with a link to the item", async () => {
     const r = en.catalog.admin.review;
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st3");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st3");
     stubApi({
       "GET /api/v1/admin/catalog/imports/st3": () =>
         json(200, {
@@ -493,7 +1035,6 @@ describe("/admin/catalog/import (WizardPage)", () => {
     await renderRouteWithCache(importPath(), lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
-    await user.click(screen.getByRole("checkbox", { name: r.deployExtension }));
     await user.click(screen.getByRole("button", { name: r.confirm }));
     expect(
       await screen.findByText(
@@ -507,7 +1048,7 @@ describe("/admin/catalog/import (WizardPage)", () => {
     expect(screen.getByText("relation exists")).toBeTruthy();
     expect(screen.getByText("snapshot_not_restored: changed meanwhile")).toBeTruthy();
     expect(screen.getByRole("link", { name: r.openItem }).getAttribute("href")).toBe(
-      `/admin/catalog/${ID}`,
+      `/admin/plugins/${ID}`,
     );
     expect(router.push).not.toHaveBeenCalled();
   });
@@ -546,7 +1087,58 @@ describe("/admin/catalog/import (WizardPage)", () => {
   });
 });
 
-describe("/catalog/[itemId]/install (WizardPage)", () => {
+describe("descriptions in the UI language (descriptionZh)", () => {
+  it.each(LOCALES)(
+    "the import review shows the description in the UI language (%s)",
+    async (locale) => {
+      stubApi({
+        "POST /api/v1/admin/catalog/import/npm": () =>
+          json(200, { stagingId: "st1", review: { ...REVIEW, descriptionZh: "客户管理插件" } }),
+      });
+      await renderRouteWithCache(importPath(), lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      const r = msgs[locale].catalog.admin.review;
+      await user.click(await screen.findByRole("radio", { name: new RegExp(`^${r.sourceNpm}`) }));
+      await user.type(
+        screen.getByRole("textbox", { name: msgs[locale].admin.extensions.wizard.npmPackage }),
+        "@acme/plugin-crm",
+      );
+      await user.click(screen.getByRole("button", { name: r.fetch }));
+      expect(await screen.findByText(locale === "zh" ? "客户管理插件" : "CRM plugin")).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "the workspace list and plugin page show the description in the UI language (%s)",
+    async (locale) => {
+      const want = locale === "zh" ? "PDF 助手" : "PDF helpers";
+      const zhItem = orgItem({ descriptionZh: "PDF 助手" });
+      stubApi({ [`GET ${ORG}/catalog`]: () => json(200, { items: [zhItem] }) });
+      await renderPlugins({ locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+      cleanup();
+      vi.unstubAllGlobals();
+      params.current = { itemId: ID };
+      stubApi({
+        [`GET ${ORG}/catalog/${ID}`]: () =>
+          json(200, {
+            item: zhItem,
+            hasIcon: false,
+            extension: null,
+            templates: [],
+            dependencies: [],
+            skills: [],
+          }),
+        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
+        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+      });
+      await renderItem({ locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+    },
+  );
+});
+
+describe("/plugins/[itemId]/enable (WizardPage)", () => {
   it("read-only endpoint fields stay read-only, editable ones change; the body has only the changed editable fields and credentials; a dependency failure names it and says it was rolled back", async () => {
     params.current = { itemId: ID };
     const t = en.catalog.org.install;
@@ -573,7 +1165,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     const calls = stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
         json(502, {
           error: {
             code: "plugin.install_failed",
@@ -608,8 +1200,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
         `${fill(t.failed, { step: t.step.skills, code: "internal" })} ${fill(t.failedIn, { dependency: "crm-core" })}`,
       ),
     ).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      version: "1.0.0",
+    expect(switchInputs(calls)).toEqual({
       connectors: {
         gh: {
           name: "GitHub",
@@ -648,11 +1239,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
             skills: [],
           }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/catalog/${ID}/install`]: () =>
-          json(201, {
-            installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
-            install: { id: "i1" },
-          }),
+        [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+          json(200, { item: orgItem({ name: "docs", state: "on" }) }),
       });
       await renderInstall({ locale });
       expect(await screen.findByText(t.personalHint)).toBeTruthy();
@@ -663,9 +1251,8 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
       expect(next.disabled).toBe(false);
       await user.click(next);
       await user.click(screen.getByRole("button", { name: t.submit }));
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
-      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-        version: "1.0.0",
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
+      expect(switchInputs(calls)).toEqual({
         connectors: { docs: { slug: "docs", credential: { token: "mine" } } },
       });
       cleanup();
@@ -687,7 +1274,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
           skills: ["skills/notes"],
         }),
       [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
         json(409, {
           error: {
             code: "catalog.dependency_unresolved",
@@ -741,14 +1328,11 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
             },
           ],
         }),
-      [`POST ${ORG}/catalog/${ID}/install`]: () =>
-        json(201, {
-          installed: { itemId: ID, version: "1.0.0", pluginInstallId: "i1" },
-          install: { id: "i1" },
-        }),
+      [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
+        json(200, { item: orgItem({ name: "crm", state: "on" }) }),
     });
     const { client } = await renderInstall();
-    // the list is cached (as after a visit to /catalog)
+    // the list is cached (as after a visit to /plugins)
     client.setQueryData(["org", "o1", "catalog"], { items: [] });
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("Region", { exact: false }), "eu");
@@ -756,7 +1340,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
     expect(screen.getByText("CRM Suite")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: t.next }));
     await user.click(screen.getByRole("button", { name: t.submit }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/settings/plugins"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/plugins/${ID}`));
     // the install invalidates pluginChangeKeys: the cached catalog is marked stale, the shown
     // item, the org's extensions and its readiness are read again
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
@@ -765,8 +1349,7 @@ describe("/catalog/[itemId]/install (WizardPage)", () => {
         new Set([`${ORG}/catalog/${ID}`, `${ORG}/extensions`, `${ORG}/readiness`]),
       ),
     );
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      version: "1.0.0",
+    expect(switchInputs(calls)).toEqual({
       extensionConfig: { region: "eu" },
     });
   });
@@ -791,18 +1374,24 @@ const INSTALL = {
   deploymentPending: false,
 };
 /** A dependency install `INSTALL` brought in (its `plugin` component). */
-const DEP_INSTALL = { ...INSTALL, id: "i2", name: "crm-core", components: [] };
+const DEP_INSTALL = {
+  ...INSTALL,
+  id: "i2",
+  itemId: "22222222-2222-4222-8222-222222222222",
+  name: "crm-core",
+  components: [],
+};
 
-describe("/settings/plugins: installed plugins and uninstall", () => {
+describe("/plugins/[itemId]: this org's installs (org admins)", () => {
   it.each(LOCALES)(
-    "dependency installs by plugin name; the uninstall report lists removed and kept components with reasons (%s)",
+    "components with dependency installs by plugin name; cleaning up a failed install reports what was removed and kept, with reasons (%s)",
     async (locale) => {
       const a = msgs[locale].catalog.plugins;
       let gone = false;
       const calls = stubApi({
         [`GET ${ORG}/readiness`]: () => json(200, { modelProvider: "ready", agents: 1 }),
         [`GET ${ORG}/plugin-installs`]: () =>
-          json(200, { installs: gone ? [] : [INSTALL, DEP_INSTALL] }),
+          json(200, { installs: gone ? [] : [{ ...INSTALL, status: "failed" }, DEP_INSTALL] }),
         [`DELETE ${ORG}/plugin-installs/i1`]: () => {
           gone = true;
           return json(200, {
@@ -817,16 +1406,15 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           });
         },
       });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
-      expect(template("SettingsPage")).not.toBeNull();
+      await renderInstalls({ locale });
+      expect(template("DetailPage")).not.toBeNull();
       expect(
         await screen.findByText(`· ${a.componentKind.plugin} crm-core — ${a.created}`),
       ).toBeTruthy();
-      expect(screen.getByText(fill(a.dependencyOf, { names: "crm" }))).toBeTruthy();
+      // only this plugin's install: the dependency's install is on its own page
+      expect(screen.queryByText(fill(a.dependencyOf, { names: "crm" }))).toBeNull();
       const user = userEvent.setup();
-      await user.click(
-        (await screen.findAllByRole("button", { name: a.uninstall }))[0] as HTMLElement,
-      );
+      await user.click(await screen.findByRole("button", { name: a.cleanup }));
       const dialog = await screen.findByRole("dialog");
       await user.click(within(dialog).getByRole("button", { name: a.confirm.confirm }));
       const report = await screen.findByRole("region", {
@@ -844,25 +1432,49 @@ describe("/settings/plugins: installed plugins and uninstall", () => {
           `· ${a.componentKind.skill} s1 — ${a.report.reason.used_by_agents}`,
         ),
       ).toBeTruthy();
-      // the uninstall invalidates what a plugin change touches: the installs and the org's
-      // readiness (an extension it brought may have been a model provider) are read again
-      expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-        `DELETE ${ORG}/plugin-installs/i1`,
-        `GET ${ORG}/plugin-installs`,
-        `GET ${ORG}/readiness`,
-      ]);
-      expect(await screen.findByText(a.empty)).toBeTruthy();
+      // the clean-up invalidates what a plugin change touches: the installs, the item and the
+      // org's readiness (an extension it brought may have been a model provider) are read again
+      await waitFor(() =>
+        expect(new Set(calls.map((c) => `${c.method} ${c.url}`))).toEqual(
+          new Set([
+            `DELETE ${ORG}/plugin-installs/i1`,
+            `GET ${ORG}/plugin-installs`,
+            `GET ${ORG}/catalog/${ID}`,
+            `GET ${ORG}/extensions`,
+            `GET ${ORG}/readiness`,
+            // the plugin's components in the org
+            `GET ${ORG}/components?itemId=${ID}`,
+          ]),
+        ),
+      );
+      expect(calls[0]?.method).toBe("DELETE");
     },
   );
 
-  it("仍在安装中：409 app.install_in_progress 给出友好说明", async () => {
+  it("a dependency install says which plugins installed it; a healthy install has no clean-up", async () => {
+    const a = en.catalog.plugins;
+    stubApi({
+      [`GET ${ORG}/plugin-installs`]: () =>
+        json(200, {
+          installs: [
+            { ...INSTALL, itemId: "other" },
+            { ...DEP_INSTALL, itemId: ID },
+          ],
+        }),
+    });
+    await renderInstalls();
+    expect(await screen.findByText(fill(a.dependencyOf, { names: "crm" }))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: a.cleanup })).toBeNull();
+  });
+
+  it("still installing: a 409 plugin.install_in_progress explains it", async () => {
     stubApi({
       [`GET ${ORG}/plugin-installs`]: () =>
         json(200, { installs: [{ ...INSTALL, status: "installing" }] }),
       [`DELETE ${ORG}/plugin-installs/i1`]: () =>
         json(409, { error: { code: "plugin.install_in_progress", message: "x" } }),
     });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
+    await renderInstalls();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.catalog.plugins.cleanup }));
     await user.click(
@@ -908,9 +1520,9 @@ const SOURCES = {
   ],
 };
 
-describe("/admin/marketplaces (ListPage)", () => {
+describe("/admin/plugins/sources (ListPage)", () => {
   it.each(LOCALES)(
-    "官方地址只读、离线模式说明；企业清单可改，显示状态与刷新（%s）",
+    "官方地址只读、离线模式说明；自定义清单可改，显示状态与刷新（%s）",
     async (locale) => {
       const s = msgs[locale].catalog.admin.marketplaces;
       stubApi({
@@ -918,15 +1530,14 @@ describe("/admin/marketplaces (ListPage)", () => {
         "POST /api/v1/admin/marketplaces/s2/refresh": () =>
           json(200, { ...SOURCES.items[1], lastStatus: "ok", lastError: null }),
       });
-      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
       expect(template("ListPage")).not.toBeNull();
-      const tab = msgs[locale].catalog.admin.tabs;
-      expect(
-        screen.getByRole("link", { name: new RegExp(`^${tab.browse}`) }).getAttribute("href"),
-      ).toBe("/admin/marketplaces/entries");
-      expect(
-        screen.getByRole("link", { name: new RegExp(`^${tab.sources}`) }).getAttribute("href"),
-      ).toBe("/admin/marketplaces");
+      // Its own page under 插件 (添加市场源 leads here): the path links back, no tabs
+      expect(screen.getByRole("link", { name: "plugins" }).getAttribute("href")).toBe(
+        "/admin/plugins",
+      );
+      const tabs = msgs[locale].catalog.admin.tabs;
+      expect(screen.queryByRole("link", { name: new RegExp(`^${tabs.installed}`) })).toBeNull();
       expect(await screen.findByText(s.offline)).toBeTruthy();
       const official = screen.getByDisplayValue(
         SOURCES.items[0]?.url as string,
@@ -979,33 +1590,31 @@ describe("marketplaces: the two tabs share one head", () => {
   const head = () => document.querySelector('[data-part="page-header"]') as HTMLElement;
 
   it.each(LOCALES)(
-    "sources and entries: the same description, tab counts and a search (%s)",
+    "sources has its description and search; the market tab has the 插件 head with its counts (%s)",
     async (locale) => {
       const m = msgs[locale].catalog.admin;
       stubApi({
         "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
         "GET /api/v1/admin/marketplaces/entries": () => json(200, { items: [ENTRY] }),
       });
-      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
       const sourcesHead = head();
       expect(within(sourcesHead).getByText(m.marketplaces.description)).toBeTruthy();
-      // browse counts the entries of the marketplaces that are listed (the official one is off)
-      const tabs = (el: HTMLElement) =>
-        within(el.querySelector('[data-part="page-header-tabs"]') as HTMLElement)
-          .getAllByRole("link")
-          .map((a) => a.textContent);
-      const counted = [`${m.tabs.browse}3`, `${m.tabs.sources}2`];
-      expect(tabs(sourcesHead)).toEqual(counted);
       expect(
         within(sourcesHead).getByRole("searchbox", { name: m.marketplaces.search }),
       ).toBeTruthy();
       cleanup();
 
-      resetNavigation("/admin/marketplaces/entries");
+      resetNavigation("/admin/plugins/market");
       await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale });
       const entriesHead = head();
-      expect(within(entriesHead).getByText(m.marketplaces.description)).toBeTruthy();
-      expect(tabs(entriesHead)).toEqual(counted);
+      expect(within(entriesHead).getByText(m.description)).toBeTruthy();
+      const tabs = within(
+        entriesHead.querySelector('[data-part="page-header-tabs"]') as HTMLElement,
+      )
+        .getAllByRole("link")
+        .map((a) => a.textContent);
+      expect(tabs).toEqual([`${m.tabs.installed}0`, m.tabs.market, `${m.tabs.pending}0`]);
       expect(within(entriesHead).getByRole("searchbox", { name: m.entries.search })).toBeTruthy();
     },
   );
@@ -1013,7 +1622,7 @@ describe("marketplaces: the two tabs share one head", () => {
   it("the sources search filters the marketplaces by name or address", async () => {
     const m = en.catalog.admin.marketplaces;
     stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
-    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const user = userEvent.setup();
     await user.type(screen.getByRole("searchbox", { name: m.search }), "acme.com");
     expect(screen.queryByDisplayValue(SOURCES.items[0]?.url as string)).toBeNull();
@@ -1023,9 +1632,11 @@ describe("marketplaces: the two tabs share one head", () => {
     expect(screen.getByText(m.noMatch)).toBeTruthy();
   });
 
-  it.each(LOCALES)("the empty entries list points to the sources tab (%s)", (locale) => {
+  it.each(LOCALES)("the empty entries list points to 添加市场源 (%s)", (locale) => {
     const m = msgs[locale].catalog.admin;
-    expect(m.entries.empty).toContain(locale === "zh" ? `「${m.tabs.sources}」` : m.tabs.sources);
+    expect(m.entries.empty).toContain(
+      locale === "zh" ? `「${m.actions.addSource}」` : m.actions.addSource,
+    );
   });
 });
 
@@ -1056,14 +1667,21 @@ describe("marketplaceErrorKind", () => {
   });
 });
 
-describe("/admin/catalog and marketplace entries", () => {
+describe("/admin/plugins and marketplace entries", () => {
   const item = (over: Record<string, unknown>) => ({
     id: ID,
     name: "cat-a",
     publisher: "Acme",
     displayName: null,
     description: "",
-    policy: "allow",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 0,
+    pending: false,
+    permissionsHash: null,
     latestVersion: "1.0.0",
     versions: ["1.0.0"],
     installs: 2,
@@ -1072,6 +1690,8 @@ describe("/admin/catalog and marketplace entries", () => {
     latestMarketplaceVersion: "2.0.0",
     newerInMarketplace: true,
     contentChanged: false,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
     updatedAt: "2026-10-22T00:00:00.000Z",
     ...over,
   });
@@ -1117,7 +1737,40 @@ describe("/admin/catalog and marketplace entries", () => {
     importedAt: "2026-10-22T00:00:00.000Z",
   });
 
-  it("list: source and “new version”, filtered by source; no kind column or filter", async () => {
+  it.each(LOCALES)(
+    "list and item detail show the description in the UI language (%s)",
+    async (locale) => {
+      const want = locale === "zh" ? "客户管理插件" : "CRM plugin";
+      const zhItem = item({
+        name: "crm",
+        description: "CRM plugin",
+        descriptionZh: "客户管理插件",
+      });
+      stubApi({
+        "GET /api/v1/admin/catalog/items": () => json(200, { items: [zhItem], nextOffset: null }),
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      });
+      await renderRouteWithCache("/admin/plugins", lastStubRoutes(), { locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+      cleanup();
+      vi.unstubAllGlobals();
+      params.current = { itemId: ID };
+      stubApi({
+        [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+          json(200, {
+            item: { ...zhItem, packageName: null, deletedAt: null },
+            versions: [version("1.0.0")],
+            hasIcon: false,
+          }),
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+      });
+      await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale });
+      expect(await screen.findByText(want)).toBeTruthy();
+    },
+  );
+
+  it("list: source and “update available”; the search narrows by name", async () => {
     const t = en.catalog;
     stubApi({
       "GET /api/v1/admin/catalog/items": () =>
@@ -1136,38 +1789,19 @@ describe("/admin/catalog and marketplace entries", () => {
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
     });
-    await renderRouteWithCache("/admin/catalog", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
     const list = await screen.findByRole("list", { name: t.admin.title });
     const row = (name: string) =>
       within(list)
         .getAllByText(new RegExp(name))
         .map((n) => n.closest("li") as HTMLElement)[0] as HTMLElement;
     expect(within(row("cat-a")).getByText(new RegExp(t.source.official))).toBeTruthy();
-    expect(await within(row("cat-a")).findByText(t.newer)).toBeTruthy();
+    // a newer compatible version in its marketplace is the row's state
+    const update = fill(t.admin.state.update, { version: "v2.0.0" });
+    expect(within(row("cat-a")).getByText(update)).toBeTruthy();
     expect(within(row("manual-skill")).getByText(new RegExp(t.source.manual))).toBeTruthy();
-    expect(within(row("manual-skill")).queryByText(t.newer)).toBeNull();
-    expect(screen.getByRole("link", { name: t.admin.actions.import }).getAttribute("href")).toBe(
-      "/admin/catalog/import",
-    );
-    // No overflow menu: browsing the marketplaces is one link; the sources are the sidebar's 市场
-    const head = document.querySelector('[data-part="page-header"]') as HTMLElement;
-    expect(within(head).queryByRole("button", { name: "More" })).toBeNull();
-    expect(
-      within(head).getByRole("link", { name: t.admin.actions.entries }).getAttribute("href"),
-    ).toBe("/admin/marketplaces/entries");
-    expect(within(head).queryByRole("link", { name: "Marketplaces" })).toBeNull();
-    // Tabs: plugins (with the count) and deployment requests, linking the two routes
-    expect(template("ListPage")).not.toBeNull();
-    expect(
-      screen
-        .getByRole("link", { name: new RegExp(`^${t.admin.tabs.requests}`) })
-        .getAttribute("href"),
-    ).toBe("/admin/catalog/requests");
-    expect(
-      screen
-        .getByRole("link", { name: new RegExp(`^${t.admin.tabs.plugins}`) })
-        .getAttribute("href"),
-    ).toBe("/admin/catalog");
+    expect(within(row("manual-skill")).queryByText(update)).toBeNull();
+    expect(within(row("manual-skill")).getByText(t.admin.state.running)).toBeTruthy();
     // The search narrows by name
     await userEvent.setup().type(screen.getByRole("searchbox", { name: t.admin.search }), "manual");
     expect(within(list).queryByText(/cat-a/)).toBeNull();
@@ -1197,17 +1831,12 @@ describe("/admin/catalog and marketplace entries", () => {
     });
     await renderRouteWithCache(entriesPath(), lastStubRoutes());
     expect(await screen.findByText(c.truncated)).toBeTruthy();
-    // One title 市场/Marketplaces with the tabs Browse (active) and Sources
+    // The 插件 head with its tab 市场 active
     expect(
       screen
-        .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.browse}`) })
+        .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.market}`) })
         .getAttribute("aria-current"),
     ).toBeTruthy();
-    expect(
-      screen
-        .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.sources}`) })
-        .getAttribute("href"),
-    ).toBe("/admin/marketplaces");
     // object rows, not a table; no filter rail
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("radiogroup")).toBeNull();
@@ -1234,7 +1863,7 @@ describe("/admin/catalog and marketplace entries", () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
-        json(200, { items: [entry()], truncated: false }),
+        json(200, { items: [entry({ adopted: null, newerAvailable: false })], truncated: false }),
       "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
         fail
           ? json(502, { error: { code: "marketplace.integrity_mismatch", message: "x" } })
@@ -1259,9 +1888,178 @@ describe("/admin/catalog and marketplace entries", () => {
     fail = false;
     await importIt();
     await waitFor(() =>
-      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st9"),
+      expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st9"),
     );
     expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({ version: "2.0.0" });
+  });
+
+  it.each(LOCALES)(
+    "entries: a row shows the entry's display name, else its name, and the summary in the UI language (%s)",
+    async (locale) => {
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/marketplaces/entries": () =>
+          json(200, {
+            items: [
+              entry({
+                displayName: { zh: "甲猫", en: "Cat A" },
+                summary: { en: "Cat tools", zh: "猫工具" },
+              }),
+              entry({ name: "dog-b", displayName: null, summary: { en: "Dog tools" } }),
+            ],
+            truncated: false,
+          }),
+      });
+      await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale });
+      const list = await screen.findByRole("list", {
+        name: msgs[locale].catalog.admin.entries.title,
+      });
+      const cat = within(list)
+        .getByText(locale === "zh" ? "甲猫" : "Cat A")
+        .closest("li") as HTMLElement;
+      expect(within(cat).getByText(locale === "zh" ? "猫工具" : "Cat tools")).toBeTruthy();
+      const dog = within(list).getByText("dog-b").closest("li") as HTMLElement;
+      // no zh summary: the English one in both languages
+      expect(within(dog).getByText("Dog tools")).toBeTruthy();
+    },
+  );
+
+  it("entries: one row per plugin with its latest version; an older import can be updated; 其他版本 imports another version", async () => {
+    const c = en.catalog.admin.entries;
+    const at = (name: string, v: string, over: Record<string, unknown> = {}) =>
+      entry({ name, version: v, adopted: null, newerAvailable: false, ...over });
+    const old = { adopted: { itemId: ID, versions: ["1.0.0-rc.0"] } };
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            // imported at an older version; rc.10 is the newest (semver, not text order)
+            at("cat-a", "1.0.0-rc.2", { ...old, newerAvailable: true }),
+            at("cat-a", "1.0.0-rc.10", { ...old, newerAvailable: true }),
+            at("cat-a", "1.0.0-rc.0", old),
+            // never imported
+            at("dog-b", "0.9.0"),
+            at("dog-b", "1.0.0"),
+            // imported at the latest
+            at("eel-c", "2.0.0", { adopted: { itemId: "e1", versions: ["2.0.0"] } }),
+            at("eel-c", "1.0.0", { adopted: { itemId: "e1", versions: ["2.0.0"] } }),
+          ],
+          truncated: false,
+        }),
+      "POST /api/v1/admin/marketplaces/official/entries/cat-a/import": () =>
+        json(200, { stagingId: "st9", review: REVIEW }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    // imported at an older version: 可更新到 the latest, 更新 imports it
+    const cat = row("cat-a");
+    expect(
+      within(cat).getByText(
+        fill(c.adoptedUpdate, { version: "v1.0.0-rc.0", latest: "v1.0.0-rc.10" }),
+      ),
+    ).toBeTruthy();
+    // the state says it: no 有新版本 chip
+    expect(within(cat).queryByText(en.catalog.newer)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(cat).getByRole("button", { name: c.update }));
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({
+        version: "1.0.0-rc.10",
+      }),
+    );
+    // never imported: 未引入 and 引入 the latest
+    const dog = row("dog-b");
+    expect(within(dog).getByText(c.notAdopted)).toBeTruthy();
+    expect(
+      within(dog).getByRole("button", { name: fill(c.importVersion, { version: "v1.0.0" }) }),
+    ).toBeTruthy();
+    // imported at the latest: 已引入 and 查看
+    const eel = row("eel-c");
+    expect(within(eel).getByText(fill(c.adopted, { version: "v2.0.0" }))).toBeTruthy();
+    expect(within(eel).getByRole("link", { name: c.view }).getAttribute("href")).toContain(
+      "/admin/plugins/e1",
+    );
+    // 其他版本: the other versions, the imported one not importable again
+    await user.click(within(cat).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: c.otherVersions }));
+    const rc2 = await screen.findByRole("menuitem", {
+      name: fill(c.importVersion, { version: "v1.0.0-rc.2" }),
+    });
+    const rc0 = screen.getByRole("menuitem", {
+      name: fill(c.adopted, { version: "v1.0.0-rc.0" }),
+    });
+    expect(rc0.getAttribute("aria-disabled")).toBe("true");
+    rc2.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(bodyOf(calls.filter((x) => x.method === "POST").at(-1))).toEqual({
+        version: "1.0.0-rc.2",
+      }),
+    );
+  });
+
+  it("entries: the newest stable version is the row's; prereleases and deprecated versions sit in 其他版本, deprecated ones not importable", async () => {
+    const c = en.catalog.admin.entries;
+    const at = (v: string, over: Record<string, unknown> = {}) =>
+      entry({ name: "cat-a", version: v, adopted: null, newerAvailable: false, ...over });
+    const calls = stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            at("3.0.0", { deprecated: { reason: "broken release" } }),
+            at("2.1.0-rc.0", { deprecated: null }),
+            at("2.0.0", { deprecated: null }),
+            at("1.0.0", { deprecated: { reason: null } }),
+          ],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    const cat = within(list).getByText("cat-a").closest("li") as HTMLElement;
+    expect(
+      within(cat).getByRole("button", { name: fill(c.importVersion, { version: "v2.0.0" }) }),
+    ).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(cat).getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: c.otherVersions }));
+    const rc = await screen.findByRole("menuitem", {
+      name: fill(c.importVersion, { version: "v2.1.0-rc.0" }),
+    });
+    expect(rc.getAttribute("aria-disabled")).not.toBe("true");
+    const three = screen.getByRole("menuitem", {
+      name: fill(c.deprecatedReason, { version: "v3.0.0", reason: "broken release" }),
+    });
+    const one = screen.getByRole("menuitem", { name: fill(c.deprecated, { version: "v1.0.0" }) });
+    expect(three.getAttribute("aria-disabled")).toBe("true");
+    expect(one.getAttribute("aria-disabled")).toBe("true");
+    three.focus();
+    await user.keyboard("{Enter}");
+    await settle();
+    expect(calls.some((x) => x.method === "POST")).toBe(false);
+  });
+
+  it("entries: a plugin whose every version is deprecated reads 已废弃 and offers no import", async () => {
+    const c = zh.catalog.admin.entries;
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [entry({ version: "2.0.0", adopted: null, deprecated: { reason: "停止维护" } })],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes(), { locale: "zh" });
+    const list = await screen.findByRole("list", { name: c.title });
+    const cat = within(list).getByText("cat-a").closest("li") as HTMLElement;
+    expect(
+      within(cat).getByText(fill(c.deprecatedReason, { version: "v2.0.0", reason: "停止维护" })),
+    ).toBeTruthy();
+    expect(within(cat).queryByRole("button", { name: /v2\.0\.0/ })).toBeNull();
   });
 
   it("item detail: the agent templates of the latest version", async () => {
@@ -1278,11 +2076,15 @@ describe("/admin/catalog and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const agents = await screen.findByRole("region", { name: c.agentTemplates });
-    expect(within(agents).getByText("· reviewer")).toBeTruthy();
+    const table = await screen.findByRole("table", {
+      name: en.catalog.admin.detail.tabs.components,
+    });
+    const row = within(table).getByText("reviewer").closest("tr") as HTMLElement;
+    expect(within(row).getByText(en.catalog.admin.detail.kind.agentTemplate)).toBeTruthy();
+    void c;
   });
 
-  it("item detail: the four component sections of the latest version (extension with its declared permissions, skills, templates, dependencies with catalog resolution)", async () => {
+  it("item detail: the components table of the latest version, the permissions count, dependencies with catalog resolution", async () => {
     params.current = { itemId: ID };
     const c = en.catalog.components;
     stubApi({
@@ -1326,18 +2128,17 @@ describe("/admin/catalog and marketplace entries", () => {
         }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const ext = await screen.findByRole("region", { name: c.extension });
-    expect(
-      within(ext).getByText(fill(c.extensionVersion, { name: "crm", version: "v1.0.0" })),
-    ).toBeTruthy();
-    expect(within(ext).getByText("crm_search")).toBeTruthy();
-    expect(within(ext).getByText(en.extensions.category.storage)).toBeTruthy();
-    expect(
-      within(screen.getByRole("region", { name: c.skills })).getByText("· crm-notes"),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByRole("region", { name: c.templates })).getByText("· docs"),
-    ).toBeTruthy();
+    // One table of the latest version's components: kind and version
+    const d = en.catalog.admin.detail;
+    const table = await screen.findByRole("table", { name: d.tabs.components });
+    const kindOf = (name: string) =>
+      within(within(table).getByText(name).closest("tr") as HTMLElement);
+    expect(kindOf("crm").getByText(d.kind.extension)).toBeTruthy();
+    expect(kindOf("crm").getByText("v1.0.0")).toBeTruthy();
+    expect(kindOf("crm-notes").getByText(d.kind.skill)).toBeTruthy();
+    expect(kindOf("docs").getByText(d.kind.connectorTemplate)).toBeTruthy();
+    // the inspector counts the declared permissions (tools and storage), confirmed
+    expect(screen.getByText(fill(d.permissions.confirmed, { n: 2 }))).toBeTruthy();
     const deps = screen.getByRole("region", { name: c.dependencies });
     const found = await within(deps).findByRole("link", {
       name: fill(c.dependencyInCatalog, {
@@ -1346,14 +2147,12 @@ describe("/admin/catalog and marketplace entries", () => {
         versions: "1.2.0, 1.0.0",
       }),
     });
-    expect(found.getAttribute("href")).toBe("/admin/catalog/core-id");
+    expect(found.getAttribute("href")).toBe("/admin/plugins/core-id");
     expect(
       within(deps).getByText(
         fill(c.dependencyNotInCatalog, { name: "crm-extra", range: "^2.0.0" }),
       ),
     ).toBeTruthy();
-    // A plugin with an extension can install it on the deployment
-    expect(screen.getByRole("button", { name: en.catalog.admin.detail.deploy })).toBeTruthy();
   });
 
   it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
@@ -1376,7 +2175,7 @@ describe("/admin/catalog and marketplace entries", () => {
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
   });
 
-  it("item detail: no icon (hasIcon false) renders no image; a plugin without an extension has no deployment install", async () => {
+  it("item detail: no icon (hasIcon false) renders no image; a plugin without an extension has no permissions", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
@@ -1391,8 +2190,7 @@ describe("/admin/catalog and marketplace entries", () => {
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
     expect(await screen.findByText("@acme/crm")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
-    expect(screen.getByText(en.catalog.components.extensionNone)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.catalog.admin.detail.deploy })).toBeNull();
+    expect(screen.getByText(en.catalog.admin.detail.permissions.none)).toBeTruthy();
   });
 
   it("entries: the marketplaces are tabs above the list only when there is more than one", async () => {
@@ -1443,17 +2241,17 @@ describe("inbox: catalog_request", () => {
       id: "r1",
       orgId: "o1",
       orgName: "Acme",
+      kind: "enable",
       item: { id: ID, name: "pdf-tools", displayName: null },
-      version: "1.0.0",
-      stage: "org",
+      entry: null,
       status: "pending",
       note: "please",
+      reason: null,
       requestedBy: "a2",
       requestedByName: "Mia",
       decidedBy: null,
       decidedAt: null,
-      orgDecidedBy: null,
-      orgDecidedAt: null,
+      stagingId: null,
       createdAt: "2026-10-22T00:00:00.000Z",
     };
     let done = false;
@@ -1479,45 +2277,48 @@ describe("inbox: catalog_request", () => {
     expect(screen.getByText("Mia")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: d.approve }));
     expect(await screen.findByText(d.approved)).toBeTruthy();
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve" });
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ approve: true });
   });
 });
 
-describe("组织插件：启用被目录条目拒绝", () => {
-  it.each(LOCALES)("approval_required 显示翻译后的原因与去目录的入口（%s）", async (locale) => {
-    const m = msgs[locale];
-    stubApi({
-      [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
-      [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
-      [`GET ${ORG}/extensions`]: () =>
-        json(200, {
-          extensions: [
-            {
-              plugin: "crm-core",
-              version: "1.0.0",
-              enabled: false,
-              configurable: false,
-              config: null,
-              secrets: [],
-              permissions: [],
-              orgConfigSchema: null,
-            },
-          ],
+describe("/extensions: switching on refused by the plugin", () => {
+  it.each(LOCALES)(
+    "approval_required shows the translated reason and a link to 插件 (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      stubApi({
+        [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
+        [`GET ${ORG}/extensions`]: () =>
+          json(200, {
+            extensions: [
+              {
+                plugin: "crm-core",
+                version: "1.0.0",
+                enabled: false,
+                configurable: false,
+                config: null,
+                secrets: [],
+                permissions: [],
+                orgConfigSchema: null,
+              },
+            ],
+          }),
+        [`PUT ${ORG}/extensions/crm-core`]: () =>
+          json(403, { error: { code: "catalog.approval_required", message: "x" } }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
+      await userEvent.setup().click(
+        await screen.findByRole("switch", {
+          name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
         }),
-      [`PUT ${ORG}/extensions/crm-core`]: () =>
-        json(403, { error: { code: "catalog.approval_required", message: "x" } }),
-    });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
-    await userEvent.setup().click(
-      await screen.findByRole("switch", {
-        name: fill(m.extensions.enableLabel, { plugin: "crm-core" }),
-      }),
-    );
-    expect(await screen.findByText(`${m.errors.catalog.approval_required}`)).toBeTruthy();
-    expect(screen.getByRole("link", { name: m.extensions.openCatalog }).getAttribute("href")).toBe(
-      "/catalog",
-    );
-  });
+      );
+      expect(await screen.findByText(`${m.errors.catalog.approval_required}`)).toBeTruthy();
+      expect(
+        screen.getByRole("link", { name: m.extensions.openPlugins }).getAttribute("href"),
+      ).toBe("/plugins");
+    },
+  );
 });
 
 describe("安装向导的默认 slug", () => {
@@ -1563,18 +2364,18 @@ describe("安装向导的默认 slug", () => {
   });
 });
 
-describe("deployment requests with none pending", () => {
-  it("one full-width empty state, not a narrow empty table beside an empty detail", async () => {
-    stubApi({ "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [] }) });
-    await renderRouteWithCache("/admin/catalog/requests", lastStubRoutes());
-    expect(await screen.findByText(en.catalog.admin.requests.empty)).toBeTruthy();
+describe("/admin/plugins/pending with nothing waiting", () => {
+  it("one full-width empty state", async () => {
+    stubApi({});
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    expect(await screen.findByText(en.catalog.admin.pending.empty)).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(document.querySelector(".cb-body-rail")).toBeNull();
   });
 });
 
-describe("部署申请页显示申请人", () => {
-  it("Inspector 里有申请人的显示名", async () => {
+describe("/admin/plugins/pending shows the requester", () => {
+  it("a request row names its org, kind and requester; the tab 待确认 is active", async () => {
     stubApi({
       "GET /api/v1/admin/catalog/requests": () =>
         json(200, {
@@ -1583,33 +2384,31 @@ describe("部署申请页显示申请人", () => {
               id: "r1",
               orgId: "o1",
               orgName: "Acme",
+              kind: "access",
               item: { id: ID, name: "crm", displayName: null },
-              version: null,
-              stage: "deployment",
+              entry: null,
               status: "pending",
               note: "",
+              reason: null,
               requestedBy: "a2",
               requestedByName: "Mia",
               decidedBy: null,
               decidedAt: null,
-              orgDecidedBy: null,
-              orgDecidedAt: null,
+              stagingId: null,
               createdAt: "2026-10-22T00:00:00.000Z",
             },
           ],
         }),
     });
-    await renderRouteWithCache("/admin/catalog/requests", lastStubRoutes());
-    expect(await screen.findByText("Mia")).toBeTruthy();
-    expect(screen.getByText(en.catalog.admin.requests.fields.requester)).toBeTruthy();
-    // One title with the catalog tabs; this page is the active "requests" tab
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const p = en.catalog.admin.pending;
+    expect(await screen.findByText(new RegExp(fill(p.requester, { name: "Mia" })))).toBeTruthy();
+    expect(screen.getByText(p.kind.access)).toBeTruthy();
+    expect(screen.getByText("Acme · crm")).toBeTruthy();
     const tab = en.catalog.admin.tabs;
     expect(
-      screen.getByRole("link", { name: new RegExp(`^${tab.plugins}`) }).getAttribute("href"),
-    ).toBe("/admin/catalog");
-    expect(
       screen
-        .getByRole("link", { name: new RegExp(`^${tab.requests}`) })
+        .getByRole("link", { name: new RegExp(`^${tab.pending}`) })
         .getAttribute("aria-current"),
     ).toBeTruthy();
   });
@@ -1643,7 +2442,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
           json(200, { offline: false, items: [SOURCES.items[0], GIT_SOURCE] }),
         "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, id: "g2" }),
       });
-      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
       expect(await screen.findByText(fill(s.gitInfo, { ref: "release" }))).toBeTruthy();
       expect(screen.getByText(fill(s.lastCommit, { commit: "0123456" }))).toBeTruthy();
       const user = userEvent.setup();
@@ -1669,7 +2468,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [] }),
       "POST /api/v1/admin/marketplaces": () => json(201, { ...GIT_SOURCE, form: "http" }),
     });
-    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     const add = await screen.findByRole("region", { name: s.add });
     const user = userEvent.setup();
     expect(within(add).queryByRole("textbox", { name: startsWith(s.ref) })).toBeNull();
@@ -1750,7 +2549,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       }),
     );
     await waitFor(() =>
-      expect(router.push).toHaveBeenCalledWith("/admin/catalog/import?staging=st7"),
+      expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st7"),
     );
     expect(bodyOf(calls.find((x) => x.method === "POST"))).toEqual({ version: "1.0.0" });
   });
@@ -1818,7 +2617,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
     async (locale) => {
       const r = msgs[locale].catalog.admin.review;
       const o = msgs[locale].catalog.origin;
-      window.history.replaceState(null, "", "/admin/catalog/import?staging=st3");
+      window.history.replaceState(null, "", "/admin/plugins/import?staging=st3");
       const commit = "fedcba9876543210fedcba9876543210fedcba98";
       stubApi({
         "GET /api/v1/admin/catalog/imports/st3": () =>
@@ -1874,7 +2673,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
 
   it("provenance not checked is shown only for npm sources", async () => {
     const r = en.catalog.admin.review;
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st6");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st6");
     stubApi({
       "GET /api/v1/admin/catalog/imports/st6": () =>
         json(200, {
@@ -1895,7 +2694,7 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
 
   it("provenance not checked says why", async () => {
     const r = en.catalog.admin.review;
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st4");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st4");
     stubApi({
       "GET /api/v1/admin/catalog/imports/st4": () =>
         json(200, { stagingId: "st4", review: REVIEW }),
@@ -1943,9 +2742,15 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
       fail = false;
       await user.click(screen.getByRole("button", { name: r.fetch }));
       await waitFor(() =>
-        expect(router.replace).toHaveBeenCalledWith("/admin/catalog/import?staging=st5"),
+        expect(window.location.pathname + window.location.search).toBe(
+          "/admin/plugins/import?staging=st5",
+        ),
       );
-      expect(bodyOf(calls.at(-1))).toEqual({ url: "acme/crm", ref: "v1.0.0", path: "plugins/crm" });
+      expect(bodyOf(calls.filter((c) => c.method === "POST").at(-1))).toEqual({
+        url: "acme/crm",
+        ref: "v1.0.0",
+        path: "plugins/crm",
+      });
     },
   );
 
@@ -1975,7 +2780,14 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
             publisher: "Acme",
             displayName: null,
             description: "",
-            policy: "allow",
+            scope: "optional",
+            scopeOrgs: [],
+            builtin: false,
+            disabled: false,
+            shownToOthers: true,
+            enabledOrgs: 0,
+            pending: false,
+            permissionsHash: null,
             latestVersion: "1.0.0",
             versions: ["1.0.0", "0.9.0"],
             installs: 0,
@@ -2034,7 +2846,14 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
               publisher: "Acme",
               displayName: null,
               description: "",
-              policy: "allow",
+              scope: "optional",
+              scopeOrgs: [],
+              builtin: false,
+              disabled: false,
+              shownToOthers: true,
+              enabledOrgs: 0,
+              pending: false,
+              permissionsHash: null,
               latestVersion: "1.0.0",
               versions: ["1.0.0"],
               installs: 0,
@@ -2043,6 +2862,13 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
               latestMarketplaceVersion: "1.0.0",
               newerInMarketplace: false,
               contentChanged: true,
+              componentCounts: {
+                extension: 0,
+                skills: 1,
+                connectorTemplates: 0,
+                agentTemplates: 0,
+              },
+              sourceFormat: "capybara",
               updatedAt: "2026-10-22T00:00:00.000Z",
             },
           ],
@@ -2050,44 +2876,20 @@ describe("phase A1: git marketplaces, source detail and provenance", () => {
         }),
       "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [GIT_SOURCE] }),
     });
-    await renderRouteWithCache("/admin/catalog", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
     const list = await screen.findByRole("list", { name: en.catalog.admin.title });
     expect(within(list).getByText(en.catalog.contentChanged)).toBeTruthy();
   });
 });
 
-describe("phase A1: plugin upgrades and skill conflicts", () => {
-  const PREVIEW = {
-    from: "1.0.0",
-    to: "1.1.0",
-    diffHash: "f".repeat(64),
-    components: [
-      { kind: "skill", ref: "notes", change: "changed" },
-      { kind: "skill", ref: "extra", change: "added" },
-      { kind: "connector", ref: "gh", change: "changed", detail: "credentials change" },
-      { kind: "agent_template", ref: "reviewer", change: "changed" },
-    ],
-    inputs: { connectors: [], credentialsChanged: ["gh"], extensionConfig: false },
-    // The target version's template (not in the latest version's detail below)
-    templates: [
-      {
-        id: "gh",
-        displayName: { zh: "GitHub", en: "GitHub" },
-        description: "",
-        plugin: "connector-mcp",
-        connector: "mcp",
-        endpoint: { url: "https://mcp.example.com" },
-        editableEndpoint: ["url"],
-        auth: { type: "bearer", ownership: "org" },
-        ownership: "org",
-      },
-    ],
-  };
+// The org plugin upgrade (its dialog and routes) is retired (ruling F2): a platform plugin moves
+// with the admin platform update (admin-components.test.tsx).
+describe("phase A1: the org plugin page and skill conflicts", () => {
   const DETAIL = {
     item: orgItem({
       name: "crm",
       latestVersion: "1.1.0",
-      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
+      installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: null },
     }),
     hasIcon: false,
     extension: null,
@@ -2095,370 +2897,17 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
     dependencies: [],
     skills: ["skills/notes", "skills/extra"],
   };
-  const UPGRADABLE = {
-    ...INSTALL,
-    components: [
-      { kind: "skill", ref: "s1", created: true, skillVersion: 1, dropped: false },
-      { kind: "skill", ref: "old-notes", created: true, skillVersion: 1, dropped: true },
-    ],
-    upgradeAvailable: "1.1.0",
-    deploymentPending: false,
-  };
 
-  it.each(LOCALES)(
-    "settings/plugins: upgrade available opens the dialog; preview -> changes and inputs -> confirm posts { version, diffHash, connectors } (%s)",
-    async (locale) => {
-      const m = msgs[locale].catalog;
-      let upgraded = false;
-      const calls = stubApi({
-        [`GET ${ORG}/plugin-installs`]: () =>
-          json(200, {
-            installs: [
-              upgraded ? { ...UPGRADABLE, version: "1.1.0", upgradeAvailable: null } : UPGRADABLE,
-            ],
-          }),
-        [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-        [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, PREVIEW),
-        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () => {
-          upgraded = true;
-          return json(200, { install: { ...UPGRADABLE, version: "1.1.0" } });
-        },
-      });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
-      expect(
-        await screen.findByText(fill(m.plugins.upgradeAvailable, { version: "v1.1.0" })),
-      ).toBeTruthy();
-      expect(
-        screen.getByText(`· ${m.plugins.componentKind.skill} old-notes — ${m.plugins.dropped}`),
-      ).toBeTruthy();
-      const user = userEvent.setup();
-      await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      const line = (change: keyof typeof m.upgrade.change, kind: string, ref: string) =>
-        fill(m.upgrade.line, { change: m.upgrade.change[change], kind, ref });
-      expect(
-        await within(dialog).findByText(line("changed", m.plugins.componentKind.skill, "notes")),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(line("added", m.plugins.componentKind.skill, "extra")),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(
-          line("changed", m.plugins.componentKind.agent_template, "reviewer"),
-        ),
-      ).toBeTruthy();
-      expect(
-        within(dialog).getByText(fill(m.upgrade.credentialsInput, { name: "GitHub" })),
-      ).toBeTruthy();
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade/preview")))).toEqual({
-        version: "1.1.0",
-      });
-      // The changed connector keeps its name, slug and endpoint: only credentials are asked, and
-      // they are required before confirming
-      expect(within(dialog).queryByLabelText("url")).toBeNull();
-      expect(
-        (within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(true);
-      await user.type(
-        within(dialog).getByLabelText(msgs[locale].connectors.form.tokenLabel),
-        "new-tok",
-      );
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      expect(
-        await screen.findByText(fill(m.upgrade.done, { name: "crm", version: "v1.1.0" })),
-      ).toBeTruthy();
-      expect(bodyOf(calls.find((c) => c.url.endsWith("/upgrade")))).toEqual({
-        version: "1.1.0",
-        diffHash: "f".repeat(64),
-        connectors: { gh: { credential: { token: "new-tok" } } },
-      });
-      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    },
-  );
-
-  it("settings/plugins: the deployment's extension moved on -> the org is told to upgrade; upgrading status; a stale preview is fetched again", async () => {
-    const m = en.catalog;
-    let previews = 0;
-    const calls = stubApi({
-      [`GET ${ORG}/plugin-installs`]: () =>
-        json(200, {
-          installs: [
-            { ...UPGRADABLE, deploymentPending: true },
-            { ...INSTALL, id: "i3", name: "busy", status: "upgrading", components: [] },
-          ],
-        }),
-      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => {
-        previews += 1;
-        return json(200, {
-          ...PREVIEW,
-          diffHash: String(previews).repeat(64),
-          components: [],
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-          templates: [],
-        });
-      },
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
-    });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
-    expect(await screen.findByText(m.plugins.deploymentPending)).toBeTruthy();
-    expect(screen.getByText(new RegExp(`^${m.plugins.status.upgrading}`))).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText(m.upgrade.noChanges)).toBeTruthy();
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    expect(await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`)).toBeTruthy();
-    await waitFor(() => expect(previews).toBe(2));
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    await waitFor(() =>
-      expect(calls.filter((c) => c.url.endsWith("/upgrade")).map((c) => bodyOf(c))).toEqual([
-        { version: "1.1.0", diffHash: "1".repeat(64) },
-        { version: "1.1.0", diffHash: "2".repeat(64) },
-      ]),
-    );
-  });
-
-  it("catalog item: installed with an upgrade available offers the upgrade to org admins; needs approval -> request submitted", async () => {
+  it("plugin page: members read no installs", async () => {
     params.current = { itemId: ID };
-    const m = en.catalog;
-    stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL),
-      [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-        json(200, {
-          ...PREVIEW,
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-          templates: [],
-        }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(202, { request: { id: "r1", stage: "deployment", status: "pending" } }),
-    });
-    await renderItem();
-    expect(
-      await screen.findByText(fill(m.org.action.upgradeAvailable, { version: "v1.1.0" })),
-    ).toBeTruthy();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(fill(m.upgrade.versions, { from: "v1.0.0", to: "v1.1.0" }));
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    expect(await screen.findByText(m.upgrade.requested)).toBeTruthy();
-  });
-
-  const NO_INPUTS = {
-    ...PREVIEW,
-    components: [],
-    inputs: { connectors: [], credentialsChanged: [], extensionConfig: false },
-    templates: [],
-  };
-
-  it("the upgrade dialog's extension config card is titled with the display name", async () => {
-    const m = en.catalog;
-    stubApi({
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-        json(200, {
-          ...NO_INPUTS,
-          inputs: { connectors: [], credentialsChanged: [], extensionConfig: true },
-        }),
-      [`GET ${ORG}/extensions`]: () =>
-        json(200, {
-          extensions: [
-            {
-              plugin: "crm",
-              displayName: { zh: "客户系统", en: "CRM Suite" },
-              version: "1.0.0",
-              enabled: true,
-              configurable: true,
-              config: null,
-              secrets: [],
-              permissions: [],
-              orgConfigSchema: {
-                type: "object",
-                properties: { region: { type: "string", title: "Region" } },
-              },
-            },
-          ],
-        }),
-    });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale: "en" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText("CRM Suite")).toBeTruthy();
-    expect(within(dialog).queryByText("crm", { exact: true })).toBeNull();
-  });
-
-  it("upgrading from the catalog item invalidates the catalog, the items and what the plugin brings", async () => {
-    params.current = { itemId: ID };
-    const calls = stubApi({
-      [`GET ${ORG}/catalog/${ID}`]: () =>
-        json(200, {
-          item: orgItem({
-            name: "crm",
-            installed: { pluginInstallId: "i1", version: "1.0.0", upgradeAvailable: "1.1.0" },
-          }),
-          hasIcon: false,
-          extension: null,
-          templates: [],
-          dependencies: [],
-          skills: [],
-        }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(200, { install: { ...UPGRADABLE, version: "1.1.0" } }),
-    });
-    const { client } = await renderItem();
-    client.setQueryData(["org", "o1", "connectors"], { connectors: [] });
-    client.setQueryData(["org", "o1", "skills"], { skills: [] });
-    const m = en.catalog;
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: m.org.action.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(m.upgrade.noChanges);
-    await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-    // the item (shown) is read again; the cached lists are marked stale
-    await vi.waitFor(() =>
-      expect(
-        calls.filter((c) => c.method === "GET" && c.url === `${ORG}/catalog/${ID}`),
-      ).toHaveLength(1),
-    );
-    expect(client.getQueryState(["org", "o1", "connectors"])?.isInvalidated).toBe(true);
-    expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
-  });
-
-  it.each(LOCALES)(
-    "a failed upgrade names the step, the dependency and whether the components were put back (%s)",
-    async (locale) => {
-      const m = msgs[locale].catalog;
-      let rolledBack = true;
-      stubApi({
-        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () => json(200, NO_INPUTS),
-        [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-          json(502, {
-            error: {
-              code: "plugin.upgrade_failed",
-              message: "x",
-              details: [
-                {
-                  step: "skills",
-                  code: "internal",
-                  dependency: "crm-core",
-                  message: "English cause",
-                  causeDetails: [{ path: "skills.notes", message: "bad file" }],
-                  rolledBack,
-                },
-              ],
-            },
-          }),
-      });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      await within(dialog).findByText(m.upgrade.noChanges);
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      const inDep = fill(m.org.install.failedIn, { dependency: "crm-core" });
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.upgrade.failed, { step: m.org.install.step.skills, code: "internal", version: "v1.0.0" })} ${inDep}`,
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).getByText("skills.notes: bad file")).toBeTruthy();
-      expect(within(dialog).queryByText(/English cause/)).toBeNull();
-      rolledBack = false;
-      await user.click(within(dialog).getByRole("button", { name: m.upgrade.confirm }));
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.upgrade.failedNoRollback, { step: m.org.install.step.skills, code: "internal" })} ${inDep}`,
-        ),
-      ).toBeTruthy();
-    },
-  );
-
-  it.each(LOCALES)(
-    "an invalid target says why in localized copy (deployment version, dependent range) (%s)",
-    async (locale) => {
-      const m = msgs[locale];
-      let details: unknown[] = [
-        { reason: "deployment_version", deploymentVersion: "0.1.0", allowedVersion: "0.1.0" },
-      ];
-      stubApi({
-        [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-        [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: () =>
-          json(409, {
-            error: { code: "plugin.upgrade_target_invalid", message: "English", details },
-          }),
-      });
-      await renderRouteWithCache("/settings/plugins", lastStubRoutes(), { locale });
-      const user = userEvent.setup();
-      await user.click(await screen.findByRole("button", { name: m.catalog.plugins.upgrade }));
-      const dialog = await screen.findByRole("dialog");
-      expect(
-        await within(dialog).findByText(
-          `${fill(m.catalog.errorDetail.deploymentVersion, { deploymentVersion: "0.1.0", allowedVersion: "0.1.0" })}`,
-        ),
-      ).toBeTruthy();
-      expect(within(dialog).queryByText(/English/)).toBeNull();
-      await user.click(within(dialog).getByRole("button", { name: m.catalog.upgrade.cancel }));
-      details = [
-        { reason: "dependent_range", dependent: "app", range: "^1.0.0", version: "2.0.0" },
-      ];
-      await user.click(screen.getByRole("button", { name: m.catalog.plugins.upgrade }));
-      expect(
-        await within(await screen.findByRole("dialog")).findByText(
-          `${fill(m.catalog.errorDetail.dependentRange, { dependent: "app", range: "^1.0.0", version: "v2.0.0" })}`,
-        ),
-      ).toBeTruthy();
-    },
-  );
-
-  it("after a stale confirm, confirm waits for the new preview", async () => {
-    const m = en.catalog;
-    let release: () => void = () => {};
-    let previews = 0;
-    stubApi({
-      [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [UPGRADABLE] }),
-      [`POST ${ORG}/plugin-installs/i1/upgrade/preview`]: async () => {
-        previews += 1;
-        if (previews > 1) await new Promise<void>((r) => (release = r));
-        return json(200, NO_INPUTS);
-      },
-      [`POST ${ORG}/plugin-installs/i1/upgrade`]: () =>
-        json(409, { error: { code: "plugin.upgrade_stale", message: "x" } }),
-    });
-    await renderRouteWithCache("/settings/plugins", lastStubRoutes());
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: m.plugins.upgrade }));
-    const dialog = await screen.findByRole("dialog");
-    await within(dialog).findByText(m.upgrade.noChanges);
-    const confirm = () =>
-      within(dialog).getByRole("button", { name: m.upgrade.confirm }) as HTMLButtonElement;
-    await user.click(confirm());
-    await within(dialog).findByText(`${en.errors.plugin.upgrade_stale}`);
-    await waitFor(() => expect(previews).toBe(2));
-    expect(confirm().disabled).toBe(true);
-    release();
-    await waitFor(() => expect(confirm().disabled).toBe(false));
-  });
-
-  it("catalog item: members see the upgrade but no button", async () => {
-    params.current = { itemId: ID };
-    stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
+    const calls = stubApi({ [`GET ${ORG}/catalog/${ID}`]: () => json(200, DETAIL) });
     await renderItem({ me: MEMBER });
-    expect(
-      await screen.findByText(fill(en.catalog.org.action.upgradeAvailable, { version: "v1.1.0" })),
-    ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.catalog.org.action.upgrade })).toBeNull();
+    await screen.findByText(en.catalog.components.skills);
+    await settle();
+    expect(calls.some((c) => c.url.endsWith("/plugin-installs"))).toBe(false);
   });
 
-  it("catalog item: the plugin's agent templates are listed", async () => {
+  it("plugin page: the plugin's agent templates are listed", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -2479,7 +2928,7 @@ describe("phase A1: plugin upgrades and skill conflicts", () => {
         [`GET ${ORG}/catalog/${ID}`]: () =>
           json(200, { ...DETAIL, item: orgItem({ name: "crm" }), templates: [] }),
         [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
-        [`POST ${ORG}/catalog/${ID}/install`]: () =>
+        [`PUT ${ORG}/catalog/${ID}/switch`]: () =>
           json(409, {
             error: {
               code: "plugin.skill_conflict",
@@ -2619,7 +3068,7 @@ const itemLine = (
 
 describe("phase B: Claude Code plugins on the import review", () => {
   const stage = (review: Record<string, unknown>) => {
-    window.history.replaceState(null, "", "/admin/catalog/import?staging=st9");
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st9");
     return stubApi({
       "GET /api/v1/admin/catalog/imports/st9": () => json(200, { stagingId: "st9", review }),
       "POST /api/v1/admin/catalog/imports/st9/confirm": () =>
@@ -2740,10 +3189,10 @@ describe("phase B: Claude Code plugins on the import review", () => {
     );
     await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
     await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
     expect(bodyOf(calls.find((x) => x.url.endsWith("/confirm")))).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
+      scope: "optional",
       pinnedSuggestions: ["brainstorming"],
     });
   });
@@ -2767,17 +3216,17 @@ describe("phase B: Claude Code plugins on the import review", () => {
       }
       await user.click(screen.getByRole("button", { name: en.admin.extensions.wizard.next }));
       await user.click(screen.getByRole("button", { name: en.catalog.admin.review.confirm }));
-      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/catalog/${ID}`));
+      await waitFor(() => expect(router.push).toHaveBeenCalledWith(`/admin/plugins/${ID}`));
       const body = bodyOf(calls.find((x) => x.url.endsWith("/confirm")));
       cleanup();
       vi.unstubAllGlobals();
       resetNavigation("/");
       return body;
     };
-    expect(await confirmWith(false)).toEqual({ reviewHash: "h1", deployExtension: false });
+    expect(await confirmWith(false)).toEqual({ reviewHash: "h1", scope: "optional" });
     expect(await confirmWith(true)).toEqual({
       reviewHash: "h1",
-      deployExtension: false,
+      scope: "optional",
       pinnedSuggestions: [],
     });
   });
@@ -2880,7 +3329,14 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         publisher: "Jesse Vincent",
         displayName: null,
         description: "",
-        policy: "allow",
+        scope: "optional",
+        scopeOrgs: [],
+        builtin: false,
+        disabled: false,
+        shownToOthers: true,
+        enabledOrgs: 0,
+        pending: false,
+        permissionsHash: null,
         latestVersion: "7.0.1",
         versions: ["7.0.1"],
         installs: 0,
@@ -2889,6 +3345,8 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         latestMarketplaceVersion: null,
         newerInMarketplace: false,
         contentChanged: false,
+        componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+        sourceFormat: "capybara",
         updatedAt: "2026-10-22T00:00:00.000Z",
         packageName: null,
         deletedAt: null,
@@ -2934,14 +3392,55 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     expect(
       within(report).getByText(itemLine("en", CLAUDE_REVIEW.translation.items[0] as never)),
     ).toBeTruthy();
-    expect(screen.getByText(tr.formatClaude)).toBeTruthy();
+    // the head's Claude Code chip
+    expect(screen.getByText(en.catalog.admin.chips.claudeCode)).toBeTruthy();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: tr.license }));
     expect(screen.getByText("MIT License")).toBeTruthy();
     await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
-    const table = screen.getByRole("table");
+    const table = screen.getByRole("table", { name: d.versionColumns.version });
     expect(within(table).getByText(d.versionColumns.format)).toBeTruthy();
     expect(within(table).getByText(d.format.claudeCode)).toBeTruthy();
+  });
+
+  it("item detail: one centred column: the full description first, the facts as a KeyValue, 删除 in the head's menu, the license folded last", async () => {
+    params.current = { itemId: ID };
+    const tr = en.catalog.admin.review.translation;
+    const d = en.catalog.admin.detail;
+    const detail = (await claudeItemDetail().json()) as { item: Record<string, unknown> };
+    stubApi({
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
+        json(200, { ...detail, item: { ...detail.item, description: LONG } }),
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    await screen.findByRole("region", { name: tr.title });
+    // No right inspector: the single centred column
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    // The head carries no description: the full text (line breaks kept) is the column's first block
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    expect(first?.textContent).toBe(LONG);
+    expect(first?.getAttribute("data-pre")).toBe("true");
+    // The facts are a KeyValue in the column
+    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    expect(facts?.textContent).toContain(d.fields.publisher);
+    expect(facts?.textContent).toContain(d.fields.owner);
+    // 删除 is a destructive item of the head's ⋯ menu, not a button in the page
+    expect(screen.queryByRole("button", { name: d.delete })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: RAW_MORE.en }));
+    const del = await screen.findByRole("menuitem", { name: d.delete });
+    expect(del.getAttribute("data-danger")).toBe("true");
+    await user.keyboard("{Escape}");
+    // The license is a folded section at the end of the page, on every tab
+    const license = screen.getByRole("button", { name: tr.license });
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const last = content.lastElementChild as HTMLElement;
+    expect(last.contains(license)).toBe(true);
+    await user.click(screen.getByRole("tab", { name: d.tabs.versions }));
+    expect(screen.getByRole("button", { name: tr.license })).toBeTruthy();
   });
 
   it("item detail: a version whose LICENSE was too long to store says so (batch-3 m6)", async () => {
@@ -2980,7 +3479,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
             ],
           }),
       });
-      await renderRouteWithCache("/admin/marketplaces", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
       const title = {
         en: "2 entries were skipped by the last refresh",
         zh: fill(s.skipped.title, { n: 2 }),
@@ -3012,7 +3511,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
         }),
     });
     stubApi(routes([{ name: "npm-thing", reason: "claude_npm_unpinned" }]));
-    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     expect(await screen.findByText("1 entry was skipped by the last refresh")).toBeTruthy();
     cleanup();
     vi.unstubAllGlobals();
@@ -3020,7 +3519,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
     const many = Array.from({ length: 25 }, () => ({ name: "dup", reason: "invalid_entry" }));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     stubApi(routes(many));
-    await renderRouteWithCache("/admin/marketplaces", lastStubRoutes());
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
     expect(await screen.findByText("25 entries were skipped by the last refresh")).toBeTruthy();
     const line = fill(s.skipped.line, { name: "dup", reason: s.skipped.reasons.invalid_entry });
     expect(screen.getAllByText(line)).toHaveLength(20);
@@ -3030,7 +3529,7 @@ describe("phase B: Claude Code plugins in the catalog and marketplaces", () => {
   });
 });
 
-describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", () => {
+describe("/plugins/[itemId]/enable renders on the server (web-SSR spec §6)", () => {
   const detail = {
     item: orgItem({ name: "crm" }),
     hasIcon: false,
@@ -3045,11 +3544,11 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
   };
   const as = (role: "member" | "admin"): Me => ({
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ ...ME.memberships[0], role } as Me["memberships"][number]],
   });
 
-  const path = `/catalog/${ID}/install`;
+  const path = `/plugins/${ID}/enable`;
 
   it("a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
@@ -3103,7 +3602,7 @@ describe("/catalog/[itemId]/install renders on the server (web-SSR spec §6)", (
   });
 });
 
-describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)", () => {
+describe("/plugins and /plugins/[itemId] render on the server (web-SSR spec §6)", () => {
   const detail = {
     item: orgItem({ name: "crm" }),
     hasIcon: false,
@@ -3115,24 +3614,30 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
   const routes = {
     [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
     [`GET ${ORG}/catalog/${ID}`]: () => json(200, detail),
+    // org admins also read the extensions, the marketplace entries and the installs
+    [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }),
+    [`GET ${ORG}/marketplaces/entries`]: () => json(200, { items: [] }),
+    [`GET ${ORG}/plugin-installs`]: () => json(200, { installs: [] }),
+    // the plugin's components in the org
+    [`GET ${ORG}/components`]: () => json(200, { components: [] }),
   };
   const GUEST: Me = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ ...ME.memberships[0], role: "guest" } as Me["memberships"][number]],
   };
 
-  it("/catalog: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
+  it("/plugins: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/catalog", routes, { readiness: NOT_READY });
-    expect(within(screen.getByRole("list", { name: en.catalog.org.title })).getByText("pdf-tools"));
+    await renderRouteWithCache("/plugins", routes, { readiness: NOT_READY });
+    expect(within(screen.getByRole("list", { name: en.plugins.title })).getByText("pdf-tools"));
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("/catalog: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/catalog", routes, `GET ${ORG}/catalog`);
+  it("/plugins: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/plugins", routes, `GET ${ORG}/catalog`);
     await vi.waitFor(() => {
       if (template("ListPage") === null) throw new Error("no page");
     });
@@ -3143,23 +3648,23 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/catalog: a guest gets no access and nothing is read; no org renders nothing", async () => {
-    const guest = await renderRouteWithCache("/catalog", routes, { me: GUEST });
+  it("/plugins: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache("/plugins", routes, { me: GUEST });
     expect(new Set(guest.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", `${ORG}/readiness`]),
     );
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     cleanup();
-    const none = await renderRouteWithCache("/catalog", routes, {
+    const none = await renderRouteWithCache("/plugins", routes, {
       me: { ...ME, currentOrgId: null },
     });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.body.textContent).toBe("");
   });
 
-  it("/catalog/<id>: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
+  it("/plugins/<id>: a first render from the hydrated cache makes no browser read; it is a setup step", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/catalog/${ID}`, routes, { readiness: NOT_READY });
+    await renderRouteWithCache(`/plugins/${ID}`, routes, { readiness: NOT_READY });
     expect(screen.getByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     expect(screen.getByText("· crm")).toBeTruthy();
     await settle();
@@ -3167,51 +3672,52 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("/catalog/<id>: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld(`/catalog/${ID}`, routes, `GET ${ORG}/catalog/${ID}`);
+  it("/plugins/<id>: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld(`/plugins/${ID}`, routes, `GET ${ORG}/catalog/${ID}`);
     await vi.waitFor(() => {
       if (template("DetailPage") === null) throw new Error("no page");
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "crm" })).toBeNull();
-    // the overview's static parts: the install action's button and the five component sections;
-    // the inspector's three facts; no generic cards
+    // one column: the facts' KeyValue (four) and the five component sections; no inspector, no
+    // generic cards
     const page = template("DetailPage") as HTMLElement;
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelectorAll('[data-part="loading-buttons"]')).toHaveLength(1);
-    const stack = page.querySelector('[data-part="loading-buttons"]')?.closest(".cb-stack")
-      ?.parentElement as HTMLElement;
-    expect(stack.children).toHaveLength(7);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(3);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
+    const facts = page.querySelector('[data-part="content"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
+    const stack = facts?.closest(".cb-stack") as HTMLElement;
+    expect(stack.children).toHaveLength(6);
     await release();
     expect(await screen.findByRole("heading", { level: 1, name: "crm" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/catalog/<id>: an item the kernel does not find is the not-found state in the shell", async () => {
+  it("/plugins/<id>: an item the kernel does not find is the not-found state in the shell", async () => {
     expectNoFirstPaintFetch();
-    await renderRouteWithCache(`/catalog/${ID}`, {
+    await renderRouteWithCache(`/plugins/${ID}`, {
+      ...routes,
       [`GET ${ORG}/catalog/${ID}`]: () =>
         json(404, { error: { code: "catalog.item_not_found", message: "x" } }),
     });
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
-  it("/catalog/<id>: a guest gets no access and nothing is read; no org renders nothing", async () => {
-    const guest = await renderRouteWithCache(`/catalog/${ID}`, routes, { me: GUEST });
+  it("/plugins/<id>: a guest gets no access and nothing is read; no org renders nothing", async () => {
+    const guest = await renderRouteWithCache(`/plugins/${ID}`, routes, { me: GUEST });
     expect(new Set(guest.calls.map((c) => c.url))).toEqual(
       new Set(["/api/v1/me", `${ORG}/readiness`]),
     );
     expect(template("StatusPage")?.getAttribute("data-kind")).toBe("no-access");
     cleanup();
-    const none = await renderRouteWithCache(`/catalog/${ID}`, routes, {
+    const none = await renderRouteWithCache(`/plugins/${ID}`, routes, {
       me: { ...ME, currentOrgId: null },
     });
     expect(none.calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
     expect(document.body.textContent).toBe("");
   });
 
-  it("requesting an install invalidates the catalog and the item: the item is read again", async () => {
+  it("a member asking to turn it on invalidates the catalog and the item: the item is read again", async () => {
     params.current = { itemId: ID };
     const calls = stubApi({
       [`GET ${ORG}/catalog/${ID}`]: () =>
@@ -3223,12 +3729,494 @@ describe("/catalog and /catalog/[itemId] render on the server (web-SSR spec §6)
     client.setQueryData(["org", "o1", "catalog"], { items: [orgItem()] });
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: en.catalog.org.action.request }));
+      .click(screen.getByRole("button", { name: en.plugins.action.requestEnable }));
     await vi.waitFor(() =>
       expect(calls.filter((c) => c.method === "GET").map((c) => c.url)).toEqual([
         `${ORG}/catalog/${ID}`,
       ]),
     );
     expect(client.getQueryState(["org", "o1", "catalog"])?.isInvalidated).toBe(true);
+  });
+});
+
+describe("/admin/plugins: installed, detail with scope, pending", () => {
+  const P = en.catalog.admin;
+  const item = (over: Record<string, unknown> = {}) => ({
+    id: ID,
+    name: "jina",
+    publisher: "Jina AI",
+    displayName: null,
+    description: "Web tools",
+    scope: "optional",
+    scopeOrgs: [],
+    builtin: false,
+    disabled: false,
+    shownToOthers: true,
+    enabledOrgs: 3,
+    pending: false,
+    permissionsHash: null,
+    latestVersion: "1.2.0",
+    versions: ["1.2.0"],
+    installs: 3,
+    source: "marketplace",
+    marketplaceId: "official",
+    latestMarketplaceVersion: "1.3.0",
+    newerInMarketplace: true,
+    contentChanged: false,
+    componentCounts: { extension: 0, skills: 1, connectorTemplates: 0, agentTemplates: 0 },
+    sourceFormat: "capybara",
+    updatedAt: "2026-10-22T00:00:00.000Z",
+    ...over,
+  });
+  const BUILTIN = item({
+    id: "22222222-2222-4222-8222-222222222222",
+    name: "openai-compatible",
+    scope: "all",
+    builtin: true,
+    newerInMarketplace: false,
+    latestMarketplaceVersion: null,
+  });
+  const PENDING = item({
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "object-store-s3",
+    scope: "all",
+    builtin: true,
+    pending: true,
+    permissionsHash: "ph1",
+    newerInMarketplace: false,
+  });
+  const REQUEST = {
+    id: "r1",
+    orgId: "o2",
+    orgName: "Beta",
+    kind: "access",
+    item: { id: ID, name: "jina", displayName: null },
+    entry: null,
+    status: "pending",
+    note: "We need it",
+    reason: null,
+    requestedBy: "a2",
+    requestedByName: "Mia",
+    decidedBy: null,
+    decidedAt: null,
+    stagingId: null,
+    createdAt: "2026-10-22T00:00:00.000Z",
+  };
+  const ORGS = {
+    orgs: [
+      { id: "o1", slug: "acme", name: "Acme", memberCount: 3, createdAt: "2026-10-01T00:00:00Z" },
+      { id: "o2", slug: "beta", name: "Beta", memberCount: 4, createdAt: "2026-10-01T00:00:00Z" },
+    ],
+  };
+  const detail = (i: ReturnType<typeof item>) => ({
+    item: { ...i, packageName: "@jina-ai/capybara-plugin", deletedAt: null },
+    versions: [
+      {
+        version: i.latestVersion,
+        source: "marketplace",
+        sourceRef: "official",
+        integrity: null,
+        contentDigest: null,
+        sourceDetail: null,
+        manifest: {
+          name: i.name,
+          version: i.latestVersion,
+          publisher: "Jina AI",
+          description: "",
+          extension: {
+            entry: "dist/index.js",
+            manifest: {
+              name: "jina-web",
+              version: "1.2.0",
+              sdk: "^0.1.0",
+              provides: [],
+              requires: [],
+              optional: [],
+              permissions: { tools: ["search"] },
+            },
+          },
+          skills: [{ path: "./skills/web-research" }],
+        },
+        size: 1024,
+        extensionSha256: "a".repeat(64),
+        importedAt: "2026-10-22T00:00:00.000Z",
+      },
+    ],
+    hasIcon: false,
+  });
+  const listRoutes = {
+    "GET /api/v1/admin/catalog/items": () =>
+      json(200, {
+        items: [
+          item({
+            componentCounts: { extension: 1, skills: 2, connectorTemplates: 0, agentTemplates: 1 },
+          }),
+          BUILTIN,
+          PENDING,
+          item({
+            id: "44444444-4444-4444-8444-444444444444",
+            name: "superpowers",
+            sourceFormat: "claude-code",
+            newerInMarketplace: false,
+          }),
+        ],
+        nextOffset: null,
+      }),
+    "GET /api/v1/admin/catalog/items?pending=true": () =>
+      json(200, { items: [PENDING], nextOffset: null }),
+    "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [REQUEST] }),
+    "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+    "GET /api/v1/admin/orgs": () => json(200, ORGS),
+  };
+
+  it("list: the tabs 已安装 / 市场 / 待确认 with counts, the actions, the 内置 chip and the states", async () => {
+    stubApi(listRoutes);
+    await renderRouteWithCache("/admin/plugins", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.title });
+    const tab = (name: string) =>
+      screen.getByRole("link", { name: new RegExp(`^${escapeRe(name)}`) });
+    expect(tab(P.tabs.installed).getAttribute("href")).toBe("/admin/plugins");
+    expect(tab(P.tabs.installed).getAttribute("aria-current")).toBeTruthy();
+    expect(tab(P.tabs.installed).textContent).toMatch(/4/);
+    expect(tab(P.tabs.market).getAttribute("href")).toBe("/admin/plugins/market");
+    // pending items + pending requests
+    expect(tab(P.tabs.pending).getAttribute("href")).toBe("/admin/plugins/pending");
+    expect(tab(P.tabs.pending).textContent).toMatch(/2/);
+    expect(screen.getByRole("link", { name: P.actions.addSource }).getAttribute("href")).toBe(
+      "/admin/plugins/sources",
+    );
+    expect(screen.getByRole("link", { name: P.actions.upload }).getAttribute("href")).toBe(
+      "/admin/plugins/import",
+    );
+    const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
+    expect(within(row("openai-compatible")).getByText(P.chips.builtin)).toBeTruthy();
+    expect(within(row("jina")).queryByText(P.chips.builtin)).toBeNull();
+    expect(within(row("openai-compatible")).getByText(P.state.running)).toBeTruthy();
+    expect(within(row("jina")).getByText(fill(P.state.update, { version: "v1.3.0" }))).toBeTruthy();
+    expect(within(row("jina")).getByText(/3 orgs using it/)).toBeTruthy();
+    // meta: version · source · components · scope · orgs using it
+    expect(
+      within(row("jina")).getByText(
+        /^v1\.2\.0 · .+ · 1 extension · 2 skills · 1 agent template · Organizations choose · 3 orgs using it$/,
+      ),
+    ).toBeTruthy();
+    expect(within(row("superpowers")).getByText(P.chips.claudeCode)).toBeTruthy();
+    expect(within(row("jina")).queryByText(P.chips.claudeCode)).toBeNull();
+    expect(within(row("object-store-s3")).getByText(P.state.pending)).toBeTruthy();
+    expect(
+      within(row("object-store-s3")).getByRole("link", { name: P.rowConfirm }).getAttribute("href"),
+    ).toBe("/admin/plugins/pending");
+  });
+
+  it("detail: 设置范围 previews the affected orgs and agents, then confirms with the scopeHash", async () => {
+    params.current = { itemId: ID };
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () =>
+        json(200, {
+          affected: [{ orgId: "o1", orgName: "Acme", agents: [{ id: "ag1", name: "Researcher" }] }],
+          needsConfig: [],
+          scopeHash: "sh1",
+        }),
+      [`PUT /api/v1/admin/catalog/items/${ID}/scope`]: () =>
+        json(200, item({ scope: "named", scopeOrgs: ["o2"] })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    // the tabs 组件 / 组织 / 版本; the components table lists the extension and the skill
+    expect(
+      await screen.findByRole("tab", { name: new RegExp(P.detail.tabs.components) }),
+    ).toBeTruthy();
+    expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.orgs) })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: new RegExp(P.detail.tabs.versions) })).toBeTruthy();
+    const table = screen.getByRole("table", { name: P.detail.tabs.components });
+    expect(within(table).getByText("jina-web")).toBeTruthy();
+    expect(within(table).getByText("web-research")).toBeTruthy();
+    // a newer marketplace version is imported first (the platform update comes after the import)
+    expect(
+      screen.getByRole("button", { name: fill(P.detail.actions.import, { version: "v1.3.0" }) }),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.named) }),
+    );
+    await user.click(await within(dialog).findByRole("checkbox", { name: "Beta" }));
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.next }));
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    expect(within(dialog).getByText(/Researcher/)).toBeTruthy();
+    const preview = calls.find((c) => c.url.endsWith("/scope/preview"));
+    expect(bodyOf(preview)).toEqual({ scope: "named", orgs: ["o2"] });
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.confirm }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/scope"))).toBe(true),
+    );
+    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/scope"));
+    expect(bodyOf(put)).toEqual({ scope: "named", orgs: ["o2"], scopeHash: "sh1" });
+  });
+
+  it("detail: a builtin plugin has the 内置 chip and no 设置范围 or 停用", async () => {
+    params.current = { itemId: BUILTIN.id };
+    stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${BUILTIN.id}`]: () => json(200, detail(BUILTIN)),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    expect(await screen.findByText(P.chips.builtin)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: P.detail.actions.scope })).toBeNull();
+    expect(screen.queryByRole("button", { name: P.detail.actions.disable })).toBeNull();
+  });
+
+  it("detail: 停用 previews what it takes away and sends the hash", async () => {
+    params.current = { itemId: ID };
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () =>
+        json(200, {
+          affected: [{ orgId: "o1", orgName: "Acme", agents: [] }],
+          needsConfig: [],
+          scopeHash: "dh1",
+        }),
+      [`PUT /api/v1/admin/catalog/items/${ID}/disabled`]: () => json(200, item({ disabled: true })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/scope/preview")))).toEqual({
+      disabled: true,
+    });
+    await user.click(within(dialog).getByRole("button", { name: P.disableDialog.confirm }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/disabled"))).toBe(true),
+    );
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/disabled")))).toEqual({
+      disabled: true,
+      scopeHash: "dh1",
+    });
+  });
+
+  it("detail: a stale 设置范围 (409 plugin.scope_stale) previews again and the second confirm sends the new hash", async () => {
+    params.current = { itemId: ID };
+    let n = 0;
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () => {
+        n += 1;
+        return json(200, {
+          affected: n === 1 ? [] : [{ orgId: "o1", orgName: "Acme", agents: [] }],
+          needsConfig: [],
+          scopeHash: `sh${n}`,
+        });
+      },
+      [`PUT /api/v1/admin/catalog/items/${ID}/scope`]: (c) =>
+        (bodyOf(c) as { scopeHash: string }).scopeHash === "sh1"
+          ? json(409, { error: { code: "plugin.scope_stale", message: "stale" } })
+          : json(200, item({ scope: "all" })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(en.catalog.scope.all) }));
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.next }));
+    await user.click(await within(dialog).findByRole("button", { name: P.scopeDialog.confirm }));
+    expect(await within(dialog).findByText(P.scopeDialog.stale)).toBeTruthy();
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.confirm }));
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "PUT").map((c) => bodyOf(c) as { scopeHash: string }),
+      ).toEqual([
+        { scope: "all", scopeHash: "sh1" },
+        { scope: "all", scopeHash: "sh2" },
+      ]),
+    );
+  });
+
+  it("detail: a stale 停用 (409 plugin.scope_stale) previews again and the second confirm sends the new hash", async () => {
+    params.current = { itemId: ID };
+    let n = 0;
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(item())),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () => {
+        n += 1;
+        return json(200, {
+          affected: n === 1 ? [] : [{ orgId: "o1", orgName: "Acme", agents: [] }],
+          needsConfig: [],
+          scopeHash: `dh${n}`,
+        });
+      },
+      [`PUT /api/v1/admin/catalog/items/${ID}/disabled`]: (c) =>
+        (bodyOf(c) as { scopeHash: string }).scopeHash === "dh1"
+          ? json(409, { error: { code: "plugin.scope_stale", message: "stale" } })
+          : json(200, item({ disabled: true })),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = () => within(dialog).getByRole("button", { name: P.disableDialog.confirm });
+    await waitFor(() => expect((confirm() as HTMLButtonElement).disabled).toBe(false));
+    await user.click(confirm());
+    expect(await within(dialog).findByText(P.scopeDialog.stale)).toBeTruthy();
+    expect(await within(dialog).findByText("Acme")).toBeTruthy();
+    await user.click(confirm());
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.method === "PUT").map((c) => bodyOf(c) as { scopeHash: string }),
+      ).toEqual([
+        { disabled: true, scopeHash: "dh1" },
+        { disabled: true, scopeHash: "dh2" },
+      ]),
+    );
+  });
+
+  it("detail: when only 对其他组织显示 changes the scope is not sent again", async () => {
+    params.current = { itemId: ID };
+    const named = item({ scope: "named", scopeOrgs: ["o2"], shownToOthers: true });
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${ID}`]: () => json(200, detail(named)),
+      [`POST /api/v1/admin/catalog/items/${ID}/scope/preview`]: () =>
+        json(200, { affected: [], needsConfig: [], scopeHash: "s0" }),
+      [`PUT /api/v1/admin/catalog/items/${ID}/shown`]: () =>
+        json(200, { ...named, shownToOthers: false }),
+    });
+    await renderRouteWithCache(adminItemPath(), lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: P.detail.actions.scope }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("switch", { name: P.scopeDialog.shown }));
+    await user.click(within(dialog).getByRole("button", { name: P.scopeDialog.next }));
+    await user.click(await within(dialog).findByRole("button", { name: P.scopeDialog.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/shown"))).toBe(true));
+    expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/scope"))).toBe(false);
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/shown")))).toEqual({ shownToOthers: false });
+  });
+
+  it("pending: confirming permissions sends the permissionsHash; rejecting a request sends the reason", async () => {
+    const calls = stubApi({
+      ...listRoutes,
+      [`GET /api/v1/admin/catalog/items/${PENDING.id}`]: () => json(200, detail(PENDING)),
+      [`POST /api/v1/admin/catalog/items/${PENDING.id}/confirm`]: () =>
+        json(200, { ...PENDING, pending: false }),
+      "POST /api/v1/admin/catalog/requests/r1/decide": () =>
+        json(200, { request: { ...REQUEST, status: "rejected" } }),
+    });
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const user = userEvent.setup();
+    const list = await screen.findByRole("list", { name: P.pending.listLabel });
+    const s3 = within(list).getByText("object-store-s3").closest("li") as HTMLElement;
+    await user.click(within(s3).getByRole("button", { name: P.pending.review }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/search/)).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: P.pending.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/confirm"))).toBe(true));
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/confirm")))).toEqual({
+      permissionsHash: "ph1",
+    });
+    const req = within(list).getByText(/Beta/).closest("li") as HTMLElement;
+    await user.click(within(req).getByRole("button", { name: P.pending.reject }));
+    const reject = await screen.findByRole("dialog");
+    await user.type(within(reject).getByRole("textbox"), "Not now");
+    await user.click(within(reject).getByRole("button", { name: P.pending.reject }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/decide"))).toBe(true));
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/decide")))).toEqual({
+      approve: false,
+      reason: "Not now",
+    });
+  });
+
+  it("import review: a staging prepared for an org's request defaults to 指定组织 = that org; a lower version says it only joins the catalog", async () => {
+    window.history.replaceState(null, "", "/admin/plugins/import?staging=st8");
+    const calls = stubApi({
+      ...listRoutes,
+      "GET /api/v1/admin/catalog/requests": () =>
+        json(200, {
+          requests: [
+            {
+              ...REQUEST,
+              kind: "import",
+              item: null,
+              entry: { marketplaceId: "official", name: "crm", version: "1.0.0" },
+              stagingId: "st8",
+            },
+          ],
+        }),
+      "GET /api/v1/admin/catalog/imports/st8": () =>
+        json(200, {
+          stagingId: "st8",
+          review: {
+            ...REVIEW,
+            sensitive: false,
+            extension: extension({
+              action: "keep",
+              olderThanDeployed: true,
+              sensitive: false,
+              permissions: [],
+            }),
+          },
+        }),
+      "POST /api/v1/admin/catalog/imports/st8/confirm": () =>
+        json(200, { item: item({ name: "crm" }), deploy: null }),
+    });
+    const { client } = await renderRouteWithCache(importPath(), lastStubRoutes());
+    // the head's pending list as the nav would have it
+    await client.prefetchQuery({
+      queryKey: ["deployment", "catalogPending"],
+      queryFn: () => ({ items: [], nextOffset: null }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.admin.extensions.wizard.next }));
+    expect(screen.getByText(P.review.olderThanDeployed)).toBeTruthy();
+    expect(screen.getByText(fill(P.review.requestDefault, { org: "Beta" }))).toBeTruthy();
+    const named = screen.getByRole("radio", { name: new RegExp(en.catalog.scope.named) });
+    expect((named as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("checkbox", { name: "Beta" }) as HTMLInputElement).checked).toBe(true);
+    await user.click(screen.getByRole("button", { name: P.review.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/st8/confirm"))).toBe(true));
+    expect(bodyOf(calls.find((c) => c.url.endsWith("/st8/confirm")))).toMatchObject({
+      scope: "named",
+      orgs: ["o2"],
+    });
+    // the request it answered leaves 待确认 (and the nav count): both lists are invalidated
+    await waitFor(() => {
+      const after = calls.slice(calls.findIndex((c) => c.url.endsWith("/st8/confirm")));
+      // read on this page: read again
+      expect(after.map((c) => c.url)).toContain("/api/v1/admin/catalog/requests?status=pending");
+      // not shown here: marked stale
+      expect(client.getQueryState(["deployment", "catalogPending"])?.isInvalidated).toBe(true);
+    });
+  });
+
+  it("pending: approving an import request opens the import review of its staging", async () => {
+    const importRequest = {
+      ...REQUEST,
+      kind: "import",
+      item: null,
+      entry: { marketplaceId: "official", name: "slack", version: "0.4.0" },
+    };
+    stubApi({
+      ...listRoutes,
+      "GET /api/v1/admin/catalog/requests": () => json(200, { requests: [importRequest] }),
+      "POST /api/v1/admin/catalog/requests/r1/decide": () =>
+        json(200, {
+          request: importRequest,
+          import: { stagingId: "st7", review: REVIEW, permissionsMismatch: null },
+        }),
+    });
+    await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
+    const list = await screen.findByRole("list", { name: P.pending.listLabel });
+    const req = within(list).getByText(/slack/).closest("li") as HTMLElement;
+    await userEvent.setup().click(within(req).getByRole("button", { name: P.pending.approve }));
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith("/admin/plugins/import?staging=st7"),
+    );
   });
 });

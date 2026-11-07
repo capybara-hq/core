@@ -33,7 +33,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "Root",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" });
 }, 120_000);
@@ -68,11 +68,11 @@ const isAdmin = async (login: string) => {
   const row = await kernelDb(raw)
     .selectFrom("identities")
     .innerJoin("accounts", "accounts.id", "identities.account_id")
-    .select("accounts.is_enterprise_admin")
+    .select("accounts.is_super_admin")
     .where("identities.source", "=", "local")
     .where("identities.external_id", "=", login)
     .executeTakeFirstOrThrow();
-  return row.is_enterprise_admin;
+  return row.is_super_admin;
 };
 
 const cliAudits = () =>
@@ -84,25 +84,27 @@ const cliAudits = () =>
     .execute();
 
 describe("capybara admin grant / revoke", () => {
-  it("grant → 退出码 0，账号成为企业管理员并写审计（via cli）；再 revoke → 撤销", async () => {
+  it("grant → 退出码 0，账号成为超级管理员并写审计（via cli）；再 revoke → 撤销", async () => {
     const g = await run(["admin", "grant", "alice"]);
     expect(g.code, g.stderr).toBe(0);
     expect(g.stdout).toContain("alice");
+    expect(g.stdout).toContain("is now a super admin");
     expect(await isAdmin("alice")).toBe(true);
 
     const r = await run(["admin", "revoke", "Alice"]);
     expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("is no longer a super admin");
     expect(await isAdmin("alice")).toBe(false);
     expect((await cliAudits()).map((e) => [e.actor_account_id, e.detail])).toEqual([
-      [null, { isEnterpriseAdmin: true, via: "cli" }],
-      [null, { isEnterpriseAdmin: false, via: "cli" }],
+      [null, { isSuperAdmin: true, via: "cli" }],
+      [null, { isSuperAdmin: false, via: "cli" }],
     ]);
   }, 60_000);
 
-  it("撤销最后一个企业管理员 → 退出码 1，stderr 含 account.last_enterprise_admin，库不变", async () => {
+  it("撤销最后一个超级管理员 → 退出码 1，stderr 含 account.last_super_admin，库不变", async () => {
     const r = await run(["admin", "revoke", "root"]);
     expect(r.code).toBe(1);
-    expect(r.stderr).toContain("account.last_enterprise_admin");
+    expect(r.stderr).toContain("account.last_super_admin");
     expect(await isAdmin("root")).toBe(true);
   }, 60_000);
 

@@ -251,9 +251,15 @@ labels: position and lines show the hierarchy **(decided)**.
 ### 9.2 Level 1: the tree
 
 - A dialog over the conversation page, opened from the conversation (the sub-agent group in the
-  stream and a title-bar entry while the conversation has sub-agents; exact entry points are the
-  designer's call for the design-system change).
-- Header: title (智能体图 / Agent map), "N 个智能体 · M 个运行中 · 点击查看详情", close.
+  stream and, since AC3 (2026-11-07), the composer's agents chip "N 个智能体" while the
+  conversation has sub-agents, in place of the title-bar entry).
+- Header: title (智能体图 / Agent map), "N 个智能体 · M 个运行中 · 点击查看详情", close. N counts
+  the sub-agents (the root not counted), the same number as the chip (AC3 ruling 4).
+- The page reads the tree whenever a root conversation has dispatched a sub-agent, not only while
+  the map is open: the server prefetches it with the conversation, and it is read again on every
+  `subagent_*` event of the root's log; while the map is closed a progress step reads it only for
+  an agent the tree lacks (once) or shows waiting (once per answer), and the trailing reads run
+  only while the map is open (AC3 fix round 1).
 - Columns left to right by depth; the root is vertically centred on its children; standard elbow
   connectors from each parent to the vertical centre of each child.
 - Every node has the **same height**; line 1: status dot + description (bold, ellipsis); line 2:
@@ -282,8 +288,9 @@ Replaces the dialog content; ← returns to the tree. Live, at the granularity o
 
 The **same timeline component** as the conversation page, inside the dialog, without the composer
 **(decided)**: the task as the first bubble, messages from the parent as bubbles labelled with their
-sender, `SubagentHandback` and other tools as ordinary tool blocks, live. The footer is a read-only
-status line ("子智能体只读 · 不能和它对话，请让 <parent> 转达"), context use and Stop while running.
+sender, `SubagentHandback` and other tools as ordinary tool blocks, live. The footer is a status line
+with the context use and Stop while running (the read-only copy was dropped in acceptance, AC1:
+the missing composer says it).
 Built from `apps/web/src/lib/timeline.ts` like every timeline, with the conversation page's
 collapsed Thread for tool calls, not IN / OUT blocks shown open (N4 is withdrawn).
 
@@ -366,8 +373,10 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - A run restarted by `SendMessage` acts for the sender's trigger account (§7), and holds a
   concurrency slot like a dispatched one.
 - The agent tree API carries no per-node latest text; level 2 reads it from the child's own events.
-- Map entry points: an "智能体图 / Agent map" action in the `SubagentGroup` header and a title-bar
-  icon while the conversation has sub-agents; the state lives in the URL hash (`#agents`,
+- Map entry points: an "智能体图 / Agent map" action in the `SubagentGroup` header and, while the
+  conversation has sub-agents, the composer's agents chip "N 个智能体" (acceptance item AC3,
+  2026-11-07, design spec §6.16.29; it replaced the title-bar icon); the state lives in the URL
+  hash (`#agents`,
   `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now.
 - The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
   the node width.
@@ -375,3 +384,19 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - The design `UserBubble` takes an optional sender label (a parent's message in a transcript), and
   the sub-agent row's "后台" label is omitted for a fork invocation's (foreground) child.
 - N4 is withdrawn (see §2): level 3 uses the collapsed Thread.
+- Acceptance (AC2, AC6): levels 2 and 3 are as wide as the conversation's column plus the dialog's
+  body padding (754 px), so the transcript has no empty side gutters; every level pads its head,
+  body and footer in the compact dialog rhythm (design spec §6.7); the tree stays 1100 px.
+- Acceptance (AC1): the transcript's status line drops "子智能体只读 · 不能和它对话，请让 <parent>
+  转达"; it keeps the context use and Stop, and is absent when it has neither.
+- Acceptance (AC5): Stop stays, in the Button's loading state, from the click until the agent's
+  terminal event or a failed request; a 409 `run.not_active` reads the tree, the child's row and its
+  log again; after a run's end the status takes the tree's word only from a tree read after the
+  restart or wake event was seen; a failed stop says "停止失败：<reason>" (map: one toast; composer:
+  inline) and logs the browser's reason to the console.
+- Acceptance fix round 1: a stop (map and composer) ends when the run's end reaches the log, when
+  the request fails, or after about 15 s, when one merged re-read (the log from its cached end,
+  never a wholesale refetch; the tree) lets Stop be pressed again; the 409 resync merges the same
+  way. The stop's failure report runs at the hook level, so it survives closing the level. The
+  transcript (level 3) is a pane like the right panel (its thread renders as in the main chat);
+  levels 1 and 2 are a dialog box. The sub-agent right panel drops its read-only copy too (AC1).

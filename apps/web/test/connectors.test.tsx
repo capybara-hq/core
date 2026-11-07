@@ -10,6 +10,7 @@ import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api"
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, onServer, type renderRoute } from "./support/server";
 import { NOT_READY, renderFrame, shellOf } from "./support/shell";
 
@@ -145,7 +146,7 @@ describe("连接器详情（DetailPage）", () => {
       m.connectors.detail.tabs.settings,
     ]);
     const user = userEvent.setup();
-    await user.selectOptions(policy, "deny");
+    await pickOption(policy, "deny", user);
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
       tools: { delete_item: { defaultPolicy: "deny" } },
     });
@@ -157,9 +158,14 @@ describe("连接器详情（DetailPage）", () => {
     expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
       tools: { delete_item: { status: "disabled" } },
     });
-    // inspector
-    const inspector = screen.getByRole("complementary");
-    expect(within(inspector).getByText("http://127.0.0.1:9/mcp")).toBeTruthy();
+    // the facts are the column's first block (no right pane): connector, endpoint, auth,
+    // credential; the slug is the head's count and is not repeated
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(document.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    expect(within(facts).getByText("http://127.0.0.1:9/mcp")).toBeTruthy();
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(4);
+    expect(within(facts).queryByText("fixture")).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -674,7 +680,7 @@ describe("连接器详情切换组织", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(router.push).not.toHaveBeenCalled();
     // the old org's page stays until the new document replaces it
     expect(screen.getByRole("heading", { name: "Fixture" })).toBeTruthy();
@@ -685,7 +691,7 @@ describe("连接器详情切换组织", () => {
 describe("the connectors pages render on the server (web-SSR spec §6)", () => {
   const GUEST = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
   };
   const routes = {
@@ -730,7 +736,7 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     expect(document.body.textContent).toBe("");
     cleanup();
     await renderRouteWithCache("/connectors", routes, { readiness: NOT_READY });
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
   });
 
   it("/connectors/<id>: a first render from the hydrated cache makes no browser read (guests too)", async () => {
@@ -758,8 +764,8 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 1, name: "Fixture" })).toBeNull();
-    // the tools tab's table: its header and, for a manager, the refresh button (disabled), and
-    // the inspector's five facts; no generic cards
+    // the facts block's four rows, then the tools tab's table: its header and, for a manager,
+    // the refresh button (disabled); no generic cards
     const page = document.querySelector('[data-template="DetailPage"]') as HTMLElement;
     expect(page.querySelector('[data-empty="loading"]')).not.toBeNull();
     expect(within(page).getByText(en.connectors.tools.columns.policy)).toBeTruthy();
@@ -768,7 +774,10 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     }) as HTMLButtonElement;
     expect(refresh.disabled).toBe(true);
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(5);
+    expect(page.querySelector(".cb-body-inspector")).toBeNull();
+    expect(
+      page.querySelectorAll('[data-part="detail-facts"] [data-part="key-value-row"]'),
+    ).toHaveLength(4);
     await act(async () => release());
     expect(await screen.findByRole("heading", { level: 1, name: "Fixture" })).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
@@ -791,7 +800,7 @@ describe("the connectors pages render on the server (web-SSR spec §6)", () => {
     expect(document.body.textContent).toBe("");
     cleanup();
     await renderRouteWithCache("/connectors/app1", routes, { readiness: NOT_READY });
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
   });
 });
 

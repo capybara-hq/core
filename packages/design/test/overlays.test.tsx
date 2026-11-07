@@ -169,6 +169,37 @@ describe("DangerConfirm", () => {
   });
 });
 
+describe("DangerConfirm confirmDisabled", () => {
+  it("keeps confirm disabled while the caller is not ready, even with the name typed", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    const ui = (confirmDisabled: boolean) => (
+      <DesignProvider locale="zh">
+        <DangerConfirm
+          open
+          onOpenChange={() => {}}
+          title="删除技能"
+          description="x"
+          confirmName="abc"
+          confirmLabel="删除"
+          confirmDisabled={confirmDisabled}
+          onConfirm={onConfirm}
+        />
+      </DesignProvider>
+    );
+    const { rerender } = render(ui(true));
+    await user.type(screen.getByRole("textbox"), "abc");
+    const confirm = screen.getByRole("button", { name: /删除$/ }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.getAttribute("data-variant")).toBe("danger");
+    rerender(ui(false));
+    expect(confirm.disabled).toBe(false);
+    expect(confirm.getAttribute("data-variant")).toBe("danger-solid");
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("DangerConfirm reset", () => {
   it("取消后重开，确认按钮重新禁用", async () => {
     const user = userEvent.setup();
@@ -286,6 +317,44 @@ describe("Menu", () => {
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
+  it("a lone danger item draws no separator above it", async () => {
+    const user = userEvent.setup();
+    zh(
+      <Menu
+        trigger={<button type="button">更多</button>}
+        items={[{ label: "停用", danger: true, onSelect: () => {} }]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu");
+    const roles = Array.from(menu.children).map((k) => k.getAttribute("role"));
+    expect(roles).toEqual(["menuitem"]);
+  });
+
+  it("never draws a leading, trailing or double separator", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    zh(
+      <Menu
+        trigger={<button type="button">更多</button>}
+        items={[
+          "separator",
+          { label: "重命名", onSelect },
+          "separator",
+          "separator",
+          { label: "复制", onSelect },
+          "separator",
+          { label: "删除", danger: true, onSelect },
+          "separator",
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "更多" }));
+    const menu = await screen.findByRole("menu");
+    const roles = Array.from(menu.children).map((k) => k.getAttribute("role"));
+    expect(roles).toEqual(["menuitem", "separator", "menuitem", "separator", "menuitem"]);
+  });
+
   it("checked items: a single choice, menuitemradio with aria-checked and a check icon", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
@@ -387,8 +456,8 @@ describe("Toast", () => {
     );
     act(() => screen.getByRole("button", { name: "prog" }).click());
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
-    // 两列网格：标题行（标题 + 计数）与关闭按钮同在第一行，进度条在第二行左列，
-    // 宽度由网格列决定，不再用写死的右外边距让出关闭按钮
+    // Three-column grid: icon, head (title + count), close on the first row; the progress bar
+    // sits in the head's column on the second row, its width set by the grid, no fixed margin
     const toast = screen.getByText("上传").closest(".cb-toast") as HTMLElement;
     const head = toast.querySelector(".cb-toast-head") as HTMLElement;
     expect(head.textContent).toContain("上传");
@@ -399,10 +468,40 @@ describe("Toast", () => {
     expect(close.nextElementSibling?.getAttribute("role")).toBe("progressbar");
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/overlays.css"), "utf8");
     const bar = css.match(/\.cb-toast-bar \{([^}]*)\}/)?.[1] ?? "";
-    expect(bar).toContain("grid-column: 1");
+    expect(bar).toContain("grid-column: 2");
     expect(bar).not.toMatch(/margin/);
     act(() => screen.getByRole("button", { name: "关闭" }).click());
     expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+  it("a leading status icon carries the status; no color stripe; top center, newest on top", () => {
+    zh(
+      <ToastProvider>
+        <T />
+      </ToastProvider>,
+    );
+    act(() => screen.getByRole("button", { name: "ok" }).click());
+    act(() => screen.getByRole("button", { name: "err" }).click());
+    act(() => screen.getByRole("button", { name: "prog" }).click());
+    const iconOf = (text: string) =>
+      screen
+        .getByText(text)
+        .closest(".cb-toast")
+        ?.querySelector(".cb-toast-icon svg")
+        ?.getAttribute("data-icon");
+    expect(iconOf("已保存")).toBe("circle-check");
+    expect(iconOf("失败了")).toBe("circle-alert");
+    expect(iconOf("上传")).toBe("spinner");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/overlays.css"), "utf8");
+    const toast = css.match(/\.cb-toast \{([^}]*)\}/)?.[1] ?? "";
+    expect(toast).not.toMatch(/inset/);
+    const region = css.match(/\.cb-toast-region \{([^}]*)\}/)?.[1] ?? "";
+    expect(region).toContain("left: 50%");
+    expect(region).toContain("top: var(--cb-space-4)");
+    expect(region).not.toMatch(/right:|bottom:/);
+    // Newest on top: the progress toast, sent after the success one, comes first in its group
+    const status = screen.getByRole("status");
+    const order = [...status.querySelectorAll(".cb-toast-msg")].map((x) => x.textContent);
+    expect(order).toEqual(["上传", "已保存"]);
   });
   it("error（role=alert）不在 aria-live 区域内；success 在 role=status 区域内", () => {
     zh(

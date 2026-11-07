@@ -22,9 +22,9 @@ import {
 const noop = () => {};
 const done = async () => {};
 
-const VISIBLE: Record<"guest" | "enterprise", FixtureNavItem["audience"][]> = {
+const VISIBLE: Record<"guest" | "superAdmin", FixtureNavItem["audience"][]> = {
   guest: ["all"],
-  enterprise: ["all", "member", "admin", "enterprise"],
+  superAdmin: ["all", "member", "admin", "superAdmin"],
 };
 
 /** "2026-10-20T14:32:00+08:00" as that wall-clock time, so untitled labels read the same anywhere. */
@@ -38,13 +38,13 @@ export type SidebarFixture = {
   activeConversation?: string;
   /** Shows the active conversation under this title (the conversation-page blocks). */
   activeTitle?: string;
-  level?: "guest" | "enterprise";
+  level?: "guest" | "superAdmin";
   state?: "loading" | "error" | "empty";
   groups?: "long" | "many";
   collapsed?: string[];
   /** The admin console's or the guided setup's context instead of the workspace's. */
   context?: "admin" | "setup";
-  /** The setup context's steps: the enterprise admin's (default) or a member's. */
+  /** The setup context's steps: the super admin's (default) or a member's. */
   setup?: "admin" | "member";
   /** Draw the 更多 flyout open. */
   moreOpen?: boolean;
@@ -59,7 +59,7 @@ export type SidebarFixture = {
  * or conversation id ("new" for New conversation).
  */
 export function sidebarProps(o: SidebarFixture, href: (id: string) => string): SidebarProps {
-  const level = o.level ?? "enterprise";
+  const level = o.level ?? "superAdmin";
   const visible = NAV_FIXTURE.filter((n) => VISIBLE[level].includes(n.audience));
   const item = (n: FixtureNavItem): SidebarNavItem => ({
     id: n.id,
@@ -103,7 +103,7 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
       o.context === "admin"
         ? {
             kind: "admin",
-            back: { href: href("overview"), slug: ORG_SWITCHER_FIXTURE.slug },
+            back: { href: href("new"), slug: ORG_SWITCHER_FIXTURE.slug },
             items: ADMIN_NAV_FIXTURE.map((n) => ({ ...n, href: href(n.id) })),
           }
         : {
@@ -118,7 +118,7 @@ export function sidebarProps(o: SidebarFixture, href: (id: string) => string): S
               icon: "extension" as const,
             })),
             ...inboxOf(visible.find((n) => n.place === "brand")),
-            ...(level === "enterprise" ? { adminHref: href("admin") } : {}),
+            ...(level === "superAdmin" ? { adminHref: href("admin") } : {}),
           },
     newConversation: { href: href("new") },
     activeNav: o.active ?? "",

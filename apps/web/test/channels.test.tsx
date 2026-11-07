@@ -7,6 +7,7 @@ import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { fieldOptionLabels, optionValues, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -186,13 +187,11 @@ describe("新建渠道连接（FormPage）", () => {
     const pluginSelect = await screen.findByRole("combobox", {
       name: new RegExp(`^${f.pluginLabel}`),
     });
-    const options = within(pluginSelect)
-      .getAllByRole("option")
-      .map((o) => o.getAttribute("value"));
+    const options = await optionValues(pluginSelect);
     // todo 不提供 channel、slack 未启用
     expect(options).toEqual(["", "fake-im"]);
     const user = userEvent.setup();
-    await user.selectOptions(pluginSelect, "fake-im");
+    await pickOption(pluginSelect, "fake-im", user);
     await user.type(
       screen.getByRole("textbox", { name: new RegExp(`^${f.nameLabel}`) }),
       "Acme Bot",
@@ -200,9 +199,10 @@ describe("新建渠道连接（FormPage）", () => {
     await user.type(await screen.findByRole("textbox", { name: /^platformUrl/ }), "http://im.test");
     await user.type(screen.getByRole("textbox", { name: /^appId/ }), "cli_acme");
     await user.type(screen.getByLabelText(/^appSecret/), "acme-secret");
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) }),
       "ag1",
+      user,
     );
     await user.click(
       screen.getByRole("radio", { name: new RegExp(`^${en.channels.policy.anonymous}`) }),
@@ -246,17 +246,19 @@ describe("新建渠道连接（FormPage）", () => {
     await user.click(submit);
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
 
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),
       "fake-im",
+      user,
     );
     await user.type(screen.getByRole("textbox", { name: new RegExp(`^${f.nameLabel}`) }), "Bot");
     await user.type(await screen.findByRole("textbox", { name: /^platformUrl/ }), "http://im.test");
     await user.type(screen.getByRole("textbox", { name: /^appId/ }), "cli");
     await user.type(screen.getByLabelText(/^appSecret/), "bad-secret");
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) }),
       "ag1",
+      user,
     );
     expect(submit.disabled).toBe(false);
     await user.click(submit);
@@ -274,7 +276,7 @@ describe("新建渠道连接（FormPage）", () => {
     const empty = container.querySelector('[data-part="empty-state"]') as HTMLElement;
     expect(empty.textContent).toContain(f.noExtensions);
     expect(within(empty).getByRole("link", { name: f.openExtensions }).getAttribute("href")).toBe(
-      "/settings/extensions",
+      "/extensions",
     );
     // no form: no fields, no action row, no 新建渠道
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -287,9 +289,10 @@ describe("新建渠道连接（FormPage）", () => {
 
 describe("the channel form opened from an agent page", () => {
   const fill = async (user: ReturnType<typeof userEvent.setup>, agentPreset: boolean) => {
-    await user.selectOptions(
+    await pickOption(
       await screen.findByRole("combobox", { name: new RegExp(`^${en.channels.form.pluginLabel}`) }),
       "fake-im",
+      user,
     );
     await user.type(
       screen.getByRole("textbox", { name: new RegExp(`^${en.channels.form.nameLabel}`) }),
@@ -299,9 +302,10 @@ describe("the channel form opened from an agent page", () => {
     await user.type(screen.getByRole("textbox", { name: /^appId/ }), "cli");
     await user.type(screen.getByLabelText(/^appSecret/), "secret");
     if (!agentPreset) {
-      await user.selectOptions(
+      await pickOption(
         screen.getByRole("combobox", { name: new RegExp(`^${en.channels.form.agentLabel}`) }),
         "ag1",
+        user,
       );
     }
   };
@@ -322,7 +326,7 @@ describe("the channel form opened from an agent page", () => {
     await fill(user, true);
     const agent = screen.getByRole("combobox", {
       name: new RegExp(`^${en.channels.form.agentLabel}`),
-    }) as HTMLSelectElement;
+    }) as HTMLButtonElement;
     expect(agent.value).toBe("ag1");
     await user.click(screen.getByRole("button", { name: en.channels.form.submit }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag1"));
@@ -365,6 +369,13 @@ describe("渠道连接详情（DetailPage）", () => {
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     const d = en.channels.detail;
     expect(await screen.findByText("connect failed with status 503")).toBeTruthy();
+    // the facts are the column's first block (no right pane); the extension is the head's count
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = container.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(container.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
+    expect(within(facts).getByText("bot-cli_acme")).toBeTruthy();
+    expect(within(facts).queryByText("fake-im")).toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: d.disable }));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ status: "disabled" });
     expect(await screen.findByRole("button", { name: d.enable })).toBeTruthy();
@@ -479,7 +490,7 @@ describe("渠道连接详情（DetailPage）", () => {
 describe("the channel pages read from the query cache (web query cache spec §3)", () => {
   const MEMBER = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
   };
   const routes = {
@@ -518,10 +529,14 @@ describe("the channel pages read from the query cache (web query cache spec §3)
       (
         screen.getByRole("combobox", {
           name: new RegExp(`^${en.channels.form.agentLabel}`),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("ag1");
-    expect(screen.getByRole("option", { name: "fake-im" })).toBeTruthy();
+    expect(
+      fieldOptionLabels(
+        screen.getByRole("combobox", { name: new RegExp(`^${en.channels.form.pluginLabel}`) }),
+      ),
+    ).toContain("fake-im");
     await settle();
     expect(browser).toEqual([]);
     expect(router.replace).not.toHaveBeenCalled();
@@ -603,8 +618,11 @@ describe("the channel pages read from the query cache (web query cache spec §3)
       "/channels/ch1",
       "DetailPage",
       (page: HTMLElement) => {
-        // the inspector's six facts
-        expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(6);
+        // the facts block's five rows, first in the one column (no right pane)
+        expect(page.querySelector(".cb-body-inspector")).toBeNull();
+        const facts = page.querySelector('[data-part="detail-facts"]') as HTMLElement;
+        expect(page.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+        expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
       },
     ],
   ] as const)("%s: the loading state has the loaded page's shape", async (path, name, check) => {
@@ -648,7 +666,7 @@ describe("the channel pages read from the query cache (web query cache spec §3)
         await settle();
         expect(router.replace).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
       }
     },
   );
@@ -695,9 +713,10 @@ describe("channel mutations update the cache", () => {
     const { client } = await renderNew({ query: { agentId: "ag1" } });
     client.setQueryData(["org", "o1", "channels"], { channels: [] });
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       await screen.findByRole("combobox", { name: new RegExp(`^${en.channels.form.pluginLabel}`) }),
       "fake-im",
+      user,
     );
     await user.type(
       screen.getByRole("textbox", { name: new RegExp(`^${en.channels.form.nameLabel}`) }),

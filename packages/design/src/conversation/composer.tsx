@@ -9,7 +9,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -86,21 +85,7 @@ export function Picker({
   onPick,
   referenceOpen,
 }: PickerProps): JSX.Element {
-  const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
-  const [offset, setOffset] = useState(4);
-  // The menu opens above the composer, `space.1` from its top edge (the signed reference), not
-  // just above the picker: the offset is the picker's distance from the composer's top.
-  const measure = () => {
-    const el = trigger.current;
-    const frame = el?.closest('[data-part="composer"]');
-    if (el && frame)
-      setOffset(el.getBoundingClientRect().top - frame.getBoundingClientRect().top + 4);
-  };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: measured once for the drawn-open menu
-  useLayoutEffect(() => {
-    if (referenceOpen) measure();
-  }, [referenceOpen]);
   if (locked) {
     return (
       <span className="cb-picker" data-part="picker" data-locked="true" title={locked.hint}>
@@ -127,24 +112,25 @@ export function Picker({
     <ConvMenu
       inline={referenceOpen === true}
       label={label}
+      anchored
+      // drawn open in place (the reference set): above, as on the conversation page
       side="top"
-      sideOffset={offset}
       align="start"
       open={open}
-      onOpenChange={(o) => {
-        if (o) measure();
-        setOpen(o);
-      }}
+      onOpenChange={setOpen}
       trigger={
         <Button
-          ref={trigger}
           variant="ghost"
           className="cb-picker"
           part="picker"
           aria-label={`${label}: ${value}`}
+          title={value}
           disabled={disabled}
         >
-          {value}
+          {/* a long label (the model's) gives way with an ellipsis on a phone (AC3 fix round 1) */}
+          <span className="cb-picker-value" data-part="picker-value">
+            {value}
+          </span>
           <Icon name="chevron-down" size={12} />
         </Button>
       }
@@ -159,7 +145,7 @@ export type ComposerBoxProps = {
   onKeyDown?(e: KeyboardEvent<HTMLTextAreaElement>): void;
   onPaste?(e: ClipboardEvent<HTMLTextAreaElement>): void;
   placeholder: string;
-  /** Replaces the placeholder while a run is going ("按 ↵ 加入队列，按 ⌘↵ 立即发送"). */
+  /** Replaces the placeholder while a run is going ("运行中发送的消息会在下一步交给智能体"). */
   hint?: string;
   /** The attachment strip, above the textarea. */
   attachments?: ReactNode;
@@ -170,6 +156,16 @@ export type ComposerBoxProps = {
    * agent (agent profile design §4.2); the model and effort pickers stay.
    */
   pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  /**
+   * The selected agent's quick actions (`QuickActions`, §6.16.27): a `zap` button right after the
+   * effort picker, given only when the agent has some.
+   */
+  quickActions?: ReactNode;
+  /**
+   * The agent map's entry (`AgentsChip`, §6.16.29): "N 个智能体" after the effort picker and the
+   * quick actions, given once the conversation has a sub-agent.
+   */
+  agents?: ReactNode;
   send: { mode: "send" | "stop"; disabled?: boolean; busy?: boolean; onClick(): void };
   textareaRef?: Ref<HTMLTextAreaElement>;
   /** The reference set only: draw the focused frame (`:focus-within` is forced there). */
@@ -217,7 +213,8 @@ function ComposerTokenChip({
 
 /**
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
- * control row: ＋ · agent · model · effort (hidden without efforts) · send / stop.
+ * control row: ＋ · agent · model · effort (hidden without efforts) · quick actions (only when the
+ * agent has some) · the agents chip (once the conversation has a sub-agent) · send / stop.
  */
 export function ComposerBox({
   value,
@@ -230,6 +227,8 @@ export function ComposerBox({
   onAttach,
   attachDisabled,
   pickers,
+  quickActions,
+  agents,
   send,
   textareaRef,
   autoFocus,
@@ -315,6 +314,8 @@ export function ComposerBox({
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
+        {quickActions ?? null}
+        {agents ?? null}
         <span className="cb-grow" />
         {send.mode === "stop" ? (
           <IconButton

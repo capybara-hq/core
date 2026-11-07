@@ -201,7 +201,7 @@ beforeEach(async () => {
     login: "owner",
     password: PW,
     displayName: "O",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   owner = await session(k, "owner");
   orgId = await createOrg(owner);

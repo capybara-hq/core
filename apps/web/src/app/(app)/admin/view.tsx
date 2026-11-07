@@ -11,10 +11,10 @@ import { useAdmin } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
 
 /**
- * `/admin`: the admin console overview (enterprise admins, OverviewPage). Four header numbers,
+ * `/admin`: the admin console overview (super admins, OverviewPage). Four header numbers,
  * each linking to its page: extensions needing action, pending catalog requests, orgs, accounts.
  * The sidebar is the way to the other pages, so the body holds only the quiet note that
- * enterprise admins cannot read conversations. From the query cache (the layout prefetched the
+ * super admins cannot read conversations. From the query cache (the layout prefetched the
  * numbers on a first load); while they load the note stays and the numbers are stat slots.
  */
 export default function AdminOverviewView() {
@@ -56,7 +56,7 @@ function AdminOverview() {
           {
             label: t("overview.metrics.catalogRequests"),
             value: value(data.catalogRequestsPending),
-            href: "/admin/catalog/requests",
+            href: "/admin/plugins/pending",
           },
           { label: t("overview.metrics.orgs"), value: value(data.orgs), href: "/admin/orgs" },
           {

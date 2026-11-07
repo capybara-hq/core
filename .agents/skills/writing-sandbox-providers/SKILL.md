@@ -104,7 +104,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 
 - `egress` / `allowHosts` are the values **in effect for the org**: the org setting `sandboxEgress` can replace the allowlist with its own or cut the network,
   and cannot be more open than the deployment (Ruling M19, kernel `effectiveSandboxEgress`). The provider just enforces what `create` receives and does not read org settings.
-- `cpu` / `memoryMb` are likewise the values **in effect for the org**: an enterprise admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
+- `cpu` / `memoryMb` are likewise the values **in effect for the org**: a super admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
   orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
   The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
   "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.

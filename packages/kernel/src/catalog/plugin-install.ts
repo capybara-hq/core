@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
   type Connector,
@@ -6,6 +6,8 @@ import {
   type ConnectorTemplateSpec,
   EXTENSION_POINTS,
   type ExtensionManifest,
+  type MarketplaceEntry,
+  marketplaceEntryDeprecation,
   type PluginManifest,
   parseExtensionPoint,
   parseSkillMd,
@@ -13,12 +15,8 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { normalizeToolRef } from "../agents/definition.js";
-import {
-  putTemplateVersionIn,
-  revertTemplateVersionIn,
-  softDeleteTemplateIn,
-} from "../agents/templates.js";
+import semver from "semver";
+import { revertTemplateVersionIn, softDeleteTemplateIn } from "../agents/templates.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
@@ -46,7 +44,11 @@ import {
   skillConflicts,
 } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
-import type { CreateConnectorInput } from "../tools/connectors.service.js";
+import type {
+  ConnectorDetail,
+  CreateConnectorInput,
+  ToolIssue,
+} from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import {
@@ -57,18 +59,32 @@ import {
   readCatalogFiles,
   readCatalogTemplates,
   requiredActions,
-  skillOf,
   type TemplateDeps,
   templateConnectorInput,
   templatePluginProblem,
 } from "./catalog-content.js";
+import { versionUsable } from "./catalog-items.js";
+import {
+  agentDefinitionRefs,
+  componentOn,
+  connectorTemplateState,
+  connectorTemplatesOn,
+  type DefinitionRefs,
+  listedIn,
+  loadComponents,
+  loadScopeState,
+  pluginFactsOf,
+  referenceIds,
+  switchOf,
+} from "./component-state.js";
 import {
   assertItemInstallable,
-  CatalogRequestsService,
   disabledPluginItems,
   pluginItemDisabled,
-} from "./requests.service.js";
-import { upgradeInfo } from "./upgrade-targets.js";
+  resolveRequestsByInstall,
+} from "./request-rules.js";
+import { visibleTo } from "./scope.js";
+import { ScopeNoLongerWanted, ScopeStillWanted, wantedByScope } from "./scope-state.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
 /** What an org fills in for one connector template at install (C30). */
@@ -109,9 +125,80 @@ export interface UninstallReport {
       | "used_by_agents"
       | "used_by_other_install"
       | "used_by_connectors"
-      | "used_by_plugins";
+      | "used_by_plugins"
+      /** A dependency install still wanted on in the org by its own scope: it stays, standalone. */
+      | "wanted_by_scope"
+      /**
+       * A connector the install created, kept by a scope sync uninstall (the plugin disabled or its
+       * scope narrowed, spec §5 rule 8): it stays as the org's own, with its credentials.
+       */
+      | "org_owned";
   }[];
 }
+
+/**
+ * What switching a plugin off would do, read without changing anything: its components, the ones the
+ * uninstall rules would keep for a reason visible beforehand (a component that pre-existed, or one an
+ * agent uses), and the agents that use the plugin's skills, connectors or agent templates.
+ */
+export interface UninstallPreview {
+  installId: string;
+  name: string;
+  version: string;
+  components: { kind: ComponentKind; ref: string; created: boolean }[];
+  kept: UninstallReport["kept"];
+  agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+}
+
+/** The confirm hash of an uninstall preview: sha256 over its sorted JSON (the scheme of `diffHash`). */
+export function uninstallPreviewHash(p: UninstallPreview): string {
+  const by = <T extends { kind: string; ref: string }>(xs: T[]) =>
+    [...xs].sort((a, b) => `${a.kind}:${a.ref}`.localeCompare(`${b.kind}:${b.ref}`));
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        ...p,
+        components: by(p.components),
+        kept: by(p.kept),
+        agents: [...p.agents]
+          .sort((a, b) => a.id.localeCompare(b.id))
+          .map((a) => ({ ...a, uses: by(a.uses) })),
+      }),
+    )
+    .digest("hex");
+}
+
+/** Upserts the org's switch row of an item in the caller's transaction (the org lock is held). */
+export async function upsertOrgSwitch(
+  db: KernelSchemaDb,
+  orgId: string,
+  itemId: string,
+  enabled: boolean,
+  actor: string | null,
+): Promise<void> {
+  await db
+    .insertInto("catalog_item_org_switches")
+    .values({ item_id: itemId, org_id: orgId, enabled, updated_by: actor })
+    .onConflict((oc) =>
+      oc.columns(["item_id", "org_id"]).doUpdateSet({
+        enabled,
+        updated_by: actor,
+        updated_at: sql<Date>`now()` as unknown as Date,
+      }),
+    )
+    .execute();
+}
+
+/** The kernel (actor null, the scope sync) never installs what needs the org's input. */
+export class NeedsOrgInput extends ApiError {
+  constructor(readonly plugin: string) {
+    super(
+      "internal",
+      `Plugin ${plugin} needs the organization's input (connector templates); only a person can install it`,
+    );
+  }
+}
+const systemNeedsInput = (name: string) => new NeedsOrgInput(name);
 
 /** A plugin install in an org (`GET /orgs/:orgId/plugin-installs`). */
 export interface PluginInstallView {
@@ -135,13 +222,13 @@ export interface PluginInstallView {
     skillVersion: number | null;
     dropped: boolean;
   }[];
-  /** The highest version this install can be upgraded to now, null when none (spec §10). */
-  upgradeAvailable: string | null;
   /**
-   * The plugin's extension on the deployment is not the one of this install's version: the org
-   * should upgrade to the deployment's version ("upgrade pending", Decision 10).
+   * Always null / false since plugin scope phase 2: a platform plugin has one version for the
+   * deployment and the platform update moves every org install (ruling F2); kept for the web until
+   * its upgrade dialog goes.
    */
-  deploymentPending: boolean;
+  upgradeAvailable: null;
+  deploymentPending: false;
 }
 
 /** A dependency resolved against the catalog. */
@@ -218,6 +305,8 @@ export interface UninstallCtx {
   authorize: boolean;
   reason?: string;
   opts: { actorTokenId?: string };
+  /** Uninstalled by the plugin scope sync: the connectors it created stay as the org's own. */
+  via?: "scope";
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -243,15 +332,17 @@ const unresolved = (name: string, range: string, why: string) =>
 const dependencyDisabled = (name: string) =>
   new ApiError(
     "catalog.dependency_disabled",
-    `Dependency ${name} is disabled by the enterprise admin, so this plugin cannot be installed`,
+    `Dependency ${name} is disabled by the super admin, so this plugin cannot be installed`,
     [{ dependency: name }],
   );
 
 /**
- * The dependency `d` resolved against the catalog: the highest imported version (of the live item
- * with that name) satisfying its range. No such item or version -> `catalog.dependency_unresolved`;
- * the item disabled -> `catalog.dependency_disabled` (the enterprise admin's ban is not bypassed,
- * spec §10).
+ * The dependency `d` resolved against the catalog (ruling P2-17, one version per deployment): the
+ * dependency's platform version (`platform_synced_version`), which must satisfy its range; only
+ * while it has none yet (its first sync failed), the highest imported version satisfying the range
+ * that its marketplace does not deprecate, a stable one before a prerelease (the marketplace
+ * folding rule). No such item or version -> `catalog.dependency_unresolved`; the item disabled ->
+ * `catalog.dependency_disabled` (the super admin's ban is not bypassed, spec §10).
  */
 async function resolveOne(
   db: KernelSchemaDb,
@@ -259,7 +350,15 @@ async function resolveOne(
 ): Promise<ResolvedDependency & { manifest: PluginManifest }> {
   const item = await db
     .selectFrom("catalog_items")
-    .select(["id", "policy"])
+    .select([
+      "id",
+      "disabled",
+      "platform_synced_version",
+      "marketplace_id",
+      "awaiting_confirmation",
+      "owner_org_id",
+      "latest_version",
+    ])
     .where("name", "=", d.name)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
@@ -267,24 +366,50 @@ async function resolveOne(
     throw unresolved(
       d.name,
       d.version,
-      "it is not in the enterprise catalog; ask the enterprise admin to import it",
+      "it is not in the platform catalog; ask the super admin to import it",
     );
   }
-  if (item.policy === "disabled") throw dependencyDisabled(d.name);
+  if (item.disabled) throw dependencyDisabled(d.name);
+  // An org upload waiting for the super admin is no dependency target (ruling P3-9)
+  if (item.awaiting_confirmation) {
+    throw unresolved(d.name, d.version, "it waits for a super admin to confirm its extension");
+  }
   const versions = await db
     .selectFrom("catalog_item_versions")
-    .select(["version", "manifest", "imported_at"])
+    .select(["version", "manifest", "imported_at", "applied_at", "rejected_at"])
     .where("item_id", "=", item.id)
     .execute();
-  const v = maxSatisfying(
-    versions.map((x) => ({ ...x, importedAt: x.imported_at })),
-    d.version,
-  );
+  let v: (typeof versions)[number] | undefined;
+  if (item.platform_synced_version !== null) {
+    v = versions.find((x) => x.version === item.platform_synced_version);
+    if (!v || !satisfiesRange(v.version, d.version)) {
+      throw unresolved(
+        d.name,
+        d.version,
+        `its platform version ${item.platform_synced_version} does not satisfy the range; ask ` +
+          "the super admin to update it",
+      );
+    }
+  } else {
+    const deprecated = await deprecatedVersions(db, d.name, item.marketplace_id);
+    // An org's plugin offers only its applied version: never one pending or rejected (P3-34),
+    // also once transferred to the platform (P3-52)
+    const candidates = versions
+      .filter((x) => versionUsable(x))
+      .filter((x) => item.owner_org_id === null || x.version === item.latest_version)
+      .filter((x) => !deprecated.has(x.version))
+      .map((x) => ({ ...x, importedAt: x.imported_at }));
+    v =
+      maxSatisfying(
+        candidates.filter((x) => semver.prerelease(x.version) === null),
+        d.version,
+      ) ?? maxSatisfying(candidates, d.version);
+  }
   if (!v) {
     throw unresolved(
       d.name,
       d.version,
-      "no imported version satisfies the range; ask the enterprise admin to import one",
+      "no imported version satisfies the range; ask the super admin to import one",
     );
   }
   return {
@@ -296,10 +421,30 @@ async function resolveOne(
   };
 }
 
+/** The versions of plugin `name` its marketplace (`marketplaceId`) marks deprecated. */
+async function deprecatedVersions(
+  db: KernelSchemaDb,
+  name: string,
+  marketplaceId: string | null,
+): Promise<Set<string>> {
+  if (marketplaceId === null) return new Set();
+  const rows = await db
+    .selectFrom("marketplace_entries")
+    .select(["version", "entry"])
+    .where("source_id", "=", marketplaceId)
+    .where("name", "=", name)
+    .execute();
+  return new Set(
+    rows
+      .filter((r) => marketplaceEntryDeprecation(r.entry as MarketplaceEntry) !== null)
+      .map((r) => r.version),
+  );
+}
+
 /**
- * Resolves a plugin's dependencies against the catalog: for each one the highest imported version
- * of the live item with that name satisfying its range. The whole dependency tree is checked: a
- * dependency nothing satisfies -> `catalog.dependency_unresolved`; a disabled one ->
+ * Resolves a plugin's dependencies against the catalog: for each one the platform version of the
+ * live item with that name, which must satisfy its range (see `resolveOne`). The whole dependency
+ * tree is checked: a dependency nothing satisfies -> `catalog.dependency_unresolved`; a disabled one ->
  * `catalog.dependency_disabled`; a cycle (`a` -> `b` -> `a`, by name) or nesting deeper than
  * {@link DEPENDENCY_DEPTH_LIMIT} -> `catalog.dependency_cycle`. Returns the direct dependencies.
  */
@@ -404,9 +549,11 @@ export function under(e: unknown, at: string): unknown {
  *    not run it; already enabled is recorded created=false);
  * 3. connectors from the templates (credentials / clients go to secrets, default policies are
  *    recorded `policy_source 'template'`);
- * 4. the skills (an org skill of the same name from the same catalog item gets a new version,
- *    recorded created=false with skill_version; one of other provenance, the org's own or another
- *    item's, refuses the install while planning with `plugin.skill_conflict`, spec §9.2).
+ * The plugin's skills and agent templates are platform components (plugin scope phase 2): stored
+ * once for the deployment and on in the org while the plugin is, so an install writes no org rows
+ * for them; a skill name the org already uses (its own skill, another plugin's) refuses the install
+ * while planning with `plugin.skill_conflict` (spec §9.2, rule 10). Uninstall leaves the org copies
+ * earlier installs wrote (linked to the platform components by the migration).
  * Approval follows the installed plugin's policy only (spec §10): dependency components are
  * re-checked against the root item's policy and their own item's disabled state. Each component is
  * recorded in `plugin_install_components` as soon as it exists; if any step fails, the components
@@ -414,9 +561,10 @@ export function under(e: unknown, at: string): unknown {
  * install is marked failed (error holds only the step and the error code) and 502
  * `plugin.install_failed` is thrown. Uninstall removes only components with created=true that
  * nothing else uses, and reports what it kept and why. No in-process state; the org row lock
- * serializes writes within one org. In-place upgrades are run by `PluginUpgrader`
- * (plugin-upgrade.ts), which reuses the planning, install and ledger methods here (the ones without
- * `private` are internal to the catalog, not an API).
+ * serializes writes within one org. There is no per-org upgrade: a platform plugin is updated
+ * once for the deployment (`PlatformPluginUpdater`, plugin-upgrade.ts, ruling F2); an install left
+ * `upgrading` by an earlier per-org upgrade is undone from its journal by the next uninstall. The
+ * methods without `private` are internal to the catalog, not an API.
  */
 @Injectable()
 export class PluginInstaller {
@@ -429,7 +577,6 @@ export class PluginInstaller {
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OrgExtensionConfigs) private readonly orgConfigs: OrgExtensionConfigs,
-    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     /** Org connectors: installs create, upgrade and remove them. */
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
@@ -465,18 +612,21 @@ export class PluginInstaller {
 
   async install(
     orgId: string,
-    actor: string,
+    actor: string | null,
     itemId: string,
     version: string,
     input: PluginInstallInput,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; switchOn?: boolean; via?: "scope" } = {},
   ): Promise<PluginInstallView> {
+    const { switchOn, via, ...actorOpts } = opts;
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
     await this.assertNoSkillConflicts(orgId, plan);
     let installId: string;
     try {
-      installId = await this.execute(orgId, actor, plan, opts, {
+      installId = await this.execute(orgId, actor, plan, actorOpts, {
         actions: planActions(plan),
+        ...(switchOn === true && { switchOn }),
+        ...(via !== undefined && { via }),
       });
     } catch (e) {
       if (!(e instanceof InstallFailure)) throw e;
@@ -534,7 +684,7 @@ export class PluginInstaller {
    */
   async plan(
     orgId: string,
-    actor: string,
+    actor: string | null,
     itemId: string,
     version: string,
     input: PluginInstallInput | null,
@@ -559,9 +709,22 @@ export class PluginInstaller {
       .executeTakeFirst();
     if (!v) throw new ApiError("catalog.item_not_found", "Plugin version not found");
     const manifest = v.manifest as PluginManifest;
-    const deps = await resolveDependencies(this.db, manifest);
+    const declared = await resolveDependencies(this.db, manifest);
     const extension = await this.planExtension(orgId, manifest);
-    const templates = await readCatalogTemplates(this.storage, v);
+    const allTemplates = await readCatalogTemplates(this.storage, v);
+    // Only the connector templates on in the org make connectors (ruling P2-6): one switched off
+    // there, outside its own scope or disabled is skipped (input given for it is ignored)
+    const on = await connectorTemplatesOn(
+      this.db,
+      orgId,
+      itemId,
+      allTemplates.map((t) => t.id),
+    );
+    const templates = allTemplates.filter((t) => on.has(t.id));
+    const deps = [
+      ...declared,
+      ...(await this.impliedProviders(orgId, manifest, templates, declared)),
+    ];
     const skillNames = await catalogSkillNames(this.storage, v, manifest);
     const agentTemplates = await readCatalogAgentTemplates(this.storage, v);
     const connectors = new Map<string, CreateConnectorInput>();
@@ -571,8 +734,10 @@ export class PluginInstaller {
         if (problem !== undefined) throw new ApiError("catalog.not_deployed", problem);
       }
     } else {
-      this.checkInput(manifest, templates, input, at);
+      this.checkInput(manifest, allTemplates, input, at);
       for (const ct of templates) {
+        // The kernel installs only what needs no org input (the scope sync's `needs_config` rule)
+        if (actor === null) throw systemNeedsInput(manifest.name);
         connectors.set(
           ct.id,
           this.planConnector(
@@ -620,6 +785,71 @@ export class PluginInstaller {
       agentTemplates,
       dependencies,
     };
+  }
+
+  /**
+   * The providers of the templates' connector kinds as implied dependencies: a template whose
+   * `plugin` is neither this plugin, a declared dependency nor already enabled in the org makes that
+   * plugin a dependency (installed first, recorded like a declared one, so an uninstall hands it
+   * back). No such plugin offered by the catalog -> `connector.kind_unavailable` naming it, before
+   * anything is written.
+   */
+  async impliedProviders(
+    orgId: string,
+    manifest: PluginManifest,
+    templates: { id: string; file: ConnectorTemplateFile }[],
+    declared: { name: string }[],
+  ): Promise<ResolvedDependency[]> {
+    const out: ResolvedDependency[] = [];
+    const seen = new Set<string>([manifest.name, ...declared.map((d) => d.name)]);
+    for (const ct of templates) {
+      const provider = ct.file.template.plugin;
+      if (seen.has(provider)) continue;
+      seen.add(provider);
+      // Not deployed: the not_deployed refusal of the plan's own checks says it
+      if (templatePluginProblem(this.templateDeps(), ct.file.template) !== undefined) continue;
+      if (await isExtensionEnabled(this.db, orgId, provider)) continue;
+      const refuse = (why: string) =>
+        new ApiError(
+          "connector.kind_unavailable",
+          `Connector template ${ct.id} needs the plugin ${provider}, which is not enabled in this organization: ${why}`,
+        );
+      let dep: ResolvedDependency;
+      try {
+        const { manifest: _m, ...resolved } = await resolveOne(this.db, {
+          name: provider,
+          version: ct.file.template.pluginVersion ?? "*",
+        });
+        dep = resolved;
+      } catch (e) {
+        if (!(e instanceof ApiError)) throw e;
+        throw refuse(
+          e.code === "catalog.dependency_unresolved"
+            ? `${provider} is deployed but switched off here and the catalog has no entry to switch it on; ask the super admin to enable it`
+            : `${provider} is not offered to this organization`,
+        );
+      }
+      // Scope: only a plugin offered to this org may be switched on for it (nothing more is said)
+      const item = await this.db
+        .selectFrom("catalog_items")
+        .select(["scope", "builtin"])
+        .where("id", "=", dep.itemId)
+        .executeTakeFirstOrThrow();
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", dep.itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+        throw refuse(`${provider} is not offered to this organization`);
+      }
+      if (await this.findLiveDependency(this.db, orgId, dep, false)) {
+        throw refuse(`${provider} is installed but switched off in this organization`);
+      }
+      out.push(dep);
+    }
+    return out;
   }
 
   /**
@@ -775,12 +1005,19 @@ export class PluginInstaller {
    */
   async execute(
     orgId: string,
-    actor: string,
+    actor: string | null,
     plan: InstallPlan,
     opts: { actorTokenId?: string },
-    ctx: { actions: OrgAction[]; approvedBy?: string; parent?: string },
+    ctx: {
+      actions: OrgAction[];
+      approvedBy?: string;
+      parent?: string;
+      switchOn?: boolean;
+      /** Installed by the plugin scope sync (recorded in the audits). */
+      via?: "scope";
+    },
   ): Promise<string> {
-    const { itemId, version, manifest } = plan;
+    const { itemId, manifest } = plan;
     // The install row (role and item policy re-checked under the lock; one live install per org
     // and item)
     const installId = randomUUID();
@@ -826,6 +1063,7 @@ export class PluginInstaller {
             actions: requiredActions(depPlan.manifest),
             approvedBy,
             parent: installId,
+            ...(ctx.via !== undefined && { via: ctx.via }),
           });
         } catch (e) {
           if (e instanceof InstallFailure) {
@@ -862,6 +1100,7 @@ export class PluginInstaller {
       for (const ct of plan.templates) {
         const ci = plan.connectors.get(ct.id);
         if (!ci) throw new ApiError("internal", `Connector template ${ct.id} was not planned`);
+        if (actor === null) throw systemNeedsInput(manifest.name);
         const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
         await record({
           kind: "connector",
@@ -871,40 +1110,8 @@ export class PluginInstaller {
           templateId: ct.id,
         });
       }
-      step = "agent_templates";
-      for (const a of plan.agentTemplates) {
-        await this.installAgentTemplate(orgId, plan, a.template, record);
-      }
-      step = "skills";
-      for (const s of manifest.skills ?? []) {
-        const files = await readCatalogFiles(
-          this.storage,
-          plan.row.object_prefix,
-          plan.row.files,
-          packagePath(s.path),
-        );
-        const r = await this.skills.createVersionFromFiles(
-          orgId,
-          actor,
-          { ...skillOf(files), files },
-          {
-            catalog: {
-              itemId,
-              version,
-              ...(nested && { approvedBy }),
-              format: plan.sourceFormat,
-              suggestPinned: s.pinned === true,
-            },
-            ...opts,
-          },
-        );
-        await record({
-          kind: "skill",
-          ref: r.skill.id,
-          created: r.created,
-          skillVersion: r.created ? null : r.version,
-        });
-      }
+      // Skills and agent templates are platform components (plugin scope phase 2): stored once for
+      // the deployment and on in the org while the plugin is, so the install writes no org rows
       await this.markInstalled(orgId, actor, installId, plan, done, ctx, opts);
       return installId;
     } catch (e) {
@@ -945,7 +1152,7 @@ export class PluginInstaller {
     orgId: string,
     name: string,
     input: OrgExtensionInput,
-    actor: string,
+    actor: string | null,
     actorTokenId: string | undefined,
     opts: Pick<OrgExtensionPutOptions, "viaItem" | "approvedBy">,
     record: (c: Component) => Promise<void>,
@@ -963,26 +1170,35 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async createInstallRow(
     orgId: string,
-    actor: string,
+    actor: string | null,
     plan: InstallPlan,
-    ctx: { actions: OrgAction[]; approvedBy?: string },
+    ctx: { actions: OrgAction[]; approvedBy?: string; via?: "scope" },
     installId: string,
   ): Promise<void> {
     const { itemId, version } = plan;
     const t = this.db;
     await lockOrgForActions(this.orgLock, orgId, actor, ctx.actions);
+    // The scope sync decided outside this lock: a person's switch-off or a scope change committed
+    // since then wins (nothing written, converged)
+    if (
+      ctx.via === "scope" &&
+      ctx.approvedBy === undefined &&
+      !(await wantedByScope(t, orgId, itemId))
+    ) {
+      throw new ScopeNoLongerWanted(orgId, itemId);
+    }
     if (ctx.approvedBy !== undefined) {
       // A dependency disabled (or removed) since it was planned
       const own = await t
         .selectFrom("catalog_items")
-        .select(["policy", "deleted_at"])
+        .select(["disabled", "deleted_at"])
         .where("id", "=", itemId)
         .forShare()
         .executeTakeFirst();
       if (!own || own.deleted_at !== null) {
-        throw unresolved(plan.name, plan.version, "it was removed from the enterprise catalog");
+        throw unresolved(plan.name, plan.version, "it was removed from the platform catalog");
       }
-      if (own.policy === "disabled") throw dependencyDisabled(plan.name);
+      if (own.disabled) throw dependencyDisabled(plan.name);
     }
     await assertItemInstallable(t, orgId, itemId, ctx.approvedBy ?? itemId);
     const live = await t
@@ -1011,54 +1227,34 @@ export class PluginInstaller {
     }
   }
 
-  /**
-   * An agent template step: created (or a new version of the org's live template of this plugin and
-   * name) and recorded in one transaction of its own, under the org row lock.
-   */
-  @Transactional({ propagation: "requires_new" })
-  private async installAgentTemplate(
-    orgId: string,
-    plan: InstallPlan,
-    template: AgentTemplate,
-    record: (c: Component) => Promise<void>,
-  ): Promise<void> {
-    await this.orgLock.lock(orgId);
-    const r = await putTemplateVersionIn(
-      this.db,
-      {
-        orgId,
-        plugin: plan.name,
-        catalogItemId: plan.itemId,
-        catalogVersion: plan.version,
-        sourceFormat: plan.sourceFormat,
-      },
-      template,
-    );
-    await record({
-      kind: "agent_template",
-      ref: r.id,
-      created: r.created,
-      skillVersion: !r.created && r.changed ? r.version : null,
-    });
-  }
-
   /** The install `installed` and its `plugin.org_installed` audit, under the org row lock (its own transaction). */
   @Transactional({ propagation: "requires_new" })
   private async markInstalled(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     plan: InstallPlan,
     done: Component[],
-    ctx: { parent?: string },
+    ctx: { parent?: string; switchOn?: boolean; via?: "scope" },
     opts: { actorTokenId?: string },
   ): Promise<void> {
     const { itemId, version } = plan;
     const t = this.db;
     await this.orgLock.lock(orgId);
+    // The platform version current at commit (one per deployment): a platform update that
+    // committed while this install ran moved the row already, or did not see it yet
     const updated = await t
       .updateTable("plugin_installs")
-      .set({ status: "installed" })
+      .set((eb) => ({
+        status: "installed",
+        version: eb.fn.coalesce(
+          eb
+            .selectFrom("catalog_items as i")
+            .select("i.platform_synced_version")
+            .where("i.id", "=", itemId),
+          eb.ref("plugin_installs.version"),
+        ),
+      }))
       .where("id", "=", installId)
       .where("status", "=", "installing")
       .executeTakeFirst();
@@ -1070,7 +1266,11 @@ export class PluginInstaller {
         "The install record was cleaned up as stale while the install was running",
       );
     }
-    await this.requests.resolveByInstall(orgId, itemId, actor, opts);
+    await resolveRequestsByInstall(t, orgId, itemId, actor, opts);
+    // The org switch is written with the install, in one transaction under the org lock
+    if (ctx.switchOn === true && ctx.parent === undefined) {
+      await upsertOrgSwitch(t, orgId, itemId, true, actor);
+    }
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
@@ -1083,6 +1283,7 @@ export class PluginInstaller {
         version,
         components: done,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
   }
@@ -1091,10 +1292,10 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async markFailed(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     plan: InstallPlan,
-    ctx: { parent?: string },
+    ctx: { parent?: string; via?: "scope" },
     f: { step: Step; code: string; done: Component[]; rollbackErrors: unknown[] },
     opts: { actorTokenId?: string },
   ): Promise<void> {
@@ -1121,6 +1322,7 @@ export class PluginInstaller {
         rolledBack: done,
         rollbackErrors,
         ...(ctx.parent !== undefined && { dependencyOf: ctx.parent }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
   }
@@ -1137,7 +1339,7 @@ export class PluginInstaller {
     if (!this.registry.manifests().some((m) => m.name === name)) {
       throw new ApiError(
         "catalog.not_deployed",
-        `The extension of plugin ${name} is not deployed; ask the enterprise admin to install and enable it`,
+        `The extension of plugin ${name} is not deployed; ask the super admin to install and enable it`,
       );
     }
     const enabled = await isExtensionEnabled(this.db, orgId, name);
@@ -1173,7 +1375,7 @@ export class PluginInstaller {
    */
   private async rollback(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     done: Component[],
     opts: { actorTokenId?: string },
@@ -1205,7 +1407,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "requires_new" })
   private async rollbackOne(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     c: Component,
     opts: { actorTokenId?: string },
@@ -1250,7 +1452,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async removeComponent(
     orgId: string,
-    actor: string,
+    actor: string | null,
     c: Component,
     reason: string,
   ): Promise<boolean> {
@@ -1271,6 +1473,15 @@ export class PluginInstaller {
       return true;
     }
     if (c.kind === "plugin") return false;
+    // A row the org promoted is the org's own shared item (ruling P3-47): an install never
+    // removes or reverts it (P3-46 keeps plugin content from being promoted; this guards rows
+    // recorded before that or by a legacy install)
+    if (
+      (c.kind === "agent_template" || c.kind === "skill") &&
+      (await promotedOrgRow(t, orgId, c.kind, c.ref))
+    ) {
+      return false;
+    }
     if (c.kind === "agent_template") {
       if (c.created) return softDeleteTemplateIn(t, orgId, c.ref);
       if (c.skillVersion !== null) {
@@ -1309,32 +1520,93 @@ export class PluginInstaller {
    */
   async uninstall(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; via?: "scope" } = {},
+    sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId)) throw installNotFound();
-    return this.writeUninstall(orgId, actor, installId, opts);
+    return this.writeUninstall(orgId, actor, installId, opts, sw);
   }
 
-  /** The uninstall's one transaction; the extensions it disabled are notified once it commits. */
+  /**
+   * The uninstall's one transaction; the extensions it disabled are notified once it commits. A
+   * scope sync uninstall (`via: "scope"`) re-checks under the org row lock that the item is still
+   * not wanted in the org and that no other live install depends on it ({@link ScopeStillWanted},
+   * nothing written), and keeps the connectors it created as the org's own (`org_owned`).
+   */
   @Transactional()
   private async writeUninstall(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
-    opts: { actorTokenId?: string },
+    opts: { actorTokenId?: string; via?: "scope" },
+    sw?: { expectHash?: string },
   ): Promise<UninstallReport> {
+    const { via, ...actorOpts } = opts;
     const report: UninstallReport = { removed: [], kept: [] };
+    let itemId: string | undefined;
+    if (via === "scope") {
+      // A person's switch-on (or a scope change) committed after the sync's decision wins
+      await this.orgLock.lock(orgId);
+      const row = await this.db
+        .selectFrom("plugin_installs")
+        .select("item_id")
+        .where("id", "=", installId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (
+        row !== undefined &&
+        ((await wantedByScope(this.db, orgId, row.item_id)) ||
+          (await this.heir(orgId, new Set([installId]), "plugin", installId)) !== undefined)
+      ) {
+        throw new ScopeStillWanted(orgId, row.item_id);
+      }
+    }
+    if (sw !== undefined) {
+      // Switching off: the org lock first, then the preview is re-checked and the switch row is
+      // written in this same transaction
+      await this.orgLock.lock(orgId);
+      const row = await this.db
+        .selectFrom("plugin_installs")
+        .select("item_id")
+        .where("id", "=", installId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      itemId = row?.item_id;
+      // The item row FOR SHARE, as a switch without an uninstall takes it: an owner's delete or
+      // transfer (FOR UPDATE) decides on who uses it
+      if (itemId !== undefined) {
+        await this.db
+          .selectFrom("catalog_items")
+          .select("id")
+          .where("id", "=", itemId)
+          .forShare()
+          .executeTakeFirst();
+      }
+      if (sw.expectHash !== undefined && row !== undefined) {
+        const now = uninstallPreviewHash(await this.previewUninstall(orgId, installId));
+        if (now !== sw.expectHash) {
+          throw new ApiError(
+            "plugin.switch_stale",
+            "The uninstall preview changed; review it and confirm again",
+          );
+        }
+      }
+    }
     const outcome = await this.uninstallIn(orgId, actor, installId, {
       report,
       removing: new Set(),
       authorize: true,
-      opts,
+      opts: actorOpts,
+      ...(via !== undefined && { via }),
     });
     if (outcome === "missing") throw installNotFound();
     if (outcome === "kept") {
       report.kept.push({ kind: "plugin", ref: installId, reason: "used_by_other_install" });
+    }
+    if (itemId !== undefined && outcome === "removed") {
+      await upsertOrgSwitch(this.db, orgId, itemId, false, actor);
     }
     afterCommit(async () => {
       for (const r of report.removed) {
@@ -1389,10 +1661,10 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async uninstallIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     ctx: UninstallCtx,
-  ): Promise<"missing" | "kept" | "removed"> {
+  ): Promise<"missing" | "kept" | "removed" | "wanted_by_scope"> {
     const t = this.db;
     const { removing } = ctx;
     if (removing.has(installId)) return "removed";
@@ -1444,6 +1716,11 @@ export class PluginInstaller {
       .forUpdate("a")
       .executeTakeFirst();
     if (!row) return "missing";
+    // A dependency its own scope still wants on in the org stays as a standalone install (the
+    // dependent's component row goes with the dependent's install row)
+    if (ctx.from !== undefined && (await wantedByScope(t, orgId, row.item_id))) {
+      return "wanted_by_scope";
+    }
     // Another install outside this uninstall depends on it: kept (a dependency uninstall hands
     // ownership over)
     const user = await this.heir(orgId, new Set([...removing, installId]), "plugin", installId);
@@ -1521,6 +1798,9 @@ export class PluginInstaller {
         created = now.created;
       }
       const comp: Component = { kind: c.kind, ref: c.ref, created, skillVersion: c.skill_version };
+      // Skills and agent templates of earlier installs (org copies, now linked to the platform
+      // components, phase 2) stay: the plugin's components go off in the org with the install
+      if ((c.kind === "skill" || c.kind === "agent_template") && !rollbackMode) continue;
       if (!created) {
         // Rollback cleanup: a version this install added to an existing skill is reverted; other
         // pre-existing components are kept
@@ -1540,6 +1820,13 @@ export class PluginInstaller {
         const outcome = await this.uninstallIn(orgId, actor, c.ref, { ...ctx, from: installId });
         if (outcome === "removed") addRemoved({ kind: "plugin", ref: c.ref });
         else if (outcome === "kept") keep("used_by_other_install");
+        else if (outcome === "wanted_by_scope") keep("wanted_by_scope");
+        continue;
+      }
+      // A scope sync uninstall leaves the connectors to the org (spec §5 rule 8): the component row
+      // goes with the install row, so nothing removes them later
+      if (c.kind === "connector" && ctx.via === "scope" && !rollbackMode) {
+        keep("org_owned");
         continue;
       }
       const reason = rollbackMode ? "plugin_install_cleanup" : (ctx.reason ?? "plugin_uninstall");
@@ -1562,6 +1849,7 @@ export class PluginInstaller {
         removed: mine.removed,
         kept: mine.kept,
         ...(ctx.from !== undefined && { dependencyOf: ctx.from }),
+        ...(ctx.via !== undefined && { via: ctx.via }),
       },
     });
     return "removed";
@@ -1580,7 +1868,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async decideRemovalIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     c: Component,
     removing: Set<string>,
     agentRefs: { connectors: Set<string>; skills: Set<string>; templates: Set<string> },
@@ -1641,11 +1929,6 @@ export class PluginInstaller {
     if (installId !== undefined) q = q.where("a.id", "=", installId);
     const rows = await q.orderBy("a.installed_at", "desc").orderBy("a.id").execute();
     if (rows.length === 0) return [];
-    const info = await upgradeInfo(
-      this.db,
-      this.registry,
-      rows.map((r) => ({ itemId: r.item_id, name: r.name, version: r.version })),
-    );
     const comps = await this.db
       .selectFrom("plugin_install_components")
       .select(["install_id", "kind", "ref", "created", "skill_version", "dropped"])
@@ -1673,8 +1956,8 @@ export class PluginInstaller {
           skillVersion: c.skill_version,
           dropped: c.dropped,
         })),
-      upgradeAvailable: info.get(`${r.item_id}@${r.version}`)?.upgradeAvailable ?? null,
-      deploymentPending: info.get(`${r.item_id}@${r.version}`)?.deploymentPending ?? false,
+      upgradeAvailable: null,
+      deploymentPending: false,
     }));
   }
 
@@ -1690,7 +1973,7 @@ export class PluginInstaller {
   @Transactional({ propagation: "mandatory" })
   async undoUpgradeIn(
     orgId: string,
-    actor: string,
+    actor: string | null,
     installId: string,
     steps: readonly UpgradeStep[],
     reason: string,
@@ -1747,6 +2030,354 @@ export class PluginInstaller {
     return removed;
   }
 
+  /**
+   * Installs the dependencies an installed plugin's version declares and the org lacks (rule 9),
+   * as the kernel (actor null): a platform update can add one. Each is recorded on the install
+   * as a `plugin` component (created when this installed it, so an uninstall takes it along). One
+   * that needs the org's input (connector templates) is left out and its name returned. A
+   * dependency already installed in the org is recorded as it is (created false).
+   */
+  async addMissingDependencies(orgId: string, installId: string): Promise<string[]> {
+    const row = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
+      )
+      .select(["a.item_id", "a.status", "v.manifest"])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row?.status !== "installed") return [];
+    const record = async (c: Component) => {
+      await this.db
+        .insertInto("plugin_install_components")
+        .values({
+          install_id: installId,
+          kind: c.kind,
+          ref: c.ref,
+          created: c.created,
+          skill_version: null,
+        })
+        .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+        .execute();
+    };
+    const needsInput: string[] = [];
+    for (const dep of await resolveDependencies(this.db, row.manifest as PluginManifest)) {
+      if ((await this.recordDependency(orgId, dep, record)) !== undefined) continue;
+      let plan: InstallPlan;
+      try {
+        plan = await this.plan(orgId, null, dep.itemId, dep.version, {}, "", row.item_id);
+      } catch (e) {
+        if (e instanceof NeedsOrgInput) {
+          needsInput.push(dep.name);
+          continue;
+        }
+        throw e;
+      }
+      const child = await this.execute(
+        orgId,
+        null,
+        plan,
+        {},
+        {
+          actions: requiredActions(plan.manifest),
+          approvedBy: row.item_id,
+          parent: installId,
+          via: "scope",
+        },
+      );
+      await this.recordDependency(orgId, dep, record, child);
+    }
+    return needsInput;
+  }
+
+  /**
+   * The connector templates of an installed plugin that are on in the org (ruling P2-6) and have
+   * no live connector there: made from the platform template (`platform_template_id`) or recorded
+   * on the install (`template_id`). The org's plugin is `needs_config` while any is missing (ruling
+   * P2-10). Empty for a plugin not installed.
+   */
+  async missingConnectors(
+    orgId: string,
+    itemId: string,
+  ): Promise<
+    | {
+        installId: string;
+        version: string;
+        templates: { id: string; file: ConnectorTemplateFile }[];
+      }
+    | undefined
+  > {
+    const a = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "a.item_id").onRef("v.version", "=", "a.version"),
+      )
+      .select(["a.id", "a.version", "v.manifest", "v.object_prefix", "v.files"])
+      .where("a.org_id", "=", orgId)
+      .where("a.item_id", "=", itemId)
+      .where("a.status", "=", "installed")
+      .executeTakeFirst();
+    if (!a) return undefined;
+    if (((a.manifest as PluginManifest).connectorTemplates ?? []).length === 0) {
+      return { installId: a.id, version: a.version, templates: [] };
+    }
+    const all = await readCatalogTemplates(this.storage, a);
+    const on = await connectorTemplatesOn(
+      this.db,
+      orgId,
+      itemId,
+      all.map((t) => t.id),
+    );
+    const made = new Set(
+      (
+        await this.db
+          .selectFrom("connectors as c")
+          .innerJoin("platform_connector_templates as p", "p.id", "c.platform_template_id")
+          .select("p.template_id")
+          .where("c.org_id", "=", orgId)
+          .where("c.deleted_at", "is", null)
+          .where("p.catalog_item_id", "=", itemId)
+          .execute()
+      ).map((r) => r.template_id),
+    );
+    const recorded = await this.db
+      .selectFrom("plugin_install_components as l")
+      .innerJoin("connectors as c", (j) => j.on(sql<string>`c.id::text`, "=", sql<string>`l.ref`))
+      .select("l.template_id")
+      .where("l.install_id", "=", a.id)
+      .where("l.kind", "=", "connector")
+      .where("c.deleted_at", "is", null)
+      .execute();
+    for (const r of recorded) if (r.template_id !== null) made.add(r.template_id);
+    return {
+      installId: a.id,
+      version: a.version,
+      templates: all.filter((t) => on.has(t.id) && !made.has(t.id)),
+    };
+  }
+
+  /**
+   * Creates the connectors an installed plugin is missing (ruling P2-10, `POST …/catalog/:itemId/
+   * connectors`): `input.connectors` names some of {@link missingConnectors}' templates with the
+   * same input as an install (endpoint, credential or OAuth client); each is created as at install
+   * and recorded on the install. Returns the created connectors by template.
+   */
+  async configureConnectors(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    input: PluginInstallInput,
+    opts: { actorTokenId?: string } = {},
+  ): Promise<{ templateId: string; connectorId: string }[]> {
+    if (!UUID_RE.test(itemId)) throw installNotFound();
+    const missing = await this.missingConnectors(orgId, itemId);
+    if (!missing) throw installNotFound();
+    const keys = Object.keys(input.connectors ?? {});
+    if (keys.length === 0) {
+      throw new ApiError("validation_failed", "Request validation failed", [
+        { path: "connectors", message: "Give the input of at least one missing connector" },
+      ]);
+    }
+    for (const k of keys) {
+      if (!missing.templates.some((t) => t.id === k)) {
+        throw new ApiError("validation_failed", "Request validation failed", [
+          {
+            path: `connectors.${k}`,
+            message: "No connector of this template is missing in this organization",
+          },
+        ]);
+      }
+    }
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select("name")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const plans = missing.templates
+      .filter((t) => keys.includes(t.id))
+      .map((t) => ({
+        id: t.id,
+        ci: this.planConnector(
+          actor,
+          { itemId, version: missing.version, name: item.name },
+          t,
+          input,
+          "",
+          undefined,
+        ),
+      }));
+    const out: { templateId: string; connectorId: string }[] = [];
+    for (const p of plans) {
+      const r = await this.connectors.create(orgId, actor, p.ci, opts.actorTokenId);
+      await this.recordConnector(missing.installId, r.connector.id, p.id);
+      out.push({ templateId: p.id, connectorId: r.connector.id });
+    }
+    return out;
+  }
+
+  /** A configured connector's ledger row (its own transaction). */
+  @Transactional({ propagation: "requires_new" })
+  private async recordConnector(installId: string, ref: string, templateId: string): Promise<void> {
+    await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: installId,
+        kind: "connector",
+        ref,
+        created: true,
+        skill_version: null,
+        template_id: templateId,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
+  }
+
+  /**
+   * One more connector from a platform connector template on in the org (rulings P4-7, P4-T6-8;
+   * `POST …/connector-templates/:templateId/connectors`): `templateId` is the platform connector
+   * template's id; `config` is an install's connector input (endpoint, credential or OAuth client,
+   * slug) and `name` its name. Without a slug the name and slug default to the first free ones,
+   * chosen by the create under the org lock after its outbound calls
+   * (`CreateConnectorInput.slugDefault`); only a given slug answers 409 `connector.slug_taken`. Created as at install ({@link planConnector}, then
+   * `ConnectorsService.create`, which checks the slug before any outbound call and re-checks it,
+   * `connectors.manage`, the item and the template being on under the org lock), linked to the
+   * template, and recorded on the plugin's live install in the org when there is one. A template
+   * that is missing, deleted or not offered to the org -> 404 `component.not_found`; offered but
+   * off there (its plugin not installed, or switched off) -> 409 `component.off`; input errors ->
+   * 400 `validation_failed` at `config.<field>`.
+   */
+  async addTemplateConnector(
+    orgId: string,
+    actor: string,
+    templateId: string,
+    input: { name?: string | undefined; config: Omit<ConnectorInstallInput, "name"> },
+    opts: { actorTokenId?: string } = {},
+  ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
+    const notFound = () =>
+      new ApiError(
+        "component.not_found",
+        "The connector template does not exist or is not available in this organization",
+      );
+    if (!UUID_RE.test(templateId)) throw notFound();
+    // read here to fail early, and again under the org lock by the create (`mustBeOn`)
+    const state = await connectorTemplateState(this.db, orgId, templateId);
+    if (state === "absent") throw notFound();
+    if (state === "off") {
+      throw new ApiError(
+        "component.off",
+        "This connector template is off in this organization; switch it (or its plugin) on first",
+      );
+    }
+    const row = await this.db
+      .selectFrom("platform_connector_templates as t")
+      .innerJoin("catalog_items as i", "i.id", "t.catalog_item_id")
+      .leftJoin("plugin_installs as a", (j) =>
+        j
+          .onRef("a.item_id", "=", "t.catalog_item_id")
+          .on("a.org_id", "=", orgId)
+          .on("a.status", "=", "installed"),
+      )
+      .select([
+        "t.template_id",
+        "t.catalog_item_id",
+        "t.file",
+        "i.name",
+        "i.latest_version",
+        "a.version",
+      ])
+      .where("t.id", "=", templateId)
+      .executeTakeFirstOrThrow();
+    const ct = { id: row.template_id, file: row.file as ConnectorTemplateFile };
+    const at = `connectors.${ct.id}`;
+    // the paths of an install's input and of the create, under `config` here (`name` stays)
+    const rebase = (e: unknown): unknown => {
+      if (!(e instanceof ApiError) || e.code !== "validation_failed" || !e.details) return e;
+      return new ApiError(
+        e.code,
+        e.message,
+        e.details.map((d) => {
+          const path = (d as { path?: unknown }).path;
+          if (typeof path !== "string") return d;
+          const rest = path === at || path.startsWith(`${at}.`) ? path.slice(at.length + 1) : path;
+          if (!/^(slug|credential|endpoint|client)(\.|$)/.test(rest)) {
+            return rest === path ? d : { ...(d as object), path: rest };
+          }
+          return { ...(d as object), path: `config.${rest}` };
+        }),
+      );
+    };
+    const display = ct.file.displayName?.en ?? ct.id;
+    // a slug given by the caller is theirs (409 when taken); otherwise the create picks the first
+    // free default under the org lock, after its outbound calls (no retry repeats them)
+    const defaulted = input.config.slug === undefined;
+    let ci: CreateConnectorInput;
+    try {
+      ci = this.planConnector(
+        actor,
+        { itemId: row.catalog_item_id, version: row.version ?? row.latest_version, name: row.name },
+        ct,
+        {
+          connectors: {
+            [ct.id]: { ...input.config, ...(input.name !== undefined && { name: input.name }) },
+          },
+        },
+        "",
+        undefined,
+      );
+    } catch (e) {
+      throw rebase(e);
+    }
+    ci = {
+      ...ci,
+      template: ci.template && { ...ci.template, mustBeOn: true },
+      ...(defaulted && {
+        slugDefault: { display, ...(input.name !== undefined && { name: input.name }) },
+      }),
+    };
+    try {
+      const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+      await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
+      return r;
+    } catch (e) {
+      throw rebase(e);
+    }
+  }
+
+  /**
+   * Records a connector made from a plugin's template on the org's live install of that plugin,
+   * when there is one, under the org lock (so an uninstall in between is seen).
+   */
+  @Transactional()
+  private async recordOnLiveInstall(
+    orgId: string,
+    itemId: string,
+    connectorId: string,
+    templateId: string,
+  ): Promise<void> {
+    await this.orgLock.lock(orgId);
+    const install = await this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", itemId)
+      .where("status", "=", "installed")
+      .executeTakeFirst();
+    if (!install) return;
+    await this.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: install.id,
+        kind: "connector",
+        ref: connectorId,
+        created: true,
+        skill_version: null,
+        template_id: templateId,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
+  }
+
   /** The connector kinds an extension provides (the `connector@1` implementations loaded on this replica). */
   connectorKindsOf(plugin: string): string[] {
     return this.registry
@@ -1757,40 +2388,142 @@ export class PluginInstaller {
   }
 
   /**
-   * The connectors, org skills and agent templates (`subagents.templates`) referenced by the
-   * current definitions of the org's live agents.
+   * The uninstall preview of an install (see {@link UninstallPreview}); the real uninstall may keep
+   * more (another install using a component, a connector still using an extension). The plugin's
+   * skills and agent templates are platform components (phase 2): the ones on in the org through
+   * the plugin (`follow`) go off with it, so the agents using them (by the platform id or an
+   * unpinned org copy linked to it) are listed, also for the dependency installs it created that
+   * go with it; ledger rows of earlier installs' org copies are not removed and not listed (an
+   * uninstall keeps legacy copies, like the platform update keeps copies of removed components).
    */
-  async agentRefs(
-    orgId: string,
-  ): Promise<{ connectors: Set<string>; skills: Set<string>; templates: Set<string> }> {
-    const rows = await this.db
-      .selectFrom("agents as a")
-      .innerJoin("agent_versions as v", (j) =>
-        j.onRef("v.agent_id", "=", "a.id").onRef("v.version", "=", "a.current_version"),
-      )
-      .select("v.definition")
+  async previewUninstall(orgId: string, installId: string): Promise<UninstallPreview> {
+    if (!UUID_RE.test(installId)) throw installNotFound();
+    const t = this.db;
+    const row = await t
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .select(["a.id", "a.item_id", "a.version", "i.name"])
+      .where("a.id", "=", installId)
       .where("a.org_id", "=", orgId)
-      .where("a.deleted_at", "is", null)
-      .execute();
-    const connectors = new Set<string>();
-    const skills = new Set<string>();
-    const templates = new Set<string>();
-    for (const r of rows) {
-      const def = r.definition as {
-        tools?: unknown[];
-        skills?: { orgSkills?: unknown[] };
-        subagents?: { templates?: unknown[] };
-      } | null;
-      for (const ref of def?.tools ?? []) {
-        const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
-        if (n?.kind === "connector" && typeof n.connectorId === "string") {
-          connectors.add(n.connectorId);
+      .executeTakeFirst();
+    if (!row) throw installNotFound();
+    const ledger = (id: string) =>
+      t
+        .selectFrom("plugin_install_components")
+        .select(["kind", "ref", "created"])
+        .where("install_id", "=", id)
+        .orderBy("kind")
+        .orderBy("ref")
+        .execute();
+    const comps = (await ledger(installId)).filter(
+      (c) => c.kind !== "skill" && c.kind !== "agent_template",
+    );
+    const agents = await agentDefinitionRefs(t, orgId);
+    const used = new Map<
+      string,
+      { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }
+    >();
+    const use = (a: { id: string; name: string }, kind: ComponentKind, ref: string) => {
+      const e = used.get(a.id) ?? { id: a.id, name: a.name, uses: [] };
+      if (!e.uses.some((u) => u.kind === kind && u.ref === ref)) e.uses.push({ kind, ref });
+      used.set(a.id, e);
+    };
+    const kept: UninstallReport["kept"] = [];
+    /**
+     * The agents using what goes with an install: connectors it created (they stay, kept for the
+     * agents) and the plugin's platform skills and agent templates on in the org through it
+     * (`follow`; by the platform id or an unpinned org copy linked to it). Dependency installs it
+     * created go with it unless their own scope wants them (Task 7: their components count too).
+     */
+    const visit = async (
+      itemId: string,
+      rows: { kind: ComponentKind; ref: string; created: boolean }[],
+      top: boolean,
+      seen: Set<string>,
+    ): Promise<void> => {
+      for (const c of rows) {
+        if (!c.created) {
+          if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "pre_existing" });
+          continue;
+        }
+        if (c.kind === "plugin") {
+          const dep = await t
+            .selectFrom("plugin_installs")
+            .select("item_id")
+            .where("id", "=", c.ref)
+            .where("org_id", "=", orgId)
+            .executeTakeFirst();
+          if (!dep) continue;
+          if (await wantedByScope(t, orgId, dep.item_id)) {
+            if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "wanted_by_scope" });
+            continue;
+          }
+          if (seen.has(c.ref)) continue;
+          seen.add(c.ref);
+          const sub = (await ledger(c.ref)).filter(
+            (x) => x.kind !== "skill" && x.kind !== "agent_template",
+          );
+          await visit(dep.item_id, sub, false, seen);
+          continue;
+        }
+        if (c.kind !== "connector") continue;
+        const users = agents.filter((a) => a.connectors.has(c.ref));
+        if (users.length === 0) continue;
+        if (top) kept.push({ kind: c.kind, ref: c.ref, reason: "used_by_agents" });
+        for (const a of users) use(a, c.kind, c.ref);
+      }
+      for (const kind of ["skill", "agent_template"] as const) {
+        const platform = await loadComponents(t, kind, { itemId });
+        const st = await loadScopeState(t, kind, platform);
+        const off = platform.filter(
+          (c) =>
+            c.scopeMode === "follow" &&
+            componentOn(
+              c,
+              pluginFactsOf(st, c.itemId, orgId),
+              listedIn(st, c.id, orgId),
+              switchOf(st, c.id, orgId),
+            ),
+        );
+        const refs = await referenceIds(
+          t,
+          orgId,
+          kind,
+          off.map((c) => c.id),
+        );
+        for (const a of agents) {
+          for (const ref of kind === "skill" ? a.skills : a.templates) {
+            if (refs.has(ref)) use(a, kind, ref);
+          }
         }
       }
-      for (const s of def?.skills?.orgSkills ?? []) if (typeof s === "string") skills.add(s);
-      for (const x of def?.subagents?.templates ?? []) if (typeof x === "string") templates.add(x);
+    };
+    await visit(row.item_id, comps, true, new Set([installId]));
+    return {
+      installId,
+      name: row.name,
+      version: row.version,
+      components: comps.map((c) => ({ kind: c.kind, ref: c.ref, created: c.created })),
+      kept,
+      agents: [...used.values()]
+        .map((a) => ({ ...a, uses: a.uses.sort((x, y) => x.ref.localeCompare(y.ref)) }))
+        .sort((x, y) => x.id.localeCompare(y.id)),
+    };
+  }
+
+  /**
+   * The connectors, skills (selected, pinned, or in an inline sub-agent template) and agent
+   * templates (`subagents.templates`) referenced by the current definitions of the org's live
+   * agents.
+   */
+  async agentRefs(orgId: string): Promise<DefinitionRefs> {
+    const out: DefinitionRefs = { connectors: new Set(), skills: new Set(), templates: new Set() };
+    for (const a of await agentDefinitionRefs(this.db, orgId)) {
+      for (const x of a.connectors) out.connectors.add(x);
+      for (const x of a.skills) out.skills.add(x);
+      for (const x of a.templates) out.templates.add(x);
     }
-    return { connectors, skills, templates };
+    return out;
   }
 }
 
@@ -1947,4 +2680,44 @@ function orderByRequires(set: ExtensionManifest[]): string[] {
     placed.push((next as ExtensionManifest).name);
   }
   return placed;
+}
+
+/**
+ * Whether org row `id` (a skill or an agent template of the org) is linked without a pin to a live
+ * platform row the org promoted when sharing it (ruling P3-3): owned by the org and from no plugin
+ * (`catalog_item_id` null). A component of the org's own uploaded plugin is a plugin's, so its
+ * install copies are removed and reverted as any plugin's.
+ */
+async function promotedOrgRow(
+  db: KernelSchemaDb,
+  orgId: string,
+  kind: "skill" | "agent_template",
+  id: string,
+): Promise<boolean> {
+  const row =
+    kind === "skill"
+      ? await db
+          .selectFrom("skills as s")
+          .innerJoin("platform_skills as p", "p.id", "s.platform_skill_id")
+          .select("s.id")
+          .where("s.id", "=", id)
+          .where("s.org_id", "=", orgId)
+          .where("s.pinned_version", "is", null)
+          .where("p.owner_org_id", "=", orgId)
+          // promoted, not an org plugin's component (which has its plugin, P3-2)
+          .where("p.catalog_item_id", "is", null)
+          .where("p.deleted_at", "is", null)
+          .executeTakeFirst()
+      : await db
+          .selectFrom("agent_templates as a")
+          .innerJoin("platform_agent_templates as p", "p.id", "a.platform_template_id")
+          .select("a.id")
+          .where("a.id", "=", id)
+          .where("a.org_id", "=", orgId)
+          .where("a.pinned_version", "is", null)
+          .where("p.owner_org_id", "=", orgId)
+          .where("p.catalog_item_id", "is", null)
+          .where("p.deleted_at", "is", null)
+          .executeTakeFirst();
+  return row !== undefined;
 }

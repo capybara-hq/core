@@ -281,12 +281,25 @@ describe("loaded by path in a kernel", () => {
       login: "root",
       password: PW,
       displayName: "Root",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     root = await login(k, "root");
     const org = await root({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
     expect(org.statusCode, org.body).toBe(201);
     orgId = (org.json() as { org: { id: string } }).org.id;
+    // connectors can be created only of kinds whose extension the org has enabled
+    const enable = new pg.Client({ connectionString: pgc.url });
+    await enable.connect();
+    try {
+      for (const plugin of ["fake-connector", "fake-openapi"]) {
+        await enable.query(
+          "INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled) VALUES ($1, $2, true) ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true",
+          [plugin, orgId],
+        );
+      }
+    } finally {
+      await enable.end();
+    }
   }, 300_000);
 
   afterAll(async () => {

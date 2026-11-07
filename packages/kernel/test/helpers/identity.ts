@@ -15,11 +15,11 @@ import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
-import type { EnterpriseAdminLock } from "../../src/identity/enterprise-admin.js";
 import { ExternalIdentities } from "../../src/identity/external.js";
 import { ExternalIdentityLock } from "../../src/identity/external-identity-lock.js";
 import { SessionService } from "../../src/identity/sessions.js";
 import { SettingsService } from "../../src/identity/settings.js";
+import type { SuperAdminLock } from "../../src/identity/super-admin.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
@@ -83,7 +83,7 @@ export function orgLockFor(db: Kysely<any>): OrgLock {
   return new OrgLock(h.db, h.txHost);
 }
 
-export function adminLockFor(db: Kysely<any>): EnterpriseAdminLock {
+export function adminLockFor(db: Kysely<any>): SuperAdminLock {
   return handlesFor(db).adminLock;
 }
 
@@ -115,6 +115,10 @@ export function orgsFor(
     orgLockFor(db),
     events,
     new EvalBudget(h.db, h.txHost),
+    // no worker in these tests: the new org's plugin scope sync is not enqueued
+    { enqueueOrg: async () => {} },
+    // no catalog here: what a deleted org owns is covered by test/orgs/org-delete-owned.test.ts
+    { onOrgDeleted: async () => ({ transferred: 0, removed: 0 }) },
   );
 }
 

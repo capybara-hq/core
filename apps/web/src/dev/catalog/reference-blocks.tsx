@@ -10,6 +10,7 @@ import {
   Button,
   CellTitle,
   type Column,
+  ContentSection,
   DangerZone,
   DangerZoneItem,
   DataTable,
@@ -60,16 +61,21 @@ import {
   type FixtureFormField,
   FORM_PAGE_FIXTURE,
   LIST_PAGE_FIXTURE,
+  LONG_MODELS_FIXTURE,
   PAGE_HEADER_FIXTURE,
+  SELECT_FIXTURE,
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
+import { BOX_BLOCKS } from "./box-blocks";
+import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { COMMANDS } from "./fixtures";
+import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { RefBlock } from "./ref-block";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
@@ -90,7 +96,7 @@ function ButtonRow({ density, disabled }: { density?: "dense" | "prominent"; dis
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <Button variant="primary" disabled={disabled} {...d}>
-        新建 agent
+        新建智能体
       </Button>
       <Button variant="secondary" disabled={disabled} {...d}>
         部署
@@ -141,7 +147,7 @@ function buttonBlocks(): ReactNode {
         force={{ pseudo: ["focus", "focus-visible"], selector: "button" }}
       >
         <Stack direction="row" gap={12} align="center" wrap>
-          <Button variant="primary">新建 agent</Button>
+          <Button variant="primary">新建智能体</Button>
           <Button variant="default">导出</Button>
           <IconButton variant="default" label="更多操作" icon={<Icon name="more-horizontal" />} />
         </Stack>
@@ -202,6 +208,55 @@ function inputBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="input-disabled" width={720} pad itemWidth={320}>
         <NameField value="研究助手" disabled />
+      </RefBlock>
+    </>
+  );
+}
+
+// ── Select ──────────────────────────────────────────────────────────────────
+
+const LONG_OPTIONS = LONG_MODELS_FIXTURE.groups.flatMap((g) =>
+  g.models.map((m) => ({ value: m.id, label: m.label })),
+);
+
+function SelectField({
+  state,
+}: {
+  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error";
+}) {
+  const S = SELECT_FIXTURE;
+  const long = state === "long";
+  return (
+    <Field label={long ? S.longLabel : S.label} {...(state === "error" ? { error: S.error } : {})}>
+      <Select
+        options={long ? LONG_OPTIONS : S.options}
+        value={long ? LONG_MODELS_FIXTURE.selected : state === "placeholder" ? "" : S.value}
+        placeholder={S.placeholder}
+        onChange={noop}
+        disabled={state === "disabled"}
+        referenceOpen={state === "open" || long}
+      />
+    </Field>
+  );
+}
+
+/** The form Select (spec §6.2): closed, placeholder, the open list, a long list, disabled, error. */
+function selectBlocks(): ReactNode {
+  return (
+    <>
+      {(["default", "placeholder", "disabled", "error"] as const).map((s) => (
+        <RefBlock key={s} id={`select-${s}`} width={720} pad itemWidth={320}>
+          <SelectField state={s} />
+        </RefBlock>
+      ))}
+      {/* the list drawn open under the field: three options, the selected one checked */}
+      <RefBlock id="select-open" width={720} height={220} pad itemWidth={320}>
+        <SelectField state="open" />
+      </RefBlock>
+      {/* 100 models: the filter, the list capped at layout.menu-max-height, scrolled to the
+          selected one */}
+      <RefBlock id="select-long" width={720} height={440} pad itemWidth={320}>
+        <SelectField state="long" />
       </RefBlock>
     </>
   );
@@ -535,24 +590,20 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock
         id="sidebar-item-hover"
         {...base}
-        force={{ pseudo: ["hover"], selector: navAt("overview") }}
+        force={{ pseudo: ["hover"], selector: navAt("connectors") }}
       />
       <SidebarBlock
         id="sidebar-item-focus"
         {...base}
-        // The inbox left the nav items for the brand row (an icon button): the focus ring is shown
-        // on 首页, a nav item every sidebar has.
-        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("overview") }}
+        // The inbox left the nav items for the brand row (an icon button) and there is no home
+        // item: the focus ring is shown on 连接器, a nav item every sidebar has (guests' too).
+        force={{ pseudo: ["focus", "focus-visible"], selector: navAt("connectors") }}
       />
       <SidebarBlock id="sidebar-conversation-active" activeConversation="cnv_r2" />
       <SidebarBlock id="sidebar-group-collapsed" {...base} collapsed={["agt_research"]} />
-      <SidebarBlock
-        id="sidebar-more-open"
-        active="connectors"
-        activeConversation="cnv_r2"
-        moreOpen
-      />
+      <SidebarBlock id="sidebar-more-open" active="plugins" activeConversation="cnv_r2" moreOpen />
       <SidebarBlock id="sidebar-filter" {...base} filter={{ q: "", state: "waiting" }} />
+      <SidebarBlock id="sidebar-filter-empty" {...base} filter={{ q: "发票", state: "all" }} />
       <SidebarBlock id="sidebar-archived" {...base} archived />
       <SidebarBlock id="sidebar-empty" {...base} state="empty" />
       <SidebarBlock id="sidebar-loading" {...base} state="loading" />
@@ -1062,7 +1113,7 @@ function noAccessBlocks(): ReactNode {
         title="没有访问权限"
         description="「渠道」只对组织管理员开放。"
         need="组织管理员"
-        ask="如需访问，请联系本组织的管理员或所有者。"
+        ask="如需访问，请联系本组织的组织管理员。"
       />
     </RefBlock>
   );
@@ -1071,7 +1122,7 @@ function noAccessBlocks(): ReactNode {
 const DELETE_ITEM = (
   <DangerZoneItem
     title="删除组织"
-    description="所有成员都会失去这个组织的访问，agent、会话与设置不再可用。"
+    description="所有成员都会失去这个组织的访问，智能体、会话与设置不再可用。"
     action={{ label: "删除组织…", onSelect: noop }}
   />
 );
@@ -1086,11 +1137,27 @@ function dangerZoneBlocks(): ReactNode {
         <DangerZone title="危险操作">
           <DangerZoneItem
             title="转让所有权"
-            description="对方成为所有者，你成为管理员。"
+            description="对方成为组织所有者，你将降为组织管理员。"
             action={{ label: "转让…", onSelect: noop }}
           />
           {DELETE_ITEM}
         </DangerZone>
+      </RefBlock>
+    </>
+  );
+}
+
+function contentSectionBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="content-section-default" width={720} pad>
+        <ContentSection title="技能" count={2} description="插件自带的技能，随插件启用。">
+          <Text>· pdf-tools</Text>
+          <Text>· meeting-notes</Text>
+        </ContentSection>
+      </RefBlock>
+      <RefBlock id="content-section-empty" width={720} pad>
+        <ContentSection title="扩展" empty="没有扩展。" />
       </RefBlock>
     </>
   );
@@ -1229,6 +1296,7 @@ function avatarBlocks(): ReactNode {
 export const REFERENCE_BLOCKS = {
   button: buttonBlocks,
   input: inputBlocks,
+  select: selectBlocks,
   segmented: segmentedBlocks,
   switch: switchBlocks,
   "filter-chip": filterChipBlocks,
@@ -1236,6 +1304,7 @@ export const REFERENCE_BLOCKS = {
   icon: iconBlocks,
   sidebar: sidebarBlocks,
   "page-header": pageHeaderBlocks,
+  "head-rhythm": headRhythmBlocks,
   skeleton: skeletonBlocks,
   "stat-cards": statCardsBlocks,
   "status-bar": statusBarBlocks,
@@ -1247,9 +1316,12 @@ export const REFERENCE_BLOCKS = {
   ...CONVERSATION_PAGE_BLOCKS,
   "no-access": noAccessBlocks,
   "danger-zone": dangerZoneBlocks,
+  "content-section": contentSectionBlocks,
   "secret-reveal": secretRevealBlocks,
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,
   avatar: avatarBlocks,
   ...CONFIG_FORM_BLOCKS,
+  ...BOX_BLOCKS,
+  ...CARD_GRID_BLOCKS,
 } as const;

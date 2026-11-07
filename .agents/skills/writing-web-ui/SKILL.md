@@ -16,19 +16,41 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 **Type, figures and details** (spec §2.2, §6.5, §6.17, §6.18). A sentence is prose: `Text variant="prose"` for hints, notes, descriptions and dialog bodies (field help, object descriptions, callouts and empty states already are); mono stays for ids, paths, numbers, versions and dates. A date is `<DateTime value={iso} />` (`YYYY-MM-DD HH:mm`, the relative age on hover) or `formatDateTime(iso, form, useTimeZone())` inside a string; never `toLocaleString`. Anything that reads the clock or the zone in render takes `useNow()` / `useTimeZone()` (`formatRelative(iso, locale, useNow())`, `untitledLabel(d, locale, useTimeZone())`, a running time `useNow(1000)`), never `Date.now()` / `new Date()`: they hydrate with the server render's clock (`DesignProvider` `clock`, set by the root layout) and switch to the browser's after, so a server-rendered time never fails hydration. A version is `versionLabel(v)` ("v0.1.0"), but request bodies keep the bare version. An `ObjectRow` mark is `{ text: <display name> }` (drawn as its upper-cased initial), never an icon for an object. Plain metadata (visibility, purpose ids) is meta or muted text, never a badge. `EmptyState` has two styles, `page` (the capybara) and `compact` (words only).
 
+**One box is enough** (spec §1 principle 7, §2.5; acceptance item AB). Inside a box (a `Card`, a
+`FormSection`'s card, a `Sheet`, a `Dialog`, an `InlineCard`, a `PropertySection`) group with
+headings, hairlines and space, never a second `Card`, `FormSection`, `ObjectList` or `StatCards`:
+
+| Inside a box you want | Use |
+|---|---|
+| A list of things, each with lines or fields (purposes, quick actions, inline sub-agents, permission groups) | `<FormSection flush>` + `<ItemList label inset="flush">` of `<ItemListItem title code? marks? actions? meta?>{fields}</ItemListItem>` (`inset="card"`, the default, inside a padded box) |
+| A nested group of fields (a config object, an advanced group) | `<Subsection title description?>` (h3, help, fields under the 1px guide) |
+| Several tables in one card | `<FormSection flush>` + one `<Subsection variant="flush" title>` per table, each holding a `DataTable` (unframed by itself) |
+| A list beside the open item's fields | `<Grid columns="list-detail" divided>`, the open item's name as `<Text variant="h3">` over its fields, no Card |
+| A notice about the section | the `Callout` above the section card; a `Callout` inside a box (a Dialog, a Sheet, a panel shared by a page and a Sheet) draws the warn / fail line with its icon by itself |
+| A choice of sources in a Dialog | `RadioGroup variant="card"` and the one `FilePicker` straight in the body, no Card |
+
+`DataTable`, `CodeBlock`, `EmbedFrame`, `Repeater` and `Callout` draw their unboxed form inside a
+box by themselves (unframed, borderless, divided rows, a warn / fail line); don't pass `framed`
+there. Option cards, form
+controls, the FilePicker in a Dialog and a `RightPanel` are the exceptions. `pnpm check:web-ui`
+(`web-ui-box-in-box`) enforces it on apps/web's JSX (components, consts, helpers, hook render
+functions and slot props are followed; `BOX_PENDING` in `tools/checks/src/box-in-box.ts` is empty
+and new code adds no entry); `findNestedBoxes` (`@capybara-hq/design/reference`) checks the
+rendered DOM in tests.
+
 **Icons are components.** Use `<Icon name="search" size={14} />` (or an `IconButton` with an `Icon` and an `aria-label`) from `@capybara-hq/design`; never a character as an icon (`▾ ✓ ✕ ⋯ ⠿ ▤ ●`…; rule `design-char-icon`) and never an icon library in `apps/web`. A missing icon is added to `packages/design/scripts/gen-icons.mjs` (`pnpm --filter @capybara-hq/design gen:icons`).
 
 ## Choosing a template (spec §5)
 
 | Page | Template | Notes |
 |---|---|---|
-| Org home, Agent summary | `OverviewPage` | Single |
+| Agent summary, admin overview | `OverviewPage` | Single (the workspace has no home page: the new conversation `/chat` is the home, `/` redirects there) |
 | Agents / knowledge bases / extensions / members lists | `ListPage` | Rail (optional facet filters) + one `DataTable` |
 | Agent / knowledge base / extension detail | `DetailPage` | Content + Inspector, with PageTabs |
 | Create / edit an object | `FormPage` | Centered, grouped by `FormSection`, always has an ActionRow |
 | Org / environment / security settings | `SettingsPage` | Secondary nav + Centered, ActionRow when there are changes |
 | Human approval, alert handling | `InboxPage` | Rail + Content (+ Inspector) |
-| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting`, `AgentRow` and `QuickActions`, and the composer has no agent picker |
+| The conversation page (`/chat`, `/chat/<id>`) | `ConversationPage` | Title bar + thread + composer, with the properties panel or one right panel (spec §5.4) (it replaced `PlaygroundPage`); a new conversation (`/chat`) passes `newConversation` with `Greeting` and `AgentRow`, and the composer has no agent picker and takes the agent's `QuickActions` (a `zap` menu after the effort picker) |
 | Single run detail | `TracePage` | Span waterfall + detail |
 | First-time setup of a model / connector / extension | `WizardPage` | Centered + step bar, previous / next |
 | Login, initialization, accept invitation | `AuthPage` | No Shell |
@@ -38,11 +60,12 @@ Tokens: `docs/design/tokens.json` is the source; `pnpm gen:tokens` writes `token
 
 ### The web order: contexts and frames (spec `docs/superpowers/specs/2026-10-31-web-order-design.md`)
 
-The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (conversations, Agents, 更多 with connectors / channels / skills / evals / catalog, org settings) and the admin console (`/admin/*`, entered from the account row, enterprise admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
+The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`): the workspace (新会话, which is the home, then 智能体 / 技能 / 连接器; 更多 with plugins / extensions / channels / evals / org settings (agent templates are the 模板 tab of 智能体, ruling P4-14); the conversations) and the admin console (`/admin/*`, entered from the account row, super admins only). Personal settings are `/account/*` (connections, grants, IM identities), org settings `/settings/*`. Every page uses one of three frames and one page head (`PageHeader`: `path` required, `title`, optional `description` / `actions` / `tabs` + `activeTab` / `search`).
 
 | Frame | Template | Use |
 |---|---|---|
-| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin extensions / catalog, marketplace entries |
+| Object list | `ListPage` with `variant="objects"`: `ObjectRow` children inside one `ObjectList` (mark, name + chips, description, mono meta, state, one action, row menu) | Things a person picks and opens: agents, skills, connectors, channels, evals, catalog, admin catalog, marketplace entries (the 扩展 pages are a record list by capability with a Sheet, spec §5.1) |
+| Card list | `ListPage` with `variant="cards"`: `ObjectCard` children in one `CardGrid` on the page ground (avatar or icon, name as the one stretched link, two-line description, meta line, one dense primary, ⋯; roving focus by row; spec §6.34) | Things a person picks by look and starts from: the workspace 智能体 page's 智能体 / 模板 tabs, the admin 智能体模板 list (ruling P4-15) |
 | Record list | `ListPage` with `variant="records"` (default): a `DataTable` | Tabular records: members, accounts, orgs, trajectories |
 | Detail / form | `DetailPage` (Content + Inspector, `PageTabs`) / `FormPage` / `WizardPage` | One object; create or edit; multi-step setup |
 | Settings | `SettingsPage` with the grouped secondary nav | Org settings, personal settings, deployment settings |
@@ -59,18 +82,23 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 | Page | Route | Template |
 |---|---|---|
 | Admin console overview | `/admin` | `OverviewPage` |
-| Accounts, orgs, extensions, catalog items, marketplaces (tabs Browse / Sources), marketplace entries | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/catalog`, `/admin/marketplaces`, `/admin/marketplaces/entries` | `ListPage` |
-| Extension detail, catalog item detail | `/admin/extensions/[name]`, `/admin/catalog/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
-| Install an extension, plugin import review | `/admin/extensions/install`, `/admin/catalog/import` | `WizardPage` |
+| Accounts, orgs, extensions (tabs by capability, a Sheet per extension with its deployment config, actions and folded permissions; spec §5.1), plugins (one head with the tabs 已安装 / 市场 / 待确认: installed plugins, marketplace entries, permission confirmations and org requests), marketplace sources | `/admin/accounts`, `/admin/orgs`, `/admin/extensions`, `/admin/plugins`, `/admin/plugins/market`, `/admin/plugins/pending`, `/admin/plugins/sources` | `ListPage` |
+| Extension detail, plugin detail (tabs 组件 / 组织 / 版本; 设置范围 and 停用 open `PluginScopeDialog` / `PluginDisableDialog` with the impact preview) | `/admin/extensions/[name]`, `/admin/plugins/[itemId]` | `DetailPage` (summary / permissions / config etc. use PageTabs) |
+| Platform components: 技能 / 连接器模板 lists (来自, 归属, 范围, 版本, orgs using it), the 智能体模板 list as cards (source · owner · scope · v, 查看, ⋯ with the scope, disable and 对其他组织显示 actions; ruling P4-17) and details (tabs 版本 / 组织; 设置范围 opens `ComponentScopeDialog` with 跟随插件, 停用, 上传新版本 for skills and agent templates); the plugin detail's 更新到 x opens `PlatformUpdateDialog` (the per-component update preview, confirmed with `diffHash`) | `/admin/skills`, `/admin/connector-templates`, `/admin/agent-templates` and their `[id]` | `ListPage` / `DetailPage` |
+| Install an extension, plugin import review (上传插件包; its confirm step asks for the scope) | `/admin/extensions/install`, `/admin/plugins/import` | `WizardPage` |
 | Deployment settings, models and prices | `/admin/settings`, `/admin/models` | `SettingsPage` |
-| Catalog requests awaiting an enterprise admin decision | `/admin/catalog/requests` | `InboxPage` |
 | Trajectory list / eval set list | `/trajectories`, `/evals` | `ListPage` |
 | Trajectory detail, eval case | `/trajectories/[conversationId]`, `/evals/[setId]/cases/[caseId]` | `TracePage`: `waterfall` holds `SpanWaterfall`, `detail` holds the selected span's detail |
 | Eval set, eval run | `/evals/[setId]`, `/evals/runs/[runId]` | `DetailPage` |
 | Create an eval set / start a run | `/evals/new`, `/evals/[setId]/run` | `FormPage` / `WizardPage` |
-| Org-side catalog, item detail, install | `/catalog`, `/catalog/[itemId]`, `/catalog/[itemId]/install` | `ListPage` / `DetailPage` / `WizardPage` |
+| Workspace 插件 (state, 启用 / 组织配置 / 停用 with the switch-off preview, requests, the 市场 tab for org admins), plugin detail (this org's installs: clean-up; a platform plugin moves only with the admin update), the input wizard 启用 opens | `/plugins`, `/plugins/[itemId]`, `/plugins/[itemId]/enable` | `ListPage` / `DetailPage` / `WizardPage` |
+| Workspace 扩展 (a DataTable with tabs by capability, `?tab=`, and a search; each row's switch, which is its plugin's; a row opens a Sheet with the org config, the state and the folded permissions; default providers; file previewers; members read the states only, without config, secrets or permissions; spec §5.1 "The 扩展 pages") | `/extensions` | `ListPage` + `Sheet` |
+| Workspace 技能 (the org's own rows and the platform components offered to the org, with state and the org admin's per-component switch; members read only) | `/skills` | `ListPage` |
+| Workspace 智能体 with the tabs 智能体 / 模板 (`?tab=templates`; cards: an agent's 开始会话 and ⋯ 设置 / 运行记录 / 另存为模板 for org admins (the owner is changed on the agent page only), a template's 用它创建 and ⋯ 查看 or 编辑 / 可共享 / 删除 for owner-org admins, plus the org admin's switch; spec §5.1 "The 智能体 page and the template cards"); `/agent-templates*` redirect there | `/agents` | `ListPage variant="cards"` |
+| The template page (the agent page's section frame: the read view for members, the editor for owner-org admins, each save a new version; 用它创建 the primary, ⋯ 可共享 / 删除; a platform template off in the org is the OverviewPage with 未在本组织启用 and the switch) and the 另存为模板 dialog (agent page and agent card ⋯, org admins; spec §5.1 "The template page and 另存为模板") | `/agents/templates/[id]` | `SettingsPage` |
+| Platform inbox (org requests, permission confirmations, scope sync failures, a failed migration run; each links to the page where it is acted on; sidebar count) | `/admin/inbox` | `InboxPage` |
 
-- Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-enterprise-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "enterprise admin".
+- Admin console views start with the gate `useAdmin()` (`lib/query/workspace.ts`): for non-super-admins the view returns `<NoAccess need={gate.need} />` (`components/NoAccess`, the `StatusPage` no-access state), and the route table prefetches nothing from `/api/v1/admin/*` for them (a UI-level block; the kernel is the final authority). Org views do the same with `useWorkspace()`. The UI always says "super admin".
 - **`SpanWaterfall`**(spec §6.10)takes only plain props (`spans`, `selectedId`, `onSelect`, `labels`, `label`): each span's `kind` (`run` / `step` / `model` / `tool` / `wait`), `startMs` (relative to the earliest span), `durationMs` (null if unknown), `status`, `parentId`; the caller passes them in depth-first order. The page computes time and cost from the data the kernel returns (latency is derived from event times; cost is labeled "estimated").
 - Permission review (install confirmation page, org extension settings, plugin review) shares `components/PermissionReview`; the purpose mapping shares `components/PurposeEditor`. Don't draw a second copy in a page.
 - After the main table, a `ListPage` may carry a subordinate block (an `h2` + one `DataTable`, e.g. invitations on the members page); see spec §5.1.
@@ -168,8 +196,8 @@ function Agents({ orgId }: { orgId: string }) {
   Secondary sections are their own `useQuery` with their own section state (`retryOnMountOf`
   keeps a hydrated error from being read again on mount).
 - `workspace.ts`: `useWorkspace({ min?, setup? })` / `useAdmin()` are the client gates, decided
-  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes to
-  `/` while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
+  from the cached `/me` and readiness (`pending` until they answer; a route without `setup` goes home,
+  `/chat`, while the org is not ready). `resetSession(qc, then)` cancels every read in flight, clears
   the cache and navigates in the same task: an org switch, create or leave and a sign-out go
   through it, then a full navigation (ruling R4), so nothing of the old org or account paints.
 - **Mutations** are `useAppMutation({ fn, invalidates: (v, r) => [keys…], forgetsOnLeave?, onSuccess? })`
@@ -186,6 +214,13 @@ function Agents({ orgId }: { orgId: string }) {
   queries on each path change themselves. The conversation's SSE stream appends to the cached
   events (`appendEvents`, unique and ordered by `seq`) and its `changed` frames invalidate the
   matching keys; on return it reopens from the cached last seq.
+- **Live drafts and the composer** (run input spec 2026-11-07). Sending while a run is active is an
+  interjection (`POST …/messages`, ↵ or ⌘↵); there is no queue UI, the bubble is placed where the run
+  absorbed it (`待处理` until then) and only paused leftovers from before keep 继续发送. A streaming
+  reply is a draft: after a reload or a conversation switch the page shows the current draft from the
+  stream's `event: draft` frame (sent after the catch-up) and resumes from it; `GET …/runs/:runId/draft`
+  only fills a gap the deltas reveal (`lib/stream.ts`, `lib/live-drafts.ts`); never the draft and its
+  final message both.
 
 **Status codes.** A missing object (a 404 read) is the page's not-found state inside the shell
 with HTTP 200; an unknown route keeps `notFound()` and its 404 (`(app)/[...rest]/page.tsx`); the
@@ -211,18 +246,20 @@ moves when the data lands. Pass the shape the page knows statically; a template 
 - `ListPage loading`: `true`, or `{ rows?, stats?, table?: { label, columns, rowHeight?, framed? },
   keep? }` (`keep`: the children are the page's own sections, each loading for itself).
 - `FormPage loading` (boolean) with `FormSection loading={{ fields: n | FieldShape[] }}` or
-  `{{ cards: CardShape[] }}`; `LoadingFormSection` when the section's title is not known either.
-- `SettingsPage loading={{ sections?: [{ fields?, cards?, title?, description? }], cards? }}`.
+  `{{ items: ItemShape[] }}` (item rows in a flush card); `LoadingFormSection` when the section's
+  title is not known either.
+- `SettingsPage loading={{ sections?: [{ fields?, items?, title?, description? }], cards? }}`
+  (`cards`: a stack of titled cards on the page ground, no section).
 - `DetailPage loading={{ inspector?: true | { rows?, keyWidth? }, blocks?, content?: BlockShape[] }}`
   and `WizardPage loading={{ fields }} | {{ content: BlockShape[] }}`.
-- `OverviewPage loading={{ stats?, sections?, mainSide?: { main, side }, keep? }}` (`mainSide`:
-  the content is a main-side grid of card stacks; `keep`: the children don't depend on the data).
+- `OverviewPage loading={{ stats?, sections?, keep? }}` (`keep`: the children don't depend on the
+  data).
 - `InboxPage loading`, `TracePage loading={{ spans?, stats? }}`, `AuthPage loading={{ fields }}`,
   `ConversationPage loading={{ thread?, title?, rightArea? }}`, `PageHeader loading`.
 - Shapes (`templates/frame.tsx`): `FieldShape` (`control`: `input` / `textarea` / `select` /
-  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `card-group`, plus
-  `help`, `rows`, `pair`, `options`, `keyWidth`), `CardShape` (`lines`, `lineSize`, `field`,
-  `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
+  `segmented` / `radio-cards` / `radios` / `key-value` / `switch` / `text` / `item-group` /
+  `list-editor`, plus `help`, `rows`, `pair`, `options`, `keyWidth`), `ItemShape` (`lines`,
+  `lineSize`, `field`, `buttons`, `actions`, `list`), `BlockShape` (`lines` / `list` / `key-value` / `buttons` / `table` /
   `card`). Parts already cached render for real; only the missing parts are skeletons. One busy
   region per page (`aria-busy`); reduced motion draws static bars. `PendingState` stays for
   in-place loading after a person's action, never for navigation.
@@ -339,6 +376,7 @@ Rule implementation: `tools/checks/src/web-ui.ts`; every rule has a violating-fi
 | `web-ui-page-path` | a `header` of a page template (all but `ConversationPage`, `AuthPage`, `OnboardingPage`, `StatusPage`, `TracePage`, `InboxPage`) in a `src/app/(app)/**/page.tsx` without a `path` property, or one the rule cannot follow (reported as "cannot be confirmed statically"): no literal `path` beside a spread, an imported or called value, a spread element without `header` | Pass `header={{ path: [...scope, { label }], title }}` inline or as a same-file const object literal; a page that builds its header elsewhere passes `path` and `title` through and writes the literal itself (see `WizardView`) |
 | `design-char-icon` | A character used as an icon (`▾ ▴ ▸ ◂ ✓ ✗ ✕ ◐ › ‹ « » ● ○ ⠿ ▤ ⋯ ↻ ↗ ↕ ▲ ▼ ‖ ⊘ ◆ □ ■ ▶ ∅ ☰ ⚙ ⌕ ▦`) in a string, template literal or JSX text of non-test code in `apps/web/src` or `packages/design/src`, or in a value of `apps/web/messages/*.json`; the message names the icon to use. Box-drawing (`─ │ └`), `⌘`, `↵`, `→`, `·` and `…` are text and allowed | `<Icon name="chevron-down">` (or an `IconButton` with an `Icon`, `Text icon="circle-x"`, `MenuItem.checked`); keep the accessible name in text or `aria-label` |
 | `web-ui-extension-label` | A provider / extension label built by hand that shows the extension id: a template literal that puts `<…>.provider` (or `provider`) before ` / `, or one holding such an expression as the value of a `label` property or JSX attribute (spaced or not), outside `lib/extension-label.ts`; option values (`value:`, encode helpers) stay allowed | `extensionLabel(x, locale)` / `modelLabel(provider, model, locale)` from `apps/web/src/lib/extension-label.ts` (the display name in the page locale, else the id) |
+| `web-ui-box-in-box` | A boxed design component (`Card`, `FormSection`, `DangerZone`, `ObjectList`, `LinkCard`, `StatCards`, `InlineCard`, `CardGrid`, `ObjectCard`, `FilePicker` outside a Dialog) inside a box (`Card`, `FormSection`, `Dialog`, `Sheet`, `Popover`, `InlineCard`, `PropertySection`, `Callout`, `DangerZone`, `ObjectList`), directly, in an attribute or through an apps/web component, a `const`, a helper, a hook's render function or a wrapper's slot prop that draws one (portals reset the box); a `DataTable` in a non-`flush` FormSection; a `framed` CodeBlock / EmbedFrame / DataTable inside a box. `web-ui-box-stale-pending`: a `BOX_PENDING` entry (`{ path, inner, max }`, empty since AB wave 2) with fewer findings than its `max` | `ItemList` / `ItemListItem` rows, `Subsection`, a `flush` FormSection, the Callout above the box (see "One box is enough") |
 | `design-color-literal` | `#hex` / `rgb()` / `hsl()` in `packages/design/src` outside `styles/tokens.css` (both CSS and TS strings are checked; `color-mix()` referencing tokens is allowed) | Define a token in `tokens.css` and use `var(--cb-…)` |
 
 `web-ui-template` has two exemptions: `app/dev/**` (the development catalog page; the other rules still apply), and pages that only handle 404 -- containing no JSX and calling `notFound()` imported from `next/navigation` (e.g. `(app)/[...rest]/page.tsx`), where the page is rendered by the `StatusPage` in the `not-found.tsx` of the same segment. Don't use this exemption to write other pages.
@@ -357,8 +395,10 @@ catalog install wizard, the plugin upgrade dialog) is drawn by one renderer, the
 `model.ts` builds the field tree and reads a draft back; `deployment.ts`, `org.ts` and
 `channel.ts` adapt each API's view and save body). Don't write another schema form. It is built
 only from design pieces: `Repeater` (arrays of objects: item titles, presets, move / remove /
-undo), `FieldRow` / `FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor`
-(records, `maskValues` for secret records). A missing piece is added to `packages/design` through
+undo; inside the form card its items are divided rows by themselves), `Subsection` (a nested
+object: its title as an h3, its help, its fields under the guide; never a `Card`), `FieldRow` /
+`FieldRowGroup` (compact rows, e.g. an endpoint's models), `KeyValueEditor` (records,
+`maskValues` for secret records). A missing piece is added to `packages/design` through
 the steps below, never styled in `apps/web`.
 
 ## Adding a component or template

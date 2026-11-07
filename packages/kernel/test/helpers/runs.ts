@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
+import { type Kysely, sql } from "kysely";
 import { expect } from "vitest";
 import {
   buildKernelApp,
@@ -18,7 +19,9 @@ import {
 } from "../../src/config/schema.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import type { KernelHttp } from "../../src/http/app.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { asUser, cookieJar } from "./http.js";
@@ -218,6 +221,38 @@ export async function createOrg(req: Req, name = "Acme"): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
   return (res.json() as { org: { id: string } }).org.id;
+}
+
+/** Switches the named extensions on in `orgId` (a row of the org's own switch). */
+export async function enableExtensions(
+  // biome-ignore lint/suspicious/noExplicitAny: any pool handle
+  db: Kysely<any>,
+  orgId: string,
+  ...plugins: string[]
+): Promise<void> {
+  for (const plugin of plugins) {
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
+      VALUES (${plugin}, ${orgId}, true)
+      ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(db);
+  }
+}
+
+/**
+ * Switches on, in `orgId`, every `connector@1` extension this kernel has loaded (connectors can be
+ * created only of kinds whose extension the org has enabled).
+ */
+export async function enableConnectorExtensions(
+  k: Pick<TestKernel, "app">,
+  orgId: string,
+): Promise<void> {
+  await enableExtensions(
+    k.app.get(KernelDb).pool,
+    orgId,
+    ...k.app
+      .get(ExtensionHost)
+      .list("connector")
+      .map((e) => e.plugin),
+  );
 }
 
 export async function createAgent(

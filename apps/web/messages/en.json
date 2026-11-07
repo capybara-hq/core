@@ -1,7 +1,7 @@
 {
   "metadata": {
     "title": "Capybara",
-    "description": "Enterprise agent platform"
+    "description": "Agent platform for organizations"
   },
   "common": {
     "appName": "Capybara",
@@ -17,7 +17,8 @@
     "theme": "Theme",
     "themeLight": "Light",
     "themeDark": "Dark",
-    "back": "Back"
+    "back": "Back",
+    "moreActions": "More actions"
   },
   "login": {
     "title": "Sign in",
@@ -45,7 +46,7 @@
   },
   "setup": {
     "title": "Setup",
-    "intro": "Create the first enterprise administrator. You will be signed in when it is done.",
+    "intro": "Create the first super admin. You will be signed in when it is done.",
     "loginLabel": "Username",
     "loginHint": "3–64 characters: letters, digits and . _ @ + -",
     "passwordLabel": "Password",
@@ -59,13 +60,6 @@
     "setupTokenHint": "Only needed if the deployment configured a setup token."
   },
   "home": {
-    "title": "Home",
-    "noMemberships": "You have not joined any organization yet.",
-    "agents": "Agents",
-    "noMembershipsHint": "Ask an organization admin to invite you.",
-    "role": "Role",
-    "slug": "Slug",
-    "noMembershipsCreateHint": "Create an organization to get started, or ask an organization admin to invite you.",
     "createOrg": {
       "open": "Create organization",
       "title": "Create an organization",
@@ -75,17 +69,7 @@
       "submit": "Create",
       "cancel": "Cancel"
     },
-    "orgSettings": "Organization settings",
-    "skills": "Skills",
-    "connectors": "Connectors",
-    "members": "Members",
-    "models": "Available models",
-    "newAgent": "New agent",
-    "newConversation": "New conversation",
-    "dailyDescription": "{org} · {role}",
-    "dailyDescriptionPending": "{org} · {role} · {count, plural, one {# thing waits for you} other {# things wait for you}}",
     "setup": {
-      "description": "{org} is new. Finish these steps and your team can start working with agents.",
       "progress": "{done} of {total} done",
       "later": "Can wait",
       "laterHint": {
@@ -94,34 +78,6 @@
         "catalog": "Add skills and connectors from the catalog.",
         "connections": "Connect your own accounts so agents can act for you."
       }
-    },
-    "inbox": {
-      "title": "Waiting for you",
-      "titleCount": "Waiting for you · {count}",
-      "open": "Open inbox",
-      "empty": "Nothing waits for you.",
-      "unavailable": "Couldn't read what waits for you. Refresh the page to try again.",
-      "toolApproval": "Tool approval",
-      "toolApprovalTitle": "{agent} wants to use {tool}",
-      "view": "View",
-      "approveOnce": "Allow once",
-      "approved": "Allowed. This call continues.",
-      "skillChange": "Skill change",
-      "skillNew": "{agent} wants to create the skill {skill}",
-      "skillUpdate": "{agent} wants to update the skill {skill}",
-      "catalogRequest": "Catalog request",
-      "catalogRequestTitle": "Request to install {item}"
-    },
-    "recent": {
-      "title": "Pick up where you left off",
-      "empty": "No conversations yet. Pick an agent on the right to start.",
-      "unavailable": "Couldn't read your conversations. Refresh the page to try again.",
-      "waiting": "Waiting for you"
-    },
-    "agentsCard": {
-      "title": "Your agents",
-      "all": "All",
-      "chat": "Chat"
     }
   },
   "errors": {
@@ -147,13 +103,13 @@
     "account": {
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
-      "last_enterprise_admin": "The last enterprise admin cannot be revoked or deactivated."
+      "last_super_admin": "The last super admin cannot be revoked or deactivated."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
       "sandbox_egress_not_allowed": "This deployment disables sandbox network access; the organization can only choose No network.",
-      "last_owner": "An organization must keep at least one owner.",
-      "owner_required": "Only an owner can do this.",
+      "last_owner": "An organization must keep at least one org owner.",
+      "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization."
     },
@@ -169,7 +125,16 @@
       "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again.",
       "profile_conflict": "Someone else changed this agent's profile while you were editing. Reload to see the latest, then apply your changes again.",
       "instructions_mismatch": "The instructions do not match the prompt files. Edit the prompt files, or reload and try again.",
-      "profile_unloaded": "The profile has not loaded yet. Reload the page and try again."
+      "profile_unloaded": "The profile has not loaded yet. Reload the page and try again.",
+      "visibility_forbidden": "Only an org admin can create an agent from a template for others. Set the visibility to Only me.",
+      "template_preview_stale": "The template or the organization changed after the preview. Preview it again, then create.",
+      "pending_connector_not_found": "This connector is no longer waiting to be configured on the agent. Reload the page.",
+      "pending_connector_mismatch": "This connector does not fit: pick one made from the same connector template, of the same protocol, offering the tools the agent needs. An OAuth connector must be authorized first.",
+      "no_pending_connectors": "The agent has no connectors waiting to be configured."
+    },
+    "agent_template": {
+      "name_taken": "The organization already has an agent template of this name; one name cannot be offered in an organization twice. Choose another name.",
+      "version_conflict": "Someone else saved this template while you were editing it. Reload the page and apply your changes again."
     },
     "conversation": {
       "not_found": "The conversation does not exist or you cannot access it.",
@@ -194,11 +159,18 @@
       "hook_denied": "The request was blocked by the policy of the \"{plugin}\" extension.",
       "hook_denied_unknown": "The request was blocked by an extension policy.",
       "pinned_unavailable": "This reply did not start: the agent's pinned skills could not be read.",
-      "pinned_conflict": "This reply did not start because the agent's pinned skills changed meanwhile. Send the message again."
+      "pinned_conflict": "This reply did not start because the agent's pinned skills changed meanwhile. Send the message again.",
+      "not_found": "The run does not exist in this conversation."
+    },
+    "component": {
+      "not_found": "The component does not exist or was removed.",
+      "version_stale": "The component changed meanwhile. Upload it again.",
+      "off": "This component is off in this organization. Switch it on first."
     },
     "connector": {
       "not_found": "The connector does not exist or has been removed.",
       "slug_taken": "This slug is already used by another connector.",
+      "kind_unavailable": "The plugin providing this connector type is not enabled in this organization.",
       "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
@@ -248,19 +220,28 @@
       "version_exists": "This version has already been imported.",
       "item_not_found": "The item does not exist or you cannot see it.",
       "name_conflict": "An item with the same name comes from a different npm package.",
-      "item_disabled": "An enterprise admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
-      "approval_required": "A catalog item that brought this in needs enterprise admin approval before this organization can install or enable it.",
+      "item_disabled": "A super admin disabled this catalog item (or an extension it contains), so it cannot be newly installed or enabled.",
+      "approval_required": "A catalog item that brought this in needs super admin approval before this organization can install or enable it.",
       "request_not_found": "The request does not exist or was already handled.",
       "request_decided": "This request has already been decided.",
-      "custom_disabled": "Enterprise admins turned off custom creation; install from the catalog instead.",
-      "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact an enterprise admin.",
+      "custom_disabled": "Super admins turned off custom creation; install from the catalog instead.",
+      "not_deployed": "An extension it needs is not installed on the deployment, or not at a matching version. Contact a super admin.",
       "icon_not_found": "No icon.",
       "invalid_manifest": "The plugin package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
-      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the enterprise admin to import it first.",
-      "dependency_disabled": "A plugin this one depends on is disabled by the enterprise admin.",
-      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed."
+      "dependency_unresolved": "A plugin this one depends on is not in the catalog at a matching version. Ask the super admin to import it first.",
+      "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
+      "dependency_cycle": "The plugin's dependencies form a cycle and cannot be installed.",
+      "request_pending": "A request of this kind is already pending.",
+      "request_invalid": "This request can no longer be handled (its marketplace was deleted, say); reject it.",
+      "marketplace_browse_disabled": "The deployment settings turned off marketplace browsing for organizations.",
+      "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
+      "owner_required": "The owner organization cannot be removed from its own item's list.",
+      "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
+      "item_removed": "This plugin has been removed.",
+      "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
+      "not_owned": "Only your organization's own skills and agent templates can be shared."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -311,12 +292,16 @@
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
-      "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu."
+      "not_invocable": "This skill is not available to invoke with this agent; pick one from the / menu.",
+      "name_exists": "A skill with this name already exists in the organization. Choose another name."
     },
     "skill_change": {
       "not_found": "The skill change does not exist or you cannot see it.",
       "not_owner": "Only the agent's owner can approve or reject its skill changes.",
       "already_decided": "This skill change has already been handled."
+    },
+    "inbox": {
+      "notice_not_found": "The notice does not exist or was already dismissed."
     },
     "trajectory": {
       "not_found": "Run history not found, or you do not have access to it."
@@ -369,6 +354,7 @@
       "private_address": "The download was refused: the host resolves to a private or reserved address. To use an internal host, add it to marketplaces.allowPrivateHosts in the deployment config.",
       "redirect": "The download was refused: the server responded with a redirect, and redirects are not followed. Use the final URL instead.",
       "incompatible": "This version is not compatible with this deployment's kernel / SDK.",
+      "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be imported. Choose another version.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
       "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
@@ -378,6 +364,9 @@
       "path_unsupported": "This entry is a path in the marketplace's repository, but the marketplace is fetched over http. Add the repository as a git marketplace."
     },
     "plugin": {
+      "name_taken": "Another owner already has a plugin with this name (the platform or another organization). Rename the plugin and upload it again.",
+      "name_reserved": "This name belongs to a bootstrap plugin or a plugin listed by a marketplace of this deployment. Rename the plugin and upload it again.",
+      "dependency_unavailable": "A plugin this one depends on is not available to this organization.",
       "review_stale": "The review is out of date (extensions on the deployment changed). Fetch the plugin package again.",
       "staging_not_found": "The staged plugin package has expired. Fetch it again.",
       "install_failed": "Installing failed; the components it created were rolled back.",
@@ -386,8 +375,14 @@
       "install_in_progress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up after the timeout.",
       "skill_conflict": "A skill this plugin brings already exists in this organization (your own skill, or one from another plugin). Remove or rename it, then install again.",
       "upgrade_stale": "The upgrade preview is out of date. Preview the upgrade again.",
-      "upgrade_target_invalid": "This version cannot be the upgrade target (a plugin with an extension can only move to the version the deployment runs, and plugins depending on it must accept the version).",
-      "upgrade_failed": "Upgrading the plugin failed."
+      "upgrade_target_invalid": "The platform plugin cannot be updated to this version: the platform already runs it, its extension cannot move this way, or a plugin that depends on it does not accept the version.",
+      "upgrade_failed": "Upgrading the plugin failed.",
+      "disabled": "This plugin is disabled on the whole deployment.",
+      "scope_locked": "The super admin sets this plugin's scope; it cannot be switched in an organization.",
+      "switch_stale": "What this changes moved on before you confirmed; review it again.",
+      "builtin": "A built-in plugin's scope cannot be changed and it cannot be disabled.",
+      "scope_stale": "The impact changed before you confirmed; preview it again.",
+      "extension_upload_pending": "This plugin carries an extension. It was submitted and can be used once the super admin confirms it."
     },
     "lock": {
       "acquire_failed": "Another operation is in progress on this resource. Try again shortly."
@@ -420,7 +415,6 @@
     "empty": "No agents yet.",
     "starting": "Creating conversation…",
     "noOrg": "No current organization selected.",
-    "backHome": "Back to home",
     "form": {
       "title": "New agent",
       "nameLabel": "Name",
@@ -435,7 +429,6 @@
       },
       "submit": "Save",
       "noModels": "No models are available. Install and configure a model provider extension first.",
-      "warningsTitle": "Saved, but please note:",
       "continue": "Continue",
       "modelParamsTitle": "Model parameters",
       "fallbackParamsTitle": "Fallback model parameters",
@@ -458,6 +451,12 @@
       "connectorsLabel": "Connectors",
       "connectorTools": "All tools of {name}",
       "noConnectors": "No connectors are installed.",
+      "extensionToolsLabel": "Extension tools",
+      "noExtensionTools": "No extension enabled in this organization provides tools.",
+      "extensionToolsUnreadable": "The extension tools could not be read. Refresh the page to retry.",
+      "extensionToolUnavailable": "Unavailable: {reason}",
+      "extensionNotEnabled": "The extension {extension} is not enabled in this organization, or was uninstalled.",
+      "extensionToolGone": "The extension {extension} no longer provides this tool.",
       "policiesLabel": "Policies",
       "policy": {
         "default": "Default",
@@ -481,7 +480,7 @@
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
-      "ownSkillDeleted": "Skill {name} deleted.",
+      "ownSkillDeleted": "Skill \"{name}\" deleted.",
       "pinnedLabel": "Pinned skills",
       "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
       "pinnedHint": "A pinned skill's instructions are always in the model's context, without calling Skill. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
@@ -496,7 +495,8 @@
       "overLimitRefused": "Saving this pinned list is refused until it fits.",
       "skillTag": {
         "manual": "manual",
-        "fork": "sub-agent"
+        "fork": "sub-agent",
+        "platform": "Platform"
       },
       "manualHint": "A manual skill is not in the model's skills catalog: people invoke it with / in a conversation.",
       "manualNotPinnable": "Manual skills cannot be pinned.",
@@ -559,9 +559,13 @@
           "self": "An agent cannot dispatch itself.",
           "too_many": "Too many sub-agents: at most 20 in total.",
           "required": "This field is required."
-        }
+        },
+        "platform": "Platform",
+        "templateUnavailable": "Unavailable: {name} (a platform template turned off in this organization; untick to remove it)"
       },
-      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used."
+      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used.",
+      "unavailableSkill": "Unavailable: {name}",
+      "unavailableSkillHint": "These platform skills are off in this organization, so the agent does not load them; they come back when an org admin turns them on again. Untick one to remove the reference."
     },
     "params": {
       "default": "Default",
@@ -590,7 +594,6 @@
       "model": "Model"
     },
     "emptyHint": "Create an agent, then start a conversation.",
-    "noOrgHint": "Pick one on the home page or from the account menu at the bottom of the sidebar.",
     "edit": "Edit",
     "runHistory": "Run history",
     "tabs": {
@@ -619,7 +622,6 @@
     },
     "readOnly": "Only the agent's owner and org admins can change it; you can chat with it.",
     "reassign": {
-      "action": "Change owner…",
       "title": "Change owner",
       "owner": "New owner",
       "help": "The owner can change and delete this agent.",
@@ -640,7 +642,7 @@
         "channels": "Channels"
       },
       "startChat": "Start a conversation",
-      "reassign": "Reassign owner",
+      "reassign": "Change owner",
       "leave": {
         "title": "Discard unsaved changes?",
         "body": "This section has changes that are not saved. Keep editing, or discard them and leave.",
@@ -682,14 +684,426 @@
         "count": "{chars, number} / {maxChars, number} characters · {files} / {maxFiles} files",
         "tooLong": "Together the files are longer than {max, number} characters. Shorten them to save."
       },
-      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here."
+      "createUploadFailed": "The agent was created, but its picture could not be uploaded. Pick it again here.",
+      "provenance": "Created from template <template>{name}</template> {version}"
+    },
+    "pageTabs": {
+      "agents": "Agents",
+      "templates": "Templates"
+    },
+    "filter": "Filter agents",
+    "ownerMe": "Me",
+    "settings": "Settings",
+    "templatePage": {
+      "navGroup": "Template",
+      "sections": {
+        "basics": "Basics",
+        "quick-actions": "Quick actions",
+        "prompt": "Prompt",
+        "model": "Model",
+        "tools": "Tools",
+        "skills": "Skills",
+        "connectors": "Connectors",
+        "subagents": "Sub-agents"
+      },
+      "basics": {
+        "name": "Name",
+        "type": "Type",
+        "description": "Description",
+        "source": "Source",
+        "version": "Version",
+        "shareable": "Shareable",
+        "shareableOn": "Yes: the super admin may offer it to other organizations",
+        "shareableOff": "No",
+        "nameFixed": "The name is also its sub-agent type and cannot change after saving.",
+        "descriptionRequired": "Enter a description."
+      },
+      "prompt": {
+        "empty": "(empty)"
+      },
+      "model": {
+        "tier": "Model tier",
+        "tierHelp": "An agent created from it gets the model the organization maps for this tier; the default chat model tier uses the organization's default chat model.",
+        "modelRef": "Specific model",
+        "modelRefHelp": "Used first when the organization can use it; otherwise the tier decides.",
+        "noModelRef": "None",
+        "unavailableModel": "{model} (not available here)",
+        "effort": "Reasoning effort",
+        "noEffort": "Model default",
+        "maxSteps": "Max steps",
+        "hint": "A template records a tier and, optionally, a specific model; creating an agent picks the model by the organization's setup, and the creator may change it."
+      },
+      "tier": {
+        "inherit": "Organization default chat model",
+        "fast": "Fast",
+        "standard": "Standard",
+        "capable": "Most capable"
+      },
+      "effort": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "xhigh": "Very high",
+        "max": "Max"
+      },
+      "policy": {
+        "ask": "Ask first",
+        "deny": "Denied"
+      },
+      "tools": {
+        "list": "Tools",
+        "none": "No tools.",
+        "disallowed": "Not allowed",
+        "hint": "An agent created from it gets the tools the organization can use; the rest are listed as unavailable.",
+        "others": "Other tools",
+        "unavailable": "{tool} (not available here)",
+        "othersHint": "The organization cannot use these tools now; untick one to remove it from the template."
+      },
+      "skills": {
+        "list": "Skills",
+        "none": "No skills.",
+        "pinned": "Preloaded",
+        "hint": "A template names its skills; creating an agent looks them up by name among the organization's skills and skips the ones it cannot find.",
+        "selectLabel": "Skills used",
+        "noOrgSkills": "The organization has no skills yet.",
+        "unreadable": "The organization's skills could not be read.",
+        "missing": "{name} (not in this organization; skipped on create)",
+        "tooMany": "At most {max} skills that are not preloaded.",
+        "pinLabel": "Preloaded",
+        "noneToPin": "Pick skills first, then choose which to preload.",
+        "pin": "Preload {name}",
+        "pinHint": "Preloaded skills go into every run's context; at most {max}."
+      },
+      "connectors": {
+        "list": "Connectors",
+        "none": "No connectors.",
+        "hint": "A template records which connectors it needs, never credentials. An agent created from it gets the organization's matching connectors; missing ones are marked to set up.",
+        "needsHint": "A needed connector records only its protocol, address and tools; the agent created from it marks it to set up, for someone who may configure connectors.",
+        "templateKind": "Connector template",
+        "needsKind": "Needs a connector · {protocol}",
+        "protocol": {
+          "mcp": "MCP",
+          "openapi": "OpenAPI"
+        },
+        "endpoint": "Address",
+        "tools": "Tools",
+        "allTools": "All tools",
+        "noTools": "None",
+        "policies": "Tool policies",
+        "label": "Name",
+        "protocolLabel": "Protocol",
+        "endpointHelp": "The connector's http(s) address, without credentials, a query or a fragment (they may hold credentials).",
+        "templateToolsHelp": "One tool name per line; leave empty for all of the connector's tools.",
+        "needsToolsHelp": "One tool name per line: the tools the agent uses.",
+        "endpointInvalid": "Enter an http(s) address (at most 2048 characters).",
+        "endpointCarries": "The address must not carry {parts}; they may hold credentials. Use: {clean}",
+        "part": {
+          "userinfo": "a user name or password",
+          "query": "a query",
+          "fragment": "a fragment"
+        },
+        "partSep": ", ",
+        "endpointRefused": "This address was not accepted. Check it and try again.",
+        "labelRequired": "Enter a name.",
+        "newNeeds": "New connector",
+        "remove": "Remove",
+        "removeLabel": "Remove {name}",
+        "addNeeds": "Add a needed connector",
+        "policiesKept": "This connector lists no tools: its {count, plural, one {# tool policy stays} other {# tool policies stay}} as saved ({list}); list its tools to change them.",
+        "addTemplateLabel": "Connector template",
+        "pickTemplate": "Choose a connector template",
+        "noTemplates": "No connector template to add",
+        "addTemplate": "Add connector template"
+      },
+      "subagents": {
+        "list": "Sub-agents",
+        "none": "No sub-agents.",
+        "hint": "An agent created from it gets these sub-agents in its own roster; no separate agents are created.",
+        "general": "General-purpose sub-agent",
+        "typeKind": "Template type",
+        "inlineKind": "Inline",
+        "model": "Model tier",
+        "tools": "Tools",
+        "skills": "Skills",
+        "noSkills": "None",
+        "allTools": "All of the agent's tools",
+        "noTools": "No tools",
+        "toolsMode": {
+          "all": "All of the agent's tools",
+          "none": "No tools",
+          "list": "Listed tools"
+        },
+        "toolKeys": "Tools",
+        "toolKeysHelp": "One tool name per line (such as AskUserQuestion).",
+        "skillsHelp": "One skill name per line, at most {max}.",
+        "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.",
+        "descriptionRequired": "Enter a description.",
+        "instructionsRequired": "Enter the instructions.",
+        "tooManySkills": "At most {max} skills.",
+        "tooMany": "At most {max} template types and inline sub-agents together.",
+        "typeUnavailable": "{type} (not available here)",
+        "toolsListEmpty": "List at least one tool, or choose No tools."
+      },
+      "off": {
+        "owner": "This template is switched off in this organization: members do not see it and cannot create agents from it.",
+        "ownerAdmin": "This template is switched off in this organization: members do not see it and cannot create agents from it. Switch it on to bring it back.",
+        "title": "This template is not on in this organization",
+        "hintAdmin": "Once it is on, members can read it and create agents from it.",
+        "hintPlugin": "It comes with a plugin that is not on in this organization. Turn the plugin on first.",
+        "hintLocked": "It cannot be switched on in this organization now.",
+        "hintMember": "Ask an organization admin to switch it on."
+      }
+    },
+    "saveAs": {
+      "action": "Save as template",
+      "title": "Save {name} as a template",
+      "name": "Template name",
+      "nameHelp": "Lowercase letters, digits and hyphens, starting with a letter or digit. It is also the sub-agent type and cannot change after saving.",
+      "nameHelpEmpty": "The agent's name has no letters or digits a template name can use, so choose one: lowercase letters, digits and hyphens, starting with a letter or digit; it cannot change after saving.",
+      "namePlaceholder": "for example sales-assistant",
+      "nameRequired": "Enter a template name.",
+      "nameInvalid": "Use lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.",
+      "description": "Description",
+      "descriptionRequired": "Enter a description.",
+      "carried": "The prompt, model, tools, skills, connectors (which ones it needs, never credentials), sub-agents and quick actions go into the template, which the organization owns.",
+      "rosterLeftOut": "These organization agents in its sub-agents are not templates and are left out:",
+      "rosterLabel": "Organization agents left out",
+      "submit": "Save as template",
+      "close": "Close",
+      "taken": {
+        "own": "The organization already has a template of this name. Choose another name.",
+        "platform": "The platform already has a template of this name. Choose another name.",
+        "org": "A template shared by {org} already uses this name. Choose another name.",
+        "reserved": "{name} is a reserved name and cannot name a template.",
+        "unknown": "This name is taken. Choose another name."
+      },
+      "savedTitle": "Saved as template {name}",
+      "savedOmitted": "The template is saved. These were left out of it:",
+      "omittedLabel": "Left out",
+      "open": "Open template",
+      "line": "{what}: {why}",
+      "kind": {
+        "subagent_agent": "Sub-agent {name}",
+        "subagent_template": "Sub-agent template {name}",
+        "subagent_inline": "Inline sub-agent {name}",
+        "skill": "Skill {name}",
+        "connector": "Connector {name}",
+        "tool": "Tool {name}",
+        "tool_policy": "Tool policy {name}",
+        "model_param": "Model parameter {name}",
+        "fallback_model": "Fallback model {name}",
+        "quick_action": "Quick action {name}"
+      },
+      "field": {
+        "disallowedTools": "disallowed tools",
+        "toolPolicies": "tool policies",
+        "effort": "reasoning effort",
+        "maxSteps": "max steps",
+        "tools": "tools",
+        "description": "description",
+        "instructions": "instructions"
+      },
+      "reason": {
+        "org_agent": "it is an organization agent, not a template",
+        "unavailable": "it is no longer available",
+        "agent_skill": "it is a skill the agent wrote itself",
+        "no_endpoint": "it has no address to record",
+        "unsupported_protocol": "templates do not support its protocol",
+        "limit": "it is over a template limit",
+        "connector_tool": "it belongs to a connector the template does not carry",
+        "unsupported_field": "templates have no place for its {field} setting",
+        "model_param": "templates record only the reasoning effort, no other model parameter",
+        "fallback": "templates record no fallback model or its parameters",
+        "empty_text": "{field, select, none {it is blank, which a template cannot hold} other {its {field} is blank, which a template cannot hold}}",
+        "other": "left out"
+      }
+    },
+    "templates": {
+      "listLabel": "Agent templates",
+      "search": "Search templates",
+      "empty": "No agent templates yet. Plugins can bring templates, and org admins can save an agent as a template.",
+      "noMatch": "No templates match.",
+      "create": "Create from it",
+      "view": "View",
+      "edit": "Edit",
+      "share": "Make shareable",
+      "unshare": "Stop sharing",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable.",
+      "delete": "Delete",
+      "deleteTitle": "Delete template {name}?",
+      "deleteHint": "Agents can no longer be created from it. Agents already created from it are not affected.",
+      "deleteAgents": "These agents have it as a sub-agent and will lose it:",
+      "deleted": "Template \"{name}\" deleted.",
+      "deletedTransferred": "Template \"{name}\" deleted; other organizations still use it, so it is now platform-owned.",
+      "previewFailed": "What deleting it does could not be read; retry before confirming.",
+      "previewRetry": "Retry",
+      "version": "v{version}",
+      "source": {
+        "platform": "Platform",
+        "org": "This org",
+        "orgNamed": "{org}",
+        "plugin": "Plugin · {plugin}"
+      }
+    },
+    "fromTemplate": {
+      "title": "Create an agent from {name}",
+      "submit": "Create",
+      "gone": "This template is no longer available in this organization (switched off, deleted or no longer shared), so no agent can be created from it.",
+      "uploadLater": "You can upload an image on the agent page after creating it.",
+      "retry": "Retry",
+      "previewLoading": "Reading what the template brings",
+      "previewTitle": "What the template brings",
+      "modelSource": {
+        "modelRef": "The model the template was saved with.",
+        "tier": "The model your organization maps to the template's tier.",
+        "default": "Your organization's default model.",
+        "chosen": "The model you picked."
+      },
+      "groups": {
+        "carried": "Carried over · {n}",
+        "pending": "To configure · {n}",
+        "unavailable": "Unavailable · {n}"
+      },
+      "emptyGroup": {
+        "carried": "Nothing to carry over.",
+        "pending": "No connector to configure.",
+        "unavailable": "Nothing unavailable."
+      },
+      "pendingHint": "The agent is still created; these connectors' tools are unavailable until they are configured.",
+      "droppedTitle": "Settings not carried over · {n}",
+      "dropped": {
+        "maxSteps": "Step limit: agents have no such setting.",
+        "effort": "Reasoning effort: the chosen model doesn't support it.",
+        "description": "The description was too long and was cut.",
+        "instructions": "The instructions were too long and were cut.",
+        "quickAction_title": "Quick action {n}'s title was too long and was cut.",
+        "quickAction_body": "Quick action {n}'s text was too long and was cut.",
+        "instructionFile": "Instruction file {n} was too long and was cut.",
+        "subagent_description": "Sub-agent {name}'s description was too long and was cut.",
+        "subagent_instructions": "Sub-agent {name}'s instructions were too long and were cut.",
+        "subagentTool": "Sub-agent {name}'s tool {tool}: the agent doesn't have it.",
+        "connectorTool": "Connector {connector}'s tool {tool}: the connector doesn't offer it.",
+        "connectorPolicy": "The policy of connector {connector}'s tool {tool}: the connector doesn't offer that tool.",
+        "other": "{path}"
+      },
+      "kinds": {
+        "instruction_file": "Instruction file",
+        "description": "Description",
+        "quick_action": "Quick action",
+        "tool": "Tool",
+        "skill": "Skill",
+        "connector": "Connector",
+        "subagent": "Sub-agent"
+      },
+      "reasons": {
+        "instruction_file_invalid_name": "The file name is not valid.",
+        "instruction_file_duplicate": "Another file has the same name.",
+        "instruction_file_too_many": "Too many files.",
+        "instruction_file_too_long": "The files together are too long.",
+        "tool_default": "The template names no tools: a new agent's defaults.",
+        "tool_subagents": "Added because the template describes sub-agents.",
+        "tool_plugin_unavailable": "Its plugin is not enabled in this organization.",
+        "tool_unknown_tool": "No such tool.",
+        "tool_connector_key": "Connector tools carry over only with their connector.",
+        "skill_pinned": "Preloaded.",
+        "skill_not_pinned_manual_only": "Manual only: not preloaded.",
+        "skill_not_pinned_too_large": "Over the preload limit: not preloaded.",
+        "skill_subagent": "Used by a sub-agent.",
+        "skill_not_found": "This organization has no such skill.",
+        "connector_several": "Several connectors were made from this template; the oldest was picked, you can switch later.",
+        "connector_no_connector": "No connector has been made from this template in this organization yet.",
+        "connector_tools_missing": "The organization's connector doesn't offer the tools needed.",
+        "connector_needs": "Needs a custom connector.",
+        "connector_template_not_found": "The connector template doesn't exist or isn't available here.",
+        "connector_disallowed": "The template disallows every tool of this connector.",
+        "connector_invalid_endpoint": "The address the template records is not a valid http(s) URL.",
+        "subagent_type_not_found": "This organization has no such agent template.",
+        "subagent_type_taken": "A sub-agent with this name already exists.",
+        "subagent_too_many": "Too many sub-agents."
+      },
+      "state": {
+        "carried": "carried over",
+        "pending": "to configure",
+        "unavailable": "unavailable"
+      },
+      "stale": "The template or your organization changed since the preview, so it was read again. Check the changes, then create.",
+      "changes": {
+        "added": "New {kind} {name}: {state}.",
+        "removed": "{kind} {name} is no longer carried over.",
+        "moved": "{kind} {name}: {from} → {to}.",
+        "droppedAdded": "Not carried over: {what}",
+        "model": "The automatically chosen model changed.",
+        "droppedRemoved": "Now carried over: {what}"
+      }
+    },
+    "pending": {
+      "title": "Connectors to configure · {n}",
+      "hintManager": "The template needs these connectors and your organization doesn't have them yet. Once configured, their tools join the agent; until then the agent runs as usual.",
+      "hintOwner": "The template needs these connectors and your organization doesn't have them yet; an organization admin configures them. Until then the agent runs as usual, without these tools.",
+      "listLabel": "Connectors to configure",
+      "state": "To configure",
+      "configure": "Configure",
+      "fromTemplateNamed": "Made from the connector template {name}",
+      "needs": "Needs {protocol, select, mcp {an MCP} openapi {an OpenAPI} other {a {protocol}}} connector: {endpoint}",
+      "toolsAll": "Takes all its tools",
+      "tools": "Takes the tools: {tools}",
+      "plain": "This agent has {n, plural, one {# connector} other {# connectors}} to configure; their tools are unavailable until then.",
+      "listTitle": "Configure connectors for {agent}",
+      "listHint": "For each one, pick an existing connector or create one, then bind it to the agent. The request closes after the last bind.",
+      "listEmpty": "All configured.",
+      "back": "Back",
+      "close": "Close",
+      "bound": "Connector bound for {name}",
+      "boundDropped": "Connector bound for {name}; {n, plural, one {# item it doesn't offer was} other {# items it doesn't offer were}} left out",
+      "entryTitle": "Configure {name}",
+      "modeLabel": "Connector source",
+      "modeExisting": "Use an existing connector",
+      "modeExistingHint": "Pick one of your organization's connectors.",
+      "modeCreate": "Create one from the template",
+      "modeCreateHint": "Create a connector from the connector template, then bind it.",
+      "modeCustom": "Create a custom connector",
+      "modeCustomHint": "Open the custom connector form with the protocol and address filled in.",
+      "connectorsFailed": "Couldn't read the connectors. Try again later.",
+      "noCandidatesTemplate": "No connector has been made from this template yet; create one from the template.",
+      "noCandidatesNeeds": "Your organization has no connector of this protocol yet; create a custom one.",
+      "connectorLabel": "Connector",
+      "customHint": "Create it in the custom connector form, then come back here to pick and bind it. If a super admin has turned off custom connectors, a super admin must allow them first.",
+      "openCustom": "Open the custom connector form",
+      "bind": "Bind",
+      "createAndBind": "Create and bind",
+      "templateGone": "This connector template is no longer available in this organization, so no connector can be made from it.",
+      "templateOff": "This connector template is switched off in this organization; switch it on first.",
+      "createdRetryBind": "The connector was created but binding it failed. Fix the problem above and bind again.",
+      "autoNameHint": "Leave the name and identifier empty to get a free one automatically.",
+      "bindError": {
+        "template": "This connector wasn't made from the connector template needed.",
+        "protocol": "This connector's protocol doesn't match.",
+        "tools": "This connector offers none of the tools the agent needs.",
+        "not_synced": "This connector isn't authorized yet, so its tools can't be read. Authorize it first, then bind it.",
+        "openConnector": "Open the connector to authorize it"
+      },
+      "request": {
+        "sent": "Requested from the organization admins",
+        "retry": "Retry",
+        "failed": "Couldn't read the request.",
+        "pending": "Requested · waiting for an organization admin.",
+        "again": "Request again",
+        "rejected": "An organization admin rejected the request.",
+        "rejectedReason": "An organization admin rejected the request: {reason}",
+        "ask": "Request",
+        "none": "No request has been sent to the organization admins to configure these connectors."
+      },
+      "modeCreateOff": "This connector template is switched off or unavailable in this organization, so no connector can be made from it.",
+      "alreadyBound": "{name} was already configured elsewhere",
+      "noCandidatesOff": "No connector has been made from this template, and the template is switched off or unavailable in this organization. Switch it on first."
     }
   },
   "skills": {
     "title": "Skills",
     "listLabel": "Organization skills",
     "empty": "No skills yet.",
-    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Admins upload them.",
+    "emptyHint": "Skills are packages of instructions and files that agents load when a task needs them. Org admins upload them.",
     "version": "v{version}",
     "columns": {
       "name": "Name",
@@ -705,15 +1119,16 @@
       "chooseHint": "or drop the .zip file here.",
       "drop": "Drop the .zip file to upload",
       "uploading": "Uploading {name}… {percent}%",
-      "created": "Skill {name} added.",
-      "versionCreated": "Skill {name} updated to version {version}.",
+      "created": "Skill \"{name}\" added.",
+      "versionCreated": "Skill \"{name}\" updated to version {version}.",
       "notZip": "Choose a .zip file.",
       "tooLarge": "The zip file is larger than 50 MB.",
       "cancel": "Cancel",
       "cancelled": "Upload cancelled.",
       "retry": "Retry",
       "open": "Upload skill",
-      "close": "Close"
+      "close": "Close",
+      "nameTaken": "The platform already offers a skill with this name to this organization; skill names are unique in an organization. Rename the skill in SKILL.md and upload it again."
     },
     "detail": {
       "tabsLabel": "Skill sections",
@@ -723,12 +1138,9 @@
         "versions": "Versions"
       },
       "bodyUnavailable": "The SKILL.md text cannot be shown (it is too large or unavailable).",
-      "inspectorTitle": "Details",
-      "name": "Name",
       "version": "Version",
       "files": "Files",
       "updated": "Updated",
-      "description": "Description",
       "filesLabel": "Files of the current version",
       "versionsLabel": "Versions",
       "columns": {
@@ -739,11 +1151,37 @@
         "files": "Files",
         "created": "Created"
       },
-      "dangerTitle": "Danger zone",
       "delete": "Delete skill",
       "deleteTitle": "Delete {name}?",
       "deleteHint": "Agents stop loading this skill. Agent definitions keep the reference, which shows as deleted until their owners remove it.",
-      "deleted": "Skill {name} deleted."
+      "deleted": "Skill \"{name}\" deleted.",
+      "owner": "Owner",
+      "ownerPlatform": "Platform",
+      "ownerOrg": "This org",
+      "plugin": "Plugin",
+      "platformHint": "The platform provides this skill: this organization cannot change or delete it; org admins turn it on or off on the Skills page.",
+      "shareable": "Shareable",
+      "shareableHelp": "When on, the super admin can show or offer this skill to other organizations. Turning it off does not affect organizations it is already offered to.",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable.",
+      "previewFailed": "What deleting it does could not be read; retry before confirming.",
+      "previewRetry": "Retry"
+    },
+    "description": "The skills this organization can use. Skills the platform turns on for everyone cannot be turned off; org admins turn the other platform skills on or off.",
+    "create": {
+      "open": "New",
+      "title": "New skill",
+      "name": "Name",
+      "nameHelp": "Lowercase letters, digits and single hyphens, up to 64 characters. Skill names are unique in an organization.",
+      "nameInvalid": "Use only lowercase letters, digits and single hyphens.",
+      "description": "Description",
+      "descriptionHelp": "Say what the skill does and when to use it: agents decide when to load it from this.",
+      "body": "Content",
+      "bodyHelp": "The body of SKILL.md. SKILL.md is generated from the name and the description: a leading --- frontmatter in the body is dropped, except the invocation keys (such as disable-model-invocation and context).",
+      "shareable": "Shareable",
+      "submit": "Create",
+      "cancel": "Cancel",
+      "created": "Skill \"{name}\" created."
     }
   },
   "chat": {
@@ -751,9 +1189,9 @@
       "someone": "another member",
       "role": {
         "guest": "a guest",
-        "member": "a member",
-        "admin": "an admin",
-        "owner": "an owner"
+        "member": "an org member",
+        "admin": "an org admin",
+        "owner": "an org owner"
       }
     },
     "title": "Chat",
@@ -775,7 +1213,9 @@
     "attachments": "Attachments",
     "removeAttachment": "Remove {name}",
     "attachLimit": "At most {max} attachments per message.",
-    "noInvocable": "This agent has no skills to run.",
+    "noInvocable": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills before you can invoke it with /.",
+    "noInvocableAction": "Choose skills",
+    "noInvocableReadOnly": "This agent has no skills selected to invoke. A skill the organization turned on must be selected in the agent's skills first; ask its owner or an org admin.",
     "skillsGroup": "Skills",
     "skillTag": {
       "manual": "manual",
@@ -784,6 +1224,7 @@
     "skillInstructions": "Skill instructions",
     "skillReport": "Report",
     "skillWaits": "Answered after the sub-agent running {skill} finishes.",
+    "interjectionPending": "Pending",
     "queuePaused": {
       "author_cannot_send": "Queue paused: the first message's author can no longer use this conversation.",
       "skill_not_invocable": "Queue paused: the first message's skill can no longer be used with this agent. Delete it or continue sending."
@@ -808,10 +1249,8 @@
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
     "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
     "newPlaceholder": "What should {agent} do?",
-    "queueHint": "↵ to queue, Ctrl+↵ to send now",
+    "runningHint": "Messages sent while it works reach it at its next step",
     "sendAfterCreate": "You can send again once the conversation is created",
-    "queueHintMac": "↵ to queue, ⌘↵ to send now",
-    "queueLabel": "Queued messages",
     "rename": "Rename",
     "copyLink": "Copy link",
     "copied": "Copied",
@@ -825,10 +1264,8 @@
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
     "toolLines": "lines {from}–{to}",
-    "pickAgent": "Switch agent",
     "pickModel": "Switch model",
     "pickEffort": "Effort",
-    "agentLocked": "The agent can't change after the first message.",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
     "effort": {
@@ -848,8 +1285,8 @@
     "fileRemoved": "No longer available",
     "noAgents": "No agent is available. Create an agent first.",
     "panelExtensions": "Extensions",
-    "agentMap": "Agent map",
     "agentMapFailed": "The agent map could not be loaded.",
+    "stopFailed": "Couldn't stop: {reason}",
     "fullOutput": "Full output",
     "builtinPreviewer": "Built-in preview",
     "setup": {
@@ -857,9 +1294,9 @@
       "description": "A few steps are left before you can start a conversation.",
       "model": {
         "description": "Configure at least one model provider (such as the openai-compatible extension) so agents can answer.",
-        "askAdmin": "No model is available yet. Enterprise admins configure models under Admin → Extensions.",
+        "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
         "action": "Set up",
-        "waiting": "Waiting for an enterprise admin"
+        "waiting": "Waiting for a super admin"
       },
       "agent": {
         "description": "An agent sets the model it uses and the tools and skills it can use.",
@@ -875,7 +1312,7 @@
       "configureModels": "Configure model services"
     },
     "greeting": {
-      "sub": "Pick an agent, or start from a common task",
+      "sub": "Pick an agent to start",
       "morning": [
         "Good morning, {name}",
         "Morning. What are we moving forward today?",
@@ -949,7 +1386,6 @@
     "liveLost": "Live updates stopped. Reload the page for the latest content."
   },
   "nav": {
-    "overview": "Home",
     "agents": "Agents",
     "goto": "Go to",
     "actions": "Actions",
@@ -960,7 +1396,8 @@
     "evals": "Evals & runs",
     "settings": "Organization settings",
     "admin": "Admin console",
-    "catalog": "Plugins"
+    "plugins": "Plugins",
+    "extensions": "Extensions"
   },
   "shell": {
     "noOrg": "Select organization",
@@ -972,7 +1409,7 @@
   "notFound": {
     "title": "Page not found",
     "description": "The link may be broken, or the page has been removed.",
-    "back": "Back to home"
+    "back": "Start a new conversation"
   },
   "tools": {
     "outputId": "Full output archived as {id}.",
@@ -1085,7 +1522,7 @@
     "approved": "Approved",
     "denied": "Denied",
     "columns": {
-      "request": "Request",
+      "item": "Item",
       "time": "Requested"
     },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",
@@ -1111,6 +1548,80 @@
       "reject": "Reject",
       "approved": "Skill change approved",
       "rejected": "Skill change rejected"
+    },
+    "skillRenamed": {
+      "label": "Skill renamed",
+      "title": "Skill {from} was renamed to {to}",
+      "hint": "A platform skill named {from} is now available to this organization, so your organization's own skill {from} was renamed to {to}. Agents that use it keep it under the new name. The platform skill is switched off in this organization; an admin can switch it on on the Skills page. Its stored SKILL.md still says {from}: when you upload a new version, set the name in SKILL.md to {to}.",
+      "from": "Old name",
+      "to": "New name",
+      "plugin": "Plugin",
+      "dismiss": "Got it",
+      "dismissed": "Notice dismissed"
+    },
+    "orgNotice": {
+      "itemSharedLabel": "Item shared",
+      "itemSharedTitle": "{org} can now use {name}",
+      "itemSharedAllTitle": "All organizations can now use {name}",
+      "itemSharedHint": "Admins of that organization can use it now.",
+      "sharedItemUpdatedLabel": "Shared item updated",
+      "sharedItemUpdatedTitle": "{owner} updated {name}: {from} → {to}",
+      "sharedItemUpdatedHint": "The owner updated an item your organization uses.",
+      "uploadConfirmedLabel": "Upload confirmed",
+      "uploadConfirmedTitle": "The super admin confirmed {name} {version}",
+      "uploadConfirmedHint": "A super admin confirmed this version.",
+      "uploadRejectedLabel": "Upload rejected",
+      "uploadRejectedTitle": "The super admin did not approve {name} {version}",
+      "uploadRejectedHint": "A super admin rejected this version.",
+      "unknownLabel": "Notice",
+      "unknownTitle": "A notice from the platform",
+      "item": "Item",
+      "org": "Organization",
+      "allOrgs": "All organizations",
+      "owner": "Owner",
+      "ownerPlatform": "Platform",
+      "from": "From version",
+      "to": "To version",
+      "version": "Version",
+      "reason": "Reason",
+      "dismiss": "Got it",
+      "dismissed": "Notice dismissed"
+    },
+    "requestDecided": {
+      "label": "Request decided",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "status": "Result",
+      "decidedAt": "Decided",
+      "dismiss": "Got it",
+      "titleApproved": "Request approved · {name}",
+      "titleRejected": "Request rejected · {name}",
+      "hintApproved": "Your request was approved; it is ready to use.",
+      "hintRejected": "Your request was not approved.",
+      "reason": "Reason",
+      "openItem": "View plugin"
+    },
+    "setup": {
+      "label": "Connector setup request",
+      "decidedLabel": "Connector setup",
+      "rejected": "Rejected",
+      "configured": "All connectors configured; the request is closed",
+      "agent": "Agent",
+      "count": "To configure",
+      "reject": "Reject",
+      "configure": "Configure",
+      "title": "Configure connectors for {agent}",
+      "hint": "This agent was created from a template that needs connectors your organization doesn't have yet. Configuring binds a connector to the agent; the request closes after the last one.",
+      "connectors": "Connectors needed",
+      "fromTemplate": "Made from the connector template {name}",
+      "needs": "Needs {protocol, select, mcp {an MCP} openapi {an OpenAPI} other {a {protocol}}} connector: {endpoint}",
+      "reasonLabel": "Reason for rejecting",
+      "reasonHelp": "Sent to the requester when you reject.",
+      "titleApproved": "{agent}'s connectors are configured",
+      "titleRejected": "Connector setup for {agent} was rejected",
+      "hintApproved": "An organization admin configured every connector; their tools have joined the agent.",
+      "hintRejected": "An organization admin didn't configure these connectors. You can request again on the agent's Tools section.",
+      "openAgent": "Open the agent's Tools section"
     }
   },
   "connectors": {
@@ -1158,7 +1669,7 @@
       "authTypeLabel": "Authentication",
       "ownershipLabel": "Credential",
       "ownershipHelp": {
-        "org": "One credential set by an admin is used for everyone.",
+        "org": "One credential set by an org admin is used for everyone.",
         "personal": "Every member fills in their own credential before using the connector."
       },
       "keyInLabel": "Send the key in",
@@ -1186,12 +1697,10 @@
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "Connector",
       "refresh": "Refresh tools",
       "refreshed": "Tool list refreshed."
     },
     "inspector": {
-      "slug": "Slug",
       "connector": "Connector",
       "endpoint": "Endpoint",
       "auth": "Auth",
@@ -1220,7 +1729,7 @@
       "missing": "Not set",
       "orgTitle": "Organization credential",
       "orgHint": "Enter a new value to replace the stored credential.",
-      "orgReadonly": "Only admins can change the organization credential.",
+      "orgReadonly": "Only org admins can change the organization credential.",
       "personalTitle": "Personal credentials",
       "personalHint": "Each member sets their own credential in My connections.",
       "openConnections": "Open My connections",
@@ -1283,6 +1792,8 @@
       "install": "Install",
       "openConnector": "Open connector",
       "typeTitle": "Choose the endpoint type",
+      "noKinds": "Enable the MCP connector or the OpenAPI connector in Plugins first.",
+      "noKindsAction": "Open Plugins",
       "connector": {
         "mcp": "MCP server",
         "openapi": "OpenAPI document"
@@ -1316,7 +1827,7 @@
       "oauthClientHint": "One shared OAuth client obtains tokens for the organization; the client is verified when you install.",
       "noticeTitle": "Needs your attention",
       "dcrUnsupported": "The authorization server does not support automatic client registration. Register a client with the provider and enter its client ID and secret below.",
-      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask your deployment admin to set it, or use another authentication method.",
+      "publicUrlRequired": "OAuth connectors need http.publicUrl configured on the kernel (it builds the OAuth callback URL). Ask a super admin to set it, or use another authentication method.",
       "operationsHint": "Choose the operations agents may use. Default policies follow the HTTP method; you can change them on the connector page later.",
       "operationsLabel": "Operations",
       "noOperations": "The document has no operations.",
@@ -1342,7 +1853,8 @@
       "credentialHint": {
         "org": "Organization credential: shared by everyone and used to list the tools when installing.",
         "personal": "Your own credential: used to list the tools when installing; other members set theirs in My connections later."
-      }
+      },
+      "customDeniedPending": "A super admin has turned off custom connectors, so this connector can't be created. Ask a super admin to allow custom connectors."
     },
     "review": {
       "title": "Review",
@@ -1362,8 +1874,8 @@
       "reject": "Reject",
       "approveLabel": "Approve {tool}",
       "rejectLabel": "Reject {tool}",
-      "approved": "Approved {tool}.",
-      "rejected": "Rejected {tool}; the tool is disabled.",
+      "approved": "Approved \"{tool}\".",
+      "rejected": "Rejected \"{tool}\"; the tool is disabled.",
       "missingTitle": "No longer provided",
       "missingHint": "These tools are disabled; if the server provides them again they go to review."
     },
@@ -1382,10 +1894,8 @@
       "general": "General",
       "sandbox": "Sandbox",
       "identities": "IM identities",
-      "extensions": "Extensions",
       "models": "Model purposes",
       "members": "Members",
-      "plugins": "Installed plugins",
       "tokens": "Service tokens"
     },
     "empty": "No connector needs your own credential.",
@@ -1395,8 +1905,8 @@
     "missing": "Not connected",
     "save": "Save",
     "clear": "Clear",
-    "saved": "Credential for {connector} saved.",
-    "cleared": "Credential for {connector} cleared.",
+    "saved": "Credential for \"{connector}\" saved.",
+    "cleared": "Credential for \"{connector}\" cleared.",
     "grants": {
       "empty": "No remembered approvals.",
       "emptyHint": "Choosing “Always for this agent” when approving adds one here.",
@@ -1409,7 +1919,7 @@
       },
       "revoke": "Revoke",
       "revokeLabel": "Revoke {tool} for {agent}",
-      "revoked": "Approval for {tool} revoked."
+      "revoked": "Approval for \"{tool}\" revoked."
     },
     "reconnect": "Reconnect",
     "oauthConnect": "Connect",
@@ -1424,7 +1934,7 @@
     "title": "Organization settings",
     "save": "Save",
     "saved": "Organization settings saved.",
-    "readonly": "Only admins can change organization settings.",
+    "readonly": "Only org admins can change organization settings.",
     "toolSearch": {
       "title": "Tool search",
       "description": "When an agent has many tools, the model gets a tool catalog and loads definitions on demand with ToolSearch.",
@@ -1465,7 +1975,7 @@
     },
     "limits": {
       "title": "Sandbox resources",
-      "description": "CPU and memory available to each sandbox. Enterprise admins adjust them per organization in deployment settings; organization admins can only view them.",
+      "description": "CPU and memory available to each sandbox. Super admins adjust them per organization in deployment settings; org admins can only view them.",
       "cpu": "CPU",
       "cpuValue": "{cpu} cores",
       "memory": "Memory",
@@ -1473,7 +1983,7 @@
       "sourceLabel": "Source",
       "source": {
         "deployment": "Deployment default",
-        "override": "Set for this organization by an enterprise admin"
+        "override": "Set for this organization by a super admin"
       },
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
     }
@@ -1570,7 +2080,6 @@
       "submit": "Create channel"
     },
     "inspector": {
-      "plugin": "Extension",
       "tenant": "Tenant",
       "bot": "Bot",
       "agent": "Agent",
@@ -1584,7 +2093,6 @@
         "credentials": "Credentials",
         "settings": "Settings"
       },
-      "inspectorTitle": "Details",
       "statusTitle": "Status",
       "lastError": "Last error",
       "noError": "No recent errors.",
@@ -1634,14 +2142,12 @@
     "title": "Extensions",
     "empty": "No extensions are installed.",
     "enableLabel": "Enable {plugin}",
-    "enabled": "Enabled for this organization",
+    "enabled": "Enabled",
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
-    "required": "Required",
-    "requiredHint": "This plugin is required by the deployment: it is enabled in every organization and cannot be disabled.",
-    "enabledToast": "{plugin} enabled.",
-    "disabledToast": "{plugin} disabled.",
+    "enabledToast": "\"{plugin}\" enabled.",
+    "disabledToast": "\"{plugin}\" disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
     "hasDependents": "These enabled extensions depend on it and will stop working:",
     "forceDisable": "Disable anyway",
@@ -1667,7 +2173,10 @@
     "configTitle": "Organization config",
     "save": "Save config",
     "saveLabel": "Save config of {plugin}",
-    "configSaved": "Config of {plugin} saved.",
+    "saveAndEnable": "Save and enable",
+    "saveAndEnableLabel": "Save config of {plugin} and enable",
+    "configFirstHint": "Fill in the organization config before enabling.",
+    "configSaved": "Config of \"{plugin}\" saved.",
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
     "syncHint": "Directory sync adds and removes organization members from the platform's directory.",
@@ -1699,18 +2208,63 @@
       },
       "at": "{file} line {line}"
     },
-    "openCatalog": "Open the catalog to view or request it",
     "pointDefaults": {
       "title": "Default providers",
       "description": "When several enabled extensions provide the same capability, choose the one this organization uses.",
       "none": "Not selected",
       "noneHint": "Several extensions provide {point}. Until you choose one, the tools that use it are unavailable.",
       "unavailable": "{extension} (unavailable)",
-      "saved": "{point} now uses {extension}.",
+      "saved": "{point} now uses \"{extension}\".",
       "points": {
         "webSearch": "Web search",
         "webFetch": "Web fetch"
       }
+    },
+    "description": "The extensions this organization can use. Fill in organization-level config (such as this organization's own API key) here.",
+    "platformHint": "The platform turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
+    "openPlugins": "Open Plugins to view or request it",
+    "needsConfig": "Needs config",
+    "enableFailed": "Enable failed",
+    "disableFailed": "Disable failed",
+    "search": "Search extensions",
+    "emptyTab": "No extensions of this kind",
+    "noResults": "No extension name contains \"{query}\".",
+    "stateTitle": "State",
+    "capabilitiesTitle": "Capabilities",
+    "permissionsNone": "None",
+    "tabs": {
+      "all": "All",
+      "model": "Models",
+      "web": "Web",
+      "connector": "Connectors",
+      "sandbox": "Sandboxes",
+      "storage": "Storage",
+      "tools": "Tools and UI"
+    },
+    "columns": {
+      "name": "Extension",
+      "capabilities": "Capabilities",
+      "state": "State",
+      "switch": "On"
+    },
+    "capability": {
+      "model": "Models",
+      "webSearch": "Web search",
+      "webFetch": "Web fetch",
+      "connector": "Connectors",
+      "sandbox": "Sandbox",
+      "objectStore": "Object storage",
+      "channel": "Channel",
+      "directory": "Directory",
+      "identity": "Third-party sign-in",
+      "filePreview": "File preview",
+      "tools": "Agent tools",
+      "ui": "UI"
+    },
+    "categoryShort": {
+      "ui": "UI",
+      "publicRoutes": "Public routes",
+      "provides": "Extension points"
     }
   },
   "identities": {
@@ -1728,7 +2282,7 @@
     "unlink": "Unlink",
     "unlinkTitle": "Unlink {name}?",
     "unlinkHint": "Messages from this IM account will no longer act as you, and you can no longer sign in with it.",
-    "unlinked": "{name} unlinked.",
+    "unlinked": "\"{name}\" unlinked.",
     "unverified": "Not verified",
     "verify": "Verify (sign in with this account)"
   },
@@ -1966,9 +2520,7 @@
       "deleteTitle": "Delete eval set \"{name}\"",
       "deleteHint": "Cases and run results will no longer be visible, and runs in progress are cancelled.",
       "deleted": "Deleted eval set \"{name}\".",
-      "inspectorTitle": "Eval set",
       "agent": "Agent",
-      "description": "Description",
       "rubric": "Rubric",
       "defaultRubric": "(default rubric)",
       "created": "Created",
@@ -2164,7 +2716,6 @@
       },
       "inspector": {
         "title": "Result",
-        "selectHint": "Select a result in the table to see the diff and the judge's reason.",
         "case": "Case",
         "status": "Status",
         "drift": "Drift",
@@ -2250,8 +2801,8 @@
         "save": "Save price",
         "saveLabel": "Save price for {model}",
         "cancel": "Cancel",
-        "saved": "Saved the price for {model}.",
-        "cleared": "Cleared the price for {model}."
+        "saved": "Saved the price for \"{model}\".",
+        "cleared": "Cleared the price for \"{model}\"."
       },
       "purposes": {
         "title": "Default model per purpose",
@@ -2260,7 +2811,7 @@
     },
     "org": {
       "title": "Model purposes",
-      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the enterprise admins; you can override it for this org or restore the default."
+      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default."
     },
     "evalUnmapped": "The eval purpose has no model mapped, so evals cannot use a judge.",
     "capability": {
@@ -2292,22 +2843,109 @@
     "nav": {
       "group": "Admin",
       "overview": "Overview",
+      "inbox": "Inbox",
       "accounts": "Accounts",
       "orgs": "Organizations",
       "settings": "Deployment settings",
       "extensions": "Extensions",
+      "skills": "Skills",
+      "connector-templates": "Connector templates",
+      "agent-templates": "Agent templates",
       "models": "Models",
-      "catalog": "Catalog",
-      "marketplaces": "Marketplaces"
+      "plugins": "Plugins"
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
-      "noConversations": "Enterprise admins cannot read conversations.",
+      "noConversations": "Super admins cannot read conversations.",
       "metrics": {
         "extensions": "Extensions needing action",
         "catalogRequests": "Pending catalog requests",
         "orgs": "Organizations",
         "accounts": "Accounts"
+      }
+    },
+    "inbox": {
+      "title": "Inbox",
+      "description": "What waits on a super admin: organizations' requests to the platform, plugins whose permissions need confirming, failed scope syncs and the platform components migration. Each item is handled on its own page.",
+      "listLabel": "Pending items",
+      "empty": "Nothing to handle.",
+      "emptyHint": "Organizations' requests to the platform, plugins whose permissions need confirming and failed syncs show up here.",
+      "pick": "Select an item on the left.",
+      "pendingCount": "{n} pending",
+      "inspectorTitle": "Details",
+      "truncated": "Only the newest items are shown. Handle some to see the rest.",
+      "columns": {
+        "item": "Item",
+        "time": "Time"
+      },
+      "open": "Open",
+      "org": "Organization",
+      "plugin": "Plugin",
+      "time": "Time",
+      "waiting": "Waiting",
+      "failed": "Failed",
+      "request": {
+        "kind": {
+          "access": "Access request",
+          "import": "Import request"
+        },
+        "requester": "Requested by",
+        "version": "Version",
+        "note": "Note",
+        "hint": {
+          "access": "{org} asks to use this plugin. Approve or reject it in the Pending tab of the Plugins page; once approved, the organization can use it at once.",
+          "import": "{org} asks to bring this plugin in from a marketplace. Approve or reject it in the Pending tab of the Plugins page; approving opens the import review, scoped to that organization by default."
+        }
+      },
+      "permission": {
+        "label": "Permissions to confirm",
+        "version": "Version",
+        "hint": "The permissions this plugin's extension declares wait for a super admin's confirmation. Review and confirm them in the Pending tab of the Plugins page.",
+        "hintBuiltin": "This built-in plugin's extension permissions wait for a super admin's confirmation; it keeps running meanwhile. Review and confirm them in the Pending tab of the Plugins page."
+      },
+      "sync": {
+        "label": "Scope sync failed",
+        "op": {
+          "install": "Not turned on",
+          "uninstall": "Not turned off",
+          "dependencies": "Dependencies not installed"
+        },
+        "code": "Error code",
+        "message": "Message",
+        "hint": {
+          "install": "The plugin's scope turns it on in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
+          "uninstall": "The plugin's scope turns it off in {org}, but the sync failed. It is tried again the next time this plugin and organization sync: once the cause is fixed, changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not).",
+          "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (import a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
+        }
+      },
+      "migration": {
+        "label": "Platform components migration",
+        "stuck": "Unfinished",
+        "failed": "{n, plural, one {# plugin failed} other {# plugins failed}}",
+        "started": "Started",
+        "finished": "Finished",
+        "items": "Failed plugins",
+        "hintStuck": "The latest run has not finished an hour after it started; its worker may have stopped. It runs again at the next worker start or daily run.",
+        "hintFailed": "The latest run could not write these plugins' platform components; the next run tries again. See the kernel log for the cause."
+      },
+      "orgUpload": {
+        "label": "Upload to confirm",
+        "title": "{org} uploaded {name}, waiting for confirmation",
+        "hint": "The upload carries an extension. Review its permissions in the Pending tab of the Plugins page, then confirm or reject it; nothing of it is usable until then.",
+        "newPlugin": "New plugin"
+      },
+      "transferred": {
+        "label": "Now owned by the platform",
+        "title": "{name} now belongs to the platform ({why})",
+        "reason": {
+          "owner_deleted": "{org} deleted it",
+          "org_deleted": "{org} was deleted"
+        },
+        "usedBy": "{count, plural, one {# organization still uses it.} other {# organizations still use it.}}",
+        "hint": "Its scope and the organizations using it are kept. Manage it like any platform item.",
+        "dismiss": "Got it",
+        "view": "View",
+        "dismissed": "Dismissed."
       }
     },
     "accounts": {
@@ -2325,19 +2963,19 @@
         "active": "Active",
         "disabled": "Deactivated"
       },
-      "enterpriseAdmin": "Enterprise admin",
+      "superAdmin": "Super admin",
       "menu": {
-        "grant": "Grant enterprise admin",
-        "revoke": "Revoke enterprise admin",
+        "grant": "Grant super admin",
+        "revoke": "Revoke super admin",
         "disable": "Deactivate account",
         "enable": "Reactivate account"
       },
       "confirm": {
-        "grantTitle": "Make {name} an enterprise admin?",
-        "grantHint": "Enterprise admins manage the whole deployment: accounts, organizations, extensions and deployment settings.",
+        "grantTitle": "Make {name} a super admin?",
+        "grantHint": "Super admins manage the whole deployment: accounts, organizations, extensions and deployment settings.",
         "grant": "Grant",
-        "revokeTitle": "Revoke enterprise admin from {name}?",
-        "revokeHint": "The account will no longer be able to open the admin console. The last enterprise admin cannot be revoked.",
+        "revokeTitle": "Revoke super admin from {name}?",
+        "revokeHint": "The account will no longer be able to open the admin console. The last super admin cannot be revoked.",
         "revoke": "Revoke",
         "disableTitle": "Deactivate {name}?",
         "disableHint": "The account is signed out at once; its sessions and personal tokens stop working.",
@@ -2347,10 +2985,10 @@
         "enable": "Reactivate"
       },
       "done": {
-        "grant": "{name} is now an enterprise admin.",
-        "revoke": "{name} is no longer an enterprise admin.",
-        "disable": "{name} was deactivated.",
-        "enable": "{name} was reactivated."
+        "grant": "\"{name}\" is now a super admin.",
+        "revoke": "\"{name}\" is no longer a super admin.",
+        "disable": "\"{name}\" was deactivated.",
+        "enable": "\"{name}\" was reactivated."
       },
       "form": {
         "title": "New account",
@@ -2359,14 +2997,14 @@
         "passwordHelp": "At least 12 characters; ask the person to change it after signing in.",
         "displayName": "Display name",
         "email": "Email",
-        "enterpriseAdmin": "Make enterprise admin",
+        "superAdmin": "Make super admin",
         "submit": "Create",
-        "created": "Created account {name}"
+        "created": "Created account \"{name}\"."
       }
     },
     "orgs": {
       "title": "Organizations",
-      "hint": "Empty values use the deployment default, and organization admins can only view them in their settings; to manage settings inside an organization, you need to be an admin of that organization.",
+      "hint": "Empty values use the deployment default, and org admins can only view them in their settings; to manage settings inside an organization, you need to be an org admin.",
       "empty": "No organizations yet.",
       "default": "Default",
       "edit": "Set limits",
@@ -2415,11 +3053,11 @@
       "deny": "Deny",
       "orgCreation": {
         "title": "Who can create organizations",
-        "description": "When restricted, only enterprise admins can create organizations.",
+        "description": "When restricted, only super admins can create organizations.",
         "anyone": "Anyone",
         "anyoneHint": "Any signed-in user can create an organization.",
-        "enterprise_admin": "Enterprise admins only",
-        "enterprise_adminHint": "Other users can only join organizations they are invited to."
+        "super_admin": "Super admins only",
+        "super_adminHint": "Other users can only join organizations they are invited to."
       },
       "currency": {
         "title": "Price currency",
@@ -2431,7 +3069,7 @@
       "customConnectors": {
         "title": "Custom connectors",
         "description": "Whether organizations may add connectors themselves, outside the catalog.",
-        "allowHint": "Organization admins can add connectors themselves or install them from the catalog.",
+        "allowHint": "Org admins can add connectors themselves or install them from the catalog.",
         "denyHint": "Organizations can only install connectors from the catalog."
       },
       "customSkills": {
@@ -2443,8 +3081,6 @@
     },
     "extensions": {
       "title": "Extensions",
-      "install": "Install extension",
-      "hint": "Every extension on this deployment. Installing, enabling, disabling and upgrading need no restart: replicas converge within seconds of a change.",
       "empty": "No extensions yet.",
       "noResults": "No extensions match the filters.",
       "sensitive": "Sensitive",
@@ -2455,7 +3091,9 @@
         "source": "Source",
         "status": "Status",
         "sensitive": "Sensitive",
-        "replicas": "Replicas"
+        "replicas": "Replicas",
+        "capabilities": "Capabilities",
+        "scope": "Scope"
       },
       "filters": {
         "status": "Status",
@@ -2558,7 +3196,7 @@
         "done": {
           "enable": "Enable submitted; replicas are converging.",
           "disable": "Disable submitted; replicas are converging.",
-          "uninstall": "Uninstalled “{name}”."
+          "uninstall": "Uninstalled \"{name}\"."
         },
         "packageError": "The extension package cannot be read: {error}."
       },
@@ -2579,44 +3217,6 @@
           "bootstrap": "bootstrap (npm)"
         }
       },
-      "wizard": {
-        "title": "Install extension",
-        "upgradeTitle": "Upgrade “{name}”",
-        "steps": {
-          "source": "Source",
-          "review": "Review permissions",
-          "confirm": "Confirm"
-        },
-        "sourceLabel": "Source",
-        "sourceFile": "Upload an extension package (.tgz)",
-        "sourceNpm": "Fetch from npm",
-        "sourceFileHint": "An npm-pack tgz (the repository's pack-plugin tool builds one).",
-        "sourceNpmHint": "Download it from the npm registry by name and version.",
-        "choose": "Choose a .tgz file",
-        "drop": "Drop the .tgz file to choose it",
-        "npmPackage": "npm package",
-        "npmVersion": "Version",
-        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
-        "upload": "Upload and review",
-        "fetch": "Fetch and review",
-        "cancelled": "Upload cancelled.",
-        "next": "Next",
-        "back": "Back",
-        "cancel": "Cancel",
-        "package": "{name} {version}",
-        "sha": "Package sha256: {sha}",
-        "newInstall": "New extensions start disabled; they load once their permissions are approved and they are enabled.",
-        "upgradeFrom": "Upgrades from {from} to {to}.",
-        "upgradeMismatch": "This package is extension “{got}”, not “{want}” which you are upgrading.",
-        "conflictConfig": "“{name}” is declared in the startup config; an extension with the same name cannot be installed here.",
-        "ack": "I understand the sensitive items",
-        "ackHint": "This extension has sensitive items (highlighted). Check each one before confirming.",
-        "enableAfter": "Enable right after installing",
-        "install": "Install",
-        "done": "Installed “{name}”; replicas are converging.",
-        "failedAfterInstall": "The extension is installed but a later step did not finish. Continue on the extension's page.",
-        "sessionExpired": "Your sign-in has expired. Sign in again, then upload."
-      },
       "config": {
         "none": "This extension has no deployment config.",
         "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
@@ -2632,12 +3232,6 @@
         "appliesNow": "These changes apply as soon as they are saved.",
         "noChanges": "No changes yet."
       },
-      "tabs": {
-        "all": "All",
-        "attention": "Needs attention",
-        "enabled": "Enabled",
-        "disabled": "Disabled"
-      },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
       "configure": "Configure",
@@ -2645,10 +3239,24 @@
       "upgrade": "Upgrade",
       "meta": {
         "points": "{n, plural, one {# extension point} other {# extension points}}",
-        "permissions": "{n, plural, one {# permission} other {# permissions}}"
+        "permissions": "{n, plural, one {# permission} other {# permissions}}",
+        "orgs": "Enabled in {n} organizations"
       },
       "loadFailed": "Could not load extensions.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "importPlugin": "Import a plugin",
+      "builtin": "Built-in",
+      "description": "Code from plugins that runs on the deployment. Deployment config, permissions and run status live here.",
+      "wizard": {
+        "choose": "Choose a .tgz file",
+        "drop": "Drop the .tgz file to choose it",
+        "npmPackage": "npm package",
+        "npmVersion": "Version",
+        "npmVersionHelp": "A version, dist-tag or range; leave empty for latest.",
+        "next": "Next",
+        "back": "Back",
+        "cancel": "Cancel"
+      }
     }
   },
   "members": {
@@ -2665,11 +3273,11 @@
     "roleOf": "Role of {name}",
     "roles": {
       "guest": "Guest",
-      "member": "Member",
-      "admin": "Admin",
-      "owner": "Owner"
+      "member": "Org member",
+      "admin": "Org admin",
+      "owner": "Org owner"
     },
-    "roleChanged": "Changed {name} to {role}.",
+    "roleChanged": "Changed \"{name}\" to {role}.",
     "empty": "No members yet.",
     "menu": {
       "transfer": "Transfer ownership",
@@ -2680,11 +3288,11 @@
       "removeHint": "They lose access to this organization immediately: their sessions and tokens are revoked, and their agents and other resources go through offboarding.",
       "remove": "Remove",
       "transferTitle": "Transfer ownership to {name}?",
-      "transferHint": "They become an owner and you become an admin.",
+      "transferHint": "They become an org owner and you become an org admin.",
       "transfer": "Transfer"
     },
-    "removed": "Removed {name}",
-    "transferred": "Transferred ownership to {name}",
+    "removed": "Removed \"{name}\".",
+    "transferred": "Transferred ownership to \"{name}\".",
     "invitations": {
       "title": "Invitations",
       "empty": "No invitations yet.",
@@ -2738,13 +3346,14 @@
     "signup": "Create account and join",
     "backToSignIn": "Have an account? Sign in",
     "invalidTitle": "Invitation link no longer valid",
-    "invalidHint": "Ask the admin who invited you to send a new invitation.",
+    "invalidHint": "Ask the org admin who invited you to send a new invitation.",
     "goHome": "Go to Capybara"
   },
   "catalog": {
-    "policy": {
-      "allow": "Allowed",
-      "needs_approval": "Needs approval",
+    "scope": {
+      "all": "All organizations",
+      "optional": "Organizations choose",
+      "named": "Selected organizations",
       "disabled": "Disabled"
     },
     "source": {
@@ -2786,61 +3395,48 @@
       "agentTools": "Tools: {tools}",
       "agentToolsInherit": "Tools: those of the agent that dispatches it",
       "agentToolsRemoved": "Removed tools: {tools}",
-      "agentInstructions": "Instructions of {name}"
+      "agentInstructions": "Instructions of {name}",
+      "nameTakenBy": "The name is used by {owner}",
+      "ownerPlatform": "the platform"
     },
     "admin": {
-      "title": "Catalog",
-      "hint": "Plugins in the catalog can be installed by organizations; the policy decides whether they can install directly.",
-      "empty": "The catalog has no items yet.",
+      "title": "Plugins",
+      "empty": "No plugins yet. Bring one in from a marketplace or upload a plugin package.",
       "noResults": "No items match the filters.",
-      "columns": {
-        "name": "Name",
-        "version": "Version",
-        "source": "Source",
-        "policy": "Policy",
-        "installs": "Organizations"
-      },
       "filters": {
         "source": "Source",
         "allSources": "All sources"
       },
       "actions": {
-        "import": "Import",
-        "entries": "Browse marketplaces",
-        "requests": "Deployment requests"
+        "addSource": "Add marketplace source",
+        "upload": "Upload plugin package"
       },
       "detail": {
-        "tabsLabel": "Item details",
+        "tabsLabel": "Plugin",
         "tabs": {
-          "overview": "Overview",
-          "versions": "Versions"
+          "versions": "Versions",
+          "components": "Components",
+          "orgs": "Organizations"
         },
-        "deleted": "This item was deleted. Organizations can no longer see it; installed components are not affected.",
+        "deleted": "This plugin was deleted. Organizations can no longer see it; installed components are not affected.",
         "fields": {
-          "package": "npm package",
+          "package": "Package",
           "publisher": "Publisher",
-          "latest": "Latest version",
           "source": "Source",
-          "installs": "Organizations",
           "updated": "Updated",
-          "origin": "Origin"
+          "origin": "Origin",
+          "scope": "Scope",
+          "orgs": "Organizations using it",
+          "permissions": "Permissions",
+          "owner": "Owner"
         },
-        "policyTitle": "Policy",
-        "policyHint": "Allowed: organization admins install directly. Needs approval: an enterprise admin approves after the organization admin asks. Disabled: no new installs; existing installs are not affected.",
-        "policySaved": "Policy changed to “{policy}”",
-        "deployTitle": "Install to the deployment",
-        "deployHint": "Install a version of the extension on the deployment (a new install starts disabled and its permissions still need approval in the extension admin). Organizations can enable it only after that.",
-        "deployVersion": "Version",
-        "deploy": "Install to deployment",
-        "deployed": "Installed on the deployment: {name}",
-        "openExtension": "Open extension admin",
-        "delete": "Delete item",
+        "delete": "Delete plugin",
         "deleteConfirm": {
-          "title": "Delete item {name}",
-          "hint": "Organizations will no longer see this item; installed components are not affected. You can import it again later.",
+          "title": "Delete plugin {name}",
+          "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
           "confirm": "Delete"
         },
-        "deletedToast": "Deleted {name}",
+        "deletedToast": "Deleted \"{name}\".",
         "versionColumns": {
           "version": "Version",
           "source": "Source",
@@ -2850,11 +3446,53 @@
           "origin": "Origin",
           "format": "Format"
         },
-        "contentChanged": "Its marketplace now has other content for a version already imported. Import it again from Browse marketplaces; it is recorded as a build of that version.",
+        "contentChanged": "Its marketplace now has other content for a version already imported. Bring it in again from the Marketplace tab; it is recorded as a build of that version.",
         "format": {
           "capybara": "Capybara",
           "claudeCode": "Claude Code"
-        }
+        },
+        "permissions": {
+          "none": "No extension",
+          "confirmed": "{n} · confirmed",
+          "pending": "{n} · to confirm"
+        },
+        "actions": {
+          "scope": "Set scope",
+          "update": "Update to {version}",
+          "disable": "Disable",
+          "enable": "Enable",
+          "import": "Import {version}"
+        },
+        "componentColumns": {
+          "name": "Component",
+          "kind": "Kind",
+          "version": "Version",
+          "scope": "Scope"
+        },
+        "kind": {
+          "extension": "Extension",
+          "skill": "Skill",
+          "connectorTemplate": "Connector template",
+          "agentTemplate": "Agent template"
+        },
+        "componentsEmpty": "This version has no components.",
+        "orgsHint": {
+          "all": "All organizations: on in every organization; org admins cannot turn it off.",
+          "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
+          "named": "Selected organizations: only the organizations below can use it."
+        },
+        "orgColumns": {
+          "name": "Organization",
+          "slug": "Slug"
+        },
+        "orgsEmpty": "No organizations yet.",
+        "enabledToast": "Enabled \"{name}\".",
+        "disabledToast": "Disabled \"{name}\".",
+        "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again once it is enabled.",
+        "notShareableNote": "Its organization does not share it: you can narrow its scope or disable it, but not show it to or associate it with other organizations.",
+        "ownerNote": "It belongs to {org}; new versions come from that organization.",
+        "awaitingNote": "Its first version waits for a super admin's confirmation in the Pending tab; nothing of it is usable until then.",
+        "pendingVersionNote": "Version {version} uploaded by its organization waits for a super admin's confirmation in the Pending tab."
       },
       "review": {
         "title": "Import plugin",
@@ -2884,18 +3522,16 @@
         "mismatch": "The permission summary in the marketplace does not match the downloaded package (the package is what counts).",
         "mismatchMissing": "Not listed in the marketplace: {keys}",
         "mismatchExtra": "Listed in the marketplace but not requested: {keys}.",
-        "deployExtension": "Also install the extension on the deployment",
         "deployOn": "After confirming, the extension is installed (or upgraded) on the deployment and enabled.",
-        "deployOff": "If unchecked, the extension is only recorded in the catalog and is not installed. Organizations cannot use the plugin until an enterprise admin installs its extension on the deployment.",
         "noExtension": "This plugin has no extension, so nothing is installed on the deployment.",
         "keepExtension": "The extension {name} {version} is already installed on the deployment.",
         "ackHint": "The plugin has sensitive permissions or migration warnings. Review them before confirming.",
         "ack": "I understand the sensitive items",
         "confirm": "Confirm import",
-        "done": "Imported plugin {name}",
+        "done": "Imported plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
-        "openItem": "Open item",
+        "openItem": "Open plugin",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
         "sourceGit": "Git repository",
@@ -3004,11 +3640,15 @@
           "license": "License text",
           "licenseTruncated": "The LICENSE file is longer than 64 KiB (or not UTF-8), so its text is not stored.",
           "bidiWarning": "This text contains bidirectional or control characters: what is shown may differ from what the model reads."
-        }
+        },
+        "scopeTitle": "Scope",
+        "olderThanDeployed": "Lower than the deployed version: it is only added to the catalog; the deployment is not changed.",
+        "requestDefault": "Requested by {org}: by default only that organization gets it.",
+        "namedNeedsOrg": "Choose at least one organization."
       },
       "entries": {
         "title": "Browse marketplaces",
-        "empty": "No marketplace entries. Add or refresh a marketplace under Sources first.",
+        "empty": "No marketplace entries. Add or refresh a marketplace with Add marketplace source.",
         "noResults": "No entries match.",
         "truncated": "There are too many entries and the list is truncated. Narrow it down by marketplace or keyword.",
         "search": "Search",
@@ -3044,11 +3684,16 @@
         "view": "View",
         "homepage": "Homepage",
         "loadFailed": "Marketplace entries failed to load.",
-        "retry": "Retry"
+        "retry": "Retry",
+        "adoptedUpdate": "Imported {version} · update to {latest} available",
+        "update": "Update",
+        "otherVersions": "Other versions",
+        "deprecated": "{version} (deprecated)",
+        "deprecatedReason": "{version} (deprecated: {reason})"
       },
       "marketplaces": {
-        "title": "Marketplaces",
-        "description": "Each entry is one version of a plugin, from the sources set up here. It becomes a catalog item only after you import it; the package is downloaded, checked against the marketplace's integrity and reviewed before it is added.",
+        "title": "Marketplace sources",
+        "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
         "noMatch": "No matching sources.",
         "official": "Official marketplace",
@@ -3072,25 +3717,25 @@
         },
         "refresh": "Refresh now",
         "refreshed": "Refreshed {name}",
-        "enterprise": "Enterprise marketplaces",
-        "enterpriseHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
-        "enterpriseEmpty": "No enterprise marketplaces yet.",
+        "custom": "Custom marketplaces",
+        "customHint": "Only https addresses are accepted; the token is sent only to the marketplace's own origin.",
+        "customEmpty": "No custom marketplaces yet.",
         "name": "Name",
         "token": "Token",
         "tokenHelp": "Optional; leave empty to keep it unchanged.",
         "tokenSet": "Token set",
         "clearToken": "Clear token",
         "save": "Save",
-        "saved": "Saved {name}",
+        "saved": "Saved \"{name}\".",
         "remove": "Remove",
         "removeConfirm": {
           "title": "Remove marketplace {name}",
           "hint": "Its cached entries are removed; catalog items already imported are kept.",
           "confirm": "Remove"
         },
-        "removed": "Removed {name}",
-        "add": "Add enterprise marketplace",
-        "added": "Added {name}",
+        "removed": "Removed \"{name}\".",
+        "add": "Add custom marketplace",
+        "added": "Added \"{name}\".",
         "form": "Type",
         "formHttp": "marketplace.json URL",
         "formGit": "Git repository",
@@ -3112,75 +3757,114 @@
           }
         }
       },
-      "requests": {
-        "title": "Deployment requests",
-        "listLabel": "Pending requests",
-        "empty": "No pending requests.",
-        "emptyHint": "Requests from organizations to install items that need approval appear here.",
-        "pick": "Pick an item on the left.",
-        "inspectorTitle": "Details",
-        "columns": {
-          "request": "Request",
-          "time": "Time"
+      "tabs": {
+        "installed": "Installed",
+        "market": "Marketplace",
+        "pending": "Pending"
+      },
+      "search": "Search plugins",
+      "description": "A plugin bundles an extension, skills, connector templates and agent templates. Bring one in from a marketplace or upload it; it is installed once its permissions are confirmed.",
+      "chips": {
+        "builtin": "Built-in",
+        "claudeCode": "Claude Code",
+        "owner": "Owner: {org}",
+        "notShareable": "Not shared by its organization"
+      },
+      "meta": {
+        "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
+        "named": "Selected: {orgs}",
+        "components": {
+          "extension": "{n, plural, one {# extension} other {# extensions}}",
+          "skills": "{n, plural, one {# skill} other {# skills}}",
+          "connectorTemplates": "{n, plural, one {# connector template} other {# connector templates}}",
+          "agentTemplates": "{n, plural, one {# agent template} other {# agent templates}}",
+          "none": "No components"
+        }
+      },
+      "state": {
+        "running": "Running",
+        "update": "Update available {version}",
+        "pending": "Permissions to confirm",
+        "disabled": "Disabled"
+      },
+      "rowConfirm": "Confirm permissions",
+      "scopeDialog": {
+        "title": "Set the scope of {name}",
+        "scopeLabel": "Scope",
+        "hints": {
+          "all": "On in every organization, including new ones; org admins cannot turn it off.",
+          "optional": "Off by default; each org admin turns it on.",
+          "named": "On only in the organizations you choose."
         },
-        "fields": {
-          "org": "Organization",
-          "requester": "Requested by",
-          "version": "Version",
-          "requested": "Requested",
-          "orgApproved": "Approved by org admin",
-          "note": "Note"
+        "orgsLabel": "Organizations",
+        "orgsNone": "No organizations yet.",
+        "shown": "Show to other organizations",
+        "shownHint": "Other organizations see it and can ask for it, but cannot use it.",
+        "next": "Preview impact",
+        "back": "Back",
+        "cancel": "Cancel",
+        "confirm": "Confirm",
+        "saved": "Scope of \"{name}\" saved.",
+        "stale": "The impact changed; review it again, then confirm.",
+        "narrowOnly": "Its organization does not share it: you can only remove organizations it is associated with. The owner organization stays.",
+        "ownerKept": "The owner organization always keeps it."
+      },
+      "impact": {
+        "none": "No organization loses access.",
+        "affected": "These organizations lose access; the agents that use it are listed:",
+        "agents": "Agents: {names}",
+        "noAgents": "No agent uses it.",
+        "connectorsKept": "{count, plural, one {The connector it created stays} other {The # connectors it created stay}} as the organization's own, with credentials.",
+        "needsConfig": "These organizations need to fill in its organization config first: {orgs}",
+        "replaced": "These components have their own scope; after the change they follow the plugin again: {names}",
+        "conflicts": "These organizations already have a skill with the same name, so this change is not possible. Rename or delete the skill there first:",
+        "conflictLine": "{org}: {name}"
+      },
+      "disableDialog": {
+        "title": "Disable {name}",
+        "hint": "Once disabled, nobody on the deployment can use it; its scope is kept and you can enable it again later.",
+        "confirm": "Disable"
+      },
+      "pending": {
+        "listLabel": "Pending",
+        "empty": "Nothing is waiting.",
+        "emptyHint": "Plugins whose permissions need confirming and organizations' requests appear here.",
+        "permissionsDescription": "Its extension's permissions are not confirmed yet; once confirmed it runs with them.",
+        "builtinDescription": "The built-in plugin is running; the permissions of this version are not confirmed yet.",
+        "waiting": "Waiting",
+        "review": "Review permissions",
+        "confirmTitle": "Confirm the permissions of {name}",
+        "confirmHint": "The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+        "confirm": "Confirm permissions",
+        "confirmed": "Permissions of \"{name}\" confirmed.",
+        "noHash": "The plugin's extension package cannot be read, so it cannot be confirmed yet.",
+        "kind": {
+          "access": "Asks for access",
+          "import": "Asks to bring in",
+          "enable": "Asks to enable"
         },
-        "hint": "Once approved, this organization can install the item (for every version).",
+        "requester": "By {name}",
         "approve": "Approve",
         "reject": "Reject",
         "approved": "Approved",
-        "rejected": "Rejected"
-      },
-      "tabs": {
-        "plugins": "Plugins",
-        "requests": "Deployment requests",
-        "browse": "Browse",
-        "sources": "Sources"
-      },
-      "search": "Search plugins"
+        "rejected": "Rejected",
+        "rejectTitle": "Reject the request of {org}",
+        "reason": "Reason",
+        "reasonHelp": "Optional; the requester sees it.",
+        "upload": {
+          "by": "Uploaded by {org}",
+          "newPlugin": "New plugin",
+          "update": "Update {from} → {to}",
+          "extension": "It carries an extension: once confirmed, its code runs in the kernel process for the whole deployment.",
+          "confirm": "Confirm",
+          "confirmHint": "{org} uploaded this version. The extension's code runs in the kernel process for the whole deployment, whatever its scope.",
+          "rejectTitle": "Reject {name} uploaded by {org}",
+          "reasonHelp": "Optional; the uploading organization sees it.",
+          "rejected": "Rejected \"{name}\"."
+        }
+      }
     },
     "org": {
-      "title": "Plugins",
-      "hint": "Plugins provided by your enterprise admins.",
-      "empty": "There are no items in the catalog yet.",
-      "columns": {
-        "name": "Name",
-        "description": "Description",
-        "status": "Status"
-      },
-      "status": {
-        "installed": "Installed {version}",
-        "yes": "Available",
-        "granted": "Approved",
-        "needs_approval": "Needs enterprise admin approval",
-        "disabled": "Disabled",
-        "not_deployed": "Extension not deployed",
-        "requested": "Requested, waiting"
-      },
-      "action": {
-        "install": "Install",
-        "requestApproval": "Ask an enterprise admin",
-        "request": "Request install",
-        "disabledHint": "An enterprise admin disabled this item; it cannot be newly installed.",
-        "notDeployedHint": "Its extension (or one its connector templates need) is not installed on the deployment yet. Contact an enterprise admin.",
-        "pendingHint": "A request has been submitted ({stage}) and is waiting.",
-        "stage": {
-          "org": "organization admin",
-          "deployment": "enterprise admin"
-        },
-        "installed": "Installed {name}",
-        "requested": "Request submitted",
-        "approvalRequested": "Enterprise admin approval is needed; a request was submitted.",
-        "openPlugins": "View installed plugins",
-        "upgradeAvailable": "Upgrade available: {version}",
-        "upgrade": "Upgrade"
-      },
       "detail": {
         "tabsLabel": "Item details",
         "tabs": {
@@ -3189,11 +3873,14 @@
         "fields": {
           "publisher": "Publisher",
           "version": "Version",
-          "status": "Status"
+          "status": "Status",
+          "owner": "Owner"
         }
       },
       "install": {
-        "title": "Install {name}",
+        "title": "Turn on {name}",
+        "alreadyOn": "{name} is already on; nothing to fill in.",
+        "backToPlugin": "Back to the plugin",
         "connectorStep": "Connector: {name}",
         "extensionStep": "Extension settings",
         "confirmStep": "Confirm",
@@ -3211,17 +3898,17 @@
         "extensionHint": "This plugin enables its extension in this organization. Fill in the organization settings if it has any (an extension already enabled keeps its settings).",
         "extensionNone": "No extension settings to fill in.",
         "extensionEnabled": "{name}: already enabled in this organization; settings unchanged.",
-        "summary": "This will install:",
+        "summary": "Turning it on gives this organization:",
         "summaryExtension": "extension {name}",
         "summaryTemplates": "{n} connectors",
         "summarySkills": "{n} skills",
         "summaryDependencies": "Installed with it first (unless this organization already has them):",
-        "submit": "Install",
+        "submit": "Turn on",
         "next": "Next",
         "back": "Back",
         "cancel": "Cancel",
-        "failed": "Installing failed at the “{step}” step ({code}); the components it created were rolled back.",
-        "failedNoRollback": "Installing failed at the “{step}” step ({code}) and some components could not be rolled back; uninstall it under Installed plugins to clean up.",
+        "failed": "Turning it on failed at the “{step}” step ({code}); the components it created were rolled back.",
+        "failedNoRollback": "Turning it on failed at the “{step}” step ({code}) and some components could not be rolled back; clean it up on the plugin's page.",
         "failedIn": "(in dependency {dependency})",
         "step": {
           "dependencies": "dependencies",
@@ -3230,16 +3917,20 @@
           "skills": "skills",
           "finish": "finish"
         },
-        "notInstallable": "This plugin cannot be installed right now."
+        "notInstallable": "This plugin cannot be turned on right now."
       },
-      "tabs": {
-        "all": "All",
-        "installed": "Installed"
+      "connectors": {
+        "title": "Complete setup of {name}",
+        "confirmStep": "Confirm",
+        "next": "Next",
+        "backToPlugin": "Back to the plugin",
+        "nothing": "{name} misses no connector.",
+        "submit": "Create connectors",
+        "done": "Connectors created for \"{name}\".",
+        "summary": "{n} connectors will be created for this organization."
       }
     },
     "plugins": {
-      "title": "Installed plugins",
-      "empty": "This organization has not installed any plugins from the catalog.",
       "status": {
         "installing": "Installing",
         "installed": "Installed",
@@ -3260,7 +3951,6 @@
         "agent_template": "Agent template"
       },
       "installedAt": "Installed {at}",
-      "uninstall": "Uninstall",
       "cleanup": "Clean up",
       "confirm": {
         "title": "Uninstall {name}",
@@ -3278,15 +3968,15 @@
           "used_by_agents": "still used by agents",
           "used_by_other_install": "used by another plugin install",
           "used_by_connectors": "still used by connectors",
-          "used_by_plugins": "still required by plugins"
+          "used_by_plugins": "still required by plugins",
+          "wanted_by_scope": "kept on by its own scope",
+          "org_owned": "kept as the organization's own"
         },
         "dismiss": "Got it"
       },
       "inProgress": "This plugin is still being installed or upgraded and cannot be changed yet. If it was interrupted, you can clean it up here after the timeout.",
       "dropped": "no longer in the plugin; kept while still in use",
-      "upgradeAvailable": "Upgrade available: {version}",
-      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match.",
-      "upgrade": "Upgrade"
+      "deploymentPending": "The deployment updated this plugin's extension. Upgrade this organization's plugin to match."
     },
     "inbox": {
       "label": "Catalog request",
@@ -3294,7 +3984,7 @@
       "requester": "Requested by",
       "version": "Version",
       "note": "Note",
-      "hint": "If approved: allowed items can be installed by an organization admin; items that need approval are forwarded to an enterprise admin.",
+      "hint": "If approved: allowed items can be installed by an org admin; items that need approval are forwarded to a super admin.",
       "approve": "Approve",
       "reject": "Reject",
       "approved": "Catalog request approved",
@@ -3309,28 +3999,53 @@
       "pinned": "pinned commit",
       "registry": "npm registry {registry}"
     },
-    "upgrade": {
-      "title": "Upgrade {name}",
+    "update": {
+      "title": "Update {name}",
       "versions": "{from} → {to}",
-      "loading": "Previewing the upgrade…",
-      "changes": "Changes",
+      "loading": "Previewing the update…",
+      "components": "Components",
+      "columns": {
+        "name": "Component",
+        "kind": "Kind",
+        "change": "Change",
+        "version": "Version",
+        "marks": "Notes"
+      },
+      "kind": {
+        "skill": "Skill",
+        "connector_template": "Connector template",
+        "agent_template": "Agent template"
+      },
       "change": {
         "added": "Added",
-        "changed": "Changed",
         "removed": "Removed",
-        "unchanged": "Unchanged"
+        "upgrade": "Upgrade",
+        "downgrade": "Downgrade",
+        "same": "Unchanged"
       },
-      "line": "{change} · {kind} {ref}",
-      "noChanges": "Only the version changes.",
-      "connectorsInput": "New connector template {name}: fill it in as at install.",
-      "credentialsInput": "The authentication of {name} changed: enter its credentials again.",
-      "extensionConfig": "This upgrade enables the plugin's extension in this organization; its organization config:",
-      "confirm": "Upgrade",
+      "marks": {
+        "updatedOnOwn": "Updated on its own",
+        "ownScope": "Own scope",
+        "kept": "Kept (still in use)"
+      },
+      "marksHint": "Components updated on their own move to this version of the plugin; components with their own scope keep it.",
+      "pinned": "{name}: the copies in {orgs} are pinned to their own version and move to the new one.",
+      "keptLine": "{name} is not in the new version but agents still use it, so it is kept: {agents}",
+      "extension": "Extension {from} → {to}, for every organization using it at once: {orgs}",
+      "extensionNew": "The update installs the extension {to} on the deployment; organizations using it: {orgs}",
+      "extensionNoOrgs": "none yet",
+      "needsApproval": "The new version asks for more permissions: the extension waits for a super admin's confirmation.",
+      "connectors": "{org}: these connectors are updated from the new template: {names}",
+      "credentialsReset": "{org}: the authentication of {names} changed; their credentials are cleared and must be entered again.",
+      "needsConfig": "{org}: the added connector templates {ids} need the organization's address and credentials.",
+      "none": "No component changes; only the version moves.",
+      "confirm": "Update",
       "cancel": "Cancel",
-      "done": "Upgraded {name} to {version}.",
-      "requested": "Enterprise admin approval is needed; a request was submitted.",
-      "failed": "Upgrading failed at the “{step}” step ({code}); this organization's components are back at {version}.",
-      "failedNoRollback": "Upgrading failed at the “{step}” step ({code}) and could not be undone right away; it is undone automatically after the timeout."
+      "done": "Updated \"{name}\" to {version}.",
+      "stale": "What the update does has changed. Review it again, then confirm.",
+      "orgCount": "{count, plural, one {# organization} other {# organizations}}",
+      "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
+      "otherOrg": "another organization"
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -3340,12 +4055,17 @@
       "gitSuffix": "The git server redirects this repository URL; use the URL ending in .git.",
       "entry": "Refused entry: {path}",
       "pathEntry": "Marketplace entry {entry} (path {path})",
-      "sameVersion": "{version} is already installed in this organization.",
-      "deploymentVersion": "The deployment runs this plugin's extension at {deploymentVersion}; this organization can upgrade only to catalog version {allowedVersion}.",
-      "deploymentVersionNone": "The deployment runs this plugin's extension at {deploymentVersion}, but no imported catalog version carries it yet.",
-      "notDeployed": "The deployment does not run this plugin's extension; ask an enterprise admin to install it first.",
-      "dependentRange": "{dependent} in this organization depends on {range}, which {version} does not satisfy.",
-      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); uninstall the plugin and install the new version instead."
+      "sameVersion": "The platform already runs {version}.",
+      "dependentRange": "The plugin {dependent} depends on {range}, which {version} does not satisfy.",
+      "templateConnector": "Connector template {template} moves to another connector ({plugin} / {connector}); delete the plugin and import the new version as a new plugin instead.",
+      "configExtension": "This plugin's extension is declared in the startup config (the deployment runs {version}); an update cannot move it. Change the startup config first.",
+      "configExtensionUnloaded": "This plugin's extension is declared in the startup config; an update cannot move it. Change the startup config first.",
+      "extensionRemoved": "{version} has no extension, but the deployment runs it; uninstall the extension first.",
+      "extensionPackage": "The extension package of {version} is missing from the catalog; import that version again."
+    },
+    "owner": {
+      "self": "This org",
+      "platform": "Platform"
     }
   },
   "filePreviewers": {
@@ -3375,7 +4095,6 @@
       "title": "Sub-agent",
       "stop": "Stop sub-agent",
       "toolsNone": "None",
-      "readOnly": "Sub-agents are read-only · you can't message them",
       "loadFailed": "The sub-agent cannot be opened."
     },
     "contextTotal": "Total tokens with sub-agents {n}",
@@ -3406,22 +4125,22 @@
     "listLabel": "Your organizations",
     "enter": "Open",
     "create": "Create organization",
-    "askHint": "Ask an organization admin to invite you.",
+    "askHint": "Ask an org admin to invite you.",
     "admin": "Open the admin console",
     "logout": "Sign out"
   },
   "setupLayout": {
     "model": {
-      "needsDeploymentAdmin": "A deployment admin needs to set up a model service",
+      "needsDeploymentAdmin": "A super admin needs to set up a model service",
       "waitingForAdmin": "Waiting for an admin to set up a model"
     },
     "agent": {
       "needsModel": "Set up a model first",
-      "waitingForAdmin": "Waiting for an admin to create an agent"
+      "waitingForAdmin": "Waiting for an org admin to create an agent"
     },
-    "waiting": "The organization is still being set up. You can start chatting once an admin finishes.",
+    "waiting": "The organization is still being set up. You can start chatting once an org admin finishes.",
     "refresh": "Refresh",
-    "waitingDeployment": "A deployment admin needs to set up a model service before you can continue.",
+    "waitingDeployment": "A super admin needs to set up a model service before you can continue.",
     "steps": {
       "model": "Configure a model",
       "agent": "Create an agent",
@@ -3436,13 +4155,13 @@
       "member": "Org member",
       "admin": "Org admin",
       "owner": "Org owner",
-      "enterprise": "Enterprise admin"
+      "superAdmin": "Super admin"
     },
     "noAccess": {
       "title": "You don't have access",
       "description": "{page} is open to {role} only.",
-      "askOrg": "To get access, ask an admin or the owner of this organization.",
-      "askEnterprise": "To get access, ask an enterprise admin to grant it, or run capybara admin grant with your login on the server."
+      "askOrg": "To get access, ask an org admin of this organization.",
+      "askSuperAdmin": "To get access, ask a super admin to grant it, or run capybara admin grant with your login on the server."
     },
     "readOnly": "Read-only for your role ({role}); changes need an org admin."
   },
@@ -3452,10 +4171,10 @@
       "title": "Leave organization",
       "description": "You lose access to this organization, and the agents you own go to its owner. Your other organizations are not affected.",
       "confirm": "Leave organization",
-      "lastOwner": "You are the only owner of this organization. Transfer ownership to someone else under Members before leaving.",
+      "lastOwner": "You are the only org owner of this organization. Transfer ownership to someone else under Members before leaving.",
       "toMembers": "Go to Members",
       "gotIt": "Got it",
-      "left": "You left {name}"
+      "left": "You left \"{name}\"."
     },
     "danger": {
       "title": "Danger zone"
@@ -3480,10 +4199,10 @@
     "roleHelp": "At most your own role in this organization.",
     "expires": "Expires",
     "expiry": {
-      "never": "Never",
       "30": "30 days",
       "90": "90 days",
-      "365": "1 year"
+      "365": "1 year",
+      "never": "Never"
     },
     "createSubmit": "Create",
     "value": "Token",
@@ -3508,5 +4227,295 @@
     "loadFailed": "Couldn’t load service tokens.",
     "retry": "Retry",
     "expired": "Expired"
+  },
+  "plugins": {
+    "title": "Plugins",
+    "description": "Plugins the platform offers this organization, and the ones it asked for. Turning a plugin on turns on all its components.",
+    "empty": "The platform has not offered any plugins to this organization yet.",
+    "tabs": {
+      "plugins": "Plugins",
+      "market": "Marketplace"
+    },
+    "state": {
+      "on": "On",
+      "off": "Off",
+      "needs_config": "Needs configuration",
+      "platform": "On · set by the platform",
+      "not_offered": "Not offered, can be requested",
+      "requested": "Requested, waiting",
+      "unavailable": "Stopped by the platform",
+      "notDeployed": "Extension not deployed",
+      "awaiting": "Waiting for the super admin's confirmation"
+    },
+    "action": {
+      "enable": "Turn on",
+      "configure": "Organization config",
+      "disable": "Turn off",
+      "request": "Request",
+      "requestEnable": "Ask to turn on",
+      "requestImport": "Request import",
+      "connectors": "Complete setup",
+      "withdraw": "Withdraw",
+      "delete": "Delete"
+    },
+    "chips": {
+      "upgrade": "Update {version}",
+      "pendingVersion": "New version {version} waiting for the super admin's confirmation",
+      "ownUpload": "Uploaded by this organization"
+    },
+    "meta": {
+      "scope": "{owner} · {scope}"
+    },
+    "toast": {
+      "enabled": "\"{name}\" turned on.",
+      "disabled": "\"{name}\" turned off.",
+      "requested": "Request submitted.",
+      "withdrawn": "Upload of \"{name}\" withdrawn.",
+      "shareOn": "\"{name}\" is now shareable.",
+      "shareOff": "\"{name}\" is no longer shareable."
+    },
+    "switchOff": {
+      "title": "Turn off {name}",
+      "hint": "Turning it off removes the components this plugin created for this organization that nothing else uses; pre-existing and still-used ones are kept.",
+      "agents": "These agents use its components and will lose them:",
+      "removed": "Removed",
+      "kept": "Kept",
+      "none": "None",
+      "confirm": "Turn off",
+      "cancel": "Cancel",
+      "stale": "What this removes changed; review it again before confirming."
+    },
+    "market": {
+      "title": "Marketplace",
+      "empty": "The marketplaces have no entries yet.",
+      "adopted": "Imported",
+      "unavailable": "Cannot be imported",
+      "otherVersions": "Other versions",
+      "deprecated": "{version} (deprecated)",
+      "deprecatedReason": "{version} (deprecated: {reason})",
+      "requestVersion": "Request import of {version}",
+      "requestedVersion": "Requested {version}, waiting"
+    },
+    "detail": {
+      "installs": "This organization's install"
+    },
+    "upload": {
+      "action": "Upload plugin package",
+      "title": "Upload plugin package",
+      "choose": "Choose a plugin package",
+      "chooseHint": "A plugin package (.tgz); a single skill's .zip is uploaded to Skills.",
+      "drop": "Drop the file here",
+      "reading": "Reading \"{name}\"…",
+      "scope": "Scope: this organization only",
+      "shareable": "Shareable",
+      "newVersion": "This is a new version of this organization's plugin \"{name}\"; it keeps the plugin's shareable setting.",
+      "extensionNotice": "This plugin contains an extension, whose code runs in the platform's kernel process. It is turned on only after the super admin confirms it.",
+      "updateTitle": "Update preview",
+      "confirm": "Confirm upload",
+      "cancel": "Cancel",
+      "back": "Choose again",
+      "pending": "Submitted, waiting for the super admin's confirmation",
+      "installed": "\"{name}\" uploaded.",
+      "updated": "\"{name}\" updated to {version}.",
+      "skillUploaded": "Skill \"{name}\" uploaded.",
+      "stale": "The review of this package is out of date. Choose the file again."
+    },
+    "owned": {
+      "title": "This organization's plugin",
+      "shareable": "Shareable",
+      "shareableHelp": "When on, the super admin can show or offer this plugin to other organizations. Turning it off does not affect organizations it is already offered to.",
+      "pendingWithdraw": "Withdrawing deletes the version waiting for confirmation."
+    },
+    "delete": {
+      "title": "Delete {name}",
+      "loading": "Reading what deleting it does…",
+      "transferred": "Other organizations still use it; after deletion it becomes platform-owned: {orgs}",
+      "removed": "This cannot be undone",
+      "agents": "These agents will lose it:",
+      "stale": "What deleting it does has changed; review it again before confirming.",
+      "confirm": "Delete",
+      "cancel": "Cancel",
+      "done": "\"{name}\" deleted.",
+      "doneTransferred": "\"{name}\" deleted; other organizations still use it, so it is now platform-owned."
+    }
+  },
+  "adminComponents": {
+    "titles": {
+      "skill": "Skills",
+      "connector_template": "Connector templates",
+      "agent_template": "Agent templates"
+    },
+    "descriptions": {
+      "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
+      "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
+      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here."
+    },
+    "tabs": {
+      "all": "All",
+      "platform": "Platform",
+      "org": "Created by organizations"
+    },
+    "empty": {
+      "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
+      "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported."
+    },
+    "emptyTab": {
+      "agent_template": "No agent templates under this tab."
+    },
+    "columns": {
+      "name": "Name",
+      "from": "From",
+      "owner": "Owner",
+      "scope": "Scope",
+      "version": "Version",
+      "orgs": "In use"
+    },
+    "from": {
+      "none": "Created on the platform",
+      "org": "Created by an org"
+    },
+    "view": "View",
+    "owner": {
+      "platform": "Platform"
+    },
+    "follow": "Follows its plugin",
+    "scopeFollow": "{scope} · follows its plugin",
+    "scopeOwn": "{scope} · own scope",
+    "orgsUsing": "{n, plural, one {# org using it} other {# orgs using it}}",
+    "state": {
+      "disabled": "Disabled",
+      "pluginStopped": "Plugin stopped",
+      "builtin": "Built-in"
+    },
+    "detail": {
+      "tabsLabel": "Component",
+      "tabs": {
+        "versions": "Versions",
+        "orgs": "Organizations"
+      },
+      "fields": {
+        "from": "From",
+        "owner": "Owner",
+        "scope": "Scope",
+        "orgs": "Orgs using it",
+        "version": "Version",
+        "state": "State"
+      },
+      "stateOn": "In use",
+      "noOrgs": "No organization uses it yet.",
+      "actions": {
+        "scope": "Set scope",
+        "disable": "Disable",
+        "enable": "Enable",
+        "upload": "Upload new version"
+      },
+      "versionColumns": {
+        "version": "Version",
+        "origin": "Origin",
+        "created": "Time"
+      },
+      "origin": {
+        "plugin": "With plugin {version}",
+        "own": "Updated on its own"
+      },
+      "enabledToast": "Enabled \"{name}\".",
+      "disabledToast": "Disabled \"{name}\".",
+      "disabledNote": "Disabled on the whole deployment; its scope is kept and applies again when it is enabled.",
+      "pluginStoppedNote": "Its plugin is disabled or deleted, so it is off in every organization.",
+      "orgsHint": {
+        "all": "All organizations: every organization uses it and org admins cannot turn it off.",
+        "optional": "Organizations choose: {n, plural, one {# organization has} other {# organizations have}} turned it on.",
+        "named": "Named organizations: only the organizations below can use it."
+      },
+      "orgOwnedNote": "It belongs to {org}; new versions come from that organization.",
+      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled."
+    },
+    "scopeDialog": {
+      "title": "Set the scope of {name}",
+      "follow": "Follows its plugin",
+      "followHint": "Uses the scope of the plugin {plugin} and changes with it.",
+      "saved": "Set the scope of \"{name}\"."
+    },
+    "disableDialog": {
+      "title": "Disable {name}",
+      "hint": "Nobody on the deployment can use it while it is disabled. Its scope is kept; you can enable it again later.",
+      "confirm": "Disable"
+    },
+    "upload": {
+      "title": "Upload a new version of {name}",
+      "skillHint": "Pick a skill package (.zip) whose skill is still named {name}. It becomes the new version and every organization uses it at once; it stays with its plugin, and the next plugin update moves it to the plugin's version.",
+      "templateHint": "Pick an agent template file (.md) still named {name}. It becomes the new version; agents created from it afterwards use it.",
+      "choose": "Choose a file",
+      "drop": "Drop a file here",
+      "confirm": "Upload",
+      "cancel": "Cancel",
+      "done": "Uploaded {version} of \"{name}\"."
+    },
+    "share": {
+      "show": "Show to other organizations",
+      "shownToast": "\"{name}\" is now shown to other organizations.",
+      "notShareable": "Not shared by its organization",
+      "notOwned": "It came from a plugin and cannot be shared"
+    }
+  },
+  "orgComponents": {
+    "state": {
+      "on": "On",
+      "off": "Off",
+      "platform": "On · set by the platform",
+      "pluginOff": "Plugin off"
+    },
+    "origin": {
+      "org": "This org",
+      "platform": "Platform"
+    },
+    "from": {
+      "plugin": "Plugin · {plugin}",
+      "platform": "Uploaded to the platform",
+      "org": "Uploaded by this org",
+      "orgNamed": "Uploaded by {org}"
+    },
+    "action": {
+      "enable": "Turn on",
+      "disable": "Turn off",
+      "plugin": "View plugin"
+    },
+    "toast": {
+      "enabled": "\"{name}\" is on.",
+      "disabled": "\"{name}\" is off."
+    },
+    "error": {
+      "conflict": {
+        "skill": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
+        "agent_template": "This organization already has an agent template of type {name}; agent template types are unique in an organization.",
+        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on."
+      },
+      "locked": "{name} is on for every organization by the platform and cannot be turned off here."
+    },
+    "switchOff": {
+      "title": "Turn off {name}",
+      "hint": {
+        "skill": "Once it is off, this organization's agents can no longer load this skill.",
+        "agent_template": "Once it is off, this organization's agents can no longer use this template as a sub-agent.",
+        "connector_template": "Once it is off, this organization can no longer create connectors from this template."
+      },
+      "agents": "These agents use it and will lose it:",
+      "noAgents": "No agent in this organization uses it.",
+      "connectorsKept": "The {n} connectors made from it stay, as this organization's own.",
+      "confirm": "Turn off",
+      "cancel": "Cancel",
+      "stale": "What this changes moved on before you confirmed; review it again."
+    },
+    "kind": {
+      "skill": "Skill",
+      "agent_template": "Agent template",
+      "connector_template": "Connector template"
+    },
+    "unavailable": "The components' state in this organization could not be read.",
+    "inOrg": "In this organization",
+    "noneInOrg": "This plugin offers no component to this organization.",
+    "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
+    "retry": "Retry"
   }
 }

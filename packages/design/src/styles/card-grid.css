@@ -1,0 +1,152 @@
+/* CardGrid and ObjectCard (spec §6.34, ruling P4-15): cards on the page ground, one box each, no
+   box around the grid. The name is the card's one link, stretched over the card (its ::after);
+   the description and the buttons sit above it, so the buttons never trigger it. */
+.cb-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-card-min)), 1fr));
+  gap: var(--cb-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-object-card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--cb-space-4);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+/* Hover: the `hover` ground over the card's panel (translucent in light), faded in over
+   motion.hover; below the content, above the card's own ground. */
+.cb-object-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--cb-hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--cb-motion-hover) ease-out;
+}
+.cb-object-card:not([data-skeleton="true"]):hover::before {
+  opacity: 1;
+}
+/* Keyboard focus is on the link; the ring goes around the card (spec §2.5, `:focus-visible` only). */
+.cb-object-card:has(.cb-object-card-link:focus-visible) {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-object-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-object-card-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+}
+/* An object without a picture: its icon on a 40 px tile (the avatar's size and radius). */
+.cb-object-card-avatar[data-kind="icon"] {
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+/* The link stays unpositioned (also while its navigation is pending), so its ::after covers the
+   card and the pending mark runs along the card's bottom edge. */
+.cb-object-card .cb-object-card-link {
+  position: static;
+  flex: 1;
+  min-width: 0;
+  color: var(--cb-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.cb-object-card-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.cb-object-card-link:focus-visible {
+  outline: none;
+}
+.cb-object-card-name {
+  position: relative;
+  z-index: 1;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-object-card-head > .cb-object-card-name {
+  flex: 1;
+  min-width: 0;
+}
+.cb-object-card-desc {
+  position: relative;
+  z-index: 1;
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  cursor: pointer;
+}
+.cb-object-card[data-skeleton="true"] .cb-object-card-desc {
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+}
+.cb-object-card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+  margin-top: auto;
+}
+.cb-object-card-foot > .cb-btn {
+  position: relative;
+  z-index: 1;
+  flex: none;
+}
+.cb-object-card-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-object-card-meta-part[data-tone="warn"] {
+  color: var(--cb-warn);
+}
+@media (max-width: 639px) {
+  .cb-card-grid {
+    grid-template-columns: 1fr;
+  }
+  /* The primary and the menu are 40 px tap targets on phones. */
+  .cb-object-card-foot > .cb-btn,
+  .cb-object-card-foot > .cb-skeleton-box {
+    min-width: 40px;
+    min-height: 40px;
+  }
+}

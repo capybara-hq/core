@@ -38,7 +38,7 @@ beforeEach(async () => {
       login: "admin",
       password: PW,
       displayName: "A",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   await accounts.createLocal({ login: "user", password: PW, displayName: "U" });
@@ -115,7 +115,7 @@ describe("/api/v1/admin/model-prices", () => {
     expect(table.get(priceKey("anthropic", "claude-x"))).toBeUndefined();
   });
 
-  it("非企业管理员 403；未登录 401", async () => {
+  it("非超级管理员 403；未登录 401", async () => {
     for (const req of [
       () => user({ method: "GET", url: "/api/v1/admin/model-prices" }),
       () => user({ method: "PUT", url: "/api/v1/admin/model-prices", payload: M1 }),
@@ -160,10 +160,10 @@ describe("/api/v1/admin/model-prices", () => {
     }
   });
 
-  it("写入时复核企业管理员身份（已被撤销 → forbidden）", async () => {
+  it("写入时复核超级管理员身份（已被撤销 → forbidden）", async () => {
     await db
       .updateTable("accounts")
-      .set({ is_enterprise_admin: false })
+      .set({ is_super_admin: false })
       .where("id", "=", adminId)
       .execute();
     await expect(k.app.get(PricesService).put(M1, adminId)).rejects.toMatchObject({

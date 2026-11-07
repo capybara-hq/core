@@ -267,7 +267,7 @@ test("switching org never shows the old org", async ({ page }) => {
     await sidebar.locator('button[data-part="account"]').click();
     await page.getByRole("menuitem", { name: zh.shell.orgMenu }).click();
     await page.getByRole("menuitemradio", { name: otherName }).click();
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(/\/chat$/);
     await hydrated(page);
     await expect(sidebar.locator('[data-part="org-switcher"]')).toHaveAttribute("title", otherName);
     // the agent list of the other org, by a client navigation

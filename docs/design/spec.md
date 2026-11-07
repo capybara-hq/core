@@ -19,6 +19,7 @@ Wording: **must** / **must not** are mandatory; **should** is the default practi
 4. **Compact and refined**: every size is a step of a named scale (§2.5); a container chooses the density step, pages never pick sizes. Numbers are monospaced and right-aligned; status always has text, never color alone.
 5. **Structure before style**: a page is composed of the App Shell (§4) and page templates (§5); pages never lay out the shell themselves.
 6. **Dark first, dark and light from one source**: the two themes share the same token names and only change the values; both ship together.
+7. **One box is enough** (acceptance item AB, maintainer decision 2026-11-07): inside a box (a Card, a FormSection's card, a Sheet, a Dialog, an InlineCard, a PropertySection, the narrow properties sheet) group with headings (`Subsection`, §6.32), hairlines (`line-soft`: `ItemList` rows, §6.33) and space, **never** a second bordered or filled box. The exceptions are card radios (option cards, §6.3: a choice drawn as cards on purpose), form controls (inputs, textareas, selects, steppers, the `FilePicker` drop zone in a Dialog, §6.25: a border that says "type or drop here", not a group) and a full-height pane (RightPanel, FilePanel, §6.16.18), which holds content like a page. Pieces that would draw a box inside one draw their unboxed form there by themselves: a DataTable is unframed (§6.6), a CodeBlock or an EmbedFrame has no line (§6.9), a Repeater's items are divided rows (§6.26), a Callout is the warn / fail line with its icon (§6.19), a PropertySection in the narrow sheet is a heading and hairline group (§6.16.17). What has no unboxed form (a Card, a FormSection, a DangerZone, an ObjectList, a LinkCard, StatCards, an InlineCard, a CardGrid and its ObjectCards, §6.34) is never drawn inside a box. Every box provides that "inside a box" context to what it holds (Card, FormSection's card, Dialog, Sheet, Popover, InlineCard, PropertySection, the narrow properties sheet, Callout, DangerZone, ObjectList: the boxes `web-ui-box-in-box` knows), and a full-height pane (RightPanel, the file preview) resets it. Enforced in both halves (§9.1): `web-ui-box-in-box` reads apps/web's JSX, and the jsdom guard `findNestedBoxes` checks what the design package and `/dev/ui` render.
 
 ---
 
@@ -109,7 +110,7 @@ Two fonts, each with a job:
 | Text (`accent` text / the `spinner` icon) | Something is happening: running, live, auto-refresh countdown, cursor |
 | Ground + left marker (`accent-tint` ground + `inset 2px 0 0 accent`) | The selected row / item |
 
-The accent color must not be used anywhere else. Selected segments and selected filter chips use the `selected` ground, not the accent. A **selection inside a control** is neutral too: a checked option card, the command palette's current row and the trace waterfall's selected row use the `selected` ground with a 1px `line-strong` border (the waterfall row, a row of a tree, a 2px `ink` marker on its left instead); the accent stays on the radio dot and the focus ring. Badges and marks never use the accent: a role ("企业管理员") is plain text, and attention is `warn` (§2.4).
+The accent color must not be used anywhere else. Selected segments and selected filter chips use the `selected` ground, not the accent. A **selection inside a control** is neutral too: a checked option card, the command palette's current row and the trace waterfall's selected row use the `selected` ground with a 1px `line-strong` border (the waterfall row, a row of a tree, a 2px `ink` marker on its left instead); the accent stays on the radio dot and the focus ring. Badges and marks never use the accent: a role ("超级管理员") is plain text, and attention is `warn` (§2.4).
 
 ### 2.4 Status encoding
 
@@ -142,7 +143,9 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
 | Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
-| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 | `--cb-layout-<name>` |
+| Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
+| Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
+| Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -157,7 +160,9 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 - The page-header primary action and the action-row actions are `default`.
 - Spacing usage: inside components steps 1–3; between components 2–3; between sections 4–6; page gutters `layout.gutter`. **If spacing can separate it, don't draw a line.**
 
-**Lines**: 1px. Column dividers, table row dividers and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and object lists use the `panel` ground with a 1px `line-card` hairline (`rgba(255,255,255,.08)` in dark, where the ground alone barely separates them; drawn as an inset shadow where a border would change the box); the table container has no border.
+**Lines**: 1px. Column dividers, table row dividers, the hairlines between rows or groups inside a box (`ItemList` rows, divided Repeater items, flush `Subsection`s, a divided `Grid`) and the status bar / action row top lines use `line-soft`. Borders (`line`) only on things that float over content or take input: inputs, buttons, chips, inline cards, overlays (`line-strong`). Cards, sections, stat cards, form field cards and object lists use the `panel` ground with a 1px `line-card` hairline (`rgba(255,255,255,.08)` in dark, where the ground alone barely separates them; drawn as an inset shadow where a border would change the box); the table container has no border.
+
+**One box is enough** (§1 principle 7): a box holds headings, hairlines and space, never a second box. Inside a padded box a group is a `Subsection` (an `h3` in the `body` step, 500, its help line, then its content under the Disclosure's 1px `line` guide, §6.32) or `ItemList` rows split by `line-soft` (§6.33); in a flush box (a `flush` FormSection) rows and flush subsections are padded themselves (`space.4` for item rows, `space.3` for a subsection's heading row, in line with a table's first column) so their hairlines run to the box's edges. The allowed exceptions are option cards, form controls, the FilePicker in a Dialog and full-height panes (§1).
 
 - **Input borders are a signed-off contrast exception.** An input's 1px `line` border on the page ground is about 1.38:1 (dark, `#2A2A28` on `#0A0A0A`) / 1.36:1 (light, `#D9D8D2` on `#FAF9F6`), below the 3:1 WCAG asks of UI component boundaries. The maintainer signed this off with the reference set (2026-10-26): the soft line is the refined E look, and an input is never identified by its border alone. It always carries a visible label (Field, `body` `ink`) or a placeholder/prefix inside it, it shows a `line-strong` border on hover, and focus draws an `accent` border plus the 3px `focus-ring` halo. `tokens.json` keeps no contrast pair for `line` for this reason; a new component that relies on a `line` border as its only boundary needs its own sign-off.
 
@@ -174,7 +179,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 (`--cb-z-*`).
 - Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
-- Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only.
+- Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only. A ring never follows a mouse click: a text field (input, textarea, stepper, the composer) keeps its halo while it has focus, since it is being typed in, but every other control, the Select's button included, draws it under `:focus-visible` (the Select also while its list is open); a tab a pointer focused carries `data-pointer-focus` and draws no ring whatever the browser's heuristics say, until a key press (a modifier alone does not count) or a blur (acceptance issue Y); the mark is set only when focus arrives from that press (or at once when the pressed tab already has focus, since Chrome keeps that focus's keyboard origin), so a press that gives no focus (WebKit and Firefox on macOS do not focus a clicked button) never hides a later keyboard ring. `packages/design/test/focus-rings.test.ts` checks the stylesheets.
 
 ### 2.6 Icons
 
@@ -216,7 +221,7 @@ Every page (except auth pages, §5 T10) is **Sidebar | content area**. The conte
 |---|---|---|---|
 | Drawer menu bar | `row.roomy` | Only below 960 | Menu button that opens the sidebar drawer, page title; below 640 its buttons are 40 px tap targets and it is padded 0 `space.1`, so their icons sit on the 16 px content edge |
 | PageHeader | content | Required | Row 1 the path; row 2 title + one-line description, actions on the right; optional tabs row (§4.2) |
-| PageTabs | 36 | Optional (detail pages only) | In-page tabs, current item underlined |
+| PageTabs | the head's tab row | Optional (detail pages only) | In-page tabs, current item underlined; drawn by the template as the head's tab row, the same box as the PageHeader's row 4 (§4.2) |
 | Body | flexible | Required | One of the layouts in §4.3 |
 | ActionRow | `layout.action-row` | Optional | Appears when the page has actions to submit, stacked above the StatusBar |
 | StatusBar | `layout.status-bar` | Required | Read-only: context · page status ｜ system status · version · time zone |
@@ -230,12 +235,23 @@ See §6.13 for the component. Width `layout.sidebar`; below 1280 an icon rail of
 
 ### 4.2 PageHeader
 
-- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`; the segments in `muted`, the `/` separators in `faint`, the last segment, the current page, in `ink` with `aria-current="page"`; the conversation title bar's path the same), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to `/`), `~` for the home page, `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost). An object's page may lead row 2 with its avatar (`avatar`: an `Avatar` at 40, §6.30, centered on the row; the agent page). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
+- Four rows. Row 1: the **path** `scope / page [/ object]` (mono, `small`; the segments in `muted`, the `/` separators in `faint`, the last segment, the current page, in `ink` with `aria-current="page"`; the conversation title bar's path the same), inside a `nav` labelled "Path"; earlier segments with a link are links. The scope is the org slug for workspace pages (links to the workspace's home, the new conversation `/chat`; there is no home page and `/` redirects to `/chat`), `~` for personal pages (`/account/*`), `/admin` for admin pages. Row 2: title (`h1`, single line with an ellipsis, full text in `title`) + count / status, actions on the right (at most one primary, rightmost; an action whose call is running draws the Button's loading state, `loading`, and cannot be pressed again until it settles; meanwhile the head's other buttons are `disabled`). An object's page may lead row 2 with its avatar (`avatar`: an `Avatar` at 40, §6.30, centered on the row; the agent page). Row 3 (optional): a one-line description (`prose-small` `muted`, single line with an ellipsis). Row 4 (optional): **tabs** with counts (`全部 6 · 我的 3`) for pages with views, with the **search** field at the right end of the same row; a tab changes the view (`onSelect`) or links (`href`). The tab row has one height with or without the search (`control.default` + `space.1` above and below) and a 1 px `line-soft` bottom border; the tabs sit at its bottom and overlap the border by 1 px, so the selected tab's underline lies **on** the border; the search is centered vertically. While a ListPage loads, the tabs and the search keep their place and a tab's count is a `faint` "–" (§5.1). Tabs never wrap: a tab row too narrow for its tabs scrolls sideways (§6.4). **Below 640** the search takes its own full-width line above the tabs (`space.2` between the lines), the tabs are 40 high (tap targets), and so are the header's actions.
 - **Loading** (`PageHeader.loading`, `{ title?, avatar?, actions?, tabs? }`; `avatar` draws a 40 px `block` skeleton in the avatar slot for a head whose loaded state carries an avatar (the agent page), so the row keeps its height; the templates' `loading` states build on it): the header keeps its rows, so nothing moves when the data arrives. What the page already knows renders for real: the path, a known title, the `actions` and `tabs` it was given. A `title` that is not known yet is a `title`-size bar (§6.29) 30% wide in the h1's line box, with no empty heading. `actions` / `tabs` give the number of placeholders to draw when the page does not know them yet (an action is a 72 px `default` control block, a tab a 56 px `body` text slot); they are drawn only while the real list is empty. **Below 640 the placeholders take the loaded parts' phone sizes**: the action blocks and the tab slots are 40 high like the real actions and tabs (state `narrow-loading`), so the header does not change height when the answer arrives. The header is `aria-busy` with the hidden "正在加载 / Loading", unless it sits inside a skeleton group (§6.29), which announces once. Nothing animates.
 - No bottom line and no background; spacing separates it from the body.
 - Actions: at most 1 solid primary action + 2 secondary + a `more-horizontal` menu; the primary action is rightmost; all `default` density; an action may lead with a 14 icon (`plus` on a create action). The submit action of form pages **must not** go here; it goes in the ActionRow.
 - List-page key metrics are **not** in the header: the template renders them below the header as StatCards (§6.14), at most 4–5. List and overview pages draw them at the top of the body; detail, trace, inbox, onboarding and status templates draw them in the fixed header area under the PageHeader.
-- Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.6` below the top of the content area and `space.3` above the body (StatCards or the table).
+- Content width: the header shares the body's one content width (`layout.content`, 1120, centered; §4.3). It sits `space.5` below the top of the content area; what follows it is the head rhythm below.
+- **Head rhythm** (acceptance item S, 2026-11-07): one set of vertical gaps for every page head, the `layout.head-*` tokens (§2.5), drawn by `PageHeader` and the templates' one head (`TemplateHead`), so a page head reads the same on every template:
+
+  | Between | Token | Value |
+  |---|---|---|
+  | the path (row 1) and the title row (row 2, with its avatar, count / status and actions) | `layout.head-path` | 12 |
+  | the title line and the description | `layout.head-description` | 4 |
+  | the title row (or the notice, or a detail page's StatCards) and the notice or the tab row | `layout.head-tabs` | 16 |
+  | the tab row's bottom line and the body's first block | `layout.head-tabs-content` | 16 |
+  | a head without a tab row (its last row, or the StatCards a detail, trace or inbox head carries) and the body's first block | `layout.head-content` | 24 |
+
+  The gaps are the head's own: the body adds no space above its first block (no top padding on a detail page's content, a form's first section or a settings grid), and no template sets a gap of its own, so the path, the title row, the tabs and the first block sit at the same y on every template for the same head (List, Detail, Form, Settings, Overview, Inbox, Trace, Wizard, and Status / Onboarding, which share the head). A detail page's in-page tabs are the head's tab row (the same box as row 4: `control.default` + `space.1` above and below, the 1 px `line-soft` bottom border, 40 px tabs below 640). In-head StatCards sit `layout.head-content` below the PageHeader. A title row led by the avatar centres the title block and the actions on the 40 px avatar. The conversation title bar (§6.16.1) is one 48 px row (the path and the title on one line), so the rhythm does not apply to it; it shares the path's look and its horizontal spacing only. Checked by the `head-rhythm` blocks (below) and `apps/web/visual/head-rhythm.spec.ts`, which measures every template's path, title row, tab row and first block and expects them equal, and by the design unit test `head-rhythm.test.tsx`.
 
 <!-- states: page-header -->
 States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading`, `narrow-loading`, `avatar`
@@ -246,15 +262,18 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | page-header-title | title | font-size | type.h1 |
 | page-header-title | title | line-height | type.h1.line |
 | page-header-title | title | color | color.ink |
+| page-header-row | title | margin-top | layout.head-path |
 | path | path | font-size | type.small |
 | path | path | color | color.faint |
 | page-header-description | description-actions | font-size | type.prose-small |
 | page-header-description | description-actions | line-height | type.prose-small.line |
 | page-header-description | description-actions | color | color.muted |
+| page-header-description | description-actions | margin-top | layout.head-description |
 | button[data-variant=primary] | description-actions | height | control.default |
 | page-header-title | long-title | height | type.h1.line |
 | page-header | long-title | width | 608 |
 | page-header-tabs | narrow | row-gap | space.2 |
+| page-header-tabs | narrow | margin-top | layout.head-tabs |
 | page-header-search | narrow | width | 358 |
 | tab | narrow | height | 40 |
 | button[data-variant=primary] | narrow | height | 40 |
@@ -265,17 +284,42 @@ States: `title`, `path`, `description-actions`, `long-title`, `narrow`, `loading
 | page-header-avatar avatar | avatar | width | 40 |
 | page-header-avatar avatar | avatar | height | 40 |
 
+The head rhythm across the templates: one block per template, all with the same head (the path `capybara / agents / 研究助手`, the title, one default action); `list-tabs` adds the header's tabs and search, `detail` has its in-page tabs, `settings-avatar` leads the title row with the avatar (the agent page). Each block is the template in a 1280 × 480 box.
+
+<!-- states: head-rhythm -->
+States: `list`, `list-tabs`, `detail`, `form`, `settings`, `settings-avatar`, `overview`, `inbox`, `trace`, `wizard`
+
+<!-- size-table: head-rhythm -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| template-head | list | padding-top | space.5 |
+| template-head | list | padding-bottom | layout.head-content |
+| page-header-row | list | margin-top | layout.head-path |
+| template-head | list-tabs | padding-bottom | layout.head-tabs-content |
+| page-header-tabs | list-tabs | margin-top | layout.head-tabs |
+| template-head | detail | padding-bottom | layout.head-tabs-content |
+| page-tabs | detail | margin-top | layout.head-tabs |
+| page-tabs | detail | height | 37 |
+| template-head | form | padding-bottom | layout.head-content |
+| template-head | settings | padding-bottom | layout.head-content |
+| template-head | settings-avatar | padding-bottom | layout.head-content |
+| page-header-row | settings-avatar | margin-top | layout.head-path |
+| page-header-row | settings-avatar | height | 40 |
+| template-head | overview | padding-bottom | layout.head-content |
+| template-head | inbox | padding-bottom | layout.head-content |
+| template-head | trace | padding-bottom | layout.head-content |
+| template-head | wizard | padding-bottom | layout.head-content |
+
 ### 4.3 Body layouts and content widths
 
 | Layout | Structure | Used for |
 |---|---|---|
-| Single | Content | Overview, trace viewer, system status, first use |
+| Single | Content | Overview, details, trace viewer, system status, first use |
 | Rail + Content | 240 + flexible | Lists with facet filters |
-| Content + Inspector | flexible + 400 | Details |
 | Rail + Content + Inspector | 240 + flexible + 400 | Inbox |
 | Centered | content max `layout.content` (1120), centered | Forms, settings, wizards |
 
-- Content width: **one** width for every page template (list, overview, form, settings, wizard, detail, trace, inbox, onboarding, status), `layout.content` (1120), centered (100% wide below that), with `layout.content-pad` (32) of side padding (16 below 640) and `space.5` (20) above the header; the page head and the body (also a detail page's tabs, beside its inspector) share that container. The head and the scrolling body both reserve the scrollbar gutter (`scrollbar-gutter: stable`), so a classic (non-overlay) scrollbar never shifts the body's column against the head. The head therefore sits at the same x and y on every page and on every tab of one page. The inbox's rail + content + inspector split is capped at that width inside the same padding; the trace viewer's waterfall and detail share its one left edge (§5 T8). A form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
+- Content width: **one** width for every page template (list, overview, form, settings, wizard, detail, trace, inbox, onboarding, status), `layout.content` (1120), centered (100% wide below that), with `layout.content-pad` (32) of side padding (16 below 640) and `space.5` (20) above the header; the page head and the body (also a detail page's tabs) share that container. The head and the scrolling body both reserve the scrollbar gutter (`scrollbar-gutter: stable`), so a classic (non-overlay) scrollbar never shifts the body's column against the head. The head therefore sits at the same x and y on every page and on every tab of one page. The inbox's rail + content + inspector split is capped at that width inside the same padding; the trace viewer's waterfall and detail share its one left edge (§5 T8). A form keeps its label column inside it (forms put `space.6` between sections, lists `space.3`); the conversation page has its own columns (§5.4). The Centered layout has **no anchor navigation**; a form's error count lives in the ActionRow.
 - Content has a minimum width of 560. The Rail is collapsible; the Inspector is closable.
 - Scrolling: the sidebar, PageHeader / PageTabs / ActionRow / StatusBar are fixed; the sidebar's conversation section, Rail, Content and Inspector scroll independently; the page must not show a horizontal scrollbar (wide tables scroll inside their own container).
 - Responsive: < 1280 the sidebar becomes the rail and the Inspector a right-side Sheet; < 960 the sidebar becomes a drawer and the Rail a toolbar "Filter" button + Sheet; < 640 (phones, checked at 390 × 844) the header actions beyond the primary fold into `more-horizontal`, and:
@@ -330,9 +374,9 @@ A new page **must** pick one of the following templates; a new template requires
 
 | # | Template | Body | PageTabs | ActionRow | Width | Typical pages |
 |---|---|---|---|---|---|---|
-| T1 | Overview | Single | — | — | content | Org home, Agent summary |
+| T1 | Overview | Single | — | — | content | Agent summary, admin overview, the setup home (the workspace has no home page: the new conversation is the home) |
 | T2 | List | Rail + Content | — | During bulk edits | content | Agents, connectors, extensions |
-| T3 | Detail | Content + Inspector | Yes | — | content | Agent, connector, extension details |
+| T3 | Detail | Single (one centred column; the facts block first, §5.2) | Yes | — | content | Agent, connector, channel, eval set and run details |
 | T4 | Form | Centered | — | Always (submit actions) | content | Create / edit Agent |
 | T5 | Settings | The PageHeader across the full content width, then below it a 200 px sub-nav (named "Settings navigation"; groups with a mono `faint` label, 30 px items, the current item on `sidebar-active`, optional mono counts) beside the content column (below 960 the nav stacks above the content; below 640 it is a compact control, one sideways-scrolling row of its items above the content with no group labels, 40 px high, the current item scrolled into view, so the content starts on the first screen); the header's `description` opens the content column instead of the head, so the head keeps one height and the sub-nav's top, aligned with the content's, has the same y on every settings page | — | When there are changes | content | Org, members, environment, security |
 | T6 | Inbox | Rail + Content (+ Inspector) | — | During decisions | content | Human approval, alert handling |
@@ -346,20 +390,20 @@ A new page **must** pick one of the following templates; a new template requires
 
 ### 5.5 Setup (T13)
 
-`SetupPage({ sidebar, status, title?, children })` is the layout the app frame draws while the current org cannot run yet (web-SSR spec `docs/superpowers/specs/2026-11-01-web-ssr-design.md` §4). It has the Shell's geometry and is built on `AppShell` (§4): the Sidebar on the left, the content area (the drawer menu bar below 960, the page, the StatusBar) on the right, the same rail below 1280 and drawer below 960. The sidebar is the setup context (§6.13): `sidebar` carries the org (the switcher, as in the workspace), `home` (the setup home's link), `steps`, `activeNav` (a step id or `home`), the account, the theme and `adminHref` (enterprise admins). There is no command palette: ⌘K opens nothing and the drawer menu bar has no search button. The page brings its own template and page head in the content width: the setup home (`/`, `/chat`) is an `OverviewPage` with the path `<slug> / 开始之前`, the h1 开始之前, the progress 已完成 n / 2 as the page head's `count` beside the h1, the checklist card (no head band of its own) and 可以稍后再做 (an `h2` over an `ObjectList` of the optional steps, each an `ObjectRow` with the step's icon, its label as the linked name and one sentence saying what it is for); a step page is its own template exactly as in the shell. There is no back link (the sidebar is the way back) and no top bar.
+`SetupPage({ sidebar, status, title?, children })` is the layout the app frame draws while the current org cannot run yet (web-SSR spec `docs/superpowers/specs/2026-11-01-web-ssr-design.md` §4). It has the Shell's geometry and is built on `AppShell` (§4): the Sidebar on the left, the content area (the drawer menu bar below 960, the page, the StatusBar) on the right, the same rail below 1280 and drawer below 960. The sidebar is the setup context (§6.13): `sidebar` carries the org (the switcher, as in the workspace), `home` (the setup home's link), `steps`, `activeNav` (a step id or `home`), the account, the theme and `adminHref` (super admins). There is no command palette: ⌘K opens nothing and the drawer menu bar has no search button. The page brings its own template and page head in the content width: the setup home (`/chat`, the workspace's home; `/` redirects there, and a route that is no setup route goes there) is an `OverviewPage` with the path `<slug> / 开始之前`, the h1 开始之前, the progress 已完成 n / 2 as the page head's `count` beside the h1, the checklist card (no head band of its own) and 可以稍后再做 (an `h2` over an `ObjectList` of the optional steps, each an `ObjectRow` with the step's icon, its label as the linked name and one sentence saying what it is for); a step page is its own template exactly as in the shell. There is no back link (the sidebar is the way back) and no top bar.
 
 ### 5.1 List (T2)
-- Order in the content column: PageHeader → StatCards (when the header has `metrics`) → the DataTable (its toolbar above the table, pagination below), separated by `space.3`.
+- Order in the content column: PageHeader → StatCards (when the header has `metrics`) → the DataTable (its toolbar above the table, pagination below): the first block sits `layout.head-content` (24) below the head, or `layout.head-tabs-content` (16) below its tab row (§4.2 "Head rhythm"), and the blocks are separated by `space.3`.
 - Rail: faceted filters; each group has a title (muted) + checkbox items + counts.
-- Content = one DataTable (§6.6) on the `panel` ground (framed, as the signed reference; `framed={false}` is only for a table inside a Card), whose toolbar, bulk bar and pagination all belong to the DataTable.
+- Content = one DataTable (§6.6) on the `panel` ground (framed, as the signed reference; inside a box, a Card or a flush form card, a table is unframed by itself, §1), whose toolbar, bulk bar and pagination all belong to the DataTable.
 - Subordinate section (optional, at most one): below the main table with a `space.6` gap, an `h2` title + one DataTable listing secondary objects closely related to the main object and few in number (such as "Invitations" on the members page, a settings page that follows the same rule); it has no filters or metrics of its own, and the create entry stays in the PageHeader. When the secondary objects need their own filters or are numerous, make a separate list page.
 - PageHeader: title + total, description, secondary actions on the right + Create (primary); metrics ≤ 5 as StatCards.
 - **One primary per screen**: while `empty` is drawn with a `primary` action, the template leaves the head's primary out and the empty state carries it (the head's other actions stay); with rows, while loading, or when the empty state has no primary action, the head keeps it. Pages pass the same action to both and never draw two.
 - StatusBar page status: the number of filter results.
-- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: agents, skills, connectors, plugins, extensions). The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` (`true`, or `{ rows?, stats?, table?, keep? }`; spec §7.1 of the web query cache design) draws the page's frame until the first answer, with one busy announcement (§6.29): the head keeps its real layout (§4.2: the path, a known title, actions and search for real, an unknown title is a `title` bar; the tabs stay with their counts shown as a `faint` "–"), so nothing moves when the answer arrives; `stats` stat card placeholders stand in for `metrics` the page does not know yet (§5.6); the list is skeleton rows in the loaded list's own container: for `objects`, the ObjectList panel with `rows` rows (default 3), each the object row's box with a 36 px mark box and a name and a description line in the one bar look (§6.17), and for `records`, the DataTable's own loading state in the caller's `table` shape (`label`, `columns`, `rowHeight`, `framed`, as InboxPage, §5.7), else four full-width `body` bars (`Skeleton({ rows })`); the action row, when there is one, stays with its buttons disabled; a page whose content is its own sections (each `FormSection` saying for itself whether it is loading) passes `keep`, and its `children` render as they are inside the page's one busy region, so no section announces itself (state `loading-keep`, against the loaded `keep`). Loading wins over `empty`. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
+- **Variants** (`variant`): `records` (default) holds a DataTable; `objects` wraps its ObjectRows (§6.17) in one ObjectList panel (things people own and configure: skills, connectors, plugins); `cards` lays its ObjectCards (§6.34) out in one CardGrid on the page ground, no box around it (things a person picks by look and starts from: the workspace 智能体 page's 智能体 and 模板 tabs, the admin 智能体模板 list; ruling P4-15). The head, its tabs and search, the `filters` row (a toolbar filter above the grid, such as the agents' `Segmented` 全部 / 我的 / 组织共享), `callout`, `empty` and `loading` work as for the other variants. The `callout` prop draws a Callout (§6.19) in the header between the title row and the tabs; `empty` draws an EmptyState (§6.18) instead of the content. `loading` (`true`, or `{ rows?, stats?, table?, keep? }`; spec §7.1 of the web query cache design) draws the page's frame until the first answer, with one busy announcement (§6.29): the head keeps its real layout (§4.2: the path, a known title, actions and search for real, an unknown title is a `title` bar; the tabs stay with their counts shown as a `faint` "–"), so nothing moves when the answer arrives; `stats` stat card placeholders stand in for `metrics` the page does not know yet (§5.6); the list is skeleton rows in the loaded list's own container: for `objects`, the ObjectList panel with `rows` rows (default 3), each the object row's box with a 36 px mark box and a name and a description line in the one bar look (§6.17); for `cards`, the CardGrid's skeleton cards, `rows` of them (default 6, §6.34); and for `records`, the DataTable's own loading state in the caller's `table` shape (`label`, `columns`, `rowHeight`, `framed`, as InboxPage, §5.7), else four full-width `body` bars (`Skeleton({ rows })`); the action row, when there is one, stays with its buttons disabled; a page whose content is its own sections (each `FormSection` saying for itself whether it is loading) passes `keep`, and its `children` render as they are inside the page's one busy region, so no section announces itself (state `loading-keep`, against the loaded `keep`). Loading wins over `empty`. Exception: a tab that exists only when the data holds something different from 全部 cannot be known before the answer and appears after it. An object list has no rail: tabs with counts in the header replace the filters.
 
 <!-- states: template-list -->
-States: `page`, `default-objects`, `loading-objects`, `keep`, `loading-keep`
+States: `page`, `default-objects`, `loading-objects`, `keep`, `loading-keep`, `cards`, `loading-cards`
 
 <!-- size-table: template-list -->
 | Part | State | Property | Value |
@@ -373,13 +417,28 @@ States: `page`, `default-objects`, `loading-objects`, `keep`, `loading-keep`
 | skeleton-text[data-size=body] | loading-objects | height | type.body.line |
 | content | keep | max-width | layout.content |
 | content | loading-keep | max-width | layout.content |
+| content | cards | max-width | layout.content |
+| card-grid | cards | column-gap | space.3 |
+| object-card | cards | padding-top | space.4 |
+| content | loading-cards | max-width | layout.content |
+| card-grid | loading-cards | column-gap | space.3 |
+| skeleton-box[data-box=block] | loading-cards | height | 40 |
+
+**The 扩展 pages** (workspace `/extensions`, admin console `/admin/extensions`; design note 2026-11-06): a `records` ListPage with one roomy DataTable, sorted by capability. The head's tabs are 全部, 模型 (`model-provider`), 网页 (`web-search`, `web-fetch`), 连接器 (`connector`), 沙箱 (`sandbox`), 存储 (`object-store`) and 工具与界面, each with its count, and the search by name at the row's end; the open tab is `?tab=<id>` (none for 全部). One web module maps the points to the tabs (`apps/web/src/lib/extension-capabilities.ts`): an extension providing points of two tabs is in both and once in 全部, and under a tab its row shows only what it provides there; 工具与界面 is the catch-all for an extension that provides none of the mapped points (agent tools, UI views, channels, directory, a point the module does not know yet, or nothing), so there is no 其他 tab. All seven tabs are always drawn (counts may be 0), so the loading head is the loaded one. A row: the display name over `plugin · version` (`CellTitle mono`), the capabilities (a `wrap` list: 模型, 网页搜索, 网页读取, 智能体工具, 界面 …), the state, and in the workspace for org admins the enable switch (an `interactive` column). Rows needing attention come first (待配置 or a refused switch in the workspace; any status neither enabled nor disabled on the admin console), then those on, then the rest, by display name. A row opens a right-side Sheet (§6.7): on top the config form (the workspace's org config, 保存配置 / 保存并启用 in the footer; the admin console's deployment config), then the state line (state, capabilities; the admin console's lifecycle actions and replicas), then the permissions folded into one line (「权限 数据库表 2 · 智能体工具 1 · 敏感」, a `Disclosure`) that opens the full permission blocks (on the admin console with the approval, open by itself while one waits). A refused switch opens its Sheet with the reason. Members read the same list without the switch and a Sheet with the capabilities and the state only (the kernel gives them no config, secrets or permissions, only the extension points each provides, `provides`, from which their tabs and chips come). The workspace page keeps the default providers (in 全部 and 网页) and the file previewers (in 全部 and 工具与界面) under the table.
+
+**The 智能体 page and the template cards** (workspace `/agents`, admin console `/admin/agent-templates`; rulings P4-14 to P4-17 of the plugin component management design): one `cards` ListPage with the head tabs 智能体 and 模板 (`?tab=templates`; 智能体 is the bare `/agents`), both counted, the search at the row's end (one per tab, cleared on a switch) and 新建智能体 as the head's primary; guests, who cannot create agents, get the agents alone without tabs. 智能体 takes the `Segmented` filter 全部 / 我的 / 组织共享 in the `filters` row. An agent card: its avatar, the name (the card opens the agent's page, read-only for whoever may only use it), the description, the meta owner · 可见范围 (「我」 for one's own; a guest's cards show the visibility only), the primary 开始会话 (a link to the new conversation with the agent picked) and ⋯ with 设置 (whoever may change it), 运行记录 (org admins and a member owner) and 另存为模板 (org admins); the owner is changed on the agent page only, never from the list (acceptance item P). A template card: the initial square, the name (the card opens the template page `/agents/templates/<id>`), the description, the meta source · v (平台 / 本组织 / the owner org's name / 插件 · name; an off platform template adds its state in `warn`), the primary 用它创建 on a template usable in the org (an org admin's 启用 on one that is off, else none) and ⋯ with 查看, or for owner-org admins 编辑 (the template page is their editor), 设为可共享 / 取消共享 and 删除 (the preview first, the name typed), then the org admin's switch actions (停用 with its preview, 查看插件). The admin list draws the same cards under its tabs 全部 / 平台 / 组织创建: the meta source · owner · scope · v (内置 plain, 已停用 / 插件已停用 in `warn`), the primary 查看 (the detail) and ⋯ with 对其他组织显示, 设置范围 and 停用 / 启用 (上传新版本 stays on the detail). 技能 and 连接器模板 keep their tables. Each tab has its own loading (skeleton cards under the real head and tabs), empty and error states; a tab whose list cannot be read says so in the list's place with 重试, its head and tabs kept. `/agent-templates` and `/agent-templates/<id>` redirect (temporarily: the old path never shipped) to `/agents?tab=templates` and `/agents/templates/<id>`.
+
+**用它创建 and 待配置** (rulings P4-3 to P4-8, P4-18; a `Dialog` opened by a template's primary, on the cards and the template page): the name (the template's), a preset avatar (an upload comes after creating), 可见范围 only for org admins (members always 仅自己, the option never drawn), the model preselected with the source of the choice said, then the preview in three `Disclosure`s 带入 / 待配置 / 不可用 with counts (待配置 and 不可用 open while non-empty; each item a kind tag, its name and the reason in words) and the settings left out; 创建 lands on the new agent, on its Tools section when connectors wait. A changed template or org state (409) re-reads the preview, says what changed in a `warn` Callout and the next 创建 sends the new hash; a template no longer usable offers no 创建. On the agent page the basics show 「由模板 X vN 创建」 (the name links while the template is usable) and Tools opens with the 待配置 notice: org admins get 配置 per entry in one dialog (use an existing connector, one more from the connector template, or the prefilled custom connector form); the owner who cannot configure sees the request state (已申请 / 驳回理由 with 重新申请 / 申请) and the same entries sit in the admin inbox as a 连接器配置申请 with the same dialog.
+
+**The template page and 另存为模板** (`/agents/templates/<id>`; rulings P4-9 to P4-14): the agent page's frame, a `SettingsPage` with the section nav 基本信息 / 快捷操作 / 提示词 / 模型 / 工具 / 技能 / 连接器 / 子智能体 (`?s=`; no 渠道) and the open section. The head follows the agent page's (not §5.2's component-detail head): the initial square (`Avatar` without a picture), the name, the description (drawn as the agent page draws it; 基本信息 does not repeat it), source · v in the title row's count slot (mono, as on the cards), the path `<org> / agents / templates / <name>` (templates goes back to `/agents?tab=templates`), 用它创建 as the primary on a template usable in the org, and ⋯ with 设为可共享 / 取消共享 and 删除 for owner-org admins (删除 is the cards' dialog: the preview first, a transfer to the platform said, the name typed; then back to the 模板 tab) and the org admin's switch actions on a platform template. Members up read every section (a template is read before 用它创建): key-value rows, flush lists of rows (tools with their policy, skills with 预载, connectors with a needs entry's address and tools, sub-agents), the prompt files and inline instructions as code blocks; guests get no access. Owner-org admins get the editor in the same sections, each with its own draft and action row as on the agent page, the prompt files and quick actions in the agent page's own editors; each save writes the whole definition as a new version with `expectedVersion`, and a stale one is the fail Callout with 重新加载 above the section. The name is fixed (it is the roster type); 模型 is the tier, an optional concrete model and the effort; 技能 picks by name with up to 3 preloaded, a name the org lacks kept and marked; 连接器 lists template entries by name and needs entries edited in place (name, protocol, address, tools one per line; an address with a user name, a query or a fragment is refused on the field with the clean form to use, before and after the kernel's check), one policy select per listed tool (默认 / 先询问 / 禁止, as in 工具; an entry naming no tools keeps its policies read-only and says so), and adds a connector template on in the org (a select) or a needs entry. A platform template offered to the org but off there (the kernel serves no detail) is an `OverviewPage` with the component's head and the page `EmptyState` 这个模板未在本组织启用, with 启用 as its action for an org admin who may switch it (查看插件 when its plugin is off), else whom to ask; a template the detail marks not usable here (`usable: false`: the owner's own promoted template switched off in its org) keeps its page with the warn notice, 启用 in it when the component is offered, and no 用它创建. 另存为模板 (org admins, from the agent page's ⋯ and the agent card's) is a `Dialog`: the name (the agent's name in the bare-name form), the description (the agent's), a sentence on what goes in (never credentials) and the org agents of its sub-agent roster, which stay out; a name taken in the org names its owner on the field (平台 / 本组织 / the sharing org), a reserved one says so. Saved: the new template's page, or first, when the kernel left more out, the dialog's second step listing each omission in plain words (what, then why) with 打开模板 as a `LinkButton` primary.
 
 ### 5.2 Detail (T3)
 - PageHeader: path ending with the object's name; name + version (faint) + status; actions: Edit (default), Trial run (secondary), `more-horizontal`.
 - PageTabs: Summary · Runs · Config · Versions · Permissions · Audit (pick per object type), with counts following in faint.
 - Content: sections on the `panel` ground with radius `md` (no border), section header h2 + actions on the right, `space.4` between sections.
-- Inspector: grouped properties, group title small muted, key 8ch wide muted, value single line with ellipsis.
-- **Loading** (`DetailPage.loading`, `{ inspector?, blocks?, content?, stats? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2); a page whose loaded header has `metrics` passes `stats` (their count), and that many stat card placeholders (§5.6: the `panel` card with a `small` label slot over a `metric` value slot) stand under the header where its StatCards will be (the header's own `metrics`, when the page knows them, render for real instead); the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart; the card is 147 px high (a 1 px border on each side, the head band 37 = `space.2` × 2 + one `body` line + its 1 px rule, and the body 108 = padding 16 × 2 + three `body` lines + two `space.2` gaps). The inspector is drawn as placeholders only when `inspector` is set: KeyValue's own box (§6.5, the same `dl`) with four rows, each a `body` slot for the 8ch key and a 55% `body` slot for the value (a group title is not drawn: the loaded inspector's groups are the page's); an inspector the page passes for real stays; `inspector` as `{ rows?, keyWidth? }` draws that many rows with that key width (the loaded inspector's KeyValue). A tab whose static structure the page knows passes `content` (`BlockShape[]`) instead of `blocks`: the blocks stand in a gap-16 stack as the loaded tab stacks its parts (state `loading-content`, against the loaded `content`). A block is `lines` (a gap-4 stack, a `body` line over `small` ones), `list` (a labelled list: a `body` label slot over `items` `body` lines, gap 8), `key-value` (KeyValue's own `dl`, `rows`, one or two `columns`, `keyWidth`), `buttons` (a gap-8 row of `count` 88 px control-height slots, with a `small` line under it when `help`), `table` (the page's real `small` muted title over the DataTable's own loading state with its `label` and header `columns`, gap 8; a static `toolbar`, such as a refresh button, renders for real in the table's toolbar row) or `card` (a `CardShape`, §5.8). A `radios` field shape (§5.8) is a plain RadioGroup's own markup: per option its box and a `body` label slot. One busy announcement for the page (§6.29). Nothing animates.
+- **One centred column, no right pane** (2026-11-07 ruling: no detail page has a right inspector for now): the content is one centred column of the content width. `DetailPage.facts` is the object's facts block (`data-part="detail-facts"`): a KeyValue (key muted at the page's key width, value single line with ellipsis; grouped KeyValues with a small muted group title when the object has groups), drawn by the template as the first block of the column, right under the head and its tabs, above the tab's content (`children`), `space.3` apart like every block of the column. A page puts its full description (when the head does not carry it, below) first inside `facts`, above the KeyValue, so the order is always description, facts, tab. Every action stays in the head, never in the facts block. What a page used to open in an inspector on selection (an eval run's result) opens in a right-side Sheet (§6.7) instead.
+- **Plugin and component details** (admin and workspace 插件 / 技能 / 连接器模板 / 智能体模板 details; 2026-11-06 ruling; the workspace template page `/agents/templates/<id>` is the exception: it follows the agent page's head, §5.1 "The template page and 另存为模板"): the head carries no description: the full description (line breaks kept) is the first block of the column, right under the head, as `prose` `muted` text, since the head's one-line description would cut it; every action is in the head (a destructive one such as 删除 is the head's `more-horizontal` menu item, never a button in the page), the facts (包, 来源, 发布者, 归属, 范围, 在用组织, 权限, 更新时间 …) are a KeyValue after it, the tab's content follows, and a long text such as 许可证全文 is a folded section (Disclosure) at the end.
+- **Loading** (`DetailPage.loading`, `{ facts?, blocks?, content?, stats? }`; spec §7.1 of the web query cache design): every region keeps its box, so nothing moves when the data arrives. The header is the PageHeader's loading state (§4.2); a page whose loaded header has `metrics` passes `stats` (their count), and that many stat card placeholders (§5.6: the `panel` card with a `small` label slot over a `metric` value slot) stand under the header where its StatCards will be (the header's own `metrics`, when the page knows them, render for real instead); the PageTabs stay real (the tabs are static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`: the `panel` card of the sections above, its head band holding a 30% `body` text slot and its body three text slots (100%, 70%, 55%) `space.2` apart; the card is 147 px high (a 1 px border on each side, the head band 37 = `space.2` × 2 + one `body` line + its 1 px rule, and the body 108 = padding 16 × 2 + three `body` lines + two `space.2` gaps). The facts block mirrors the loaded one: with `loading.facts` set, the column's first block is the same `detail-facts` block holding KeyValue's own box (§6.5, the same `dl`) with four rows, each a `body` slot for the 8ch key and a 55% `body` slot for the value (a group title is not drawn: the loaded facts' groups are the page's), above the content blocks; `facts` the page passes for real stays; `loading.facts` as `{ rows?, keyWidth?, columns?, lead? }` draws that many rows with that key width in one or two columns (the loaded facts' KeyValue), and `lead` puts a 70% `prose` line over them (gap 12) for facts that start with the object's description (the eval set). A page whose loaded facts block has no KeyValue rows to mirror leaves it unset. A tab whose static structure the page knows passes `content` (`BlockShape[]`) instead of `blocks`: the blocks stand in a gap-16 stack as the loaded tab stacks its parts (state `loading-content`, against the loaded `content`). A block is `lines` (a gap-4 stack, a `body` line over `small` ones), `list` (a labelled list: a `body` label slot over `items` `body` lines, gap 8), `key-value` (KeyValue's own `dl`, `rows`, one or two `columns`, `keyWidth`), `buttons` (a gap-8 row of `count` 88 px control-height slots, with a `small` line under it when `help`), `table` (the page's real `small` muted title over the DataTable's own loading state with its `label` and header `columns`, gap 8; a static `toolbar`, such as a refresh button, renders for real in the table's toolbar row) or `card` (a titled card on the page ground, an `ItemShape`, §5.8). A `radios` field shape (§5.8) is a plain RadioGroup's own markup: per option its box and a `body` label slot. One busy announcement for the page (§6.29). Nothing animates.
 
 <!-- states: template-detail -->
 States: `default`, `loading`, `content`, `loading-content`
@@ -392,7 +451,8 @@ States: `default`, `loading`, `content`, `loading-content`
 | loading-card | loading | border-radius | radius.md |
 | loading-card | loading | height | 147 |
 | skeleton-text[data-size=body] | loading | height | type.body.line |
-| loading-inspector-row | loading | height | type.body.line |
+| detail-facts key-value-row | default | height | type.body.line |
+| detail-facts key-value-row | loading | height | type.body.line |
 | content | content | max-width | layout.content |
 | content | loading-content | max-width | layout.content |
 | skeleton-box[data-box=default] | loading-content | height | control.default |
@@ -401,12 +461,13 @@ States: `default`, `loading`, `content`, `loading-content`
 - PageHeader: path ending with the object's name (`new` for a new one); title "Create X" + draft badge; only auxiliary actions on the right (such as "Import from YAML").
 - No anchor navigation (the Centered body has none, §4.3).
 - Sections: a two-column grid, the left column 240 wide with the section title (`h2`) and a description (`prose-small` `muted`), the right column the fields on a `panel` card with radius `md`, padding `space.4`, `space.3` between fields. Sections are separated by `space.6` of spacing, **not by lines**; rows inside a list of switches are divided by `line-soft`.
+- **The card is the one box** (§1 principle 7): what a section holds groups with headings, hairlines and space, never cards. A list of things each with its own lines or fields (model purposes, quick actions, inline sub-agents) is one `ItemList inset="flush"` of `ItemListItem` rows in a `flush` section (§6.33: each row padded `space.4`, its title line, meta lines, then its field; rows split by `line-soft`); a table is unframed in a `flush` section, running to the card's edges, and several tables in one card are flush `Subsection`s, each an `h3` heading row over its table, split by `line-soft` (§6.32, §6.6); a nested group of fields (a config object) is a `Subsection` under the Disclosure's guide; an array of objects is a `Repeater`, whose items are divided rows inside the card (§6.26). A notice about the section goes above the section card (§6.19); a Callout that does land inside a box (a panel shared with a Sheet) draws its line form there by itself.
 - **Stacked sections** (`FormSection layout="stacked"`; default `columns`): the head (the `h2` title over its description, `space.1` apart) sits above the fields card, `space.3` below it, and the card takes the content's full width. Use it for a section whose content needs the width, such as an editor (the agent page's prompt files, §5.8 "List + editor"). **Every section of a SettingsPage (§5.8) is stacked**, whatever its `layout`: the sub-nav already holds a column of titles, and a second title column beside the cards would leave an empty band between the nav and the fields. Sections elsewhere (a FormPage) keep the two columns. Below 960 every section is stacked this way already, so the narrow layout does not change. A loading section passes the same `layout` (`SettingsPage.loading.sections[].layout`), so its skeleton keeps the loaded section's boxes.
 - Fields: label on top (`body` `ink`; required marked with an accent `*`, optional marked "Optional" in faint); controls `default` density; help text and error message below (`small`); on error the border is `fail` and the message starts with the `circle-alert` icon and gives an actionable suggestion.
 - The ActionRow is always present: Cancel · Save draft (⌘S) · Publish.
 - **Create forms** (`FormPage create`, a new object): focus starts on the first field; the ActionRow never says "No unsaved changes" (nothing exists yet to be unchanged; typed fields still count as unsaved and guard leaving); the primary is disabled until the form is valid (the required fields filled), as in a create dialog. A create form whose prerequisite is missing (no channel extension enabled for 新建渠道) draws only the `EmptyState` with the next step, never the form.
 
-- **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }` or `{ cards }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`; a section that lists cards passes `cards` (`CardShape[]`, §5.8) instead and draws those titled card placeholders in its card. `fields` is a count (that many default inputs) or `FieldShape[]`, the page's static field layout, which it knows before the data arrives and **must pass** whenever a field is not a plain input, so the loading card is as tall as the loaded one: `{ control?: input | textarea | select | segmented; help?: boolean; rows?: number; pair?: boolean }`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then the control's own box directly in the field (`control.default` for input, select and segmented; a textarea is `max(rows, 2)` `body` lines + `space.2` + 2 px high, `rows` default 2), so the box has whatever width the field's rule gives a control (never a width of its own), then, when `help` is set, one `small` slot (the loaded field's help text, error message or counter line). A shape with `pair` and the one after it sit in the two-column `Grid` (gap 12) the loaded section draws for paired fields. The ActionRow stays, its buttons disabled and with no unsaved or error count. A `flush` section (a SwitchList) keeps its flush card (no padding) and draws `fields` switch rows in SwitchList's own list and row (divider, padding, `row.roomy` height): a `body` name slot (30%) over a `small` description slot (55%) in the text column and a 32 × 20 box in the switch's place. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
+- **Loading** (`FormPage.loading`, a flag; `FormSection.loading`, `{ fields }` or `{ items }`; spec §7.1 of the web query cache design): every region keeps its box. The header is its loading state (§4.2: the path the page knows, a title bar when the title is not known yet). Each section is the page's own `FormSection`, so the page passes its static section list and a section whose data is ready renders for real next to loading ones: a loading section keeps its title and description and draws `fields` field placeholders in its card in place of `children`; a section that lists items passes `items` (`ItemShape[]`, §5.8) instead and draws those item row placeholders in a flush card (never card placeholders inside the card, §1). `fields` is a count (that many default inputs) or `FieldShape[]`, the page's static field layout, which it knows before the data arrives and **must pass** whenever a field is not a plain input, so the loading card is as tall as the loaded one: `{ control?: input | textarea | select | segmented; help?: boolean; rows?: number; pair?: boolean }`. A field placeholder is the loaded `.cb-field` itself: a `body` slot (30%) in the field head where the label is, then the control's own box directly in the field (`control.default` for input, select and segmented; a textarea is `max(rows, 2)` `body` lines + `space.2` + 2 px high, `rows` default 2), so the box has whatever width the field's rule gives a control (never a width of its own), then, when `help` is set, one `small` slot (the loaded field's help text, error message or counter line). A shape with `pair` and the one after it sit in the two-column `Grid` (gap 12) the loaded section draws for paired fields. The ActionRow stays, its buttons disabled and with no unsaved or error count. A `flush` section (a SwitchList) keeps its flush card (no padding) and draws `fields` switch rows in SwitchList's own list and row (divider, padding, `row.roomy` height): a `body` name slot (30%) over a `small` description slot (55%) in the text column and a 32 × 20 box in the switch's place. One busy announcement (§6.29); a loading section outside a loading page announces itself. Nothing animates.
 
 <!-- states: template-form -->
 States: `page`, `loading`
@@ -434,14 +495,14 @@ States: `page`, `loading`
   - The **middle column** holds, top to bottom: the title bar (§6.16.1), the thread (centered, at most `layout.chat` wide, gutters `layout.gutter`, padding `space.4` on top, items `space.3` apart, following the bottom while the reader is at the bottom; it reserves a classic scrollbar's gutter on both sides, `scrollbar-gutter: stable both-edges`, so it keeps the composer's center line whether or not it scrolls), the composer (§6.16.2, at most `layout.chat` plus the gutters wide, centered, `space.3` from the status bar) and the status bar (§4.4). It is never narrower than `layout.chat-min`, except **below 640**, where it fills the window and the title bar, the thread and the composer use `space.4` (16) gutters, so the composer, its send button and the user bubbles never run past the right edge.
   - The **right area** holds one thing at a time: either the **properties panel** (§6.16.17), which sits *inside* the middle column under its title bar so the title bar spans thread and properties, or **one right panel** (§6.16.18), full height beside the middle column, whose title bar then narrows with it. Opening one closes the other; "none" is the default.
 - **Narrow windows**: below 1280 (where the sidebar becomes the rail, §4.3) the right area is a right-side Sheet over the page (`layout.panel` wide, `shadow-sheet`, a `scrim` behind it), closed by Esc, its close button or a click on the scrim; the server render and hydration cannot know the window, so below 1280 a CSS media query hides the inline right area until the first client render makes it the Sheet (the page never scrolls sideways, no flash). At 1280 and above it sits beside the thread; with the full sidebar at exactly 1280 the panel narrows to 544 so the thread keeps `layout.chat-min` (maintainer ruling 2026-10-27).
-- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent), the selected agent's quick actions (§6.16.27; hidden when it has none) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay). `ConversationPage.newConversation` takes them as `greeting`, `agents` and `quickActions`; without a `greeting` the agent's name (`h2`) and description (`prose-small` `muted`) stand in its place. With any of the three the column's parts are `space.4` apart; with none it is the name and description over the composer, `space.2` apart. The status bar shows only the context and the version.
-- **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>"; right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
-- **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark, built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for an enterprise admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
+- **New conversation**: nothing is created until the first send. The title bar shows "新会话" / "New conversation"; the thread is replaced by a centered column (`layout.chat` wide) holding, top to bottom and `space.4` apart (agent profile design §4, U1): the greeting (§6.16.25), the agents row (§6.16.26; hidden with one usable agent) and the composer, whose control row then has no agent picker (the row chooses the agent; the model and effort pickers stay) and holds the selected agent's quick actions as a `zap` button after the effort picker (§6.16.27; none when it has none). `ConversationPage.newConversation` takes them as `greeting` and `agents`; without a `greeting` the agent's name (`h2`) and description (`prose-small` `muted`) stand in its place. With either of the two the column's parts are `space.4` apart; with none it is the name and description over the composer, `space.2` apart. The status bar shows only the context and the version.
+- **Status bar** (read-only, §4.4): left `user@org:/chat/<id>` and "第 N 轮 · 已用 <elapsed>" / "Turn N · <elapsed>" (the run's working time: it ticks only while the run works and stops while it waits for a person, an approval or a question, then counts on); right the run status ("空闲" / "Idle", "运行中" / "Running", "等待批准" / "Waiting for approval"), "上下文 N%" / "Context N%" and the version.
+- **Runs** (design note, unslop fixes 2026-11-03): every run that ended closes with a **run row** (§6.16.23), a quiet mono line `运行 · <model> · <duration> · <tokens>` with its status mark (the duration is working time, waits for a person left out, as the status bar counts it), built from the log alone (`run_started`, `model_call`, `usage`, `run_finished` / `run_failed` / `run_aborted`). A finished run's row is collapsed and uncoloured except its `ok` check; a failed run's row is open at first and red only in its mark, its status word and the failure sentence; its detail holding the failure (ErrorDetail: the sentence in the reader's language, the raw kernel text behind 原始错误), 重试 (the last failure only, while nothing runs), 查看轨迹 (`/trajectories/<conversationId>`, only for those the kernel lets read it: org admins and owners, or the agent's owner) and, for a super admin when the model service is misconfigured (`model.auth`, `model.unconfigured`, `run.model_unavailable`), 去配置模型服务 (`/admin/extensions`). A stopped run's row names who stopped it. The run row replaces the stopped, failed and hook-denied dividers (no run is drawn twice); a running run shows nothing new (the live indicators stay). The properties panel's Context section adds the last run's line (model, duration, tokens; cost only when the log carries one, which it does not today).
 - Extension slots, files and sub-agents: §6.16.16–§6.16.18, §6.16.15.
 - **Loading** (`ConversationPage.loading`, `{ thread?, title?, rightArea? }`, per part; spec §7.1 of the web query cache design): every region keeps its box and the page announces once (§6.29). `thread`: the real thread column (`.cb-conv-scroll`, with its scrollbar gutter, and the thread at most `layout.chat` wide, items `space.3` apart) holds three turns: a user bubble's box (the bubble's padding and 1 px border, 45% of the thread, right-aligned) with a `prose` bar in it, then two `prose` bars, 100% and 70% wide; a `prose` slot is one `type.prose.line` high (§6.29). The composer always renders for real and keeps its box, stays mounted and focusable and its textarea stays editable (autofocus works); it cannot send while the thread loads (`composer` may be a function receiving `{ sendDisabled }`, which the page passes to the composer's `send.disabled`), and it stays mounted when the thread arrives, so a draft and its focus are never lost. `title`: the title bar keeps its path and every icon (properties toggle, panel icons); the title is a `body` bar in the title's own box, 30% of the bar wide, in place of the title menu. `rightArea`: an open right area draws its own loading state instead of `panel` / `properties`: the right panel's `loading` state (§6.16.18: the head with the open panel's title, which the caller gives as `rightArea: { title }` (default "右侧面板" / "Right panel"), and close, without the full-screen button, and the block's loading bars in the body) or the properties panel with its one always-present section loading (上下文 / Context; §6.16.17; the Files and extension sections exist only when the data holds something, so no placeholder stands in for them); a closed area stays closed. Nothing animates.
 
 <!-- states: template-conversation -->
-States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`, `loading`
+States: `properties`, `file-panel`, `subagent-panel`, `new`, `sheet`, `properties-sheet`, `loading`
 
 The two `right-panel` widths of 544 hold only at the width the `template-conversation` blocks render (a 1280 window with the full sidebar): 1280 − `layout.sidebar` (256) − `layout.chat-min` (480). At other widths the panel follows the clamp in §6.16 (right panel).
 
@@ -462,10 +523,15 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 | new-conversation-body | new | row-gap | space.4 |
 | greeting-line | new | height | type.h1.line |
 | agent-chip | new | height | control.prominent |
-| quick-action | new | color | color.muted |
+| quick-actions | new | width | control.default |
 | sidebar | sheet | width | layout.sidebar-rail |
 | right-panel | sheet | width | layout.panel |
 | status-bar | sheet | height | layout.status-bar |
+| sidebar | properties-sheet | width | layout.sidebar-rail |
+| properties | properties-sheet | background-color | color.panel-2 |
+| property-section | properties-sheet | padding-left | 0 |
+| property-section | properties-sheet | padding-top | space.3 |
+| property-section | properties-sheet | border-top-left-radius | 0 |
 | title-bar | loading | height | layout.title-bar |
 | thread | loading | max-width | layout.chat |
 | right-panel | loading | width | 544 |
@@ -473,11 +539,11 @@ The two `right-panel` widths of 544 hold only at the width the `template-convers
 | status-bar | loading | height | layout.status-bar |
 
 ### 5.6 Overview (T1)
-- Order in the content column: PageHeader → StatCards (the header's `metrics`) → the page's sections (cards, lists), separated by `space.3`.
-- **Loading** (`OverviewPage.loading`, `{ stats?, sections?, mainSide?, keep? }`): the header is its loading state (§4.2); `stats` stat cards (default 4) in the loaded card's box (the `panel` card with a `small` label slot over a `metric` value slot), unless the header's own `metrics` are given, which render for real; `sections` card-shaped blocks (default 2, as in §5.2) in place of `children`; a page whose content is a `Grid columns="main-side"` of two card stacks (gap 16) passes `mainSide: { main, side }` (the cards of each column) instead, and the blocks stand in the same grid and stacks, so the side column does not move when the data lands (state `loading-main-side`, against the loaded `main-side`); a page whose content does not depend on the data (a note under the numbers) passes `keep`, and its `children` render as they are in place of the blocks (state `loading-keep`, against the loaded `keep`). One busy announcement (§6.29). Nothing animates.
+- Order in the content column: PageHeader → StatCards (the header's `metrics`) → the page's sections (cards, lists): the first block sits `layout.head-content` (24) below the head (§4.2 "Head rhythm"), and the blocks are separated by `space.3`.
+- **Loading** (`OverviewPage.loading`, `{ stats?, sections?, keep? }`): the header is its loading state (§4.2); `stats` stat cards (default 4) in the loaded card's box (the `panel` card with a `small` label slot over a `metric` value slot), unless the header's own `metrics` are given, which render for real; `sections` card-shaped blocks (default 2, as in §5.2) in place of `children`; a page whose content does not depend on the data (a note under the numbers) passes `keep`, and its `children` render as they are in place of the blocks (state `loading-keep`, against the loaded `keep`). One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-overview -->
-States: `default`, `loading`, `main-side`, `loading-main-side`, `keep`, `loading-keep`
+States: `default`, `loading`, `keep`, `loading-keep`
 
 <!-- size-table: template-overview -->
 | Part | State | Property | Value |
@@ -486,13 +552,11 @@ States: `default`, `loading`, `main-side`, `loading-main-side`, `keep`, `loading
 | content | loading | max-width | layout.content |
 | skeleton-text[data-size=small] | loading | height | type.small.line |
 | skeleton-text[data-size=metric] | loading | height | type.metric.line |
-| content | main-side | max-width | layout.content |
-| content | loading-main-side | max-width | layout.content |
 | content | keep | max-width | layout.content |
 | content | loading-keep | max-width | layout.content |
 
 ### 5.7 Inbox (T6)
-- Rail (240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400).
+- Rail (320, the list column; wider than a filter rail's 240): the filters above the list (`filters`, then `list`); content: the selected item; an optional inspector (400). A row leads with the item's display name (one line, the ellipsis on the name, the full text in `title`), its version beside the name in `CellTitle`'s `trailing` (never cut), and what kind of item it is on the second line; the list's column header is neutral (事项 / Item), since rows are requests and notices alike.
 - **Loading** (`InboxPage.loading`, `{ rows?, inspector? }`): the header is its loading state (§4.2); the rail's `filters` stay real (they are static); the list is `rows` rows (default 4) in the object list's own container (§6.17: the same border, radius and first row) in the 64 px row: a 36 px mark and two text slots (a `body` one at 55%, a `small` one at 30%); `loading.list: "records"` (with `loading.table`: `label`, `columns`, `rowHeight`, `framed`) draws the DataTable's loading state (§6.6) in the caller's table shape instead, for the inbox pages whose list is a DataTable (`rowHeight="dense" framed={false}`); the content is one card-shaped block (§5.2) in place of `children`. A real `inspector` stays. A page whose loaded state opens its first item (the rail-inspector layout, an ActionRow for the decision) keeps both while loading: `inspector` (`true`, or `{ rows?, keyWidth? }` as in §5.2) draws KeyValue placeholders in the inspector column, and the page passes its `inspectorTitle` and its decision `actionRow` (the labels are static), which stays with its buttons disabled (as in §5.3). One busy announcement (§6.29). Nothing animates.
 
 <!-- states: template-inbox -->
@@ -505,18 +569,21 @@ States: `default`, `loading`, `default-records`, `loading-records`
 | content | loading | max-width | layout.content |
 | content | default-records | max-width | layout.content |
 | content | loading-records | max-width | layout.content |
+| rail | default | width | 320 |
+| rail | default-records | width | 320 |
 | loading-row | loading | height | 64 |
 | skeleton-box[data-box=mark] | loading | height | 36 |
 
 ### 5.8 Settings (T5)
 - **Sections are stacked** (§5.3 "Stacked sections"): beside the sub-nav, each `FormSection` puts its head above its card at every width, so the content column starts with the section title right after the nav.
 - **Loading** (`SettingsPage.loading`, `{ sections? }`): the header is its loading state (§4.2); the sub-nav is real (static per page) and so is the header's `description`; an ActionRow the page passes stays with its buttons disabled. `sections` (one entry per section: `fields`, and the `title` / `description` the page already knows) draws each section in the `FormSection` frame (§5.3) in place of `children`: a title the page does not know is an h2-sized slot (`SkeletonText` `heading`, 45%), a description it does not know a `body` slot (70%), then `fields` field placeholders (§5.3; a count or `FieldShape[]`). Without `sections` the children render as they are, each `FormSection` or list saying for itself whether it is loading. One busy announcement (§6.29). Nothing animates.
-  - **Control groups** that are no `Field` have their own `FieldShape`s, each drawn in a `Stack` (gap 8) with an optional `help` line (`small`, 55%) under it, as a settings section draws a group and its hint: `radio-cards` is the card RadioGroup's own markup (`.cb-radios[data-variant=card]`, gap 8) with `options` cards (default 2), each the card's frame (padding `space.2` `space.3`, 1 px `line` border) holding a 14 px box slot and the text column's `body` label slot (30%) over its `small` description slot (70%); `key-value` is KeyValue's own `dl` with `rows` rows (default 3), a `body` slot in the `keyWidth` key column (default 8ch) and a 55% value slot; `switch` is a row (gap 12, centred) of a 32 × 20 box (the Switch) and a 64 px `body` slot (its state word). Two shapes stand beside the groups without a stack: `text` is one `body` slot (70%: a hint is `Text variant="prose"`, whose prose-small line is the body line), a hint line the section always shows; `card-group` is a `small` label slot (30%) over a gap-12 stack of `options` untitled cards (default 2), each a `body` slot over `rows` `small` slots (default 2) in a gap-4 stack, as a labelled list of cards (an extension's permissions). A loading slot that sits in a flex row (a card radio's text column, a card's title) takes the row's free width (`flex: 1`, `min-width: 0`), so its percentage bar is never 0 px wide. Static text the page shows beside a group (a read-only note, "applies to new sandboxes") renders for real through `help` only when the page knows it is shown. States `radio-cards` / `loading-radio-cards`.
-  - **Cards**: a section that lists titled cards takes `cards: CardShape[]` instead of `fields`, and a page that is a stack of titled cards (no sections) passes `loading.cards`: `CardShape[]`, or `{ shape, count }` (one shape repeated, default 3), in a 16-gap stack as the loaded cards. A card placeholder is the `Card` frame: in its head a 45% `body` title slot and `actions` button slots (88 px wide, `control.default` high); in its body `lines` text lines (`lineSize` `body` or `small`; 70% then 55%) in a gap-8 stack, or, with a `field`, the lines in a gap-4 stack and that field's placeholder below them (gap 12), as a card that describes a setting and then edits it; `buttons` puts a gap-8 row of that many button slots (88 px, `control.default`) below the lines (gap 4) instead, `space.3` apart, as a card that explains an action and offers it (a danger card); `list` adds after the lines a labelled list (a `small` label slot and `list` `small` slots, gap 4), as an install card's components. States `cards` / `loading-cards`.
-  - **List + editor**: a section that edits a list of named items next to the open item (the agent page's prompt files, §3.3 of the agent profile design) is a stacked `FormSection` (§5.3), so its card has the content's full width, and lays the card out as `Grid columns="list-detail"` (gap 16; one column below 640, §4.3): on the left a gap-8 stack of a rows `Repeater` (§6.26) whose rows each hold the item's name as a default-height button, and a `small` count line under it; on the right a titled `Card` with the item's fields (gap 12). Its loading shape is `{ control: "list-editor", options?, rows? }`: the same grid and stack, the Repeater's own list of `options` rows (default 1), each a `control.default` slot, its add button slot (`control.dense`, 88 px) and a `small` 70% count slot; and the `Card` frame with a 45% title slot over a name field placeholder (an input with its help line) and a `rows`-line textarea placeholder with its help line (default 16), gap 12.
+  - **Control groups** that are no `Field` have their own `FieldShape`s, each drawn in a `Stack` (gap 8) with an optional `help` line (`small`, 55%) under it, as a settings section draws a group and its hint: `radio-cards` is the card RadioGroup's own markup (`.cb-radios[data-variant=card]`, gap 8) with `options` cards (default 2), each the card's frame (padding `space.2` `space.3`, 1 px `line` border) holding a 14 px box slot and the text column's `body` label slot (30%) over its `small` description slot (70%); `key-value` is KeyValue's own `dl` with `rows` rows (default 3), a `body` slot in the `keyWidth` key column (default 8ch) and a 55% value slot; `switch` is a row (gap 12, centred) of a 32 × 20 box (the Switch) and a 64 px `body` slot (its state word). Two shapes stand beside the groups without a stack: `text` is one `body` slot (70%: a hint is `Text variant="prose"`, whose prose-small line is the body line), a hint line the section always shows; `item-group` is a `small` label slot (30%) over an `ItemList`'s own rows (`options` rows, default 2, split by `line-soft`), each a 30% `body` title slot over `rows` `small` slots (default 2) `space.1` apart, as a labelled list inside a form card (an extension's permissions): rows, never cards (§1). A loading slot that sits in a flex row (a card radio's text column, a card's title) takes the row's free width (`flex: 1`, `min-width: 0`), so its percentage bar is never 0 px wide. Static text the page shows beside a group (a read-only note, "applies to new sandboxes") renders for real through `help` only when the page knows it is shown. States `radio-cards` / `loading-radio-cards`.
+  - **Items**: a section that lists items, each with its own lines and field (the model purposes: `/admin/models` 用途默认映射, `/settings/models`), is a `flush` FormSection holding one `ItemList inset="flush"` of `ItemListItem` rows (§6.33), never a card per item (§1). Its loading shape is `items: ItemShape[]` instead of `fields` (`FormSection.loading`, `SettingsPage.loading.sections[].items`): the flush card holds the flush ItemList's own `ul` and rows (padding `space.4`, split by `line-soft`), each row in the loaded row's own boxes: the title line (a 45% `body` title slot and `actions` button slots, 88 px wide, `control.default` high), then `lines` text slots (`lineSize` `body` or `small`; 70% then 55%) in the meta lines' box (`space.1` below the title line, `space.1` apart), then in the body's box (`space.3` below) the `field`'s placeholder, as a row that describes a setting and then edits it; or a gap-8 row of `buttons` button slots (88 px, `control.default`); or a labelled `list` (a `small` label slot and `list` `small` slots, gap 4). States `items` / `loading-items`.
+  - **Cards on the page ground**: a page that is a stack of titled cards with no section around them (installed plugins) passes `loading.cards`: `ItemShape[]`, or `{ shape, count }` (one shape repeated, default 3), in a 16-gap stack as the loaded cards; each placeholder is the `Card` frame with the title line in its head and the body as an item row's. A card on the page ground is the one box, so this is allowed; inside a section the items are rows. States `cards` / `loading-cards`.
+  - **List + editor**: a section that edits a list of named items next to the open item (the agent page's prompt files, §3.3 of the agent profile design) is a stacked `FormSection` (§5.3), so its card has the content's full width, and lays the card out as `Grid columns="list-detail"` (gap 16; one column below 640, §4.3): on the left a gap-8 stack of a rows `Repeater` (§6.26) whose rows each hold the item's name as a default-height button, and a `small` count line under it; on the right, with **no card** around them (§1), the open item's name as an `h3` (`Text variant="h3"`) over its fields, gap 12. The two columns are split by a `line-soft` column divider (`Grid columns="list-detail" divided`, the only grid that takes `divided`: the divider `space.4` from each column, running the row's full height; a row divider above the detail once the grid stacks below 640). Its loading shape is `{ control: "list-editor", options?, rows? }`: the same divided grid and stack, the Repeater's own list of `options` rows (default 1), each a `control.default` slot, its add button slot (`control.dense`, 88 px) and a `small` 70% count slot; and, in a gap-12 stack, a 45% `body` slot for the `h3` over a name field placeholder (an input with its help line) and a `rows`-line textarea placeholder with its help line (default 16).
 
 <!-- states: template-settings -->
-States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `loading-cards`
+States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `loading-cards`, `items`, `loading-items`
 
 <!-- size-table: template-settings -->
 | Part | State | Property | Value |
@@ -533,6 +600,13 @@ States: `default`, `loading`, `radio-cards`, `loading-radio-cards`, `cards`, `lo
 | content | cards | max-width | layout.content |
 | content | loading-cards | max-width | layout.content |
 | skeleton-box[data-box=default] | loading-cards | height | control.default |
+| content | items | max-width | layout.content |
+| item-list-row | items | padding-left | space.4 |
+| item-list-row | items | padding-top | space.4 |
+| item-list-body | items | margin-top | space.3 |
+| content | loading-items | max-width | layout.content |
+| loading-item-row | loading-items | padding-left | space.4 |
+| skeleton-box[data-box=default] | loading-items | height | control.default |
 
 ### 5.9 Wizard (T9)
 - **Loading** (`WizardPage.loading`, `{ fields }`, `{ content }` or `{ keep: true }`): the header is its loading state (§4.2); the step bar is real (the steps are static); the ActionRow stays with its buttons disabled; the step's body is one card (the `panel` card of §5.2 with a 30% `body` slot as its title) holding `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`) `space.4` apart, in place of `children`; a step whose body is no card (a review stack) passes `content` (`BlockShape[]`, §5.2) instead, drawn in a gap-16 stack (state `loading-content`, against the loaded `content`); a step that is its own `FormSection`s passes `keep`, and its `children` render as they are inside the page's one busy region, each section saying for itself whether it is loading (§5.3), so the static titles, descriptions and field layouts stay real and no section announces itself. One busy announcement (§6.29). Nothing animates.
@@ -653,6 +727,7 @@ States: `default-step`, `dense-step`, `prominent-step`, `hover`, `focus`, `disab
 - A Textarea is two lines high unless `rows` asks for more. A Textarea with a character count shows `n / max` (muted) at the bottom right. Prose textareas (descriptions) use `prose-small`; prompts and code use the mono font.
 - Textareas are plain, as the signed reference: no line-number gutter and no resize grip (`resize: none`). Code-like input (prompts, JSON) keeps lines unwrapped in the mono font (`code`); read-only code is shown by CodeBlock (§6.9).
 - Stepper: `− value +`, with square buttons at the step's height on both sides.
+- **Select** (maintainer decision R, 2026-11-07): the field looks like an input (the rules above, `chevron-down` 14 `muted` at its end) but is a button (`role="combobox"`, `aria-haspopup="listbox"`, `aria-expanded`; a `Field`'s `label[for]` names it) that opens the design system's own list, never the browser's popup: the composer's anchored menu (§6.16.3, the same code) as a `listbox` of `option`s (`aria-selected`), named like the field. It hangs `space.1` under the field (above it when the room below is short), its start edge on the field's, at least the field's width, its height `min(layout.menu-max-height, the live room on its side)`; the selected option has the `selected` ground and a `check` 14 at its end and is scrolled into view; a long label is cut with an ellipsis and whole in its tooltip. With more than ten options the menu's filter field heads it (focus starts there, the IME guard, typing on an option goes back to it, Space on an option picks it); otherwise focus starts on the selected option and typing jumps to the option it starts (typeahead). ↓, ↑, Enter and Space open it; the arrows move, Enter or Space picks (the change fires only for another option), Escape closes and focus returns to the field; Tab (Shift+Tab) closes it without a change and moves the focus on to the next (previous) field, as a native select (the list does not trap Tab). A click on its label focuses the field without opening it. The field is as wide as its widest option (every label sits in it, only the current one shown) and cuts the current one with an ellipsis when narrower; a value matching no option shows the `placeholder` in `faint`. Disabled: the input's disabled look, it never opens. In a form it carries a hidden native copy (`name`, `required`, `form`) so the form submits and validates it; the copy is hidden from assistive tech and never focused (a failed validation sends the focus to the field).
 - Slider: a discrete block track (20 cells by default, cell width adaptive, 2 between cells, 8 high); the selected part is `accent` and the rest `line`; the thumb is a 4×16 `ink` vertical bar; keyboard ←→ by step, PageUp/PageDown by 10 steps; can be linked with a value input box on the right (8ch wide). When no value is set, the thumb is centered and the track is all `line`, so it doesn't pretend to be some value.
 - Reset to default: when a field has been set by the user, a ghost small link "Reset to default" with the `refresh` icon appears on the right of the label row; clicking clears the value and returns to the default display.
 
@@ -679,11 +754,40 @@ States: `default`, `focus`, `error`, `disabled`
 | input | disabled | border-top-color | color.line |
 | input-control | disabled | color | color.disabled |
 
+<!-- states: select -->
+States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
+
+<!-- size-table: select -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| select | default | height | control.default |
+| select | default | border-radius | radius.sm |
+| select | default | border-top-color | color.line |
+| input-control | default | padding-left | space.2 |
+| input-control | default | font-size | type.body |
+| input-control | default | color | color.ink |
+| select-label[data-placeholder=true] | placeholder | color | color.faint |
+| select | open | border-top-color | color.accent |
+| menu | open | background-color | color.panel |
+| menu | open | border-top-color | color.line-strong |
+| menu | open | border-radius | radius.md |
+| menu-item | open | height | row.default |
+| menu-item | open | padding-left | pad.default.x |
+| menu-item[aria-selected=true] | open | background-color | color.selected |
+| menu | long | max-height | layout.menu-max-height |
+| menu-filter | long | height | control.dense |
+| menu-filter | long | font-size | type.small |
+| menu-item | long | height | row.default |
+| select | disabled | background-color | color.hover |
+| select | disabled | border-top-color | color.line |
+| select | disabled | color | color.disabled |
+| select | error | border-top-color | color.fail |
+
 ### 6.3 Checkbox / Radio / Switch / option card
 - Checkbox and radio are 14×14 with radius `sm` (radio round). Checkbox checked: `accent` ground + `on-accent` `check` icon; indeterminate `minus`. Radio checked: `accent` border + a 6×6 `accent` inner dot.
 - Switch: a `space.7` × `space.5` (32 × 20) track with radius `bubble` and 2px padding, a `space.4` (16) round knob; off: `line` track + `muted` knob; on: `accent` track + `on-accent` knob moved right by `space.3`; the knob moves over `motion.hover`. Where a switch stands alone its label and current state ("On" / "Off", muted) are shown as text next to it, so the state never relies on color: `SwitchField` draws that row, `control.default` high with `space.2` gaps (clicking the label toggles too).
 - Switch list (`SwitchList`, a form's tools and similar lists): one `row.roomy` row per item with the name and a `small` prose `muted` description (each one line with an ellipsis), `muted` `small` meta text (such as the policy) and the switch; padding `space.4`, rows divided by `line-soft`; it sits in a `flush` FormSection card.
-- Option card (rich option of a single choice): 1px `line` border, radius `md`; selected: `line-strong` border + `selected` ground (neutral, §2.3), the radio dot in `accent`.
+- Option card (rich option of a single choice): 1px `line` border, radius `md`; selected: `line-strong` border + `selected` ground (neutral, §2.3), the radio dot in `accent`. Option cards are the one allowed card inside a box (§1): a choice drawn as cards on purpose (the org 沙箱 page's 直接执行 / 需要审批 inside its form card).
 
 <!-- states: switch -->
 States: `default`, `selected`, `focus`
@@ -735,20 +839,22 @@ States: `default`, `selected`, `focus`
 - Kbd: 1px `line` border + 2px bottom edge, radius `sm`.
 - Tooltip: `panel` ground + `line-strong` border + `shadow-1`, radius `sm`, small, padding `pad.dense`, 400ms delay.
 - Up / down: `trending-up` 8.2% (ok) / `trending-down` 1.1s (fail) — up and down are the one place `ok` is shown.
-- KeyValue: a key-value list (Inspector property groups, detail sections); key muted with a fixed 8ch width, value single line with ellipsis. `columns={2}` (an overview card's figures, an extension's facts) flows the pairs into two columns: keys at their natural width, each value `space.3` after its key, the second column `space.7` (32 px) after the first, so a value never reads as part of the next label; one column below 640.
-- Disclosure: an expandable block (a skill body, a license text). The summary line is the toggle button (`aria-expanded`, `aria-controls`, a `faint` `chevron-right` / `chevron-down` icon (12) on the right, `hover` ground, same row style as ThinkingRow); closed by default (`defaultOpen` opens it); once open, the body follows `space.1` below under a 1px `line` guide on the left, indented `space.2`. The body is rendered only while open. Not in the reference set: no state list or size table yet (like KeyValue).
+- KeyValue: a key-value list (a detail page's facts block, the inbox inspector's property groups, detail sections); key muted with a fixed 8ch width, value single line with ellipsis. `columns={2}` (an overview card's figures, an extension's facts) flows the pairs into two columns: keys at their natural width, each value `space.3` after its key, the second column `space.7` (32 px) after the first, so a value never reads as part of the next label; one column below 640.
+- Disclosure: an expandable block (a skill body, a license text). Its body's 1px `line` guide on the left, indented `space.2`, is also how a `Subsection` (§6.32) sets a nested group apart inside a box. The summary line is the toggle button (`aria-expanded`, `aria-controls`, a `faint` `chevron-right` / `chevron-down` icon (12) on the right, `hover` ground, same row style as ThinkingRow); closed by default (`defaultOpen` opens it); once open, the body follows `space.1` below under a 1px `line` guide on the left, indented `space.2`. The body is rendered only while open. Not in the reference set: no state list or size table yet (like KeyValue).
 - Metrics on list pages are StatCards (§6.14).
 - TextLink: an in-site text link drawn through the DesignProvider's `link` (§6.7 Links): `ink` text, a `line-strong` underline offset 3px that turns `ink` on hover, the accent focus ring; visited links keep `ink`. Pages never show the browser's link colors.
-- LinkCard: a card that leads to another page (not used by the admin overview any more: its numbers link to their pages, §6.14, and the sidebar leads to the rest): `panel` ground, radius `md`, padding `space.4`, `space.2` apart: the title (`body`, 500), a `prose-small` `muted` description, and one TextLink with a `faint` `chevron-right` (12). Not in the reference set (like KeyValue).
+- LinkCard: a card that leads to another page (on the page ground only, §1) (not used by the admin overview any more: its numbers link to their pages, §6.14, and the sidebar leads to the rest): `panel` ground, radius `md`, padding `space.4`, `space.2` apart: the title (`body`, 500), a `prose-small` `muted` description, and one TextLink with a `faint` `chevron-right` (12). Not in the reference set (like KeyValue).
 
 ### 6.6 DataTable
 Structure, top to bottom: toolbar / bulk action bar → the table (header and rows on the `panel` ground, **square, no border**) → pagination. The toolbar and pagination sit on the page ground outside the panel.
+
+- **Framed or not** (§1 "One box is enough"): `framed` defaults to the place. On the page ground and in a pane (RightPanel) the table sits on its `panel` ground; inside a box (a Card, a form card, a Dialog or Sheet, an inline card, a property section) it is unframed by itself, with no ground of its own (it takes the box's ground for its sticky header: `panel`, or `raised` in an inline card). An explicit `framed` wins. A table inside a form section goes in a `flush` FormSection, so it runs to the card's edges (its cells keep the `space.3` edge padding), as an only-child unframed table does in a Card body. Several tables in one card (one per model provider) are flush `Subsection`s (§6.32): each an `h3` heading row padded `space.3` over its table, the subsections split by `line-soft`. A table in a padded form card is a `web-ui-box-in-box` finding (§9.1).
 
 - **Density**: the rows (row menus, inline controls) and the pagination are `dense` (`DensityContext` around the body); the toolbar, the bulk action bar and the empty-state actions are `default`, as the signed reference draws them, so the toolbar has the height of the page's other controls.
 - Toolbar: search (240 wide, `search` icon prefix, `/` focuses), filter chips (§6.15), clear all; at the right end (`toolbarEnd`, right-aligned as the signed reference) sort, view switch, column settings. It has the same height as the bulk action bar so nothing jumps when one replaces the other in place.
 - Bulk action bar: when ≥1 row is checked it **replaces the toolbar in place**, `panel` ground, radius `sm`, left "N selected" (600) + bulk actions, right "Deselect Esc". An accent border or ground must not be used.
 - Header: `row.dense` high, padding `space.2`, `small` `muted`, weight 400; the column being sorted is `ink` + `arrow-down` / `arrow-up`; a sortable column shows `arrow-up-down` and a `hover` ground on hover.
-- Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis). A row is named by its first cell (the row checkbox reads "Select {name}"): a plain-text cell, or the `title` of a `CellTitle`; `rowLabel` overrides it.
+- Name cell of a roomy row: `CellTitle` (an optional initial tile, `control.dense` square on `selected` with radius `sm`, then the name and a `small` prose `muted` description, each one line with an ellipsis; `mono` draws a description that is an id or a version, `plugin · v1.0.0`, in mono instead of prose; `trailing` puts a short mono label such as a version after the name on its line, `small` `faint`, which never takes the ellipsis: the name does). A row is named by its first cell (the row checkbox reads "Select {name}"): a plain-text cell, or the `title` of a `CellTitle`; `rowLabel` overrides it.
 - Rows: height by `rowHeight`: `dense` 28, `default` 32, `roomy` 44 (two lines: name + a `small` prose description, or a thumbnail). Cell padding `space.2` horizontally, the first and last columns `space.3` toward the edge. Row dividers are 1px `line-soft` above each row; no outer border. Success in a status column has no mark (§2.4).
 - Alignment: numbers, durations and amounts are right-aligned; IDs and times are left-aligned; IDs and times use `muted`. An overlong single line is truncated with an ellipsis and the full text is shown on hover with a native `title`. A column marked `wrap` (a short list that must stay readable, such as a model's capabilities 「工具 · 图片 · 推理」) wraps onto more lines instead, never an ellipsis: the row grows, the extra lines get `space.1` above and below; names and ids never wrap. A wrap cell given a list of strings draws them joined by 「 · 」, each item with its separator as one no-break unit, so lines break only between items (never inside 「缓存」, never before a 「·」).
 - Row states (priority from high to low when they occur together): focus ring > selected > checked > hover > default. They paint the row ground, transitioning over `motion.hover`.
@@ -766,6 +872,7 @@ Structure, top to bottom: toolbar / bulk action bar → the table (header and ro
   - No results (caused by filters): the compact EmptyState, centered the same way, with the `search-x` icon, "No matching results", a description of the current filters and "Clear filters".
   - Error: `circle-x` + "Failed to load" in `fail`, the error code · request ID (muted) + "Retry" (`refresh`).
 - **Narrow (below 640): stacked rows.** Every table becomes stacked rows; it is the table's own behaviour, no page opts in. The header row is hidden from sight (also above an empty state) but stays for screen readers: every table element carries its explicit role (`table`, `rowgroup`, `row`, `columnheader`, `cell`), because the stacked display drops the implicit table semantics in WebKit, and the hidden header holds plain text, no controls. What the header did moves to a compact bar above the rows, drawn only when there is something to do: a 全选 checkbox (with row selection) and a 排序 select listing each sortable column both ways (「名称 升序」, 「名称 降序」). Each row is a card, `space.2` padding above and below, a `line-soft` line between rows: the first column's cell is its title line (500, at least `row.dense` high), with the row checkbox before it and the row menu after it on the same line; every other cell is one `label value` line, the label being the column header (`small` `muted`, 10ch, one line with an ellipsis; a column without a header has no label) and the value one line with an ellipsis (the full text in `title`). Cells keep the `space.3` edge padding. Nothing sticks; the selected row keeps its 2px accent bar on the card's left; the row-menu button is a 40 px square (tap target). The toolbar wraps and its search takes the full width.
+- Inline controls: a column marked `interactive` holds its own control (the 扩展 pages' enable switch); a click inside it works the control and never opens the row (`onOpen`), like the checkbox and the row menu.
 - Keyboard: ↑↓ move focus, Space checks, ↵ opens, Esc deselects.
 - The header is sticky; when scrolling horizontally the first column sticks to the left.
 
@@ -802,13 +909,14 @@ States: `default`, `row-hover`, `row-selected`, `loading`, `empty`, `narrow`
 
 Selection rules: the user needs to decide → Dialog; view / edit one object without leaving the list → Sheet; in-place options / filters → Popover / Menu; feedback on an operation result → Toast (a Dialog must not be used); creating something with more than 6 fields → a form page (T4).
 
-- **Dialog**: width 480 / 640 (the agent map's levels are 1100 / 760 / 1060, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
-- **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches.
+- **Dialog**: width 480 / 640 (the agent map's tree is 1100 and its levels 2 and 3 the conversation's column plus the body padding, §6.16.28), `panel` background + `line-strong` border + radius `md` + `shadow-2` + `scrim`. Header (h2 title + close `x`) / body (padding 16) / footer (right-aligned: ghost Cancel + primary action, the primary action carries `↵`), with 1px `line` separating header and footer. Esc closes; focus is trapped and returned after closing. Default focus: on the first field for a dialog that asks for input (新建组织, 新建令牌), else on the primary action (a `LinkButton` primary too); on Cancel for a dangerous dialog. A create dialog's primary is disabled until it is valid. A dialog that only explains why something cannot be done (退出组织 as the only owner) is not dangerous: plain title, one default button "知道了" / "Got it", and a link to where it can be fixed. A dialog whose next step lives elsewhere (加入评测集 with no eval set) says so and offers that step as its primary (`LinkButton`), never a disabled dead end.
+- **Dangerous confirmation**: the ordinary frame and title (`line-strong`, `ink`): the red is only on the destructive button; explains the consequences and recoverability; the object name must be typed, the confirm button is disabled until it matches, and is danger-solid once it matches. A caller that must read something first (what a delete does, ruling P3-19) passes `confirmDisabled`: the button then stays disabled and `danger` while the read is pending or failed, even with the name typed.
 - **Sheet**: slides out from the right, width 480 / 720, `panel` background + `line-strong` left line + `shadow-sheet`; no scrim by default (the list is still operable). Header: name + version + open in a new page `external-link` + close `x`; may contain Tabs; footer: actions. Closing with unsaved changes needs a second confirmation.
+- **Inside an overlay** (§1 "One box is enough"): a Dialog or a Sheet is the box. Its body groups with `ContentSection` headings (§6.31), `Subsection`s (§6.32) and hairline-divided `ItemList` rows (§6.33), never Cards or FormSections; tables, code blocks and repeaters inside draw their unboxed forms by themselves. Choosing between sources in a dialog is a card `RadioGroup` straight in the body (no Card around it), and its one `FilePicker` drop zone is allowed (§6.25).
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
-- **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; it keeps 8 px from the viewport's edges (collision padding) and, opening below or above its trigger, is at least as wide as the trigger (the org switcher, the account row; a flyout to the side keeps its own width); menu items are `row.default` high with padding `pad.default.x`, optionally led by a 16 px `muted` icon (a navigation menu's items carry the main nav's icons); an item may carry a description after its label (`small`, `muted`, one line with an ellipsis; a Repeater preset's help); the current choice of a single-choice set (the current org, the language) is an ordinary item in `ink` with a `check`, never drawn disabled; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. The trigger button is outlined in the accent color when open and holding a value.
+- **Popover / Menu**: `panel` background + `line-strong` border + radius `md` + `shadow-1`; it keeps 8 px from the viewport's edges (collision padding) and, opening below or above its trigger, is at least as wide as the trigger (the org switcher, the account row; a flyout to the side keeps its own width); menu items are `row.default` high with padding `pad.default.x`, optionally led by a 16 px `muted` icon (a navigation menu's items carry the main nav's icons); an item may carry a description after its label (`small`, `muted`, one line with an ellipsis; a Repeater preset's help); the current choice of a single-choice set (the current org, the language) is an ordinary item in `ink` with a `check`, never drawn disabled; a filter Popover has a search `>` at the top and "Clear / Apply ↵" at the bottom; a hovered item gets a `hover` background. Destructive (`danger`) items go last, after a separator; a menu never draws an empty group: no separator leads, trails or follows another, so a menu whose only item is destructive (an object row's ⋯ → 停用) has no line above it. The trigger button is outlined in the accent color when open and holding a value.
 - **No menu of one**: an overflow menu (`more-horizontal` in a page head or an object row, More on the conversation title bar) is drawn only when it holds two or more actions a person can take, or one destructive one (separators and disabled items don't count). With none it is not drawn; with one safe action, that action is drawn directly in its place (a button or link). A destructive (`danger`) action is never promoted out of its menu: a menu whose only action is dangerous stays a `more-horizontal` menu with that one item. A table's row menu keeps its column, so a row with one action keeps `⋯`, and a row with none shows no button (§6.6). Never list an action twice on one screen (a menu item that repeats a visible button, the name link or a sidebar entry).
-- **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has the `selected` background + a 1px `line-strong` outline (neutral, §2.3); key hints at the bottom.
+- **Command palette (⌘K)**: width 560, input with a `>` prefix; group titles small faint; the current item has the `selected` background + a 1px `line-strong` outline (neutral, §2.3); key hints at the bottom. An empty list says why in one `muted` sentence (`emptyText`; default 「没有匹配」) and may offer the next step under it as a text link (`emptyAction`, which closes the palette as it navigates): the composer's `/` menu on an agent with no invocable skills explains that an org skill must be selected on the agent and links someone who can edit the agent to its skills section.
   - **Items** are one `row.dense` line, gap `space.2`: the label (`ink`), then an optional hint (`faint`, a skill's argument hint "[issue-number]"), then optional tags (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`, the picker-menu tag), then an optional description (`muted`, filling the rest of the line with an ellipsis), then an optional source, a secondary label (`small` `faint`, at the end of the line: the plugin a skill comes from, "superpowers"), then an optional shortcut (`Kbd`, at the end).
   - **Filtering and ranking**: the query (a leading `/` ignored, case-insensitive) matches the label, an item's extra search text (not shown; e.g. a skill's qualified name "superpowers:brainstorming") and the description. Order: label prefix, then search-text prefix (also after a `<plugin>:`), then label substring, then search-text substring, then description substring; anything else is hidden. Groups follow their best item.
   - The composer's `/` menu is this palette (phase D): the "Skills" group first (sorted by name, tags "manual" / "sub-agent", the argument hint, the plugin as the source), then the connector prompt groups.
@@ -834,7 +942,7 @@ States: `skills`, `filtered`
 | palette-source | skills | font-size | type.small |
 | palette-item | filtered | height | row.dense |
 | palette-item[data-selected=true] | filtered | background-color | color.selected |
-- **Toast**: stacked at the bottom right, `panel` background + `line-strong` border + radius `md` + `shadow-1`, a 2px status-color bar on the left (ok / accent / fail); success auto-dismisses after 4s, or after 8s when it carries an undo ("撤销" / "Undo", no arrow; a Repeater's remove, §6.26); an error must be dismissed manually and may carry "View →"; a progress type carries a segmented progress bar.
+- **Toast**: top center, 16px (`space.4`) below the top of the content area (there is no TopBar, §4), stacked downward with the newest on top (errors, which stay until closed, above the rest); centered rather than top right so it never covers the PageHeader's actions (the primary button sits top right); 360px wide, and below 640px it spans the width with a 16px gutter. `panel` background + `line-strong` border + radius `md` + `shadow-1`, no status-color bar: a leading 16px status icon carries the status, so it never relies on color alone (success `circle-check` in `ok`, error `circle-alert` in `fail`, progress `spinner` in accent), together with the error's `role="alert"` and the `role="status"` live region of the others. Success auto-dismisses after 4s, or after 8s when it carries an undo ("撤销" / "Undo", no arrow; a Repeater's remove, §6.26); an error must be dismissed manually and may carry "View →"; every toast has a close button; a progress type carries a segmented progress bar under its message. A name in a toast message is quoted: corner quotes in zh (已启用「待办清单」。), straight double quotes in en (`Enabled "Todo".`), §7 "Copy".
 
 ### 6.8 Charts
 - Bar charts stack discrete blocks (pixel style), `line-strong` for normal values, `fail` marks the failure count, and the current period uses the accent color.
@@ -851,14 +959,15 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 - **ToolCallRow** (superseded by the tool group and tool row of §6.16.8–§6.16.10, together with IoBlock, Timeline and the Inspector-only Checklist; kept until the conversation page moves over, then deleted): by default only one line: tool name (600) + a one-sentence description (`muted`, single line with ellipsis) + a `StatusMark` for non-completed states (running / failed / cancelled) + `▸` on the right. The whole row is an expand button, with a `hover` background on hover. On error the tool name is `fail`; when cancelled it is `muted`. Once expanded, inside a 1px `line` frame come two `IoBlock`s, IN and OUT (no OUT while running); when the output is truncated, the bottom shows small `faint` "Output too long, truncated" + a "View full output" text button (leaving it to the caller to fetch the full text from the archive).
 - **IoBlock**: `panel` background; a 5ch label column on the left (`IN` / `OUT`, 11px 600 `faint`, right line `line`), and monospace raw text on the right (line breaks preserved, long words broken); IN is `ink`, OUT is `muted` (`fail` when the tool errored). Beyond `collapsedLines` (default 12) lines only the first N lines are shown, with an "Expand all (M lines)" / "Collapse" text button below (`aria-expanded`).
 - **Checklist**: each item is `icon + text`. `pending` `square` `faint`; `in_progress` `spinner` accent, the whole row gets an `accent-tint` background + a 2px accent bar on the left + 600, `aria-current="step"`; `completed` `check` `muted` (success is not colored, §2.4), text `faint` and struck through with `<s>`. Each item carries screen-reader status text (To do / In progress / Done). An item with an id carries it as `data-ui-item` (a right panel scrolls to it); an item with an open target (§5.3 linkage) renders its text as a link button.
-- **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting.
-- **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360); 1px `line` border, `panel` background. Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
+- **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting. **Inside a box** (a Card body, a form card, a Dialog or Sheet, an inline card, a property section; §1) it draws its borderless form by itself, as a DataTable is unframed there: no line, a `panel-2` tint, radius `sm`, the language label split from the code by spacing alone (no bottom line). An explicit `framed` wins (`framed` forces the frame, which inside a box is a `web-ui-box-in-box` finding). A diff is a CodeBlock (`language="diff"`), so a file diff in a review card follows the same rule.
+- **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360); 1px `line` border, `panel` background. **Inside a box** (an inline card, a property section, a Card; §1, §6.16.16) the box is its frame: no border and no ground of its own (`framed` overrides). Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
 - **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
 - **AttachmentChip** (its looks are superseded by the attachment strip of §6.16.21; the behavior below stays): an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
 - **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
 - **FileButton**: a file-picking button. It looks like `IconButton` (default `+`, `aria-label` passed in by the caller); clicking opens the system file picker (a hidden `input type=file`, with `accept` / `multiple` settable), and after selection the files are handed to `onFiles` and the input is cleared so the same file can be chosen again.
 - **AttachmentPreview**: an attachment in a message. `kind="image"` is a thumbnail: at most 240×160, cropped proportionally to fill (`object-fit: cover`), 1px `line` border, `loading="lazy"`, `referrerpolicy="no-referrer"`; `kind="file"` is a file card: 1px `line` border, `panel` background, `file` `muted` on the left, file name (single line with ellipsis) + small `muted` description below (such as the type). Both are links that open in a new tab (`target="_blank"`, `rel="noopener noreferrer"`), with a `line-strong` border on hover. Addresses accept only absolute http(s) addresses and same-origin absolute paths: a raw string containing any ASCII control character, whitespace or `\` is rejected outright (browsers strip tabs / newlines, so `/\t/evil` would become `//evil`), and one starting with `/` is resolved against a placeholder origin whose origin must stay unchanged; anything else (`javascript:`, `data:`, protocol-relative addresses, relative paths) renders no link and no image, and shows only the file name. When an image fails to load, `onImageError` is called; when `retry` is greater than 0 the image address gets the cache parameter `retry=<n>` and reloads (the link is unchanged); when `onOpen` is given, an unmodified left click is handed to the caller to open.
 - **Card `tone="accent"`**: superseded on the conversation page by §6.16.11–§6.16.13, where only the pending approval keeps the `accent` outline (the question and connect cards use `line`).
+- **Card** (§2.5): the `panel` ground, a 1px `line-card` hairline, radius `md`, a head band (`space.2` `space.4`, 500, a `line-soft` rule) over a `space.4` body. It is a box, so it stands on the page ground (or in a pane) and **never inside another box** (§1): a group inside a box is a `Subsection` (§6.32), a list of things is `ItemList` rows (§6.33); a plugin view's blocks inside an inline card or a property section are drawn without frames of their own.
 - Charts keep using `BarChart` / `Sparkline` from §6.8, property lists keep using `KeyValue`, and tables keep using DataTable; none is reinvented.
 
 ### 6.10 Span waterfall (SpanWaterfall)
@@ -883,10 +992,10 @@ The interaction rules are part of the spec and are covered by Playwright interac
 - **Overlays** fade in with a 4px offset over `motion.overlay`; Esc closes the topmost overlay; focus is trapped while open and returned to the trigger after closing.
 - **Skip link**: the AppShell's first tab stop is a "Skip to main content" link (visually hidden until focused, then a `panel` chip at the top left) that moves focus to `main`.
 - **Sidebar keyboard**: Tab enters the nav list at the current item and the conversation list at the active conversation (one roving tab stop per list); ↑ / ↓ move between nav items and between conversation rows; Home / End go to the first / last; ↵ follows the link; Enter / Space on a group label toggles the group (`aria-expanded`); Esc closes the drawer and returns focus to the menu button.
-- **Composer keys** (§6.16.2): ↵ sends while idle and **queues** for after the turn while a run is going (or waits for a person); ⌘↵ (Ctrl+↵ off macOS) sends while idle and **interjects** (sends now) while a run is going; Shift+↵ is a newline; Esc closes the open picker menu, then the right-panel Sheet, and never stops a run (Stop stays on its button).
-- **Queue** (§6.16.14): queued messages are sent one at a time after the current turn ends, each as its own user message; an interjection never touches the queue or jumps ahead of it; "Send now" turns a queued message into an interjection; while waiting for an approval or an answer the queue waits for the turn to end; a failed or stopped run pauses it until "Continue sending". The queue lives in the kernel, so it survives a reload and two tabs converge.
+- **Composer keys** (§6.16.2): ↵ sends; while a run is going (or waits for a person) the message is an **interjection**, logged at once and taken in by the run at its next step (run input spec `docs/superpowers/specs/2026-11-07-run-input-and-live-drafts-design.md` D1); ⌘↵ (Ctrl+↵ off macOS) sends exactly like ↵ (D2); Shift+↵ is a newline; Esc closes the open picker menu, then the right-panel Sheet, and never stops a run (Stop stays on its button).
+- **No queue** (run input spec D1, D3): nothing is queued any more. Until the run takes an interjection in, it stands at the bottom of the thread as a pending user bubble (§6.16.6, 待处理); the timeline then places it before the step that took it in. Messages an older version queued (leftovers the kernel still sends one per run after the turn) show the same way after the thread, with no actions, until the log holds them; leftovers a failed or stopped run paused keep the paused line and "Continue sending" of §6.16.14, the only way they drain.
 - **Conversation toggles**: tool lines, tool groups, tool rows, thinking rows and sub-agent rows are `button`s with `aria-expanded` and open over `motion.expand`.
-- **Right panel**: the resize handle on its left edge is focusable (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` the width): ← / → change the width by 16px, Home / End go to the minimum / maximum. The open panel's title-bar icon has `aria-pressed="true"`; opening another panel replaces it, its close button or the pressed icon closes it, and focus returns to the icon. Switching conversation closes the panel and drops the old conversation's panel, files, uploads and queue state.
+- **Right panel**: the resize handle on its left edge is focusable (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` the width): ← / → change the width by 16px, Home / End go to the minimum / maximum. The open panel's title-bar icon has `aria-pressed="true"`; opening another panel replaces it, its close button or the pressed icon closes it, and focus returns to the icon. Switching conversation closes the panel and drops the old conversation's panel, files, uploads and pending messages.
 - **Reduced motion**: under `prefers-reduced-motion: reduce` every transition and animation above is instant (duration ≤ 0.01ms); the spinner stops on a static frame and the streaming cursor is steady.
 
 ### 6.12 Icon
@@ -913,35 +1022,36 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
 - **Workspace context**, top to bottom:
   1. **Brand row** (`brand-row`, `row.default`): logo (pixel unit 2) + wordmark `CAPYBARA`, then at its right end two ghost icon buttons (`control.default`, 2 apart): **search** (`search`, accessible name and native tooltip "搜索 ⌘K", opens the command palette) and the **inbox** (`inbox`, a link to `/inbox`, `sidebar-active` while current). The inbox carries a small count badge (`inbox-badge`: `selected` ground, mono `micro`, inset 2px from the box's top right, min width 14, padding 0 3px) only while something is pending (`99+` above 99, `n+` when truncated); its accessible name includes the count ("收件箱，3 项待处理"), else "收件箱".
   2. **Org switcher** (`org-switcher`): a 40 high block on `bg` with a `line` border and radius `md`: the org's initial in a 24 box (radius `sm`) on `ink` with `bg` text (mono, 600), the org's name (600) over `~/<slug> · <role>` (mono `micro`, `muted`), and a `chevrons-up-down` 14 icon. It opens the org menu (the user's orgs as `menuitemradio` items, then "创建组织…" when allowed); its accessible name is "当前组织：{org}，切换组织". This is the only place the current org is shown and switched. Without menu items it is static (not a button).
-  3. **Navigation** (`nav` labelled "Main navigation", gap 2): 新会话 (`plus`), then the primary items 首页 · Agents.
-  4. **更多** (`more-toggle`, `more-horizontal` + label + a `chevron-right` 12, `muted`): a button opening a **flyout menu to the right of the sidebar** (the design `Menu` with `side="right"`, anchored to the row, `space.3` past the sidebar's edge): 技能, 连接器, 插件, 渠道, 评测与运行, 组织设置 (the last three for org admins only; hiding is cosmetic, the kernel decides), then, after a separator, the org's extension pages; every item is led by its nav icon, as in the main nav. The row takes the `sidebar-active` ground and `ink` (`data-active`) while the current page is one of its items, and that item is marked current inside the flyout (`aria-current="page"`, `selected` ground). Enter, Space and → open it; Escape closes it and returns focus to the row. Nothing is remembered and it never opens by itself.
-  5. **Conversations** (`section` labelled "会话"): take the rest of the height and scroll on their own, after a `line-soft` divider and `space.2`. See below.
-  6. **管理后台** (`admin-entry`, enterprise admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
+  3. **Navigation** (`nav` labelled "Main navigation", gap 2): 新会话 (`plus`), then the primary items 智能体 (`agent`) · 技能 (`skills`) · 连接器 (`connector`) (acceptance 2026-11-07). There is **no home item**: the new conversation is the workspace's home, so 新会话 is the current item (`activeNav: "new"`, `aria-current="page"`, the `sidebar-active` ground) on the new conversation `/chat` (and `/`, which redirects there); on a conversation `/chat/<id>` no nav item is current (its row is). 技能 is for members up (guests see 新会话 · 智能体 · 连接器); hiding is cosmetic, the kernel decides.
+  4. **更多** (`more-toggle`, `more-horizontal` + label + a `chevron-right` 12, `muted`): a button opening a **flyout menu to the right of the sidebar** (the design `Menu` with `side="right"`, anchored to the row, `space.3` past the sidebar's edge): 插件, 扩展, 渠道, 评测与运行, 组织设置 (插件, 扩展 and 组织设置 for members up, 渠道 and 评测与运行 for org admins only; hiding is cosmetic, the kernel decides; the row is drawn only when it has something to list, so a guest without extension pages has none), then, after a separator, the org's extension pages; every item is led by its nav icon, as in the main nav. The row takes the `sidebar-active` ground and `ink` (`data-active`) while the current page is one of its items, and that item is marked current inside the flyout (`aria-current="page"`, `selected` ground). Enter, Space and → open it; Escape closes it and returns focus to the row. Nothing is remembered and it never opens by itself.
+  5. **Conversations** (`section` labelled "会话"): take the rest of the height and scroll on their own, after a `line-soft` divider (inset by the sidebar's padding, like the account row's) and `space.2`. The scroll box runs out over the sidebar's `space.2` side padding to its edges and pads its content back by `space.2`, so the rows keep their place and the scrollbar sits flush on the right border, never over the rows' ends. See below.
+  6. **管理后台** (`admin-entry`, super admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
   7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (切换组织 ▸, 语言 ▸, …, sign out); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 640, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
-- **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 扩展, 企业目录, 市场, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
+- **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 插件 (its count: what waits in its 待确认 tab), 扩展, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
 
 - **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons; the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). The drawer is the full setup sidebar.
 - **Pending navigation**: every design link (nav items, steps, the admin entry, the back link, conversation rows; object rows, item lists, tabs, breadcrumbs, the settings navigation) renders `LinkPendingMark` as its last child. It calls the `DesignProvider`'s `useLinkPending` (apps/web: `() => useLinkStatus().pending` from next/link, so it must sit inside the link) and, while that navigation is pending, carries `data-pending` and draws a 2 px `accent` underline along the link's bottom that sweeps left to right in `motion.cursor` (reduced motion: a still underline). Without the hook nothing is ever pending. The reference block `sidebar-pending` is the setup sidebar with one step's navigation pending.
 
-  The overview (`OverviewPage`) is built from `Grid columns="main-side"` (a main column twice the side column; one column below 960), Cards, `ItemList` (rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) and the setup layout (§5.5) uses `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card) until a model and an agent exist. A `StepList` row is the state mark (top-aligned), the label over a `small` `muted` description, and **one** thing at the right, centered with the row: 已完成 / Done (`small` `muted`) when done, else the step's `action` (the button this viewer can use, or the `small` `muted` reason it waits). There is no 待办 / To do label (a hidden one for screen readers when a step has neither) and never a disabled button next to its reason.
+  `ItemList` (§6.33: rows of a tag, a linked title with a muted meta line, a status and actions, split by `line-soft`; an empty list shows its muted empty text) lists things inside a Card (an agent's channels, the org chooser), and the setup layout (§5.5) uses `StepList inset="card"` (the checklist OnboardingPage centers, filling a Card) until a model and an agent exist. A `StepList` row is the state mark (top-aligned), the label over a `small` `muted` description, and **one** thing at the right, centered with the row: 已完成 / Done (`small` `muted`) when done, else the step's `action` (the button this viewer can use, or the `small` `muted` reason it waits). There is no 待办 / To do label (a hidden one for screen readers when a step has neither) and never a disabled button next to its reason.
 - **Nav items**: `row.default` high, radius `sm`, padding `pad.dense.x`, icon 16 + label (`body`, `ink`, single line with an ellipsis). The current item gets the `sidebar-active` ground, `ink` and weight 600 (§2.3); hover the `hover` ground. An item may still carry a count (`nav-count`, an `accent` pill, 18 high, radius 9, mono `micro`, `on-accent`; `99+` above 99, `n+` when truncated, the accessible name includes it); the inbox, the one item that had one, is now the brand row's button.
 - **Conversation section**:
-  - A header: the label `会话` (mono `micro` `faint`, letter-spacing 0.06em) and a dense filter icon button (`filter`, "筛选会话", `aria-expanded`; `accent` while a filter applies). Open, it shows a dense search input ("按标题搜索", case-insensitive title substring) and a dense filled `Segmented` (全部 / 运行中 / 等待我). The filter is controlled (`conversations.filter`): the page asks the kernel with it (`?q=`, `?state=`) and the rows shown are narrowed at once; groups without a matching row hide; no match is the compact empty state "没有匹配的会话" with 清除筛选. Closing the filter (the button or Esc in the input) clears it.
+  - A header: the label `会话` (mono `micro` `faint`, letter-spacing 0.06em) and a dense filter icon button (`filter`, "筛选会话", `aria-expanded`; `accent` while a filter applies). Open, it shows a dense search input ("按标题搜索", case-insensitive title substring) and a dense filled `Segmented` (全部 / 运行中 / 等待我). The filter is controlled (`conversations.filter`): the page asks the kernel with it (`?q=`, `?state=`) and the rows shown are narrowed at once; groups without a matching row hide; no match is the compact empty state "没有匹配的会话" with a dense 清除筛选, in its in-list form: centered in the list with `space.8` above and below, as the DataTable's empty area draws it (§6.6). Closing the filter (the button or Esc in the input) clears it.
+  - **One vertical rhythm**: the header, the filter, the archived back row and the list are `space.1` apart, and so are the agent groups inside the list (expanded or collapsed); a group's rows follow its label row with no gap.
   - **Groups** by agent, most recent first: a label row (`row.dense`): the agent's `Avatar` 16 (§6.30; the initial when the agent is not known), then the agent name (`small`, 500, `ink`; single line with an ellipsis, full name in `title`) inside a toggle button with `aria-expanded` and a `chevron-down` / `chevron-right` 12 icon, and a dense `plus` icon button "与 {agent} 新建会话". Collapse is remembered per viewer and org in `localStorage["cap.sidebar.collapsed.<orgId>"]` (a JSON array of agent ids, read and written inside try/catch; renders expanded when storage throws).
   - **Rows** (`conversation-row`, `row.dense`, radius `sm`): a 6 px state dot only for running (`ok`) or waiting for me (`warn`) (`state-dot`, `role="img"` named "运行中" / "等待我"), the title link (`conversation`, `ink`, single line with an ellipsis, full text in `title`), and the `⋯` menu (`row-menu`, 22 square, `more-horizontal` 14): 重命名 / 归档 / 删除 (danger, last). The menu button shows on hover, on focus within the row and on the current row; Tab reaches the menu of the row holding the list's tab stop. The current row gets the `sidebar-active` ground. An untitled conversation reads `未命名会话 · MM-DD HH:mm` / `Untitled conversation · MM-DD HH:mm` (its start time).
   - **重命名** is inline: a dense input with the title, focused and selected; Enter saves (trimmed; empty is not allowed and marks the input invalid), Escape cancels; focus returns to the row. **删除** asks first with `Dialog` (danger; "删除会话？", the title in the body; 取消 is focused). **归档** archives at once.
   - Each group shows its 5 most recent conversations, then "显示更多" (or "再显示 N 个" when the count is known; `small` `faint`, 26 high); the list shows 20 groups, then "更多分组".
-  - **Archived**: `已归档 · N` (`archived-entry`, `archive` 14, `small` `faint`) at the end of the list when N > 0 swaps the list **in place** for the archived conversations: a header `← 已归档 · N` (`archived-back`, `ink`, 600; accessible name "返回会话列表：已归档 · N") returns; archived rows' menu offers 取消归档 and 删除; group ＋ buttons hide; the filter applies to it too. No separate page.
-- **States of the conversation section**: empty: the compact EmptyState (§6.18) "还没有会话" / "No conversations yet" with a 新会话 link (the archived list: "没有已归档的会话"; a filter matching nothing: "没有匹配的会话" + 清除筛选); loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
+  - **Archived**: an icon button (`archived-entry`, `archive` 14, dense `IconButton`, accessible name and tooltip `已归档 · N` / `Archived · N`) in the section header next to the filter button, shown only when N > 0, swaps the list **in place** for the archived conversations: a header `← 已归档 · N` (`archived-back`, `ink`, 600; accessible name "返回会话列表：已归档 · N") returns; archived rows' menu offers 取消归档 and 删除; group ＋ buttons hide; the filter applies to it too. No separate page.
+- **States of the conversation section**: empty: the compact EmptyState (§6.18) "还没有会话" / "No conversations yet" with a 新会话 link (the archived list: "没有已归档的会话"; a filter matching nothing (`filter-empty`): "没有匹配的会话" + 清除筛选, centered in the list); loading: skeleton bars (`space.3` high, `selected`, radius `sm`) in three groups (3, 2, 2), `aria-busy`, no spinner; error: `circle-alert` + "会话列表加载失败" / "Couldn't load conversations" in `fail` and a dense ghost "Retry" (`refresh`).
 - Long titles and agent names (40+ CJK characters without spaces) truncate to one line and never widen the sidebar.
 - **Rail** (below 1280): width `layout.sidebar-rail`, icons only: the brand row is the logo alone; under it the expand button (`panel-left`, "Expand sidebar", opens the drawer), then search and the inbox as rail icons (the inbox badge as in the brand row); the org initial (a button opening the org menu, named as the switcher; the admin context shows the shield and the back arrow), 新会话, the primary items (each `row.default` square, accessible name kept, a Tooltip with the label to the right, past the rail's edge, on hover and focus), 更多 as one `more-horizontal` button opening the same flyout (on `sidebar-active` while the current page is inside), the admin entry and the account. Hover over the current item takes the `hover` ground (the signed rail reference). No conversations.
-- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button. The drawer is the touch form: its rows (nav items, the back link, group heads, conversation rows, the archived entry) are 40 high and a conversation row's menu is a 40 px square.
+- **Drawer** (below 960): the full sidebar slides in from the left over a `scrim`, with `shadow-float`, opened from the menu button in the drawer menu bar; its brand row carries a close button (`x`), and the drawer menu bar carries the search button (`search`, at its right end) so the command palette stays reachable by pointer below 960. Esc, the close button and route changes close it; focus returns to the menu button. The drawer is the touch form: its rows (nav items, the back link, group heads, conversation rows, the archived back row) are 40 high and a conversation row's menu is a 40 px square.
 - **First paint**: the full / rail / drawer variant follows the window width through CSS media queries before hydration (both panels are drawn, one shown), so the server render never draws the full 256 sidebar at a narrow width. Remembered collapsed groups apply on the first client commit (layout effects) without the height motion; the motion runs only after the viewer toggles a group. The remembered collapsed list keeps at most 100 ids and drops ids of agents no longer listed once every group of that org is loaded.
 - Hover never replaces the current item's `sidebar-active` ground.
 - Interaction: §6.11.
 
 <!-- states: sidebar -->
-States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `setup-drawer`, `pending`
+States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-collapsed`, `more-open`, `filter`, `filter-empty`, `archived`, `empty`, `loading`, `error`, `long-title`, `many-groups`, `guest`, `admin`, `rail`, `drawer`, `setup`, `setup-waiting`, `setup-hover`, `setup-focus`, `setup-rail`, `setup-drawer`, `pending`
 
 <!-- size-table: sidebar -->
 | Part | State | Property | Value |
@@ -973,14 +1083,20 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | more-toggle | default | color | color.muted |
 | admin-entry | default | height | row.default |
 | admin-entry | default | color | color.muted |
+| conversations | default | row-gap | space.1 |
+| conversations | default | margin-left | -8 |
+| conversations | default | margin-right | -8 |
+| conversations | default | padding-left | space.2 |
+| conversations | default | padding-right | space.2 |
+| conversation-list | default | row-gap | space.1 |
 | group-label | default | height | row.dense |
 | group-label | default | font-size | type.small |
 | group-label | default | color | color.ink |
 | conversation-row | default | height | row.dense |
 | conversation-row | default | padding-left | pad.dense.x |
 | state-dot | default | width | 6 |
-| archived-entry | default | height | row.dense |
-| archived-entry | default | color | color.faint |
+| archived-entry | default | width | control.dense |
+| archived-entry | default | height | control.dense |
 | account | default | height | row.default |
 | avatar | default | width | control.dense |
 | nav-item[data-ref-forced=true] | item-hover | background-color | color.hover |
@@ -998,6 +1114,9 @@ States: `default`, `item-hover`, `item-focus`, `conversation-active`, `group-col
 | back | admin | height | row.dense |
 | back | admin | color | color.muted |
 | empty-hint empty-state-text | empty | color | color.ink |
+| empty-hint[data-state=no-match] | filter-empty | padding-top | space.8 |
+| empty-hint[data-state=no-match] | filter-empty | padding-bottom | space.8 |
+| empty-hint empty-state-text | filter-empty | color | color.ink |
 | skeleton-bar | loading | height | space.3 |
 | skeleton-bar | loading | background-color | color.selected |
 | retry | error | height | control.dense |
@@ -1121,7 +1240,7 @@ The components of the conversation page (T7, §5.4; UI refresh spec §5), signed
 - Belongs to the middle column only and never spans the right panel. Height `layout.title-bar`, padding 0 `space.3` 0 `space.5`, no ground, no bottom line.
 - Left: the path `<org slug> / <agent> /` (mono `small`, `faint`, the agent a link led by its `Avatar` 16 and `space.1`, §6.30; the name takes the ellipsis), spaced like the page head's path (`space.2` on both sides of every `/`), then the title button (`control.default` high, radius `sm`, padding 0 `space.2`, pulled left by `space.2`, `body` `ink`, one line with an ellipsis and the full title in `title`, then `chevron-down` 14 `muted`; `hover` ground on hover and while its menu is open). It opens a menu: Rename (`square-pen`), Copy link (`link`), a separator, Delete (`trash-2`, `fail`). Rename opens a dialog; a manual rename stops title generation for good.
 - Untitled: the title reads "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) in `muted` until a generated or manual title exists. The new-conversation page shows only the `muted` label "新会话" / "New conversation".
-- Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
+- Right, two groups of ghost icon buttons (`control.default` square, radius `sm`, icon 16): group 1 is the properties toggle (`panel-right`); then a 1px × `space.4` `line` separator with `space.1` on each side; group 2 is Files (`file-text`, once the conversation has a file; it opens the newest file in the right panel, whose switcher reaches the others) and the panel icons of the extensions enabled in the org, in contribution order, then More (`more-vertical`). The agent map has no icon here: its entry is the composer's agents chip (§6.16.29; acceptance item AC3, 2026-11-07). Icons that don't fit move into More, a menu of icon + label items; More exists only while two or more icons don't fit (one that doesn't fit takes More's slot, §6.7), and never repeats an icon on the bar. With no icon in group 2 the separator goes too. Each button's name is the panel it opens. The title and More menus hang 2px below their button. The open item's button has `aria-pressed="true"`, the `selected` ground and an `ink` icon; More is pressed while its menu is open.
 - **Below 640** the bar is padded 0 `space.1` 0 `space.4` (the path on the 16 px content edge, the last icon's glyph near it), the title button is 40 high and the icon buttons 40 square (tap targets); fewer panel icons fit, and the rest go into More as above.
 
 <!-- states: title-bar -->
@@ -1162,12 +1281,12 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
-- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · flexible space · send. The agent picker is optional (`pickers.agent`): the new conversation page leaves it out, its agents row chooses the agent (§5.4).
-  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) above them.
-  - The agent picker is a picker only in a new conversation; after the first message it is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
+- **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
+  - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short). When the row is short (a phone) a picker's label gives way with an ellipsis, the whole value in its tooltip; the icon buttons and the agents chip keep their size (AC3 fix round 1).
+  - Where a page passes the agent picker it is a picker only before the first message; a `locked` one is plain `muted` text with no chevron (`data-locked="true"`, `title` "发送第一条消息后不能再换 agent" / "The agent can't change after the first message").
   - The effort picker is hidden when the selected model declares no `effort` values.
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
-- Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running "按 ↵ 加入队列，按 ⌘↵ 立即发送" / "↵ to queue, ⌘↵ to send now" (Ctrl+↵ off macOS; conversation send spec 2026-11-04 §2.3). Keys: §6.11.
+- Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running (state `running`) the hint "运行中发送的消息会在下一步交给智能体" / "Messages sent while it works reach it at its next step" (run input spec 2026-11-07 §4: ↵ and ⌘↵ both send an interjection). Keys: §6.11.
 - Existing behavior carries over: `/` connector prompts, `@` connector resources, file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
 - **Skill chip** (phase D, state `skill`): a skill picked from the `/` menu (or typed as `/name`) shows as a chip before the text on its first line, `space.2` from it, centered on the prose line: `control.dense` high, radius `sm`, padding 0 `space.1` 0 `space.2`, gap `space.1`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, then a remove × (`x` 12, a `type.small.line` square, `hover` ground on hover; "移除 /fix-issue" / "Remove /fix-issue"; its hit target extends invisibly to a `control.dense` square, WCAG 2.5.8). The skill's argument hint replaces the placeholder. Backspace with the caret at the start removes the chip and keeps the text; the text that follows is the skill's arguments. Removing it with the × puts focus in the text; while the chip is there the text area is described by its label (`aria-describedby`).
 
@@ -1196,7 +1315,6 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 | stop | running | width | control.default |
 | stop | running | background-color | color.selected |
 | stop | running | color | color.ink |
-| picker[data-locked=true] | running | color | color.muted |
 | attachment | attachments | border-radius | radius.sm |
 | composer | focus | border-top-color | color.accent |
 | send | focus | background-color | color.accent |
@@ -1215,14 +1333,20 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`
 
 #### 6.16.3 Picker menu
 
-- The model, effort and agent menus of the composer: a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) opening above the composer, `space.1` from its top edge, aligned with its picker. Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
+- The model, effort and agent menus of the composer, and the quick actions' (§6.16.27): a Menu (§6.7: `panel` ground, 1px `line-strong` border, radius `md`, `shadow-1`, padding `space.1`) **anchored to its trigger** (maintainer decision 2026-11-07; `ConvMenu anchored`):
+  - **Placement** (`menuPlacement`, a pure function): `space.1` from the trigger, below it by default, above it when the menu does not fit below but fits above (so the new conversation page's menus open below, the conversation page's above); when neither side fits the whole menu, on the side with more room. Its start edge sits on the trigger's; it may cover the textarea. 8 px stay between the menu and the viewport edge (collision padding; it shifts sideways to keep them).
+  - **Size**: as wide as its content, at least the trigger's width and at most `min(320px, 100vw − 16px)`, a long label cut with an ellipsis and the whole label in its tooltip. Its height is the smaller of `layout.menu-max-height` (328: ten `row.default` items and the padding) and the room from the trigger to the viewport edge on its side minus the gap and the 8 px; it is set in CSS from Radix's live available height, so it stays right after a resize, a zoom or a phone keyboard (the side is chosen once, on open). The list scrolls inside it while the filter field above and the note below stay in view.
+  - **Filter**: with more than ten items a filter field heads the menu (`menu-filter`: `control.dense` high, 1px `line` border, `accent` when focused, radius `sm`, `bg` ground, `small`, placeholder "筛选" / "Filter" in `faint`). Focus starts in it; typing narrows the items to those whose label contains the text (case-insensitive) and keeps the group label over each group that still has a match; ↓ moves to the first match and the arrows go on through the matches, ↑ on the first match returns to the field; Enter picks the first match (never while an IME composes); no match is the line "没有匹配项" / "No matches" (`menu-empty`, prose `small` `muted`). When the pointer has moved the focus onto an item or the menu, typing and Backspace go back to the field; Space on a focused item is not typing: it picks the item, as Enter does (Space in the field stays text). The field controls the list (`aria-controls`) and is described by an always-mounted live region with the match count ("N 项匹配" / "N matches") or the no-match line.
+  - **Open**: the list is scrolled so the checked item is in view.
+  - **Form selects**: the form `Select` (§6.2) opens this same anchored menu as a `listbox` (options with `aria-selected`; without a filter the focus starts on the selected option).
+- Items are `menuitemradio`, `row.default` high, padding 0 `pad.default.x`, radius `sm`, `ink`; the selected item has `aria-checked="true"`, the `selected` ground and a `check` 14 at its end.
 - **Model**: grouped by provider, each group under a label (`micro` `muted`, padding `space.2` `pad.default.x` `space.1`); the chat models of the org's enabled providers (`GET /orgs/:orgId/models`), the agent's own model first and tagged "agent 默认" / "agent default" (`micro` `muted` on the `selected` ground, radius `sm`, padding 0 `space.1`). The agent's fallback model is never listed.
 - **Effort**: exactly the values the selected model declares, in the order low, medium, high, xhigh, max.
 - **Agent**: the agents the person can use (new conversation only).
 - A note closes each menu (`micro` `muted`, a `line-soft` top line, padding `space.2` `pad.default.x` `space.1`): model and effort "从下一条消息起生效" / "Applies from the next message"; agent "发送第一条消息后不能再换 agent" / "The agent can't change after the first message".
 
 <!-- states: picker-menu -->
-States: `model`, `effort`, `agent`
+States: `model`, `effort`, `agent`, `long`
 
 <!-- size-table: picker-menu -->
 | Part | State | Property | Value |
@@ -1245,6 +1369,12 @@ States: `model`, `effort`, `agent`
 | menu-item | effort | height | row.default |
 | menu-item | agent | height | row.default |
 | menu-note | agent | color | color.muted |
+| menu | long | max-height | layout.menu-max-height |
+| menu-filter | long | height | control.dense |
+| menu-filter | long | border-radius | radius.sm |
+| menu-filter | long | font-size | type.small |
+| menu-item | long | height | row.default |
+| menu-note | long | color | color.muted |
 
 #### 6.16.4 Prose
 
@@ -1306,13 +1436,15 @@ States: `collapsed`, `expanded`, `live`
 #### 6.16.6 User bubble
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
+- **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize; the server render and hydration, which cannot measure, guess from the text: more than eight lines, counting the hard lines and each line's wrapping at about 34 CJK or 68 other characters, so a long message is folded from the first paint and the measurement then corrects it) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
+- **Pending** (the queued form, `queued`): a message on its way, or an interjection the run has not taken in yet, or a leftover queued message (§6.11 "No queue"): the dashed bubble of §6.16.14 at opacity .6, and for an interjection or a leftover "待处理" / "Pending" under it in `small` `faint`; no actions.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). Each opens like today's AttachmentPreview. A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
 - **Skill invocation** (phase D, state `skill`): the bubble starts with the skill chip, the composer's chip (§6.16.2) without its remove button: `control.dense` high, radius `sm`, padding 0 `space.2`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, centered on the first prose line, `space.2` before the text, which is the invocation's arguments (none: the chip alone). Under the bubble, right-aligned, at most 75% wide, `space.2` below it: a closed Disclosure (§6.5) "技能说明" / "Skill instructions" in `small` `muted`, a `row.dense` summary line whose chevron is `muted` too (not the Disclosure's usual `faint`), whose body is the text sent in the person's name (`small`, line breaks kept). A queued invocation (§6.16.14) shows the same chip in its dashed bubble.
 
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
 
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`, `sender`
+States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1340,6 +1472,13 @@ States: `default`, `attachments`, `skill`, `sender`
 | bubble-sender | sender | font-size | type.small |
 | bubble-sender | sender | color | color.muted |
 | bubble | sender | background-color | color.selected |
+| bubble-body | long | max-height | layout.bubble-clamp |
+| bubble-body | long | height | layout.bubble-clamp |
+| bubble-more | long | font-size | type.small |
+| bubble-more | long | color | color.muted |
+| bubble | long | background-color | color.selected |
+| bubble-more | expanded | font-size | type.small |
+| bubble-more | expanded | color | color.muted |
 
 #### 6.16.7 Run divider
 
@@ -1570,7 +1709,8 @@ States: `pending`, `closed`
 
 #### 6.16.14 Queued message
 
-- Messages queued with ↵ while a run is going (UI refresh spec §5.7) sit in the chat column after the sent messages, in order: each a user bubble with a 1px dashed `line` border at opacity .6 (`data-queued="true"`), and under it, right-aligned (`small`, gap `space.1`): "排队中" / "Queued" in `faint`, then dense icon buttons (`copy`, `square-pen`, `trash-2`, 14; named 复制 / 编辑 / 删除 · Copy / Edit / Delete) and "立即发送" / "Send now" (dense default button).
+- **Retired from the conversation page** (run input spec 2026-11-07): nothing is queued any more, and leftover queued messages render as pending user bubbles (§6.16.6) without these actions; only the **paused** line and "Continue sending" below are still drawn there, for paused leftovers. The full component stays in the design package and the catalog until the kernel's queue routes are removed.
+- Messages queued with ↵ while a run is going (UI refresh spec §5.7) sat in the chat column after the sent messages, in order: each a user bubble with a 1px dashed `line` border at opacity .6 (`data-queued="true"`), and under it, right-aligned (`small`, gap `space.1`): "排队中" / "Queued" in `faint`, then dense icon buttons (`copy`, `square-pen`, `trash-2`, 14; named 复制 / 编辑 / 删除 · Copy / Edit / Delete) and "立即发送" / "Send now" (dense default button).
 - **Editing**: a prose textarea 75% wide (input focus rule) with "取消" / "Cancel" (dense ghost) and "保存" / "Save" (dense primary) under it.
 - **Paused** (the run failed or was stopped): the bubbles without their actions, then one line "运行已停止，队列已暂停（N 条）" / "Run stopped; queue paused (N)" in `muted` and "继续发送" / "Continue sending" (dense). When the queue paused for another reason (phase D: the first message's author can no longer send, or its skill can no longer be invoked), the line says that reason instead, same style.
 - A queued message is not in the event log until it is sent; behavior and keys in §6.11.
@@ -1639,6 +1779,7 @@ States: `running`, `waiting`, `done`, `failed`, `stopped`, `expanded`, `map-link
 - An extension card in the stream (`place: "inline"`), hanging off the tool result that named it (`ToolResult.card`); stage B2's MCP Apps widgets use the same frame.
 - A title tool line above the card: "来自 <extension> 的卡片" / "Card from <extension>", then at the right its badge in `faint` (e.g. "2 / 5"), "实时" / "Live" in `muted` for a live embed, and a dense ⤢ icon button (`maximize-2` 14, "在右侧面板打开" / "Open in the right panel") when the extension has a right panel.
 - The card is a floating card. Body: the rendered view (UiView blocks at the `dense` step) or an embed (EmbedFrame, the embed's own height). Loading: skeleton bars (`selected`, radius `sm`, `aria-busy`), never a spinner. Failure: the load-failure line of §6.16, in this card only.
+- **The card is the one box** (§1): an embed inside it has no border of its own (EmbedFrame's boxed-in form, §6.9), a view's table is unframed (on the card's `raised` ground), its code blocks are borderless (`panel-2`); the caller passes nothing, the pieces read that they are inside a box.
 
 <!-- states: inline-card -->
 States: `view`, `embed`, `loading`, `failed`
@@ -1664,6 +1805,8 @@ States: `view`, `embed`, `loading`, `failed`
 - Built-in sections, in order: **Context** (the usage ratio as the value; a meter `space.1` high, `line` track, `ink` fill, radius `sm`; "<model> · <sandbox status>" and "连接器：…" / "Connectors: …" in `small` `muted`; the last run's line "上次运行 · <model> · <duration> · <tokens>" / "Last run · …" in `small` `muted` (`context-last-run`, once a run ended; cost joins it only when the log carries one); once the conversation has sub-agents, a last `small` `muted` line with its tokens including theirs, worded by the page); extension sections (`place: "section"`, in contribution order, rendered `dense`); **Files** (the count as the value, the conversation's own files and its sub-agents' deliveries; rows `row.dense`: type badge, name with an ellipsis, for a sub-agent's file "来自 <sub-agent>" / "from <sub-agent>" in `faint` (at most 40% of the row, with an ellipsis), size in `muted`; then "全部 N 个文件" / "All N files" with `chevron-right` 12 in `muted`); **Background tasks** (sub-agents and background Bash tasks, running ones only; rows `row.dense`: `spinner`, name, duration `muted` (a sub-agent waiting for a person: no `spinner`, and what it waits for in `accent` instead of the duration), a dense stop icon button `square` 12 named "停止「<name>」" / "Stop <name>"; a task whose stop is under way keeps its `spinner` and shows "正在停止…" / "Stopping…" in `muted` instead of the button; a sub-agent's own tasks are nested under it, indented `space.4` (a task with a parent is nested whatever the parent's status); then "已完成 N 项" / "N completed" with a chevron, counting finished tasks and sub-agents together and opening the newest). The section shows running items only: finished tasks and sub-agents are not rows, they are counted in "N completed". `BackgroundTaskRow`'s finished states exist for places that list finished tasks: no `spinner`, ending with the status word: "已完成" / "Done", "已停止" / "Stopped" and "已丢失" / "Lost" in `muted` (success is not colored), "失败" / "Failed" and "已超时" / "Timed out" in `fail`.
 - **Task output** (`TaskOutputPanel`, the body of the right panel for a task, §6.16.18): a head line with the status word (`muted`, `fail` when failed or timed out), the elapsed time in `faint` and, while running, a dense stop icon button at the right (once a stop is under way, the task view's `stopping` or the page's own stop in flight, "正在停止…" / "Stopping…" in `muted` with `role="status"` instead of the button); the command in the design's monospace (`font.mono`, which the size table cannot express: it holds numbers and colors only) in `ink`; when only the finish event's tail is left (the sandbox is suspended) the note "输出不可读（沙箱已暂停）" / "Output unavailable (sandbox suspended)" in `muted` above the last lines; the last lines in a `CodeBlock` (§6.8). The elements sit `space.2` apart.
 - A failing extension section shows the load-failure line in that section only.
+- **Boxes inside a section** (§1): an extension section's embed, table and code blocks draw their unboxed forms, as in an inline card (§6.16.16).
+- **The narrow properties sheet** (below a 1280 window the properties panel opens in a Sheet, §5.4): the sheet is the box, so its sections are heading and hairline groups there (`data-inset="box"`): no ground, radius or hairline of their own, padding `space.3` 0, a `line-soft` line between the panel's children (so a section the page wraps, such as an extension section in its `data-extension-section` box, is split from its neighbours too); the sheet keeps its `panel-2` ground and padding `space.2` `space.4`, the sections `0` apart (state `properties-sheet` of `template-conversation`, §5.4). A RightPanel or a file preview opened in the sheet is a full-height pane and holds content like a page.
 
 <!-- states: property-section -->
 States: `context`, `files`, `background`, `extension`, `failed`
@@ -1722,7 +1865,7 @@ States: `running`, `finished`, `unavailable`, `stopping`
 - **Width**: default `layout.panel`, at least `layout.panel-min`, at most the content width minus `layout.chat-min` (so wide screens may go past 600, and at a 1280 window with the full sidebar it is 544). Resizable by a handle on its left edge (§6.11); the width is a per-viewer preference in `localStorage["cap.chat.panelWidth"]` (read and written in try/catch, clamped on read). Below a 1280 window the right area is a Sheet (§5.4).
 - **Header**: `layout.title-bar` high, padding 0 `space.2` 0 `space.4`, a `line-soft` bottom line, gap `space.1`: back (`chevron-left`, optional), the type badge (files), the title as a ghost button with `chevron-down` 14 that opens the switcher (a Menu: extension panels, a separator, the conversation's files, each group under a `micro` label; the open item has the `selected` ground and no check; the title keeps the `hover` ground while it is open), or plain text when there is nothing to switch to (a sub-agent); meta in `small` `faint` ("v2 · 10-26 14:20", "2 / 5", a `spinner` and the duration); actions; full screen (`maximize-2`); close (`x`).
 - **Body**: padding `space.4` (flush for tables), scrolls on its own. A failing extension panel shows the load-failure line in its body.
-- **Sub-agent panel**: header back (returns to what the right area showed before, e.g. the properties panel it was opened from; otherwise closes), description, spinner and duration, "停止" / "Stop" (default), full screen, close; body padding `space.4` `space.5`: the task as a block (`selected` ground, radius `md`, padding `space.3`, `prose-small`; label "任务 · 主 agent 派出" / "Task · from the main agent" in `micro` `muted`), a tool line naming its agent (an org agent's name is a link to that agent, styled as a link button), model and tool scope, then its tool groups and prose like the main thread; read-only; its own status bar at the bottom.
+- **Sub-agent panel**: header back (returns to what the right area showed before, e.g. the properties panel it was opened from; otherwise closes), description, spinner and duration, "停止" / "Stop" (default), full screen, close; body padding `space.4` `space.5`: the task as a block (`selected` ground, radius `md`, padding `space.3`, `prose-small`; label "任务 · 主 agent 派出" / "Task · from the main agent" in `micro` `muted`), a tool line naming its agent (an org agent's name is a link to that agent, styled as a link button), model and tool scope, then its tool groups and prose like the main thread; no composer and no read-only copy (the missing composer says it); its own status bar at the bottom (context use only).
 
 <!-- states: right-panel -->
 States: `extension`, `file`, `subagent`, `switcher`, `failed`
@@ -1859,7 +2002,7 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 
 `RunRow({ status, parts, statusText?, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
 
-- **Line**: a tool line (§6.16, `row.dense` high, mono `small` `muted`, gap `space.2`): "运行" / "Run" and the `parts` the page fills (the model, the duration such as `3.7s`, the tokens such as `1,234 tokens`; unknown ones are left out) joined by " · " with an ellipsis, then the **status**: the mark (12) and the status word, `space.1` apart: `ok` a `check` in `ok` and "完成" / "Done" in `muted` (the one coloured mark of a quiet row, an exception to §2.4's uncoloured success: a run is a unit a person checks for its outcome); `failed` a `circle-x` and "失败" / "Failed" (or the page's words such as "失败 · 已重试") both in `fail`; `stopped` a `ban` and the page's words "已停止 · <who> <time>" in `muted`. Then a `chevron-right` / `chevron-down` 12 when there is a detail.
+- **Line**: a tool line (§6.16, `row.dense` high, mono `small` `muted`, gap `space.2`): "运行" / "Run" and the `parts` the page fills (the model, the duration such as `3.7s`, the tokens such as `1,234 tokens`; unknown ones are left out) joined by " · " with an ellipsis, then the **status**: the mark (12) and the status word, `space.1` apart: `ok` a `check` in `ok` and "完成" / "Done" in `muted` (the one coloured mark of a quiet row, an exception to §2.4's uncoloured success: a run is a unit a person checks for its outcome); `failed` a `circle-x` and "失败" / "Failed" (or the page's words such as "失败 · 已重试") both in `fail`; `stopped` a `ban` and the page's words "已停止 · <who> <time>" in `muted`. Then a `chevron-right` / `chevron-down` 12 when there is a detail. The duration is the run's working time: from its start to its end without the time it waited for a person (an approval or a question, until answered), the same derivation as the status bar's "已用" (§5.4), so the two agree.
 - **Disclosure**: with a detail the line is a `button` with `aria-expanded` and `aria-controls`; the detail is a `region` named "运行详情" / "Run details". A failed row starts open (`defaultOpen` overrides), the others closed. Without any detail the line is plain text.
 - **Detail**: `space.1` below the line, `space.2` between its parts, under a 1px `line` guide on the left, indented `space.3` (the thinking body's guide): the failure as an `ErrorDetail` (§6.24: the localized sentence, the raw text behind its toggle); `facts`, plain mono `small` `muted` lines (the token split, the start time); then the actions, a row `space.2` apart of `dense` buttons: Retry ("重试" / "Retry", default) and the `links` as `LinkButton`s (default): "查看轨迹" / "View trajectory", "去配置模型服务" / "Configure model services". The page decides which actions a role gets; the row never draws one the reader cannot use.
 
@@ -1941,8 +2084,7 @@ States: `default`, `reduced-motion`
   `pickGreeting`), so the server render (and any render without `text`) draws the mark and an empty
   text box: the line box is always one `type.h1.line` high, and the line replaces the placeholder
   in place.
-- **Sub line** under the text, aligned with it: `prose-small` `muted`, default "选一个 agent，或从常用
-  任务开始" / "Pick an agent, or start from a common task"; `sub={null}` draws none.
+- **Sub line** under the text, aligned with it: `prose-small` `muted`, default "选一个智能体开始" / "Pick an agent to start"; `sub={null}` draws none.
 - **A11y**: the heading's name is the whole line (a visually hidden copy); the typed text and the
   caret are `aria-hidden`, so the line is read once, never a character at a time. The mark is
   decorative.
@@ -2040,17 +2182,23 @@ States: `default`, `panel`, `no-match`
 
 #### 6.16.27 Quick actions
 
-`QuickActions({ items, onPick, max = 4, moreLabel })` lists the selected agent's quick actions
-(agent profile design §4.3); `items` are `{ id, title }` and the page keeps the bodies.
+`QuickActions({ items, onPick, label? })` offers the selected agent's quick actions (agent profile
+design §4.3); `items` are `{ id, title }` and the page keeps the bodies. It sits in the composer's
+control row (`ComposerBox.quickActions`, §6.16.2), right after the effort picker (after the model
+picker when the effort picker is hidden), so the new conversation's column holds no line of its own
+between the agents row and the composer (maintainer decision, 2026-11-07).
 
-- **Quiet** (U1): one line of text links `space.4` apart, each a button `control.dense` high with
-  no ground and no border, `small` `muted`, `ink` on hover and focus (the focus ring as everywhere);
-  a title is one line with an ellipsis (the whole title is its tooltip), and titles shrink before
-  the line overflows.
-- **Count**: the first `max` show, then a quiet "更多" / "More" link of the same look opens the rest
-  in a small menu (§6.16.3's menu, 160 at least and at most `min(320px, 100vw − 16px)`, one item
-  per title, a long title cut with an ellipsis). No items: nothing.
-- **Pick**: `onPick(id)`; the page puts the body into the composer and focuses it.
+- **Button**: a ghost `IconButton` like the ＋ (`control.default` square, `muted` icon, `ink` on
+  hover), the `zap` icon 16 (the line set, §3), named "常用任务" / "Common tasks" (its accessible name
+  and tooltip). Shown only when the agent has quick actions; no items: nothing, and nothing takes its
+  place.
+- **Menu**: it opens the pickers' anchored menu (§6.16.3: below the button, or above it when the
+  room below is short; at least the button's width, at most `min(320px, 100vw − 16px)`; capped at
+  `layout.menu-max-height` with a filter past ten items), named like the button, one item per
+  title in the agent's order, a long title cut with an ellipsis and whole in its tooltip.
+- **Pick**: choosing one closes the menu, then `onPick(id)`: the page puts the body into the
+  composer and focuses it (focus does not return to the button); Escape closes the menu and
+  returns focus to the button.
 
 <!-- states: quick-actions -->
 States: `default`, `hover`, `menu`
@@ -2058,32 +2206,39 @@ States: `default`, `hover`, `menu`
 <!-- size-table: quick-actions -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| quick-actions | default | column-gap | space.4 |
-| quick-action | default | height | control.dense |
-| quick-action | default | font-size | type.small |
-| quick-action | default | color | color.muted |
-| quick-action | default | border-top-width | 0 |
-| quick-more | default | color | color.muted |
-| quick-action[data-ref-forced=true] | hover | color | color.ink |
+| quick-actions | default | width | control.default |
+| quick-actions | default | height | control.default |
+| quick-actions | default | color | color.muted |
+| quick-actions[data-ref-forced=true] | hover | color | color.ink |
 | menu | menu | background-color | color.panel |
 | menu-item | menu | height | row.default |
 
 #### 6.16.28 Agent map
 
 `AgentMapDialog({ open, onOpenChange, level, onBack?, view?, children })` is a dialog over the conversation page
-(agent map spec §9) whose width follows its level: the tree 1100, one agent's summary 760, the
-transcript 1060, and levels 2 and 3 have fixed heights, 600 and 640 (at most the window less 32),
-so the dialog does not jump while an agent works (the §6.7 frame: `panel`, `line-strong`, radius `md`, `shadow-2`, `scrim`; at
-level 1 padding `space.5` `space.6`). Level 1's head is the title "智能体图" / "Agent map" (`h2`,
-prose, 500) and close; levels 2 and 3 draw their own head with the same parts (one shared head:
-back, status dot, title, close, then meta lines). Esc closes the tree and goes back one level
+(agent map spec §9) whose width follows its level: the tree 1100 (three columns of nodes and
+their gaps, with room for a scrollbar), and one agent's summary and its transcript the
+conversation's column plus the body padding and the border (`layout.chat` + 2 × `space.4` + 2 =
+754, at most the window less 32), so the transcript's thread fills the dialog with no empty side
+gutters and levels 2 and 3 are one width. Levels 2 and 3 have fixed heights, 600 and 640 (at most
+the window less 32), so the dialog does not jump while an agent works (the §6.7 frame: `panel`,
+`line-strong`, radius `md`, `shadow-2`, `scrim`). The frame has no padding at any level: the head,
+body and footer pad themselves in the compact dialog rhythm of §6.7 (head `space.2` `space.4` with
+1px `line-soft` below, body `space.4`, footer `space.3` `space.4`). Level 1's head is the title
+"智能体图" / "Agent map" (`h2`, prose, 500) and close, over a body padded `space.4`
+(`agent-map-content`) that holds the tree, or, while the page reads it, the page's loading bars
+(`SkeletonBars`, state `loading`) or its error line (state `failed`); levels 2 and 3 draw their own
+head with the same parts (one shared head: back, status dot, title, close, then meta lines).
+Levels 1 and 2 are a dialog box (§1: what they hold draws its unboxed form); level 3's thread is a
+pane, like `RightPanel`, so it renders exactly as in the main chat. Esc closes the tree and goes back one level
 from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view changes (another
 level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
-- **Count line** under the title (prose, `muted`): "N 个智能体 · M 个运行中 · 点击查看详情" /
-  "N agents · M running · Click a node for details"; N counts every node with the root, M the
-  running ones.
+- **Count line** at the top of the body (prose, `muted`, `space.3` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
+  "N agents · M running · Click a node for details" ("1 agent"); N counts the sub-agents, every
+  node but the root (the conversation itself), M the running ones among them: the same number
+  as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
 - **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
   children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
   each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
@@ -2112,18 +2267,18 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   scrolls without a pointer.
 
 `AgentDetail({ node, agentType, inBackground?, spawnedBy, latestText, task, background, toolCalls,
-onBack, onClose, onOpenParent, onOpenTranscript, onStop?, now? })` is level 2, one agent's summary, live at
-the granularity of tool summaries. The dialog has no padding and is 600 high (at most the window
-less 32), so it does not jump while the agent works; head, body and footer pad themselves:
+onBack, onClose, onOpenParent, onOpenTranscript, onStop?, stopping?, now? })` is level 2, one agent's summary, live at
+the granularity of tool summaries. The dialog is 600 high (at most the window less 32), so it does
+not jump while the agent works; head, body and footer pad themselves:
 
-- **Head** (padding `space.5` `space.6` `space.3`, 1px `line-soft` below): a dense back button
+- **Head** (padding `space.2` `space.4`, 1px `line-soft` below): a dense back button
   (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
   one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
   `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the
 default: a fork skill's child runs in the foreground and has none);
   "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
   node (`onOpenParent`); "<time> · <tokens>".
-- **Body** (scrolls, padding `space.3` `space.6`): the latest text (prose), then three collapsible
+- **Body** (scrolls, padding `space.4`): the latest text (prose), then three collapsible
   sections, each a button (chevron, title 500, count `faint`) with `aria-expanded`: **任务 / Task**
   (the dispatch prompt, prose small `muted`, closed at first), **后台任务 / Background tasks · N**
   (the agent's own tasks, level 1's rows, closed at first) and **工具调用 / Tool calls · N** (open):
@@ -2131,23 +2286,30 @@ default: a fork skill's child runs in the foreground and has none);
   pulses), the tool name (500, at least 44 wide), its display summary (`muted`; the running one
   `ink`) with an ellipsis, and at the end in `faint` a range ("第 1–180 行") or the running call's
   clock. The section content starts under its title.
-- **Footer** (padding `space.3` `space.6`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
+- **Footer** (padding `space.3` `space.4`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
   and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
   The buttons share the row; a finished agent's "Open transcript" fills it.
+- **Stopping** (`stopping`): from the click until the agent's terminal event arrives, until the
+  request fails, or at most about 15 s (the page then reads the agent's log and the tree once more
+  and lets Stop be pressed again; the stop is idempotent), Stop stays in its place in the Button's loading state (spinner, `disabled`,
+  `aria-busy`, label unchanged, §6.1), even when `onStop` is absent; it
+  never disappears and cannot be pressed again while the stop is under way.
 
 `TranscriptFrame({ node, agentType, inBackground?, spawnedBy, onOpenParent?, contextPercent?,
-onBack, onClose, onStop?, children })` is level 3: the same head with one meta line ("<status> ·
+onBack, onClose, onStop?, stopping?, children })` is level 3: the same head with one meta line ("<status> ·
 <agent type> · <model> · 后台 · 由 <parent> 派出 · <time> · <tokens>"; "后台" as at level 2, the
 parent the same link as at level 2 when `onOpenParent` is given), the thread (`children`: the conversation page's own
 timeline components, built from `apps/web/src/lib/timeline.ts`) in the conversation's thread column
-(`.cb-conv-thread`, padding `space.4` `layout.gutter`, scrolling), and instead of a composer a
-read-only status line (`row.dense`, 1px `line-soft` above, `small`, `faint`): "子智能体只读 ·
-不能和它对话，请让 <parent> 转达" / "Read-only sub-agent · You can't talk to it; ask <parent> to
-pass it on", then "上下文 N%" / "Context N%" when known and a dense `danger` Stop while running. The
+(`.cb-conv-thread`, at most `layout.chat`, inside padding `space.4`, scrolling; the dialog is
+exactly that wide, so there are no side gutters), and instead of a composer a status line
+(`row.dense`, padding 0 `space.4`, 1px `line-soft` above, `small`, `faint`): "上下文 N%" /
+"Context N%" when known and, at the end of the line, a dense `danger` Stop while running (in its
+loading state while `stopping`, as at level 2). No read-only copy: the missing composer says it. A
+transcript with neither (a finished agent whose context use is unknown) has no status line. The
 dialog is 640 high.
 
 <!-- states: agent-map -->
-States: `tree`, `deep`, `detail`, `finished`, `transcript`
+States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `transcript`
 
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
@@ -2156,7 +2318,12 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-map-dialog | tree | background-color | color.panel |
 | agent-map-dialog | tree | border-top-color | color.line-strong |
 | agent-map-dialog | tree | border-radius | radius.md |
+| agent-map-head | tree | padding-top | space.2 |
+| agent-map-head | tree | padding-left | space.4 |
+| agent-map-head | tree | border-bottom-color | color.line-soft |
 | agent-map-title | tree | font-size | type.h2 |
+| agent-map-content | tree | padding-left | space.4 |
+| agent-map-content | tree | padding-top | space.4 |
 | agent-map-count | tree | color | color.muted |
 | agent-node | tree | width | 320 |
 | agent-node | tree | height | 62 |
@@ -2181,8 +2348,16 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-legend | tree | color | color.faint |
 | agent-node | deep | height | 62 |
 | agent-node[data-depth=3] | deep | width | 320 |
-| agent-map-dialog | detail | width | 760 |
+| agent-map-head | loading | border-bottom-color | color.line-soft |
+| agent-map-content | loading | padding-left | space.4 |
+| agent-map-content | loading | padding-top | space.4 |
+| skeleton-bar | loading | height | space.3 |
+| agent-map-content | failed | padding-left | space.4 |
+| agent-map-content | failed | padding-top | space.4 |
+| agent-map-dialog | detail | width | 754 |
 | agent-map-dialog | detail | height | 600 |
+| agent-map-head | detail | padding-top | space.2 |
+| agent-map-head | detail | padding-left | space.4 |
 | agent-map-head | detail | border-bottom-color | color.line-soft |
 | agent-map-title | detail | font-size | type.h2 |
 | agent-meta | detail | font-size | type.small |
@@ -2195,18 +2370,81 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 | agent-call[data-running=true] | detail | height | row.dense |
 | agent-call-clock | detail | color | color.faint |
 | agent-call-range | detail | color | color.faint |
+| agent-detail | detail | padding-left | space.4 |
+| agent-detail | detail | padding-top | space.4 |
+| agent-detail-foot | detail | padding-left | space.4 |
+| agent-detail-foot | detail | padding-top | space.3 |
 | agent-detail-foot | detail | border-top-color | color.line-soft |
 | button[data-variant=danger] | detail | height | control.default |
 | agent-detail-foot | finished | border-top-color | color.line-soft |
 | agent-call-summary | finished | color | color.muted |
-| button | finished | width | 710 |
-| agent-map-dialog | transcript | width | 1060 |
+| button | finished | width | 720 |
+| button[data-state=loading] | stopping | height | control.default |
+| button[data-state=loading] | stopping | width | 354 |
+| agent-map-dialog | transcript | width | 754 |
 | agent-map-dialog | transcript | height | 640 |
+| agent-transcript | transcript | padding-left | space.4 |
 | thread | transcript | max-width | layout.chat |
 | agent-transcript-status | transcript | height | row.dense |
 | agent-transcript-status | transcript | color | color.faint |
 | agent-transcript-status | transcript | border-top-color | color.line-soft |
+| agent-transcript-status | transcript | padding-left | space.4 |
 | agent-context | transcript | font-size | type.small |
+
+#### 6.16.29 Agents chip
+
+`AgentsChip({ count, running, waiting?, onOpen })` is the agent map's entry (acceptance item AC3,
+maintainer ruling 2026-11-07, like Claude Code's "0 agents" chip). It sits in the composer's control
+row (`ComposerBox.agents`, §6.16.2) after the effort picker and the quick actions, and replaces the
+title bar's agent map icon (§6.16.1).
+
+- **Shown** once the conversation has a sub-agent (a root conversation whose log dispatched one);
+  never on the new conversation page or a sub-agent's own page (the tree is its root's). `count`
+  0: nothing, and nothing takes its place.
+- **Look**: a ghost picker (§6.16.2: `default`-step button, padding 0 `space.2`, `muted`, `hover`
+  ground and `ink` on hover), no chevron (it opens a dialog, not a menu): the label "N 个智能体" /
+  "N agents" ("1 agent"), led by the agent map's status dot (§6.16.28: 8, round, `role="img"`)
+  `space.2` before it while a sub-agent is active: running (queued included) the `accent` dot
+  pulsing every `motion.pulse`; else, while one waits for a person, `warn`; with nothing active
+  no dot. It draws no box of its own inside the composer (one box is enough, §1).
+- **Count**: N is every sub-agent of the conversation's tree, at every depth, at all times (the
+  root is not counted; the map's count line shows the same N, §6.16.28). The page reads the agent
+  tree with the conversation (the server prefetches it for the first paint) and again on every
+  sub-agent event of the root's log and on the progress of an agent the tree lacks; the stream's
+  progress and the log's waits count an agent at once. The dot says whether any runs; the running
+  count goes into the accessible name and the tooltip: "3 个智能体，1 个运行中" / "3 agents,
+  1 running", then "，N 个等待中" / ", N waiting" while some wait. A child of the conversation that
+  is active with nothing below it that counts is working itself (a stale tree never drops the
+  dot).
+- **Below 640** (state `narrow`): the dot, or the `agent` icon 14 when nothing is active, and the
+  count alone ("● 3"); the full text stays its accessible name and tooltip. The chip and the icon
+  buttons keep their size; a picker's label gives way with an ellipsis (§6.16.2), so the send
+  button stays inside the composer with the model, effort, quick actions and the chip.
+- **Open**: activating it (click, Enter, Space) opens the agent map at its root level (`#agents`;
+  `aria-haspopup="dialog"`); the map keeps its keyboard and Esc behaviour, and focus returns to the
+  chip when it closes. The sub-agent group's "智能体图" / "Agent map" link (§6.16.15) stays.
+
+<!-- states: agents-chip -->
+States: `default`, `running`, `waiting`, `hover`, `narrow`
+
+<!-- size-table: agents-chip -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| agents-chip | default | height | control.default |
+| agents-chip | default | padding-left | space.2 |
+| agents-chip | default | color | color.muted |
+| agents-chip | running | height | control.default |
+| agent-dot | running | width | space.2 |
+| agent-dot | running | background-color | color.accent |
+| agent-dot | waiting | width | space.2 |
+| agent-dot | waiting | background-color | color.warn |
+| agents-chip[data-ref-forced=true] | hover | background-color | color.hover |
+| agents-chip[data-ref-forced=true] | hover | color | color.ink |
+| agents-chip | narrow | height | control.default |
+| agents-chip-count | narrow | font-size | type.body |
+| agents-chip-count | narrow | color | color.muted |
+| agent-dot | narrow | width | space.2 |
+| agent-dot | narrow | background-color | color.accent |
 
 ---
 
@@ -2217,6 +2455,7 @@ States: `tree`, `deep`, `detail`, `finished`, `transcript`
 - A 36 px mark (radius `md`, `selected` ground; an agent's row draws its `Avatar` 28 centred in that place on no ground, `mark.avatar`, §6.30): the one avatar-tile rule, the upper-cased first grapheme of the display name in 600 (mono like the whole UI; `initialOf`, as the org switcher and the account row), for extensions and plugins too; an icon only for rows that are steps, not objects (the setup page); `tone="warn"` tints it with `warn` at 15% when the object needs attention.
 - Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted` prose, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
 - At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 640 the row wraps, and its action and menu buttons are at least 40 px (tap targets).
+- **Pending**: while an action of the row runs (a switch, a preview call), the row's buttons are disabled until it settles; the running one shows the Button's loading state (`action.loading`: the `spinner` before its label, `aria-busy`), or, when the running action came from the menu (`busy`), the menu button draws the `spinner` in place of `more-horizontal` (`aria-busy`; a lone menu item drawn as a button carries the loading state itself). Never a click that seems to do nothing.
 - **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row's shape instead of its rows (the same `.cb-object-row` box, 64 px at least, with its divider and first-row rule): a `mark` box (36 × 36, radius `md`, §6.29) and a name line and a description line in the text column, `body` bars 30% and 55% wide in the one bar look (§6.29), and the list is `aria-busy` with a hidden "正在加载 / Loading" (none of its own inside a skeleton group, which announces once). It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws the DataTable's loading state in the caller's table shape, else a Skeleton (§6.29), instead.
 
 ### 6.18 EmptyState
@@ -2225,7 +2464,7 @@ One empty state for the whole product, in two styles only. `EmptyState({ text, h
 
 - **Illustration**: the pixel capybara of §3 drawn as a line (`LogoLine`: the outer edges of the bitmap's cells, the eye included, 1 px `faint` stroke, no fill), decorative, on the `page` style only. No other art or icon stands in for it (a search that matched nothing is the same style with its own sentence).
 - **Copy**: one sentence in `ink` (prose font) saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`, prose font), and at most one action, the primary next step (a `default` or `primary` button or link). A `primary` action here is the screen's one primary: `ListPage` hides the head's primary while it is shown (§5.1). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
-- **Styles**: `page` (default) is the line-art capybara over the words, centered in the content frame, no frame of its own, `space.8` × 2 above and below, the illustration at scale 6 (85 × 61). `compact` (panels, cards, the DataTable's empty area, the sidebar's conversation list) is the words alone, no art: left-aligned with `space.3` padding (none inside a card body, which pads it already) and `space.2` gaps, the action `dense`; an `ItemList` with no rows draws it; inside a DataTable it is centered horizontally in the table body instead (§6.6).
+- **Styles**: `page` (default) is the line-art capybara over the words, centered in the content frame, no frame of its own, `space.8` × 2 above and below, the illustration at scale 6 (85 × 61). `compact` (panels, cards, the DataTable's empty area, the sidebar's conversation list) is the words alone, no art: left-aligned with `space.3` padding (none inside a card body, which pads it already) and `space.2` gaps, the action `dense`; an `ItemList` with no rows draws it; inside a DataTable it is centered horizontally in the table body instead (§6.6), and so is the sidebar's "no match" (the in-list form: centered, `space.8` above and below).
 - **Where**: every ListPage / ObjectList empty (`ListPage.empty`), the InboxPage with no items (the page state instead of the list + detail split, §5), the DataTable's empty and no-results areas (§6.6, compact), the sidebar's conversation list (compact: "还没有会话" + 新会话; a filter matching nothing: "没有匹配的会话" + 清除筛选).
 
 ### 6.20 PendingState
@@ -2234,7 +2473,25 @@ One empty state for the whole product, in two styles only. `EmptyState({ text, h
 
 ### 6.19 Callout
 
-`Callout({ tone, action?, children })`: a `role="status"` bar naming what needs action, radius `md`, padding `space.3` / `space.4`: a `circle-alert` icon, the sentence, and one dense button or link. `warn` uses the `warn` tint (15%) and a `warn` icon; `fail` the `fail` tint (12%) and icon. On list pages it sits in the header between the title row and the tabs (`ListPage.callout`). `info` is the quiet form for a standing fact about the page rather than something to fix (the admin overview's "企业管理员不能查看对话内容。"): a `role="note"` on the `panel` ground, `muted` text, a `faint` icon, usually no action; it sits first in the page body, under the head.
+`Callout({ tone, action?, children })`: a `role="status"` bar naming what needs action, radius `md`, padding `space.3` / `space.4`: a `circle-alert` icon, the sentence, and one dense button or link. `warn` uses the `warn` tint (15%) and a `warn` icon; `fail` the `fail` tint (12%) and icon. On list pages it sits in the header between the title row and the tabs (`ListPage.callout`). `info` is the quiet form for a standing fact about the page rather than something to fix (the admin overview's "超级管理员不能查看会话内容。"): a `role="note"` on the `panel` ground, `muted` text, a `faint` icon, usually no action; it sits first in the page body, under the head. The tinted bar is a box (§1), so **inside a box it draws its unboxed form by itself**, as a CodeBlock drops its line (§6.9): inside a card, a form card, a Dialog or a Sheet (any `BoxScope`) it is the `warn` / `fail` line with its icon, `data-framed="false"`: no tint, no padding, no radius, the 12 px `circle-alert` on the first line, the sentence in the prose font at `prose-small` in the tone's colour (`info`: `muted`, `faint` icon), the action at the right `space.2` after it; still a `status` (`note`). So a panel drawn both on a page and in a Sheet (an extension's failed replicas, its missing config, a plugin's permission mismatch) passes a Callout and gets the tinted bar on the page and the line in the Sheet. A notice about a whole section still stands above the section's card (between the section head and the card on a stacked section, or above the section), never as its first line.
+
+<!-- states: callout -->
+States: `warn`, `info`, `in-box`
+
+<!-- size-table: callout -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| callout | warn | padding-left | space.4 |
+| callout | warn | padding-top | space.3 |
+| callout | warn | border-top-left-radius | radius.md |
+| callout | info | padding-left | space.4 |
+| callout | info | color | color.muted |
+| callout | in-box | padding-left | 0 |
+| callout | in-box | padding-top | 0 |
+| callout | in-box | border-top-left-radius | 0 |
+| callout | in-box | color | color.warn |
+| callout-text | in-box | font-size | type.prose-small |
+| callout-text | in-box | line-height | type.prose-small.line |
 
 ### 6.21 DangerZone
 
@@ -2314,7 +2571,7 @@ States: `default`, `open`
 
 ### 6.25 FilePicker
 
-`FilePicker({ dropLabel, onFiles, label?, hint?, accept?, multiple?, disabled?, children? })`: the one file pick of a form or a flow (上传技能, the extension package of 安装扩展, the plugin package of 导入插件), never a bare `+` icon button. A drop zone (`FileDrop`: dragging a file over it draws the `dropLabel` overlay, a drop or a paste hands the files over) drawn as a 1px dashed `line-strong` box, radius `md`, `panel` ground, padding `space.6` / `space.4`, its content centered in a column `space.2` apart: the `upload` icon (16, `faint`), a `default` button with words ("选择文件" / "Choose file"; `label` names the type, "选择 .zip 文件") that opens the system picker, and a `small` prose `muted` hint ("或拖放到这里。" / "or drop it here."; `hint` overrides). What is chosen or happening (the file's `AttachmentChip` with its progress, a cancelled note) goes inside the zone under the hint (`children`). Disabled: the button disabled, the border `line`, drops ignored. Choosing between sources (upload / npm / git) above it uses card radios (§6.3 option cards) in a `Card`, as every install and import flow does.
+`FilePicker({ dropLabel, onFiles, label?, hint?, accept?, multiple?, disabled?, children? })`: the one file pick of a form or a flow (上传技能, the extension package of 安装扩展, the plugin package of 导入插件), never a bare `+` icon button. A drop zone (`FileDrop`: dragging a file over it draws the `dropLabel` overlay, a drop or a paste hands the files over) drawn as a 1px dashed `line-strong` box, radius `md`, `panel` ground, padding `space.6` / `space.4`, its content centered in a column `space.2` apart: the `upload` icon (16, `faint`), a `default` button with words ("选择文件" / "Choose file"; `label` names the type, "选择 .zip 文件") that opens the system picker, and a `small` prose `muted` hint ("或拖放到这里。" / "or drop it here."; `hint` overrides). What is chosen or happening (the file's `AttachmentChip` with its progress, a cancelled note) goes inside the zone under the hint (`children`). Disabled: the button disabled, the border `line`, drops ignored. Choosing between sources (upload / npm / git) above it uses card radios (§6.3 option cards) in a `Card` on a page, as every install and import flow does; in a Dialog the card radios and the drop zone stand straight in the dialog's body, with no Card around them (§1, §6.7). A FilePicker is allowed inside a Dialog (a drop target, not a group); inside a Card or a form card it is a second box (`web-ui-box-in-box`).
 
 <!-- states: file-picker -->
 States: `default`, `chosen`
@@ -2336,9 +2593,10 @@ States: `default`, `chosen`
 
 ### 6.26 Repeater
 
-`Repeater({ label, items, addLabel, onAdd, presets?, onRemove, onMove?, onToggle?, min?, max?, disabled?, empty?, variant? })` with `RepeaterItem { key, title?, subtitle?, body, invalid?, collapsed? }`: an array of objects in a config form (an extension's endpoints, an endpoint's models; config forms spec §5). A `group` named by `label` around a list (`ul`) of items, `space.2` apart; each item is a `group` named by its title (an untitled item by its position, "第 2 项" / "Item 2").
+`Repeater({ label, items, addLabel, onAdd, presets?, onRemove, onMove?, onToggle?, min?, max?, disabled?, empty?, variant?: "cards" | "divided" | "rows" })` with `RepeaterItem { key, title?, subtitle?, body, invalid?, collapsed? }`: an array of objects in a config form (an extension's endpoints, an endpoint's models; config forms spec §5). A `group` named by `label` around a list (`ul`) of items, `space.2` apart; each item is a `group` named by its title (an untitled item by its position, "第 2 项" / "Item 2").
 
 - **Cards** (`variant="cards"`, default): a 1px `line` hairline card, radius `md`, no fill (the form card's `panel` shows through). The head is one line at least `row.default` high, split from the body by `line-soft`: the drag handle (`grip-vertical` 14, `faint`, only with `onMove`), a collapse chevron (`chevron-down` / `chevron-right`, a dense icon button with `aria-expanded`, only with `onToggle`), the title (`body`, 500, `ink`, one line with an ellipsis), the subtitle after it (`small`, `muted`, mono, one line with an ellipsis; a template such as `{baseUrl}`), and at the right the dense icon buttons move up / move down (`arrow-up` / `arrow-down`, only with `onMove`) and remove (`trash-2`), each named with the item ("上移 deepseek", "移除 deepseek"). The body holds the item's fields, padding `space.3`, `space.3` between fields. A `collapsed` card (with `onToggle`) draws only its head. An `invalid` card's border is `fail`.
+- **Divided** (`variant="divided"`, and what `cards` draws inside a box: a form card, a Card, a Dialog or Sheet; §1): no border, no radius, no fill; the items are split by `line-soft` hairlines, each item `space.3` above and below (the first none above), its head line as the card's (handle, chevron, the title in `body` 500, the subtitle, the actions at the right) with no rule under it and no padding of its own, the body `space.2` below it. An invalid item carries a 2px `fail` bar `space.2` left of the item, in the box's padding. Keyboard focus draws the list item ring (`outline: 1px solid accent; outline-offset: -1px`, §2.5); a drop target gets the `hover` ground. So `cards` is the page-ground form only.
 - **Rows** (`variant="rows"`): compact items without a head, one `FieldRow` (§6.27) each, `space.2` above and below, split by `line-soft`; the handle and the actions sit at the row's ends on the inputs' line (below the first row's labels); an invalid row carries a 2px `fail` bar on its left. Titles only name the rows. A row whose body has no field labels (a list of names, each a button) keeps its handle and actions on its own line on the first row too.
 - **Footer**: a dense `default` button with `plus` and the caller's words ("添加端点" / "Add endpoint"). With `presets` it opens a menu (§6.7) of the presets, each with its help as the item's description, then a separator and "空白" / "Blank"; the button carries a `chevron-down` after its words. `onAdd(presetId?)` gets the preset's id, or nothing for a blank item. After an add, focus goes to the new item's first empty required field (`aria-required`; a preset filled the others), else its first field, else the item.
 - **Remove** acts at once: `onRemove(key)` removes the item and returns a restore function; the Repeater shows a success toast "已移除「deepseek」。" / `Removed "deepseek".` whose "撤销" / "Undo" action calls it (the toast stays 8 s). Focus moves to the next item (else the previous, else the add button).
@@ -2346,7 +2604,7 @@ States: `default`, `chosen`
 - **Limits and states**: remove is disabled while there are `min` items or fewer, add while there are `max` or more. Without items the list gives way to `empty` (`prose-small`, `muted`). `disabled` (a field given by the startup config) disables add, remove, move and dragging, and hides the handle.
 
 <!-- states: repeater -->
-States: `default`, `rows`, `invalid`, `empty`
+States: `default`, `rows`, `invalid`, `empty`, `divided`
 
 <!-- size-table: repeater -->
 | Part | State | Property | Value |
@@ -2367,6 +2625,14 @@ States: `default`, `rows`, `invalid`, `empty`
 | repeater-item | invalid | border-top-color | color.fail |
 | repeater-empty | empty | color | color.muted |
 | repeater-empty | empty | font-size | type.prose-small |
+| repeater-item | divided | border-left-width | 0 |
+| repeater-item | divided | border-top-left-radius | 0 |
+| repeater-head | divided | border-bottom-width | 0 |
+| repeater-head | divided | padding-left | 0 |
+| repeater-title | divided | font-size | type.body |
+| repeater-title | divided | color | color.ink |
+| repeater-body | divided | padding-top | space.2 |
+| repeater-body | divided | padding-left | 0 |
 
 ### 6.27 FieldRow
 
@@ -2502,6 +2768,147 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 | avatar-upload-reason | picker-upload-off | color | color.muted |
 | avatar-upload-reason | picker-upload-off | font-size | type.small |
 
+### 6.31 ContentSection
+
+`ContentSection({ title, count?, description?, actions?, empty?, children })`: one section of a detail page's single column or a review (a plugin's components: 扩展, 技能, 连接器模板, 依赖; 许可证 …). A `region` named by its heading, the parts `space.2` apart:
+
+- **Heading row**: the title as an `h2` in the `h2` step (16 / 24, 500, `ink`), so it reads as a heading over the lines under it, then the optional `count` (`small`, `faint`, tabular), then optional `actions` at the right (dense buttons or links).
+- **Help** (`description`): one line in the prose font, `small`, `muted`.
+- **Content**: the children; or, when the section holds nothing, the `empty` line instead (prose font, `small`, `muted`: "没有扩展。"). Secondary text under a heading is always this muted small style, never the heading's size and color.
+
+<!-- states: content-section -->
+States: `default`, `empty`
+
+<!-- size-table: content-section -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| content-section | default | row-gap | space.2 |
+| content-section-title | default | font-size | type.h2 |
+| content-section-title | default | line-height | type.h2.line |
+| content-section-title | default | color | color.ink |
+| content-section-count | default | color | color.faint |
+| content-section-description | default | font-size | type.small |
+| content-section-description | default | color | color.muted |
+| content-section-title | empty | font-size | type.h2 |
+| content-section-empty | empty | font-size | type.small |
+| content-section-empty | empty | color | color.muted |
+
+### 6.32 Subsection
+
+`Subsection({ title, count?, description?, actions?, variant?: "guide" | "flush", children })`: a group inside one box, where a second Card would have stood (§1 principle 7): a nested config object in a form card, an advanced group in a Sheet, one provider's table in a card of providers. A `region` named by its heading, the parts `space.2` apart:
+
+- **Heading row**: the title as an `h3` in the `body` step (500, `ink`; also `Text variant="h3"`), then the optional `count` (`small`, `faint`, tabular), then optional `actions` at the right (dense buttons, a status word).
+- **Help** (`description`): one line in the prose font, `small`, `muted`, `space.1` under the heading. A string is a paragraph; any other node is a block (a `div`, `data-block`) in the same place for content with lines of its own, which keep their own type step: a provider whose models failed to list shows its error there (the message in `body`, each detail on its own row, `role="alert"`) instead of a table.
+- **Loading** (`LoadingSubsection({ variant?, children })`): the same frame with a one-line `body` skeleton bar (120 px, a provider name's width) in the title's slot and no `h3`, then the content (a loading table), so the loaded heading row does not move what is under it (`/admin/models` while its providers load).
+- **Content** (`guide`, default; inside a padded box): the children `space.3` apart under the Disclosure's guide (§6.5): a 1px `line` on the left, indented `space.2`. Subsections nest by nesting their guides.
+- **Flush** (`variant="flush"`; inside a `flush` form card): the heading row and help padded `space.3` (in line with a table's first column), the content running to the box's edges with no guide (an unframed DataTable, §6.6); a flush subsection after another is split from it by a `line-soft` hairline.
+
+<!-- states: subsection -->
+States: `guide`, `flush`
+
+<!-- size-table: subsection -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| subsection | guide | row-gap | space.2 |
+| subsection-title | guide | font-size | type.body |
+| subsection-title | guide | line-height | type.body.line |
+| subsection-title | guide | color | color.ink |
+| subsection-description | guide | font-size | type.small |
+| subsection-description | guide | color | color.muted |
+| subsection-body | guide | padding-left | space.2 |
+| subsection-body | guide | border-left-color | color.line |
+| subsection-head | flush | padding-left | space.3 |
+| subsection-head | flush | padding-top | space.3 |
+| subsection-title | flush | font-size | type.body |
+| subsection-body | flush | padding-left | 0 |
+
+### 6.33 ItemList
+
+`ItemList({ label, rows?, children?, empty?, inset?: "card" | "flush" })` with plain rows `ItemListRow { id, tag?, title, meta?, status?, href?, actions? }` or `ItemListItem({ title, code?, marks?, tag?, href?, actions?, meta?, invalid?, children? })` children: things to look at, act on or edit inside one box, as rows split by `line-soft` hairlines, never cards (§1). A `ul` named by `label`; an empty list shows `empty` as the compact empty state (§6.18).
+
+- **Plain rows** (`rows`): at least `row.roomy` high, `space.2` above and below, gap `space.3`: a tag (`micro`, `muted`, a 1px `line` chip; `accent` for what waits on the viewer), the title (`ink`, a link when it has `href`) over one `small` `muted` meta line, a status word, the actions (an agent's channels, the org chooser).
+- **Item rows** (`ItemListItem`): rows that hold more than a line, where a card per item would have stood (a model purpose, a quick action, an inline sub-agent, a permission group). The title line (at least `control.dense` high, gap `space.2`): the title in `body` 500 `ink` (a link with `href`), its mono id `code` (`small`, `muted`: `eval`), `marks` (a `Badge`, a muted state word: 已覆盖), and the `actions` at the right (dense). Then `meta`, lines `space.1` apart (`small`, `muted` by default: who declares it, the deployment default; a `warn` line carries its icon). Then the body (fields, a list, a warning and its borderless code, §6.9), `space.3` below, its parts `space.3` apart. A row with a body is a `group` named by its title, so its fields read as that row's. `invalid` draws a 2px `fail` bar on the row's left (in the box's padding; at the card's edge when flush).
+- **Inset**: `card` (default) inside a padded box (a Card body, a form card that holds other fields, a Sheet): the rows reach the box's padding (no padding of their own at the sides; item rows `space.3` above and below, the first and last `space.2` so they meet the box's padding). `flush`: the list alone in a flush box (a `flush` FormSection): plain rows padded `space.2` `space.4`, item rows `space.4` on every side, so the hairlines run to the card's edges, as a SwitchList's do (§6.3).
+- **A review row** (PermissionReview): one item row per category, the category as the title, the 「敏感」 `Badge` as a mark, its reasons as meta lines, its entries as `small` `muted` lines in the body; a danger block (destructive migration statements) is a row whose meta is a `warn` line with the `circle-alert` icon (`Text variant="small" tone="warn" icon="circle-alert"`) and whose body is the code (a CodeBlock, borderless inside the box).
+
+<!-- states: item-list -->
+States: `rows`, `fields`, `review`
+
+<!-- size-table: item-list -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| item-list-row | rows | min-height | row.roomy |
+| item-list-row | rows | padding-top | space.2 |
+| item-list-row | fields | padding-left | space.4 |
+| item-list-row | fields | padding-top | space.4 |
+| item-list-head | fields | min-height | control.dense |
+| item-list-title | fields | font-size | type.body |
+| item-list-title | fields | color | color.ink |
+| item-list-code | fields | font-size | type.small |
+| item-list-code | fields | color | color.muted |
+| item-list-meta | fields | margin-top | space.1 |
+| item-list-body | fields | margin-top | space.3 |
+| item-list-row | review | padding-left | 0 |
+| code-block | review | background-color | color.panel-2 |
+| code-block | review | border-top-width | 0 |
+| code-block | review | border-top-left-radius | radius.sm |
+
+### 6.34 CardGrid and ObjectCard
+
+`CardGrid({ label, loading?, empty?, children })` lays `ObjectCard`s out on the page ground (ruling P4-15 of the plugin component management design: the workspace 智能体 page's 智能体 and 模板 tabs, the admin 智能体模板 list; on a list page `ListPage variant="cards"`, §5.1). It is a `ul` named by `label` with no box of its own: a CSS grid of `auto-fill` columns at least `layout.card-min` (280) wide (`minmax(min(100%, layout.card-min), 1fr)`), `space.3` apart both ways, so three columns at the content width and one below 640 (§4.3). It is drawn on the page ground only (§1); inside a box the same things are `ItemList` rows (§6.33).
+
+`ObjectCard({ avatar?, title, href, description?, meta?, primary?, menu? })`, or `{ loading: true }`, is one `li` and the one box (§1): the `panel` ground, a 1px `line-card` border, radius `md`, padding `space.4`, its parts `space.3` apart in a column. Nothing inside it is boxed.
+
+- **Head** (40 high, gap `space.3`): the avatar, an agent's `Avatar` at 40 (§6.30; `null` or none draws the initial square of the title), or `{ icon }` for an object without a picture (its 16 px icon on a 40 px `selected` tile, radius `sm`), decorative (`aria-hidden`); then the name, `body` 600 `ink`, one line with an ellipsis; when it is cut off, the full text is its `title` (measured after layout and on resize: a name that fits has no tooltip).
+- **Description** (optional): prose, `prose-small`, `muted`, clamped to two lines (`-webkit-line-clamp: 2`); when it is cut off, the full text is its `title`. A card without one draws no line and no gap; the grid stretches the cards of a row to one height and the foot keeps to the bottom.
+- **Foot** (at least `control.dense`, at the card's bottom, gap `space.2`): the meta, one mono `small` `muted` line with an ellipsis (a list joins its parts with 「 · 」, a `warn` part in `warn`; an agent: owner · 可见范围, a template: source · version, ruling P4-15); then the primary (`primary`, a `dense` `default` button or link: never the solid `primary` variant, which would put an accent button on every card, while the screen's one primary stays in the page head, §5.1); then the `more-horizontal` menu (`menu`, a dense icon button, §6.7: no menu of one, a lone safe item is a second button, none draws nothing). While the primary runs (`primary.loading`) it draws the Button's loading state and the card's other buttons are disabled. The primary, a lone item and the menu button keep their own names (开始会话, 更多操作) and are described by the card's name (`aria-describedby` on the name), so a screen reader hears which card they act on.
+- **One link, the whole card**: the name is the card's only link (`href`); its `::after` is stretched over the card, so a click anywhere opens the detail and the card keeps a link's behaviour (a new tab, the URL on hover, the pending mark along the card's bottom while the router navigates, §6.13). The primary, the menu and the description sit above it (`z-index`), beside the link in the markup and never inside it (valid HTML, no nested interactive elements), so pressing them never navigates. The description passes a click on to the link, so its tooltip shows and the card still opens: a plain click navigates as the link does, Ctrl / Cmd / Shift or the middle button open the detail in a new tab, and a click that ends a text selection inside the description stays a selection (a selection elsewhere on the page does not count).
+- **Hover** lays the `hover` ground over the card (fading over `motion.hover`); **keyboard focus** on the link draws the 2px `accent` ring, offset 2px, around the whole card (`:has(:focus-visible)`, §2.5).
+- **Keyboard: roving focus by row** (ruling P4-15). The grid is one tab stop, the card last reached (the first by default). ← / → move to the previous / next card in reading order, across rows; ↑ / ↓ to the card above / below in the same column (from a column the short last row lacks, ↓ goes to the last card); Home / End to the first / last card. Tab then goes through that card's link, its primary and its menu and leaves the grid: the other cards' controls are out of the tab order (`tabIndex` −1) until an arrow or a click brings focus into them. Arrows on the primary or the menu belong to them (↵ or ↓ opens the menu). Skeleton cards take no part. The stop belongs to a card, by its key, not to a position: cards added or removed elsewhere leave it where it is; when the held card goes away (deleted from its own ⋯ menu, filtered out), the stop moves to its neighbour (the card now in its place, else the new last card), and if focus was inside the card (its link, its buttons, its open menu) focus moves to that neighbour's link, never to the page body. The children are a flat list of cards; fragments among them are opened, and each card needs a stable `key`. An ObjectCard outside a CardGrid keeps every control in the tab order.
+- **Phones** (below 640): one column, and the primary and the menu are 40 px tap targets (§4.3).
+- **Loading** (`CardGrid.loading`: `true` for six cards, two rows of three, or a count; `ObjectCard` with `loading: true`): skeleton cards in the card's anatomy and box (§6.29): a 40 × 40 `block` box in the avatar's place, a `body` slot 45% wide for the name, two `body` slots (100%, 55%: the line boxes of two `prose-small` lines) for the description, a `small` slot 45% wide for the meta and a 72 px `dense` box for the primary; the list is `aria-busy` with one hidden "正在加载 / Loading" (none inside a skeleton group, which announces once). Loading wins over `empty`.
+- **Empty** (`CardGrid.empty`): the `page` EmptyState (§6.18) instead of the grid; on a list page the template's `empty` draws it (§5.1).
+
+<!-- states: card-grid -->
+States: `default`, `long-text`, `no-description`, `loading`, `empty`, `narrow`
+
+<!-- size-table: card-grid -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| card-grid | default | column-gap | space.3 |
+| card-grid | default | row-gap | space.3 |
+| object-card | default | width | 344 |
+| object-card | default | padding-top | space.4 |
+| object-card | default | padding-left | space.4 |
+| object-card | default | border-top-left-radius | radius.md |
+| object-card | default | background-color | color.panel |
+| object-card | default | border-top-color | color.line-card |
+| object-card-head | default | height | 40 |
+| object-card-avatar avatar | default | width | 40 |
+| object-card-name | default | font-size | type.body |
+| object-card-name | default | color | color.ink |
+| object-card-description | default | font-size | type.prose-small |
+| object-card-description | default | line-height | type.prose-small.line |
+| object-card-description | default | color | color.muted |
+| object-card-meta | default | font-size | type.small |
+| object-card-meta | default | color | color.muted |
+| object-card-foot button | default | height | control.dense |
+| object-card-foot icon-button | default | width | control.dense |
+| object-card-description | long-text | height | 40 |
+| object-card-name | long-text | height | type.body.line |
+| object-card-head | no-description | height | 40 |
+| object-card-avatar[data-kind=icon] | no-description | background-color | color.selected |
+| object-card-avatar[data-kind=icon] | no-description | border-top-left-radius | radius.sm |
+| object-card | loading | padding-top | space.4 |
+| skeleton-box[data-box=block] | loading | width | 40 |
+| skeleton-box[data-box=block] | loading | height | 40 |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| skeleton-box[data-box=dense] | loading | height | control.dense |
+| empty-state-text | empty | color | color.ink |
+| object-card | narrow | width | 358 |
+| object-card-foot button | narrow | height | 40 |
+| object-card-foot icon-button | narrow | width | 40 |
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; durations `6.8s` / `41.2s` / `00:00:18`; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
@@ -2524,10 +2931,12 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 
 The polish checklist below comes from an audit with [unslop](https://github.com/heydamir/unslop) (Damir Sokolovsky, CC BY 4.0), adapted to this product: exact, restrained, a little dry.
 
-- **Periods**: full sentences (descriptions, hints, errors, toasts, empty-state explanations, notices) end with "。" / "."; titles, buttons, labels, menu items, table headers, tabs, short phrase captions ("先配置模型", "设置 · 成员") and inline key hints ("按 ↵ 加入队列，按 Ctrl+↵ 立即发送") have none. `check:i18n` rule `i18n-label-period` rejects a period at the end of a message whose key names a label (`title`, `label`, `action`, `confirm`, `cancel`, `submit`, `button`, `name`, `tab`, `heading`, `item`, `menu`, `placeholder`, also as the last camelCase word, e.g. `confirmLabel`).
+- **Periods**: full sentences (descriptions, hints, errors, toasts, empty-state explanations, notices) end with "。" / "."; titles, buttons, labels, menu items, table headers, tabs, short phrase captions ("先配置模型", "设置 · 成员") and inline hints ("运行中发送的消息会在下一步交给智能体") have none. `check:i18n` rule `i18n-label-period` rejects a period at the end of a message whose key names a label (`title`, `label`, `action`, `confirm`, `cancel`, `submit`, `button`, `name`, `tab`, `heading`, `item`, `menu`, `placeholder`, also as the last camelCase word, e.g. `confirmLabel`).
+- **Names in messages**: a name interpolated into a toast or notice is quoted: corner quotes 「」 in zh (已启用「待办清单」。, 已移除「deepseek」。), straight double quotes in en (`Enabled "Todo".`).
 - **Ellipsis and punctuation**: the ellipsis is the single character "…", never three dots (`i18n-ellipsis`); in Chinese a half-width `?` `!` `:` `;` never follows a Chinese character, use `？` `！` `：` `；` (`i18n-cjk-halfwidth`).
-- **One name per object**: conversation is "会话" (not "对话", which stays a verb), sub-agent is "子 agent", rename is "重命名", a created-at column is "创建时间", the home page is "首页", the admin area is "管理后台" and its first page "概览"; a page's h1 is its nav name.
-- **"agent"**: in Chinese running text the word is lowercase ("新建 agent", "agent 决定用哪个模型…"); the nav item and the page name stay "Agents". The create verb is "新建" everywhere (buttons, the setup step, the page title "新建 agent").
+- **One name per object**: conversation is "会话" (not "对话", which stays a verb), sub-agent is "子智能体", rename is "重命名", a created-at column is "创建时间", the new conversation is "新会话" (the workspace has no home page and no "首页"), the admin area is "管理后台" and its first page "概览"; a page's h1 is its nav name.
+- **"agent"**: Chinese says "智能体" (sub-agent "子智能体", agent template "智能体模板", the nav item and the page name "智能体"); English stays "agent" (`check:i18n` rule `i18n-zh-agent` rejects the Latin word in zh messages). The create verb is "新建" everywhere (buttons, the setup step, the page title "新建智能体").
+- **Roles and the platform**: the roles are "超级管理员" / "Super admin" (the deployment level), "组织所有者" / "Org owner", "组织管理员" / "Org admin", "组织成员" / "Org member" and "访客" / "Guest"; the deployment layer is "平台" / "Platform" (平台目录, 平台统一), a non-official marketplace is "自定义市场源" / "Custom marketplace", and "企业" is never used (`i18n-zh-enterprise`; plugin and component management spec §13.4b, §13.4c).
 - **The path is not translated**: the page-head path and the status bar's path line (`user@org:~/path`) keep the route words (`capybara / settings / members`, `/admin / extensions`); they mirror the URL and are the product's signature.
 - **One primary per screen**: the page head (or the action row of a form) holds the one `primary` button; row actions in lists are secondary (§6.17), and a row that needs attention says so in its state text.
 - **No badge for plain metadata**: a version, "必需" / "Required" or a source is meta text (§6.17); a badge (chip) is for a scope or something that needs attention ("敏感" / "Sensitive").
@@ -2546,6 +2955,7 @@ The polish checklist below comes from an audit with [unslop](https://github.com/
 2. **Template enforcement**: every `page.tsx` under `apps/web/src/app` must render one of the §5 templates imported from `@capybara-hq/design` (aliases and namespace imports are recognized); the Shell layers are rendered only by templates. Two exemptions: the development catalog pages `app/dev/**`; and pages that only handle 404 (containing no JSX and calling `notFound()` from `next/navigation`, such as `[...rest]/page.tsx`), whose page is rendered by the StatusPage in the same segment's `not-found.tsx`.
 3. **Style ownership**: in `apps/web/src` there must be no `className` / `class` / `style` / `dangerouslySetInnerHTML` attributes (including spread props and `createElement` / `jsx` calls), `<style>` elements, `.css` files, or any color literal (`#hex`, `rgb()`, `hsl()`, `oklch()`, `color-mix()` and so on); layout inside a page may only use the design package's layout primitives (`Stack`, `Grid`, `Card`, `Text`). In `packages/design`, color literals are allowed only in the generated `tokens.css`. **Characters are not icons** (rule `design-char-icon`, part of `check:web-ui`): no string, template literal or JSX text in non-test code of `apps/web/src` or `packages/design/src` (and no value in `apps/web/messages/*.json`) may contain an icon character (`▾ ✓ ✕ ⋯ ⠿ ▤ ● ‖` and siblings); use `Icon` (§2.6). Box-drawing, `⌘`, `↵`, `→`, `·` and `…` are text.
 4. **Tokens**: `check:tokens` keeps `tokens.json`, `tokens.css` and `tokens.ts` in step and checks the contrast pairs (§2).
+5. **One box is enough** (§1 principle 7), in two halves. `web-ui-box-in-box` (part of `check:web-ui`) reads the JSX of `apps/web/src`: a boxed design component (`Card`, `FormSection`, `DangerZone`, `ObjectList`, `LinkCard`, `StatCards`, `InlineCard`, `FilePicker`, `CardGrid`, `ObjectCard`) drawn inside a box (`Card`, `FormSection`, `Dialog`, `Sheet`, `Popover`, the agent map's dialog, `InlineCard`, `PropertySection`, `Callout`, `DangerZone`, `ObjectList`), directly, through an attribute (`title`, `actions`, a render prop) or through what the JSX hands it: a component of apps/web whose JSX draws one (followed across same-file components, relative and `@/` imports and re-exports), a same-function `const` holding JSX (a `.map(...)` result too), a same-file helper returning JSX, a render function a hook returns; a local wrapper that draws a prop inside its box (`children`, renamed or not, or another slot prop) counts as that box for what is passed there; a `DataTable` in a FormSection that is not `flush`; a `CodeBlock`, `EmbedFrame` or `DataTable` forced `framed` inside a box. Overlays are portals: one that is a box (Dialog, Sheet, Popover, the agent map's dialog) is the box of what it holds, the others (menus, the command palette, tooltips) start on no box, so a Card in a Menu in a Card is not inside the Card; full-height panes (RightPanel, the file preview, the agent map's transcript) hold content like a page. Its exceptions: a FilePicker in a Dialog; card radios and form controls are not boxes to it. A CardGrid's cards are judged by the grid alone: a grid in a box is one finding, not one per card. `BOX_PENDING` (`tools/checks/src/box-in-box.ts`) has been empty since AB wave 2, and new code adds no entry; it stays as a ratchet bounded like `KC_PENDING` (`{ path, inner, max }`: more findings fail, fewer fail as "lower max", none as stale, `web-ui-box-stale-pending`). The rendered half is the jsdom guard `findNestedBoxes` (`@capybara-hq/design/reference`): every box the design package draws by its markup (`BOXES`), full-height panes (`PANES`) and the reasoned exceptions (`BOX_EXCEPTIONS`: option cards anywhere, a FilePicker in a Dialog); `packages/design/test/box-in-box.test.tsx` runs it on every box holding every piece with an unboxed form and on the template loading shapes, and `apps/web/test/box-in-box.test.tsx` on every `/dev/ui` route.
 
 Every check has a violating-fixture test.
 

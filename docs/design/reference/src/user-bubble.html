@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>User bubble</h1>
-<p>Selected ground, radius bubble, padding 6/12, at most 75% wide, right-aligned; attachments above it.</p>
+<p>Selected ground, radius bubble, padding 6/12, at most 75% wide, right-aligned; attachments above it. A message taller than eight prose lines (layout.bubble-clamp) is clamped with its last line fading, and 展开 / 收起 sits under it.</p>
 <div class="r-blocks">
 <section data-ref-block="user-bubble-default" style="width:752px" data-pad>
   <template data-fixture="user-bubble" data-opts='{"state": "default"}'></template>
@@ -23,6 +23,12 @@
 </section>
 <section data-ref-block="user-bubble-sender" style="width:752px" data-pad>
   <template data-fixture="user-bubble" data-opts='{"state": "sender"}'></template>
+</section>
+<section data-ref-block="user-bubble-long" style="width:752px" data-pad>
+  <template data-fixture="user-bubble" data-opts='{"state": "long"}'></template>
+</section>
+<section data-ref-block="user-bubble-expanded" style="width:752px" data-pad>
+  <template data-fixture="user-bubble" data-opts='{"state": "expanded"}'></template>
 </section>
 </div>
 </main>

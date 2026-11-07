@@ -27,7 +27,7 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -105,7 +105,9 @@ beforeEach(async () => {
 async function createOrg(name: string): Promise<string> {
   const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(org.statusCode, org.body).toBe(201);
-  return (org.json() as { org: { id: string } }).org.id;
+  const id = (org.json() as { org: { id: string } }).org.id;
+  await enableConnectorExtensions(k, id);
+  return id;
 }
 
 async function installConnector(slug: string, inOrg = orgId): Promise<string> {

@@ -414,10 +414,10 @@ describe("ComposerBox (§6.16.2)", () => {
   });
 
   it("send is disabled without text and the hint replaces the placeholder while running", () => {
-    wrap(<ComposerBox {...composer({ hint: "按 ↵ 加入队列，按 ⌘↵ 立即发送" })} />);
+    wrap(<ComposerBox {...composer({ hint: "运行中发送的消息会在下一步交给智能体" })} />);
     expect((screen.getByRole("button", { name: "发送" }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByLabelText("消息").getAttribute("placeholder")).toBe(
-      "按 ↵ 加入队列，按 ⌘↵ 立即发送",
+      "运行中发送的消息会在下一步交给智能体",
     );
   });
 

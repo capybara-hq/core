@@ -489,7 +489,7 @@ export class ConversationsService {
    * are stopped after the conversation is marked deleted, so no finish
    * (the stops' own, or one the poller writes meanwhile) can wake a run on it: `ensureRun` refuses a
    * deleted conversation (the stops' finishes carry `stoppedBy: "deletion"` as well). The event
-   * log, runs and trajectory stay (enterprise admins still see them).
+   * log, runs and trajectory stay (super admins still see them).
    */
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.writable(orgId, conversationId, accountId);

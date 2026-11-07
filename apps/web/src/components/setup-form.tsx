@@ -9,7 +9,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * The setup wizard's form: creates the first enterprise admin (and optionally an org); on success
+ * The setup wizard's form: creates the first super admin (and optionally an org); on success
  * the kernel signs them in and `onSuccess` (the page) ends the cache's session and navigates.
  */
 export function SetupForm({ onSuccess }: { onSuccess: () => void }) {

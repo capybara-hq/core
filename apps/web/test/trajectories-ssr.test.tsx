@@ -10,6 +10,7 @@ import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { fieldOptionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -41,7 +42,7 @@ const UI = `${O}/ui`;
 const T = "2026-10-22T08:00:00.000Z";
 const as = (role: string) => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const failing = () => json(500, { error: { code: "internal", message: "x" } });
@@ -146,11 +147,8 @@ describe("/trajectories", () => {
     const table = screen.getByRole("table", { name: en.trajectories.title });
     expect(within(table).getByText("Clean up")).toBeTruthy();
     expect(
-      within(screen.getByRole("combobox", { name: en.trajectories.filters.agent })).getByRole(
-        "option",
-        { name: "Helper" },
-      ),
-    ).toBeTruthy();
+      fieldOptionLabels(screen.getByRole("combobox", { name: en.trajectories.filters.agent })),
+    ).toContain("Helper");
     expect(calls.find((c) => c.url.startsWith(`${O}/trajectories`))?.url).toBe(
       `${O}/trajectories?limit=50`,
     );
@@ -165,11 +163,11 @@ describe("/trajectories", () => {
       `${O}/trajectories?limit=50&agentId=ag1&status=failed`,
     );
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLButtonElement)
         .value,
     ).toBe("ag1");
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.status }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.status }) as HTMLButtonElement)
         .value,
     ).toBe("failed");
     await settle();
@@ -189,9 +187,7 @@ describe("/trajectories", () => {
   it("changing a filter is a navigation", async () => {
     expectNoFirstPaintFetch();
     await renderRouteWithCache("/trajectories?status=failed", ROUTES);
-    await userEvent
-      .setup()
-      .selectOptions(screen.getByRole("combobox", { name: en.trajectories.filters.agent }), "ag1");
+    await pickOption(screen.getByRole("combobox", { name: en.trajectories.filters.agent }), "ag1");
     expect(router.replace).toHaveBeenCalledWith("/trajectories?agentId=ag1&status=failed");
   });
 
@@ -264,7 +260,7 @@ describe("/trajectories", () => {
     });
     expect(screen.getByRole("table", { name: en.trajectories.title })).toBeTruthy();
     expect(
-      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.trajectories.filters.agent }) as HTMLButtonElement)
         .value,
     ).toBe("ag9");
     await settle();
@@ -497,7 +493,7 @@ describe("the gates by role", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, ROUTES, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     },
   );
 });

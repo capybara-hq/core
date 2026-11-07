@@ -1,0 +1,12 @@
+{
+  "name": "no-zh-description",
+  "version": "0.1.0",
+  "description": "Published with an English description only",
+  "license": "Apache-2.0",
+  "homepage": "https://example.com/x",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/capybara-hq/core.git",
+    "directory": "plugins/no-zh-description"
+  }
+}

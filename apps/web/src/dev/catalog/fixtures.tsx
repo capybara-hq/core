@@ -62,7 +62,7 @@ export const LIST_FACETS: Facet[] = [
     ],
   },
   {
-    name: "负责人",
+    name: "所有者",
     items: [
       { label: "张琳", count: 7, on: false },
       { label: "grant", count: 6, on: false },
@@ -83,7 +83,7 @@ export type AgentRow = {
   spark: number[];
 };
 
-/** 确定性的 12 段迷你趋势（每个 Agent 不同）。 */
+/** 确定性的 12 段迷你趋势（每个智能体不同）。 */
 function sparkOf(seed: number): number[] {
   return Array.from({ length: 12 }, (_, i) => 1 + ((seed * 7 + i * 5 + ((i * i + seed) % 3)) % 6));
 }
@@ -251,7 +251,7 @@ export const DETAIL_PROPS: { title: string; rows: [string, string][] }[] = [
   {
     title: "归属",
     rows: [
-      ["负责人", "张琳"],
+      ["所有者", "张琳"],
       ["创建", "2026-08-02 grant"],
       ["环境", "生产环境"],
     ],
@@ -451,13 +451,13 @@ export const SHEET_PROPS: [string, string][] = [
   ["工具", "kb.search · crm.get_order · ticket.reply"],
   ["触发", "webhook · /hooks/support"],
   ["24h", "412 次 · 成功率 98.1%"],
-  ["负责人", "张琳"],
+  ["所有者", "张琳"],
 ];
 
 // ── 组件（e-components）──────────────────────────────────────────────────
 
 export const BUTTON_VARIANTS = [
-  { variant: "primary", name: "Primary", use: "实心主色", label: "新建 agent" },
+  { variant: "primary", name: "Primary", use: "实心主色", label: "新建智能体" },
   { variant: "secondary", name: "Secondary", use: "主色描边", label: "部署" },
   { variant: "default", name: "Default", use: "中性描边", label: "导出" },
   { variant: "ghost", name: "Ghost", use: "无边框", label: "取消" },

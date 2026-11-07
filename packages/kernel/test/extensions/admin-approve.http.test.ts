@@ -158,7 +158,7 @@ beforeAll(async () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
@@ -174,7 +174,7 @@ afterAll(async () => {
 });
 
 describe("插件列表与网页批准权限", () => {
-  it("非企业管理员：列表、详情与批准都 403", async () => {
+  it("非超级管理员：列表、详情与批准都 403", async () => {
     for (const res of [
       await member({ method: "GET", url: "/api/v1/admin/extensions" }),
       await member({ method: "GET", url: "/api/v1/admin/extensions/demo-pkg" }),

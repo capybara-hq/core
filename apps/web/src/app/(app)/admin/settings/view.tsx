@@ -22,8 +22,8 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/admin/settings`：部署设置（企业管理员，SettingsPage）——谁能建组织、价格币种、
- * 组织能否自建连接器 / 技能（`deny` 时只能从企业目录安装）。按组织的限额在「组织」页；
+ * `/admin/settings`：部署设置（超级管理员，SettingsPage）——谁能建组织、价格币种、
+ * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）。按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
  * settings into the cache.
@@ -166,7 +166,7 @@ function AdminSettings({
           variant="card"
           value={value("orgCreation") ?? "anyone"}
           onChange={(v) => setDraft((d) => ({ ...d, orgCreation: v as Simple["orgCreation"] }))}
-          options={(["anyone", "enterprise_admin"] as const).map((v) => ({
+          options={(["anyone", "super_admin"] as const).map((v) => ({
             value: v,
             label: t(`orgCreation.${v}`),
             description: t(`orgCreation.${v}Hint`),

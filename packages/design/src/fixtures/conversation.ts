@@ -12,6 +12,31 @@ import type { PresetId } from "../display/avatar-presets";
 export type FixtureModelOption = { id: string; label: string; efforts?: string[] };
 export type FixtureModelGroup = { provider: string; label: string; models: FixtureModelOption[] };
 
+/**
+ * A long model list (§6.16.3 state `long`): two providers of fifty models each, the checked one
+ * deep in the second group, so the menu is capped, filtered and scrolled to the checked model.
+ */
+export const LONG_MODELS_FIXTURE: {
+  groups: { provider: string; label: string; models: { id: string; label: string }[] }[];
+  /** The checked model's id. */
+  selected: string;
+  /** What the filter field holds in the reference block (empty: the whole list). */
+  query: string;
+} = {
+  groups: [
+    { provider: "acme", label: "Acme Cloud" },
+    { provider: "north", label: "North AI" },
+  ].map((g, gi) => ({
+    ...g,
+    models: Array.from({ length: 50 }, (_, i) => {
+      const n = gi * 50 + i + 1;
+      return { id: `model-${n}`, label: `${g.provider}-chat-${String(n).padStart(3, "0")}` };
+    }),
+  })),
+  selected: "model-80",
+  query: "",
+};
+
 export const CONV_FIXTURE: {
   title: string;
   /** A 60-character CJK title for the long-title block. */
@@ -71,14 +96,14 @@ export const CONV_FIXTURE: {
 export const CONV_COPY = {
   placeholder: "输入消息，/ 使用命令",
   newPlaceholder: "想让 研究助手 做什么？",
-  queueHint: "按 ↵ 加入队列，按 ⌘↵ 立即发送",
+  runningHint: "运行中发送的消息会在下一步交给智能体",
   attach: "添加附件",
   send: "发送",
   stop: "停止",
-  agent: "切换 agent",
+  agent: "切换智能体",
   model: "切换模型",
   effort: "思考档位",
-  agentLocked: "发送第一条消息后不能再换 agent",
+  agentLocked: "发送第一条消息后不能再换智能体",
   modelHint: "从下一条消息起生效",
   properties: "属性面板",
   files: "文件",
@@ -562,10 +587,10 @@ export const SKILL_FIXTURE: {
           id: "skill:review",
           label: "/review",
           hint: "[path]",
-          tags: ["子 agent"],
+          tags: ["子智能体"],
           search: "dev-kit:review",
           source: "dev-kit",
-          description: "在子 agent 里审查代码改动",
+          description: "在子智能体里审查代码改动",
         },
       ],
     },
@@ -943,6 +968,30 @@ export const NEW_CONVERSATION_FIXTURE: {
     { id: "q6", title: "翻译一份合同" },
   ],
   noMatch: "报销",
+};
+
+/** A long user message (§6.16.6 states `long` / `expanded`): taller than eight prose lines. */
+export const LONG_MESSAGE_FIXTURE: { text: string } = {
+  text: [
+    "请按下面的步骤核对 9 月的示例表：",
+    "1. 先读 finance/q3/summary.csv，按事业部汇总收入和成本；",
+    "2. 再和总账导出的 ledger-2026-09.xlsx 逐行比对；",
+    "3. 差异超过 500 元的行单独列出，写明可能的原因；",
+    "4. 每个差异找到对应的凭证号；",
+    "5. 汇总成一张表：事业部、科目、账面金额、表内金额、差异、原因；",
+    "6. 表下写三条改进建议；",
+    "7. 结果存成 reports/2026-09-diff.md；",
+    "8. 最后用三句话总结这个月的整体情况。",
+    "金额保留两位小数，日期统一写成 YYYY-MM-DD。",
+    "拿不准的地方先列出来，不要猜。",
+  ].join("\n"),
+};
+
+/** The composer's agents chip (§6.16.29): the tree's sub-agents, how many run and wait. */
+export const AGENTS_CHIP_FIXTURE: { count: number; running: number; waiting: number } = {
+  count: 3,
+  running: 1,
+  waiting: 1,
 };
 
 // ── Agent map (§6.16.28) ────────────────────────────────────────────────────

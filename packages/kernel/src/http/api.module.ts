@@ -7,17 +7,33 @@ import { SetupController } from "../admin/setup.controller.js";
 import { AgentsController } from "../agents/agents.controller.js";
 import { AgentsModule } from "../agents/agents.module.js";
 import { ModelsController } from "../agents/models.controller.js";
+import { PendingConnectorsController } from "../agents/pending-connectors.controller.js";
 import { ReadinessController } from "../agents/readiness.controller.js";
-import { AgentTemplatesController } from "../agents/templates.controller.js";
+import {
+  AgentSaveAsTemplateController,
+  AgentTemplatesController,
+} from "../agents/templates.controller.js";
 import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
-import { MarketplacesController } from "../catalog/marketplaces.controller.js";
+import {
+  AdminComponentsController,
+  OrgComponentsController,
+} from "../catalog/component-scope.controller.js";
+import {
+  MarketplacesController,
+  OrgMarketplacesController,
+} from "../catalog/marketplaces.controller.js";
 import {
   AdminCatalogRequestsController,
   OrgCatalogController,
 } from "../catalog/org-catalog.controller.js";
+import { OrgExtensionConfigsController } from "../catalog/org-extension.controller.js";
+import {
+  OrgOwnedPluginsController,
+  OrgPluginUploadsController,
+} from "../catalog/org-plugin-uploads.controller.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
@@ -28,7 +44,6 @@ import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
 import { TrajectoryController } from "../evals/trajectory.controller.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { OrgExtensionConfigsController } from "../extensions/org-config.controller.js";
 import { ExtensionPointDefaultsController } from "../extensions/point-defaults.controller.js";
 import { FilesModule } from "../files/files.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
@@ -42,6 +57,7 @@ import {
   SsoController,
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
+import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
 import { ModelsModule } from "../models/models.module.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
@@ -63,6 +79,7 @@ import { StorageModule } from "../storage/storage.module.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
+import { ExtensionToolsController } from "../tools/extension-tools.controller.js";
 import {
   OAuthCallbackController,
   OAuthConnectController,
@@ -83,10 +100,14 @@ const CONTROLLERS: Type[] = [
   AdminController,
   AdminExtensionsController,
   AdminCatalogController,
+  AdminComponentsController,
   MarketplacesController,
+  OrgMarketplacesController,
   OrgExtensionConfigsController,
   AgentsController,
   AgentTemplatesController,
+  AgentSaveAsTemplateController,
+  PendingConnectorsController,
   ModelsController,
   ReadinessController,
   ConversationsController,
@@ -97,12 +118,14 @@ const CONTROLLERS: Type[] = [
   AgentSkillsController,
   InvocableSkillsController,
   InboxController,
+  PlatformInboxController,
   ConversationStreamController,
   ConnectorContentController,
   ConnectorsController,
   ApprovalsController,
   ToolGrantsController,
   QuestionsController,
+  ExtensionToolsController,
   OAuthConnectController,
   OAuthCallbackController,
   SsoController,
@@ -118,6 +141,9 @@ const CONTROLLERS: Type[] = [
   EvalRunsController,
   ModelPurposesController,
   OrgCatalogController,
+  OrgPluginUploadsController,
+  OrgOwnedPluginsController,
+  OrgComponentsController,
   AdminCatalogRequestsController,
 ];
 

@@ -1,4 +1,4 @@
-import type { FieldShape, FormSectionLayout } from "@capybara-hq/design";
+import type { FieldShape, FormSectionLayout, ItemShape } from "@capybara-hq/design";
 
 /**
  * The agent page's sections (agent profile design §3.2), in nav order. The URL keeps the open one
@@ -53,20 +53,29 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
     { control: "textarea", rows: 3 },
     { control: "select" },
   ],
-  "quick-actions": [{ control: "card-group", options: 2 }],
+  "quick-actions": [{ control: "item-group", options: 2 }],
   // the file list (one row: AGENTS.md) beside the open file's name and 16-line content
   prompt: [{ control: "list-editor", options: 1, rows: 16 }],
   model: [{ control: "select" }, { control: "select" }],
-  tools: [{ control: "card-group", options: 2 }],
-  skills: [{ control: "card-group", options: 2 }],
-  subagents: [{ control: "card-group", options: 1 }],
-  channels: [{ control: "card-group", options: 1 }],
+  tools: [{ control: "item-group", options: 2 }],
+  skills: [{ control: "item-group", options: 2 }],
+  subagents: [{ control: "item-group", options: 1 }],
+  channels: [{ control: "item-group", options: 1 }],
 };
 
-/** The read-only variant's field layout (key-value rows, or the quick-action cards). */
-export const READ_ONLY_FIELDS: Partial<Record<AgentSection, FieldShape[]>> = {
+/**
+ * A section's loading layout: its fields, or, for a section whose card is a flush list of item
+ * rows (FormSection `flush` + ItemList `inset="flush"`), those rows (`items`: the card goes flush).
+ */
+export type SectionShape = FieldShape[] | { items: ItemShape[] };
+
+/**
+ * The read-only variant's layout (key-value rows, or the quick actions: a flush card of item rows,
+ * each a title over its body, as `QuickActionsReadOnly` draws them).
+ */
+export const READ_ONLY_FIELDS: Partial<Record<AgentSection, SectionShape>> = {
   basics: [{ control: "text" }, { control: "key-value" }],
-  "quick-actions": [{ control: "card-group", options: 2 }],
+  "quick-actions": { items: [{ lines: 2 }, { lines: 2 }] },
   model: [{ control: "key-value" }],
 };
 

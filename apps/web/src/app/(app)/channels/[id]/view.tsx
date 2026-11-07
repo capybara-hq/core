@@ -65,7 +65,8 @@ export interface ChannelData {
 type Update = (input: UpdateChannelInput) => Promise<ChannelConnection>;
 
 /**
- * `/channels/[id]`：渠道连接详情（DetailPage）：概览（状态与最近错误、启停）、凭据（按连接 schema
+ * `/channels/[id]`: a channel connection's detail (DetailPage, one centred column): the facts
+ * (tenant, bot, agent, policy, created) first, then the tabs 概览（状态与最近错误、启停）、凭据（按连接 schema
  * 修改配置与轮换密钥，内核先向平台校验）、设置（改名、绑定的 agent、未绑定策略、删除）。
  * From the query cache (the layout prefetched it on a first load); a missing connection is the
  * not-found state. A change the kernel answers with the connection replaces it in the cache.
@@ -114,9 +115,8 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
       <DetailPage
         header={{ path: [...scope, { label: "channels", href: "/channels" }], title: "" }}
         tabs={tabs}
-        inspectorTitle={t("detail.inspectorTitle")}
-        // the inspector's six facts (extension, tenant, bot, agent, policy, created)
-        loading={{ inspector: { rows: 6, keyWidth: "10ch" } }}
+        // the facts block's five rows (tenant, bot, agent, policy, created)
+        loading={{ facts: { rows: 5, keyWidth: "10ch" } }}
       />
     );
   }
@@ -134,8 +134,7 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
         status: <ChannelStatusMark status={data.channel.status} />,
       }}
       tabs={tabs}
-      inspectorTitle={t("detail.inspectorTitle")}
-      inspector={<Inspector data={data} />}
+      facts={<ChannelFacts data={data} />}
     >
       {tab === "overview" ? (
         <OverviewTab channel={data.channel} update={update} />
@@ -159,7 +158,11 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   );
 }
 
-function Inspector({ data }: { data: ChannelData }) {
+/**
+ * The connection's facts at the top of the column (spec §5.2). The extension is the head's count
+ * and the status the head's mark, so neither is repeated here.
+ */
+function ChannelFacts({ data }: { data: ChannelData }) {
   const t = useTranslations("channels");
   const { channel } = data;
   const agent = data.agents.find((a) => a.id === channel.agentId);
@@ -167,7 +170,6 @@ function Inspector({ data }: { data: ChannelData }) {
     <KeyValue
       keyWidth="10ch"
       rows={[
-        { k: t("inspector.plugin"), v: channel.plugin },
         { k: t("inspector.tenant"), v: channel.tenantId ?? "—" },
         { k: t("inspector.bot"), v: channel.botUserId ?? "—" },
         { k: t("inspector.agent"), v: agent?.definition.name ?? channel.agentId },

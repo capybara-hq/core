@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { legacyDbFor } from "../helpers/conversations.js";
+import { legacyDbFor, seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
@@ -258,10 +258,9 @@ describe("archive and soft delete", { timeout: 60_000 }, () => {
       15_000,
       "running",
     );
-    const q = await owner({
-      method: "POST",
-      url: `${base()}/${conv}/queue`,
-      payload: { text: "echo:later", clientMessageId: randomUUID() },
+    const q = await seedQueued(k.app, orgId, conv, ownerId, {
+      text: "echo:later",
+      clientMessageId: randomUUID(),
     });
     expect(q.statusCode, q.body).toBe(201);
     expect((await owner({ method: "DELETE", url: `${base()}/${conv}` })).statusCode).toBe(204);

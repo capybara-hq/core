@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
@@ -20,6 +21,7 @@ import {
   Tabs,
   Tooltip,
 } from "../src/index";
+import { pickOption } from "./support/select";
 
 afterEach(cleanup);
 
@@ -94,7 +96,7 @@ describe("Pagination", () => {
       true,
     );
   });
-  it("per-page select when page sizes are given; English copy", () => {
+  it("per-page select when page sizes are given; English copy", async () => {
     const onPageSize = vi.fn();
     wrap(
       <Pagination
@@ -108,7 +110,7 @@ describe("Pagination", () => {
       "en",
     );
     expect(screen.getByText("1,284 total · page 2 / 26")).toBeTruthy();
-    fireEvent.change(screen.getByRole("combobox"), { target: { value: "25" } });
+    await pickOption(screen.getByRole("combobox"), "25");
     expect(onPageSize).toHaveBeenCalledWith(25);
   });
   it("total=0: page 1 / 1, both buttons disabled", () => {
@@ -172,6 +174,88 @@ describe("Tabs", () => {
     screen.getByRole("tab", { name: "A" }).focus();
     await userEvent.keyboard("{ArrowRight}");
     expect(onChange).toHaveBeenCalledWith("b");
+  });
+});
+
+describe("Tabs: no focus ring after a pointer (issue Y)", () => {
+  const items = [
+    { id: "a", label: "A" },
+    { id: "b", label: "B" },
+  ];
+  function Stateful() {
+    const [value, setValue] = React.useState("a");
+    return <Tabs label="x" value={value} onChange={setValue} items={items} />;
+  }
+  it("a tab focused by a click is marked, so its :focus-visible ring is not drawn", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("data-pointer-focus")).toBe("true");
+    expect(screen.getByRole("tab", { name: "A" }).getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a key press drops the mark: keyboard focus draws the ring again", async () => {
+    wrap(<Stateful />);
+    await userEvent.click(screen.getByRole("tab", { name: "B" }));
+    await userEvent.keyboard("{ArrowLeft}");
+    const a = screen.getByRole("tab", { name: "A" });
+    expect(document.activeElement).toBe(a);
+    expect(a.getAttribute("data-pointer-focus")).toBeNull();
+    expect(screen.getByRole("tab", { name: "B" }).getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("leaving the tab drops the mark, so tabbing back draws the ring", async () => {
+    wrap(
+      <>
+        <Stateful />
+        <button type="button">after</button>
+      </>,
+    );
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    // a focus move with no key press (a click elsewhere, a script): only the blur drops it
+    const after = screen.getByRole("button", { name: "after" });
+    act(() => after.focus());
+    expect(document.activeElement).toBe(after);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a click on a tab that already has keyboard focus marks it (the focus does not move)", async () => {
+    wrap(<Stateful />);
+    const a = screen.getByRole("tab", { name: "A" });
+    act(() => a.focus());
+    expect(a.getAttribute("data-pointer-focus")).toBeNull();
+    await userEvent.click(a);
+    expect(document.activeElement).toBe(a);
+    expect(a.getAttribute("data-pointer-focus")).toBe("true");
+  });
+  it("a modifier key alone keeps the mark (the browser does not count it as keyboard use)", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    await userEvent.click(b);
+    await userEvent.keyboard("{Meta}{Shift}");
+    expect(b.getAttribute("data-pointer-focus")).toBe("true");
+    await userEvent.keyboard("{Enter}");
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a pointer press that gives no focus (WebKit, Firefox on macOS) leaves no mark for a later focus", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    // pointerdown and pointerup without the button taking focus, as a click there does
+    fireEvent.pointerDown(b);
+    fireEvent.pointerUp(b);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    // later, keyboard focus arrives (Tab): the ring must show, so no mark
+    act(() => b.focus());
+    expect(document.activeElement).toBe(b);
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
+  });
+  it("a pointer press that is never released gives no mark to a focus on the next tick", async () => {
+    wrap(<Stateful />);
+    const b = screen.getByRole("tab", { name: "B" });
+    fireEvent.pointerDown(b);
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    act(() => b.focus());
+    expect(b.getAttribute("data-pointer-focus")).toBeNull();
   });
 });
 

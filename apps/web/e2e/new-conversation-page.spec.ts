@@ -2,9 +2,13 @@ import { expect, test } from "@playwright/test";
 import { CSRF, composer, createAgent, currentOrg, replies, users, zh } from "./support/chat";
 import { signIn } from "./support/sign-in";
 
+/** The zap button's and its menu's accessible name in zh (the design package's own copy). */
+const QUICK_ACTIONS = "常用任务";
+
 /**
  * The new conversation page (agent profile design §4): the greeting, the selected agent's quick
- * actions filling the composer, and the first send from there (model-fake echoes).
+ * actions (the composer's zap menu, spec §6.16.27) filling the composer, and the first send from
+ * there (model-fake echoes).
  */
 
 test("the new conversation page greets, a quick action fills the composer, and the send works", async ({
@@ -48,7 +52,9 @@ test("the new conversation page greets, a quick action fills the composer, and t
     zh.chat.newPlaceholder.replace("{agent}", "Cap quick"),
   );
   await input.fill("draft text");
-  await page.getByRole("button", { name: "Say hello" }).click();
+  // the quick actions are a zap button in the composer's control row (design i18n "quick.label")
+  await page.getByRole("button", { name: QUICK_ACTIONS }).click();
+  await page.getByRole("menuitem", { name: "Say hello" }).click();
   await expect(input).toHaveValue("echo:hello from a quick action");
   await expect(input).toBeFocused();
 

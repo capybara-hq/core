@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,7 @@ import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 import { NOT_READY } from "./support/shell";
 
@@ -141,7 +143,7 @@ const contentBox = () =>
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const as = (role: "guest" | "member" | "admin") => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -164,6 +166,19 @@ describe("the agent page's sections with their own saves (agent profile design Â
     expect(contentBox().value).toBe("Be helpful.");
     // nothing changed: no action row
     expect(document.querySelector('[data-part="action-row"]')).toBeNull();
+  });
+
+  it("prompt: list + editor without an editor card (one box is enough, acceptance item AB)", async () => {
+    stubApi(routes(agent({ files: null })));
+    await renderEditAgent({ section: "prompt" });
+    const section = screen.getByRole("region", { name: en.agents.page.sections.prompt });
+    // the columns split by a hairline; the open file's name is an h3 over its fields
+    expect(
+      section.querySelector('[data-columns="list-detail"]')?.getAttribute("data-divided"),
+    ).toBe("true");
+    expect(within(section).getByRole("heading", { level: 3, name: "AGENTS.md" })).toBeTruthy();
+    expect(section.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("prompt: add WORKFLOW.md, reorder, save sends instructionFiles in order", async () => {
@@ -342,9 +357,10 @@ describe("the agent page's sections with their own saves (agent profile design Â
     const user = userEvent.setup();
     const base = sent(saved);
 
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "other/o-1",
+      user,
     );
     await user.click(save());
     await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
@@ -430,9 +446,10 @@ describe("the agent page's sections with their own saves (agent profile design Â
     );
     await renderEditAgent({ section: "model" });
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "other/o-1",
+      user,
     );
     // someone else saves version 2 meanwhile
     current = agent({ version: 2, definition: { model: { provider: "other", model: "o-1" } } });
@@ -443,14 +460,14 @@ describe("the agent page's sections with their own saves (agent profile design Â
     // the section starts over from the newer version
     await vi.waitFor(() =>
       expect(
-        (screen.getByRole("combobox", { name: F.modelLabel }) as HTMLSelectElement).value,
+        (screen.getByRole("combobox", { name: F.modelLabel }) as HTMLButtonElement).value,
       ).toBe("other/o-1"),
     );
     expect(
       (
         screen.getByRole("combobox", {
           name: (n) => n.startsWith(F.fallbackLabel),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("");
     expect(document.querySelector('[data-part="action-row"]')).toBeNull();
@@ -486,28 +503,52 @@ describe("the agent page's sections with their own saves (agent profile design Â
       (
         screen.getByRole("combobox", {
           name: (n) => n.startsWith(F.fallbackLabel),
-        }) as HTMLSelectElement
+        }) as HTMLButtonElement
       ).value,
     ).toBe("other/o-1");
   });
 
-  it("a section save shows the kernel's warnings in the section and the row goes", async () => {
+  const SAME = { fallback: { provider: "model-fake", model: "fake-1" } };
+  const hint = () => screen.queryByText(en.agents.warnings.fallback_same_provider);
+
+  it("saving Tools shows no model warning, even when the kernel returns one", async () => {
+    const a = agent({ definition: SAME });
     stubApi(
-      routes(agent(), {
-        [`PATCH ${ORG}/agents/ag1`]: ok({ agent: agent(), warnings: ["fallback_same_provider"] }),
+      routes(a, {
+        [`PATCH ${ORG}/agents/ag1`]: ok({ agent: a, warnings: ["fallback_same_provider"] }),
       }),
     );
-    await renderEditAgent({ section: "model" });
+    await renderEditAgent({ section: "tools" });
     const user = userEvent.setup();
-    await user.selectOptions(
+    await user.click(screen.getByRole("checkbox", { name: F.builtin.SkillWrite }));
+    await user.click(save());
+    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
+    expect(hint()).toBeNull();
+  });
+
+  it("the Model section shows the same-provider hint persistently, live and only then", async () => {
+    stubApi(routes(agent({ definition: SAME })));
+    await renderEditAgent({ section: "model" });
+    const warning = await screen.findByText(en.agents.warnings.fallback_same_provider);
+    expect(warning.closest('[data-tone="warn"]')).not.toBeNull();
+    cleanup();
+
+    stubApi(routes(agent({ definition: { fallback: { provider: "other", model: "o-1" } } })));
+    await renderEditAgent({ section: "model" });
+    await screen.findByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) });
+    expect(hint()).toBeNull();
+    // editing the fallback to the model's provider shows it before any save
+    await pickOption(
       screen.getByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) }),
       "model-fake/fake-1",
     );
-    await user.click(save());
-    const warning = await screen.findByText(en.agents.warnings.fallback_same_provider);
-    expect(warning.closest('[data-tone="danger"]')).not.toBeNull();
-    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
-    expect(router.push).not.toHaveBeenCalled();
+    expect(hint()).not.toBeNull();
+    cleanup();
+
+    stubApi(routes(agent()));
+    await renderEditAgent({ section: "model" });
+    await screen.findByRole("combobox", { name: (n) => n.startsWith(F.fallbackLabel) });
+    expect(hint()).toBeNull();
   });
 });
 

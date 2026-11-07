@@ -10,7 +10,8 @@ type NavGroup = { group: string; items: { id: string; label: string; href: strin
 
 /**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
- * Members, Models, Service tokens] and Capabilities [Extensions, Plugins, Sandbox]. Members see
+ * Members, Models, Service tokens] and Capabilities [Sandbox] (plugins and extensions are the
+ * workspace's 插件 and 扩展 pages). Members see
  * General, Members and Sandbox (read-only); the rest is for admins; guests never open these pages. This only hides items,
  * the kernel decides. Groups without items are dropped.
  */
@@ -32,15 +33,7 @@ export function useOrgSettingsNav(): NavGroup[] {
     },
     {
       group: t("groupCapabilities"),
-      items: [
-        ...(admin
-          ? [
-              { id: "extensions", label: t("extensions"), href: "/settings/extensions" },
-              { id: "plugins", label: t("plugins"), href: "/settings/plugins" },
-            ]
-          : []),
-        { id: "sandbox", label: t("sandbox"), href: "/settings/sandbox" },
-      ],
+      items: [{ id: "sandbox", label: t("sandbox"), href: "/settings/sandbox" }],
     },
   ];
   return groups.filter((g) => g.items.length > 0);

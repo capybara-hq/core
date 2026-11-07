@@ -7,17 +7,21 @@ import {
   PLUGIN_MANIFEST_FILE,
   type PluginManifest,
   parseSkillMd,
+  pluginDescription,
   SDK_VERSION,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
+import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
+import type { Queue } from "bullmq";
+import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
-import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { writeSnapshot } from "../extensions/approvals.js";
-import { ExtensionBlobs } from "../extensions/blobs.js";
+import { blobKey, ExtensionBlobs } from "../extensions/blobs.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { PluginApproveLock, PluginInstallLock } from "../extensions/locks.js";
 import { unrunMigrations } from "../extensions/migrate-lock.js";
@@ -44,15 +48,19 @@ import {
 } from "../extensions/permission-view.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { assertCustomAllowed } from "../identity/settings.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import type { ProvenanceResult } from "../packages/provenance.js";
 import { packPackageTgz } from "../packages/tgz.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { checkSkillFiles, SkillArchiveError, type SkillPackageFile } from "../skills/package.js";
 import { type PrefixedStorage, StorageService } from "../storage/storage.service.js";
 import { canonicalJson } from "../tools/canonical-json.js";
@@ -65,13 +73,18 @@ import type {
 } from "./catalog.service.js";
 import { findConnectorIn } from "./catalog-content.js";
 import {
+  assertOrgsExist,
   assertPluginNameOwner,
   catalogObjectPrefix,
+  itemConfirmations,
+  itemScopeFacts,
   itemView,
+  markVersionApplied,
   permissionsMismatch,
   precheckCatalogImport,
   putCatalogFiles,
   templateProblems,
+  unappliedOwnVersion,
   writeCatalogVersion,
 } from "./catalog-items.js";
 import {
@@ -89,16 +102,34 @@ import {
 import { isClaudePluginTree, translateClaudePlugin } from "./claude/translate.js";
 import { CatalogItemLock } from "./locks.js";
 import {
+  assertNameFree,
+  assertPackageFree,
+  assertShareable,
+  packageOwner,
+  releaseExtensionClaim,
+  shareGate,
+  usableBy,
+} from "./ownership.js";
+import { PlatformComponents } from "./platform-components.js";
+import { PLATFORM_MIGRATION_JOB } from "./platform-migration.js";
+import {
   type PluginContents,
   PluginPackageError,
   packagePath,
   readPluginFiles,
   readPluginPackage,
 } from "./plugin-package.js";
+import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
+import { assertNameNotReserved } from "./reserved-names.js";
+import type { PluginScope } from "./scope.js";
+import { addScopeOrg } from "./scope-orgs.js";
 import { maxSatisfying, satisfiesRange } from "./versions.js";
 
+/** How long after a failed post-import platform sync the migration job runs for the item. */
+export const PLATFORM_SYNC_RETRY_MS = 60_000;
+
 /**
- * Enterprise import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
+ * Platform import of a plugin (package ecosystem spec §4.3): one review for every plugin, whatever
  * it contains (an extension, skills, connector templates, dependencies), confirmed once.
  *
  * prepare: the tgz is always hostile input, and **nothing is written until every check passes**
@@ -108,7 +139,7 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  * refused; name ownership; a downgrade to a version with unrun migrations is refused), each skill by
  * the skill package rules, each connector template against the connector loaded on this replica (or
  * statically when the connector is provided by the plugin's own extension or by a dependency), the
- * catalog name / version conflicts and the actor still an enterprise admin. Dependencies are only
+ * catalog name / version conflicts and the actor still a super admin. Dependencies are only
  * resolved against the imported catalog versions for the review (an unresolved one does not block
  * the import, spec §4.1); they are never fetched. Only then is the extension handed to
  * `ExtensionInstalls.ingest` (source `catalog`), the skill / template / icon files written to object
@@ -117,13 +148,13 @@ import { maxSatisfying, satisfiesRange } from "./versions.js";
  * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row
  * (confirm works once), locks the extension name and recomputes its deployment state (installed /
  * upgraded / swapped after the review -> `plugin.review_stale`), writes the extension's permission
- * snapshot when it is installed by this import (or upgraded with `deployExtension`; source web, audit
- * `extension.permissions_approved` carrying the plugin), and creates the item or adds the version
- * (`manifest` = the normalized plugin.json, `extension_sha256`, the files under the staging prefix).
- * After the commit, with `deployExtension`, the plugin's own extension is installed on the
- * deployment and enabled (`ExtensionAdminOps.install` + `enable`; each replica reconciles, no
- * restart); a failure is returned, not thrown, and an upgrade that was not installed gets its old
- * snapshot back.
+ * snapshot when it is installed or upgraded by this import (source web, audit
+ * `extension.permissions_approved` carrying the plugin), and creates the item (with the scope the
+ * admin chose, default `optional`) or adds the version (`manifest` = the normalized plugin.json,
+ * `extension_sha256`, the files under the staging prefix). After the commit the plugin's own
+ * extension is installed on the deployment and enabled (`ExtensionAdminOps.install` + `enable`;
+ * each replica reconciles, no restart); a failure is returned, not thrown, and an upgrade that was
+ * not installed gets its old snapshot back.
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
  * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; a stored
@@ -136,7 +167,7 @@ export const PLUGIN_STAGING_TTL_MS = 24 * 3600_000;
 /** Staging rows cleaned per batch. */
 const CLEANUP_BATCH = 100;
 
-/** The deployment state of the plugin's extension and what confirming with `deployExtension` does. */
+/** The deployment state of the plugin's extension and what confirming does with it. */
 export type ExtensionReviewAction = "install" | "upgrade" | "keep";
 
 /** The plugin's extension in a review. */
@@ -146,10 +177,17 @@ export interface PluginReviewExtension {
   /** sha256 of the plugin tgz (the package store key). */
   sha256: string;
   /**
-   * install: not on the deployment; upgrade: installed from another package (another version), the
-   * import's package replaces it when deployed; keep: this exact package is installed.
+   * install: not on the deployment; upgrade: installed from another package whose version is not
+   * above the import's, the import's package replaces it when confirmed; keep: this exact package is
+   * installed, or the installed version is newer (`olderThanDeployed`): the confirm records the
+   * version in the catalog only and never downgrades the deployment.
    */
   action: ExtensionReviewAction;
+  /**
+   * The import's version is below the one deployed: the review warns that confirming keeps the
+   * deployed extension (action `keep`); absent otherwise.
+   */
+  olderThanDeployed?: true;
   /** Installed on the deployment (any version). */
   deployed: boolean;
   /** The installed version (null when not installed). */
@@ -218,6 +256,15 @@ export interface PluginImportSource {
   detail?: SourceDetail;
 }
 
+/**
+ * An org upload (spec §14, rulings P3-7, P3-8): the org that will own the plugin. Its admin is
+ * authorized (`catalog.upload`) instead of the super admin, its staging is its own, and the new
+ * item is owned by it with scope `named: [orgId]`.
+ */
+export interface ImportOwner {
+  orgId: string;
+}
+
 /** The format a plugin was read from: a Capybara plugin, or a translated Claude Code plugin. */
 export type PluginSourceFormat = "capybara" | "claude-code";
 
@@ -226,7 +273,7 @@ const LICENSE_FILES = ["LICENSE", "LICENSE.md", "LICENSE.txt", "LICENCE"] as con
 /** The largest license text stored (bytes); a longer one is omitted (`licenseTruncated`). */
 export const LICENSE_TEXT_MAX_BYTES = 65536;
 
-/** The one review of a plugin (the enterprise admin sees every component before confirming). */
+/** The one review of a plugin (the super admin sees every component before confirming). */
 export interface PluginReview {
   name: string;
   /** `claude-code`: translated from a Claude Code plugin (no extension; see `translation`). */
@@ -257,7 +304,10 @@ export interface PluginReview {
   /** package.json `name`; null for a git plugin without package.json. */
   packageName: string | null;
   publisher: string;
+  /** The plugin.json description's English text (a plain string description is English). */
   description: string;
+  /** Its Chinese text (`description.zh`); null without one. */
+  descriptionZh: string | null;
   displayName?: LocalizedName;
   license?: string;
   homepage?: string;
@@ -297,7 +347,7 @@ export interface PluginReview {
   reviewHash: string;
 }
 
-/** The deploy result of the plugin's extension with `deployExtension`. */
+/** The deploy result of the plugin's extension at confirm. */
 export interface ExtensionDeployResult {
   name: string;
   action: "install" | "upgrade";
@@ -318,8 +368,21 @@ export interface ExtensionDeployResult {
 /** The result of {@link PluginImport.confirm}. */
 export interface PluginConfirmResult {
   item: CatalogItemView;
-  /** null without `deployExtension` or when there is nothing to deploy (no extension, keep). */
+  /** This confirm created the item (a first import of the name), else it added a version. */
+  created: boolean;
+  /** null when there is nothing to deploy (no extension, or keep). */
   deploy: ExtensionDeployResult | null;
+  /**
+   * An org upload with an extension: the version waits for the super admin's confirmation
+   * (ruling P3-10); nothing was approved, installed or synced.
+   */
+  pending: boolean;
+  /**
+   * The confirm made the item's first usable version: it created the item, or it replaced an org
+   * upload's first version that was still waiting for the super admin with a version without an
+   * extension (applied at once, plan Task 6).
+   */
+  firstVersion: boolean;
 }
 
 /** What prepare checks besides the package itself (npm and marketplace imports). */
@@ -373,6 +436,35 @@ interface StagedPlugin {
   translation?: TranslationReport;
   licenseText?: string;
   licenseTruncated?: true;
+  /**
+   * An org's own version already imported but not applied (pre-flight F4): the confirm writes no
+   * version (the caller retries the update); no files are staged.
+   */
+  retry?: true;
+}
+
+/** What an org's staged upload targets (see {@link PluginImport.stagedTarget}). */
+export interface StagedTarget {
+  itemId: string;
+  version: string;
+  /** The review's own hash (an org's review of an update shows a combined one, P3-12). */
+  reviewHash: string;
+  /** The review has an extension. */
+  extension: boolean;
+  /** The live item exists already (a new version), owned by the staging's org. */
+  existing: boolean;
+  /** That item's first version still waits for the super admin (P3-9). */
+  awaiting: boolean;
+  /** The version is imported already (pre-flight F4). */
+  retry: boolean;
+  /** The target as the platform updater reads it (the staged manifest and files). */
+  target: {
+    version: string;
+    manifest: PluginManifest;
+    object_prefix: string | null;
+    files: { path: string; size: number; sha256: string }[];
+    extension_sha256: string | null;
+  };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -445,8 +537,10 @@ export class PluginImport {
 
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
+    /** The owner org's lock: an org upload re-checks its admin under it (ruling P3-7). */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     @Inject(PluginApproveLock) private readonly approveLock: PluginApproveLock,
     @Inject(CatalogItemLock) private readonly itemLock: CatalogItemLock,
@@ -454,12 +548,17 @@ export class PluginImport {
     @Inject(StorageService) storage: StorageService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     /** Reads a package from the package store (confirm recomputes the permission set). */
     @Inject(ExtensionBlobs) private readonly blobs: ExtensionBlobs,
     /** Config-declared names, loaded connectors and extension versions (the extension registry). */
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The platform rows of a new item's components, written after the confirm's commit. */
+    @Inject(PlatformComponents) private readonly platform: PlatformComponents,
+    /** A failed platform sync enqueues a run of the migration job here (it heals the item). */
+    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) private readonly maintenance: Pick<Queue, "add">,
   ) {
     this.files = storage;
   }
@@ -477,23 +576,29 @@ export class PluginImport {
   useCliStorage(storage: PrefixedStorage): void {
     this.files = storage;
     this.connectorsLoaded = false;
+    this.platform.useCliStorage(storage);
   }
 
   /**
-   * The enterprise-admin re-check under the lock, in the caller's transaction. `actor` null is the
+   * The super-admin re-check under the lock, in the caller's transaction. `actor` null is the
    * CLI (the operator of the deployment: no account to re-check, audits carry no actor), like
-   * `ExtensionInstalls.ingest`.
+   * `ExtensionInstalls.ingest`. An org upload (`owner`) re-checks the actor as an admin of the
+   * owner org under the org row lock instead (`catalog.upload`; an org deleted meanwhile -> 404
+   * `org.not_found`).
    */
   @Transactional({ propagation: "mandatory" })
-  private async authorizeActor(actor: string | null): Promise<void> {
-    if (actor === null) await this.adminLock.lock();
+  private async authorizeActor(actor: string | null, owner?: ImportOwner): Promise<void> {
+    if (owner !== undefined) {
+      if (actor === null) throw new Error("an org upload has an actor");
+      await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
+    } else if (actor === null) await this.adminLock.lock();
     else await this.adminLock.lockAndAuthorize(actor);
   }
 
   /** The re-check alone, in a transaction of its own (before anything is written). */
   @Transactional()
-  private async authorize(actor: string | null): Promise<void> {
-    await this.authorizeActor(actor);
+  private async authorize(actor: string | null, owner?: ImportOwner): Promise<void> {
+    await this.authorizeActor(actor, owner);
   }
 
   /**
@@ -510,6 +615,8 @@ export class PluginImport {
       fallback?: { name: string; version?: string; publisher: string };
       provenance?: ReviewProvenance;
       claudeManifestIgnored?: true;
+      /** An org upload (a `file` source only, ruling P3-7). */
+      owner?: ImportOwner;
     } = {},
   ): Promise<{
     stagingId: string;
@@ -639,6 +746,7 @@ export class PluginImport {
       /** The Claude manifest's `repository` (display only). */
       repository?: string;
       claudeManifestIgnored?: true;
+      owner?: ImportOwner;
     },
   ): Promise<{
     stagingId: string;
@@ -647,6 +755,10 @@ export class PluginImport {
     permissionsMismatch: PermissionsMismatch;
   }> {
     const maxBytes = this.config.get().packages.maxBytes;
+    const owner = opts.owner;
+    if (owner !== undefined && source.kind !== "file") {
+      throw new Error("an org upload is a file (ruling P3-7)");
+    }
 
     // 1. Every check (nothing written)
     const m = pkg.manifest;
@@ -664,14 +776,36 @@ export class PluginImport {
           )
         : undefined;
     const content = this.checkContent(pkg, format);
-    const { existing, version } = await precheckCatalogImport(this.db, m.name, {
-      packageName,
-      version: m.version,
-      contentDigest: pkg.contentDigest,
-      ...(source.integrity !== undefined && { integrity: source.integrity }),
-      ...(source.detail !== undefined && { detail: source.detail }),
-      ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
-    });
+    // A name live for another owner (an org's for the super admin; the platform's or another
+    // org's for an org) -> 409 plugin.name_taken naming it (P3-14); the same owner adds a version
+    await assertNameFree(this.db, m.name, owner?.orgId ?? null);
+    if (owner !== undefined) {
+      // a bootstrap or marketplace plugin's name stays free for the platform (ruling P3-28)
+      await assertNameNotReserved(this.db, m.name);
+      // its npm package is an identity of this org only (ruling P3-51)
+      await assertPackageFree(this.db, packageName, owner.orgId);
+      await assertCustomContent(this.db, content);
+    }
+    // An org's own version imported but not applied: its update is retried (pre-flight F4)
+    const retry =
+      owner !== undefined && !m.extension
+        ? await unappliedOwnVersion(this.db, m.name, owner.orgId, {
+            packageName,
+            version: m.version,
+            contentDigest: pkg.contentDigest,
+          })
+        : undefined;
+    const { existing, version } =
+      retry !== undefined
+        ? { existing: { id: retry.itemId }, version: retry.version }
+        : await precheckCatalogImport(this.db, m.name, {
+            packageName,
+            version: m.version,
+            contentDigest: pkg.contentDigest,
+            ...(source.integrity !== undefined && { integrity: source.integrity }),
+            ...(source.detail !== undefined && { detail: source.detail }),
+            ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
+          });
     // The catalog name space is the extension name space: a declarative plugin cannot take a
     // config-declared or another package's extension name either
     this.assertNotDeclared(m.name);
@@ -692,7 +826,7 @@ export class PluginImport {
       ...(source.marketplaceId !== undefined && { marketplaceId: source.marketplaceId }),
       ...(source.detail !== undefined && { detail: source.detail }),
     };
-    const dependencies = await this.resolveDependencies(m);
+    const dependencies = await this.resolveDependencies(m, owner);
     let translation: TranslationReport | undefined;
     if (opts.claude !== undefined) {
       const added: TranslationItem[] = [
@@ -726,7 +860,8 @@ export class PluginImport {
       contentDigest: pkg.contentDigest,
       packageName,
       publisher: m.publisher,
-      description: m.description,
+      description: pluginDescription(m.description).en,
+      descriptionZh: pluginDescription(m.description).zh ?? null,
       ...(m.displayName !== undefined && { displayName: m.displayName }),
       ...(m.license !== undefined && { license: m.license }),
       ...(m.homepage !== undefined && { homepage: m.homepage }),
@@ -742,8 +877,9 @@ export class PluginImport {
       reviewHash: "",
     };
     review.reviewHash = pluginReviewHash(review, content.files);
-    // Re-check under the lock that the actor is still an enterprise admin before writing
-    await this.authorize(actor);
+    // Re-check under the lock that the actor is still a super admin (an org upload: an admin of
+    // the owner org) before writing
+    await this.authorize(actor, owner);
 
     // 2. Write: the extension into the package store, files into object storage, the staging row
     const stagingId = randomUUID();
@@ -762,11 +898,13 @@ export class PluginImport {
         {
           ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
           ...(bootstrap && { store: "pg" as const }),
+          // an org upload only stores the package (nothing runs until the super admin confirms)
+          ...(owner !== undefined && { owner }),
         },
       );
     }
     let objectPrefix: string | null = null;
-    if (content.files.length > 0) {
+    if (content.files.length > 0 && retry === undefined) {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
       await putCatalogFiles(this.files, objectPrefix, content.files);
     }
@@ -792,8 +930,9 @@ export class PluginImport {
       ...(translation !== undefined && { translation }),
       ...(license.text !== undefined && { licenseText: license.text }),
       ...(license.truncated && { licenseTruncated: true as const }),
+      ...(retry !== undefined && { retry: true as const }),
     };
-    await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts);
+    await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts, owner);
     return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
   }
 
@@ -807,10 +946,11 @@ export class PluginImport {
     objectPrefix: string | null,
     src: PluginImportSource,
     opts: ActorOpts,
+    owner: ImportOwner | undefined,
   ): Promise<void> {
     const { extension } = review;
     const t = this.db;
-    await this.authorizeActor(actor);
+    await this.authorizeActor(actor, owner);
     await t
       .insertInto("plugin_import_staging")
       .values({
@@ -821,6 +961,8 @@ export class PluginImport {
         source: JSON.stringify(src),
         created_by: actor,
         expires_at: new Date(Date.now() + PLUGIN_STAGING_TTL_MS),
+        // the org's own staging (P3-8); null = the super admin's
+        org_id: owner?.orgId ?? null,
       })
       .execute();
     await audit(t, {
@@ -840,6 +982,7 @@ export class PluginImport {
         ...(extension && {
           extension: { sha256: extension.sha256, action: extension.action },
         }),
+        ...(owner !== undefined && { orgId: owner.orgId }),
       },
     });
   }
@@ -873,9 +1016,13 @@ export class PluginImport {
   /**
    * A staged import's review, as prepare returned it, with a marketplace import's permission
    * mismatch when there is one (the import page loads `?staging=<id>` with it). Unknown, expired or
-   * already confirmed -> 404 `plugin.staging_not_found`.
+   * already confirmed -> 404 `plugin.staging_not_found`. Each sees only its own staging (P3-8):
+   * the super admin's routes the platform's (no `owner`), an org's routes that org's.
    */
-  async staged(stagingId: string): Promise<{
+  async staged(
+    stagingId: string,
+    owner?: ImportOwner,
+  ): Promise<{
     stagingId: string;
     review: PluginReview;
     permissionsMismatch?: PermissionsMismatch;
@@ -886,6 +1033,7 @@ export class PluginImport {
       .select(["id", "review", "manifest"])
       .where("id", "=", stagingId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .where(ownStaging(owner))
       .executeTakeFirst();
     if (!row) throw notFound();
     const mismatch = (row.manifest as StagedPlugin).permissionsMismatch;
@@ -897,36 +1045,146 @@ export class PluginImport {
   }
 
   /**
-   * Confirms a staged import (see the file header). Returns the committed catalog item and, with
-   * `deployExtension`, the extension's deploy result (a failed deploy is returned, not thrown).
+   * What an org's staged upload targets (P3-12, pre-flight F3): its item, version and review hash,
+   * whether the item exists (a new version of the org's own plugin) or the version is imported
+   * already (F4), and the target as the platform updater reads it: the staged manifest and files,
+   * or the imported version's for a retry. Another org's staging -> 404 `plugin.staging_not_found`.
+   */
+  async stagedTarget(stagingId: string, owner: ImportOwner): Promise<StagedTarget> {
+    if (!UUID_RE.test(stagingId)) throw notFound();
+    const row = await this.db
+      .selectFrom("plugin_import_staging")
+      .select(["review", "manifest", "object_prefix"])
+      .where("id", "=", stagingId)
+      .where("expires_at", ">", sql<Date>`now()`)
+      .where(ownStaging(owner))
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const review = row.review as PluginReview;
+    const staged = row.manifest as StagedPlugin;
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["id", "awaiting_confirmation"])
+      .where("id", "=", staged.itemId)
+      .where("deleted_at", "is", null)
+      .where("owner_org_id", "=", owner.orgId)
+      .executeTakeFirst();
+    const imported =
+      staged.retry === true
+        ? await this.db
+            .selectFrom("catalog_item_versions")
+            .select(["version", "manifest", "object_prefix", "files", "extension_sha256"])
+            .where("item_id", "=", staged.itemId)
+            .where("version", "=", staged.version)
+            .executeTakeFirst()
+        : undefined;
+    return {
+      itemId: staged.itemId,
+      version: staged.version,
+      reviewHash: review.reviewHash,
+      extension: review.extension !== undefined,
+      existing: item !== undefined,
+      awaiting: item?.awaiting_confirmation === true,
+      retry: staged.retry === true,
+      target:
+        imported !== undefined
+          ? {
+              version: imported.version,
+              manifest: imported.manifest as PluginManifest,
+              object_prefix: imported.object_prefix,
+              files: imported.files as StagedTarget["target"]["files"],
+              extension_sha256: imported.extension_sha256,
+            }
+          : {
+              version: staged.version,
+              manifest: staged.manifest,
+              object_prefix: row.object_prefix,
+              files: staged.files,
+              extension_sha256: review.extension?.sha256 ?? null,
+            },
+    };
+  }
+
+  /** The catalog item's view (as a confirm returns it). */
+  async view(itemId: string): Promise<CatalogItemView> {
+    return this.itemView(itemId);
+  }
+
+  /**
+   * Confirms a staged import (see the file header). Returns the committed catalog item and the
+   * extension's deploy result (a failed deploy is returned, not thrown). `scope` (default
+   * `optional`) and `orgs` (only with `named`; each an existing org, else `validation_failed`) are
+   * written when this confirm creates the item; a new version of an existing item keeps its scope.
+   * The caller enqueues the scope sync of the item after this returns.
+   *
+   * An org upload (`opts.owner`, spec §14): only that org's staging; the actor re-checked as its
+   * admin; `scope` / `orgs` are not taken: a new item is owned by the org, scope `named: [owner]`,
+   * not shown to other orgs, `shareable` as given (default false). Custom deny, the name owner and
+   * the dependencies are checked again under the item name's lock. A package with an extension
+   * is stored and its extension name claimed, nothing approved or installed: the version waits
+   * for the super admin (`pending`, ruling P3-10; see {@link commit}).
    */
   async confirm(
     actor: string | null,
     stagingId: string,
     input: {
       reviewHash: string;
-      deployExtension: boolean;
       /**
-       * With `deployExtension`: enable the extension after installing it (default true). false
-       * keeps the install record's desired state (a new install stays disabled), for the bootstrap
-       * step's upgrades of a plugin an enterprise admin may have disabled.
+       * Enable the extension after installing it (default true). false keeps the install record's
+       * desired state (a new install stays disabled), for the bootstrap step's upgrades of a
+       * plugin a super admin may have disabled.
        */
       enable?: boolean;
+      /** The new item's scope (default `optional`). */
+      scope?: PluginScope;
+      /** The orgs of a `named` scope. */
+      orgs?: string[];
       /**
        * The skills (by name, each in the review) suggested as pinned when an agent selects them
        * (spec §9.1); replaces the plugin's `pinned` flags in the stored manifest. Omitted keeps
-       * them. An admin decision like `deployExtension`, so not part of `reviewHash`.
+       * them. An admin decision like the scope, so not part of `reviewHash`.
        */
       pinnedSuggestions?: string[];
+      /** An org upload's new item: shared with other orgs by its owner (default false, P3-16). */
+      shareable?: boolean;
     },
-    opts: ActorOpts = {},
+    opts: ActorOpts & { owner?: ImportOwner } = {},
   ): Promise<PluginConfirmResult> {
     if (!UUID_RE.test(stagingId)) throw notFound();
+    const owner = opts.owner;
+    if (owner !== undefined && (input.scope !== undefined || input.orgs !== undefined)) {
+      throw new Error("an org upload's scope is its owner's");
+    }
+    // A staging prepared by approving an org's `import` request defaults to that org (spec §5.1
+    // rule 3); the admin may still choose any scope
+    const linked =
+      input.scope === undefined && owner === undefined
+        ? await importRequestOf(this.db, stagingId)
+        : undefined;
+    const scope =
+      owner !== undefined
+        ? "named"
+        : (input.scope ?? (linked !== undefined ? "named" : "optional"));
+    const orgs =
+      owner !== undefined
+        ? [owner.orgId]
+        : (input.orgs ?? (linked !== undefined ? [linked.orgId] : undefined));
+    if (input.orgs !== undefined && scope !== "named") {
+      throw new ApiError("validation_failed", "orgs: only allowed with scope named", [
+        { path: "orgs", message: "only allowed with scope named" },
+      ]);
+    }
+    if (scope === "named" && (orgs ?? []).length === 0) {
+      throw new ApiError("validation_failed", "orgs: scope named needs at least one organization", [
+        { path: "orgs", message: "scope named needs at least one organization" },
+      ]);
+    }
     const row = await this.db
       .selectFrom("plugin_import_staging")
       .selectAll()
       .where("id", "=", stagingId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .where(ownStaging(owner))
       .executeTakeFirst();
     if (!row) throw notFound();
     const review = row.review as PluginReview;
@@ -935,21 +1193,42 @@ export class PluginImport {
     if (input.reviewHash !== review.reviewHash) throw reviewStale(review);
     const manifest = withPinned(staged.manifest, review, input.pinnedSuggestions);
     const reviewed = review.extension;
-    // Read the stored package outside the transaction (unless it was already installed as is)
+    // Read the stored package outside the transaction (unless it was already installed as is, or
+    // an org upload, which approves nothing)
     const stored =
-      reviewed && reviewed.action !== "keep" ? await this.readStored(reviewed.sha256) : undefined;
+      reviewed && reviewed.action !== "keep" && owner === undefined
+        ? await this.readStored(reviewed.sha256)
+        : undefined;
 
     const committed = await this.commit(
       actor,
       { stagingId, review, staged, src, manifest, objectPrefix: row.object_prefix },
-      input,
+      {
+        scope,
+        orgs: [...new Set(orgs ?? [])].sort(),
+        ...(owner !== undefined && { owner, shareable: input.shareable ?? false }),
+      },
       stored,
       opts,
     );
 
     const { now } = committed;
+    if (committed.pending) {
+      // Waits for the super admin (P3-10): no platform components, nothing deployed
+      return {
+        item: await this.itemView(committed.itemId),
+        created: committed.created,
+        deploy: null,
+        pending: true,
+        firstVersion: false,
+      };
+    }
+    // A new item's skills, agent templates and connector templates become platform components
+    // (plugin scope phase 2); a new version of an existing item leaves them to the platform
+    // update. After the commit: it copies files in object storage
+    if (committed.firstVersion) await this.syncPlatform(committed.itemId, staged.version);
     const deploy =
-      input.deployExtension && now && now.action !== "keep"
+      now && now.action !== "keep"
         ? await this.deploy(
             actor,
             review,
@@ -960,13 +1239,37 @@ export class PluginImport {
             input.enable ?? true,
           )
         : null;
-    return { item: await this.itemView(committed.itemId), deploy };
+    return {
+      item: await this.itemView(committed.itemId),
+      created: committed.created,
+      deploy,
+      pending: false,
+      firstVersion: committed.firstVersion,
+    };
+  }
+
+  /**
+   * Writes the platform components of an item's first usable version after a commit made
+   * elsewhere (the super admin's confirmation of an org upload, `CatalogScopeService`); a failure
+   * is logged and retried by the migration job (see {@link syncPlatform}).
+   */
+  async writePlatformComponents(itemId: string, version: string): Promise<void> {
+    await this.syncPlatform(itemId, version);
   }
 
   /**
    * The confirm's transaction: the staging row consumed, the extension's action recomputed under
    * its install lock (stale -> `plugin.review_stale`), its snapshot approved, and the catalog
    * version written under the item name's lock.
+   *
+   * An org upload with an extension (ruling P3-10) approves nothing: under the install lock it
+   * claims the extension name for its package (another package's -> 409
+   * `extension.name_conflict` naming its owner, before anything is written), and the version
+   * written becomes the item's pending one (`pending_version` / `_by` / `_at`; a first version
+   * also `awaiting_confirmation`). A later upload replaces the pending version (P3-11). An org
+   * upload without an extension for an item whose first version still waits (plan Task 6) replaces
+   * that upload and applies at once: the item stops waiting and the claim is released (nothing
+   * was installed under it).
    */
   @Transactional()
   private async commit(
@@ -979,26 +1282,44 @@ export class PluginImport {
       manifest: StagedPlugin["manifest"];
       objectPrefix: string | null;
     },
-    input: { deployExtension: boolean },
+    scope: { scope: PluginScope; orgs: string[]; owner?: ImportOwner; shareable?: boolean },
     stored: ExtensionPackage | undefined,
     opts: ActorOpts,
   ): Promise<{
     itemId: string;
+    /** This confirm created the catalog item (a first import of the name). */
+    created: boolean;
+    /** The item's first usable version (see {@link PluginConfirmResult.firstVersion}). */
+    firstVersion: boolean;
+    /** An org upload's version waits for the super admin. */
+    pending: boolean;
     now: PluginReviewExtension | undefined;
     previous: PreviousSnapshot | null | undefined;
   }> {
     const { stagingId, review, staged, src, manifest } = c;
     const reviewed = review.extension;
     const stale = () => reviewStale(review);
-    await this.authorizeActor(actor);
+    const { owner } = scope;
+    await this.authorizeActor(actor, owner);
     const t = this.db;
     const used = await t
       .deleteFrom("plugin_import_staging")
       .where("id", "=", stagingId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .where(ownStaging(owner))
       .returning("id")
       .executeTakeFirst();
     if (!used) throw notFound();
+    if (owner !== undefined) {
+      await assertCustomContent(t, {
+        skills: review.skills,
+        agentTemplates: review.agentTemplates ?? [],
+        templates: review.connectorTemplates,
+      });
+    }
+    await assertOrgsExist(t, scope.orgs);
+    // Checked again before this upload claims anything (ruling P3-51)
+    if (owner !== undefined) await assertPackageFree(t, staged.packageName, owner.orgId);
     let now: PluginReviewExtension | undefined;
     let previous: PreviousSnapshot | null | undefined;
     if (reviewed) {
@@ -1011,23 +1332,88 @@ export class PluginImport {
         ...actionOf(
           await this.extensionState(reviewed.name, staged.packageName as string),
           reviewed.sha256,
+          reviewed.version,
         ),
       };
       if (pluginReviewHash({ ...review, extension: now }, staged.files) !== review.reviewHash) {
         throw stale();
       }
+      if (owner !== undefined) {
+        // An org upload only claims the name (P3-10): the super admin approves and installs it
+        await t
+          .insertInto("extension_name_owners")
+          .values({ name: reviewed.name, package_name: staged.packageName as string })
+          .onConflict((oc) => oc.column("name").doNothing())
+          .execute();
+        await assertPluginNameOwner(t, reviewed.name, staged.packageName);
+      }
       // A foreseeable deploy failure (a downgrade to a version with unrun migrations) is refused
       // before anything is written
-      if (input.deployExtension && now.action === "upgrade" && stored) {
+      if (now.action === "upgrade" && stored) {
         await assertDowngradable(t, now, stored.migrationSql);
       }
-      if (now.action === "install" || (now.action === "upgrade" && input.deployExtension)) {
+      if (owner === undefined && (now.action === "install" || now.action === "upgrade")) {
         previous = await this.approve(actor, review, staged, now, stored as ExtensionPackage, opts);
       }
     }
     const m = manifest;
     await this.itemLock.lock(m.name);
-    const itemId = await writeCatalogVersion(t, {
+    // Under the name's lock: the first confirm of a name wins, a later one of another owner is
+    // refused naming it, before anything of it is written (P3-14)
+    await assertNameFree(t, m.name, owner?.orgId ?? null);
+    if (owner !== undefined) {
+      await assertNameNotReserved(t, m.name);
+      await this.resolveDependencies(m, owner);
+    }
+    // The scope the audit records: the review's for a new item, the item's own for a new version
+    // of a live item (which keeps its scope)
+    const existing = await t
+      .selectFrom("catalog_items")
+      .select(["id", "scope", "awaiting_confirmation", "package_name"])
+      .where("name", "=", m.name)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    const actual =
+      existing === undefined
+        ? scope
+        : {
+            scope: existing.scope,
+            orgs: (
+              await t
+                .selectFrom("catalog_item_scope_orgs")
+                .select("org_id")
+                .where("item_id", "=", existing.id)
+                .orderBy("org_id")
+                .execute()
+            ).map((r) => r.org_id),
+          };
+    if (staged.retry === true) {
+      // An org's own version imported already (pre-flight F4): nothing to write, the caller
+      // retries its update; it must still be there as reviewed
+      const v =
+        existing === undefined
+          ? undefined
+          : await t
+              .selectFrom("catalog_item_versions")
+              .select("version")
+              .where("item_id", "=", existing.id)
+              .where("version", "=", staged.version)
+              .where("content_digest", "=", staged.contentDigest)
+              .executeTakeFirst();
+      if (existing === undefined || existing.id !== staged.itemId || v === undefined) throw stale();
+      return {
+        itemId: existing.id,
+        created: false,
+        firstVersion: false,
+        pending: false,
+        now,
+        previous,
+      };
+    }
+    const { id: itemId, created } = await writeCatalogVersion(t, {
+      // an org's version becomes its latest only when applied or confirmed (P3-34)
+      ...(owner !== undefined && { keepLatest: true }),
       actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       name: m.name,
@@ -1037,7 +1423,7 @@ export class PluginImport {
       manifest: m,
       listing: {
         publisher: m.publisher,
-        description: m.description,
+        description: pluginDescription(m.description).en,
         displayName: m.displayName ?? null,
       },
       newItemId: staged.itemId,
@@ -1058,12 +1444,147 @@ export class PluginImport {
       licenseTruncated: staged.licenseTruncated === true,
       auditDetail: {
         stagingId,
-        deployExtension: input.deployExtension,
+        scope: actual.scope,
+        ...(actual.scope === "named" && { orgs: actual.orgs }),
         suggestedPinned: pinnedNames(manifest, review),
         ...(now && { extension: { name: now.name, version: now.version, action: now.action } }),
       },
     });
-    return { itemId, now, previous };
+    // A new item gets the scope chosen in the review; a new version keeps the item's scope, its
+    // org list and its scope version (prepare reuses the live item's id, so the id cannot tell)
+    if (created) {
+      await t
+        .updateTable("catalog_items")
+        .set({
+          scope: scope.scope,
+          // an org upload: the org owns it, nobody else sees it until shared and shown (P3-16)
+          ...(owner !== undefined && {
+            owner_org_id: owner.orgId,
+            shareable: scope.shareable === true,
+            shown_to_others: false,
+          }),
+        })
+        .where("id", "=", itemId)
+        .execute();
+      if (scope.scope === "named" && scope.orgs.length > 0) {
+        await t
+          .insertInto("catalog_item_scope_orgs")
+          .values(scope.orgs.map((org_id) => ({ item_id: itemId, org_id })))
+          .onConflict((oc) => oc.doNothing())
+          .execute();
+      }
+    }
+    // The org requests this staging answers resolve with the confirm; on an item that existed
+    // already (imported meanwhile) a `named` scope gains their orgs. An org-owned item held back by
+    // the share gate fails closed before any request is marked (ruling P3-26; P3-14 refuses a
+    // super admin import of an org-owned name, so this should not be reached)
+    const item = created
+      ? undefined
+      : await t
+          .selectFrom("catalog_items")
+          .select(["id", "name", "scope", "builtin", "owner_org_id", "shareable"])
+          .where("id", "=", itemId)
+          .forUpdate()
+          .executeTakeFirstOrThrow();
+    if (item !== undefined && !shareGate(item) && (await hasImportRequests(t, stagingId))) {
+      assertShareable(item);
+    }
+    const requestOrgs = await resolveImportRequests(t, stagingId, itemId, actor, opts);
+    if (item !== undefined) {
+      for (const org of requestOrgs) await addScopeOrg(t, actor, item, org, opts);
+    }
+    const pending = owner !== undefined && reviewed !== undefined;
+    // An org's first version without an extension is installed at once: applied (P3-52)
+    if (owner !== undefined && created && !pending)
+      await markVersionApplied(t, itemId, staged.version);
+    if (pending) {
+      // Waits for the super admin; a later upload replaces the pending version (P3-10, P3-11)
+      await t
+        .updateTable("catalog_items")
+        .set({
+          ...(created && { awaiting_confirmation: true }),
+          pending_version: staged.version,
+          pending_by: actor,
+          pending_at: sql<Date>`now()` as unknown as Date,
+        })
+        .where("id", "=", itemId)
+        .execute();
+    }
+    // A first version still waiting replaced by one without an extension: applied at once
+    const replacedAwaiting =
+      owner !== undefined && !pending && existing?.awaiting_confirmation === true;
+    if (replacedAwaiting) {
+      await t
+        .updateTable("catalog_items")
+        .set({
+          awaiting_confirmation: false,
+          pending_version: null,
+          pending_by: null,
+          pending_at: null,
+          latest_version: staged.version,
+        })
+        .where("id", "=", itemId)
+        .execute();
+      await markVersionApplied(t, itemId, staged.version);
+      await releaseExtensionClaim(t, m.name, existing.package_name);
+    }
+    return {
+      itemId,
+      created,
+      firstVersion: (created && !pending) || replacedAwaiting,
+      pending,
+      now,
+      previous,
+    };
+  }
+
+  /**
+   * The platform components of a new item. The item is committed already, so a failure is logged
+   * and not thrown (like a failed deploy, the import itself succeeded); a run of the platform
+   * components migration job (which writes what is missing) is enqueued on `cap-kernel-maintenance`
+   * after {@link PLATFORM_SYNC_RETRY_MS}, one per item (deterministic job id). If that run fails
+   * too, its `itemsFailed` shows in the super admin's inbox; the daily run and every worker start
+   * try again.
+   */
+  private async syncPlatform(itemId: string, version: string): Promise<void> {
+    try {
+      await this.platform.syncFromVersion(itemId, version, { initial: true });
+    } catch (err) {
+      // Removed meanwhile (an org deletion racing a confirmation, P3-20): nothing to write
+      const live = await this.db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("id", "=", itemId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst();
+      if (live === undefined) {
+        this.log.info("catalog item removed before its platform components were written", {
+          itemId,
+          version,
+        });
+        return;
+      }
+      this.log.error("writing the platform components of a new catalog item failed", {
+        itemId,
+        version,
+        err,
+      });
+      try {
+        await this.maintenance.add(
+          PLATFORM_MIGRATION_JOB,
+          {},
+          {
+            jobId: `${PLATFORM_MIGRATION_JOB}-retry-${itemId}`,
+            delay: PLATFORM_SYNC_RETRY_MS,
+            attempts: 1,
+            removeOnComplete: true,
+            removeOnFail: { age: 86_400 },
+          },
+        );
+      } catch (e) {
+        this.log.warn("cannot enqueue the platform components migration", { itemId, err: e });
+      }
+    }
   }
 
   /**
@@ -1277,7 +1798,7 @@ export class PluginImport {
     const t = this.db;
     const locked = await t
       .selectFrom("plugin_import_staging")
-      .select("id")
+      .select(["id", "org_id", "review", "manifest"])
       .where("id", "=", r.id)
       .where("expires_at", "<=", sql<Date>`now()`)
       .forUpdate()
@@ -1286,7 +1807,69 @@ export class PluginImport {
     if (!locked) return false;
     if (r.object_prefix) await this.files.deployment().deletePrefix(r.object_prefix);
     await t.deleteFrom("plugin_import_staging").where("id", "=", r.id).execute();
+    await this.dropOrgPackage(locked);
     return true;
+  }
+
+  /**
+   * An expired org staging's extension package (an org upload stores it at prepare, P3-10): removed
+   * with the staging unless something else uses it — an install (running or migrated), a catalog
+   * version, another staging — or it was stored by anyone else (the package row's source must be
+   * this staging's own `catalog` ref). A platform staging keeps its package, as before. Its object
+   * is deleted after the commit.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async dropOrgPackage(row: {
+    org_id: string | null;
+    review: unknown;
+    manifest: unknown;
+  }): Promise<void> {
+    const sha = (row.review as PluginReview).extension?.sha256;
+    if (row.org_id === null || sha === undefined) return;
+    const staged = row.manifest as StagedPlugin;
+    const t = this.db;
+    const pkg = await t
+      .selectFrom("extension_packages")
+      .select("blob_store")
+      .where("sha256", "=", sha)
+      .where("source", "=", "catalog")
+      .where("source_ref", "=", `${staged.itemId}@${staged.version}`)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!pkg) return;
+    const used =
+      (await t
+        .selectFrom("extension_installs")
+        .select("name")
+        .where((eb) => eb.or([eb("sha256", "=", sha), eb("migrated_sha", "=", sha)]))
+        .executeTakeFirst()) ??
+      (await t
+        .selectFrom("catalog_item_versions")
+        .select("version")
+        .where("extension_sha256", "=", sha)
+        .executeTakeFirst()) ??
+      (await t
+        .selectFrom("plugin_import_staging")
+        .select("id")
+        .where(sql<boolean>`review->'extension'->>'sha256' = ${sha}`)
+        .executeTakeFirst());
+    if (used !== undefined) return;
+    // extension_blobs (a PG-stored package) goes with the row (ON DELETE CASCADE)
+    await t.deleteFrom("extension_packages").where("sha256", "=", sha).execute();
+    // The object only once the row is gone for good: a failure leaves an unreferenced object
+    // (harmless; a later upload of the same bytes rewrites it), never a row without its bytes
+    if (pkg.blob_store === "object") {
+      afterCommit(async () => {
+        try {
+          await this.files.deployment().delete(blobKey(sha));
+        } catch (err) {
+          this.log.warn("cannot delete an expired org upload's extension package object", {
+            sha256: sha,
+            err,
+          });
+        }
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1459,23 +2042,48 @@ export class PluginImport {
 
   /**
    * The highest imported, non-deleted catalog version satisfying each dependency's range (null when
-   * none does).
+   * none does). An org upload (`owner`, P3-13) resolves only against items the org can use
+   * ({@link usableBy}: confirmed, not disabled, offered to it), and any dependency left unresolved
+   * -> 409 `plugin.dependency_unavailable` (details `[{ dependencies }]`, their names): an org
+   * upload never brings in anything the org could not install itself.
    */
-  private async resolveDependencies(m: PluginManifest): Promise<PluginReview["dependencies"]> {
+  private async resolveDependencies(
+    m: PluginManifest,
+    owner?: ImportOwner,
+  ): Promise<PluginReview["dependencies"]> {
     const deps = m.dependencies ?? [];
     if (deps.length === 0) return [];
-    const rows = await this.db
+    const names = deps.map((d) => d.name);
+    const versions = this.db
       .selectFrom("catalog_items as i")
       .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
-      .select(["i.name", "v.version", "v.imported_at"])
       .where("i.deleted_at", "is", null)
-      .where(
-        "i.name",
-        "in",
-        deps.map((d) => d.name),
-      )
-      .execute();
-    return deps.map((d) => ({
+      .where("i.name", "in", names);
+    const rows: { name: string; version: string; imported_at: Date }[] =
+      owner === undefined
+        ? await versions.select(["i.name", "v.version", "v.imported_at"]).execute()
+        : (
+            await versions
+              // the org's own row of a `named` list (usableBy reads whether it is listed)
+              .leftJoin("catalog_item_scope_orgs as so", (j) =>
+                j.onRef("so.item_id", "=", "i.id").on("so.org_id", "=", owner.orgId),
+              )
+              .select([
+                "i.name",
+                "v.version",
+                "v.imported_at",
+                "i.scope",
+                "i.builtin",
+                "i.disabled",
+                "i.deleted_at",
+                "i.awaiting_confirmation",
+                "i.owner_org_id",
+                "i.shareable",
+                "so.org_id as listed",
+              ])
+              .execute()
+          ).filter((r) => usableBy(r, owner.orgId, r.listed !== null));
+    const resolved = deps.map((d) => ({
       name: d.name,
       range: d.version,
       resolved:
@@ -1486,6 +2094,15 @@ export class PluginImport {
           d.version,
         )?.version ?? null,
     }));
+    const missing = resolved.filter((d) => d.resolved === null).map((d) => d.name);
+    if (owner !== undefined && missing.length > 0) {
+      throw new ApiError(
+        "plugin.dependency_unavailable",
+        `Dependencies not available to this organization: ${missing.join(", ")}`,
+        [{ dependencies: missing }],
+      );
+    }
+    return resolved;
   }
 
   /**
@@ -1507,6 +2124,7 @@ export class PluginImport {
       throw new ApiError(
         "extension.name_conflict",
         `Extension ${name} is already installed from package ${r.package_name}; package ${packageName} cannot use it`,
+        [{ owner: await packageOwner(this.db, r.package_name, name) }],
       );
     }
     return r
@@ -1533,7 +2151,7 @@ export class PluginImport {
       name,
       version: pkg.section.version,
       sha256: pkg.sha256,
-      ...actionOf(state, pkg.sha256),
+      ...actionOf(state, pkg.sha256, pkg.section.version),
       permissions,
       added,
       addedItems: permissionKeyItems(added),
@@ -1562,10 +2180,15 @@ export class PluginImport {
       .executeTakeFirstOrThrow();
     const versions = await this.db
       .selectFrom("catalog_item_versions")
-      .select(["version", "source", "imported_at"])
+      .select(["version", "source", "imported_at", "extension_sha256", "manifest", "source_format"])
       .where("item_id", "=", itemId)
       .execute();
-    return itemView(item, versions);
+    const facts = await itemScopeFacts(
+      this.db,
+      [item],
+      await itemConfirmations(this.admin, [item], new Map([[item.id, versions]])),
+    );
+    return itemView(item, versions, 0, undefined, facts.get(item.id));
   }
 }
 
@@ -1602,13 +2225,25 @@ function packageNameOf(pkg: PluginContents): string | null {
 function actionOf(
   s: ExtensionState,
   sha256: string,
-): Pick<PluginReviewExtension, "action" | "deployed" | "currentVersion" | "currentSha256"> {
+  version: string,
+): Pick<
+  PluginReviewExtension,
+  "action" | "deployed" | "currentVersion" | "currentSha256" | "olderThanDeployed"
+> {
   if (s.kind === "installed") {
+    // A version below the deployed one is recorded in the catalog only: an import never
+    // downgrades the deployment (ruling H)
+    const older =
+      s.sha256 !== sha256 &&
+      semver.valid(version) !== null &&
+      semver.valid(s.version) !== null &&
+      semver.lt(version, s.version);
     return {
-      action: s.sha256 === sha256 ? "keep" : "upgrade",
+      action: s.sha256 === sha256 || older ? "keep" : "upgrade",
       deployed: true,
       currentVersion: s.version,
       currentSha256: s.sha256,
+      ...(older && { olderThanDeployed: true as const }),
     };
   }
   return { action: "install", deployed: false, currentVersion: null, currentSha256: null };
@@ -1744,4 +2379,32 @@ function withPinned(
 function pinnedNames(m: PluginManifest, review: PluginReview): string[] {
   const byPath = new Map(review.skills.map((s) => [s.path, s.name] as const));
   return (m.skills ?? []).filter((s) => s.pinned === true).map((s) => byPath.get(s.path) ?? s.path);
+}
+
+/**
+ * The staging rows a route may see (P3-8): the platform's (`org_id` null) without an owner, else
+ * the owner org's.
+ */
+function ownStaging(owner: ImportOwner | undefined) {
+  return (eb: ExpressionBuilder<KernelDatabase, "plugin_import_staging">) =>
+    owner === undefined ? eb("org_id", "is", null) : eb("org_id", "=", owner.orgId);
+}
+
+/**
+ * An org upload's custom deny, by content (ruling P3-15'): skills or agent templates ->
+ * `customSkills`, connector templates -> `customConnectors`; each `deny` -> 403
+ * `catalog.custom_disabled`. A package carrying neither passes.
+ */
+async function assertCustomContent(
+  db: KernelSchemaDb,
+  content: {
+    skills: readonly unknown[];
+    agentTemplates: readonly unknown[];
+    templates: readonly unknown[];
+  },
+): Promise<void> {
+  if (content.skills.length > 0 || content.agentTemplates.length > 0) {
+    await assertCustomAllowed(db, "customSkills");
+  }
+  if (content.templates.length > 0) await assertCustomAllowed(db, "customConnectors");
 }

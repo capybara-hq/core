@@ -1,6 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "@formatjs/icu-messageformat-parser";
+import {
+  isLiteralElement,
+  isPluralElement,
+  isSelectElement,
+  isTagElement,
+  type MessageFormatElement,
+  parse,
+} from "@formatjs/icu-messageformat-parser";
 import type { Finding } from "./source.js";
 
 export type { Finding };
@@ -141,6 +148,121 @@ function cjkHalfwidth(file: string, text: string, json: unknown): Finding[] {
     }));
 }
 
+/**
+ * The text of a message a reader sees: its literal parts, including the bodies of plural and
+ * select branches and of rich-text tags, but not argument names or select keys (`{agent}`,
+ * `{kind, select, agent {…}}`). A message that does not parse (reported by
+ * `i18n-invalid-message`) falls back to the message with every `{…}` removed.
+ */
+function visibleText(message: string): string {
+  try {
+    const parts: string[] = [];
+    const walk = (elements: MessageFormatElement[]): void => {
+      for (const el of elements) {
+        if (isLiteralElement(el)) parts.push(el.value);
+        else if (isPluralElement(el) || isSelectElement(el)) {
+          for (const option of Object.values(el.options)) walk(option.value);
+        } else if (isTagElement(el)) walk(el.children);
+      }
+    };
+    walk(parse(message));
+    return parts.join("\u0000");
+  } catch {
+    return message.replace(/\{[^{}]*\}/g, "\u0000");
+  }
+}
+
+/**
+ * Words the Chinese UI does not use (spec 2026-11-05 §13.4, §13.4c): 企业 (the deployment layer is
+ * 平台, its admin 超级管理员, a non-official marketplace 自定义市场源), and the Latin word "agent"
+ * (智能体; names in `{placeholders}` are not text).
+ */
+const ZH_BANNED: { rule: string; pattern: RegExp; fix: string }[] = [
+  {
+    rule: "i18n-zh-enterprise",
+    pattern: /企业/,
+    fix: "the Chinese UI has no 企业: write 超级管理员 for the admin, 平台 for the deployment layer, 自定义市场源 for a non-official marketplace",
+  },
+  {
+    rule: "i18n-zh-agent",
+    pattern: /\bagents?\b/i,
+    fix: "the Chinese UI says 智能体 (子智能体, 智能体模板); a {placeholder} named agent is fine",
+  },
+];
+
+/** 企业 or the Latin word agent in the text of a Chinese message. */
+function zhBannedWords(file: string, text: string, json: unknown): Finding[] {
+  return stringLeaves(json).flatMap(([key, message]) => {
+    const visible = visibleText(message);
+    return ZH_BANNED.filter((b) => b.pattern.test(visible)).map((b) => ({
+      file,
+      line: lineOf(text, key),
+      rule: b.rule,
+      message: `「${key}」(${JSON.stringify(message)}): ${b.fix}`,
+    }));
+  });
+}
+
+/** One entry of the design system's zh object: `"key": "string literal",` on one line. */
+const DESIGN_ENTRY = /^\s*"([^"\\]+)":\s*("(?:[^"\\]|\\.)*"),?\s*$/;
+
+/**
+ * The zh strings of the design system (`packages/design/src/i18n.ts`, a `const zh = { … }` object of
+ * one-line `"key": "text"` entries) follow the same word rules as the web's zh messages
+ * (`i18n-zh-enterprise`, `i18n-zh-agent`). A line of the object that is not such an entry (a
+ * concatenation, a template literal, a value split over lines) cannot be confirmed statically and is
+ * reported as `i18n-design-unreadable`, as is a file without the object.
+ */
+export function checkDesignI18n(file: string): Finding[] {
+  if (!existsSync(file)) {
+    return [{ file, line: 1, rule: "i18n-missing-file", message: `${file} does not exist` }];
+  }
+  const lines = readFileSync(file, "utf8").split("\n");
+  const start = lines.findIndex((l) => /^const zh\b.*=\s*\{\s*$/.test(l));
+  if (start < 0) {
+    return [
+      {
+        file,
+        line: 1,
+        rule: "i18n-design-unreadable",
+        message: "no `const zh = {` object found; the zh word rules cannot be confirmed statically",
+      },
+    ];
+  }
+  const findings: Finding[] = [];
+  for (let i = start + 1; i < lines.length && !/^\}/.test(lines[i] as string); i++) {
+    const l = lines[i] as string;
+    if (/^\s*(?:\/\/.*)?$/.test(l)) continue;
+    const m = DESIGN_ENTRY.exec(l);
+    let message: string | undefined;
+    try {
+      message = m ? (JSON.parse(m[2] as string) as string) : undefined;
+    } catch {
+      message = undefined;
+    }
+    if (!m || message === undefined) {
+      findings.push({
+        file,
+        line: i + 1,
+        rule: "i18n-design-unreadable",
+        message: `${l.trim()} cannot be confirmed statically; write the entry as one "key": "text" line`,
+      });
+      continue;
+    }
+    const key = m[1] as string;
+    const visible = visibleText(message);
+    for (const b of ZH_BANNED.filter((x) => x.pattern.test(visible))) {
+      findings.push({
+        file,
+        line: i + 1,
+        rule: b.rule,
+        message: `「${key}」(${JSON.stringify(message)}): ${b.fix}`,
+      });
+    }
+  }
+  return findings;
+}
+
 type Loaded = { file: string; text: string; json: unknown; keys: Set<string> } | Finding;
 
 function load(file: string): Loaded {
@@ -171,7 +293,9 @@ function load(file: string): Loaded {
  * en.json 缺少的 key → `i18n-missing-key`，多出的 key → `i18n-extra-key`。
  * A message in either file that is not valid ICU MessageFormat -> `i18n-invalid-message`; a
  * title / label / button message ending with a period -> `i18n-label-period`; "..." in a message ->
- * `i18n-ellipsis`; a half-width ? ! : ; right after a CJK character in zh -> `i18n-cjk-halfwidth`.
+ * `i18n-ellipsis`; a half-width ? ! : ; right after a CJK character in zh -> `i18n-cjk-halfwidth`;
+ * 企业 in the text of a zh message -> `i18n-zh-enterprise`; the Latin word agent (or agents) in
+ * the text of a zh message, placeholders excluded -> `i18n-zh-agent`.
  */
 export function checkI18n(messagesDir: string): Finding[] {
   const base = load(join(messagesDir, BASE));
@@ -188,6 +312,7 @@ export function checkI18n(messagesDir: string): Finding[] {
     ...ellipses(base.file, base.text, base.json),
     ...ellipses(target.file, target.text, target.json),
     ...cjkHalfwidth(base.file, base.text, base.json),
+    ...zhBannedWords(base.file, base.text, base.json),
   ];
   for (const key of base.keys) {
     if (target.keys.has(key)) continue;

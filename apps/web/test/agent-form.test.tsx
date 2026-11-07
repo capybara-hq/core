@@ -74,7 +74,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
   const T = "2026-10-20T08:00:00.000Z";
   const as = (role: "guest" | "member" | "admin") => ({
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
   });
   const agent = (id: string, name: string, owner = "a1") => ({
@@ -111,6 +111,12 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     tools: [{ key: "mcp__tracker__find", status: "enabled" }],
   };
   const ok = (body: unknown) => () => apiJson(200, body);
+  /** What `/agents` reads besides the agents for members up (owner names, the 模板 tab). */
+  const agentsPageReads = {
+    [`GET ${ORG}/members`]: ok({ members: [] }),
+    [`GET ${ORG}/agent-templates`]: ok({ templates: [] }),
+    [`GET ${ORG}/components`]: ok({ components: [] }),
+  };
   const formRoutes = {
     [`GET ${ORG}/models`]: ok(MODELS),
     [`GET ${ORG}/connectors`]: ok({ connectors: [connector] }),
@@ -143,10 +149,10 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     stubApi({});
     await renderRouteWithCache(
       "/agents",
-      { [`GET ${ORG}/agents`]: ok({ agents: [] }) },
+      { [`GET ${ORG}/agents`]: ok({ agents: [] }), ...agentsPageReads },
       { readiness: NOT_READY },
     );
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
     expect(template("ListPage")).toBeNull();
   });
 
@@ -154,6 +160,8 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     const browser = stubApi({});
     await renderRouteWithCache("/agents", {
       [`GET ${ORG}/agents`]: ok({ agents: [agent("ag1", "Echo agent")] }),
+      // members up: the cards' owner names and the 模板 tab (its count) paint at once too
+      ...agentsPageReads,
     });
     expect(screen.getByText("Echo agent")).toBeTruthy();
     await settle();
@@ -166,6 +174,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
       release = r;
     });
     await renderRouteEmptyCache("/agents", {
+      ...agentsPageReads,
       [`GET ${ORG}/agents`]: async () => {
         await held;
         return apiJson(200, { agents: [agent("ag1", "Echo agent")] });
@@ -187,7 +196,7 @@ describe("the agent pages render on the server (web-SSR spec §6)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderNewAgent({ routes: formRoutes });
     expect(
-      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLSelectElement)
+      (screen.getByRole("combobox", { name: en.agents.form.modelLabel }) as HTMLButtonElement)
         .value,
     ).toBe("model-fake/fake-1");
     expect(screen.queryByRole("checkbox", { name: /Tracker/ })).toBeNull();

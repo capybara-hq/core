@@ -2,7 +2,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { agentTreeNodes } from "../src/components/conversation/AgentMap";
+import { agentTreeNodes, liveStatus, logWord } from "../src/components/conversation/AgentMap";
 import type { AgentTreeNode, ConversationEvent } from "../src/lib/conversations";
 import { TREE_PROGRESS_MS } from "../src/lib/subagents";
 import { type Call, json, stubApi } from "./support/api";
@@ -20,9 +20,9 @@ import { resetNavigation } from "./support/navigation";
 
 /**
  * Agent map spec §9.2 (Task C1): the agent map's level 1 opened from the conversation page, from
- * the sub-agent group's header and from a title-bar icon shown while the conversation has
- * sub-agents; the dialog lives in the URL hash (`#agents`) and reads `GET …/agent-tree`, again
- * when a sub-agent event or progress arrives.
+ * the sub-agent group's header and from the composer's agents chip shown while the conversation
+ * has sub-agents (AC3; the title-bar icon is gone); the dialog lives in the URL hash (`#agents`)
+ * and reads `GET …/agent-tree`, again when a sub-agent event or progress arrives.
  */
 
 const params = { conversationId: "c1" };
@@ -39,7 +39,8 @@ vi.mock("next/navigation", () => ({
 
 const ORG = "/api/v1/orgs/o1";
 const PARENT = `${ORG}/conversations/c1`;
-const MAP = en.chat.agentMap;
+/** The map dialog's name and the sub-agent group's link (the design's `agentMap.title`). */
+const MAP = "Agent map";
 
 const call = (id: string, description: string) => ({
   type: "tool_call",
@@ -184,7 +185,7 @@ function childEvents(id = "ch1", parent = "c1", task = "Do Scan docs"): Conversa
 function api(
   events: ConversationEvent[],
   answer: () => Response = () => json(200, tree("running")),
-  extra: Record<string, (c: Call) => Response> = {},
+  extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
 ): Call[] {
   return stubApi({
     [`GET ${CHILD}`]: () => json(200, CONV("ch1", { parentConversationId: "c1" })),
@@ -219,6 +220,9 @@ function api(
 const treeReads = (calls: Call[]) =>
   calls.filter((c) => c.method === "GET" && c.url.endsWith("/agent-tree")).length;
 const titleBar = () => document.querySelector('[data-part="title-bar"]') as HTMLElement;
+/** The composer's agents chip (AC3). */
+const agentsChip = () =>
+  document.querySelector('[data-part="agents-chip"]') as HTMLButtonElement | null;
 const mapDialog = () => screen.findByRole("dialog", { name: MAP });
 
 beforeEach(() => {
@@ -280,25 +284,129 @@ describe("the agent map's entry points", () => {
     expect(window.location.hash).toBe("");
   });
 
-  it("the title-bar icon shows only while the conversation has sub-agents", async () => {
+  it("the composer's agents chip shows only while the conversation has sub-agents; no title-bar icon", async () => {
     api([userMsg(1, "go"), runStarted(2)]);
     await renderChatRoute();
     await screen.findByText("go");
-    expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    expect(agentsChip()).toBeNull();
     cleanup();
 
     const calls = api(parentEvents());
-    await renderChatRoute();
-    const icon = await within(titleBar()).findByRole("button", { name: MAP });
-    // the tree is read only once the map opens
+    const { calls: server } = await renderChatRoute();
+    const chip = await waitFor(() => {
+      const c = agentsChip();
+      expect(c).not.toBeNull();
+      return c as HTMLButtonElement;
+    });
+    // the agent map has no title-bar icon any more (AC3)
+    expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    // the server read the tree for the first paint; the browser has not read it again
+    expect(treeReads(server)).toBe(1);
     expect(treeReads(calls)).toBe(0);
-    await userEvent.setup().click(icon);
+    const user = userEvent.setup();
+    await user.click(chip);
     expect(window.location.hash).toBe("#agents");
-    expect(await within(await mapDialog()).findByText("Read the changelog")).toBeTruthy();
-    // the dialog is modal: the page under it is hidden from the accessibility tree
-    const pressed = within(titleBar()).getByRole("button", { name: MAP, hidden: true });
-    expect(pressed.getAttribute("aria-pressed")).toBe("true");
+    const dialog = await mapDialog();
+    expect(await within(dialog).findByText("Read the changelog")).toBeTruthy();
+    // Esc closes the map and gives the focus back to the chip
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
+    expect(window.location.hash).toBe("");
+    await waitFor(() => expect(document.activeElement).toBe(agentsChip()));
   });
+
+  it("the agents chip counts the tree, pulses while one runs and names the running count", async () => {
+    api(parentEvents());
+    await renderChatRoute();
+    const chip = await waitFor(() => {
+      const c = agentsChip();
+      expect(c).not.toBeNull();
+      return c as HTMLButtonElement;
+    });
+    // the whole tree from the first paint (the grandchild too), before any open of the map
+    const label = () => agentsChip()?.querySelector('[data-part="agents-chip-label"]')?.textContent;
+    expect(label()).toBe("2 agents");
+    expect(chip.getAttribute("aria-label")).toBe("2 agents, 2 running");
+    expect(chip.title).toBe("2 agents, 2 running");
+    expect(chip.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
+      "running",
+    );
+    // the map's count line names the same number (the root not counted, AC3 ruling 4)
+    const user = userEvent.setup();
+    await user.click(chip);
+    const dialog = await mapDialog();
+    expect(await within(dialog).findByText("Read the changelog")).toBeTruthy();
+    expect(within(dialog).getByText(/^2 agents · /)).toBeTruthy();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: MAP })).toBeNull());
+    expect(label()).toBe("2 agents");
+    // the child ends: nothing below it counts as running any more, the dot goes
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        ev(5, "subagent_finished", {
+          subagentId: "ch1",
+          childRunId: "run-ch1",
+          callId: "k1",
+          status: "completed",
+          toolCalls: 2,
+          durationMs: 41_000,
+          usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        }),
+      );
+    });
+    await waitFor(() =>
+      expect(agentsChip()?.getAttribute("aria-label")).toBe("2 agents, 0 running"),
+    );
+    expect(agentsChip()?.querySelector('[data-part="agent-dot"]')).toBeNull();
+  });
+
+  it("the chip's tree reads stay bounded: re-renders and known agents' progress read nothing", async () => {
+    const calls = api(parentEvents());
+    await renderChatRoute();
+    await waitFor(() => expect(agentsChip()).not.toBeNull());
+    await act(async () => await new Promise((r) => setTimeout(r, 50)));
+    expect(treeReads(calls)).toBe(0);
+    // progress of agents the tree already has, many steps: the closed map reads nothing
+    for (let step = 1; step <= 12; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: step % 2 === 0 ? "ch1" : "gc1",
+          step,
+          toolCalls: step,
+          lastToolKey: "Read",
+        });
+      });
+    }
+    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    expect(treeReads(calls)).toBe(0);
+    // an agent the tree lacks (a new grandchild): one read, once, however many steps it makes
+    for (let step = 1; step <= 6; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: "gc2",
+          step,
+          toolCalls: step,
+          lastToolKey: "Bash",
+        });
+      });
+    }
+    await waitFor(() => expect(treeReads(calls)).toBe(1), { timeout: TREE_PROGRESS_MS + 1500 });
+    for (let step = 7; step <= 10; step++) {
+      act(() => {
+        FakeEventSource.instances[0]?.emit("subagent_progress", {
+          subagentId: "gc2",
+          step,
+          toolCalls: step,
+          lastToolKey: "Bash",
+        });
+      });
+    }
+    await act(async () => await new Promise((r) => setTimeout(r, TREE_PROGRESS_MS + 300)));
+    expect(treeReads(calls)).toBe(1);
+    // the stream's progress counts the new agent at once
+    expect(agentsChip()?.getAttribute("aria-label")).toMatch(/^3 agents, /);
+  }, 15_000);
 
   it("open properties, open the map, close the map: the properties are back", async () => {
     api(parentEvents());
@@ -306,7 +414,8 @@ describe("the agent map's entry points", () => {
     await renderChatRoute();
     expect(await screen.findByRole("complementary", { name: "Properties" })).toBeTruthy();
     const user = userEvent.setup();
-    await user.click(await within(titleBar()).findByRole("button", { name: MAP }));
+    await waitFor(() => expect(agentsChip()).not.toBeNull());
+    await user.click(agentsChip() as HTMLButtonElement);
     expect(window.location.hash).toBe("#agents");
     const dialog = await mapDialog();
     await user.click(within(dialog).getByRole("button", { name: "Close" }));
@@ -374,6 +483,7 @@ describe("the agent map's entry points", () => {
     await screen.findByText("Reading the docs first.");
     await waitFor(() => expect(window.location.hash).toBe(""));
     expect(within(titleBar()).queryByRole("button", { name: MAP })).toBeNull();
+    expect(agentsChip()).toBeNull();
     const group = document.querySelector('[data-entry="subagents"]') as HTMLElement;
     expect(within(group).queryByRole("button", { name: MAP })).toBeNull();
     expect(within(group).queryByRole("button", { name: "View in agent map" })).toBeNull();
@@ -536,9 +646,10 @@ describe("the agent map's levels 2 and 3", () => {
     // read-only: no composer, the child's own stream, one live thread on the page
     expect(within(dialog).queryByRole("textbox")).toBeNull();
     expect(log.getAttribute("aria-live")).toBe("off");
-    expect(dialog.querySelector('[data-part="agent-transcript-status"]')?.textContent).toContain(
-      "ask Release notes to pass it on",
-    );
+    // no read-only copy in the status line (AC1): the missing composer says it; Stop stays
+    const status = dialog.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
+    expect(status.textContent).not.toMatch(/Read-only|pass it on/);
+    expect(within(status).getByRole("button", { name: "Stop" })).toBeTruthy();
     expect(childStream()).toBeTruthy();
     // back returns to level 2
     await user.click(within(dialog).getByRole("button", { name: "Back to the agent map" }));
@@ -676,7 +787,7 @@ describe("nested agents (agent map spec §7)", () => {
         toolKey: "mcp__gh__issue",
       }),
     ]);
-    await renderChatRoute();
+    const { calls: server } = await renderChatRoute();
     const line = await waitFor(() => {
       const c = document.querySelector('[data-role="subagent-connect"]');
       expect(c?.textContent).toContain(
@@ -684,8 +795,10 @@ describe("nested agents (agent map spec §7)", () => {
       );
       return c as HTMLElement;
     });
-    // the tree is read for the name while the map is closed
-    expect(treeReads(calls)).toBeGreaterThan(0);
+    // the tree that names it was read with the page while the map is closed (AC3 fix round 1:
+    // the server prefetches it), and the browser reads it no more for the name
+    expect(treeReads(server)).toBe(1);
+    expect(treeReads(calls)).toBe(0);
     // its transcript: the thread there holds the card to decide or connect
     await userEvent.setup().click(within(line).getByRole("button", { name: en.subagents.open }));
     expect(window.location.hash).toBe("#agents=gc1/transcript");
@@ -886,5 +999,321 @@ describe("the agent map's statuses and keys (final review)", () => {
     });
     await userEvent.setup().click(within(notice).getByRole("button", { name: "Open" }));
     expect(window.location.hash).toBe("#bg-t1");
+  });
+});
+
+describe("stopping a sub-agent from the map (AC5)", () => {
+  const c = (seq: number, type: string, payload: unknown, runId: string | null = "run-ch1") =>
+    ev(seq, type, payload, runId, "ch1");
+  const ended = (reason = "completed") => [
+    ...childEvents().slice(0, 5),
+    c(6, "run_finished", { reason, consumedUpToSeq: 2 }),
+  ];
+  const abortCalls = (calls: Call[]) =>
+    calls.filter((x) => x.method === "POST" && x.url === `${CHILD}/abort`).length;
+  const toasts = () => [...document.querySelectorAll(".cb-toast-msg")].map((t) => t.textContent);
+  const headStatus = (dialog: HTMLElement) =>
+    dialog
+      .querySelector('[data-part="agent-map-head"] [data-part="agent-dot"]')
+      ?.getAttribute("data-status");
+
+  it("Stop stays rendered, busy and disabled while the stop is pending, until the terminal event", async () => {
+    let answer: (r: Response) => void = () => {};
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Stop" }));
+    const busy = await within(dialog).findByRole("button", { name: "Stop" });
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    await user.click(busy);
+    expect(abortCalls(calls)).toBe(1);
+    // the kernel took it: still stopping until the agent's terminal event arrives
+    await act(async () => answer(json(202, { runId: "run-ch1" })));
+    expect(within(dialog).getByRole("button", { name: "Stop" }).getAttribute("aria-busy")).toBe(
+      "true",
+    );
+    await waitFor(() => expect(childStream()).toBeTruthy());
+    act(() => {
+      childStream()?.emit(
+        "event",
+        ev(9, "run_aborted", { byAccountId: "a1", reason: "user" }, "run-ch1", "ch1"),
+      );
+    });
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(headStatus(dialog)).toBe("aborted");
+  });
+
+  it("a failed request shows one stop-specific toast, logs the browser's reason, and frees Stop", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const calls = api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () => {
+        throw new TypeError("Load failed");
+      },
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(toasts()).toHaveLength(1));
+    expect(toasts()[0]).toBe(
+      "Couldn't stop: Cannot reach the server. Check your network connection.",
+    );
+    expect(abortCalls(calls)).toBe(1);
+    // the browser's own message goes to the console, not the UI
+    expect(warn).toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Load failed");
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(stop.hasAttribute("disabled")).toBe(false);
+    warn.mockRestore();
+  });
+
+  /** The `after` of a log read (0: the first read; else a catch-up from the cached end). */
+  const afterOf = (x: Call) => Number(new URL(x.url, "http://x").searchParams.get("after") ?? 0);
+  const finishedAt = (seq: number) =>
+    c(seq, "run_finished", { reason: "completed", consumedUpToSeq: 2 });
+
+  it("409 run.not_active reads the tree, the child's row and its log again, and Stop goes", async () => {
+    let logReads = 0;
+    const catchUps: number[] = [];
+    const calls = api(parentEvents(), undefined, {
+      // the page holds a stale running log (the stream missed the end); the kernel has the end
+      [`GET ${CHILD}/events`]: (x) => {
+        logReads++;
+        if (afterOf(x) === 0) return json(200, { events: childEvents() });
+        catchUps.push(afterOf(x));
+        return json(200, { events: [finishedAt(9)] });
+      },
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const stop = await within(dialog).findByRole("button", { name: "Stop" });
+    const before = {
+      tree: treeReads(calls),
+      row: calls.filter((x) => x.method === "GET" && x.url === CHILD).length,
+    };
+    await userEvent.setup().click(stop);
+    await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull());
+    expect(headStatus(dialog)).toBe("completed");
+    expect(treeReads(calls)).toBeGreaterThan(before.tree);
+    expect(calls.filter((x) => x.method === "GET" && x.url === CHILD).length).toBeGreaterThan(
+      before.row,
+    );
+    expect(logReads).toBeGreaterThan(1);
+    // read from the cached end and merged, never the whole log again
+    expect(catchUps).toEqual([8]);
+    // the kernel's answer is no failure to report
+    expect(toasts()).toHaveLength(0);
+  });
+
+  it("409 with a failing re-read: a warning, no unhandled rejection, Stop free again", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    api(parentEvents(), undefined, {
+      [`GET ${CHILD}/events`]: (x) =>
+        afterOf(x) === 0
+          ? json(200, { events: childEvents() })
+          : json(500, { error: { code: "internal", message: "down" } }),
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(warn.mock.calls.some((c) => String(c[0]).includes("re-read"))).toBe(true),
+    );
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(toasts()).toHaveLength(0);
+    warn.mockRestore();
+  });
+
+  it("409: an event the stream delivers while the re-read is pending survives it", async () => {
+    let answer: (r: Response) => void = () => {};
+    api(parentEvents(), undefined, {
+      [`GET ${CHILD}/events`]: (x) =>
+        afterOf(x) === 0
+          ? json(200, { events: childEvents() })
+          : // served before the end was written: it holds nothing new
+            new Promise<Response>((resolve) => {
+              answer = resolve;
+            }),
+      [`POST ${CHILD}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(childStream()).toBeTruthy());
+    act(() => {
+      childStream()?.emit("event", finishedAt(9));
+    });
+    await act(async () => answer(json(200, { events: [] })));
+    await waitFor(() => expect(headStatus(dialog)).toBe("completed"));
+    expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
+  it("a failed stop is reported even when the level was left while the request ran", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let fail: (e: Error) => void = () => {};
+    api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () =>
+        new Promise<Response>((_, reject) => {
+          fail = reject;
+        }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    const user = userEvent.setup();
+    await user.click(await within(dialog).findByRole("button", { name: "Stop" }));
+    // back to the tree: the level (and its mutation's observer) unmounts
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(window.location.hash).toBe("#agents"));
+    await act(async () => fail(new TypeError("Failed to fetch")));
+    await waitFor(() => expect(toasts()).toHaveLength(1));
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Failed to fetch");
+    warn.mockRestore();
+  });
+
+  it("an end followed at once by a restart leaves the new run's Stop free", async () => {
+    api(parentEvents(), undefined, {
+      [`POST ${CHILD}/abort`]: () => json(202, { runId: "run-ch1" }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await userEvent.setup().click(await within(dialog).findByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Stop" }).getAttribute("aria-busy")).toBe(
+        "true",
+      ),
+    );
+    // one batch: the stopped run's end, a parent's message and the new run's start
+    act(() => {
+      childStream()?.emit("event", c(9, "run_aborted", { byAccountId: "a1", reason: "user" }));
+      childStream()?.emit("event", restart(10));
+      childStream()?.emit(
+        "event",
+        c(
+          11,
+          "run_started",
+          { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } },
+          "run-ch1-2",
+        ),
+      );
+    });
+    await waitFor(() => expect(headStatus(dialog)).toBe("running"));
+    const stop = within(dialog).getByRole("button", { name: "Stop" });
+    expect(stop.getAttribute("aria-busy")).toBeNull();
+    expect(stop.hasAttribute("disabled")).toBe(false);
+  });
+
+  const ACTIVE_STATUSES: ReadonlySet<string> = new Set(["running", "waiting"]);
+  // The head's status and Stop come from one status, settled from the log first: a tree read
+  // before the run's end never brings Stop back (rows: the child's log tail, the tree's status).
+  const restart = (seq: number): ConversationEvent =>
+    c(
+      seq,
+      "user_message",
+      {
+        content: [{ type: "text", text: "One more thing" }],
+        authorAccountId: "a1",
+        dispatch: { parentConversationId: "c1", parentRunId: "r1", callId: "s1", kind: "message" },
+      },
+      null,
+    );
+  it.each([
+    ["an open run, tree running", childEvents(), "running", "running"],
+    ["an open run, tree idle (read before it started)", childEvents(), "idle", "running"],
+    ["run finished, tree still running (stale)", ended(), "running", "completed"],
+    [
+      "run aborted, tree still running (stale)",
+      [...childEvents(), c(9, "run_aborted", { byAccountId: "a1", reason: "user" })],
+      "running",
+      "aborted",
+    ],
+    ["run out of steps, tree still running", ended("max_steps"), "running", "failed"],
+    ["a queued restart after the end, tree queued", [...ended(), restart(7)], "queued", "running"],
+    ["a message after the end, tree idle", [...ended(), restart(7)], "idle", "completed"],
+    [
+      "a restart that started (its run_started in the log), tree idle",
+      [
+        ...ended(),
+        restart(7),
+        c(
+          8,
+          "run_started",
+          { agentVersion: 1, model: { provider: "model-fake", model: "fake-1" } },
+          "run-ch1-2",
+        ),
+      ],
+      "idle",
+      "running",
+    ],
+  ] as const)("%s: head %s", async (_, log, treeStatus, expected) => {
+    api(parentEvents(), () => json(200, tree(treeStatus)), {
+      [`GET ${CHILD}/events`]: () => json(200, { events: log }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents=ch1");
+    await renderChatRoute();
+    const dialog = await detailDialog();
+    await within(dialog).findByText("Reading the docs first.");
+    await waitFor(() => expect(headStatus(dialog)).toBe(expected));
+    const active = ACTIVE_STATUSES.has(expected);
+    await waitFor(() =>
+      expect(within(dialog).queryByRole("button", { name: "Stop" }) !== null).toBe(active),
+    );
+    // settled: both still agree once every read has landed
+    await act(async () => await new Promise((r) => setTimeout(r, 50)));
+    expect(headStatus(dialog)).toBe(expected);
+    expect(within(dialog).queryByRole("button", { name: "Stop" }) !== null).toBe(active);
+  });
+
+  it("a message after the end with a tree read before it: the tree is read again and Stop never shows", async () => {
+    let reads = 0;
+    // the map's first tree read predates the run's end (running); the kernel's next says idle
+    const calls = api(parentEvents(), () => json(200, tree(reads++ === 0 ? "running" : "idle")), {
+      [`GET ${CHILD}/events`]: () => json(200, { events: [...ended(), restart(7)] }),
+    });
+    window.history.replaceState(null, "", "/chat/c1#agents");
+    await renderChatRoute();
+    await userEvent.setup().click(await within(await mapDialog()).findByText("Scan docs"));
+    const dialog = await detailDialog();
+    await within(dialog).findByText("Reading the docs first.");
+    await waitFor(() => expect(treeReads(calls)).toBeGreaterThan(1));
+    await waitFor(() => expect(headStatus(dialog)).toBe("completed"));
+    expect(within(dialog).queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
+  it("liveStatus never takes an active tree word after the log's end, unless the tree is fresh", () => {
+    const log = (events: ConversationEvent[]) => ({
+      loading: false,
+      running: false,
+      waiting: false,
+      events,
+    });
+    expect(liveStatus("running", logWord({ ...log([]), loading: true }), false)).toBe("running");
+    expect(liveStatus("running", logWord(log(ended())), false)).toBe("completed");
+    expect(liveStatus("running", logWord(log(ended())), true)).toBe("completed");
+    const restarted = logWord(log([...ended(), restart(7)]));
+    expect(restarted).toEqual({ kind: "restart", seq: 7, ended: "completed" });
+    expect(liveStatus("running", restarted, false)).toBe("completed");
+    expect(liveStatus("running", restarted, true)).toBe("running");
+    expect(liveStatus("completed", logWord({ ...log([]), running: true }), false)).toBe("running");
+    expect(liveStatus("running", logWord({ ...log([]), waiting: true }), false)).toBe("waiting");
   });
 });

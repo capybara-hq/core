@@ -35,17 +35,20 @@ import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
 import { markSigningOut, resetSession } from "../../lib/query/workspace";
+import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
+import { usePluginPendingCount } from "../PluginsHead";
 import { noOrgConversations, useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
   activeNavOf,
   navLevelOf,
   statusPrompt,
+  useAdminInboxCount,
   useAdminItems,
   useExtensions,
   useNav,
@@ -98,9 +101,10 @@ const under = (pathname: string, prefix: string) =>
  * 3. otherwise the App Shell: the sidebar in its work or admin context (web order §2.1–§2.2), the
  *    account menu and the status bar (`<login>@<slug>:<path>` · version · time zone).
  *
- * It provides the session to pages ({@link SessionContext}). An org change is a full navigation to
- * `/` (ruling R4), so the current page stays until the new document arrives; `reload()` re-renders
- * the route on the server (`router.refresh()`), which hydrates fresh shell data. The conversation
+ * It provides the session to pages ({@link SessionContext}). An org change is a full navigation
+ * home, the new conversation (ruling R4), so the current page stays until the new document
+ * arrives; `reload()` re-renders the route on the server (`router.refresh()`), which hydrates
+ * fresh shell data. The conversation
  * list, the pending count and the extension pages read their queries directly; the frame stays
  * mounted across navigations, so on each path change it refetches the stale ones of the list and
  * the count (web query cache spec §6, "Persistent components").
@@ -216,10 +220,17 @@ function ShellFrame({
     pending.count,
     navLevelOf(me),
     pending.more,
-    me.account.isEnterpriseAdmin,
+    me.account.isSuperAdmin,
   );
   const extensions = sections?.extensions ?? [];
-  const adminItems = useAdminItems();
+  // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
+  // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
+  // path change.
+  const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
+  const adminItems = useAdminItems({
+    inbox: useAdminInboxCount(adminContext),
+    plugins: usePluginPendingCount(adminContext),
+  });
   const preferences = usePreferences();
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
@@ -243,7 +254,7 @@ function ShellFrame({
    */
   const openHome = useCallback(() => {
     setSwitching(true);
-    void resetSession(qc, () => navigateBrowser("/"));
+    void resetSession(qc, () => navigateBrowser(HOME_PATH));
   }, [qc]);
   const reload = useCallback(async () => startRefresh(() => router.refresh()), [router]);
   // Both end the cache's session themselves (`resetSession`): nothing to invalidate.
@@ -272,9 +283,9 @@ function ShellFrame({
   // A failed switch from a menu says why (the menu has closed).
   const selectOrg = (next: string) =>
     void switchOrg(next).catch((e: unknown) => toast.error(errorMessage(e)));
-  // Another tab signed in or out: start over from `/`; it switched org: follow (the current org
+  // Another tab signed in or out: start over from home; it switched org: follow (the current org
   // belongs to the session the tabs share).
-  useSessionSync(() => void resetSession(qc, () => navigateBrowser("/")), openHome);
+  useSessionSync(() => void resetSession(qc, () => navigateBrowser(HOME_PATH)), openHome);
 
   const session = useMemo<Session>(
     () => ({
@@ -431,7 +442,7 @@ function ShellFrame({
   );
 
   // Signed in without a current org: the chooser covers the whole shell (the admin console, which
-  // needs no org, stays reachable for enterprise admins).
+  // needs no org, stays reachable for super admins).
   if (currentOrg === null && !under(pathname, "/admin")) {
     return (
       <SessionContext.Provider value={session}>
@@ -449,13 +460,13 @@ function ShellFrame({
           <SetupPage
             sidebar={{
               org: sidebarOrg(multiOrg ? orgItems : []),
-              home: { href: "/" },
+              home: { href: HOME_PATH },
               steps,
               activeNav: activeStepOf(pathname, steps),
               // The org has its own menu in the switcher.
               account: { name: me.account.displayName, menu: personalMenu },
               theme: preferences.theme,
-              ...(me.account.isEnterpriseAdmin ? { adminHref: "/admin" } : {}),
+              ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
             }}
             status={{
               ...status,
@@ -497,10 +508,14 @@ function ShellFrame({
   }
 
   // The admin context under /admin (web order §2.2), else the workspace of the current org. Only
-  // for an enterprise admin: anyone else gets the 403 beside the workspace sidebar.
-  const inAdmin = me.account.isEnterpriseAdmin && under(pathname, "/admin");
+  // for a super admin: anyone else gets the 403 beside the workspace sidebar.
+  const inAdmin = adminContext;
   const context: SidebarContext = inAdmin
-    ? { kind: "admin", back: { href: "/", slug: currentOrg?.slug ?? null }, items: adminItems }
+    ? {
+        kind: "admin",
+        back: { href: HOME_PATH, slug: currentOrg?.slug ?? null },
+        items: adminItems,
+      }
     : {
         kind: "work",
         org: sidebarOrg(orgItems),

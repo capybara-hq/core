@@ -52,7 +52,7 @@ function spawnRun(args: string[], stdin: string, dbUrl?: string): Promise<CliRes
 }
 
 describe("capybara admin create", () => {
-  it("成功：退出码 0，库中该账号是企业管理员", async () => {
+  it("成功：退出码 0，库中该账号是超级管理员", async () => {
     // The real process (`pnpm capybara`: bin, tsx, the process entry, a piped stdin); the other
     // cases run the same `main` in process
     const r = await spawnRun(
@@ -66,14 +66,14 @@ describe("capybara admin create", () => {
       const row = await kernelDb(raw)
         .selectFrom("identities")
         .innerJoin("accounts", "accounts.id", "identities.account_id")
-        .select(["accounts.display_name", "accounts.email", "accounts.is_enterprise_admin"])
+        .select(["accounts.display_name", "accounts.email", "accounts.is_super_admin"])
         .where("identities.source", "=", "local")
         .where("identities.external_id", "=", "admin")
         .executeTakeFirst();
       expect(row).toEqual({
         display_name: "The Admin",
         email: "a@x.io",
-        is_enterprise_admin: true,
+        is_super_admin: true,
       });
     } finally {
       await raw.destroy();
@@ -146,7 +146,7 @@ async function passwordHash(url: string, login: string): Promise<string | undefi
 }
 
 describe("capybara admin create --if-none / --password-file (admin exists)", () => {
-  it("--if-none with an existing enterprise admin exits 0 without creating an account", async () => {
+  it("--if-none with an existing super admin exits 0 without creating an account", async () => {
     // Runs after the describe above created "admin" in the same database.
     const before = await countAccounts(pg.url);
     expect(before).toBeGreaterThan(0);
@@ -155,7 +155,7 @@ describe("capybara admin create --if-none / --password-file (admin exists)", () 
       "",
     );
     expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("enterprise admin already exists; skipped");
+    expect(r.stdout).toContain("super admin already exists; skipped");
     expect(await countAccounts(pg.url)).toBe(before);
   }, 60_000);
 
@@ -243,7 +243,7 @@ describe("capybara admin create --if-none / --password-file (fresh database)", (
     expect(r.stdout).not.toContain("skipped");
     expect(r.stderr).toContain("account.login_taken");
     expect(r.stderr).toContain(
-      "no active enterprise admin; choose another --login or re-enable the account",
+      "no active super admin; choose another --login or re-enable the account",
     );
     expect(`${r.stdout}${r.stderr}`).not.toContain(PW);
     expect(await countAccounts(fresh.url)).toBe(1);
@@ -280,7 +280,7 @@ describe("capybara admin create --if-none (concurrent)", () => {
     ]);
     expect(a.code, a.stderr).toBe(0);
     expect(b.code, b.stderr).toBe(0);
-    expect(`${a.stdout}${b.stdout}`).toContain("enterprise admin already exists; skipped");
+    expect(`${a.stdout}${b.stdout}`).toContain("super admin already exists; skipped");
     expect(await countAccounts(fresh.url)).toBe(1);
   }, 120_000);
 });

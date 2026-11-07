@@ -24,8 +24,25 @@ export interface AgentView {
   memberIds: string[] | null;
   /** 负责人离职后被转给组织所有者、等待管理员重新指派。 */
   needsReassignment: boolean;
+  /**
+   * The template the agent was created from (ruling P4-8; set once, never versioned), null for an
+   * agent created otherwise. `name` and `version` are the snapshot taken at create.
+   */
+  createdFrom: AgentProvenance | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** {@link AgentView.createdFrom}. */
+export interface AgentProvenance {
+  templateId: string;
+  version: number;
+  name: string;
+  /**
+   * The template is still usable in the org (the agent page links it only then). Set on the
+   * agents API's responses only (`AgentsService.withTemplateLinks`), never on internal reads.
+   */
+  available?: boolean;
 }
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
@@ -164,6 +181,9 @@ export class AgentLookup {
         "agents.profile_description",
         "agents.profile_quick_actions",
         "agents.profile_updated_at",
+        "agents.created_from_template_id",
+        "agents.created_from_template_version",
+        "agents.created_from_template_name",
         "agent_versions.definition",
       ])
       .where("agents.id", "in", ids)
@@ -185,6 +205,7 @@ export class AgentLookup {
     return ids.flatMap((id) => {
       const r = byId.get(id);
       if (!r) return [];
+      const fromId = r.created_from_template_id;
       return [
         {
           id: r.id,
@@ -204,6 +225,14 @@ export class AgentLookup {
               ? memberRows.filter((m) => m.agent_id === id).map((m) => m.account_id)
               : null,
           needsReassignment: r.needs_reassignment,
+          createdFrom:
+            fromId === null
+              ? null
+              : {
+                  templateId: fromId,
+                  version: r.created_from_template_version ?? 1,
+                  name: r.created_from_template_name ?? "",
+                },
           createdAt: r.created_at,
           updatedAt: r.updated_at,
         },

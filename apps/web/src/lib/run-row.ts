@@ -4,7 +4,7 @@ import type { RunData } from "./timeline";
 
 /** What the gates read of `GET /me` (the session's `me`). */
 export interface RunRowViewer {
-  account: { id: string; isEnterpriseAdmin: boolean };
+  account: { id: string; isSuperAdmin: boolean };
   currentOrgId: string | null;
   memberships: { orgId: string; role: string }[];
 }
@@ -22,12 +22,12 @@ export function canViewTrajectory(me: RunRowViewer, agentOwnerId: string | undef
   );
 }
 
-/** Whether the row offers 去配置模型服务 (`/admin/extensions`): enterprise admins only. */
-export const canConfigureModels = (me: RunRowViewer): boolean => me.account.isEnterpriseAdmin;
+/** Whether the row offers 去配置模型服务 (`/admin/extensions`): super admins only. */
+export const canConfigureModels = (me: RunRowViewer): boolean => me.account.isSuperAdmin;
 
 /**
  * Failures a deployment's model service setup causes (credentials, a purpose without a model, a
- * model gone), which an enterprise admin fixes in the extensions' config.
+ * model gone), which a super admin fixes in the extensions' config.
  */
 const MODEL_SETUP_ERRORS = new Set(["model.auth", "model.unconfigured", "run.model_unavailable"]);
 export const isModelSetupError = (code: string): boolean => MODEL_SETUP_ERRORS.has(code);

@@ -3,6 +3,7 @@
 import {
   Badge,
   CodeBlock,
+  ContentSection,
   Disclosure,
   ImageBlock,
   Stack,
@@ -13,12 +14,13 @@ import { useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   type CatalogItem,
-  type CatalogPolicy,
   dependencyOfError,
   errorDetailOf,
   gitLocation,
   hasHiddenCharacters,
   type Marketplace,
+  ownerOfError,
+  ownerSide,
   type SourceDetail,
   shortCommit,
   skillConflictsOfError,
@@ -30,6 +32,20 @@ import {
   translationExtras,
   translationValues,
 } from "../lib/catalog";
+import type { Owner } from "../lib/components";
+
+/**
+ * The owner as the workspace names it (spec §14): 本组织 for the viewing org's own item or
+ * component, the owner org's name for another org's shared one, 平台 for the platform's. Badges and
+ * meta lines both go through it, so a row never says two different owners.
+ */
+export function useOwnerLabel(orgId: string): (owner: Owner | undefined) => string {
+  const t = useTranslations("catalog.owner");
+  return (owner) => {
+    const side = ownerSide(owner, orgId);
+    return side.kind === "org" ? side.name : t(side.kind);
+  };
+}
 
 /**
  * One kind of a plugin's components (extension, skills, connector templates, dependencies) as a
@@ -46,13 +62,11 @@ export function ComponentSection({
   empty: string;
   children?: ReactNode;
 }) {
+  // The design ContentSection (spec §6.31): the title a heading, the empty line muted and small
   return (
-    <section aria-label={title}>
-      <Stack gap={8}>
-        <Text>{title}</Text>
-        {count === 0 ? <Text tone="muted">{empty}</Text> : children}
-      </Stack>
-    </section>
+    <ContentSection title={title} {...(count === 0 ? { empty } : {})}>
+      {children}
+    </ContentSection>
   );
 }
 
@@ -184,7 +198,8 @@ export function LicenseView({
  * `catalog.dependency_*` error (or the cycle), one line per skill of `plugin.skill_conflict` (the
  * org's own skill or the plugin it comes from), and the envelope details of the network, git and
  * upgrade-target codes (the host, repository, ref or commit, refused entry, the version rule) as
- * localized lines. None for other errors; `{ path, message }` details come from `issueLines`.
+ * localized lines (the platform update's refusals: same version, an extension declared in the
+ * startup config, removed or missing, a dependent's range, a template changing connector). None for other errors; `{ path, message }` details come from `issueLines`.
  */
 export function useCatalogErrorLines(): (e: unknown) => string[] {
   const t = useTranslations("catalog.components");
@@ -198,16 +213,21 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
       switch (d.reason) {
         case "same_version":
           return [td("sameVersion", { version: d.version == null ? "" : versionLabel(d.version) })];
-        case "deployment_version":
-          if (d.deploymentVersion === undefined) return [td("notDeployed")];
-          return d.allowedVersion === undefined
-            ? [td("deploymentVersionNone", { deploymentVersion: d.deploymentVersion })]
-            : [
-                td("deploymentVersion", {
-                  deploymentVersion: d.deploymentVersion,
-                  allowedVersion: d.allowedVersion,
-                }),
-              ];
+        case "config_extension":
+          // the extension is declared in the startup config (its loaded version, if any)
+          return [
+            d.deploymentVersion === undefined
+              ? td("configExtensionUnloaded")
+              : td("configExtension", { version: versionLabel(d.deploymentVersion) }),
+          ];
+        case "extension_removed":
+          return [
+            td("extensionRemoved", { version: d.version == null ? "" : versionLabel(d.version) }),
+          ];
+        case "extension_package":
+          return [
+            td("extensionPackage", { version: d.version == null ? "" : versionLabel(d.version) }),
+          ];
         case "dependent_range":
           return [
             td("dependentRange", {
@@ -269,7 +289,17 @@ export function useCatalogErrorLines(): (e: unknown) => string[] {
                 : `${c.source.name} ${versionLabel(c.source.version)}`,
           }),
     );
-    return [...dependency, ...skills, ...detailLines(e)];
+    // A taken plugin or extension name names its owner (ruling P3-14)
+    const owner = ownerOfError(e);
+    const taken =
+      owner === null
+        ? []
+        : [
+            t("nameTakenBy", {
+              owner: owner.kind === "platform" ? t("ownerPlatform") : owner.name,
+            }),
+          ];
+    return [...dependency, ...skills, ...taken, ...detailLines(e)];
   };
 }
 
@@ -294,17 +324,18 @@ export function useOrigin(): (d: SourceDetail) => string {
   };
 }
 
-/** 策略徽标：禁用用强调色，其余普通。 */
-export function PolicyBadge({ policy }: { policy: CatalogPolicy }) {
-  const t = useTranslations("catalog.policy");
-  return policy === "allow" ? (
-    <Text variant="small">{t(policy)}</Text>
+/** The scope badge: a disabled plugin is marked, every scope is named; `all` is plain text. */
+export function ScopeBadge({ item }: { item: Pick<CatalogItem, "scope" | "disabled"> }) {
+  const t = useTranslations("catalog.scope");
+  if (item.disabled) return <Badge tone="accent">{t("disabled")}</Badge>;
+  return item.scope === "all" ? (
+    <Text variant="small">{t("all")}</Text>
   ) : (
-    <Badge tone={policy === "disabled" ? "accent" : "default"}>{t(policy)}</Badge>
+    <Badge tone="default">{t(item.scope)}</Badge>
   );
 }
 
-/** An item's source label: manual import, the official marketplace, or the enterprise marketplace's name ("Removed marketplace" once it is gone). */
+/** An item's source label: manual import, the official marketplace, or the custom marketplace's name ("Removed marketplace" once it is gone). */
 export function useSourceLabel(
   sources: Marketplace[],
 ): (item: Pick<CatalogItem, "marketplaceId">) => string {

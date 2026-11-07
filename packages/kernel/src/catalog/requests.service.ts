@@ -2,39 +2,98 @@ import { randomUUID } from "node:crypto";
 import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { readOrgMarketplaceBrowse } from "../identity/settings.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
+import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
+import { CatalogScopeService } from "./catalog-scope.service.js";
+import { assertEntryNotDeprecated, loadMarketplaceEntry } from "./marketplaces.service.js";
+import { OrgCatalogService } from "./org-catalog.service.js";
+import { PluginImport } from "./plugin-import.js";
+import type { RequestActorOpts } from "./request-rules.js";
+import { itemsSeenBy } from "./scope-state.js";
 
-export type CatalogRequestStage = "org" | "deployment";
+export type CatalogRequestKind = "access" | "import" | "enable" | "connector_setup";
 export type CatalogRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
-export type CatalogDecision = "approve" | "reject";
 
-/** A catalog request (the inbox's `catalog_request`, the enterprise admin request list). */
+/** A pending connector a `connector_setup` request waits for (ruling P4-T6-5). */
+export interface SetupRequestConnector {
+  /** The agent's `pendingConnectors[].key` (the bind route's `:key`). */
+  key: string;
+  label: string;
+  /** `template`: made from a platform connector template; `needs`: a hand-configured one. */
+  kind: "template" | "needs";
+  /**
+   * What configures it, so an org admin acts from the request without opening the agent (fix
+   * round 1): `template.id` is the platform connector template's id (pick an org connector made
+   * from it, or `POST connector-templates/:id/connectors`), `displayName` its display name (null
+   * once the template row is gone); `needs` the protocol (the connector kind to pick), the endpoint
+   * and the tools of the hand-configured connector the template recorded.
+   */
+  source:
+    | { template: { id: string; displayName: LocalizedName | null } }
+    | { needs: { protocol: "mcp" | "openapi"; endpoint: string; tools: string[] } };
+  /** The tool names the agent takes once bound; null = all of the connector's tools. */
+  tools: string[] | null;
+  /** The tool names the entry tightens a policy for (names only, sorted). */
+  policies: string[];
+}
+
+/**
+ * A catalog request (spec §5.1): the inbox's `catalog_request` (pending `enable` and
+ * `connector_setup` requests, for the org admins) and `catalog_request_decided` (the requester's
+ * decided requests), and the super admin's list (`access` and `import`). `item` is null for an
+ * `import` request until its confirm writes the item, and always for `connector_setup`; `entry` is
+ * the marketplace entry of an `import` request. A `connector_setup` request (ruling P4-7) names its
+ * agent (`agent`) and what it still waits for (`connectors`); both are null for other kinds.
+ */
 export interface CatalogRequestView {
   id: string;
   orgId: string;
   orgName: string;
-  item: { id: string; name: string; displayName: LocalizedName | null };
-  version: string | null;
-  stage: CatalogRequestStage;
+  kind: CatalogRequestKind;
+  item: { id: string; name: string; displayName: LocalizedName | null } | null;
+  entry: { marketplaceId: string | null; name: string; version: string | null } | null;
+  /**
+   * The agent of a `connector_setup` request: its current name, `deleted` once soft-deleted (the
+   * request is then cancelled). Null for other kinds.
+   */
+  agent: { id: string; name: string; deleted: boolean } | null;
+  /**
+   * The pending connectors a `connector_setup` request waits for, with their labels from the
+   * agent's current version (keys it no longer has are left out; empty once closed). Null for
+   * other kinds.
+   */
+  connectors: SetupRequestConnector[] | null;
   status: CatalogRequestStatus;
   note: string;
+  /** The optional reason of a rejection. */
+  reason: string | null;
   requestedBy: string | null;
   /** 申请人的显示名（账号已删除为 null）。 */
   requestedByName: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
-  /** 组织管理员批准并升级到企业管理员时的批准人与时间（没有升级为 null）。 */
-  orgDecidedBy: string | null;
-  orgDecidedAt: string | null;
+  /** The prepared import of an approved `import` request that is not confirmed yet. */
+  stagingId: string | null;
   createdAt: string;
+}
+
+/** A decision: approve, or reject with an optional reason the requester sees. */
+export interface CatalogDecision {
+  approve: boolean;
+  reason?: string | undefined;
 }
 
 /** 申请列表一次最多返回的条数。 */
@@ -48,183 +107,59 @@ const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item 
 const itemDisabled = () =>
   new ApiError(
     "catalog.item_disabled",
-    "This catalog item is disabled by the enterprise admin and cannot be newly installed",
+    "This catalog item is disabled by the super admin and cannot be requested",
+  );
+const alreadyDecided = () =>
+  new ApiError("catalog.request_decided", "This request has already been decided");
+const pendingExists = () =>
+  new ApiError(
+    "catalog.request_pending",
+    "This organization already has a pending request of this kind for it",
   );
 
-/** 在调用方事务里读条目的策略（FOR SHARE：与企业管理员改策略 / 删除互斥）。不存在或已删除 → undefined。 */
-async function lockItem(t: KernelSchemaDb, itemId: string) {
-  if (!UUID_RE.test(itemId)) return undefined;
-  return t
-    .selectFrom("catalog_items")
-    .select(["id", "name", "policy", "deleted_at"])
-    .where("id", "=", itemId)
-    .forShare()
-    .executeTakeFirst();
-}
+/** A unique violation (the partial index of pending requests). */
+const isUniqueViolation = (e: unknown) =>
+  typeof e === "object" && e !== null && (e as { code?: unknown }).code === "23505";
 
-async function hasGrant(db: KernelSchemaDb, orgId: string, itemId: string): Promise<boolean> {
-  const g = await db
-    .selectFrom("catalog_org_grants")
-    .select("item_id")
-    .where("item_id", "=", itemId)
-    .where("org_id", "=", orgId)
-    .executeTakeFirst();
-  return g !== undefined;
-}
+/** The deployment-level kinds (decided by the super admin). */
+const DEPLOYMENT_KINDS = ["access", "import"] as const;
+
+/** The org-level kinds (decided by the org admins). */
+const ORG_KINDS = ["enable", "connector_setup"] as const;
 
 /**
- * Before an org creates a component from the catalog (enabling an extension, creating a connector
- * from a template, importing a skill), re-checks the item policy in the caller's transaction (C22):
- * deleted or disabled -> `catalog.item_disabled`; needs_approval without an enterprise admin grant
- * for this org -> `catalog.approval_required`; allow or granted -> passes. A dependency's
- * components pass `approvedBy`, the item the org is installing (spec §10: approval follows the
- * installed plugin only): the dependency's own item must still be live and not disabled, and the
- * approval is judged by `approvedBy`.
- */
-export async function assertItemInstallable(
-  t: KernelSchemaDb,
-  orgId: string,
-  itemId: string,
-  approvedBy: string = itemId,
-): Promise<void> {
-  if (approvedBy !== itemId) {
-    const own = await lockItem(t, itemId);
-    if (!own || own.deleted_at !== null || own.policy === "disabled") throw itemDisabled();
-  }
-  const item = await lockItem(t, approvedBy);
-  if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-  if (item.policy === "needs_approval" && !(await hasGrant(t, orgId, approvedBy))) {
-    throw new ApiError(
-      "catalog.approval_required",
-      "This catalog item needs enterprise admin approval before this organization can install it",
-    );
-  }
-}
-
-/**
- * The extensions among `plugins` whose own catalog item (the non-deleted item with the same name) is
- * disabled (FOR SHARE: exclusive with policy changes). A disabled item is a master switch: no path
- * (direct enabling, its item, another plugin) can newly enable its extension (Ruling M-5).
- */
-export async function disabledPluginItems(
-  db: KernelSchemaDb,
-  plugins: readonly string[],
-): Promise<string[]> {
-  if (plugins.length === 0) return [];
-  const rows = await db
-    .selectFrom("catalog_items")
-    .select("name")
-    .where("name", "in", [...plugins])
-    .where("policy", "=", "disabled")
-    .where("deleted_at", "is", null)
-    .orderBy("name")
-    .forShare()
-    .execute();
-  return [...new Set(rows.map((r) => r.name))];
-}
-
-/**
- * Throws `catalog.item_disabled` when a plugin's own catalog item is disabled (the message names
- * the plugin).
- */
-export function pluginItemDisabled(names: readonly string[]): ApiError {
-  return new ApiError(
-    "catalog.item_disabled",
-    `The enterprise admin disabled the catalog item of extension ${names.join(", ")}; it cannot be newly enabled, not even through a plugin that bundles it`,
-  );
-}
-
-/**
- * When an org enables an extension directly (not by installing from an item, e.g.
- * `PUT /orgs/:orgId/extensions/:extension`), it is judged by every catalog item that brought it into the
- * deployment (`extension_catalog_sources`), and **the strictest wins**: any source disabled ->
- * `catalog.item_disabled`; otherwise any source needs_approval without a grant of that item to the
- * org -> `catalog.approval_required`; all allow / granted -> passes. Deleted items no longer count
- * as sources (an enterprise admin deleting an item withdraws its constraint). No source (not
- * installed through the catalog) -> not bound by catalog policy.
- */
-export async function assertPluginSourcesInstallable(
-  t: KernelSchemaDb,
-  orgId: string,
-  plugin: string,
-): Promise<void> {
-  const rows = await t
-    .selectFrom("extension_catalog_sources as s")
-    .innerJoin("catalog_items as i", "i.id", "s.item_id")
-    .select(["i.id", "i.policy"])
-    .where("s.plugin", "=", plugin)
-    .where("i.deleted_at", "is", null)
-    .orderBy("i.id")
-    .forShare("i")
-    .execute();
-  if (rows.some((r) => r.policy === "disabled")) throw itemDisabled();
-  for (const r of rows) {
-    if (r.policy === "needs_approval" && !(await hasGrant(t, orgId, r.id))) {
-      throw new ApiError(
-        "catalog.approval_required",
-        "A catalog item that brought this extension in needs enterprise admin approval before this organization can enable it",
-      );
-    }
-  }
-}
-
-/** 审计里带上 PAT（个人令牌发起时）。 */
-export interface RequestActorOpts {
-  actorTokenId?: string;
-}
-
-/**
- * Cancels catalog requests still pending in the caller's transaction (`db` is its handle; when the
- * item or the org is deleted), status `cancelled` (the decider is the actor). Each one audits
- * `catalog.request_cancelled` (with the reason). Returns how many were cancelled.
- */
-export async function cancelPendingRequests(
-  db: KernelSchemaDb,
-  where: { itemId: string } | { orgId: string },
-  actor: string,
-  reason: "item_removed" | "org_deleted",
-  opts: RequestActorOpts = {},
-): Promise<number> {
-  let q = db
-    .updateTable("catalog_requests")
-    .set({ status: "cancelled", decided_by: actor, decided_at: sql<Date>`now()` })
-    .where("status", "=", "pending");
-  q =
-    "itemId" in where ? q.where("item_id", "=", where.itemId) : q.where("org_id", "=", where.orgId);
-  const rows = await q.returning(["id", "org_id", "item_id", "stage"]).execute();
-  for (const r of rows) {
-    await audit(db, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      orgId: r.org_id,
-      action: "catalog.request_cancelled",
-      target: r.id,
-      detail: { itemId: r.item_id, stage: r.stage, reason },
-    });
-  }
-  return rows.length;
-}
-
-/**
- * Catalog requests and approvals (C22 / F-AF). Two levels:
- * - a member request (stage `org`) goes to the org admins' inbox, an org admin (`catalog.decide`)
- *   approves or rejects it; when the item is needs_approval without a grant for this org, approving
- *   moves the request to stage `deployment` (still pending) for the enterprise admins to decide;
- * - an org admin installing a needs_approval item without a grant -> creates a stage `deployment`
- *   request (or moves the existing pending one there);
- * - an enterprise admin approving a stage `deployment` request -> writes a grant
- *   (`catalog_org_grants`, valid across versions), after which org admins can install.
- * One pending request per org and item (partial unique index; org-side writes all run inside the
- * org row lock, in order). No in-process state.
+ * Catalog requests under plugin scope (spec §5.1). Three kinds, one pending request per (org,
+ * kind, item or entry) (partial unique indexes; org-side writes run inside the org row lock):
+ * - `enable`: a member asks the org admins to switch on an item that is off in the org (an
+ *   `optional` item); an org admin approving it switches the item on, as that admin;
+ * - `access`: an org admin asks the super admin for a `named` item shown to orgs outside its
+ *   list; approving adds the org to the list (`CatalogScopeService.addOrg`), the scope sync then
+ *   installs it;
+ * - `import`: an org admin asks for a marketplace entry not in the catalog (deployment setting
+ *   `orgMarketplaceBrowse`); approving prepares the import and returns its staging, the request
+ *   resolves when the super admin confirms it (scope default `named` = the requesting org);
+ * - `connector_setup` (ruling P4-7): one per agent (`agent_id`, `pending_keys`), asking the org
+ *   admins to set up an agent's pending connectors; written by the agents module
+ *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
+ *   (`cancelled`); here it is listed and rejected.
+ * A rejection stores an optional reason. Decided requests show in the requester's inbox until
+ * dismissed. No in-process state.
  */
 @Injectable()
 export class CatalogRequestsService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The org row and enterprise admin locks: both join the caller's transaction. */
+    /** The org row and super admin locks: both join the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: OrgLock,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
+    @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
+    @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
+    @Inject(CatalogService) private readonly catalog: CatalogService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Serializes the approvals of one `import` request (`@WithLock`). */
+    @Inject(LockService) readonly lockService: LockService,
   ) {}
 
   /** The kernel-schema handle of the current context (the transaction, else the pool). */
@@ -233,170 +168,216 @@ export class CatalogRequestsService {
   }
 
   /**
-   * A member request (`catalog.request`, re-checked inside the org row lock). Item missing /
-   * deleted -> `catalog.item_not_found`; disabled -> org admins get `catalog.item_disabled`,
-   * members get `catalog.item_not_found` (members do not see disabled items). An existing pending
-   * request is returned as is (`created: false`), no new one. Audits `catalog.requested`.
+   * A request for a catalog item (`POST /orgs/:orgId/catalog/:itemId/requests`): `enable`
+   * (`catalog.request`, members and up) or `access` (`catalog.decide`, org admins), checked first.
+   * The item as the org sees it: absent (missing, deleted, hidden, disabled for a member) ->
+   * `catalog.item_not_found`; disabled -> `catalog.item_disabled` for an org admin; `access` needs
+   * `not_offered`, `enable` needs `off` (else `catalog.request_invalid`); a pending request of the
+   * kind -> `catalog.request_pending`. Audits `catalog.requested`.
    */
-  async request(
+  async requestItem(
     orgId: string,
     actor: string,
     itemId: string,
-    input: { note?: string | undefined; version?: string | undefined },
+    input: { kind: "access" | "enable"; note?: string | undefined },
     opts: RequestActorOpts = {},
-  ): Promise<{ request: CatalogRequestView; created: boolean }> {
-    const r = await this.writeRequest(orgId, actor, itemId, input, opts);
-    return { request: await this.view(r.id), created: r.created };
+  ): Promise<CatalogRequestView> {
+    const action = input.kind === "access" ? "catalog.decide" : "catalog.request";
+    await this.authorize(orgId, actor, action);
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    const [item] = await this.orgCatalog.list(orgId, actor, itemId);
+    if (!item) throw itemNotFound();
+    if (item.state === "unavailable") throw itemDisabled();
+    const want = input.kind === "access" ? "not_offered" : "off";
+    if (item.state !== want) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        input.kind === "access"
+          ? "This plugin is already offered to this organization"
+          : "This plugin is not off in this organization (or not one an org admin switches on)",
+      );
+    }
+    const id = await this.writeItemRequest(orgId, actor, item.name, itemId, input, opts);
+    return this.view(id);
+  }
+
+  /** The role check alone, before any item error (a member cannot probe items by error codes). */
+  @Transactional()
+  private async authorize(
+    orgId: string,
+    actor: string,
+    action: "catalog.request" | "catalog.decide",
+  ): Promise<void> {
+    await this.orgLock.lockAndAuthorize(orgId, actor, action);
   }
 
   @Transactional()
-  private async writeRequest(
+  private async writeItemRequest(
     orgId: string,
     actor: string,
+    name: string,
     itemId: string,
-    input: { note?: string | undefined; version?: string | undefined },
+    input: { kind: "access" | "enable"; note?: string | undefined },
     opts: RequestActorOpts,
-  ): Promise<{ id: string; created: boolean }> {
-    const t = this.db;
-    const { role } = await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.request");
-    const item = await lockItem(t, itemId);
-    if (!item || item.deleted_at !== null) throw itemNotFound();
-    // 成员看不到 disabled 的条目（列表、详情、图标一致）：同样答 not found，不暴露条目存在
-    if (item.policy === "disabled") {
-      throw roleAtLeast(role, "admin") ? itemDisabled() : itemNotFound();
-    }
-    const existing = await this.pendingRow(orgId, itemId);
-    if (existing) return { id: existing.id, created: false };
-    const id = randomUUID();
-    await t
-      .insertInto("catalog_requests")
-      .values({
-        id,
-        org_id: orgId,
-        item_id: itemId,
-        version: input.version ?? null,
-        stage: "org",
-        requested_by: actor,
-        note: input.note ?? "",
-      })
-      .execute();
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      orgId,
-      action: "catalog.requested",
-      target: id,
-      detail: { itemId, name: item.name, stage: "org" },
-    });
-    return { id, created: true };
-  }
-
-  private pendingRow(orgId: string, itemId: string) {
-    return this.db
-      .selectFrom("catalog_requests")
-      .select(["id", "stage"])
-      .where("org_id", "=", orgId)
-      .where("item_id", "=", itemId)
-      .where("status", "=", "pending")
-      .executeTakeFirst();
-  }
-
-  /**
-   * An org admin installing a needs_approval item without a grant: in the caller's transaction (the
-   * caller has locked the org row and re-checked the role) creates a stage `deployment` request; an
-   * existing pending request is moved to deployment (a member request goes to the enterprise admins
-   * with it). Returns the request id. Audits `catalog.requested`.
-   */
-  @Transactional({ propagation: "mandatory" })
-  async requestDeployment(
-    orgId: string,
-    actor: string,
-    item: { id: string; name: string },
-    version: string | null,
-    opts: RequestActorOpts = {},
   ): Promise<string> {
     const t = this.db;
-    const existing = await this.pendingRow(orgId, item.id);
-    if (existing) {
-      if (existing.stage === "org") {
-        await t
-          .updateTable("catalog_requests")
-          .set({ stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` })
-          .where("id", "=", existing.id)
-          .execute();
-        await audit(t, {
-          actorAccountId: actor,
-          ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-          orgId,
-          action: "catalog.request_decided",
-          target: existing.id,
-          detail: { itemId: item.id, decision: "approve", stage: "org", escalated: true },
-        });
-      }
-      return existing.id;
-    }
+    await this.orgLock.lockAndAuthorize(
+      orgId,
+      actor,
+      input.kind === "access" ? "catalog.decide" : "catalog.request",
+    );
+    const existing = await t
+      .selectFrom("catalog_requests")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", itemId)
+      .where("kind", "=", input.kind)
+      .where("status", "=", "pending")
+      .executeTakeFirst();
+    if (existing) throw pendingExists();
     const id = randomUUID();
-    await t
-      .insertInto("catalog_requests")
-      .values({
-        id,
-        org_id: orgId,
-        item_id: item.id,
-        version,
-        stage: "deployment",
-        requested_by: actor,
-      })
-      .execute();
+    try {
+      await t
+        .insertInto("catalog_requests")
+        .values({
+          id,
+          org_id: orgId,
+          item_id: itemId,
+          kind: input.kind,
+          // still written for the old NOT NULL / CHECK, never read
+          stage: input.kind === "enable" ? "org" : "deployment",
+          requested_by: actor,
+          note: input.note ?? "",
+        })
+        .execute();
+    } catch (e) {
+      if (isUniqueViolation(e)) throw pendingExists();
+      throw e;
+    }
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       orgId,
       action: "catalog.requested",
       target: id,
-      detail: { itemId: item.id, name: item.name, stage: "deployment" },
+      detail: { itemId, name, kind: input.kind },
     });
     return id;
   }
 
   /**
-   * 安装成功后：本组织该条目仍 pending 的申请（成员申请 stage org，以及之前因 needs_approval 建的 stage deployment
-   * 申请——条目之后改成 allow 再装的就不会一直挂着）标为 approved（安装者即决定人），收件箱与企业管理员列表随之清空。
-   * 在调用方事务里执行。
+   * An org admin asks for a marketplace entry to be imported (`POST /orgs/:orgId/
+   * marketplace-requests`, `catalog.decide`). The deployment setting `orgMarketplaceBrowse` off ->
+   * `catalog.marketplace_browse_disabled`; the marketplace or the entry / version missing ->
+   * `marketplace.not_found` / `marketplace.entry_not_found`; a deprecated version ->
+   * `marketplace.entry_deprecated`; a live item of that name ->
+   * `catalog.request_invalid` (ask for access instead) when the org can see or request that item
+   * (a hidden one is not revealed: the request is accepted); a pending request for the entry ->
+   * `catalog.request_pending`. Audits `catalog.requested`.
    */
-  @Transactional({ propagation: "mandatory" })
-  async resolveByInstall(
+  async requestImport(
     orgId: string,
-    itemId: string,
     actor: string,
+    input: { marketplaceId: string; name: string; version: string; note?: string | undefined },
     opts: RequestActorOpts = {},
-  ): Promise<void> {
+  ): Promise<CatalogRequestView> {
+    const id = await this.writeImportRequest(orgId, actor, input, opts);
+    return this.view(id);
+  }
+
+  @Transactional()
+  private async writeImportRequest(
+    orgId: string,
+    actor: string,
+    input: { marketplaceId: string; name: string; version: string; note?: string | undefined },
+    opts: RequestActorOpts,
+  ): Promise<string> {
     const t = this.db;
-    const rows = await t
-      .updateTable("catalog_requests")
-      .set({ status: "approved", decided_by: actor, decided_at: sql<Date>`now()` })
-      .where("org_id", "=", orgId)
-      .where("item_id", "=", itemId)
-      .where("status", "=", "pending")
-      .returning(["id", "stage"])
-      .execute();
-    for (const r of rows) {
-      await audit(t, {
-        actorAccountId: actor,
-        ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-        orgId,
-        action: "catalog.request_decided",
-        target: r.id,
-        detail: { itemId, decision: "approve", stage: r.stage, installed: true },
-      });
+    await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
+    if (!(await readOrgMarketplaceBrowse(t))) {
+      throw new ApiError(
+        "catalog.marketplace_browse_disabled",
+        "Organizations cannot browse the marketplaces or request imports in this deployment",
+      );
     }
+    const { entry } = await loadMarketplaceEntry(
+      t,
+      this.config.get(),
+      input.marketplaceId,
+      input.name,
+      input.version,
+    );
+    assertEntryNotDeprecated(entry);
+    const live = await t
+      .selectFrom("catalog_items")
+      .select("id")
+      .where("name", "=", input.name)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    // Only an item the org can see or request is named back to it; a hidden `named` item stays
+    // unknown and the request is accepted (approving it adds the org to that item's list)
+    if (live && (await itemsSeenBy(t, orgId, [live.id])).has(live.id)) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        `Plugin ${input.name} is already in the catalog; request access to it instead`,
+      );
+    }
+    const existing = await t
+      .selectFrom("catalog_requests")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("kind", "=", "import")
+      .where("marketplace_id", "=", input.marketplaceId)
+      .where("entry_name", "=", input.name)
+      .where("status", "=", "pending")
+      .executeTakeFirst();
+    if (existing) throw pendingExists();
+    const id = randomUUID();
+    try {
+      await t
+        .insertInto("catalog_requests")
+        .values({
+          id,
+          org_id: orgId,
+          item_id: null,
+          kind: "import",
+          stage: "deployment",
+          marketplace_id: input.marketplaceId,
+          entry_name: input.name,
+          entry_version: input.version,
+          requested_by: actor,
+          note: input.note ?? "",
+        })
+        .execute();
+    } catch (e) {
+      if (isUniqueViolation(e)) throw pendingExists();
+      throw e;
+    }
+    await audit(t, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId,
+      action: "catalog.requested",
+      target: id,
+      detail: {
+        kind: "import",
+        marketplaceId: input.marketplaceId,
+        name: input.name,
+        version: input.version,
+      },
+    });
+    return id;
   }
 
   /**
-   * An org admin decides a member request (`catalog.decide`, re-checked inside the org row lock;
-   * the request row FOR UPDATE). Not this org's request -> `catalog.request_not_found`; already
-   * decided or handed to the enterprise admins -> `catalog.request_decided`. On approval: item
-   * deleted or disabled -> `catalog.item_disabled`; needs_approval without a grant -> moved to stage
-   * deployment (still pending); otherwise approved. Audits `catalog.request_decided`.
+   * An org admin decides a member's `enable` or `connector_setup` request (`catalog.decide`). Not
+   * this org's request of those kinds -> `catalog.request_not_found`; decided ->
+   * `catalog.request_decided`. Approving an `enable` request switches the item on in the org as the
+   * deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
+   * needs, leave the request pending); the install itself resolves the request. A
+   * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
+   * approving it -> `catalog.request_invalid`. Rejecting stores the reason. Audits
+   * `catalog.request_decided`.
    */
   async decideOrg(
     orgId: string,
@@ -406,122 +387,227 @@ export class CatalogRequestsService {
     opts: RequestActorOpts = {},
   ): Promise<CatalogRequestView> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
-    await this.writeDecideOrg(orgId, actor, requestId, decision, opts);
+    if (decision.approve) {
+      const itemId = await this.pendingOrgRequest(orgId, actor, requestId);
+      await this.orgCatalog.setSwitch(orgId, actor, itemId, { enabled: true }, opts.actorTokenId);
+    }
+    await this.writeDecision(requestId, actor, decision, opts, { orgId });
     return this.view(requestId);
   }
 
+  /** The item of a pending `enable` request of the org (the decider re-checked). */
   @Transactional()
-  private async writeDecideOrg(
-    orgId: string,
-    actor: string,
-    requestId: string,
-    decision: CatalogDecision,
-    opts: RequestActorOpts,
-  ): Promise<void> {
-    const t = this.db;
+  private async pendingOrgRequest(orgId: string, actor: string, requestId: string) {
     await this.orgLock.lockAndAuthorize(orgId, actor, "catalog.decide");
-    const row = await t
+    const row = await this.db
       .selectFrom("catalog_requests")
-      .select(["id", "item_id", "stage", "status"])
+      .select(["item_id", "status", "kind"])
       .where("id", "=", requestId)
       .where("org_id", "=", orgId)
-      .forUpdate()
+      .where("kind", "in", [...ORG_KINDS])
       .executeTakeFirst();
     if (!row) throw requestNotFound();
-    if (row.status !== "pending" || row.stage !== "org") {
+    if (row.status !== "pending") throw alreadyDecided();
+    if (row.kind === "connector_setup") {
       throw new ApiError(
-        "catalog.request_decided",
-        row.status === "pending"
-          ? "This request is waiting for the enterprise admin"
-          : "This request has already been decided",
+        "catalog.request_invalid",
+        "A connector setup request is resolved by binding the agent's connectors; reject it to refuse",
       );
     }
-    let escalated = false;
-    if (decision === "approve") {
-      const item = await lockItem(t, row.item_id);
-      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
-      escalated = item.policy === "needs_approval" && !(await hasGrant(t, orgId, row.item_id));
-    }
-    await t
-      .updateTable("catalog_requests")
-      .set(
-        escalated
-          ? { stage: "deployment", org_decided_by: actor, org_decided_at: sql<Date>`now()` }
-          : {
-              status: decision === "approve" ? "approved" : "rejected",
-              decided_by: actor,
-              decided_at: sql<Date>`now()`,
-            },
-      )
-      .where("id", "=", requestId)
-      .execute();
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      orgId,
-      action: "catalog.request_decided",
-      target: requestId,
-      detail: { itemId: row.item_id, decision, stage: "org", escalated },
-    });
+    if (row.item_id === null) throw requestNotFound();
+    return row.item_id;
   }
 
   /**
-   * An enterprise admin decides a stage deployment request (re-checked inside the enterprise admin
-   * lock; the request row FOR UPDATE). Missing or still at the org stage ->
-   * `catalog.request_not_found`; already decided -> `catalog.request_decided`; on approval, item
-   * deleted or disabled -> `catalog.item_disabled`, the request's org deleted ->
-   * `catalog.request_not_found`. Approval writes a grant to `catalog_org_grants`. Audits
-   * `catalog.request_decided` (with orgId).
+   * A super admin decides an `access` or `import` request (re-checked inside the super
+   * admin lock; the request row FOR UPDATE). Missing or an `enable` request ->
+   * `catalog.request_not_found`; decided -> `catalog.request_decided`. Approving `access`: the item
+   * deleted or disabled -> `catalog.item_disabled`, the org deleted -> not found; otherwise the org
+   * joins the item's `named` list. Approving `import` prepares the import of the entry and returns
+   * it; the request stays pending, linked to the staging, until that confirm commits (approving
+   * again prepares a new one). Audits `catalog.request_decided` (`catalog.request_import_prepared`
+   * for an import's approval).
    */
   async decideDeployment(
     actor: string,
     requestId: string,
     decision: CatalogDecision,
     opts: RequestActorOpts = {},
-  ): Promise<CatalogRequestView> {
+  ): Promise<{ request: CatalogRequestView; import?: MarketplaceImportResult }> {
     if (!UUID_RE.test(requestId)) throw requestNotFound();
-    await this.writeDecideDeployment(actor, requestId, decision, opts);
-    return this.view(requestId);
+    const row = await this.pendingDeploymentRequest(actor, requestId);
+    if (decision.approve && row.kind === "import")
+      return this.approveImport(actor, requestId, opts);
+    await this.writeDecision(requestId, actor, decision, opts, { deployment: true });
+    return { request: await this.view(requestId) };
   }
 
-  @Transactional()
-  private async writeDecideDeployment(
+  /**
+   * Approves an `import` request, one approval of a request at a time (across replicas): an item
+   * of the entry's name that holds the requested version already (one hidden from the org, which
+   * is why the request was accepted) -> the org joins its `named` list at once, nothing imported;
+   * a staging linked by an earlier approval and not expired -> that staging again; otherwise the
+   * import is prepared and linked. The confirm of a staging adds the org to an item that exists by
+   * then (`PluginImport.commit`).
+   */
+  @WithLock({ key: "catalog-request-#{1}", ttl: 60_000, waitTimeout: 180_000 })
+  private async approveImport(
     actor: string,
     requestId: string,
-    decision: CatalogDecision,
     opts: RequestActorOpts,
-  ): Promise<void> {
-    const t = this.db;
+  ): Promise<{ request: CatalogRequestView; import?: MarketplaceImportResult }> {
+    const row = await this.pendingDeploymentRequest(actor, requestId);
+    if (row.marketplace_id === null || row.entry_name === null) {
+      throw new ApiError(
+        "catalog.request_invalid",
+        "The marketplace of this request was deleted; reject it",
+      );
+    }
+    const existing = await this.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", "v.item_id", "i.id")
+      .select("i.id")
+      .where("i.name", "=", row.entry_name)
+      .where("i.deleted_at", "is", null)
+      .where("v.version", "=", row.entry_version ?? "")
+      .executeTakeFirst();
+    if (existing) {
+      await this.writeDecision(requestId, actor, { approve: true }, opts, {
+        deployment: true,
+        grantItem: existing.id,
+      });
+      return { request: await this.view(requestId) };
+    }
+    if (row.staging_id !== null) {
+      const staged = await this.pluginImport.staged(row.staging_id).catch(() => undefined);
+      if (staged) {
+        return {
+          request: await this.view(requestId),
+          import: {
+            stagingId: staged.stagingId,
+            review: staged.review,
+            permissionsMismatch: staged.permissionsMismatch ?? null,
+          },
+        };
+      }
+    }
+    const prepared = await this.catalog.importFromMarketplace(
+      actor,
+      {
+        marketplaceId: row.marketplace_id,
+        name: row.entry_name,
+        ...(row.entry_version !== null && { version: row.entry_version }),
+      },
+      opts,
+    );
+    await this.linkStaging(actor, requestId, prepared.stagingId, opts);
+    return { request: await this.view(requestId), import: prepared };
+  }
+
+  /** A pending `access` / `import` request (the row locked; the super admin re-checked). */
+  @Transactional()
+  private async pendingDeploymentRequest(actor: string, requestId: string) {
     await this.adminLock.lockAndAuthorize(actor);
-    const row = await t
+    const row = await this.db
       .selectFrom("catalog_requests")
-      .select(["id", "org_id", "item_id", "stage", "status"])
+      .select(["kind", "status", "marketplace_id", "entry_name", "entry_version", "staging_id"])
       .where("id", "=", requestId)
+      .where("kind", "in", [...DEPLOYMENT_KINDS])
       .forUpdate()
       .executeTakeFirst();
-    if (row?.stage !== "deployment") throw requestNotFound();
+    if (!row) throw requestNotFound();
+    if (row.status !== "pending") throw alreadyDecided();
+    return row;
+  }
+
+  /** Links a still pending `import` request to its prepared staging. */
+  @Transactional()
+  private async linkStaging(
+    actor: string,
+    requestId: string,
+    stagingId: string,
+    opts: RequestActorOpts,
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor);
+    const row = await this.db
+      .selectFrom("catalog_requests")
+      .select(["org_id", "status", "entry_name"])
+      .where("id", "=", requestId)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (row.status !== "pending") throw alreadyDecided();
+    await this.db
+      .updateTable("catalog_requests")
+      .set({ staging_id: stagingId })
+      .where("id", "=", requestId)
+      .execute();
+    await audit(this.db, {
+      actorAccountId: actor,
+      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      orgId: row.org_id,
+      action: "catalog.request_import_prepared",
+      target: requestId,
+      detail: { name: row.entry_name, stagingId },
+    });
+  }
+
+  /**
+   * Writes a decision (the request row FOR UPDATE): org side (`orgId`: the org admin re-checked,
+   * `enable` only) or deployment side (the super admin re-checked, `access` / `import`). An
+   * approval of an `enable` request may find it approved already by the install it triggered.
+   */
+  @Transactional()
+  private async writeDecision(
+    requestId: string,
+    actor: string,
+    decision: CatalogDecision,
+    opts: RequestActorOpts,
+    side: { orgId: string } | { deployment: true; grantItem?: string },
+  ): Promise<void> {
+    const t = this.db;
+    if ("orgId" in side) await this.orgLock.lockAndAuthorize(side.orgId, actor, "catalog.decide");
+    else await this.adminLock.lockAndAuthorize(actor);
+    let q = t
+      .selectFrom("catalog_requests")
+      .select(["id", "org_id", "item_id", "kind", "status", "decided_by"])
+      .where("id", "=", requestId);
+    q =
+      "orgId" in side
+        ? q.where("org_id", "=", side.orgId).where("kind", "in", [...ORG_KINDS])
+        : q.where("kind", "in", [...DEPLOYMENT_KINDS]);
+    const row = await q.forUpdate().executeTakeFirst();
+    if (!row) throw requestNotFound();
     if (row.status !== "pending") {
-      throw new ApiError("catalog.request_decided", "This request has already been decided");
+      // The switch-on of this approval already resolved it (the install approves pending requests)
+      if (decision.approve && row.kind === "enable" && row.status === "approved") return;
+      throw alreadyDecided();
     }
-    if (decision === "approve") {
-      const item = await lockItem(t, row.item_id);
-      if (!item || item.deleted_at !== null || item.policy === "disabled") throw itemDisabled();
+    if (decision.approve && row.kind === "access" && row.item_id !== null) {
+      const item = await t
+        .selectFrom("catalog_items")
+        .select(["deleted_at", "disabled"])
+        .where("id", "=", row.item_id)
+        .executeTakeFirst();
+      if (!item || item.deleted_at !== null || item.disabled) throw itemDisabled();
       const org = await t
         .selectFrom("orgs")
         .select("deleted_at")
         .where("id", "=", row.org_id)
         .executeTakeFirst();
       if (!org || org.deleted_at !== null) throw requestNotFound();
-      await t
-        .insertInto("catalog_org_grants")
-        .values({ item_id: row.item_id, org_id: row.org_id, granted_by: actor })
-        .onConflict((oc) => oc.columns(["item_id", "org_id"]).doNothing())
-        .execute();
+      await this.scope.addOrg(actor, row.item_id, row.org_id, { ...opts, requestId });
+    }
+    // An `import` request whose entry is in the catalog already: the org joins that item's list
+    const grantItem = "grantItem" in side ? side.grantItem : undefined;
+    if (decision.approve && row.kind === "import" && grantItem !== undefined) {
+      await this.scope.addOrg(actor, grantItem, row.org_id, { ...opts, requestId });
     }
     await t
       .updateTable("catalog_requests")
       .set({
-        status: decision === "approve" ? "approved" : "rejected",
+        status: decision.approve ? "approved" : "rejected",
+        reason: decision.approve ? null : (decision.reason ?? null),
+        ...(grantItem !== undefined && { item_id: grantItem }),
         decided_by: actor,
         decided_at: sql<Date>`now()`,
       })
@@ -533,30 +619,54 @@ export class CatalogRequestsService {
       orgId: row.org_id,
       action: "catalog.request_decided",
       target: requestId,
-      detail: { itemId: row.item_id, decision, stage: "deployment" },
+      detail: {
+        itemId: row.item_id,
+        kind: row.kind,
+        decision: decision.approve ? "approve" : "reject",
+        ...(!decision.approve && decision.reason !== undefined && { reason: decision.reason }),
+      },
     });
   }
 
-  /** 企业管理员的申请列表（stage deployment；`status` 缺省 pending），新的在前。 */
+  /**
+   * The requester dismisses a decided request from the inbox (`POST /orgs/:orgId/
+   * catalog-requests/:id/dismiss`). Not the requester's decided request in this org ->
+   * `catalog.request_not_found`.
+   */
+  async dismiss(orgId: string, accountId: string, requestId: string): Promise<void> {
+    if (!UUID_RE.test(requestId)) throw requestNotFound();
+    const r = await this.db
+      .updateTable("catalog_requests")
+      .set({ dismissed_at: sql<Date>`now()` })
+      .where("id", "=", requestId)
+      .where("org_id", "=", orgId)
+      .where("requested_by", "=", accountId)
+      .where("status", "in", ["approved", "rejected"])
+      .where("dismissed_at", "is", null)
+      .executeTakeFirst();
+    if (r.numUpdatedRows === 0n) throw requestNotFound();
+  }
+
+  /** 超级管理员的申请列表（`access` / `import`；`status` 缺省 pending），新的在前。 */
   async listDeployment(q: { status?: CatalogRequestStatus } = {}): Promise<CatalogRequestView[]> {
     const rows = await this.baseQuery()
-      .where("r.stage", "=", "deployment")
+      .where("r.kind", "in", [...DEPLOYMENT_KINDS])
       .where("r.status", "=", q.status ?? "pending")
       .where("o.deleted_at", "is", null)
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    return rows.map(toView);
+    return this.toViews(rows);
   }
 
-  /** 待企业管理员处理的申请数（后台概览）。 */
+  /** 待超级管理员处理的申请数（后台概览）。 */
   async countPendingDeployment(): Promise<number> {
     const r = await this.db
       .selectFrom("catalog_requests as r")
       .innerJoin("orgs as o", "o.id", "r.org_id")
       .select(sql<string>`count(*)`.as("n"))
-      .where("r.stage", "=", "deployment")
+      .where("r.kind", "in", [...DEPLOYMENT_KINDS])
       .where("r.status", "=", "pending")
       .where("o.deleted_at", "is", null)
       .executeTakeFirstOrThrow();
@@ -564,8 +674,9 @@ export class CatalogRequestsService {
   }
 
   /**
-   * 收件箱：当前用户是本组织管理员（实时读角色）时，返回待他处理的成员申请（stage org、pending），新的在前；
-   * 否则为空。
+   * The inbox: when the account is an org admin of the org (the role read live), the members'
+   * pending `enable` requests and the pending `connector_setup` requests, newest first; otherwise
+   * none.
    */
   async listForOrgAdmin(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
     const m = await this.db
@@ -577,98 +688,210 @@ export class CatalogRequestsService {
     if (!m || !roleAtLeast(m.role, "admin")) return [];
     const rows = await this.baseQuery()
       .where("r.org_id", "=", orgId)
-      .where("r.stage", "=", "org")
+      .where("r.kind", "in", [...ORG_KINDS])
       .where("r.status", "=", "pending")
       .orderBy("r.created_at", "desc")
       .orderBy("r.id")
       .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    return rows.map(toView);
+    // A request on an item the org can no longer see (its scope hid it since) is left out, so
+    // nothing reveals the item's name to the org; a setup request of a deleted agent too
+    const ids = [...new Set(rows.flatMap((r) => (r.item_id !== null ? [r.item_id] : [])))];
+    const seen = await itemsSeenBy(this.db, orgId, ids);
+    return this.toViews(
+      rows.filter((r) =>
+        r.kind === "connector_setup"
+          ? r.agent_id !== null && r.agent_deleted_at === null
+          : r.item_id !== null && seen.has(r.item_id),
+      ),
+    );
   }
 
-  /** 本组织各条目最新的一条申请（组织目录列表用）。 */
-  async latestByItem(
-    orgId: string,
-  ): Promise<Map<string, { id: string; stage: CatalogRequestStage; status: string }>> {
-    const rows = await this.db
-      .selectFrom("catalog_requests")
-      .select(["id", "item_id", "stage", "status", "created_at"])
-      .where("org_id", "=", orgId)
-      .orderBy("created_at", "asc")
+  /** The inbox: the account's decided requests in the org it has not dismissed, newest first. */
+  async listDecidedForRequester(orgId: string, accountId: string): Promise<CatalogRequestView[]> {
+    const rows = await this.baseQuery()
+      .where("r.org_id", "=", orgId)
+      .where("r.requested_by", "=", accountId)
+      .where("r.status", "in", ["approved", "rejected"])
+      .where("r.dismissed_at", "is", null)
+      .orderBy("r.decided_at", "desc")
+      .orderBy("r.id")
+      .limit(CATALOG_REQUESTS_LIST_MAX)
       .execute();
-    const out = new Map<string, { id: string; stage: CatalogRequestStage; status: string }>();
-    for (const r of rows) out.set(r.item_id, { id: r.id, stage: r.stage, status: r.status });
-    return out;
+    return this.toViews(rows);
   }
 
   async view(id: string): Promise<CatalogRequestView> {
     const row = await this.baseQuery().where("r.id", "=", id).executeTakeFirst();
     if (!row) throw requestNotFound();
-    return toView(row);
+    return (await this.toViews([row]))[0] as CatalogRequestView;
+  }
+
+  /** The views of `rows`, with the display names of the connector templates setup requests name. */
+  private async toViews(rows: RequestRow[]): Promise<CatalogRequestView[]> {
+    const ids = new Set<string>();
+    for (const r of rows) {
+      if (r.kind !== "connector_setup") continue;
+      const def = r.agent_definition as Pick<AgentDefinition, "pendingConnectors"> | null;
+      for (const c of def?.pendingConnectors ?? []) {
+        if ("template" in c.source && UUID_RE.test(c.source.template)) ids.add(c.source.template);
+      }
+    }
+    const names = new Map<string, LocalizedName | null>();
+    if (ids.size > 0) {
+      const found = await this.db
+        .selectFrom("platform_connector_templates")
+        .select(["id", "file"])
+        .where("id", "in", [...ids])
+        .execute();
+      for (const t of found) {
+        const dn = (t.file as { displayName?: LocalizedName } | null)?.displayName;
+        names.set(t.id, dn ?? null);
+      }
+    }
+    return rows.map((r) => toView(r, names));
   }
 
   private baseQuery() {
-    return this.db
-      .selectFrom("catalog_requests as r")
-      .innerJoin("catalog_items as i", "i.id", "r.item_id")
-      .innerJoin("orgs as o", "o.id", "r.org_id")
-      .leftJoin("accounts as a", "a.id", "r.requested_by")
-      .select([
-        "r.id",
-        "r.org_id",
-        "o.name as org_name",
-        "r.item_id",
-        "i.name",
-        "i.display_name",
-        "r.version",
-        "r.stage",
-        "r.status",
-        "r.note",
-        "r.requested_by",
-        "a.display_name as requested_by_name",
-        "r.decided_by",
-        "r.decided_at",
-        "r.org_decided_by",
-        "r.org_decided_at",
-        "r.created_at",
-      ]);
+    return (
+      this.db
+        .selectFrom("catalog_requests as r")
+        .leftJoin("catalog_items as i", "i.id", "r.item_id")
+        .innerJoin("orgs as o", "o.id", "r.org_id")
+        .leftJoin("accounts as a", "a.id", "r.requested_by")
+        // a connector_setup request's agent and its current version (name, pending connectors)
+        .leftJoin("agents as ag", "ag.id", "r.agent_id")
+        .leftJoin("agent_versions as av", (j) =>
+          j.onRef("av.agent_id", "=", "ag.id").onRef("av.version", "=", "ag.current_version"),
+        )
+        .select([
+          "r.agent_id",
+          "r.pending_keys",
+          "ag.deleted_at as agent_deleted_at",
+          "av.definition as agent_definition",
+          "r.id",
+          "r.org_id",
+          "o.name as org_name",
+          "r.kind",
+          "r.item_id",
+          "i.name",
+          "i.display_name",
+          "r.marketplace_id",
+          "r.entry_name",
+          "r.entry_version",
+          "r.status",
+          "r.note",
+          "r.reason",
+          "r.requested_by",
+          "a.display_name as requested_by_name",
+          "r.decided_by",
+          "r.decided_at",
+          "r.staging_id",
+          "r.created_at",
+        ])
+    );
   }
 }
 
-function toView(r: {
+/** The view fields of a `connector_setup` request (ruling P4-T6-5); null for other kinds. */
+function setupFields(
+  r: {
+    kind: CatalogRequestKind;
+    agent_id: string | null;
+    pending_keys: string[] | null;
+    agent_deleted_at: Date | null;
+    agent_definition: unknown;
+  },
+  templateNames: ReadonlyMap<string, LocalizedName | null>,
+): Pick<CatalogRequestView, "agent" | "connectors"> {
+  if (r.kind !== "connector_setup" || r.agent_id === null) return { agent: null, connectors: null };
+  const def = (r.agent_definition ?? null) as Pick<
+    AgentDefinition,
+    "name" | "pendingConnectors"
+  > | null;
+  const pending = new Map((def?.pendingConnectors ?? []).map((c) => [c.key, c]));
+  const connectors: SetupRequestConnector[] = [];
+  for (const key of r.pending_keys ?? []) {
+    const c = pending.get(key);
+    if (c === undefined) continue;
+    const src = c.source;
+    connectors.push({
+      key,
+      label: c.label,
+      kind: "template" in src ? "template" : "needs",
+      source:
+        "template" in src
+          ? { template: { id: src.template, displayName: templateNames.get(src.template) ?? null } }
+          : {
+              needs: {
+                protocol: src.needs.protocol,
+                endpoint: src.needs.endpoint,
+                tools: [...src.needs.tools],
+              },
+            },
+      tools: c.tools !== undefined && c.tools.length > 0 ? [...c.tools] : null,
+      // jsonb keeps no key order: sorted
+      policies: Object.keys(c.policies ?? {}).sort(),
+    });
+  }
+  return {
+    agent: { id: r.agent_id, name: def?.name ?? "", deleted: r.agent_deleted_at !== null },
+    connectors,
+  };
+}
+
+type RequestRow = {
   id: string;
   org_id: string;
   org_name: string;
-  item_id: string;
-  name: string;
+  kind: CatalogRequestKind;
+  agent_id: string | null;
+  pending_keys: string[] | null;
+  agent_deleted_at: Date | null;
+  agent_definition: unknown;
+  item_id: string | null;
+  name: string | null;
   display_name: LocalizedName | null;
-  version: string | null;
-  stage: CatalogRequestStage;
+  marketplace_id: string | null;
+  entry_name: string | null;
+  entry_version: string | null;
   status: CatalogRequestStatus;
   note: string;
+  reason: string | null;
   requested_by: string | null;
   requested_by_name: string | null;
   decided_by: string | null;
   decided_at: Date | null;
-  org_decided_by: string | null;
-  org_decided_at: Date | null;
+  staging_id: string | null;
   created_at: Date;
-}): CatalogRequestView {
+};
+
+function toView(
+  r: RequestRow,
+  templateNames: ReadonlyMap<string, LocalizedName | null>,
+): CatalogRequestView {
   return {
     id: r.id,
     orgId: r.org_id,
     orgName: r.org_name,
-    item: { id: r.item_id, name: r.name, displayName: r.display_name },
-    version: r.version,
-    stage: r.stage,
+    kind: r.kind,
+    item:
+      r.item_id !== null && r.name !== null
+        ? { id: r.item_id, name: r.name, displayName: r.display_name }
+        : null,
+    entry:
+      r.entry_name !== null
+        ? { marketplaceId: r.marketplace_id, name: r.entry_name, version: r.entry_version }
+        : null,
+    ...setupFields(r, templateNames),
     status: r.status,
     note: r.note,
+    reason: r.reason,
     requestedBy: r.requested_by,
     requestedByName: r.requested_by_name,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at?.toISOString() ?? null,
-    orgDecidedBy: r.org_decided_by,
-    orgDecidedAt: r.org_decided_at?.toISOString() ?? null,
+    stagingId: r.status === "pending" ? r.staging_id : null,
     createdAt: r.created_at.toISOString(),
   };
 }

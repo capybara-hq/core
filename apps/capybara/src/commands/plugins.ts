@@ -27,7 +27,8 @@ const withCatalog = <T>(
   fn: (cli: CatalogCli) => Promise<T>,
 ) => withOpened(log, env, (config) => openCatalogCli(config, log), fn);
 
-/** `capybara plugins list`: the catalog's items with their latest version, components and policy. */
+/** `capybara plugins list`: the catalog's items with their latest version, components and scope
+ * (with `builtin` / `disabled` markers). */
 export async function runPluginsList(
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
@@ -45,7 +46,7 @@ export async function runPluginsList(
         io.stdout.write("No plugins in the catalog.\n");
         return 0;
       }
-      const lines = [["NAME", "VERSION", "COMPONENTS", "POLICY"].join("\t")];
+      const lines = [["NAME", "VERSION", "COMPONENTS", "SCOPE"].join("\t")];
       for (const item of items) {
         const { versions } = await cli.catalog.get(item.id);
         const m = versions.find((v) => v.version === item.latestVersion)?.manifest;
@@ -56,8 +57,13 @@ export async function runPluginsList(
             ? [count(m.connectorTemplates.length, "connector template")]
             : []),
         ];
+        const scope = [
+          item.scope,
+          ...(item.builtin ? ["builtin"] : []),
+          ...(item.disabled ? ["disabled"] : []),
+        ];
         lines.push(
-          [item.name, item.latestVersion, components.join(", ") || "-", item.policy].join("\t"),
+          [item.name, item.latestVersion, components.join(", ") || "-", scope.join(" ")].join("\t"),
         );
       }
       io.stdout.write(`${lines.join("\n")}\n`);
@@ -226,16 +232,16 @@ export function describeReview(r: PluginReview): string[] {
 
 /**
  * `capybara plugins import <file.tgz | npm:<name>[@<ver>] | git:<url>[#<ref>][:<path>]>
- * [--deploy-extension] [--yes]`: prepares the import (reads and checks the whole package or git
+ * [--yes]`: prepares the import (reads and checks the whole package or git
  * folder, stages it; git goes through the same network rules as the API, `marketplaces.*`), prints
  * the review (source, digest, provenance, extension permissions, skills, connector templates,
- * dependencies) and, after `--yes` or an interactive yes, confirms it.
- * `--deploy-extension` also installs and enables the plugin's extension on the deployment. Acts as the
+ * dependencies) and, after `--yes` or an interactive yes, confirms it, which also installs and
+ * enables the plugin's extension on the deployment. Acts as the
  * CLI operator (no account, like `capybara extensions install`). Exit code: 0 / 1 (failure, not
  * confirmed, or the extension deploy failed).
  */
 export async function runPluginsImport(
-  opts: { target: string; yes?: boolean; deployExtension?: boolean },
+  opts: { target: string; yes?: boolean },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: PluginsIo = defaultIo(),
@@ -272,9 +278,10 @@ export async function runPluginsImport(
       }
       const { item, deploy } = await cli.imports.confirm(null, prepared.stagingId, {
         reviewHash: prepared.review.reviewHash,
-        deployExtension: opts.deployExtension === true,
       });
       io.stdout.write(`Imported ${item.name} ${item.latestVersion} into the catalog.\n`);
+      // The orgs its scope turns it on in converge (as the admin console's confirm does)
+      await cli.enqueueScopeSync(item);
       if (deploy === null) return 0;
       if (deploy.result === "enabled") {
         await cli.publishChanged(deploy.name);

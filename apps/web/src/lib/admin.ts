@@ -1,7 +1,7 @@
 import { apiFetch } from "./api";
 
 /**
- * 企业管理员后台（`/api/v1/admin/*`，内核 `admin/admin.controller.ts`）。只有企业管理员能调用，
+ * 超级管理员后台（`/api/v1/admin/*`，内核 `admin/admin.controller.ts`）。只有超级管理员能调用，
  * 界面上的隐藏只是方便，最终由内核判定。
  */
 
@@ -9,7 +9,7 @@ import { apiFetch } from "./api";
 export interface AdminOverview {
   /** 需要处理的插件：待批准、待配置、失败、依赖缺失、副本不一致。 */
   extensionsNeedingAction: number;
-  /** 待处理的企业目录申请（目录申请上线前恒为 0）。 */
+  /** 待处理的平台目录申请（目录申请上线前恒为 0）。 */
   catalogRequestsPending: number;
   orgs: number;
   accounts: number;
@@ -20,7 +20,7 @@ export interface AdminAccount {
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
-  isEnterpriseAdmin: boolean;
+  isSuperAdmin: boolean;
   createdAt: string;
 }
 
@@ -57,7 +57,7 @@ export type CustomPolicy = "allow" | "deny";
 
 /** 部署设置（`GET /admin/settings`）。 */
 export interface DeploymentSettings {
-  orgCreation: "anyone" | "enterprise_admin";
+  orgCreation: "anyone" | "super_admin";
   runConcurrencyOverrides: Record<string, number>;
   priceCurrency: string;
   sandboxLimitOverrides: Record<string, SandboxLimitOverride>;
@@ -84,10 +84,10 @@ export interface NewAccountInput {
   password: string;
   displayName: string;
   email?: string;
-  enterpriseAdmin: boolean;
+  superAdmin: boolean;
 }
 
-export type AccountPatch = Partial<Pick<AdminAccount, "status" | "isEnterpriseAdmin">>;
+export type AccountPatch = Partial<Pick<AdminAccount, "status" | "isSuperAdmin">>;
 
 /** 沙箱 cpu（核）与内存（MB）的范围，与内核部署设置的校验一致。 */
 export const SANDBOX_CPU = { min: 0.25, max: 64 } as const;

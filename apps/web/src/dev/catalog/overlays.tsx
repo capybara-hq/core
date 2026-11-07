@@ -80,7 +80,7 @@ function DialogDemo() {
           <Text variant="small" tone="muted">
             {RERUN_IDS}
           </Text>
-          <Checkbox checked={latest} onChange={setLatest} label="使用最新的 Agent 版本" />
+          <Checkbox checked={latest} onChange={setLatest} label="使用最新的智能体版本" />
         </Stack>
       </Dialog>
     </Backdrop>
@@ -97,7 +97,7 @@ function DangerDemo() {
       <DangerConfirm
         open={open}
         onOpenChange={setOpen}
-        title="删除 Agent"
+        title="删除智能体"
         description="此操作不可撤销。历史运行记录保留 30 天。"
         confirmName="support-triage"
         confirmLabel="删除"
@@ -253,7 +253,9 @@ function ToastDemo() {
     fired.current = true;
     fire();
   });
-  return <Backdrop label="Toast — 右下堆叠；4s 消失；错误需手动关" onOpen={fire} />;
+  return (
+    <Backdrop label="Toast — 顶部居中，向下堆叠，最新在上；4s 消失；错误需手动关" onOpen={fire} />
+  );
 }
 
 /** `/dev/ui/overlays/*`：每条路由打开一种浮层。 */

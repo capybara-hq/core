@@ -10,7 +10,7 @@
 # Needs Docker Compose v2.23 or newer (inline `configs: content:`).
 #
 # Services: postgres (17; 15 or newer is required), valkey, seaweedfs + seaweedfs-s3 (S3 for the
-# object-store-s3 plugin, proxied by web on its own origin) and createbuckets; init (one-shot: migrate, bootstrap the plugins bootstrap.json pins, downloaded from npm on the first start, then create the enterprise admin if none exists); api,
+# object-store-s3 plugin, proxied by web on its own origin) and createbuckets; init (one-shot: migrate, bootstrap the plugins bootstrap.json pins, downloaded from npm on the first start, then create the super admin if none exists); api,
 # worker and gateway (the three kernel roles, one image each); web (the only published port).
 # Scale workers with `docker compose up -d --scale worker=N`.
 #
@@ -22,7 +22,7 @@
 # Secrets: nothing secret is written here; values come from .env (POSTGRES_PASSWORD,
 # CAPYBARA_MASTER_KEY, CAPYBARA_S3_*) and from the admin password file.
 #
-# Enterprise admin: with CAPYBARA_INIT_ADMIN_PASSWORD_FILE set in .env, init creates the admin
+# Super admin: with CAPYBARA_INIT_ADMIN_PASSWORD_FILE set in .env, init creates the admin
 # (login CAPYBARA_INIT_ADMIN_LOGIN) on the first start and skips on every later start. Without it,
 # init only migrates and bootstraps, and the admin is created on the web setup page, which then requires
 # CAPYBARA_SETUP_TOKEN from .env (when set). With the password file the token is moot: setup is
@@ -172,7 +172,7 @@ services:
     restart: "no"
 
   # One-shot, on every `up`: migrate (fails on PostgreSQL older than 15), bootstrap, then create the
-  # enterprise admin if the password file exists and no admin exists yet. A failure here keeps
+  # super admin if the password file exists and no admin exists yet. A failure here keeps
   # api, worker and gateway from starting. The first bootstrap downloads the pinned plugins from
   # npm (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror, in a compose.override.yaml); offline, mount
   # a host directory holding the pinned tgz files (any names) at /app/bootstrap, e.g.
@@ -213,14 +213,14 @@ services:
         if [ -f "$$pw" ]; then
           exec node /app/bin/capybara.mjs admin create --if-none --login "$$CAPYBARA_INIT_ADMIN_LOGIN" --display-name "$$CAPYBARA_INIT_ADMIN_NAME" --password-file "$$pw"
         fi
-        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set or not a regular file); create the enterprise admin on the web setup page (enter CAPYBARA_SETUP_TOKEN from .env as the setup token)"
+        echo "init: no admin password file (CAPYBARA_INIT_ADMIN_PASSWORD_FILE is not set or not a regular file); create the super admin on the web setup page (enter CAPYBARA_SETUP_TOKEN from .env as the setup token)"
 
   api:
     <<: *kernel
     image: *api-image
     environment:
       <<: *kernel-env
-      # The web setup page (creating the first enterprise admin) asks for this token, so whoever
+      # The web setup page (creating the first super admin) asks for this token, so whoever
       # reaches the port first can't take the deployment over. Empty: no token is required.
       CAPYBARA_AUTH__SETUP_TOKEN: ${CAPYBARA_SETUP_TOKEN:-}
       # Webhook inbound (optional): the public https origin that reaches the gateway's webhook
@@ -327,7 +327,7 @@ services:
   # the egress proxy image, then exit.
   sandbox-image:
     profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#08e336dafe124615622534683887120c81ec416b:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#755d7575f62b56becbeda993e06df70ceaa4535f:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -335,7 +335,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#08e336dafe124615622534683887120c81ec416b:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#755d7575f62b56becbeda993e06df70ceaa4535f:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

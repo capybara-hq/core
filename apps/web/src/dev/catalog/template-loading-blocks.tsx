@@ -10,16 +10,19 @@ import {
   DetailPage,
   Field,
   FormSection,
-  Grid,
   type HeaderAction,
   InboxPage,
   Input,
+  ItemList,
+  ItemListItem,
   KeyValue,
   ListPage,
+  ObjectCard,
   ObjectList,
   ObjectRow,
   OverviewPage,
   RadioGroup,
+  Select,
   SettingsPage,
   SpanWaterfall,
   Stack,
@@ -30,12 +33,13 @@ import {
 } from "@capybara-hq/design";
 import { LIST_PAGE_FIXTURE, PAGE_HEADER_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
+import { AGENT_CARDS } from "./card-grid-blocks";
 import { TRACE_SPANS } from "./fixtures";
 import { RefBlock } from "./ref-block";
 
 // The loading states of the Detail, Overview and Inbox templates (spec §5.2, §5.6, §5.7). Each
 // template's `-default` and `-loading` blocks come from one fixture (the same header, tabs,
-// filters, inspector and metrics), so the part boxes of the two can be compared. The box is the
+// filters, facts, inspector and metrics), so the part boxes of the two can be compared. The box is the
 // 1280-wide content area without the sidebar.
 
 const W = 1280;
@@ -74,7 +78,7 @@ const PROPERTIES = [
   { k: "可见性", v: "组织" },
 ];
 
-const inspector = <KeyValue rows={PROPERTIES} />;
+const facts = <KeyValue rows={PROPERTIES} />;
 
 const sections: ReactNode = (
   <>
@@ -104,17 +108,12 @@ function detailBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="template-detail-default" width={W} height={H}>
-        <DetailPage header={DETAIL_HEADER} tabs={TABS} inspector={inspector}>
+        <DetailPage header={DETAIL_HEADER} tabs={TABS} facts={facts}>
           {sections}
         </DetailPage>
       </RefBlock>
       <RefBlock id="template-detail-loading" width={W} height={H}>
-        <DetailPage
-          header={loadingHeader(PATH, 2)}
-          tabs={TABS}
-          inspector={inspector}
-          loading={{ inspector: true }}
-        />
+        <DetailPage header={loadingHeader(PATH, 2)} tabs={TABS} loading={{ facts: true }} />
       </RefBlock>
       {/* A tab with a known static structure: facts, actions and a table (spec §5.2). */}
       <RefBlock id="template-detail-content" width={W} height={H}>
@@ -184,25 +183,10 @@ function overviewBlocks(): ReactNode {
           loading={{ stats: 4, sections: 2 }}
         />
       </RefBlock>
-      {/* The home overview's shape: a main-side grid of two card stacks (spec §5.6). */}
-      <RefBlock id="template-overview-main-side" width={W} height={H}>
-        <OverviewPage header={OVERVIEW_HEADER}>
-          <Grid columns="main-side">
-            <Stack gap={16}>{sections}</Stack>
-            <Stack gap={16}>{sections}</Stack>
-          </Grid>
-        </OverviewPage>
-      </RefBlock>
-      <RefBlock id="template-overview-loading-main-side" width={W} height={H}>
-        <OverviewPage
-          header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
-          loading={{ stats: 0, mainSide: { main: 2, side: 2 } }}
-        />
-      </RefBlock>
       {/* A note that does not depend on the data stays while the numbers load (spec §5.6). */}
       <RefBlock id="template-overview-keep" width={W} height={H}>
         <OverviewPage header={{ ...OVERVIEW_HEADER, metrics: METRICS }}>
-          <Callout tone="info">企业管理员看不到任何对话内容。</Callout>
+          <Callout tone="info">超级管理员看不到任何对话内容。</Callout>
         </OverviewPage>
       </RefBlock>
       <RefBlock id="template-overview-loading-keep" width={W} height={H}>
@@ -210,7 +194,7 @@ function overviewBlocks(): ReactNode {
           header={loadingHeader(PATH.slice(0, 1), 1, OVERVIEW_HEADER.description)}
           loading={{ stats: METRICS.length, keep: true }}
         >
-          <Callout tone="info">企业管理员看不到任何对话内容。</Callout>
+          <Callout tone="info">超级管理员看不到任何对话内容。</Callout>
         </OverviewPage>
       </RefBlock>
     </>
@@ -391,21 +375,21 @@ function settingsBlocks(): ReactNode {
               <Text variant="small" tone="muted">
                 权限
               </Text>
-              <Stack gap={12}>
+              {/* Rows split by hairlines inside the form card, never cards (spec §1). */}
+              <ItemList label="权限">
                 {["存储", "网络"].map((g) => (
-                  <Card key={g}>
-                    <Stack gap={4}>
-                      <Text>{g}</Text>
-                      <Text variant="small" tone="muted">
-                        · read
-                      </Text>
-                      <Text variant="small" tone="muted">
-                        · write
-                      </Text>
-                    </Stack>
-                  </Card>
+                  <ItemListItem
+                    key={g}
+                    title={g}
+                    meta={
+                      <>
+                        <span>· read</span>
+                        <span>· write</span>
+                      </>
+                    }
+                  />
                 ))}
-              </Stack>
+              </ItemList>
             </Stack>
           </FormSection>
         </SettingsPage>
@@ -427,7 +411,7 @@ function settingsBlocks(): ReactNode {
                 description: "每个沙箱的 CPU 与内存。",
                 fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
               },
-              { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
+              { fields: [{ control: "switch" }, { control: "text" }, { control: "item-group" }] },
             ],
           }}
         />
@@ -463,9 +447,64 @@ function settingsBlocks(): ReactNode {
           loading={{ cards: { shape: { lines: 1, list: 2, actions: 1 } } }}
         />
       </RefBlock>
+      {/* A section that lists items (the model purposes): rows in a flush card, never cards. */}
+      <RefBlock id="template-settings-items" width={W} height={H}>
+        <SettingsPage header={SETTINGS_HEADER} nav={SETTINGS_NAV} activeNav="org">
+          <FormSection id="purposes" title="模型用途" description="每个用途用哪个模型。" flush>
+            <ItemList label="用途" inset="flush">
+              {PURPOSES.map((p) => (
+                <ItemListItem
+                  key={p.code}
+                  title={p.title}
+                  code={p.code}
+                  meta={p.lines.map((l) => (
+                    <Text key={l} variant="small" tone="muted">
+                      {l}
+                    </Text>
+                  ))}
+                >
+                  <Field label="模型">
+                    <Select value="" onChange={noop} options={[{ value: "", label: "使用默认" }]} />
+                  </Field>
+                </ItemListItem>
+              ))}
+            </ItemList>
+          </FormSection>
+        </SettingsPage>
+      </RefBlock>
+      <RefBlock id="template-settings-loading-items" width={W} height={H}>
+        <SettingsPage
+          header={{ ...SETTINGS_HEADER, title: "" }}
+          nav={SETTINGS_NAV}
+          activeNav="org"
+          loading={{
+            sections: [
+              {
+                title: "模型用途",
+                description: "每个用途用哪个模型。",
+                items: PURPOSES.map((p) => ({
+                  lines: p.lines.length,
+                  lineSize: "small" as const,
+                  field: { control: "select" as const },
+                })),
+              },
+            ],
+          }}
+        />
+      </RefBlock>
     </>
   );
 }
+
+/** The purposes of the `items` blocks: a title, its mono id and its small lines. */
+const PURPOSES = [
+  { title: "评测", code: "eval", lines: ["由内核声明"] },
+  {
+    title: "子智能体 · 快",
+    code: "subagent_fast",
+    lines: ["由内核声明", "部署默认：deepseek-chat"],
+  },
+];
 
 const WIZARD_HEADER = { path: PATH.slice(0, 1), title: "接入模型" };
 const WIZARD_STEPS = ["选择供应商", "填写凭据", "测试连接", "完成"];
@@ -579,14 +618,14 @@ export function listLoadingBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="template-list-default-objects" width={W} height={H}>
-        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents">
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="智能体">
           {AGENTS.map((name) => (
             <ObjectRow key={name} mark={{ text: name }} name={name} description="检索资料并整理" />
           ))}
         </ListPage>
       </RefBlock>
       <RefBlock id="template-list-loading-objects" width={W} height={H}>
-        <ListPage header={LIST_HEADER} variant="objects" listLabel="Agents" loading />
+        <ListPage header={LIST_HEADER} variant="objects" listLabel="智能体" loading />
       </RefBlock>
       {/* A list page whose content is its own sections (spec §5.1 `keep`). */}
       <RefBlock id="template-list-keep" width={W} height={H}>
@@ -602,6 +641,18 @@ export function listLoadingBlocks(): ReactNode {
         <ListPage header={LIST_HEADER} loading={{ keep: true }}>
           <FormSection id="a" title="内置市场" description="官方市场" loading={{ fields: 1 }} />
         </ListPage>
+      </RefBlock>
+      {/* Cards on the page ground (spec §6.34, ruling P4-15): the workspace 智能体 tab. */}
+      <RefBlock id="template-list-cards" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="cards" listLabel="智能体">
+          {AGENT_CARDS.map((c, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed catalog cards
+            <ObjectCard key={i} {...c} />
+          ))}
+        </ListPage>
+      </RefBlock>
+      <RefBlock id="template-list-loading-cards" width={W} height={H}>
+        <ListPage header={LIST_HEADER} variant="cards" listLabel="智能体" loading />
       </RefBlock>
     </>
   );

@@ -520,6 +520,21 @@ describe("runModelStep", () => {
     expect(deltas.filter((d) => d.kind === "step_reset")).toHaveLength(1);
   });
 
+  it("a step an earlier execution already sent to the model starts with step_reset; a fresh one does not", async () => {
+    // an earlier execution streamed part of step 1 and ended without its assistant_message
+    await say("slowfail:1:partial text");
+    const first = collector();
+    expect(await runErrorCode(step({ sink: first.sink }))).toBe("model.invalid_request");
+    expect(first.deltas[0]?.kind).toBe("text");
+    expect(first.deltas.some((d) => d.kind === "step_reset")).toBe(false);
+    // a new execution of the same step: clients drop the old draft before the offset-0 deltas
+    const again = collector();
+    expect(await runErrorCode(step({ sink: again.sink }))).toBe("model.invalid_request");
+    expect(again.deltas[0]).toEqual({ kind: "step_reset", runId, step: 1 });
+    expect(again.deltas.filter((d) => d.kind === "step_reset")).toHaveLength(1);
+    expect(again.deltas.slice(1).some((d) => d.kind === "text")).toBe(true);
+  });
+
   it("retryAfterMs 超过上限（10s）→ 跳过同模型重试，直接切兜底", async () => {
     stubImpl = stub([stubInfo("limited"), stubInfo("ok")], (req) => {
       if (req.model === "limited") {

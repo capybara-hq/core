@@ -21,7 +21,7 @@ import { orgSettingsFor } from "../helpers/identity.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
 /**
- * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：企业管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
+ * 组织级沙箱 cpu / 内存（C19 / Ruling M16）：超级管理员在部署设置 `sandboxLimitOverrides` 里按组织覆盖，
  * 创建沙箱时生效（只影响之后新建的）；组织设置 GET 只读地带回实际生效值与来源。
  */
 
@@ -106,7 +106,7 @@ async function newConversation(org = orgId): Promise<string> {
   return id;
 }
 
-/** 直接写部署设置（等同企业管理员 PUT /admin/settings 的结果）。 */
+/** 直接写部署设置（等同超级管理员 PUT /admin/settings 的结果）。 */
 const setOverrides = (value: unknown) =>
   sql`INSERT INTO capybara.deployment_settings (key, value)
     VALUES ('sandboxLimitOverrides', ${JSON.stringify(value)}::jsonb)

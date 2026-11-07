@@ -40,7 +40,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Phase D acceptance (plan Task 12), end to end on one kernel: an enterprise admin imports the
+ * Phase D acceptance (plan Task 12), end to end on one kernel: a super admin imports the
  * `commands-demo` Claude Code plugin (a checked-in fixture on a local fake git server, no network)
  * and an org installs it; an agent selects all its skills. The model's catalog lists the command
  * `fix-issue` and the forked `review`, never the manual-only `manual-script`; the model loads
@@ -133,7 +133,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
@@ -216,7 +216,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
     const confirmed = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-      payload: { reviewHash: review.reviewHash, deployExtension: false },
+      payload: { reviewHash: review.reviewHash },
     });
     expect(confirmed.statusCode, confirmed.body).toBe(201);
     state.itemId = confirmed.json().item.id as string;

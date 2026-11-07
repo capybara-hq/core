@@ -187,6 +187,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
           return null;
         },
       },
+      { run: async (id) => void calls.push(["owned-cleanup", id]) },
       {
         runNow: async (name) => {
           if (name !== "sandbox-suspend-idle") return false;
@@ -205,6 +206,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     );
     await processor.process(job("directory-sync", { orgId: "o" }));
     await processor.process(job("bg-wake", { conversationId: "c2" }));
+    await processor.process(job("owned-plugin-cleanup", { itemId: "i1" }));
     await processor.process(job("sandbox-suspend-idle", {}));
     await processor.process(job("no-such-job", {}));
     expect(calls).toEqual([
@@ -213,6 +215,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
       ["wake", "c2"],
+      ["owned-cleanup", "i1"],
       ["periodic", "sandbox-suspend-idle"],
     ]);
     expect(warned).toEqual([

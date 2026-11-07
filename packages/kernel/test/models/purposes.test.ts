@@ -25,7 +25,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * 模型用途映射（T6 / C9）：内核用途 `eval` 与插件 `permissions.models` 声明的用途；部署默认（企业管理员）+
+ * 模型用途映射（T6 / C9）：内核用途 `eval` 与插件 `permissions.models` 声明的用途；部署默认（超级管理员）+
  * 组织覆盖（组织管理员，`org.models.manage`）；`effective` 先取组织覆盖、再取部署默认；未映射 → 409。
  */
 
@@ -76,7 +76,7 @@ beforeEach(async () => {
       login: "ent",
       password: PW,
       displayName: "E",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   const mk = async (login: string) =>
@@ -360,7 +360,7 @@ describe("chat", () => {
 });
 
 describe("权限", () => {
-  it("部署级端点只给企业管理员；组织端点要 org.models.manage（admin 起）", async () => {
+  it("部署级端点只给超级管理员；组织端点要 org.models.manage（admin 起）", async () => {
     for (const req of [owner, admin, alice]) {
       expect((await req({ method: "GET", url: adminUrl() })).statusCode).toBe(403);
       expect(

@@ -2,6 +2,8 @@ import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
+import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
+import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
@@ -33,7 +35,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * The one consumer of `cap-kernel-maintenance` (decision R11 of the Nest kernel spec): dispatches
  * each one-off job by name to its domain (`wait-timeout` → {@link Waits}, `sandbox-destroy-for` →
  * {@link SandboxService}, `drift-connector` → {@link ToolDrift}, `directory-sync` →
- * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link DirectorySync}, `bg-wake` → {@link RunQueue.ensureRun}, `owned-plugin-cleanup` →
+ * {@link OwnedPluginCleanup}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -47,6 +50,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunQueue) private readonly runs: Pick<RunQueue, "ensureRun">,
+    @Inject(OwnedPluginCleanup) private readonly ownedCleanup: Pick<OwnedPluginCleanup, "run">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
@@ -96,6 +100,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await this.runs.ensureRun(conversationId, { wakeRetry: (retry ?? 0) + 1 });
         return;
       }
+      // a removed org-owned plugin's extension (plugin scope phase 3, P3-20)
+      case OWNED_PLUGIN_CLEANUP_JOB:
+        await this.ownedCleanup.run((job.data as OwnedPluginCleanupData).itemId);
+        return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
         this.log.warn("unknown maintenance job", { name: job.name, jobId: job.id });
@@ -127,6 +135,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     SandboxModule,
     ToolsModule,
     OrgsModule,
+    // the removed org plugins' cleanup and its daily sweep (worker-only through this module)
+    OwnedPluginCleanupModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

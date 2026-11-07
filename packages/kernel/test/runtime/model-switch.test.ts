@@ -5,6 +5,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
@@ -346,11 +347,7 @@ describe("a queued message carries its model / effort pick (final review I1)", {
   timeout: 60_000,
 }, () => {
   const enqueue = (conv: string, payload: Record<string, unknown>) =>
-    owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/${conv}/queue`,
-      payload,
-    });
+    seedQueued(k.app, orgId, conv, ownerId, payload as unknown as Parameters<typeof seedQueued>[4]);
 
   it("dispatch writes model_switched before the queued user_message; the run uses the pick", async () => {
     const conv = await createConv(owner, orgId, agentId);

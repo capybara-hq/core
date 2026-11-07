@@ -20,6 +20,10 @@ type HeaderButton = {
   icon?: IconName;
   variant: "primary" | "secondary" | "default";
   shortcut?: string;
+  /** Its call is running: the Button's loading state (spinner, `aria-busy`, disabled). */
+  loading?: boolean;
+  /** Another action's call is running (spec §6.17: never a click that seems to do nothing). */
+  disabled?: boolean;
 };
 
 /** A button (onSelect) or a link (href), never both; a `more-horizontal` menu is its own kind. */
@@ -90,9 +94,20 @@ export function assertHeader(p: PageHeaderProps): void {
 const shown = (v: React.ReactNode) => v != null && v !== false;
 
 /**
+ * Whether the header draws its tab row (row 4, spec §4.2): tabs, the search, or tab placeholders
+ * while loading. The one place this is decided: the PageHeader draws the row by it, and the
+ * template head picks its head-to-content gap by it (spec §4.2 "Head rhythm").
+ */
+export function hasTabRow(p: PageHeaderProps): boolean {
+  return (p.tabs?.length ?? 0) > 0 || p.search !== undefined || (p.loading?.tabs ?? 0) > 0;
+}
+
+/**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
  * description, actions on the right. No line, no ground. Below 640 the actions other than the
- * primary fold into a `more-horizontal` menu.
+ * primary fold into a `more-horizontal` menu. The vertical rhythm is the head tokens (spec §4.2
+ * "Head rhythm"): `layout.head-path` between the path and the title row, `layout.head-description`
+ * between the title and the description, `layout.head-tabs` above the notice and the tab row.
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
@@ -123,7 +138,13 @@ export function PageHeader(p: PageHeaderProps) {
     if (isPrimary(a)) continue;
     if ("menu" in a) folded.push(...a.menu);
     else if (a.href !== undefined) folded.push({ label: a.label, href: a.href });
-    else folded.push({ label: a.label, onSelect: () => a.onSelect?.() });
+    else {
+      folded.push({
+        label: a.label,
+        onSelect: () => a.onSelect?.(),
+        ...(a.loading || a.disabled ? { disabled: true } : {}),
+      });
+    }
   }
   // One action besides the primary stays a button below 640 too.
   const more: HeaderAction | null =
@@ -170,6 +191,8 @@ export function PageHeader(p: PageHeaderProps) {
         variant={a.variant}
         density="default"
         {...(a.shortcut !== undefined ? { shortcut: a.shortcut } : {})}
+        {...(a.loading ? { loading: true } : {})}
+        {...(a.disabled ? { disabled: true } : {})}
         {...(a.onSelect ? { onClick: a.onSelect } : {})}
       >
         {a.icon ? <Icon name={a.icon} size={14} /> : null}
@@ -237,7 +260,11 @@ export function PageHeader(p: PageHeaderProps) {
           })}
         </nav>
       ) : null}
-      <div className="cb-pageheader-row">
+      <div
+        className="cb-pageheader-row"
+        data-part="page-header-row"
+        data-avatar={shown(p.avatar) || loading?.avatar ? "true" : undefined}
+      >
         {shown(p.avatar) ? (
           <span className="cb-pageheader-avatar" data-part="page-header-avatar">
             {p.avatar}
@@ -288,8 +315,8 @@ export function PageHeader(p: PageHeaderProps) {
           </div>
         ) : null}
       </div>
-      {p.notice ?? null}
-      {tabItems.length > 0 || p.search || tabSlots > 0 ? (
+      {shown(p.notice) ? <div className="cb-pageheader-notice">{p.notice}</div> : null}
+      {hasTabRow(p) ? (
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">
           {tabItems.length > 0 ? (
             <Tabs

@@ -6,7 +6,7 @@ import { pluginSchemaName } from "../ctx/create-ctx.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -14,6 +14,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { ExtensionAdmin, type PublishBus } from "./admin-view.js";
 import { ExtensionBlobs } from "./blobs.js";
 import { ExtensionLifecycle, PLUGINS_CHANGED_TOPIC } from "./lifecycle.js";
@@ -33,16 +34,34 @@ import { ExtensionRegistry } from "./registry.js";
  * the commit (a failure only warns; the periodic reconcile catches up); replicas converge through
  * reconcile, no restart. It does not wait for replicas: the returned view may say `converging`.
  * Stateless, shared by every replica; the CLI uses it too (`actor` is null).
- * Every write runs in a transaction: first `lockEnterpriseAdminsAndAuthorize` (skipped by the CLI),
+ * Every write runs in a transaction: first `lockSuperAdminsAndAuthorize` (skipped by the CLI),
  * then an advisory lock by extension name and a lock on the install record row.
  */
+/**
+ * An operation an org admin runs as the owner of an org plugin (an owner update removing or putting
+ * back its extension, ruling P3-12'): the actor is re-checked as an admin of `orgId`
+ * (`catalog.upload`, under the org row lock) instead of as a super admin, and the audit records
+ * the actor with `ownerOrgId`.
+ */
+export interface ExtensionOpsOwner {
+  orgId: string;
+  /**
+   * Putting the extension back after a failed owner update: the actor was authorized when the
+   * update started, so no role is checked again (a demotion meanwhile must not leave the
+   * deployment without the extension it had); the audit keeps the actor, marked `rollback`.
+   */
+  rollback?: true;
+}
+
 @Injectable()
 export class ExtensionAdminOps {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
+    /** The owner org's lock: an owner's operation re-checks its admin under it. */
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     /**
      * The admin view after the operation, degraded when the package cannot be read
@@ -74,7 +93,7 @@ export class ExtensionAdminOps {
    * New install or version change (upgrade / downgrade): the install record points at package
    * `sha256`; the desired state is unchanged (a new install is disabled). Audit `extension.installed`.
    * - Config-declared -> `extension.config_declared`; a required bootstrap plugin may be
-   *   installed at another version (an enterprise admin upgrades it; `required` is kept);
+   *   installed at another version (a super admin upgrades it; `required` is kept);
    * - package not in the package store -> `extension.package_not_found`; the extension name in the
    *   package is not `name` -> `extension.name_mismatch`;
    * - an install record of the same name exists but comes from another npm package ->
@@ -90,7 +109,7 @@ export class ExtensionAdminOps {
    *   go back to a version whose migrations are a subset of those already run).
    * Already pointing at the same package: nothing changes (no audit; for a changed source item only,
    * see below).
-   * `opts.catalogItemId`: the source item when installing through the enterprise catalog, stored
+   * `opts.catalogItemId`: the source item when installing through the platform catalog, stored
    * in `extension_installs.catalog_item_id` (F-AA) and registered in `extension_catalog_sources`;
    * installing outside the catalog (upload / npm / CLI) **keeps** the existing source items (T26
    * fix: clearing them would let org enablement bypass catalog policy, C22). The detail of the
@@ -103,7 +122,7 @@ export class ExtensionAdminOps {
     sha256: string,
     actor: string | null,
     actorTokenId?: string,
-    opts: { catalogItemId?: string } = {},
+    opts: { catalogItemId?: string; owner?: ExtensionOpsOwner } = {},
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
     const pkg = await this.db
@@ -148,10 +167,10 @@ export class ExtensionAdminOps {
     target: { migrationSql: { file: string; sql: string }[] },
     actor: string | null,
     actorTokenId: string | undefined,
-    opts: { catalogItemId?: string },
+    opts: { catalogItemId?: string; owner?: ExtensionOpsOwner },
   ): Promise<{ changed: boolean; state: "enabled" | "disabled" }> {
     const db = this.db;
-    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    await this.authorize(actor, opts.owner);
     const row = await this.lockRow(name);
     // 不经目录重装时保留原来的来源条目（不清空，C22）
     const catalogItemId = opts.catalogItemId ?? row?.catalog_item_id ?? null;
@@ -254,14 +273,20 @@ export class ExtensionAdminOps {
       .execute();
     await this.audit(actor, actorTokenId, "extension.installed", name, pkg.version, sha256, {
       catalogItemId,
+      ...ownerDetail(opts.owner),
     });
     afterCommit(() => this.notify(name));
     return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
   /** Enable on the deployment (audit `extension.enabled`); no change when already enabled. Org enablement is unchanged. */
-  enable(name: string, actor: string | null, actorTokenId?: string): Promise<AdminExtensionView> {
-    return this.setState(name, "enabled", actor, actorTokenId);
+  enable(
+    name: string,
+    actor: string | null,
+    actorTokenId?: string,
+    owner?: ExtensionOpsOwner,
+  ): Promise<AdminExtensionView> {
+    return this.setState(name, "enabled", actor, actorTokenId, owner);
   }
 
   /**
@@ -270,8 +295,13 @@ export class ExtensionAdminOps {
    * it; the org enablement switch is unchanged and the org page shows it as unavailable. A required
    * bootstrap plugin -> `extension.required`.
    */
-  disable(name: string, actor: string | null, actorTokenId?: string): Promise<AdminExtensionView> {
-    return this.setState(name, "disabled", actor, actorTokenId);
+  disable(
+    name: string,
+    actor: string | null,
+    actorTokenId?: string,
+    owner?: ExtensionOpsOwner,
+  ): Promise<AdminExtensionView> {
+    return this.setState(name, "disabled", actor, actorTokenId, owner);
   }
 
   /**
@@ -282,9 +312,14 @@ export class ExtensionAdminOps {
    * permission snapshot and the package in the package store are untouched (a reinstall picks them
    * up).
    */
-  async uninstall(name: string, actor: string | null, actorTokenId?: string): Promise<void> {
+  async uninstall(
+    name: string,
+    actor: string | null,
+    actorTokenId?: string,
+    owner?: ExtensionOpsOwner,
+  ): Promise<void> {
     this.assertInstallable(name);
-    await this.writeUninstall(name, actor, actorTokenId);
+    await this.writeUninstall(name, actor, actorTokenId, owner);
   }
 
   @Transactional()
@@ -292,9 +327,10 @@ export class ExtensionAdminOps {
     name: string,
     actor: string | null,
     actorTokenId: string | undefined,
+    owner: ExtensionOpsOwner | undefined,
   ): Promise<void> {
     const db = this.db;
-    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    await this.authorize(actor, owner);
     const row = await this.lockRow(name);
     if (!row) throw notFound(name);
     if (row.required) throw required(name);
@@ -307,7 +343,15 @@ export class ExtensionAdminOps {
     await db.deleteFrom("extension_installs").where("name", "=", name).execute();
     // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
     await db.deleteFrom("extension_catalog_sources").where("plugin", "=", name).execute();
-    await this.audit(actor, actorTokenId, "extension.uninstalled", name, row.version, row.sha256);
+    await this.audit(
+      actor,
+      actorTokenId,
+      "extension.uninstalled",
+      name,
+      row.version,
+      row.sha256,
+      ownerDetail(owner),
+    );
     afterCommit(() => this.notify(name));
   }
 
@@ -316,9 +360,10 @@ export class ExtensionAdminOps {
     state: "enabled" | "disabled",
     actor: string | null,
     actorTokenId: string | undefined,
+    owner?: ExtensionOpsOwner,
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
-    const result = await this.writeState(name, state, actor, actorTokenId);
+    const result = await this.writeState(name, state, actor, actorTokenId, owner);
     return this.viewAfterCommit(name, {
       version: result.row.version,
       sha256: result.row.sha256,
@@ -332,9 +377,10 @@ export class ExtensionAdminOps {
     state: "enabled" | "disabled",
     actor: string | null,
     actorTokenId: string | undefined,
+    owner?: ExtensionOpsOwner,
   ) {
     const db = this.db;
-    if (actor !== null) await this.adminLock.lockAndAuthorize(actor);
+    await this.authorize(actor, owner);
     const row = await this.lockRow(name);
     if (!row) throw notFound(name);
     if (state === "disabled" && row.required) throw required(name);
@@ -355,6 +401,7 @@ export class ExtensionAdminOps {
       name,
       row.version,
       row.sha256,
+      ownerDetail(owner),
     );
     afterCommit(() => this.notify(name));
     return { row, changed: true };
@@ -375,6 +422,21 @@ export class ExtensionAdminOps {
         err,
       });
       return fallbackView(name, known, err);
+    }
+  }
+
+  /**
+   * Re-checks the actor in the operation's transaction: a super admin, or for an owner's operation
+   * an admin of the owner org; no account (the CLI, the kernel itself) is not checked.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async authorize(actor: string | null, owner: ExtensionOpsOwner | undefined) {
+    if (owner?.rollback === true) return;
+    if (owner !== undefined) {
+      if (actor === null) throw new Error("an owner's extension operation has an actor");
+      await this.orgLock.lockAndAuthorize(owner.orgId, actor, "catalog.upload");
+    } else if (actor !== null) {
+      await this.adminLock.lockAndAuthorize(actor);
     }
   }
 
@@ -476,6 +538,9 @@ function fallbackView(
     configValid: true,
     removable: true,
     required: false,
+    scope: null,
+    enabledOrgs: 0,
+    builtin: false,
     installSource: null,
     error: `the change was saved, but its current status cannot be read: ${err instanceof Error ? err.message : String(err)}`,
   };
@@ -511,7 +576,7 @@ async function hasRetainedData(db: KernelSchemaDb, name: string): Promise<boolea
 const required = (name: string) =>
   new ApiError(
     "extension.required",
-    `Extension ${name} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled; an enterprise admin can upgrade it`,
+    `Extension ${name} is required by this deployment (a bootstrap plugin): it is enabled in every organization and cannot be disabled or uninstalled; a super admin can upgrade it`,
   );
 
 const notFound = (name: string) =>
@@ -520,3 +585,9 @@ const notFound = (name: string) =>
 /** `to` 比 `from` 旧（任一方不是合法 semver 时不算降级）。 */
 const isDowngrade = (to: string, from: string): boolean =>
   semver.valid(to) !== null && semver.valid(from) !== null && semver.lt(to, from);
+
+/** The audit detail of an owner's operation. */
+function ownerDetail(owner: ExtensionOpsOwner | undefined): Record<string, unknown> {
+  if (owner === undefined) return {};
+  return { ownerOrgId: owner.orgId, ...(owner.rollback === true && { rollback: true }) };
+}

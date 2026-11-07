@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Callout,
+  Card,
   DesignProvider,
   EmptyState,
   ListPage,
@@ -93,6 +94,59 @@ describe("ObjectRow", () => {
     expect(screen.getByRole("menuitem", { name: "停用" })).toBeTruthy();
   });
 
+  it("a running row action shows its loading state and cannot be pressed again", async () => {
+    const onEnable = vi.fn();
+    zh(
+      <ObjectList label="l">
+        <ObjectRow
+          mark={{ text: "a" }}
+          name="a"
+          action={{ label: "启用", onSelect: onEnable, loading: true }}
+          menu={[
+            { label: "撤回", onSelect: () => {} },
+            { label: "停用", danger: true, onSelect: () => {} },
+          ]}
+        />
+      </ObjectList>,
+    );
+    const button = screen.getByRole("button", { name: "启用" });
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(button);
+    expect(onEnable).not.toHaveBeenCalled();
+    // The rest of the row waits too
+    expect((screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("a busy row whose menu item is running draws the spinner on its menu button", () => {
+    zh(
+      <ObjectList label="l">
+        <ObjectRow
+          mark={{ text: "a" }}
+          name="a"
+          busy
+          action={{ label: "组织配置", href: "/x" }}
+          menu={[{ label: "停用", danger: true, onSelect: () => {} }]}
+        />
+        <ObjectRow
+          mark={{ text: "b" }}
+          name="b"
+          busy
+          menu={[{ label: "撤回", onSelect: () => {} }]}
+        />
+      </ObjectList>,
+    );
+    const more = screen.getByRole("button", { name: "更多操作" }) as HTMLButtonElement;
+    expect(more.disabled).toBe(true);
+    expect(more.getAttribute("aria-busy")).toBe("true");
+    // A lone safe item drawn as a button carries the loading state itself
+    const lone = screen.getByRole("button", { name: "撤回" }) as HTMLButtonElement;
+    expect(lone.disabled).toBe(true);
+    expect(lone.getAttribute("aria-busy")).toBe("true");
+  });
+
   it("warn mark and chip use the warn tone", () => {
     zh(
       <ObjectList label="l">
@@ -167,11 +221,34 @@ describe("EmptyState and Callout", () => {
     expect(within(el).getByRole("link", { name: "去配置" })).toBeTruthy();
   });
 
+  it("Callout on the page ground is the tinted bar, a box for what it holds", () => {
+    zh(<Callout tone="fail">副本启动失败</Callout>);
+    const el = screen.getByRole("status");
+    expect(el.hasAttribute("data-framed")).toBe(false);
+    expect(el.querySelector("svg")?.getAttribute("width")).toBe("16");
+  });
+
+  it("Callout inside a box is the line with its icon (spec §6.19), its action kept", () => {
+    const onSelect = vi.fn();
+    zh(
+      <Card title="扩展">
+        <Callout tone="fail" action={{ label: "刷新", onSelect }}>
+          副本启动失败
+        </Callout>
+      </Card>,
+    );
+    const el = screen.getByRole("status");
+    expect(el.getAttribute("data-framed")).toBe("false");
+    expect(el.getAttribute("data-tone")).toBe("fail");
+    expect(el.querySelector("svg")?.getAttribute("width")).toBe("12");
+    expect(within(el).getByRole("button", { name: "刷新" })).toBeTruthy();
+  });
+
   it("Callout info is a quiet note without an action", () => {
-    zh(<Callout tone="info">企业管理员不能查看对话内容。</Callout>);
+    zh(<Callout tone="info">超级管理员不能查看对话内容。</Callout>);
     const el = screen.getByRole("note");
     expect(el.getAttribute("data-tone")).toBe("info");
-    expect(el.textContent).toBe("企业管理员不能查看对话内容。");
+    expect(el.textContent).toBe("超级管理员不能查看对话内容。");
   });
 });
 

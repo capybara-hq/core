@@ -27,8 +27,14 @@ import {
   type AgentView,
   type AgentWarning,
 } from "./agents.service.js";
-import { AgentDefinitionSchema, AgentToolRef, DEFAULT_AGENT_TOOLS } from "./definition.js";
-import { type AgentProfile, ProfileInputSchema } from "./profile.js";
+import {
+  AgentDefinitionSchema,
+  AgentToolRef,
+  DEFAULT_AGENT_TOOLS,
+  ModelRef,
+} from "./definition.js";
+import { AgentsFromTemplate, type TemplatePreview } from "./from-template.service.js";
+import { type AgentProfile, PRESET_IDS, ProfileInputSchema } from "./profile.js";
 
 const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
@@ -39,7 +45,8 @@ const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
  * new agent given neither gets the `AGENTS.md` starter (`deriveInstructions`).
  */
 const RequestInstructions = z.string().max(100_000).optional();
-const CreateDefinition = AgentDefinitionSchema.extend({
+/** Pending connectors come only from a template (ruling P4-6): a create request's are dropped. */
+const CreateDefinition = AgentDefinitionSchema.omit({ pendingConnectors: true }).extend({
   instructions: RequestInstructions,
   tools: z.array(AgentToolRef).default(() => structuredClone(DEFAULT_AGENT_TOOLS)),
 });
@@ -82,6 +89,28 @@ const UpdateBody = z
   })
   .strict();
 
+const TemplateId = z.string().min(1).max(100);
+const FromTemplatePreviewBody = z.object({ templateId: TemplateId }).strict();
+const FromTemplateBody = z
+  .object({
+    templateId: TemplateId,
+    name: z.string().min(1).max(80),
+    /** Default `private`; anything else needs `agents.manage` (ruling P4-3). */
+    visibility: z.enum(AGENT_VISIBILITIES).optional(),
+    /** The accounts of a `members` agent. */
+    members: MemberIds.optional(),
+    /** The person's choice; absent = the template's model resolution (P4-4). */
+    model: ModelRef.strict().optional(),
+    /** A preset avatar; absent = a random one. */
+    avatar: z
+      .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
+      .strict()
+      .optional(),
+    /** The preview's `previewHash`; another one → 409 `agent.template_preview_stale`. */
+    previewHash: z.string().regex(/^[0-9a-f]{64}\.[0-9a-f]{16}$/),
+  })
+  .strict();
+
 /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
 const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
 
@@ -90,6 +119,11 @@ class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
 class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
 class AgentAvatarUploadBodyDto extends createZodDto(AvatarUploadBody, "AgentAvatarUploadBody") {}
 class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
+class AgentFromTemplatePreviewBodyDto extends createZodDto(
+  FromTemplatePreviewBody,
+  "AgentFromTemplatePreviewBody",
+) {}
+class AgentFromTemplateBodyDto extends createZodDto(FromTemplateBody, "AgentFromTemplateBody") {}
 
 /**
  * Agent 定义（`/api/v1/orgs/:orgId/agents`）。读用 `agents.use`（访客与服务令牌可用），
@@ -101,7 +135,60 @@ export class AgentsController {
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+    @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
   ) {}
+
+  /** A response's view with its provenance link (`createdFrom.available`, ruling P4-8). */
+  private async linked(orgId: string, view: AgentView): Promise<AgentView> {
+    return (await this.agents.withTemplateLinks(orgId, [view]))[0] as AgentView;
+  }
+
+  /**
+   * What creating an agent from a template would carry over (rulings P4-3, P4-5): the items
+   * (carried / pending / unavailable, with reasons), the model the dialog preselects (P4-4), the
+   * template fields with no place in the agent, and the `previewHash` the create must send. A
+   * template not usable in the org → 404 `component.not_found`.
+   */
+  @Post("from-template/preview")
+  @HttpCode(200)
+  @OrgAction("agents.create")
+  async previewFromTemplate(
+    @CurrentOrg() org: OrgContext,
+    @ZBody(AgentFromTemplatePreviewBodyDto) body: z.infer<typeof FromTemplatePreviewBody>,
+  ): Promise<TemplatePreview> {
+    return this.fromTemplate.preview(org.orgId, body.templateId);
+  }
+
+  /**
+   * Creates an agent from a template (ruling P4-3): private by default; another visibility without
+   * `agents.manage` → 403 `agent.visibility_forbidden`; a plan that no longer matches the preview →
+   * 409 `agent.template_preview_stale`. The agent records its provenance (P4-8) and carries the
+   * template's missing connectors as `pendingConnectors` (P4-6).
+   */
+  @Post("from-template")
+  @OrgAction("agents.create")
+  async createFromTemplate(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZBody(AgentFromTemplateBodyDto) body: z.infer<typeof FromTemplateBody>,
+  ): Promise<{ agent: AgentView }> {
+    const p = requireUser(principal);
+    const { agent } = await this.fromTemplate.create(
+      org.orgId,
+      p.account.id,
+      {
+        templateId: body.templateId,
+        name: body.name,
+        previewHash: body.previewHash,
+        ...(body.visibility !== undefined && { visibility: body.visibility }),
+        ...(body.members !== undefined && { members: body.members }),
+        ...(body.model !== undefined && { model: body.model }),
+        ...(body.avatar !== undefined && { avatar: body.avatar }),
+      },
+      patTokenId(p),
+    );
+    return { agent: await this.linked(org.orgId, agent) };
+  }
 
   @Post()
   @OrgAction("agents.create")
@@ -130,7 +217,8 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
   ): Promise<{ agents: AgentView[] }> {
-    return { agents: await this.agents.listVisible(org.orgId, viewerOf(principal)) };
+    const agents = await this.agents.listVisible(org.orgId, viewerOf(principal));
+    return { agents: await this.agents.withTemplateLinks(org.orgId, agents) };
   }
 
   @Get(":agentId")
@@ -140,7 +228,12 @@ export class AgentsController {
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
   ): Promise<{ agent: AgentView }> {
-    return { agent: await this.agents.get(org.orgId, agentId, viewerOf(principal)) };
+    return {
+      agent: await this.linked(
+        org.orgId,
+        await this.agents.get(org.orgId, agentId, viewerOf(principal)),
+      ),
+    };
   }
 
   @Patch(":agentId")
@@ -152,7 +245,8 @@ export class AgentsController {
     @ZBody(AgentUpdateBodyDto) body: z.infer<typeof UpdateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
-    return this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+    const r = await this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));
+    return { ...r, agent: await this.linked(org.orgId, r.agent) };
   }
 
   /** Display data only: no agent version. Same permission as `PATCH :agentId`. */
@@ -254,15 +348,14 @@ export class AgentsController {
     @ZBody(AgentOwnerBodyDto) body: z.infer<typeof OwnerBody>,
   ): Promise<{ agent: AgentView }> {
     const p = requireUser(principal);
-    return {
-      agent: await this.agents.reassignOwner(
-        org.orgId,
-        agentId,
-        body.accountId,
-        p.account.id,
-        patTokenId(p),
-      ),
-    };
+    const agent = await this.agents.reassignOwner(
+      org.orgId,
+      agentId,
+      body.accountId,
+      p.account.id,
+      patTokenId(p),
+    );
+    return { agent: await this.linked(org.orgId, agent) };
   }
 
   @Get(":agentId/versions")

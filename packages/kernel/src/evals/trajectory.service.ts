@@ -69,7 +69,7 @@ const notFound = () => new ApiError("trajectory.not_found", "Trajectory not foun
 /**
  * 轨迹查看器（D6、C1）：只给组织管理员（admin / owner）与 agent 负责人。负责人与角色每次实时读（R5）；
  * 无权查看与不存在一律 `trajectory.not_found`，不泄露对话是否存在。每次查看详情写审计 `trajectory.viewed`。
- * 企业管理员不因身份而能看（不是组织成员时 OrgGuard 已 404）。
+ * 超级管理员不因身份而能看（不是组织成员时 OrgGuard 已 404）。
  *
  * 列表按 `conversations.kind` 过滤，不传时只列 `chat`（评测回放的隐藏对话用 `kind: "eval"` 列出）。
  * 评测对话（`kind = 'eval'`）只给组织管理员（Ruling S1-c）：里面是管理员的候选指令，非管理员的 agent 负责人

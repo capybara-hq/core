@@ -13,6 +13,8 @@ const PAGES = [
   "status-bar",
   "action-row",
   "controls",
+  // the form select: the design system's own list (maintainer decision R)
+  "select",
   "table",
   "icon",
   "template-list",
@@ -49,6 +51,8 @@ const PAGES = [
   "roles",
   // unslop fixes: a failure sentence with its raw text behind a toggle
   "error-detail",
+  // detail and review sections: a heading over its content, muted help and empty lines
+  "content-section",
   // forms and flows: the one file pick
   "file-picker",
   // the run row: a run's model, duration, tokens and outcome
@@ -74,6 +78,12 @@ const PAGES = [
   "template-settings",
   "template-wizard",
   "template-auth",
+  // one box is enough (acceptance item AB): the groupings inside a box
+  "item-list",
+  "subsection",
+  "callout",
+  // cards on the page ground (plugin scope phase 4, ruling P4-15)
+  "card-grid",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

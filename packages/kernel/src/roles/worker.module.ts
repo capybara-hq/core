@@ -3,6 +3,8 @@ import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
+import { PlatformMigration } from "../catalog/platform-migration.js";
+import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
 import { ChannelsModule, ChannelWorkersModule } from "../channels/channels.module.js";
 import { GatewayCheckJob } from "../channels/supervisor.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -16,6 +18,7 @@ import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
 import { OffboardSweepJob } from "../orgs/offboarding.js";
+import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
 import { RuntimeWorkersModule } from "../runtime/run-processors.js";
@@ -35,7 +38,7 @@ import { WorkerRole } from "./worker-role.js";
  * `worker`: the cron scheduler and the `@LockedInterval` scheduler (`KernelScheduleModule`, the one
  * place `ScheduleModule.forRoot` is imported), every fixed-period job (`@LockedCron` /
  * `@LockedInterval`, each once per tick across replicas), every queue consumer (`@Processor`: runs,
- * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries) and
+ * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync) and
  * {@link WorkerRole}, which `KernelLifecycle` drives. A process without the worker role runs no cron
  * and no BullMQ worker (the queues' producers exist on every role).
  */
@@ -52,6 +55,7 @@ export class WorkerModule {
         EvalWorkersModule.forRoot(config),
         ChannelWorkersModule.forRoot(config),
         MaintenanceModule,
+        PluginScopeWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         UsageReportModule,
@@ -64,6 +68,7 @@ export class WorkerModule {
         ToolsModule,
         CatalogModule,
         OrgsModule,
+        OrgLockModule,
         ExtensionsModule,
         ChannelsModule,
       ],
@@ -76,6 +81,7 @@ export class WorkerModule {
         BackgroundTaskPollJob,
         ToolJobs,
         CatalogJobs,
+        PlatformMigration,
         DirectoryScanJob,
         OffboardSweepJob,
         PluginsReconcileJob,

@@ -13,13 +13,12 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
-import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
@@ -31,9 +30,15 @@ import {
   CatalogService,
   type PermissionsMismatch,
 } from "./catalog.service.js";
+import { CatalogScopeService, type ScopePreview } from "./catalog-scope.service.js";
 import { sendCatalogIcon } from "./org-catalog.controller.js";
 import { OrgCatalogService } from "./org-catalog.service.js";
 import { type PluginConfirmResult, PluginImport, type PluginReview } from "./plugin-import.js";
+import {
+  PlatformPluginUpdater,
+  type PlatformUpdatePreview,
+  type PlatformUpdateResult,
+} from "./plugin-upgrade.js";
 
 const NpmBody = z.object({
   package: z.string().min(1).max(214),
@@ -48,22 +53,53 @@ const GitBody = z
   })
   .strict();
 
-const PolicyBody = z.object({ policy: z.enum(["allow", "needs_approval", "disabled"]) });
+const Scope = z.enum(["all", "optional", "named"]);
+const Orgs = z.array(z.string().min(1).max(128)).max(1000);
+const Hash = z.string().min(1).max(128);
 
-const InstallBody = z.object({ version: z.string().min(1).max(256) });
+const ConfirmBody = z
+  .object({
+    reviewHash: Hash,
+    /** The new item's scope (default `optional`); `orgs` only with `named`. */
+    scope: Scope.optional(),
+    orgs: Orgs.optional(),
+    /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
+    pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
+  })
+  .strict();
 
-const ConfirmBody = z.object({
-  reviewHash: z.string().min(1).max(128),
-  deployExtension: z.boolean(),
-  /** Skill names suggested as pinned (spec §9.1); omitted keeps the plugin's flags. */
-  pinnedSuggestions: z.array(z.string().min(1).max(64)).max(50).optional(),
-});
+/** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable), not both. */
+const ScopePreviewBody = z
+  .object({ scope: Scope.optional(), orgs: Orgs.optional(), disabled: z.literal(true).optional() })
+  .strict()
+  .refine((b) => (b.disabled === true) !== (b.scope !== undefined), {
+    message: "send either scope (with orgs for named) or disabled: true",
+  })
+  .refine((b) => b.disabled === undefined || b.orgs === undefined, {
+    message: "orgs: only allowed with scope named",
+    path: ["orgs"],
+  });
+
+const ScopeBody = z.object({ scope: Scope, orgs: Orgs.optional(), scopeHash: Hash }).strict();
+
+const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
+const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
 
 const ListQuery = z.object({
   includeDeleted: z.enum(["true", "false"]).optional(),
   limit: z.coerce.number().int().min(1).max(CATALOG_LIST_MAX_LIMIT).optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
+  /** `true`: only the items waiting for a permission confirmation (not paged). */
+  pending: z.enum(["true", "false"]).optional(),
 });
+
+const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
+/** The reason shown to the owner org in its `upload_rejected` notice (optional). */
+const RejectBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() }).strict();
+
+const Version = z.string().min(1).max(256);
+const UpdatePreviewBody = z.object({ version: Version }).strict();
+const UpdateBody = z.object({ version: Version, diffHash: Hash }).strict();
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -72,27 +108,38 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 
 class CatalogImportConfirmBody extends createZodDto(ConfirmBody, "CatalogImportConfirmBody") {}
 class CatalogGitImportBody extends createZodDto(GitBody, "CatalogGitImportBody") {}
-class CatalogDeploymentInstallBody extends createZodDto(
-  InstallBody,
-  "CatalogDeploymentInstallBody",
-) {}
 class CatalogItemsQuery extends createZodDto(ListQuery, "CatalogItemsQuery") {}
 class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
-class CatalogPolicyBody extends createZodDto(PolicyBody, "CatalogPolicyBody") {}
+class CatalogScopePreviewBody extends createZodDto(ScopePreviewBody, "CatalogScopePreviewBody") {}
+class CatalogScopeBody extends createZodDto(ScopeBody, "CatalogScopeBody") {}
+class CatalogConfirmPermissionsBody extends createZodDto(
+  ConfirmPermissionsBody,
+  "CatalogConfirmPermissionsBody",
+) {}
+class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
+class CatalogRejectBody extends createZodDto(RejectBody, "CatalogRejectBody") {}
+class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
+class CatalogUpdatePreviewBody extends createZodDto(
+  UpdatePreviewBody,
+  "CatalogUpdatePreviewBody",
+) {}
+class CatalogUpdateBody extends createZodDto(UpdateBody, "CatalogUpdateBody") {}
 
 /**
- * The enterprise catalog (`/api/v1/admin/catalog/*`, enterprise admins): plugin import (upload / npm
- * prepare, then confirm), the item list and detail, policy, delete, and installing an item's
- * extension on the deployment. Writes re-check the enterprise admin inside the service's lock and are
+ * The platform catalog (`/api/v1/admin/catalog/*`, super admins): plugin import (upload / npm
+ * prepare, then confirm, which installs the plugin's extension), the item list and detail, scope and
+ * disable (previewed, then confirmed with `scopeHash`), delete. Writes re-check the super admin inside the service's lock and are
  * audited.
  */
 @Controller("api/v1/admin/catalog")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class AdminCatalogController {
   constructor(
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
+    @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
+    @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
   ) {}
 
   /**
@@ -189,11 +236,13 @@ export class AdminCatalogController {
   }
 
   /**
-   * Confirms a staged import: approves the plugin's extension when this import installs it (writes
-   * its snapshot) and creates the item or adds the version; with `deployExtension` it installs and
-   * enables the plugin's own extension after the commit and returns `{ item, deploy }`, where
-   * `deploy` says enabled / failed (+ code); a failed deploy does not make the committed import fail
-   * (retry from the extension admin by sha256). A foreseeable failure (a downgrade to a version with
+   * Confirms a staged import: approves the plugin's extension when this import installs or upgrades
+   * it (writes its snapshot), creates the item (with `scope`, default `optional`; `orgs` only with
+   * `named`, each an existing org, else 400 `validation_failed`) or adds the version, installs and
+   * enables the plugin's own extension after the commit and enqueues the item's scope sync; returns
+   * `{ item, deploy }`, where `deploy` says enabled / failed (+ code), null without an extension to
+   * deploy; a failed deploy does not make the committed import fail (retry from the extension admin
+   * by sha256). An unknown field (the removed `deployExtension`) -> 400 `validation_failed`. A foreseeable failure (a downgrade to a version with
    * unrun migrations) is a 409 `extension.downgrade_unsupported` before anything is written.
    * Staging missing or expired -> 404 `plugin.staging_not_found`; `reviewHash` differs or the
    * extension on the deployment changed -> 409 `plugin.review_stale`. `pinnedSuggestions` (skill
@@ -208,11 +257,15 @@ export class AdminCatalogController {
     @ZBody(CatalogImportConfirmBody) body: z.infer<typeof ConfirmBody>,
   ): Promise<PluginConfirmResult> {
     const actor = requireUser(principal);
-    const { pinnedSuggestions, ...rest } = body;
-    return this.pluginImport.confirm(
+    return this.scope.confirmImport(
       actor.account.id,
       stagingId,
-      { ...rest, ...(pinnedSuggestions !== undefined && { pinnedSuggestions }) },
+      {
+        reviewHash: body.reviewHash,
+        ...(body.scope !== undefined && { scope: body.scope }),
+        ...(body.orgs !== undefined && { orgs: body.orgs }),
+        ...(body.pinnedSuggestions !== undefined && { pinnedSuggestions: body.pinnedSuggestions }),
+      },
       actorOpts(actor),
     );
   }
@@ -227,6 +280,7 @@ export class AdminCatalogController {
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     return this.catalog.page({
       includeDeleted: q.includeDeleted === "true",
+      ...(q.pending === "true" && { pending: true }),
       ...(q.limit !== undefined && { limit: q.limit }),
       ...(q.offset !== undefined && { offset: q.offset }),
     });
@@ -251,15 +305,166 @@ export class AdminCatalogController {
     await sendCatalogIcon(reply, await this.orgCatalog.icon(id, true));
   }
 
-  /** 改策略（allow / needs_approval / disabled）。 */
-  @Put("items/:id/policy")
-  setPolicy(
+  /**
+   * What a scope change (`{ scope, orgs? }`, `orgs` only with `named`) or a disable
+   * (`{ disabled: true }`) would take away: `{ affected: [{ orgId, orgName, agents,
+   * connectorsKept }], needsConfig, scopeHash }` (spec §5 rule 8; nothing written; the connectors
+   * stay as the orgs' own). A builtin item -> 409 `plugin.builtin`; unknown
+   * orgs -> 400 `validation_failed`.
+   */
+  @Post("items/:id/scope/preview")
+  @HttpCode(200)
+  previewScope(
+    @Param("id") id: string,
+    @ZBody(CatalogScopePreviewBody) body: z.infer<typeof ScopePreviewBody>,
+  ): Promise<ScopePreview> {
+    return this.scope.preview(
+      id,
+      body.scope === undefined
+        ? { disabled: true }
+        : { scope: body.scope, ...(body.orgs !== undefined && { orgs: body.orgs }) },
+    );
+  }
+
+  /**
+   * Changes the scope, confirmed with the preview's `scopeHash` (recomputed under the item row lock;
+   * a difference -> 409 `plugin.scope_stale`); bumps the scope version, audits
+   * `catalog.scope_changed` and enqueues the scope sync. Builtin -> 409 `plugin.builtin`.
+   */
+  @Put("items/:id/scope")
+  setScope(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @ZBody(CatalogPolicyBody) body: z.infer<typeof PolicyBody>,
+    @ZBody(CatalogScopeBody) body: z.infer<typeof ScopeBody>,
   ): Promise<CatalogItemView> {
     const actor = requireUser(principal);
-    return this.catalog.setPolicy(actor.account.id, id, body.policy, actorOpts(actor));
+    return this.scope.setScope(
+      actor.account.id,
+      id,
+      {
+        scope: body.scope,
+        scopeHash: body.scopeHash,
+        ...(body.orgs !== undefined && { orgs: body.orgs }),
+      },
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * Disables the plugin on the whole deployment (`scopeHash` of the `{ disabled: true }` preview
+   * required; the scope sync then uninstalls it everywhere, its scope and the org switches are kept)
+   * or enables it again (no hash; the sync reinstalls where it is wanted). Builtin -> 409
+   * `plugin.builtin`; a stale hash -> 409 `plugin.scope_stale`.
+   */
+  @Put("items/:id/disabled")
+  setDisabled(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogDisabledBody) body: z.infer<typeof DisabledBody>,
+  ): Promise<CatalogItemView> {
+    const actor = requireUser(principal);
+    return this.scope.setDisabled(
+      actor.account.id,
+      id,
+      {
+        disabled: body.disabled,
+        ...(body.scopeHash !== undefined && { scopeHash: body.scopeHash }),
+      },
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * Confirms the item's extension permissions (the admin's 待确认; body `{ permissionsHash }` from
+   * the item view): approves the current permission set (snapshot source `web`) and installs and
+   * enables an extension that was never deployed. A changed set -> 409 `extension.approval_stale`;
+   * nothing to confirm -> 409 `extension.not_pending`. Returns the item. An org's upload
+   * (`owner.kind` org, ruling P3-10): the digest of its pending version's package; a first version
+   * is installed, approved, enabled and synced, a new version applied by the platform update
+   * (the item removed meanwhile -> 409 `catalog.item_removed`, P3-21).
+   */
+  @Post("items/:id/confirm")
+  @HttpCode(200)
+  confirmPermissions(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogConfirmPermissionsBody) body: z.infer<typeof ConfirmPermissionsBody>,
+  ): Promise<CatalogItemView> {
+    const actor = requireUser(principal);
+    return this.scope.confirmPermissions(
+      actor.account.id,
+      id,
+      body.permissionsHash,
+      actorOpts(actor),
+    );
+  }
+
+  /**
+   * Rejects an org upload's pending version (ruling P3-10; body `{ reason? }`, told to the owner
+   * org in `upload_rejected`): a first version is removed (its name free again), a new version's
+   * pending state cleared. Nothing pending, or a platform item (pre-flight F11) -> 409
+   * `extension.not_pending`. 204.
+   */
+  @Post("items/:id/reject")
+  @HttpCode(204)
+  async reject(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogRejectBody) body: z.infer<typeof RejectBody>,
+  ): Promise<void> {
+    const actor = requireUser(principal);
+    await this.scope.reject(actor.account.id, id, body.reason ?? null, actorOpts(actor));
+  }
+
+  /**
+   * Whether orgs outside a `named` item's list see it as requestable (spec §5.1 rule 1). Hiding it
+   * keeps pending requests as they are; new requests from unlisted orgs are then 404. Never makes
+   * anything usable, so no preview and no scope sync. Audits `catalog.shown_changed`.
+   */
+  @Put("items/:id/shown")
+  setShown(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogShownBody) body: z.infer<typeof ShownBody>,
+  ): Promise<CatalogItemView> {
+    const actor = requireUser(principal);
+    return this.scope.setShown(actor.account.id, id, body.shownToOthers, actorOpts(actor));
+  }
+
+  /**
+   * What updating the platform plugin to `version` would do (spec §7.1, `PlatformPluginUpdater`):
+   * `{ itemId, name, from, to, components: [{ kind, id, name, change: added | removed | upgrade |
+   * downgrade | same, from, to, updatedOnOwn, ownScope, pinnedOrgs, kept? }], extension,
+   * connectorOrgs: [{ orgId, connectors, needsConfig }], diffHash }`. Nothing written. The same
+   * version, a target the deployment's extension or a dependent plugin cannot take -> 409
+   * `plugin.upgrade_target_invalid`; an added skill named like one in use where the plugin is on
+   * -> 409 `plugin.skill_conflict`; disabled -> 403 `catalog.item_disabled`.
+   */
+  @Post("items/:id/update/preview")
+  @HttpCode(200)
+  previewUpdate(
+    @Param("id") id: string,
+    @ZBody(CatalogUpdatePreviewBody) body: z.infer<typeof UpdatePreviewBody>,
+  ): Promise<PlatformUpdatePreview> {
+    return this.updater.preview(id, body.version);
+  }
+
+  /**
+   * Updates the platform plugin, confirmed with the preview's `diffHash` (recomputed under the item
+   * lock; a difference -> 409 `plugin.upgrade_stale`; another update running -> 409
+   * `plugin.install_in_progress`). A failure undoes everything -> 502 `plugin.upgrade_failed`.
+   * Audits `plugin.platform_updated`. A version an org upload waits with (or an item whose first
+   * version waits) -> 409 `catalog.item_pending`: confirm it in 待确认 (pre-flight F8); the
+   * preview answers the same.
+   */
+  @Put("items/:id/update")
+  update(
+    @CurrentPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @ZBody(CatalogUpdateBody) body: z.infer<typeof UpdateBody>,
+  ): Promise<PlatformUpdateResult> {
+    const actor = requireUser(principal);
+    return this.updater.update(actor.account.id, id, body, actorOpts(actor));
   }
 
   /** 删除条目（软删除，已安装的组件不受影响）。 */
@@ -268,21 +473,5 @@ export class AdminCatalogController {
   async remove(@CurrentPrincipal() principal: Principal, @Param("id") id: string): Promise<void> {
     const actor = requireUser(principal);
     await this.catalog.remove(actor.account.id, id, actorOpts(actor));
-  }
-
-  /**
-   * Installs the extension of a version of an item on the deployment (a new install starts disabled;
-   * unapproved permissions still need approval). A version without an extension -> 409
-   * `catalog.no_extension`.
-   */
-  @Post("items/:id/install-deployment")
-  @HttpCode(200)
-  installToDeployment(
-    @CurrentPrincipal() principal: Principal,
-    @Param("id") id: string,
-    @ZBody(CatalogDeploymentInstallBody) body: z.infer<typeof InstallBody>,
-  ): Promise<AdminExtensionView> {
-    const actor = requireUser(principal);
-    return this.catalog.installToDeployment(actor.account.id, id, body.version, actorOpts(actor));
   }
 }

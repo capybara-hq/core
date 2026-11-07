@@ -19,6 +19,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
   createOrg,
+  enableConnectorExtensions,
   eventsOf,
   PW,
   postMessage,
@@ -201,6 +202,7 @@ beforeEach(async () => {
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   req = await session(k, "owner");
   orgId = await createOrg(req);
+  await enableConnectorExtensions(k, orgId);
   payCalls = 0;
   mcp.elicitations.length = 0;
   mcp.calls.length = 0;

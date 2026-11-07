@@ -21,6 +21,7 @@ import {
   type MessageInput,
 } from "../../lib/conversations";
 import { type GreetingLines, greetingBucket, pickGreeting } from "../../lib/greeting";
+import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { modelsQuery, seedNewConversation } from "../../lib/query/conversation";
@@ -200,17 +201,6 @@ export function useNewConversationPage(
                 onSelect={selectAgent}
               />
             ),
-            quickActions: (
-              <QuickActions
-                // keyed by agent: another agent's line starts closed
-                key={agent?.id ?? ""}
-                items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
-                onPick={(id) => {
-                  const body = quickActions[Number(id)]?.body;
-                  if (body !== undefined) composer.current?.fill(body);
-                }}
-              />
-            ),
           },
         }),
     composer: (
@@ -226,6 +216,9 @@ export function useNewConversationPage(
           key={`${sent ? "sent" : "new"}:${restore.n}`}
           orgId={orgId}
           agentId={agent?.id}
+          {...(agent !== undefined && canEditAgent(session.me, agent)
+            ? { skillsHref: `/agents/${encodeURIComponent(agent.id)}?s=skills` }
+            : {})}
           initialDraft={sent ? undefined : restore.draft}
           running={false}
           // one message at a time until the conversation exists (it has no queue yet)
@@ -239,6 +232,22 @@ export function useNewConversationPage(
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
+          // the agent's quick actions: a zap menu after the effort picker, none without any
+          {...(!sent && quickActions.length > 0
+            ? {
+                quickActions: (
+                  <QuickActions
+                    // keyed by agent: another agent's menu starts closed
+                    key={agent?.id ?? ""}
+                    items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
+                    onPick={(id) => {
+                      const body = quickActions[Number(id)]?.body;
+                      if (body !== undefined) composer.current?.fill(body);
+                    }}
+                  />
+                ),
+              }
+            : {})}
           placeholder={t("newPlaceholder", { agent: name })}
         />
       </Stack>

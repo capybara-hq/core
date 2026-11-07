@@ -33,7 +33,19 @@ export function Field({
   return (
     <div className="cb-field" data-part="field" data-state={error ? "error" : undefined}>
       <div className="cb-field-head">
-        <label className="cb-field-label" data-part="field-label" htmlFor={id}>
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: the label's own click; keys reach the control */}
+        <label
+          id={`${base}-label`}
+          className="cb-field-label"
+          data-part="field-label"
+          htmlFor={id}
+          // a Select is a button: not every browser focuses a button when its label is clicked
+          onClick={(e) => {
+            const control = e.currentTarget.ownerDocument.getElementById(id);
+            if (control?.getAttribute("role") === "combobox" && control.tagName === "BUTTON")
+              control.focus();
+          }}
+        >
           {label}
           {required ? (
             <span className="cb-field-req" aria-hidden="true">

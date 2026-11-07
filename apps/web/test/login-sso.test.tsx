@@ -5,6 +5,7 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import {
   LOGIN_ERROR_CODES,
+  loginPathFor,
   parseLoginError,
   safeReturnTo,
   ssoStartUrl,
@@ -109,7 +110,7 @@ describe("第三方登录按钮", () => {
     expect(screen.queryByText(en.login.or)).toBeNull();
   });
 
-  it("本地登录成功后回到 returnTo；外站地址被拒，回首页", async () => {
+  it("after a local sign-in back to returnTo; an off-site address is refused and goes home", async () => {
     stubApi({
       "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
       "POST /api/v1/auth/login": () => json(200, { account: { id: "a1" } }),
@@ -124,10 +125,17 @@ describe("第三方登录按钮", () => {
 
   it("safeReturnTo / ssoStartUrl", () => {
     expect(safeReturnTo("/bind/x?y=1")).toBe("/bind/x?y=1");
-    expect(safeReturnTo("//evil.example")).toBe("/");
-    expect(safeReturnTo("https://evil.example")).toBe("/");
-    expect(safeReturnTo("/\\evil")).toBe("/");
-    expect(safeReturnTo(null)).toBe("/");
+    expect(safeReturnTo("//evil.example")).toBe("/chat");
+    expect(safeReturnTo("https://evil.example")).toBe("/chat");
+    expect(safeReturnTo("/\\evil")).toBe("/chat");
+    expect(safeReturnTo(null)).toBe("/chat");
     expect(ssoStartUrl("a b", "/x")).toBe("/api/v1/auth/sso/a%20b/start?returnTo=%2Fx");
+  });
+
+  it("loginPathFor: home (/chat, or / which redirects there) needs no returnTo", () => {
+    expect(loginPathFor("/chat")).toBe("/login");
+    expect(loginPathFor("/")).toBe("/login");
+    expect(loginPathFor("/chat?agent=a1")).toBe("/login?returnTo=%2Fchat%3Fagent%3Da1");
+    expect(loginPathFor("/chat/c1")).toBe("/login?returnTo=%2Fchat%2Fc1");
   });
 });

@@ -198,7 +198,7 @@ git repository `capybara-hq/plugins` on github.com) every `marketplaces.refreshI
 the admin console lists its plugins. A deployment without internet access sets
 `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
 `CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`); its marketplaces page then shows offline mode.
-Enterprise marketplaces, npm installs and manual uploads are unaffected either way.
+Custom marketplaces, npm installs and manual uploads are unaffected either way.
 
 The default `marketplaces.official.url` is now the git repository
 `https://github.com/capybara-hq/plugins.git` (it was a placeholder marketplace.json URL). A git

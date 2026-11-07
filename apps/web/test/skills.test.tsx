@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
+import { bodyOf, json, lastStubRoutes, noContent, stubApi as stubApiOnly } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
@@ -19,6 +19,13 @@ vi.mock("next/navigation", () => ({
     throw new Error("NOT_FOUND");
   },
 }));
+
+/** The platform skills offered to the org (the 技能 page's switches): none unless a test stubs them. */
+const stubApi = (routes: Parameters<typeof stubApiOnly>[0]) =>
+  stubApiOnly({
+    "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
+    ...routes,
+  });
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
 /** `/skills` as a first load: the layout prefetches from the latest `stubApi` routes. */
@@ -116,6 +123,10 @@ afterEach(() => {
   FakeXhr.instances = [];
 });
 
+/** A long, multi-line description: detail pages show it in full (fix round 1). */
+const LONG =
+  "Use when a meeting ends.\nIt writes the minutes, lists the decisions and the follow-ups, and names who owns each one, so nothing said in the room is lost on the way out of it.";
+
 describe("技能库列表（ListPage）", () => {
   it.each(LOCALES)("列出组织技能；管理员看到上传说明（布局与上限）（%s）", async (locale) => {
     const m = msgs[locale];
@@ -183,7 +194,7 @@ describe("技能库列表（ListPage）", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST" && c.url === BASE))).toEqual({
       uploadId: "up1",
     });
-    await vi.waitFor(() => expect(screen.getByText(/^v2 · /)).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByText(/ · v2 · /)).toBeTruthy());
   });
 
   it("an upload invalidates skills and that skill: the list is read again", async () => {
@@ -325,6 +336,13 @@ const detail = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** 删除 sits in the detail head's ⋯ menu (a destructive item): opens it and picks 删除技能. */
+async function openDelete(user: ReturnType<typeof userEvent.setup>, locale: "zh" | "en") {
+  const m = msgs[locale];
+  await user.click(await screen.findByRole("button", { name: m.common.moreActions }));
+  await user.click(await screen.findByRole("menuitem", { name: m.skills.detail.delete }));
+}
+
 describe("技能详情（DetailPage）", () => {
   beforeEach(() => resetNavigation("/skills/s1"));
 
@@ -362,11 +380,13 @@ describe("技能详情（DetailPage）", () => {
   it("管理员删除：二次确认（输入技能名）→ DELETE → 回到列表", async () => {
     const calls = stubApi({
       [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`GET ${BASE}/s1/delete-preview`]: () =>
+        json(200, { outcome: "removed", orgs: [], agents: [] }),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
     await renderSkill();
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    await openDelete(user, "en");
     const dialog = await screen.findByRole("dialog");
     const confirm = within(dialog).getByRole("button", { name: en.skills.detail.delete });
     expect(confirm).toHaveProperty("disabled", true);
@@ -381,6 +401,36 @@ describe("技能详情（DetailPage）", () => {
     await renderSkill({ me: MEMBER });
     await screen.findByText("# PDF tools", { exact: false });
     expect(screen.queryByRole("button", { name: en.skills.detail.delete })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.common.moreActions })).toBeNull();
+  });
+
+  it("one centred column: the full description first, the facts as a KeyValue, 删除 in the head's menu", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ description: LONG })) });
+    await renderSkill();
+    await screen.findByText("# PDF tools", { exact: false });
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    // The head carries no description: the full text (line breaks kept) is the column's first block
+    expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
+    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    expect(first?.textContent).toBe(LONG);
+    expect(first?.getAttribute("data-pre")).toBe("true");
+    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    expect(facts?.textContent).toContain(en.skills.detail.owner);
+    expect(facts?.textContent).toContain(en.skills.detail.version);
+    // no danger card in the page: 删除 is the head menu's destructive item
+    // no danger card in the page (its hint was the card's text)
+    expect(screen.queryByText(en.skills.detail.deleteHint)).toBeNull();
+    // the inspector and danger card copy left with them, in both locales
+    for (const m of [zh, en]) {
+      for (const k of ["inspectorTitle", "name", "dangerTitle", "description"]) {
+        expect(k in m.skills.detail).toBe(false);
+      }
+      expect("more" in m.catalog.admin.detail).toBe(false);
+    }
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: en.common.moreActions }));
+    const del = await screen.findByRole("menuitem", { name: en.skills.detail.delete });
+    expect(del.getAttribute("data-danger")).toBe("true");
   });
 
   it("a skill the kernel does not find is the not-found state in the shell", async () => {
@@ -395,18 +445,22 @@ describe("技能详情（DetailPage）", () => {
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, { skills: [] }),
       [`GET ${BASE}/s1`]: () => json(200, detail()),
+      [`GET ${BASE}/s1/delete-preview`]: () =>
+        json(200, { outcome: "removed", orgs: [], agents: [] }),
       [`DELETE ${BASE}/s1`]: () => noContent(),
     });
     const { client, unmount } = await renderSkill();
     // the library is cached (as after a visit to /skills)
     client.setQueryData(["org", "o1", "skills"], { skills: [skill("s1", "pdf-tools")] });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: en.skills.detail.delete }));
+    await openDelete(user, "en");
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
     await user.click(within(dialog).getByRole("button", { name: en.skills.detail.delete }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    const writes = () => calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.url}`);
+    expect(writes()).toEqual([`DELETE ${BASE}/s1`]);
+    expect(calls.some((c) => c.url === `${BASE}`)).toBe(false);
     expect(client.getQueryState(["org", "o1", "skills"])?.isInvalidated).toBe(true);
     // still cached while the page shows (no read, no not-found flash before the navigation) ...
     expect(client.getQueryData(["org", "o1", "skill", "s1"])).toBeDefined();
@@ -414,14 +468,17 @@ describe("技能详情（DetailPage）", () => {
     // ... and gone once the page is left: Back reads it instead of painting the deleted skill
     unmount();
     expect(client.getQueryState(["org", "o1", "skill", "s1"])).toBeUndefined();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([`DELETE ${BASE}/s1`]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${BASE}/s1/delete-preview`,
+      `DELETE ${BASE}/s1`,
+    ]);
   });
 });
 
 describe("the skills pages render on the server (web-SSR spec §6)", () => {
   const GUEST = {
     ...ME,
-    account: { ...ME.account, isEnterpriseAdmin: false },
+    account: { ...ME.account, isSuperAdmin: false },
     memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
   };
   const detail = {
@@ -432,6 +489,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
   const routes = {
     [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }),
     [`GET ${BASE}/s1`]: () => json(200, detail),
+    "GET /api/v1/orgs/o1/components": () => json(200, { components: [] }),
   };
   const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
@@ -484,7 +542,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
     },
   );
 
-  it("/skills/<id>: the loading content is the body's lines and, for an admin, the delete card", async () => {
+  it("/skills/<id>: the loading content is the facts' KeyValue and the body's lines, in one column", async () => {
     await renderRouteEmptyCache("/skills/s1", {
       [`GET ${BASE}/s1`]: () => new Promise<Response>(() => {}),
     });
@@ -494,10 +552,11 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       return el as HTMLElement;
     });
     expect(page.querySelectorAll('[data-part="loading-card"]')).toHaveLength(0);
-    const card = page.querySelectorAll('[data-part="loading-shaped-card"]');
-    expect(card).toHaveLength(1);
-    expect(card[0]?.querySelectorAll('[data-part="loading-buttons"] [data-box]')).toHaveLength(1);
-    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
+    // No delete card (删除 is the head's menu) and no inspector: the facts are in the column
+    expect(page.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(0);
+    expect(page.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(0);
+    const facts = page.querySelector('[data-part="content"] [data-part="loading-key-value"]');
+    expect(facts?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(5);
   });
 
   it.each(["/skills", "/skills/s1"])(
@@ -515,7 +574,243 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, routes, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+    },
+  );
+});
+
+describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview", () => {
+  const GUEST = {
+    ...ME,
+    account: { ...ME.account, isSuperAdmin: false },
+    memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+  };
+  const fill = (s: string, vars: Record<string, string>) =>
+    s.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? "");
+  const c = (locale: "zh" | "en") => msgs[locale].skills.create;
+
+  it.each(LOCALES)("org admins get 新建 next to 上传 (%s)", async (locale) => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ locale });
+    await screen.findByText("pdf-tools");
+    expect(screen.getByRole("button", { name: c(locale).open })).toBeTruthy();
+    expect(screen.getByRole("button", { name: msgs[locale].skills.upload.open })).toBeTruthy();
+  });
+
+  it("members and guests do not get 新建", async () => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ me: MEMBER });
+    await screen.findByText("pdf-tools");
+    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}`]: () => json(200, { skills: [skill("s1", "pdf-tools")] }) });
+    await renderSkills({ me: GUEST });
+    await settle();
+    expect(screen.queryByRole("button", { name: en.skills.create.open })).toBeNull();
+    expect(screen.queryByText("pdf-tools")).toBeNull();
+  });
+
+  it("the dialog posts { name, description, body, shareable } and opens the new skill", async () => {
+    const m = en.skills.create;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}`]: () =>
+        json(201, { skill: skill("s9", "notes", { shareable: true }), version: 1, created: true }),
+    });
+    await renderSkills();
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
+    const dialog = await screen.findByRole("dialog", { name: m.title });
+    // the body's frontmatter rule is said where the body is written
+    expect(within(dialog).getByText(m.bodyHelp)).toBeTruthy();
+    const submit = within(dialog).getByRole("button", { name: m.submit });
+    expect(submit).toHaveProperty("disabled", true);
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "Notes");
+    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "Take notes.");
+    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
+    // an invalid name keeps the primary disabled
+    expect(submit).toHaveProperty("disabled", true);
+    expect(within(dialog).getByText(m.nameInvalid)).toBeTruthy();
+    await user.clear(within(dialog).getByRole("textbox", { name: m.name }));
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
+    const share = within(dialog).getByRole("switch", { name: m.shareable });
+    expect(share.getAttribute("aria-checked")).toBe("false");
+    await user.click(share);
+    await user.click(submit);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills/s9"));
+    expect(bodyOf(calls.find((x) => x.method === "POST" && x.url === BASE))).toEqual({
+      name: "notes",
+      description: "Take notes.",
+      body: "# Notes",
+      shareable: true,
+    });
+    expect(await screen.findByText(fill(m.created, { name: "notes" }))).toBeTruthy();
+  });
+
+  it("409 skill.name_exists keeps the dialog open with its copy", async () => {
+    const m = zh.skills.create;
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, { skills: [] }),
+      [`POST ${BASE}`]: () => json(409, { error: { code: "skill.name_exists", message: "x" } }),
+    });
+    await renderSkills({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click((await screen.findAllByRole("button", { name: m.open }))[0] as HTMLElement);
+    const dialog = await screen.findByRole("dialog", { name: m.title });
+    await user.type(within(dialog).getByRole("textbox", { name: m.name }), "notes");
+    await user.type(within(dialog).getByRole("textbox", { name: m.description }), "记笔记。");
+    await user.type(within(dialog).getByRole("textbox", { name: m.body }), "# Notes");
+    await user.click(within(dialog).getByRole("button", { name: m.submit }));
+    expect(await within(dialog).findByText(zh.errors.skill.name_exists)).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
+  it.each(LOCALES)(
+    "an own skill shows the 可共享 switch, which sets it and reads the skill again (%s)",
+    async (locale) => {
+      const m = msgs[locale].skills.detail;
+      let shared = false;
+      const calls = stubApi({
+        [`GET ${BASE}/s1`]: () =>
+          json(200, detail({ origin: "org", plugin: null, shareable: shared })),
+        [`PUT ${BASE}/s1/shareable`]: () => {
+          shared = true;
+          return json(200, { id: "s1", shareable: true });
+        },
+      });
+      await renderSkill({ locale });
+      const share = await screen.findByRole("switch", { name: m.shareable });
+      expect(share.getAttribute("aria-checked")).toBe("false");
+      expect(screen.getByText(m.shareableHelp)).toBeTruthy();
+      await userEvent.setup().click(share);
+      await vi.waitFor(() =>
+        expect(bodyOf(calls.find((x) => x.method === "PUT"))).toEqual({ shareable: true }),
+      );
+      await vi.waitFor(() =>
+        expect(screen.getByRole("switch", { name: m.shareable }).getAttribute("aria-checked")).toBe(
+          "true",
+        ),
+      );
+    },
+  );
+
+  it("a platform skill names its owner from owner_org_id: 本组织, another org, 平台", async () => {
+    const m = en.skills.detail;
+    const cases = [
+      [{ kind: "org", orgId: "o1", name: "Acme" }, en.catalog.owner.self],
+      [{ kind: "org", orgId: "o2", name: "Beta" }, "Beta"],
+      [{ kind: "platform" }, en.catalog.owner.platform],
+    ] as const;
+    for (const [owner, label] of cases) {
+      stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "platform", owner })) });
+      await renderSkill();
+      const key = await screen.findByText(m.owner);
+      expect(key.parentElement?.textContent).toContain(label);
+      cleanup();
+    }
+  });
+
+  it("no 可共享 on a platform skill, a plugin's skill, or for members", async () => {
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "platform" })) });
+    await renderSkill();
+    await screen.findByText(en.skills.detail.platformHint);
+    expect(screen.queryByRole("switch", { name: en.skills.detail.shareable })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", plugin: "docs" })) });
+    await renderSkill();
+    await screen.findByText("# PDF tools", { exact: false });
+    expect(screen.queryByRole("switch", { name: en.skills.detail.shareable })).toBeNull();
+    cleanup();
+    stubApi({ [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })) });
+    await renderSkill({ me: MEMBER });
+    const share = await screen.findByRole("switch", { name: en.skills.detail.shareable });
+    expect(share.getAttribute("aria-checked")).toBe("true");
+    expect(share).toHaveProperty("disabled", true);
+  });
+
+  it("the delete waits for its preview; a failed preview offers 重试; the toast follows the preview seen", async () => {
+    let fail = true;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let reads = 0;
+    const calls = stubApi({
+      [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })),
+      [`GET ${BASE}/s1/delete-preview`]: async () => {
+        reads += 1;
+        if (fail) return json(500, { error: { code: "internal", message: "x" } });
+        await held;
+        return json(200, {
+          outcome: "transferred",
+          orgs: [{ id: "o2", name: "Beta" }],
+          agents: [],
+        });
+      },
+      [`DELETE ${BASE}/s1`]: () => noContent(),
+    });
+    await renderSkill();
+    const user = userEvent.setup();
+    await openDelete(user, "en");
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+    const confirm = within(dialog).getByRole("button", { name: en.skills.detail.delete });
+    // the preview failed: an error with 重试, and no delete without it
+    const retry = await within(dialog).findByRole("button", {
+      name: en.skills.detail.previewRetry,
+    });
+    expect(confirm).toHaveProperty("disabled", true);
+    fail = false;
+    const before = reads;
+    await user.click(retry);
+    await vi.waitFor(() => expect(reads).toBe(before + 1));
+    // while it reads, confirm stays disabled
+    expect(confirm).toHaveProperty("disabled", true);
+    release();
+    await within(dialog).findByText(fill(en.plugins.delete.transferred, { orgs: "Beta" }));
+    await vi.waitFor(() => expect(confirm).toHaveProperty("disabled", false));
+    await user.click(confirm);
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+    expect(
+      await screen.findByText(fill(en.plugins.delete.doneTransferred, { name: "pdf-tools" })),
+    ).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "deleting a shared skill another org uses says it is transferred, naming the orgs and agents (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const sep = locale === "zh" ? "、" : ", ";
+      stubApi({
+        [`GET ${BASE}/s1`]: () => json(200, detail({ origin: "org", shareable: true })),
+        [`GET ${BASE}/s1/delete-preview`]: () =>
+          json(200, {
+            outcome: "transferred",
+            orgs: [
+              { id: "o2", name: "Beta" },
+              { id: "o3", name: "Gamma" },
+            ],
+            agents: [{ id: "ag1", name: "Writer" }],
+          }),
+        [`DELETE ${BASE}/s1`]: () => noContent(),
+      });
+      await renderSkill({ locale });
+      const user = userEvent.setup();
+      await openDelete(user, locale);
+      const dialog = await screen.findByRole("dialog");
+      expect(
+        await within(dialog).findByText(
+          fill(m.plugins.delete.transferred, { orgs: `Beta${sep}Gamma` }),
+        ),
+      ).toBeTruthy();
+      expect(within(dialog).getByText("· Writer")).toBeTruthy();
+      await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
+      await user.click(within(dialog).getByRole("button", { name: m.skills.detail.delete }));
+      await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));
+      expect(
+        await screen.findByText(fill(m.plugins.delete.doneTransferred, { name: "pdf-tools" })),
+      ).toBeTruthy();
     },
   );
 });

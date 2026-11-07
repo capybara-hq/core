@@ -105,7 +105,7 @@ export function effectiveWakeOnBackgroundTask(
 }
 
 /**
- * 组织实际生效的沙箱限额（C19 / Ruling M16）：企业管理员的覆盖（部署设置 `sandboxLimitOverrides[orgId]`）
+ * 组织实际生效的沙箱限额（C19 / Ruling M16）：超级管理员的覆盖（部署设置 `sandboxLimitOverrides[orgId]`）
  * 给出的 cpu / memoryMb 替换部署默认，未给的项、disk 与出站沿用 `deployment`。只在创建沙箱时读取。
  */
 export function effectiveSandboxLimits(
@@ -120,7 +120,7 @@ export function effectiveSandboxLimits(
   };
 }
 
-/** 组织设置 GET 带回的只读沙箱限额：实际生效值与来源（有企业管理员的覆盖为 `override`）。 */
+/** 组织设置 GET 带回的只读沙箱限额：实际生效值与来源（有超级管理员的覆盖为 `override`）。 */
 export interface OrgSandboxLimits {
   cpu: number;
   memoryMb: number;
@@ -174,7 +174,7 @@ export class OrgSettingsService {
     };
   }
 
-  /** 组织实际生效的沙箱 cpu / 内存（只读；由企业管理员在部署设置里覆盖）。 */
+  /** 组织实际生效的沙箱 cpu / 内存（只读；由超级管理员在部署设置里覆盖）。 */
   async sandboxLimits(orgId: string): Promise<OrgSandboxLimits> {
     const lim = this.config.get().sandbox.limits;
     const override: SandboxLimitOverride | undefined = await readSandboxLimitOverride(

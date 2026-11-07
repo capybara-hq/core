@@ -32,10 +32,28 @@ export const keys = {
       agentSkills: (agentId: string): readonly unknown[] => [...all, "agentSkills", agentId],
       /** The org's agent templates (from plugins). */
       agentTemplates: (): readonly unknown[] => [...all, "agentTemplates"],
+      /** One agent template usable in the org (its definition, owner and 可共享). */
+      agentTemplate: (id: string): readonly unknown[] => [...all, "agentTemplate", id],
+      /** Every agent template detail read (an invalidation prefix). */
+      agentTemplateAll: (): readonly unknown[] => [...all, "agentTemplate"],
+      /** What deleting the org's own agent template does. */
+      agentTemplateDeletePreview: (id: string): readonly unknown[] => [
+        ...all,
+        "agentTemplateDeletePreview",
+        id,
+      ],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
       skill: (skillId: string): readonly unknown[] => [...all, "skill", skillId],
+      /** Every skill detail read (an invalidation prefix: a linked copy's detail too). */
+      skillAll: (): readonly unknown[] => [...all, "skill"],
+      /** What deleting the org's skill does (transferred to the platform or removed). */
+      skillDeletePreview: (skillId: string): readonly unknown[] => [
+        ...all,
+        "skillDeletePreview",
+        skillId,
+      ],
       /** The org's channel connections. */
       channels: (): readonly unknown[] => [...all, "channels"],
       /** One channel connection. */
@@ -48,20 +66,31 @@ export const keys = {
       extensionPointDefaults: (): readonly unknown[] => [...all, "extensionPointDefaults"],
       /** Whether each `org-default` point has a provider for the org now (the web tools). */
       extensionPointsAvailable: (): readonly unknown[] => [...all, "extensionPointsAvailable"],
+      /** The tools of the extensions enabled in the org (the agent form's extension tools). */
+      extensionTools: (): readonly unknown[] => [...all, "extensionTools"],
       /** The catalog from the org's view (the items it may install). */
       catalog: (): readonly unknown[] => [...all, "catalog"],
       /** Every catalog item read (an invalidation prefix). */
       catalogItemsAll: (): readonly unknown[] => [...all, "catalogItem"],
       /** One catalog item from the org's view (its latest version's components). */
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
+      /** The marketplace entries an org admin browses (source `""`: all; search `""`: none). */
+      marketplaceEntries: (sourceId: string, q: string): readonly unknown[] => [
+        ...all,
+        "marketplaceEntries",
+        sourceId,
+        q,
+      ],
       /** The plugins installed in the org. */
       pluginInstalls: (): readonly unknown[] => [...all, "pluginInstalls"],
-      /** An upgrade preview of an installed plugin to a version. */
-      pluginUpgradePreview: (installId: string, version: string): readonly unknown[] => [
+      /** Every read of the platform components offered to the org (an invalidation prefix). */
+      componentsAll: (): readonly unknown[] => [...all, "components"],
+      /** The components offered to the org (`""`: every kind / every plugin). */
+      components: (kind: string, itemId: string): readonly unknown[] => [
         ...all,
-        "pluginUpgradePreview",
-        installId,
-        version,
+        "components",
+        kind,
+        itemId,
       ],
       /** My standing tool grants in the org. */
       toolGrants: (): readonly unknown[] => [...all, "toolGrants"],
@@ -86,6 +115,14 @@ export const keys = {
       inboxCount: (): readonly unknown[] => [...all, "inboxCount"],
       /** One skill change with its files and the skill's current version (the inbox's detail). */
       skillChange: (changeId: string): readonly unknown[] => [...all, "skillChange", changeId],
+      /** What creating an agent from a template carries over (the 用它创建 dialog's preview). */
+      templatePreview: (templateId: string): readonly unknown[] => [
+        ...all,
+        "templatePreview",
+        templateId,
+      ],
+      /** An agent's latest connector setup request (its 待配置 notice). */
+      setupRequest: (agentId: string): readonly unknown[] => [...all, "setupRequest", agentId],
       extensionPages: (): readonly unknown[] => [...all, "extensionPages"],
       /** The org's members. */
       members: (): readonly unknown[] => [...all, "members"],
@@ -158,6 +195,8 @@ export const keys = {
       models: (): readonly unknown[] => [...all, "models"],
       /** The org's connectors. */
       connectors: (): readonly unknown[] => [...all, "connectors"],
+      /** The connector kinds whose extension is enabled in the org (the install wizard). */
+      connectorKinds: (): readonly unknown[] => [...all, "connectorKinds"],
       /** One connector's detail. */
       connector: (connectorId: string): readonly unknown[] => [...all, "connector", connectorId],
       /** The connectors' prompts (`/` menu) or resources (`@` menu). */
@@ -268,6 +307,10 @@ export const keys = {
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
+      /** The super admin's inbox (its items). */
+      adminInbox: (): readonly unknown[] => [...all, "adminInbox"],
+      /** How many items wait in the super admin's inbox (the admin sidebar's count). */
+      adminInboxCount: (): readonly unknown[] => [...all, "adminInboxCount"],
       /** Every page of the accounts list (an invalidation prefix). */
       adminAccountsAll: (): readonly unknown[] => [...all, "adminAccounts"],
       /** A page of the accounts list: the first (`after: ""`) or the one after a cursor. */
@@ -296,10 +339,24 @@ export const keys = {
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
       /** A staged plugin import's review. */
       stagedImport: (stagingId: string): readonly unknown[] => [...all, "stagedImport", stagingId],
+      /** The plugins waiting for a permission confirmation (待确认). */
+      catalogPending: (): readonly unknown[] => [...all, "catalogPending"],
       /** The pending catalog requests at the deployment stage. */
       catalogRequests: (): readonly unknown[] => [...all, "catalogRequests"],
       /** The marketplaces (with the offline flag). */
       marketplaces: (): readonly unknown[] => [...all, "marketplaces"],
+      /** Every platform component read (lists and versions; an invalidation prefix). */
+      componentsAll: (): readonly unknown[] => [...all, "components"],
+      /** The platform components of one kind (`skill` / `connector_template` / `agent_template`). */
+      components: (kind: string): readonly unknown[] => [...all, "components", kind],
+      /** One platform component's versions. */
+      componentVersions: (kind: string, id: string): readonly unknown[] => [
+        ...all,
+        "components",
+        kind,
+        id,
+        "versions",
+      ],
       /** Every entries read (an invalidation prefix). */
       marketplaceEntriesAll: (): readonly unknown[] => [...all, "marketplaceEntries"],
       /** The marketplace entries of one source (`""`: all) and search (`""`: none). */

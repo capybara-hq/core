@@ -8,6 +8,7 @@ import {
   DateTime,
   DetailPage,
   Dialog,
+  Disclosure,
   Field,
   formatDateTime,
   Input,
@@ -54,8 +55,8 @@ type Tab = (typeof TABS)[number];
 const grouped = new Intl.NumberFormat("en-US");
 
 /**
- * `/evals/[setId]`: an eval set (DetailPage): the tabs "Cases" and "Runs", the inspector is the
- * set's info. Header: "Sample from conversations" (dialog), "Run eval" (wizard), delete. A case
+ * `/evals/[setId]`: an eval set (DetailPage, one centred column): the set's facts first (the
+ * description, agent, created, rubric), then the tabs "Cases" and "Runs". Header: "Sample from conversations" (dialog), "Run eval" (wizard), delete. A case
  * opens its snapshot trajectory, a run its results. From the query cache (the layout prefetched it
  * on a first load): the set (required), its runs (a section: the runs tab draws its own error)
  * and its agent (a section: the agent's id shows). A change invalidates the set (and the sets
@@ -113,10 +114,10 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
           value: tab,
           onChange: (x) => setTab(x as Tab),
         }}
-        inspectorTitle={t("set.inspectorTitle")}
-        // The cases tab (its table) and the inspector's facts (agent, created, the rubric)
+        // The facts (the description's line, then agent, created, the rubric), then the cases
+        // tab (its table)
         loading={{
-          inspector: { rows: 4, keyWidth: "10ch" },
+          facts: { rows: 3, keyWidth: "10ch", lead: true },
           content: [
             {
               kind: "table",
@@ -155,8 +156,7 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
           value: tab,
           onChange: (x) => setTab(x as Tab),
         }}
-        inspectorTitle={t("set.inspectorTitle")}
-        inspector={<SetInspector set={set} agent={agent ?? null} />}
+        facts={<SetFacts set={set} agent={agent ?? null} />}
       >
         {tab === "cases" ? (
           <CasesTab orgId={orgId} set={set} />
@@ -194,39 +194,37 @@ function EvalSet({ orgId, setId }: { orgId: string; setId: string }) {
   );
 }
 
-function SetInspector({ set, agent }: { set: EvalSetDetail; agent: Agent | null }) {
+/**
+ * The set's facts at the top of the column (spec §5.2): the full description first (line breaks
+ * kept), then the agent, the creation time and the rubric. The default rubric is a row; a custom
+ * one, often several lines, is a folded section under the rows (the row would cut it to one line).
+ */
+function SetFacts({ set, agent }: { set: EvalSetDetail; agent: Agent | null }) {
   const t = useTranslations("evals.set");
   // Display only: the agent's id when it could not be read.
   const agentName = agent?.definition.name || set.agentId;
   return (
     <Stack gap={12}>
+      {set.description !== "" ? (
+        <Text variant="prose" tone="muted" pre>
+          {set.description}
+        </Text>
+      ) : null}
       <KeyValue
         keyWidth="10ch"
         rows={[
           { k: t("agent"), v: agentName },
           { k: t("created"), v: <DateTime value={set.createdAt} /> },
+          ...(set.rubric === null
+            ? [{ k: t("rubric"), v: <Text tone="muted">{t("defaultRubric")}</Text> }]
+            : []),
         ]}
       />
-      {set.description !== "" ? (
-        <Stack gap={4}>
-          <Text variant="small" tone="muted">
-            {t("description")}
-          </Text>
-          <Text variant="prose" pre>
-            {set.description}
-          </Text>
-        </Stack>
-      ) : null}
-      <Stack gap={4}>
-        <Text variant="small" tone="muted">
-          {t("rubric")}
-        </Text>
-        {set.rubric === null ? (
-          <Text tone="muted">{t("defaultRubric")}</Text>
-        ) : (
+      {set.rubric !== null ? (
+        <Disclosure summary={t("rubric")}>
           <Text pre>{set.rubric}</Text>
-        )}
-      </Stack>
+        </Disclosure>
+      ) : null}
     </Stack>
   );
 }

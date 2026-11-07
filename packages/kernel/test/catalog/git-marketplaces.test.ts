@@ -222,7 +222,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
 }, 240_000);
@@ -278,7 +278,7 @@ const confirm = async (prepared: { stagingId: string; review: { reviewHash: stri
   const c = await admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${prepared.stagingId}/confirm`,
-    payload: { reviewHash: prepared.review.reviewHash, deployExtension: false },
+    payload: { reviewHash: prepared.review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return c.json();
@@ -417,7 +417,9 @@ describe("branch heads to resolve", () => {
   });
 });
 
-describe("git marketplaces", () => {
+// Each case drives git over HTTP, the object store and the kernel end to end: about 1-2 s alone,
+// several times that in a full parallel run, past the local 5 s default (CI has 30 s).
+describe("git marketplaces", { timeout: 30_000 }, () => {
   it("refresh reads .capybara-plugin/marketplace.json at the branch head; an unchanged commit is skipped", async () => {
     const head = await marketplaceRepo();
     const id = await addGit({ url: srv.url("mkt") });
@@ -503,7 +505,12 @@ describe("git marketplaces", () => {
     await srv.commit(
       "solo-repo",
       await pluginFiles({
-        manifest: { name: "solo", version: "3.1.0", description: "Solo plugin" },
+        manifest: {
+          name: "solo",
+          version: "3.1.0",
+          description: { en: "Solo plugin", zh: "独奏插件" },
+          displayName: { zh: "独奏", en: "Solo" },
+        },
         files: skill("solo"),
       }),
     );
@@ -511,7 +518,8 @@ describe("git marketplaces", () => {
     expect((await refresh(a)).json()).toMatchObject({ lastStatus: "ok", entryCount: 1 });
     expect((await entries(a)).get("solo")).toMatchObject({
       version: "3.1.0",
-      summary: { en: "Solo plugin" },
+      summary: { en: "Solo plugin", zh: "独奏插件" },
+      displayName: { zh: "独奏", en: "Solo" },
       importable: true,
     });
 
@@ -759,7 +767,7 @@ describe("git marketplaces", () => {
   });
 });
 
-describe("direct git import", () => {
+describe("direct git import", { timeout: 30_000 }, () => {
   it("POST import/git stages a review from a repo (ref, path) without creating a marketplace", async () => {
     await other.commit("multi", {
       ...under("plugins/alpha", skill("alpha")),
@@ -830,7 +838,7 @@ describe("direct git import", () => {
   });
 });
 
-describe("item identity", () => {
+describe("item identity", { timeout: 30_000 }, () => {
   const importGit = (payload: Record<string, unknown>) =>
     admin({ method: "POST", url: "/api/v1/admin/catalog/import/git", payload });
 
@@ -887,7 +895,7 @@ describe("item identity", () => {
   });
 });
 
-describe("content changed at the same version (spec §5.3)", () => {
+describe("content changed at the same version (spec §5.3)", { timeout: 30_000 }, () => {
   /** A marketplace repo with one path entry and one entry following a branch of another repo. */
   async function movingRepo(note: string): Promise<string> {
     return srv.commit("moving", {
@@ -1052,7 +1060,7 @@ describe("content changed at the same version (spec §5.3)", () => {
   });
 });
 
-describe("archive entries without plugin.json", () => {
+describe("archive entries without plugin.json", { timeout: 30_000 }, () => {
   let reg: FakeNpmRegistry;
   let mkt: FakeMarketplace;
   let tgz: Uint8Array;
@@ -1114,7 +1122,7 @@ describe("archive entries without plugin.json", () => {
   });
 });
 
-describe("contentChanged follows the plugin's own source", () => {
+describe("contentChanged follows the plugin's own source", { timeout: 30_000 }, () => {
   const changedOf = async (id: string) =>
     Object.fromEntries(
       [...(await entries(id))].map(([name, e]) => [name, e.contentChanged as boolean]),
@@ -1277,7 +1285,9 @@ describe("contentChanged follows the plugin's own source", () => {
   });
 });
 
-describe("npm provenance of a git marketplace's npm entries (spec §5.5)", () => {
+describe("npm provenance of a git marketplace's npm entries (spec §5.5)", {
+  timeout: 30_000,
+}, () => {
   it("shows the attested build; a repository other than the marketplace's is a warning, not a refusal", async () => {
     const sri = (b: Uint8Array) => `sha512-${createHash("sha512").update(b).digest("base64")}`;
     await srv.commit("prov", {

@@ -12,6 +12,7 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
+import { otherNameOwner } from "../catalog/ownership.js";
 import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
 import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -63,7 +64,7 @@ import { ExtensionRegistry } from "./registry.js";
  *   manifest's sha256 (written with the audit `bootstrap.completed` only when every entry
  *   succeeded; otherwise the next start runs it again, which is idempotent).
  * - Only entries new to the manifest are installed (Ruling 5): an optional entry that the last
- *   completed run already handled and that is not installed now (an enterprise admin uninstalled
+ *   completed run already handled and that is not installed now (a super admin uninstalled
  *   it) stays uninstalled -> `kept`. A required entry is always installed.
  * - Per entry, by the installed state of its extension:
  *   - not installed (and new, or required): imported into the catalog (source `bootstrap`, ref
@@ -72,8 +73,8 @@ import { ExtensionRegistry } from "./registry.js";
  *     and enabled -> `installed`;
  *   - installed from `bootstrap` at a lower version: upgraded the same way (core's release vouched
  *     for the version, so new permissions are pre-approved and audited), keeping the desired state
- *     an enterprise admin chose (a disabled optional plugin stays disabled) -> `upgraded`;
- *   - installed at a higher version, or from another source (an enterprise admin upgraded it), or
+ *     a super admin chose (a disabled optional plugin stays disabled) -> `upgraded`;
+ *   - installed at a higher version, or from another source (a super admin upgraded it), or
  *     the name is config-declared (`declared`: config wins, no install record is created):
  *     untouched, never downgraded -> `kept`;
  *   - a declarative plugin (no extension): imported into the catalog only -> `imported` (`kept`
@@ -383,6 +384,7 @@ export class BootstrapService {
       const failures: BootstrapFailure[] = [];
       for (const e of o.manifest.plugins) {
         signal.throwIfAborted();
+        await this.warnIfHeld(e);
         try {
           const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
           results.push(carried(r, o.carry));
@@ -408,6 +410,26 @@ export class BootstrapService {
       this.log.info("bootstrap completed", { manifestSha256, results });
       return { manifestSha256, results };
     });
+  }
+
+  /**
+   * A pin whose plugin name an org holds (a live org-owned catalog item): the bootstrap takes no
+   * name over (ruling P3-28), so the entry fails; this warning tells the super admin why and
+   * which org holds it (final review M4).
+   */
+  private async warnIfHeld(e: BootstrapEntry): Promise<void> {
+    const holder = await otherNameOwner(this.db, e.name, null);
+    if (holder?.kind !== "org") return;
+    this.log.warn(
+      "bootstrap: the plugin name is held by an organization; the entry cannot take it over until the organization renames or deletes its plugin",
+      {
+        plugin: e.name,
+        version: e.version,
+        required: e.required,
+        ownerOrgId: holder.orgId,
+        ownerOrg: holder.name,
+      },
+    );
   }
 
   /** The `bootstrap_runs` row and the `bootstrap.completed` audit, in one transaction. */
@@ -490,8 +512,10 @@ export class BootstrapService {
     // Not new to the manifest: an optional entry left out on purpose stays out (Ruling 5)
     const isNew = handled === undefined || !handled.has(e.name);
     if (!pkg.manifest.extension) {
+      await this.markBuiltin(e.name, e.required);
       if (!isNew) return { name: e.name, action: "kept", version: e.version };
       const imported = await this.importOnly(e, bytes, ref, imports);
+      await this.markBuiltin(e.name, e.required);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
     }
     if (this.registry.declared().has(e.name)) {
@@ -546,7 +570,43 @@ export class BootstrapService {
     if (e.required && row?.desired_state === "disabled") {
       await this.ops.enable(e.name, null);
     }
+    await this.markBuiltin(e.name, e.required);
     return result;
+  }
+
+  /**
+   * The catalog item of a bootstrap entry follows `required`: a required entry is builtin, offered
+   * to every org (scope `all`) and not disabled (migration 0075 could leave a required plugin
+   * disabled); an entry that stops being required is no longer builtin and keeps scope `all` (the
+   * admin may change it from then on).
+   */
+  private async markBuiltin(name: string, required: boolean): Promise<void> {
+    const touch = { updated_at: sql<Date>`now()` as unknown as Date };
+    if (required) {
+      await this.db
+        .updateTable("catalog_items")
+        .set({
+          builtin: true,
+          scope: "all",
+          disabled: false,
+          scope_version: sql<number>`scope_version + 1`,
+          ...touch,
+        })
+        .where("name", "=", name)
+        .where("deleted_at", "is", null)
+        .where((eb) =>
+          eb.or([eb("builtin", "=", false), eb("scope", "<>", "all"), eb("disabled", "=", true)]),
+        )
+        .execute();
+      return;
+    }
+    await this.db
+      .updateTable("catalog_items")
+      .set({ builtin: false, ...touch })
+      .where("name", "=", name)
+      .where("deleted_at", "is", null)
+      .where("builtin", "=", true)
+      .execute();
   }
 
   /** A declarative plugin: catalog only. Returns false when that version is already imported. */
@@ -562,10 +622,7 @@ export class BootstrapService {
         ref,
         integrity: e.integrity,
       });
-      await imports.confirm(null, stagingId, {
-        reviewHash: review.reviewHash,
-        deployExtension: false,
-      });
+      await imports.confirm(null, stagingId, { reviewHash: review.reviewHash });
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.code === "catalog.version_exists") return false;
@@ -574,7 +631,7 @@ export class BootstrapService {
   }
 
   /**
-   * Imports, approves, installs and enables (one review, confirmed with `deployExtension`). When
+   * Imports, approves, installs and enables (one review; its confirm deploys the extension). When
    * the catalog already has this version (an earlier run stopped after importing, or the same
    * package came from a marketplace), the extension is deployed from the package store instead.
    */
@@ -601,7 +658,6 @@ export class BootstrapService {
     }
     const r = await imports.confirm(null, staged.stagingId, {
       reviewHash: staged.review.reviewHash,
-      deployExtension: true,
       enable,
     });
     if (r.deploy?.result === "failed") {
@@ -683,6 +739,15 @@ export class BootstrapService {
       .where("required", "=", true);
     if (names.length > 0) q = q.where("name", "not in", names);
     const rows = await q.returning(["name", "version"]).execute();
+    for (const r of rows) await this.markBuiltin(r.name, false);
+    // A declarative plugin has no install record: clear builtin by catalog name
+    let items = this.db
+      .updateTable("catalog_items")
+      .set({ builtin: false, updated_at: sql<Date>`now()` as unknown as Date })
+      .where("builtin", "=", true)
+      .where("deleted_at", "is", null);
+    if (names.length > 0) items = items.where("name", "not in", names);
+    await items.execute();
     return rows.map((r) => ({ name: r.name, action: "required_cleared", version: r.version }));
   }
 }

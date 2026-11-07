@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { PluginScopeSyncProcessor } from "../catalog/scope-sync.js";
 import { ChannelsProcessor } from "../channels/channels.module.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
@@ -23,8 +24,8 @@ import { UsageReporter } from "../runtime/usage-report.js";
 /**
  * The worker role's parts, driven by `KernelLifecycle` at fixed points of its start order and stop
  * phases (so they stay ordered after the extension load and before the extension host closes): the
- * queue consumers (runs, sub-agent runs, evals, maintenance, channel deliveries, `usage.report`,
- * titles) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
+ * queue consumers (runs, sub-agent runs, evals, maintenance, the plugin scope sync, channel
+ * deliveries, `usage.report`, titles) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
  * `WorkerModule`, so a process without the worker role has none of them.
  */
 @Injectable()
@@ -53,6 +54,7 @@ export class WorkerRole {
     @Inject(ChannelsProcessor) private readonly channelsProcessor: ChannelsProcessor,
     @Inject(EvalsProcessor) private readonly evalsProcessor: EvalsProcessor,
     @Inject(MaintenanceProcessor) private readonly maintenanceProcessor: MaintenanceProcessor,
+    @Inject(PluginScopeSyncProcessor) private readonly scopeProcessor: PluginScopeSyncProcessor,
   ) {
     this.config = config.get();
   }
@@ -80,6 +82,7 @@ export class WorkerRole {
     }
     checkpoint();
     this.maintenanceProcessor.start();
+    this.scopeProcessor.start();
     this.channelOutbound.startWorker(this.channelsProcessor.worker);
     this.usageReport.startWorker(this.usageProcessor.worker);
     this.titles.startWorker(this.titleProcessor.worker);
@@ -92,6 +95,8 @@ export class WorkerRole {
     // The gate opens: from here on ticks run; the runOnStart jobs run once now, in the background
     this.scheduledRuns.open();
     this.intervals.runStartJobs();
+    // Every plugin's scope converges once per worker start (a failed or lost sync is retried)
+    this.scopeProcessor.resync();
   }
 
   /**
@@ -112,8 +117,8 @@ export class WorkerRole {
     return this.evalsStarted ? this.evalWorker.close(budgetMs) : undefined;
   }
 
-  /** Closes the maintenance queue's worker. */
-  closeMaintenance(): Promise<void> {
-    return this.maintenanceProcessor.worker.close();
+  /** Closes the maintenance queue's worker and the plugin scope sync's (it stops between pairs). */
+  async closeMaintenance(): Promise<void> {
+    await Promise.all([this.maintenanceProcessor.worker.close(), this.scopeProcessor.close()]);
   }
 }

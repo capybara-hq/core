@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { Button, IconButton, LinkButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { BoxScope } from "../layout/box";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
@@ -38,12 +39,18 @@ export type ObjectRowProps = {
    * The row's most common action, always a secondary (`default`) button or link: the page head
    * holds the one primary of the screen (spec §6.17); urgency is the row's `state`.
    */
-  action?: { label: string; href?: string; onSelect?(): void };
+  action?: { label: string; href?: string; onSelect?(): void; loading?: boolean };
   menu?: MenuItem[];
+  /**
+   * An action of the row is running (spec §6.17): every button of the row is disabled until it
+   * settles, and the menu button (or the menu's lone item drawn as a button) shows the spinner
+   * unless the row action's own `loading` does.
+   */
+  busy?: boolean;
 };
 
 /** A button or link at the row's right: the row action, or a menu's lone item. */
-type RowButton = { label: string; href?: string; onSelect?(): void };
+type RowButton = { label: string; href?: string; onSelect?(): void; loading?: boolean };
 
 /** Skeleton rows an object list shows while it loads (spec §6.17). */
 const SKELETON_ROWS = 3;
@@ -68,7 +75,7 @@ export function ObjectList({
   if (loading === undefined || loading === false) {
     return (
       <ul className="cb-object-list" aria-label={label}>
-        {children}
+        <BoxScope kind="object-list">{children}</BoxScope>
       </ul>
     );
   }
@@ -103,6 +110,7 @@ export function ObjectRow({
   trailing,
   action,
   menu,
+  busy,
 }: ObjectRowProps) {
   const Link = useDesignLink();
   const t = useDesignT();
@@ -110,8 +118,13 @@ export function ObjectRow({
   // destructive one stays in the menu; none, no menu.
   const actions = menuActions(menu ?? []);
   const lone = menuLone(menu ?? []);
+  const actionLoading = action?.loading === true;
+  const waiting = busy === true || actionLoading;
+  // The spinner goes where the running action is: the row action, else the menu (or its lone item)
+  const menuLoading = busy === true && !actionLoading;
   const single: RowButton | undefined = lone && {
     label: lone.label,
+    ...(menuLoading ? { loading: true } : {}),
     ...(lone.href !== undefined ? { href: lone.href } : {}),
     ...(lone.onSelect ? { onSelect: lone.onSelect } : {}),
   };
@@ -184,6 +197,8 @@ export function ObjectRow({
             key={i}
             variant="default"
             density="dense"
+            loading={a.loading === true}
+            disabled={waiting}
             {...(a.onSelect ? { onClick: a.onSelect } : {})}
           >
             {a.label}
@@ -196,9 +211,19 @@ export function ObjectRow({
           trigger={
             <IconButton
               label={t("shell.moreActions")}
-              icon={<Icon name="more-horizontal" />}
+              icon={
+                menuLoading ? (
+                  <span className="cb-btn-spin" aria-hidden="true">
+                    <Icon name="spinner" size={14} />
+                  </span>
+                ) : (
+                  <Icon name="more-horizontal" />
+                )
+              }
               density="dense"
               variant="default"
+              disabled={waiting}
+              aria-busy={menuLoading ? true : undefined}
             />
           }
         />

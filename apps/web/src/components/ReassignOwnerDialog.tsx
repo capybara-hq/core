@@ -12,7 +12,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * 更换负责人 (org admins, `agents.manage`): pick a member of the org (anonymous guests can't own
+ * 更改所有者 (org admins, `agents.manage`): pick a member of the org (anonymous guests can't own
  * agents, the kernel refuses them) and `POST …/agents/:id/owner`, which invalidates the agents list
  * and the agent. `onDone` after success.
  */

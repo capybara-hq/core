@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useRef } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
@@ -39,6 +39,9 @@ function TabExtras({ it }: { it: TabItem }) {
   );
 }
 
+/** Keys that alone do not count as keyboard use (they leave a pointer focus mark in place). */
+const MODIFIER_KEYS = new Set(["Meta", "Control", "Alt", "Shift", "CapsLock", "Fn", "OS"]);
+
 export type TabsProps = {
   items: TabItem[];
   value: string;
@@ -49,6 +52,24 @@ export type TabsProps = {
 export function Tabs({ items, value, onChange, label }: TabsProps) {
   const Link = useDesignLink();
   const ref = useRef<HTMLDivElement>(null);
+  // The tab a pointer focused: it draws no ring (spec §2.5), until a key press or a blur. A press
+  // only arms it (`pressed`); the mark is set when focus arrives from that press, in the same
+  // task. WebKit and Firefox on macOS do not focus a clicked button, so an armed press that gives
+  // no focus is dropped on pointerup or the next tick, and a later keyboard focus keeps its ring.
+  const [pointerFocus, setPointerFocus] = useState<string | null>(null);
+  const pressed = useRef<string | null>(null);
+  const press = (id: string, el: HTMLElement) => {
+    // A press on the tab that already has focus moves no focus, so no focus event comes: Chrome
+    // keeps that focus's keyboard origin (and its ring), so the mark is set at once.
+    if (document.activeElement === el) {
+      setPointerFocus(id);
+      return;
+    }
+    pressed.current = id;
+    setTimeout(() => {
+      if (pressed.current === id) pressed.current = null;
+    }, 0);
+  };
   const hasLinks = items.some((i) => i.href);
 
   if (hasLinks) {
@@ -91,6 +112,9 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
   // value 不对应任何可用页签时，第一个可用页签可被 Tab 聚焦（否则整个页签栏不可达）
   const focusId = enabled.some((i) => i.id === value) ? value : enabled[0]?.id;
   const onKey = (e: KeyboardEvent) => {
+    // A key press is keyboard use: the ring shows again. A modifier alone is not (Chrome does not
+    // turn on :focus-visible for one either).
+    if (!MODIFIER_KEYS.has(e.key)) setPointerFocus(null);
     const idx = enabled.findIndex((i) => i.id === focusId);
     let next: TabItem | undefined;
     if (e.key === "ArrowRight") next = enabled[(idx + 1) % enabled.length];
@@ -119,6 +143,19 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
             tabIndex={it.id === focusId ? 0 : -1}
             disabled={it.disabled}
             data-state={selected ? "selected" : undefined}
+            data-pointer-focus={pointerFocus === it.id ? "true" : undefined}
+            onPointerDown={(e) => press(it.id, e.currentTarget)}
+            onPointerUp={() => {
+              pressed.current = null;
+            }}
+            onPointerCancel={() => {
+              pressed.current = null;
+            }}
+            onFocus={() => {
+              if (pressed.current === it.id) setPointerFocus(it.id);
+              pressed.current = null;
+            }}
+            onBlur={() => setPointerFocus((p) => (p === it.id ? null : p))}
             onClick={() => onChange?.(it.id)}
           >
             {it.label}

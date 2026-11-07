@@ -3,29 +3,49 @@
 import { Badge, Button, Checkbox, DangerConfirm, Stack, Text, useToast } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { type OrgComponent, unavailableComponent } from "../lib/components";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { deleteAgentSkill, PINNED_SKILLS_LIMITS, type SkillSummary } from "../lib/skills";
+import {
+  deleteAgentSkill,
+  PINNED_SKILLS_LIMITS,
+  type SkillSummary,
+  skillAliases,
+} from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
- * 组织技能多选：每个技能一个复选框（名称 · 描述）。已选但不在库里的 id（技能已被删除）显示为
+ * 组织技能多选：每个技能一个复选框（名称 · 描述），平台技能带「平台」标记。已选但不在库里的 id（技能已被删除）显示为
  * 「已删除的技能」并保持勾选，取消勾选即从定义里移除（内核修改时只核对新加的引用，保留它不会报错）。
+ * A platform skill is selected when the definition names it or one of the org copies linked to it
+ * (`linkedIds`, older agents); those copy ids are never shown as deleted. Unticking it removes
+ * every alias; ticking it adds the platform skill's own id.
  */
 export function OrgSkillsPicker({
   skills,
+  offered,
   value,
   onChange,
 }: {
   skills: SkillSummary[] | undefined;
+  /** The platform components offered to the org: an id of one that is off reads as unavailable. */
+  offered?: OrgComponent[] | null;
   value: string[];
   onChange(next: string[]): void;
 }) {
   const t = useTranslations("agents.form");
-  const toggle = (id: string, on: boolean) =>
-    onChange(on ? [...value, id] : value.filter((x) => x !== id));
-  const known = new Set((skills ?? []).map((s) => s.id));
-  const deleted = skills === undefined ? [] : value.filter((id) => !known.has(id));
+  const toggle = (s: SkillSummary, on: boolean) => {
+    const aliases = skillAliases(s);
+    onChange(on ? [...value, s.id] : value.filter((x) => !aliases.includes(x)));
+  };
+  const known = new Set((skills ?? []).flatMap(skillAliases));
+  const missing = skills === undefined ? [] : value.filter((id) => !known.has(id));
+  // a platform skill off in the org (spec §5 rule 8): unavailable, back when it is on again
+  const unavailable = missing.flatMap((id) => {
+    const c = unavailableComponent(offered, "skill", id);
+    return c === undefined ? [] : [{ id, name: c.name }];
+  });
+  const deleted = missing.filter((id) => !unavailable.some((u) => u.id === id));
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset 带浏览器默认边框与内边距，apps/web 不能写样式；用 role=group 分组
     <div role="group" aria-label={t("orgSkillsLabel")}>
@@ -33,7 +53,7 @@ export function OrgSkillsPicker({
         <Text variant="small" tone="muted">
           {t("orgSkillsLabel")}
         </Text>
-        {skills !== undefined && skills.length === 0 && deleted.length === 0 && (
+        {skills !== undefined && skills.length === 0 && missing.length === 0 && (
           <Text variant="small" tone="faint">
             {t("noOrgSkills")}
           </Text>
@@ -42,8 +62,8 @@ export function OrgSkillsPicker({
           <Stack key={s.id} direction="row" gap={8} align="center">
             <Checkbox
               label={`${s.name} · ${s.description}`}
-              checked={value.includes(s.id)}
-              onChange={(on) => toggle(s.id, on)}
+              checked={skillAliases(s).some((id) => value.includes(id))}
+              onChange={(on) => toggle(s, on)}
             />
             <SkillTags skill={s} />
           </Stack>
@@ -53,12 +73,25 @@ export function OrgSkillsPicker({
             {t("manualHint")}
           </Text>
         )}
+        {unavailable.map((u) => (
+          <Checkbox
+            key={u.id}
+            label={t("unavailableSkill", { name: u.name })}
+            checked
+            onChange={(on) => onChange(on ? value : value.filter((x) => x !== u.id))}
+          />
+        ))}
+        {unavailable.length > 0 && (
+          <Text variant="small" tone="warn">
+            {t("unavailableSkillHint")}
+          </Text>
+        )}
         {deleted.map((id) => (
           <Checkbox
             key={id}
             label={t("deletedSkill", { id })}
             checked
-            onChange={(on) => toggle(id, on)}
+            onChange={(on) => onChange(on ? value : value.filter((x) => x !== id))}
           />
         ))}
         {deleted.length > 0 && (
@@ -71,11 +104,15 @@ export function OrgSkillsPicker({
   );
 }
 
-/** Phase D tags: "manual" (not in the model's catalog), "sub-agent" (runs as one when invoked). */
-function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork"> }) {
+/**
+ * Tags: "platform" (a platform skill on in the org), and phase D's "manual" (not in the model's
+ * catalog), "sub-agent" (runs as one when invoked).
+ */
+function SkillTags({ skill }: { skill: Pick<SkillSummary, "manual" | "fork" | "origin"> }) {
   const t = useTranslations("agents.form");
   return (
     <>
+      {skill.origin === "platform" && <Badge>{t("skillTag.platform")}</Badge>}
       {skill.manual === true && <Badge>{t("skillTag.manual")}</Badge>}
       {skill.fork === true && <Badge>{t("skillTag.fork")}</Badge>}
     </>
@@ -117,6 +154,7 @@ export function SkillWriteSwitch({
  */
 export function PinnedSkillsPicker({
   skills,
+  offered,
   selected,
   value,
   onChange,
@@ -124,6 +162,8 @@ export function PinnedSkillsPicker({
 }: {
   /** Undefined when a skill list could not be read. */
   skills: SkillSummary[] | undefined;
+  /** The platform components offered to the org: a pin of one that is off reads as unavailable. */
+  offered?: OrgComponent[] | null;
   /** Ids of the selected skills (org skills in `orgSkills`, then the agent's own). */
   selected: string[];
   value: string[];
@@ -147,19 +187,28 @@ export function PinnedSkillsPicker({
       </div>
     );
   }
-  const byId = new Map(skills.map((s) => [s.id, s]));
-  const rows = selected.flatMap((id) => {
+  // a linked copy's id stands for its platform skill (older agents select and pin copy ids)
+  const byId = new Map(skills.flatMap((s) => skillAliases(s).map((id) => [id, s] as const)));
+  /** Each selected skill once, under the id the definition selects it by. */
+  const rows: (SkillSummary & { ref: string })[] = [];
+  for (const id of selected) {
     const s = byId.get(id);
-    return s === undefined ? [] : [s];
-  });
-  const stale = value.filter((id) => !rows.some((s) => s.id === id));
-  const pinnedRows = rows.filter((s) => value.includes(s.id));
+    if (s !== undefined && !rows.some((r) => r.id === s.id)) rows.push({ ...s, ref: id });
+  }
+  const pinnedOf = (s: SkillSummary) => skillAliases(s).some((id) => value.includes(id));
+  const stale = value.filter((id) => !rows.some((s) => skillAliases(s).includes(id)));
+  const pinnedRows = rows.filter(pinnedOf);
   const bytes = pinnedRows.reduce((n, s) => n + (s.entryBytes ?? 0), 0);
   const tokens = pinnedRows.reduce((n, s) => n + (s.tokenEstimate ?? 0), 0);
   const max = PINNED_SKILLS_LIMITS.count;
   const full = value.length >= max;
   const toggle = (id: string, on: boolean) =>
     onChange(on ? [...value, id] : value.filter((x) => x !== id));
+  /** Pins a row under the id it is selected by; unpins every alias of it. */
+  const toggleRow = (s: SkillSummary & { ref: string }, on: boolean) => {
+    const aliases = skillAliases(s);
+    onChange(on ? [...value, s.ref] : value.filter((x) => !aliases.includes(x)));
+  };
   return (
     // biome-ignore lint/a11y/useSemanticElements: fieldset has default browser border and padding, apps/web cannot style it; group with role=group
     <div role="group" aria-label={t("pinnedLabel")}>
@@ -176,7 +225,7 @@ export function PinnedSkillsPicker({
           </Text>
         )}
         {rows.map((s) => {
-          const on = value.includes(s.id);
+          const on = pinnedOf(s);
           // a manual-only skill is not in the model's catalog: never newly pinned (phase D)
           const manual = s.manual === true;
           return (
@@ -185,7 +234,7 @@ export function PinnedSkillsPicker({
                 label={t("pinSkill", { name: s.name })}
                 checked={on}
                 disabled={!on && (full || manual)}
-                onChange={(next) => toggle(s.id, next)}
+                onChange={(next) => toggleRow(s, next)}
               />
               <SkillTags skill={s} />
               {s.suggestPinned === true && <Badge>{t("suggested")}</Badge>}
@@ -200,12 +249,17 @@ export function PinnedSkillsPicker({
         {stale.map((id) => (
           <Checkbox
             key={id}
-            label={t("deletedSkill", { id })}
+            label={(() => {
+              const off = unavailableComponent(offered, "skill", id);
+              return off !== undefined
+                ? t("unavailableSkill", { name: off.name })
+                : t("deletedSkill", { id });
+            })()}
             checked
             onChange={(next) => toggle(id, next)}
           />
         ))}
-        {rows.some((s) => s.manual === true && !value.includes(s.id)) && (
+        {rows.some((s) => s.manual === true && !pinnedOf(s)) && (
           <Text variant="small" tone="faint">
             {t("manualNotPinnable")}
           </Text>

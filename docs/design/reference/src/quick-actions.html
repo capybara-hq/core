@@ -10,19 +10,20 @@
 <body>
 <main class="r-page">
 <h1>Quick actions</h1>
-<p>The selected agent's quick actions (spec §6.16.27), quiet: muted small text links with no border, ink on hover and focus, a long title cut with an ellipsis; four, then 更多 opens the rest in a small menu.</p>
+<p>The selected agent's quick actions (spec §6.16.27): a ghost zap icon button in the composer's control row, right after the effort picker, shown only when the agent has quick actions; it opens a small menu above the composer listing them, a long title cut with an ellipsis.</p>
 <div class="r-blocks">
 <section data-ref-block="quick-actions-default" style="width:752px" data-pad>
-  <div class="r-chatcol"><div class="r-quick-actions" data-part="quick-actions" role="group" aria-label="常用任务"><button class="r-quick-action" data-part="quick-action" title="核对上月总账与银行流水">核对上月总账与银行流水</button><button class="r-quick-action" data-part="quick-action" title="整理本周进展，按项目写成周报并列出下周计划和风险">整理本周进展，按项目写成周报并列出下周计划和风险</button><button class="r-quick-action" data-part="quick-action" title="查一个供应商的背景">查一个供应商的背景</button><button class="r-quick-action" data-part="quick-action" title="汇总差异明细">汇总差异明细</button><span class="r-quick-more-wrap"><button class="r-quick-action" data-part="quick-more">更多</button></span></div></div>
+  <template data-fixture="quick-actions" data-opts='{"state": "default"}'></template>
 </section>
 <section data-ref-block="quick-actions-hover" style="width:752px" data-pad>
-  <div class="r-chatcol"><div class="r-quick-actions" data-part="quick-actions" role="group" aria-label="常用任务"><button class="r-quick-action" data-part="quick-action" title="核对上月总账与银行流水" data-state="hover">核对上月总账与银行流水</button><button class="r-quick-action" data-part="quick-action" title="整理本周进展，按项目写成周报并列出下周计划和风险">整理本周进展，按项目写成周报并列出下周计划和风险</button><button class="r-quick-action" data-part="quick-action" title="查一个供应商的背景">查一个供应商的背景</button><button class="r-quick-action" data-part="quick-action" title="汇总差异明细">汇总差异明细</button><span class="r-quick-more-wrap"><button class="r-quick-action" data-part="quick-more">更多</button></span></div></div>
+  <template data-fixture="quick-actions" data-opts='{"state": "hover"}'></template>
 </section>
-<section data-ref-block="quick-actions-menu" style="width:752px;height:160px" data-pad>
-  <div class="r-chatcol"><div class="r-quick-actions" data-part="quick-actions" role="group" aria-label="常用任务"><button class="r-quick-action" data-part="quick-action" title="核对上月总账与银行流水">核对上月总账与银行流水</button><button class="r-quick-action" data-part="quick-action" title="整理本周进展，按项目写成周报并列出下周计划和风险">整理本周进展，按项目写成周报并列出下周计划和风险</button><button class="r-quick-action" data-part="quick-action" title="查一个供应商的背景">查一个供应商的背景</button><button class="r-quick-action" data-part="quick-action" title="汇总差异明细">汇总差异明细</button><span class="r-quick-more-wrap"><button class="r-quick-action" data-part="quick-more">更多</button><div class="r-menu r-quick-menu" data-part="menu" role="menu" aria-label="常用任务"><div class="r-menu-item" data-part="menu-item" role="menuitem">写一份会议纪要</div><div class="r-menu-item" data-part="menu-item" role="menuitem">翻译一份合同</div></div></span></div></div>
+<section data-ref-block="quick-actions-menu" style="width:752px" data-pad>
+  <template data-fixture="quick-actions" data-opts='{"state": "menu"}'></template>
 </section>
 </div>
 </main>
+<script src="conversation.js"></script>
 <script src="fill.js"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import { getSandboxStatus } from "../artifacts";
 import { getAttachmentLimits } from "../attachments";
 import {
   getConnector,
+  listConnectorKinds,
   listConnectorPrompts,
   listConnectorResources,
   listConnectors,
@@ -64,7 +65,7 @@ export const eventsQuery = (orgId: string, id: string) =>
     freshness: "events",
   });
 
-/** The queued messages and whether the queue is paused (and why). */
+/** Messages an older version queued (leftovers the kernel still sends) and whether they are paused. */
 export const queueQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).queue(),
@@ -101,7 +102,10 @@ export const subagentsQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
-/** The agent tree of a root conversation (the agent map's level 1; read while the map is open). */
+/**
+ * The agent tree of a root conversation (the agent map's level 1, and the composer's agents chip:
+ * read once the conversation has dispatched a sub-agent).
+ */
 export const agentTreeQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).conversation(id).agentTree(),
@@ -229,6 +233,14 @@ export const connectorsQuery = (orgId: string) =>
     freshness: "orgConfig",
   });
 
+/** The connector kinds the org can create connectors of (`{ kinds }`; org admins). */
+export const connectorKindsQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).connectorKinds(),
+    fn: () => listConnectorKinds(orgId),
+    freshness: "orgConfig",
+  });
+
 /** The attachment limits the composer checks files against. */
 export const attachmentLimitsQuery = (orgId: string) =>
   defineQuery({
@@ -333,10 +345,10 @@ export const connectorResourcesQuery = (orgId: string) =>
 
 /**
  * What the conversation page reads once it has the log and the row (the route's `then`, as
- * today's snapshot did): the tool info the events name, the sub-agents and usage once one was
- * dispatched, the background tasks once the log names one ({@link hasBackgroundTasks}), the
- * members once a run another account stopped shows, and the agent's invocable
- * skills (with the conversation's trial drafts when it is the caller's).
+ * today's snapshot did): the tool info the events name, the sub-agents, usage and (a root
+ * conversation's) agent tree once one was dispatched, the background tasks once the log names one
+ * ({@link hasBackgroundTasks}), the members once a run another account stopped shows, and the
+ * agent's invocable skills (with the conversation's trial drafts when it is the caller's).
  */
 export function conversationFollowUps(
   orgId: string,
@@ -353,6 +365,9 @@ export function conversationFollowUps(
   if (events.some((e) => e.type === "subagent_dispatched")) {
     add(subagentsQuery(orgId, id));
     add(usageQuery(orgId, id));
+    // the composer's agents chip counts the whole tree from the first paint (AC3); a sub-agent
+    // conversation has no tree of its own (the API answers 404)
+    if (!row.parentConversationId) add(agentTreeQuery(orgId, id));
   }
   if (hasBackgroundTasks(events)) add(backgroundTasksQuery(orgId, id));
   const stoppedByOther = events.some(
@@ -433,6 +448,22 @@ export function appendEvents(
     return [...cur, ...fresh].sort((a, b) => a.seq - b.seq);
   });
   return { added };
+}
+
+/**
+ * Reads what the cached log lacks after its end and merges it ({@link appendEvents}): a resync
+ * that never replaces the cache, so an event the stream appends meanwhile survives (the log is
+ * never refetched wholesale, {@link eventsQuery}). Nothing is read while the log is not cached.
+ */
+export async function catchUpEvents(
+  qc: QueryClient,
+  orgId: string,
+  id: string,
+): Promise<{ added: number }> {
+  const cached = qc.getQueryData<ConversationEvent[]>(keys.org(orgId).conversation(id).events());
+  if (cached === undefined) return { added: 0 };
+  const events = await listAllEvents(orgId, id, cached.at(-1)?.seq ?? 0);
+  return appendEvents(qc, orgId, id, events);
 }
 
 /**

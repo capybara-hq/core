@@ -38,7 +38,7 @@ import NotFound from "../../not-found";
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
  * sandbox tools (run directly / ask for approval), sandbox egress (follow the deployment / custom
- * allowlist / no network, ruling M19) and sandbox resources (cpu / memory, read-only: enterprise
+ * allowlist / no network, ruling M19) and sandbox resources (cpu / memory, read-only: super
  * admins override them per organization in the deployment settings, C19). Members can see, admins
  * can change; changes show an ActionRow. The org-settings PATCH is shared with the general page:
  * this page sends only its own fields. From the query cache (the layout prefetched it on a first

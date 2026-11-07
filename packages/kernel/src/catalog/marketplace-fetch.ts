@@ -8,7 +8,7 @@ import { isLoopback, readCapped } from "../packages/npm.js";
 
 /**
  * Fetching a marketplace manifest `marketplace.json` (C26, spec §5.2) and a marketplace's archive
- * sources. The URLs come from an enterprise admin or the config, but responses are always hostile
+ * sources. The URLs come from a super admin or the config, but responses are always hostile
  * input:
  * - https only (`allowInsecureLoopback`, tests only, allows http on loopback addresses), no user
  *   info in the URL;

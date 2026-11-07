@@ -1,16 +1,20 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
 import { z } from "zod";
 import { MARKETPLACE_MAX_MIRRORS } from "../config/schema.js";
+import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
+import { readOrgMarketplaceBrowse } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import {
   type ActorOpts,
@@ -18,6 +22,7 @@ import {
   MarketplacesService,
   type MarketplaceView,
 } from "./marketplaces.service.js";
+import { itemsSeenBy } from "./scope-state.js";
 
 const Url = z.string().min(1).max(2000);
 
@@ -66,12 +71,12 @@ class MarketplaceImportBody extends createZodDto(ImportBody, "MarketplaceImportB
 class MarketplacePatchBody extends createZodDto(PatchBody, "MarketplacePatchBody") {}
 
 /**
- * Marketplaces (`/api/v1/admin/marketplaces/*`, enterprise admins): create, update, delete and
- * refresh the official and enterprise marketplaces, browse entries, import from a marketplace.
- * Writes re-check the enterprise admin inside the service's lock and are audited.
+ * Marketplaces (`/api/v1/admin/marketplaces/*`, super admins): create, update, delete and
+ * refresh the official and custom marketplaces, browse entries, import from a marketplace.
+ * Writes re-check the super admin inside the service's lock and are audited.
  */
 @Controller("api/v1/admin/marketplaces")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class MarketplacesController {
   constructor(
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
@@ -89,7 +94,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Adds an enterprise marketplace (https URL and mirrors; the token is kept in secrets and sent only
+   * Adds a custom marketplace (https URL and mirrors; the token is kept in secrets and sent only
    * to the URL's origin). A git URL (`…/*.git`, `owner/repo`, or any URL with `form: "git"`) is a
    * git marketplace with an optional `ref`; anything else is a marketplace.json URL.
    */
@@ -159,7 +164,7 @@ export class MarketplacesController {
   }
 
   /**
-   * Deletes an enterprise marketplace (imported catalog items are kept); official -> 409
+   * Deletes a custom marketplace (imported catalog items are kept); official -> 409
    * `marketplace.builtin`.
    */
   @Delete(":id")
@@ -217,5 +222,49 @@ export class MarketplacesController {
       { marketplaceId: id, name, ...(body.version !== undefined && { version: body.version }) },
       actorOpts(actor),
     );
+  }
+}
+
+/**
+ * Org admins browse the marketplaces read-only (`GET /api/v1/orgs/:orgId/marketplaces/entries`,
+ * `catalog.decide`; plugin scope spec §5.1 rule 3) to request an import. The deployment setting
+ * `orgMarketplaceBrowse` off -> 404 `not_found`. An entry imported as an item the org can neither
+ * see nor request (a hidden `named` item) reads as not imported (`adopted: null`).
+ */
+@Controller("api/v1/orgs/:orgId/marketplaces")
+export class OrgMarketplacesController {
+  constructor(
+    @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
+  ) {}
+
+  @Get("entries")
+  @OrgAction("catalog.decide")
+  async entries(
+    @CurrentOrg() org: OrgContext,
+    @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
+  ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
+    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
+      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
+    }
+    const r = await this.marketplaces.entries({
+      ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
+      ...(q.q !== undefined && { q: q.q }),
+    });
+    // A hidden `named` item the org is not listed on stays unknown to it: the entry reads as not
+    // imported
+    const seen = await itemsSeenBy(
+      this.kdb.db,
+      org.orgId,
+      r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+    );
+    return {
+      ...r,
+      items: r.items.map((e) =>
+        e.adopted === null || seen.has(e.adopted.itemId)
+          ? e
+          : { ...e, adopted: null, newerAvailable: false, contentChanged: false },
+      ),
+    };
   }
 }

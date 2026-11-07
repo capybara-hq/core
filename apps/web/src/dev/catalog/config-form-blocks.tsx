@@ -5,6 +5,7 @@ import {
   Field,
   FieldRow,
   FieldRowGroup,
+  FormSection,
   Input,
   KeyValueEditor,
   Repeater,
@@ -261,6 +262,12 @@ function repeaterBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="repeater-empty" width={720} pad>
         <EndpointsDemo initial={[]} empty="还没有端点。添加一个兼容 OpenAI 的服务即可开始。" />
+      </RefBlock>
+      {/* Inside a form card the cards are divided rows (spec §6.26, §1 "One box is enough"). */}
+      <RefBlock id="repeater-divided" width={720} pad>
+        <FormSection id="endpoints" title="端点" layout="stacked">
+          <EndpointsDemo initial={ENDPOINTS} />
+        </FormSection>
       </RefBlock>
     </>
   );

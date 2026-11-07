@@ -187,7 +187,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
       ),
     );
   const fork = a.forSkill;
-  const listed = await resolveRoster(d.db, ctx.orgId, ctx.agent);
+  const listed = await resolveRoster(d.db, ctx.orgId, ctx.agent, d.log);
   const roster =
     fork !== undefined && !listed.some((e) => e.type === GENERAL_ENTRY.type)
       ? [GENERAL_ENTRY, ...listed]
@@ -223,7 +223,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
     // the template went away since the roster was read (spec §13: refuse, never fail the run);
     // the list offered instead is read again, without it
     if (e instanceof SubagentTypeGoneError) {
-      return unknown(await resolveRoster(d.db, ctx.orgId, ctx.agent));
+      return unknown(await resolveRoster(d.db, ctx.orgId, ctx.agent, d.log));
     }
     throw e;
   }

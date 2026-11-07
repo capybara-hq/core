@@ -35,6 +35,11 @@ const SUCCESS_MS = 4000;
 /** How long a success toast carrying an action (Undo) stays (spec §6.7). */
 const UNDO_MS = 8000;
 const SEGMENTS = 10;
+const TOAST_ICON = {
+  success: "circle-check",
+  error: "circle-alert",
+  progress: "spinner",
+} as const;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useDesignT();
@@ -108,7 +113,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       data-kind={it.kind}
       role={it.kind === "error" ? "alert" : undefined}
     >
-      {/* 两列网格：左列为标题行与进度条，右列为关闭按钮；进度条因此与标题行同宽。 */}
+      {/* Three-column grid: the status icon, then the head row and the progress bar (so the bar is
+          as wide as the head), then the close button. The icon carries the status, not color alone:
+          ok circle-check, fail circle-alert, progress spinner. */}
+      <span className="cb-toast-icon">
+        <Icon name={TOAST_ICON[it.kind]} size={16} />
+      </span>
       <div className="cb-toast-head">
         <span className="cb-toast-msg">{it.msg}</span>
         {it.kind === "progress" ? (
@@ -157,16 +167,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     </div>
   );
 
+  const newestFirst = [...items].reverse();
+
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {/* 两个分组：错误以 role=alert 自行播报，不能再嵌在 aria-live 区域里（否则读两遍）。 */}
+      {/* Two groups: errors announce themselves with role=alert and must not sit inside the
+          aria-live region (else they are read twice). Each group lists the newest first, so the
+          stack grows downward from the top with the newest on top (spec §6.7). */}
       <div className="cb-toast-region">
         <div className="cb-toast-group" data-group="alert">
-          {items.filter((it) => it.kind === "error").map(renderToast)}
+          {newestFirst.filter((it) => it.kind === "error").map(renderToast)}
         </div>
         <div className="cb-toast-group" data-group="status" role="status" aria-live="polite">
-          {items.filter((it) => it.kind !== "error").map(renderToast)}
+          {newestFirst.filter((it) => it.kind !== "error").map(renderToast)}
         </div>
       </div>
     </ToastContext.Provider>

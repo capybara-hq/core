@@ -52,8 +52,8 @@ docker compose ps -a     # createbuckets and init exit 0, the other services bec
 ```
 
 1. Open <http://localhost:3000> (use `localhost`: over plain http on another host name, browsers
-   drop the session cookie). The setup page creates the admin and the first organization; enter the
-   setup token from `.env` (`grep CAPYBARA_SETUP_TOKEN .env`).
+   drop the session cookie). The setup page creates the super admin and the first organization;
+   enter the setup token from `.env` (`grep CAPYBARA_SETUP_TOKEN .env`).
 2. Install `model-fake`, a scripted model that needs no API key: Admin → Extensions → Install
    extension, enter `@capybara-hq/plugin-model-fake`, review the permissions, approve and enable. Or
    from the shell:
@@ -67,8 +67,8 @@ docker compose ps -a     # createbuckets and init exit 0, the other services bec
 3. Create an agent with the model `model-fake/fake-1` and send `echo:hello`.
 
 For a real model, configure `openai-compatible` under Admin → Extensions (it is always installed), or
-install `@capybara-hq/plugin-anthropic` / `@capybara-hq/plugin-openai` the same way; see
-[Models](docs/guide/models.md). The official plugins live in
+`anthropic` / `openai` (preinstalled, off in each organization until an org admin switches them on
+in Plugins); see [Models](docs/guide/models.md). The official plugins live in
 [capybara-hq/plugins](https://github.com/capybara-hq/plugins). `.env.example` lists the optional
 settings (image version, port, public URL).
 

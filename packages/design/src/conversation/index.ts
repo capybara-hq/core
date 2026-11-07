@@ -21,10 +21,12 @@ export {
   gridStep,
 } from "./agent-row";
 export { type AgentMapStatus, agentMapTokens } from "./agent-status";
+export { AgentsChip, type AgentsChipProps } from "./agents-chip";
 export {
   type BubbleAttachment,
   BubbleAttachments,
   BubbleSkill,
+  bubbleLooksLong,
   UserBubble,
   type UserBubbleProps,
 } from "./bubble";
@@ -84,7 +86,16 @@ export {
   type QuestionState,
   safeHttpUrl,
 } from "./hitl";
-export { ConvMenu, type ConvMenuEntry, type ConvMenuProps } from "./menu";
+export {
+  ConvMenu,
+  type ConvMenuEntry,
+  type ConvMenuProps,
+  filterMenuEntries,
+  MENU_COLLISION_PADDING,
+  MENU_FILTER_THRESHOLD,
+  type MenuPlacementInput,
+  menuPlacement,
+} from "./menu";
 export {
   type BlockState,
   ContextSection,
@@ -130,6 +141,7 @@ export {
   subagentRowFromView,
   subagentRowsFromViews,
   subagentStatusOfFinish,
+  subagentWaitingLabel,
   subagentWaitKind,
 } from "./subagents";
 export { TaskOutputPanel, type TaskOutputPanelProps } from "./task-output-panel";

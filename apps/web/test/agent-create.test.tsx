@@ -7,6 +7,7 @@ import zh from "../messages/zh.json";
 import { renderNewAgent } from "./support/agents";
 import { json as apiJson, bodyOf, type Call, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -92,9 +93,10 @@ describe("the create form of /agents/new", () => {
       "private",
     );
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: en.agents.form.modelLabel }),
       "other/o-1",
+      user,
     );
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag1?s=prompt"));

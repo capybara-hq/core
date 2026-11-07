@@ -8,11 +8,15 @@ import type {
   MarketplaceEntry,
   PluginManifest,
 } from "@capybara-hq/plugin-sdk";
+import { pluginDescription } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
+import semver from "semver";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionAdmin } from "../extensions/admin-view.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
+import { blockingKeys } from "../extensions/permission-set.js";
 import { audit } from "../identity/audit.js";
 import type { StorageService } from "../storage/storage.service.js";
 import { endpointCredentialIssues } from "../tools/endpoint.js";
@@ -20,6 +24,7 @@ import type {
   CatalogItemView,
   CatalogPolicy,
   CatalogVersionSource,
+  ComponentCounts,
   PermissionsMismatch,
   SourceDetail,
 } from "./catalog.service.js";
@@ -28,10 +33,21 @@ import { gitLocationIdentity } from "./git-source.js";
 import {
   entryCompatible,
   entryContentChanged,
+  entryDeprecated,
   type ImportedAs,
   sourceEffective,
+  unimportable,
 } from "./marketplaces.service.js";
+import {
+  type Owner,
+  ownerOf,
+  ownersOf,
+  PLATFORM_OWNER,
+  packageOwner,
+  pendingDigest,
+} from "./ownership.js";
 import { schemaHasPath } from "./schema-path.js";
+import type { PluginScope } from "./scope.js";
 import { compareVersions, newestFirst, sameRelease, withBuild } from "./versions.js";
 
 /**
@@ -116,6 +132,12 @@ export interface CatalogListing {
 
 /** Input of {@link writeCatalogVersion}. */
 export interface CatalogVersionWrite {
+  /**
+   * A new version of an org-owned item: `latest_version` (and the listing) stays where it is; it
+   * moves only when the version is applied or confirmed (ruling P3-34). The version row is
+   * written not applied (`applied_at` null, ruling P3-52) until {@link markVersionApplied}.
+   */
+  keepLatest?: boolean;
   /** null: the CLI (no account). */
   actor: string | null;
   actorTokenId?: string;
@@ -221,6 +243,41 @@ async function itemVersions(db: KernelSchemaDb, itemId: string) {
     .execute();
 }
 
+/**
+ * An org's own version imported but not applied (pre-flight F4, ruling P3-12): the live item named
+ * `name` owned by `ownerOrgId` (same package) has a version of the release of `p.version` with the
+ * same content digest and no extension, other than the platform's version. Uploading it again
+ * retries its update instead of `catalog.version_exists`. undefined otherwise.
+ */
+export async function unappliedOwnVersion(
+  db: KernelSchemaDb,
+  name: string,
+  ownerOrgId: string,
+  p: Pick<ImportIdentity, "packageName" | "version" | "contentDigest">,
+): Promise<{ itemId: string; version: string } | undefined> {
+  const item = await db
+    .selectFrom("catalog_items")
+    .select(["id", "package_name", "platform_synced_version"])
+    .where("name", "=", name)
+    .where("deleted_at", "is", null)
+    .where("owner_org_id", "=", ownerOrgId)
+    .executeTakeFirst();
+  if (!item || item.package_name !== p.packageName) return undefined;
+  const rows = await db
+    .selectFrom("catalog_item_versions")
+    .select(["version", "content_digest", "extension_sha256"])
+    .where("item_id", "=", item.id)
+    .where("content_digest", "=", p.contentDigest)
+    .execute();
+  const same = rows.find(
+    (v) =>
+      sameRelease(v.version, p.version) &&
+      v.extension_sha256 === null &&
+      v.version !== item.platform_synced_version,
+  );
+  return same && { itemId: item.id, version: same.version };
+}
+
 /** What is being imported, as far as the version conflict rules need it. */
 export interface ImportIdentity {
   packageName: string | null;
@@ -308,7 +365,7 @@ export async function precheckCatalogImport(
 
 /**
  * Writes a catalog version in the caller's transaction (`db` is its handle; the caller has
- * re-checked the enterprise admin and holds the name's {@link CatalogItemLock}): checks conflicts again (the same source; no version of
+ * re-checked the super admin and holds the name's {@link CatalogItemLock}): checks conflicts again (the same source; no version of
  * the release with the same content; `version` not taken meanwhile), creates the item when there is
  * none or adds the version (latest and display fields change only for a newer version, a version
  * equal but for build metadata being newer as the later import), and writes the version row (with
@@ -317,11 +374,12 @@ export async function precheckCatalogImport(
 export async function writeCatalogVersion(
   db: KernelSchemaDb,
   w: CatalogVersionWrite,
-): Promise<string> {
+): Promise<{ id: string; created: boolean }> {
   const t = db;
   const { name, version, listing } = w;
   const live = await liveItem(t, name);
   let id: string;
+  const created = live === undefined;
   if (live) {
     id = live.id;
     assertSameSource(live, w.packageName, sourceIdentity(w.source.detail, w.marketplaceId));
@@ -337,7 +395,7 @@ export async function writeCatalogVersion(
       true,
     );
     if (existing.some((v) => v.version === version)) throw versionExists(version, false, true);
-    const newer = compareVersions(version, live.latest_version) >= 0;
+    const newer = w.keepLatest !== true && compareVersions(version, live.latest_version) >= 0;
     await t
       .updateTable("catalog_items")
       .set({
@@ -389,6 +447,8 @@ export async function writeCatalogVersion(
       translation: w.translation != null ? JSON.stringify(w.translation) : null,
       license_text: w.licenseText ?? null,
       license_truncated: w.licenseTruncated === true,
+      // an org's version is usable only once applied or confirmed (ruling P3-52)
+      ...(w.keepLatest === true && { applied_at: null }),
     })
     .execute();
   await audit(t, {
@@ -408,13 +468,40 @@ export async function writeCatalogVersion(
       ...w.auditDetail,
     },
   });
-  return id;
+  return { id, created };
+}
+
+/**
+ * Records that `version` of the item was applied or confirmed (ruling P3-52), in the caller's
+ * transaction: from then on it may serve other orgs and the generic update. Idempotent.
+ */
+export async function markVersionApplied(
+  db: KernelSchemaDb,
+  itemId: string,
+  version: string,
+): Promise<void> {
+  await db
+    .updateTable("catalog_item_versions")
+    .set({ applied_at: sql<Date>`now()` as unknown as Date })
+    .where("item_id", "=", itemId)
+    .where("version", "=", version)
+    .where("applied_at", "is", null)
+    .execute();
+}
+
+/**
+ * Whether a version may serve other orgs, dependency resolution and the generic update (ruling
+ * P3-52): applied or confirmed, and never rejected, whoever owns the item now.
+ */
+export function versionUsable(v: { applied_at: Date | null; rejected_at: Date | null }): boolean {
+  return v.applied_at !== null && v.rejected_at === null;
 }
 
 /**
  * An extension name belongs to the npm package that first installed it (`extension_name_owners`,
  * Ruling P3): when another package owns it, the import is refused right away with
- * `extension.name_conflict` (the same code as at install), instead of failing only at deploy time.
+ * `extension.name_conflict` (the same code as at install, details `[{ owner }]`: the owner of the
+ * package holding it), instead of failing only at deploy time.
  */
 export async function assertPluginNameOwner(
   db: KernelSchemaDb,
@@ -430,6 +517,8 @@ export async function assertPluginNameOwner(
     throw new ApiError(
       "extension.name_conflict",
       `Extension name ${name} belongs to package ${owner.package_name}; ${packageLabel(packageName)} cannot use it`,
+      // who holds it (package -> item -> owner, ruling P3-14)
+      [{ owner: await packageOwner(db, owner.package_name, name) }],
     );
   }
 }
@@ -475,8 +564,10 @@ export interface MarketplaceStatus {
 }
 
 /**
- * For each marketplace-imported item, its marketplace (when enabled): the highest compatible
- * version listed, and whether a compatible entry's content changed at an imported version.
+ * For each marketplace-imported item, its marketplace (when enabled): the version to update to
+ * (the highest compatible, importable, non-deprecated stable version listed, a prerelease only
+ * when no such stable version exists, as the market rows fold them), and whether a compatible,
+ * non-deprecated entry's content changed at an imported version.
  */
 export async function marketplaceLatest(
   db: KernelSchemaDb,
@@ -500,6 +591,7 @@ export async function marketplaceLatest(
       "s.builtin",
       "s.enabled",
       "s.url",
+      "s.form",
       "s.last_commit",
     ])
     .where("e.source_id", "in", [...new Set(sourced.map((i) => i.marketplace_id as string))])
@@ -511,12 +603,21 @@ export async function marketplaceLatest(
         r.source_id === i.marketplace_id &&
         r.name === i.name &&
         sourceEffective(r, config) &&
-        entryCompatible(r.entry as MarketplaceEntry),
+        entryCompatible(r.entry as MarketplaceEntry) &&
+        // a deprecated version is never the one to update to, nor content to import again
+        !entryDeprecated(r.entry as MarketplaceEntry),
     );
-    const [best] = listed
-      .filter((r) => r.version !== "")
+    // As the market rows fold them: the newest importable stable version, a prerelease only when
+    // no stable one can be imported
+    const importable = listed
+      .filter(
+        (r) =>
+          r.version !== "" &&
+          unimportable(r.entry as MarketplaceEntry, r.form, config) === undefined,
+      )
       .map((r) => r.version)
       .sort(newestFirst);
+    const best = importable.find((v) => semver.prerelease(v) === null) ?? importable[0];
     const recorded = versions.get(i.id) ?? [];
     out.set(i.id, {
       latest: best ?? null,
@@ -578,6 +679,197 @@ export async function countInstalls(
   return new Map([...orgs].map(([id, set]) => [id, set.size]));
 }
 
+/**
+ * Every id is a live org (`validation_failed` naming the unknown ones otherwise): the orgs of a
+ * `named` scope.
+ */
+export async function assertOrgsExist(db: KernelSchemaDb, orgs: readonly string[]): Promise<void> {
+  if (orgs.length === 0) return;
+  const found = await db
+    .selectFrom("orgs")
+    .select("id")
+    .where("id", "in", [...orgs])
+    .where("deleted_at", "is", null)
+    .execute();
+  const known = new Set(found.map((o) => o.id));
+  const unknown = orgs.filter((o) => !known.has(o));
+  if (unknown.length > 0) {
+    throw new ApiError("validation_failed", `orgs: unknown organizations ${unknown.join(", ")}`, [
+      { path: "orgs", message: `unknown organizations: ${unknown.join(", ")}` },
+    ]);
+  }
+}
+
+/** The scope facts of an item's admin view (see {@link CatalogItemView}). */
+export interface ItemScopeFacts {
+  scopeOrgs: string[];
+  enabledOrgs: number;
+  pending: boolean;
+  /** The digest `confirm` takes (null unless pending and readable). */
+  permissionsHash: string | null;
+  /** The platform, or the org that owns the item (ruling P3-1). */
+  owner: Owner;
+}
+
+/** The facts of a view that shows none of the scope facts, only the item's owner. */
+export function ownerOnlyFacts(owner: Owner): ItemScopeFacts {
+  return { scopeOrgs: [], enabledOrgs: 0, pending: false, permissionsHash: null, owner };
+}
+
+const NO_FACTS: ItemScopeFacts = ownerOnlyFacts(PLATFORM_OWNER);
+
+/** What an item with an extension needs confirming (see {@link itemConfirmations}). */
+export type ItemConfirmations = ReadonlyMap<
+  string,
+  { pending: boolean; permissionsHash: string | null }
+>;
+
+/**
+ * Per item id: is its extension waiting for a person's confirmation (pending) and the permission
+ * digest to confirm. Pending when the extension is not installed on the deployment, when the
+ * installed version's permission set is not covered by the stored snapshot, or (a builtin item)
+ * when the snapshot is the bootstrap step's, never confirmed by a person. Items whose latest
+ * version has no extension are never pending.
+ */
+export async function itemConfirmations(
+  admin: ExtensionAdmin,
+  items: {
+    id: string;
+    name: string;
+    builtin: boolean;
+    latest_version: string;
+    owner_org_id: string | null;
+    pending_version: string | null;
+  }[],
+  versions: ReadonlyMap<string, { version: string; extension_sha256: string | null }[]>,
+): Promise<ItemConfirmations> {
+  const out = new Map<string, { pending: boolean; permissionsHash: string | null }>();
+  // An org-owned item waits only while an upload of it does (rulings P3-9, P3-10): the digest of
+  // that version's package (P3-11); nothing else of an org's item is the super admin's to confirm
+  for (const i of items) {
+    if (i.owner_org_id === null) continue;
+    const sha =
+      i.pending_version === null
+        ? null
+        : ((versions.get(i.id) ?? []).find((v) => v.version === i.pending_version)
+            ?.extension_sha256 ?? null);
+    if (sha === null) {
+      out.set(i.id, { pending: false, permissionsHash: null });
+      continue;
+    }
+    const hash = await admin.packageReviewHash(sha);
+    out.set(i.id, {
+      pending: true,
+      permissionsHash: hash === null ? null : pendingDigest(sha, hash),
+    });
+  }
+  const withExtension = items.flatMap((i) => {
+    if (i.owner_org_id !== null) return [];
+    const sha =
+      (versions.get(i.id) ?? []).find((v) => v.version === i.latest_version)?.extension_sha256 ??
+      null;
+    return sha === null ? [] : [{ item: i, sha }];
+  });
+  if (withExtension.length === 0) return out;
+  // only these items' extensions: reading every installed package would also log each one that
+  // cannot be read right now (the bootstrap step confirms before the object store is loaded)
+  const names = new Set(withExtension.map((w) => w.item.name));
+  const installed = new Map((await admin.list(names)).map((v) => [v.name, v]));
+  for (const { item, sha } of withExtension) {
+    const v = installed.get(item.name);
+    if (!v) {
+      out.set(item.id, { pending: true, permissionsHash: await admin.packageReviewHash(sha) });
+      continue;
+    }
+    const pending =
+      v.snapshot === null ||
+      blockingKeys(v.added).length > 0 ||
+      (item.builtin && v.snapshot.source === "bootstrap");
+    out.set(item.id, {
+      pending,
+      permissionsHash: pending && v.error === undefined ? v.reviewHash : null,
+    });
+  }
+  return out;
+}
+const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
+
+/**
+ * Per item: the orgs of its `named` list, the orgs it is on in (a live plugin install; every org for
+ * a builtin item) and whether it is pending (`confirmations`, see {@link itemConfirmations}).
+ */
+export async function itemScopeFacts(
+  db: KernelSchemaDb,
+  items: {
+    id: string;
+    name: string;
+    builtin: boolean;
+    latest_version: string;
+    owner_org_id: string | null;
+  }[],
+  confirmations: ItemConfirmations,
+): Promise<Map<string, ItemScopeFacts>> {
+  const owners = await ownersOf(
+    db,
+    items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
+  );
+  const out = new Map<string, ItemScopeFacts>(
+    items.map((i) => [
+      i.id,
+      {
+        scopeOrgs: [],
+        enabledOrgs: 0,
+        pending: confirmations.get(i.id)?.pending ?? false,
+        permissionsHash: confirmations.get(i.id)?.permissionsHash ?? null,
+        owner: ownerOf(i.owner_org_id, owners),
+      },
+    ]),
+  );
+  if (items.length === 0) return out;
+  const ids = items.map((i) => i.id);
+  // one after the other: `db` may be a transaction's single connection
+  const listed = await db
+    .selectFrom("catalog_item_scope_orgs")
+    .select(["item_id", "org_id"])
+    .where("item_id", "in", ids)
+    .orderBy("org_id")
+    .execute();
+  for (const r of listed) out.get(r.item_id)?.scopeOrgs.push(r.org_id);
+  const live = await db
+    .selectFrom("plugin_installs as a")
+    .innerJoin("orgs as o", "o.id", "a.org_id")
+    .select(["a.item_id", (eb) => eb.fn.count<string>("a.org_id").distinct().as("n")])
+    .where("a.item_id", "in", ids)
+    .where("a.status", "in", [...LIVE_INSTALL])
+    .where("o.deleted_at", "is", null)
+    .groupBy("a.item_id")
+    .execute();
+  for (const r of live) {
+    const f = out.get(r.item_id);
+    if (f) f.enabledOrgs = Number(r.n);
+  }
+  if (items.some((i) => i.builtin)) {
+    const orgs = await db
+      .selectFrom("orgs")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    for (const i of items) {
+      const f = out.get(i.id);
+      if (i.builtin && f) f.enabledOrgs = Number(orgs.n);
+    }
+  }
+  return out;
+}
+
+/** The `zh` text of a stored manifest's description; null without one (or an unreadable manifest). */
+function descriptionZhOf(manifest: unknown): string | null {
+  const d = (manifest as { description?: unknown } | null | undefined)?.description;
+  if (typeof d !== "object" || d === null) return null;
+  const zh = pluginDescription(d as { en: string; zh?: string }).zh;
+  return typeof zh === "string" ? zh : null;
+}
+
 export function itemView(
   i: {
     id: string;
@@ -586,13 +878,28 @@ export function itemView(
     display_name: LocalizedName | null;
     description: string;
     policy: CatalogPolicy;
+    scope: PluginScope;
+    builtin: boolean;
+    disabled: boolean;
+    shown_to_others: boolean;
     latest_version: string;
     marketplace_id?: string | null;
     updated_at: Date;
+    shareable: boolean;
+    awaiting_confirmation: boolean;
+    pending_version: string | null;
   },
-  versions: { version: string; source: string; imported_at?: Date }[],
+  versions: {
+    version: string;
+    source: string;
+    imported_at?: Date;
+    /** The version's plugin.json (counted for `componentCounts`; absent: nothing counted). */
+    manifest?: unknown;
+    source_format?: SourceFormat;
+  }[],
   installs = 0,
   marketplace: MarketplaceStatus = { latest: null, contentChanged: false },
+  facts: ItemScopeFacts = NO_FACTS,
 ): CatalogItemView {
   const sorted = [...versions].sort((a, b) =>
     newestFirst(
@@ -602,22 +909,48 @@ export function itemView(
   );
   const top = sorted[0]?.version ?? i.latest_version;
   const latestMarketplaceVersion = marketplace.latest;
+  const current = versions.find((v) => v.version === i.latest_version);
   return {
     id: i.id,
     name: i.name,
     publisher: i.publisher,
     displayName: i.display_name,
     description: i.description,
+    descriptionZh: descriptionZhOf(current?.manifest),
     policy: i.policy,
+    scope: i.builtin ? "all" : i.scope,
+    scopeOrgs: [...facts.scopeOrgs],
+    builtin: i.builtin,
+    disabled: i.disabled,
+    shownToOthers: i.shown_to_others,
+    owner: facts.owner,
+    shareable: i.shareable,
+    awaitingConfirmation: i.awaiting_confirmation,
+    pendingVersion: i.pending_version,
+    enabledOrgs: facts.enabledOrgs,
+    pending: facts.pending,
+    permissionsHash: facts.permissionsHash,
     latestVersion: i.latest_version,
     versions: sorted.map((v) => v.version),
     installs,
-    source: versions.find((v) => v.version === i.latest_version)?.source ?? "file",
+    source: current?.source ?? "file",
     marketplaceId: i.marketplace_id ?? null,
     latestMarketplaceVersion,
     newerInMarketplace:
       latestMarketplaceVersion !== null && compareVersions(latestMarketplaceVersion, top) > 0,
     contentChanged: marketplace.contentChanged,
+    componentCounts: componentCountsOf(current?.manifest as PluginManifest | undefined),
+    sourceFormat: current?.source_format ?? "capybara",
     updatedAt: i.updated_at.toISOString(),
+  };
+}
+
+/** The components a version's plugin.json brings, by kind (none without a manifest). */
+export function componentCountsOf(m: PluginManifest | undefined): ComponentCounts {
+  return {
+    extension: m?.extension === undefined ? 0 : 1,
+    skills: m?.skills?.length ?? 0,
+    connectorTemplates: m?.connectorTemplates?.length ?? 0,
+    agentTemplates: m?.agents?.length ?? 0,
   };
 }

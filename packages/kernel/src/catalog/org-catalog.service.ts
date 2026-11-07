@@ -9,7 +9,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
-import { can, type OrgAction, roleAtLeast } from "../orgs/roles.js";
+import { can, roleAtLeast } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
 import {
@@ -17,41 +17,55 @@ import {
   type CatalogVersionFiles,
   catalogHasIcon,
   findConnectorIn,
-  lockOrgForActions,
   type OrgCatalogDetail,
   type OrgCatalogItem,
   type OrgInstallInput,
   type OrgInstallResult,
-  type OrgUpgradeResult,
   orgTemplateView,
   readCatalogIcon,
   readCatalogTemplates,
   type TemplateDeps,
   templatePluginProblem,
 } from "./catalog-content.js";
-import { itemView } from "./catalog-items.js";
-import { PluginInstaller } from "./plugin-install.js";
-import { type PluginUpgradeInput, PluginUpgrader, type UpgradePreview } from "./plugin-upgrade.js";
-import { CatalogRequestsService } from "./requests.service.js";
-import { upgradeInfo } from "./upgrade-targets.js";
+import { itemView, ownerOnlyFacts, versionUsable } from "./catalog-items.js";
+import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { itemPendingError, ownerOf, ownersOf } from "./ownership.js";
+import {
+  PluginInstaller,
+  type UninstallPreview,
+  type UninstallReport,
+  uninstallPreviewHash,
+  upsertOrgSwitch,
+} from "./plugin-install.js";
+import { type OrgPluginState, requestable, switchable, visibleTo, wantedOn } from "./scope.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const itemNotFound = () => new ApiError("catalog.item_not_found", "Catalog item not found");
-const itemDisabled = () =>
+const notOffered = () =>
   new ApiError(
-    "catalog.item_disabled",
-    "This catalog item is disabled by the enterprise admin and cannot be newly installed",
+    "catalog.approval_required",
+    "This plugin is not offered to this organization; an org admin can request access",
+  );
+const pluginDisabled = () =>
+  new ApiError(
+    "plugin.disabled",
+    "This plugin is disabled by the super admin and cannot be switched on",
   );
 
+/** The result of a switch: the item, or (switching off without `confirm`) the uninstall preview. */
+export type SwitchResult =
+  | { kind: "done"; item: OrgCatalogItem }
+  | { kind: "preview"; preview: UninstallPreview; confirm: string };
+
 /**
- * Organizations browse and install from the enterprise catalog (C22): members browse (without
- * disabled items) and request, org admins install. Every item is a plugin, installed with its
- * dependencies by {@link PluginInstaller}; installing requires the union of the component actions
- * of the plugins it brings in ({@link requiredActions}), re-checked inside the org row lock; item
- * disabled -> `catalog.item_disabled`; a dependency unresolved / disabled / in a cycle ->
- * `catalog.dependency_*`; an extension or a template's connector not on the deployment ->
- * `catalog.not_deployed`; needs_approval without a grant -> a stage deployment request (HTTP 202;
- * dependencies are not approved separately, spec §10). No in-process state.
+ * Organizations see the platform catalog with the plugin scope rules applied (plugin and component
+ * management spec §5): a plugin is `all` (on in every org), `optional` (an org admin switches it on),
+ * or `named` (offered to the listed orgs). Members get the list read-only; org admins switch a
+ * plugin on (an install by {@link PluginInstaller}, with its dependencies; the union of the
+ * component actions of the plugins it brings in is re-checked inside the org row lock) or off (an
+ * uninstall, after a preview they confirm with its hash). Disabled item -> `plugin.disabled`; a
+ * dependency unresolved / disabled / in a cycle -> `catalog.dependency_*`; an extension or a
+ * template's connector not on the deployment -> `catalog.not_deployed`. No in-process state.
  */
 @Injectable()
 export class OrgCatalogService {
@@ -61,9 +75,7 @@ export class OrgCatalogService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(StorageService) private readonly storage: StorageService,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
-    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
-    @Inject(PluginUpgrader) private readonly pluginUpgrader: PluginUpgrader,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
@@ -73,7 +85,11 @@ export class OrgCatalogService {
     return this.kdb.db;
   }
 
-  /** The org's view of the items; members (not admins) don't see disabled items. */
+  /**
+   * The org's view of the items: a `named` item without the org on its list is `not_offered` when
+   * shown to other orgs and absent otherwise; disabled ones are shown to admins as `unavailable`
+   * and absent for members. Each item carries the org's pending request for it.
+   */
   async list(orgId: string, accountId: string, itemId?: string): Promise<OrgCatalogItem[]> {
     const m = await this.db
       .selectFrom("memberships")
@@ -89,74 +105,163 @@ export class OrgCatalogService {
       .orderBy("name")
       .orderBy("id");
     if (itemId !== undefined) q = q.where("id", "=", itemId);
-    if (!isAdmin) q = q.where("policy", "<>", "disabled");
-    const items = await q.execute();
-    if (items.length === 0) return [];
-    const ids = items.map((i) => i.id);
-    const [versions, grants, requests, pluginInstalls] = await Promise.all([
+    if (!isAdmin) q = q.where("disabled", "=", false);
+    const all = await q.execute();
+    const [listed, switches] = await Promise.all([
       this.db
-        .selectFrom("catalog_item_versions")
-        .select(["item_id", "version", "source", "manifest", "object_prefix", "files"])
-        .where("item_id", "in", ids)
-        .execute(),
-      this.db
-        .selectFrom("catalog_org_grants")
+        .selectFrom("catalog_item_scope_orgs")
         .select("item_id")
         .where("org_id", "=", orgId)
         .execute(),
-      this.requests.latestByItem(orgId),
+      this.db
+        .selectFrom("catalog_item_org_switches")
+        .select(["item_id", "enabled"])
+        .where("org_id", "=", orgId)
+        .execute(),
+    ]);
+    const inList = new Set(listed.map((r) => r.item_id));
+    // Hidden `named` items (not listed, not shown to other orgs) are absent; shown ones are
+    // `not_offered`
+    // An org upload waiting for the super admin is its owner's only (ruling P3-9)
+    const items = all.filter(
+      (i) =>
+        (!i.awaiting_confirmation || i.owner_org_id === orgId) &&
+        (visibleTo({ scope: i.builtin ? "all" : i.scope }, inList.has(i.id)) ||
+          requestable(i, inList.has(i.id))),
+    );
+    if (items.length === 0) return [];
+    const sw = new Map(switches.map((r) => [r.item_id, r.enabled]));
+    const ids = items.map((i) => i.id);
+    const [versions, pluginInstalls, configs, requests] = await Promise.all([
+      this.db
+        .selectFrom("catalog_item_versions")
+        .select([
+          "item_id",
+          "version",
+          "source",
+          "source_format",
+          "manifest",
+          "object_prefix",
+          "files",
+          "applied_at",
+          "rejected_at",
+        ])
+        .where("item_id", "in", ids)
+        .execute(),
       this.db
         .selectFrom("plugin_installs")
         .select(["id", "item_id", "version"])
         .where("org_id", "=", orgId)
         .where("status", "in", ["installing", "installed", "upgrading"])
         .execute(),
+      this.db
+        .selectFrom("extension_org_configs")
+        .select("plugin")
+        .where("org_id", "=", orgId)
+        .where("config", "is not", null)
+        .execute(),
+      this.db
+        .selectFrom("catalog_requests")
+        .select(["id", "item_id", "kind", "created_at"])
+        .where("org_id", "=", orgId)
+        .where("item_id", "in", ids)
+        .where("kind", "in", ["access", "enable"])
+        .where("status", "=", "pending")
+        .orderBy("created_at")
+        .execute(),
     ]);
-    const upgrades = await upgradeInfo(
-      this.db,
-      this.registry,
-      pluginInstalls.flatMap((a) => {
-        const item = items.find((i) => i.id === a.item_id);
-        return item ? [{ itemId: a.item_id, name: item.name, version: a.version }] : [];
-      }),
+    const pending = new Map(
+      requests.map((r) => [
+        r.item_id,
+        { id: r.id, kind: r.kind as "access" | "enable", createdAt: r.created_at.toISOString() },
+      ]),
     );
-    const granted = new Set(grants.map((g) => g.item_id));
     const undeployed = await this.undeployed(
       items.flatMap((i) => {
         const v = versions.find((x) => x.item_id === i.id && x.version === i.latest_version);
         return v ? [v] : [];
       }),
     );
+    const configured = new Set(configs.map((c) => c.plugin));
+    const owners = await ownersOf(
+      this.db,
+      items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
+    );
+    const loaded = new Map(this.registry.manifests().map((x) => [x.name, x]));
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
-      const vs = versions.filter((v) => v.item_id === i.id);
+      // Another org sees only an org-owned plugin's applied version, never one its owner
+      // uploaded that is pending or was rejected (ruling P3-34), nor such a version of a plugin
+      // transferred to the platform since (ruling P3-52)
+      const vs = versions.filter(
+        (v) =>
+          v.item_id === i.id &&
+          (i.owner_org_id === orgId ||
+            (versionUsable(v) && (i.owner_org_id === null || v.version === i.latest_version))),
+      );
       const {
         installs: _installs,
         marketplaceId: _source,
         latestMarketplaceVersion: _latest,
         newerInMarketplace: _newer,
+        scopeOrgs: _scopeOrgs,
+        enabledOrgs: _enabledOrgs,
+        pending: _pending,
+        shownToOthers: _shown,
+        awaitingConfirmation,
+        pendingVersion,
         ...view
-      } = itemView(i, vs);
+      } = itemView(i, vs, 0, undefined, ownerOnlyFacts(ownerOf(i.owner_org_id, owners)));
       const latest = vs.find((v) => v.version === i.latest_version);
-      let installable: OrgCatalogItem["installable"];
-      if (i.policy === "disabled") installable = "disabled";
-      else if (latest && undeployed.has(i.id)) {
-        installable = "not_deployed";
-      } else if (i.policy === "needs_approval") {
-        installable = granted.has(i.id) ? "granted" : "needs_approval";
-      } else installable = "yes";
       const a = pluginInstalls.find((x) => x.item_id === i.id);
+      const scope = i.builtin ? "all" : i.scope;
+      const wanted = wantedOn(i, inList.has(i.id), sw.get(i.id) ?? null);
+      let state: OrgPluginState;
+      if (i.awaiting_confirmation) state = "awaiting_confirmation";
+      else if (i.disabled) state = "unavailable";
+      else if (requestable(i, inList.has(i.id))) state = "not_offered";
+      else if (a) {
+        // An on connector template without a connector here (ruling P2-10)
+        const missing = await this.pluginInstaller.missingConnectors(orgId, i.id);
+        state = (missing?.templates.length ?? 0) > 0 ? "needs_config" : "on";
+      } else if (i.builtin) state = "on";
+      else if (!wanted) state = "off";
+      else {
+        const m = latest?.manifest as PluginManifest | undefined;
+        const ext = m?.extension ? loaded.get(m.name) : undefined;
+        // only the connector templates on in the org need input (ruling P2-6)
+        const templateIds = (m?.connectorTemplates ?? []).map((t) => templateIdOfPath(t.path));
+        const needsInputs =
+          (await connectorTemplatesOn(this.db, orgId, i.id, templateIds)).size > 0 ||
+          (m?.extension !== undefined &&
+            ext?.config?.org !== undefined &&
+            !ext.config.org.safeParse({}).success &&
+            !configured.has(m.name));
+        // Wanted but not installed and needing nothing: the sync has not installed it (yet, or its
+        // install failed); `off`, so an org admin can switch it on (the worker start retries it)
+        state = needsInputs ? "needs_config" : "off";
+      }
       out.push({
         ...view,
-        installable,
+        // A pending upload is the owner's business only (other orgs never learn of it)
+        ...(i.owner_org_id === orgId && { awaitingConfirmation, pendingVersion }),
+        scope,
+        builtin: i.builtin,
+        state,
+        switchable:
+          state !== "not_offered" &&
+          state !== "awaiting_confirmation" &&
+          switchable({ scope, builtin: i.builtin }),
+        notDeployed: latest !== undefined && undeployed.has(i.id),
         installed: a
           ? {
               pluginInstallId: a.id,
               version: a.version,
-              upgradeAvailable: upgrades.get(`${a.item_id}@${a.version}`)?.upgradeAvailable ?? null,
+              // no per-org upgrade: the platform update moves every org (ruling F2)
+              upgradeAvailable: null,
             }
           : null,
-        request: requests.get(i.id) ?? null,
+        request: pending.get(i.id) ?? null,
       });
     }
     return out;
@@ -180,24 +285,59 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
+    const templates = await readCatalogTemplates(this.storage, v);
+    // Providers the install would switch on first (a refusal is the install's to report)
+    const implied = await this.pluginInstaller
+      .impliedProviders(orgId, m, templates, m.dependencies ?? [])
+      .catch((e: unknown) => {
+        if (e instanceof ApiError) return [];
+        throw e;
+      });
     return {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
-      templates: (await readCatalogTemplates(this.storage, v)).map((t) =>
-        orgTemplateView(t.id, t.file),
-      ),
-      dependencies: (m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
+      templates: templates.map((t) => orgTemplateView(t.id, t.file)),
+      dependencies: [
+        ...(m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
+        ...implied.map((d) => ({ name: d.name, range: d.range, implied: true as const })),
+      ],
       skills: (m.skills ?? []).map((s) => packagePath(s.path)),
       agents: (m.agents ?? []).map((a) => packagePath(a.path)),
+      missingTemplates:
+        item.installed !== null && item.state === "needs_config"
+          ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
+              (t) => orgTemplateView(t.id, t.file),
+            )
+          : [],
     };
   }
 
   /**
-   * The item's icon; members don't see disabled items (-> `catalog.item_not_found`, decided before
-   * reading storage).
+   * The item's icon; members don't see disabled items, nobody outside its list sees a hidden
+   * `named` item (-> `catalog.item_not_found`, decided before reading storage). Without `orgId`
+   * (the super admin) every item.
    */
-  icon(itemId: string, isAdmin: boolean): Promise<CatalogIcon> {
+  async icon(itemId: string, isAdmin: boolean, orgId?: string): Promise<CatalogIcon> {
+    if (orgId === undefined) return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    // A hidden `named` item stays absent here too
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin", "shown_to_others", "owner_org_id", "shareable"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    // Not requestable from outside its list (hidden, or held back by the share gate): only listed orgs
+    if (item && !item.builtin && item.scope === "named" && !requestable(item, false)) {
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (listed === undefined) throw itemNotFound();
+    }
     return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
   }
 
@@ -246,7 +386,11 @@ export class OrgCatalogService {
     return out;
   }
 
-  /** Installs a plugin in the org (see the class comment). */
+  /**
+   * Installs a plugin in the org (the old install route, an alias of switching it on): the role
+   * first, then item errors (a member cannot probe a disabled item through error codes), then the
+   * installer. Records the org's switch as on.
+   */
   async install(
     orgId: string,
     actor: string,
@@ -255,17 +399,10 @@ export class OrgCatalogService {
     actorTokenId?: string,
   ): Promise<OrgInstallResult> {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
-    // The role first (forbidden when it can install nothing), then item errors: a member cannot
-    // probe the existence or versions of a disabled item through error codes
     await this.assertCanInstall(orgId, actor);
-    const item = await this.db
-      .selectFrom("catalog_items")
-      .selectAll()
-      .where("id", "=", itemId)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!item) throw itemNotFound();
-    const version = body.version ?? item.latest_version;
+    const item = await this.visibleItem(orgId, itemId);
+    // The platform's version (one per deployment, ruling P2-17)
+    const version = item.platform_synced_version ?? item.latest_version;
     const v = await this.db
       .selectFrom("catalog_item_versions")
       .select("version")
@@ -274,22 +411,11 @@ export class OrgCatalogService {
       .executeTakeFirst();
     if (!v)
       throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
-    if (item.policy === "disabled") throw itemDisabled();
-    // Dependencies resolved, extensions deployed, template connectors available: before a request
-    // is created. The actions are the union over the plugins the install brings in
-    const { actions } = await this.pluginInstaller.preflight(orgId, actor, itemId, version);
-
-    // 1. Role and policy under the lock; needs_approval without a grant -> a request (202). Approval
-    //    follows this plugin's policy only, not its dependencies' (spec §10)
-    const pending = await this.requestIfNeeded(orgId, actor, item, version, actions, opts);
-    if (pending !== undefined) {
-      return { status: 202, request: await this.requests.view(pending) };
-    }
-
-    // 2. Install (each step re-checks the item policy in its own transaction)
-    const { version: _version, ...input } = body;
-    const view = await this.pluginInstaller.install(orgId, actor, itemId, version, input, opts);
+    const opts = { switchOn: true, ...(actorTokenId !== undefined && { actorTokenId }) };
+    if (item.disabled) throw pluginDisabled();
+    // Dependencies resolved, extensions deployed, template connectors available
+    await this.pluginInstaller.preflight(orgId, actor, itemId, version);
+    const view = await this.pluginInstaller.install(orgId, actor, itemId, version, body, opts);
     return {
       status: 201,
       installed: { itemId, version, pluginInstallId: view.id },
@@ -297,115 +423,171 @@ export class OrgCatalogService {
     };
   }
 
-  /**
-   * Role and policy under the org row lock; needs_approval without a grant -> a stage deployment
-   * request (its id). Approval follows this plugin's policy only, not its dependencies' (spec §10).
-   */
-  @Transactional()
-  private async requestIfNeeded(
-    orgId: string,
-    actor: string,
-    item: { id: string; name: string },
-    version: string,
-    actions: OrgAction[],
-    opts: { actorTokenId?: string },
-  ): Promise<string | undefined> {
-    const itemId = item.id;
-    const t = this.db;
-    await lockOrgForActions(this.orgLock, orgId, actor, actions);
-    const locked = await t
+  /** The item when the org may see it (scope), else `catalog.item_not_found`. */
+  private async visibleItem(orgId: string, itemId: string) {
+    const item = await this.db
       .selectFrom("catalog_items")
-      .select(["policy", "deleted_at"])
+      .selectAll()
       .where("id", "=", itemId)
-      .forShare()
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (!locked || locked.deleted_at !== null) throw itemNotFound();
-    if (locked.policy === "disabled") throw itemDisabled();
-    if (locked.policy === "needs_approval") {
-      const grant = await t
-        .selectFrom("catalog_org_grants")
-        .select("item_id")
-        .where("item_id", "=", itemId)
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      if (!grant) {
-        return this.requests.requestDeployment(orgId, actor, item, version, opts);
-      }
+    if (!item) throw itemNotFound();
+    // An org upload waiting for the super admin: absent for other orgs, not switchable by its
+    // owner (ruling P3-9)
+    if (item.awaiting_confirmation) {
+      if (item.owner_org_id !== orgId) throw itemNotFound();
+      throw itemPendingError(item.name);
     }
-    return undefined;
-  }
-
-  /** The upgrade preview of an org install (spec §10, see `PluginUpgrader`). */
-  async upgradePreview(
-    orgId: string,
-    actor: string,
-    installId: string,
-    version: string,
-  ): Promise<UpgradePreview> {
-    await this.assertCanInstall(orgId, actor);
-    return this.pluginUpgrader.preview(orgId, actor, installId, version);
-  }
-
-  /**
-   * Upgrades an org install in place (spec §10, Decision 11): the preview's `diffHash` is checked
-   * first (`plugin.upgrade_stale`); the item disabled -> `catalog.item_disabled`; needs_approval
-   * without a grant -> a stage deployment request for the target version (202; after approval the
-   * org admin runs the upgrade again); otherwise the upgrade runs (200, the install view).
-   */
-  async upgrade(
-    orgId: string,
-    actor: string,
-    installId: string,
-    body: PluginUpgradeInput,
-    actorTokenId?: string,
-  ): Promise<OrgUpgradeResult> {
-    await this.assertCanInstall(orgId, actor);
-    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
-    const { itemId, actions, diff } = await this.pluginUpgrader.check(
-      orgId,
-      actor,
-      installId,
-      body,
-    );
-    const pending = await this.upgradeRequestIfNeeded(orgId, actor, itemId, body, actions, opts);
-    if (pending !== undefined) {
-      return { status: 202, request: await this.requests.view(pending) };
-    }
-    return {
-      status: 200,
-      install: await this.pluginUpgrader.upgrade(orgId, actor, installId, body, opts, diff),
-    };
-  }
-
-  /** Like {@link requestIfNeeded}, for an upgrade's target version. */
-  @Transactional()
-  private async upgradeRequestIfNeeded(
-    orgId: string,
-    actor: string,
-    itemId: string,
-    body: PluginUpgradeInput,
-    actions: OrgAction[],
-    opts: { actorTokenId?: string },
-  ): Promise<string | undefined> {
-    const t = this.db;
-    await lockOrgForActions(this.orgLock, orgId, actor, actions);
-    const locked = await t
-      .selectFrom("catalog_items")
-      .select(["id", "name", "policy", "deleted_at"])
-      .where("id", "=", itemId)
-      .forShare()
-      .executeTakeFirst();
-    if (!locked || locked.deleted_at !== null) throw itemNotFound();
-    if (locked.policy === "disabled") throw itemDisabled();
-    if (locked.policy !== "needs_approval") return undefined;
-    const grant = await t
-      .selectFrom("catalog_org_grants")
+    const listed = await this.db
+      .selectFrom("catalog_item_scope_orgs")
       .select("item_id")
       .where("item_id", "=", itemId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    if (grant) return undefined;
-    return this.requests.requestDeployment(orgId, actor, locked, body.version, opts);
+    if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+      // Shown to other orgs: the org sees it and may request access, but cannot switch it on
+      if (requestable(item, false)) throw notOffered();
+      throw itemNotFound();
+    }
+    return item;
+  }
+
+  /** The org's live plugin install of the item, if any. */
+  private liveInstall(orgId: string, itemId: string) {
+    return this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("item_id", "=", itemId)
+      .where("status", "in", ["installing", "installed", "upgrading"])
+      .executeTakeFirst();
+  }
+
+  /**
+   * The org admin's switch of a plugin (`PUT catalog/:itemId/switch`). On: installs it (or just
+   * records the switch when it is installed already). Off: refused for `all` and builtin items
+   * (`plugin.scope_locked`); without `confirm` returns the uninstall preview and its hash, with the
+   * hash of the current preview uninstalls (a changed preview -> `plugin.switch_stale`). The switch
+   * row is written after the install / uninstall.
+   */
+  async setSwitch(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    body: { enabled: true; inputs?: OrgInstallInput } | { enabled: false; confirm?: string },
+    actorTokenId?: string,
+  ): Promise<SwitchResult> {
+    if (!UUID_RE.test(itemId)) throw itemNotFound();
+    await this.assertCanInstall(orgId, actor);
+    const item = await this.visibleItem(orgId, itemId);
+    const opts = actorTokenId !== undefined ? { actorTokenId } : {};
+    if (body.enabled) {
+      if (item.disabled) throw pluginDisabled();
+      if ((await this.liveInstall(orgId, itemId)) !== undefined) {
+        await this.recordSwitch(orgId, actor, itemId, true);
+      } else {
+        await this.install(orgId, actor, itemId, body.inputs ?? {}, actorTokenId);
+      }
+      return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
+    }
+    if (!switchable({ scope: item.scope, builtin: item.builtin })) {
+      throw new ApiError(
+        "plugin.scope_locked",
+        "This plugin is on for every organization and cannot be switched off here",
+      );
+    }
+    const live = await this.liveInstall(orgId, itemId);
+    if (live === undefined) {
+      await this.recordSwitch(orgId, actor, itemId, false);
+      return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
+    }
+    const preview = await this.pluginInstaller.previewUninstall(orgId, live.id);
+    const confirm = uninstallPreviewHash(preview);
+    if (body.confirm === undefined) return { kind: "preview", preview, confirm };
+    // The hash is re-checked and the switch row written inside the uninstall's transaction
+    await this.pluginInstaller.uninstall(orgId, actor, live.id, opts, { expectHash: body.confirm });
+    return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
+  }
+
+  /**
+   * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: `all`
+   * and builtin items are refused (`plugin.scope_locked`) unless the install is not live (failed,
+   * or `installing`: the installer cleans up a stale one and refuses a fresh one), and the switch
+   * row is written false in the uninstall's transaction.
+   */
+  async uninstall(
+    orgId: string,
+    actor: string,
+    installId: string,
+    actorTokenId?: string,
+  ): Promise<UninstallReport> {
+    if (!UUID_RE.test(installId))
+      throw new ApiError("plugin.install_not_found", "Plugin install not found");
+    const row = await this.db
+      .selectFrom("plugin_installs as a")
+      .innerJoin("catalog_items as i", "i.id", "a.item_id")
+      .select(["i.scope", "i.builtin", "a.status"])
+      .where("a.id", "=", installId)
+      .where("a.org_id", "=", orgId)
+      .executeTakeFirst();
+    // A failed or stuck install is cleaned up whatever the scope (it is not on anyway)
+    const live = row?.status === "installed" || row?.status === "upgrading";
+    if (row !== undefined && live && !switchable({ scope: row.scope, builtin: row.builtin })) {
+      throw new ApiError(
+        "plugin.scope_locked",
+        "This plugin is on for every organization and cannot be uninstalled here",
+      );
+    }
+    return this.pluginInstaller.uninstall(
+      orgId,
+      actor,
+      installId,
+      actorTokenId !== undefined ? { actorTokenId } : {},
+      row !== undefined ? {} : undefined,
+    );
+  }
+
+  private async itemOf(orgId: string, accountId: string, itemId: string): Promise<OrgCatalogItem> {
+    const [item] = await this.list(orgId, accountId, itemId);
+    if (!item) throw itemNotFound();
+    return item;
+  }
+
+  /**
+   * Writes the org's switch row of the item under the org row lock. The item row is locked FOR
+   * SHARE first (exclusive with a scope change, an unshare, ruling P3-25, and an owner's delete or
+   * transfer); switching on re-checks that the org may still see it; the install path re-checks the same in `assertItemInstallable`.
+   */
+  @Transactional()
+  private async recordSwitch(
+    orgId: string,
+    actor: string,
+    itemId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.orgLock.lock(orgId);
+    // Both directions lock the item row FOR SHARE: an owner's delete or transfer (FOR UPDATE)
+    // decides on who uses it, so a switch-off racing it must not change that answer meanwhile
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forShare()
+      .executeTakeFirst();
+    if (enabled) {
+      if (!item) throw itemNotFound();
+      const listed = await this.db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", orgId)
+        .executeTakeFirst();
+      if (!visibleTo({ scope: item.builtin ? "all" : item.scope }, listed !== undefined)) {
+        throw itemNotFound();
+      }
+    }
+    await upsertOrgSwitch(this.db, orgId, itemId, enabled, actor);
   }
 
   /** The actor can install something in the org (forbidden otherwise), checked before item errors. */

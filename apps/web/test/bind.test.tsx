@@ -67,11 +67,11 @@ describe("绑定确认页（AuthPage）", () => {
     },
   );
 
-  it("取消：不绑定，回首页", async () => {
+  it("cancel: no binding, back home (the new conversation)", async () => {
     const calls = stubApi({ [`GET ${PATH}`]: () => json(200, { binding: BINDING }) });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: en.bind.cancel }));
-    expect(router.replace).toHaveBeenCalledWith("/");
+    expect(router.replace).toHaveBeenCalledWith("/chat");
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 

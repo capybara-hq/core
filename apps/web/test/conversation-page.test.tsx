@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -123,6 +123,17 @@ describe("the conversation page (ConversationPage)", () => {
     expect(nav.textContent).toBe("acme/Echo agent/");
   });
 
+  it("the composer's toolbar names no agent: the title bar's path does (issue U)", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    const { container } = await renderChat("en");
+    await screen.findByText("hi");
+    await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
+    const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(bar.querySelector('[data-locked="true"]')).toBeNull();
+    expect(bar.textContent).not.toContain("Echo agent");
+  });
+
   it("the status bar signs like every page: <login>@<slug>:~/chat/<id>, then version and time zone", async () => {
     params.conversationId = "9f60c1e6-1111-4222-8333-444455556666";
     const id = params.conversationId;
@@ -200,6 +211,73 @@ describe("the conversation page (ConversationPage)", () => {
     },
   );
 
+  it("a stop whose request fails says so inline, once, and logs the browser's reason (AC5)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`POST ${BASE}/abort`]: () => {
+        throw new TypeError("Load failed");
+      },
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    expect(
+      await screen.findByText(
+        "Couldn't stop: Cannot reach the server. Check your network connection.",
+      ),
+    ).toBeTruthy();
+    expect(String(warn.mock.calls[0]?.[2])).toContain("Load failed");
+    // the run still shows as running: Stop can be pressed again
+    expect(screen.getByRole("button", { name: en.chat.stop })).toHaveProperty("disabled", false);
+    warn.mockRestore();
+  });
+
+  it("a stop the kernel took stays under way until the run's end arrives (AC5)", async () => {
+    api({
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
+      [`POST ${BASE}/abort`]: () => json(202, { runId: "r1" }),
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    // the HTTP answer is in: the stop is still under way (disabled), not pressable again
+    await act(async () => await new Promise((r) => setTimeout(r, 20)));
+    expect(screen.getByRole("button", { name: en.chat.stop })).toHaveProperty("disabled", true);
+    act(() => {
+      FakeEventSource.instances[0]?.emit(
+        "event",
+        ev(3, "run_aborted", { byAccountId: "a1", reason: "user" }),
+      );
+    });
+    expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+  });
+
+  it("a stop answered run.not_active reads the log again, so a stale Stop goes (AC5)", async () => {
+    let reads = 0;
+    const calls = api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events:
+            reads++ === 0
+              ? [userMsg(1, "hi"), runStarted(2)]
+              : [
+                  userMsg(1, "hi"),
+                  runStarted(2),
+                  ev(3, "run_finished", { reason: "completed", consumedUpToSeq: 1 }),
+                ],
+        }),
+      [`POST ${BASE}/abort`]: () =>
+        json(409, { error: { code: "run.not_active", message: "no active run" } }),
+    });
+    await renderChat("en");
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.chat.stop }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull());
+    // the server's first read, then the client's read from the cached end after the 409
+    expect(reads).toBe(2);
+    expect(calls.some((c) => c.method === "GET" && c.url.includes("/events?after=2"))).toBe(true);
+    expect(calls.some((c) => c.method === "GET" && c.url.startsWith(`${BASE}/events`))).toBe(true);
+    expect(screen.queryByText(/Couldn't stop/)).toBeNull();
+  });
+
   it("a run another member stopped names them; an unknown account reads another member (m8)", async () => {
     const stopped = (seq: number, by: string, run: string) => [
       ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, run),
@@ -274,66 +352,42 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.getByText("hello world")).toBeTruthy();
   });
 
-  it("↵ while running queues (POST queue); ⌘↵ and Ctrl+↵ send now (POST messages)", async () => {
+  it("↵, ⌘↵ and Ctrl+↵ while running all post a message (an interjection); nothing is queued", async () => {
     let n = 2;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/messages`]: (c) =>
         json(202, { event: userMsg(++n, String((bodyOf(c) as { text: string }).text)) }),
-      [`POST ${BASE}/queue`]: (c) =>
-        json(201, {
-          item: {
-            id: `q${n}`,
-            text: (bodyOf(c) as { text: string }).text,
-            files: [],
-            attachments: [],
-            clientMessageId: "x",
-            createdAt: "2026-10-26T06:00:00.000Z",
-            position: 1,
-          },
-        }),
     });
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
-    expect(input().getAttribute("placeholder")).toBe("↵ to queue, Ctrl+↵ to send now");
+    expect(input().getAttribute("placeholder")).toBe(en.chat.runningHint);
     const user = userEvent.setup();
     await user.type(input(), "later{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
-    expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({ text: "later" });
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(
-      typeof (bodyOf(posts(calls, `${BASE}/queue`)[0]) as { clientMessageId: unknown })
+      typeof (bodyOf(posts(calls, `${BASE}/messages`)[0]) as { clientMessageId: unknown })
         .clientMessageId,
     ).toBe("string");
     await user.type(input(), "now{Meta>}{Enter}{/Meta}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    await user.type(input(), "now2{Control>}{Enter}{/Control}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    await user.type(input(), "now2{Control>}{Enter}{/Control}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(3));
     expect(
       posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
-    ).toEqual(["now", "now2"]);
-    expect(posts(calls, `${BASE}/queue`)).toHaveLength(1);
+    ).toEqual(["later", "now", "now2"]);
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
+    // no queue list or its controls
+    expect(screen.queryByRole("group", { name: /queue/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send now" })).toBeNull();
   });
 
-  it("↵ while running queues with the pending model / effort pick and clears it (final review I1)", async () => {
+  it("↵ while running sends the pending model / effort pick with the message and clears it", async () => {
     let n = 2;
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
       [`POST ${BASE}/messages`]: (c) =>
         json(202, { event: userMsg(++n, String((bodyOf(c) as { text: string }).text)) }),
-      [`POST ${BASE}/queue`]: (c) =>
-        json(201, {
-          item: {
-            id: `q${++n}`,
-            text: (bodyOf(c) as { text: string }).text,
-            files: [],
-            attachments: [],
-            clientMessageId: "x",
-            model: null,
-            effort: null,
-            createdAt: "2026-10-26T06:00:00.000Z",
-            position: 1,
-          },
-        }),
     });
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
@@ -343,16 +397,16 @@ describe("the conversation page (ConversationPage)", () => {
     await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
     await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
     await user.type(input(), "later{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
-    expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
       text: "later",
       model: { provider: "model-fake", model: "fake-2" },
       effort: "high",
     });
-    // the pick went with the queued message: the next send carries none
-    await user.type(input(), "now{Meta>}{Enter}{/Meta}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
-    const body = bodyOf(posts(calls, `${BASE}/messages`)[0]) as Record<string, unknown>;
+    // the pick went with that message: the next one carries none
+    await user.type(input(), "again{Enter}");
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
+    const body = bodyOf(posts(calls, `${BASE}/messages`)[1]) as Record<string, unknown>;
     expect(body).not.toHaveProperty("model");
     expect(body).not.toHaveProperty("effort");
   });
@@ -375,17 +429,15 @@ describe("the conversation page (ConversationPage)", () => {
     expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
   });
 
-  it("the running placeholder says ↵ queues and ⌘↵ sends now, in both languages", () => {
-    expect(zh.chat.queueHintMac).toBe("按 ↵ 加入队列，按 ⌘↵ 立即发送");
-    expect(zh.chat.queueHint).toBe("按 ↵ 加入队列，按 Ctrl+↵ 立即发送");
-    expect(en.chat.queueHintMac).toBe("↵ to queue, ⌘↵ to send now");
-    expect(en.chat.queueHint).toBe("↵ to queue, Ctrl+↵ to send now");
+  it("the running hint says a message reaches the agent at its next step, in both languages", () => {
+    expect(zh.chat.runningHint).toBe("运行中发送的消息会在下一步交给智能体");
+    expect(en.chat.runningHint).toBe("Messages sent while it works reach it at its next step");
   });
 
   describe("instant send (conversation send spec §2.1)", () => {
     /** The user bubbles of `text`, pending or from the log. */
     const bubbles = (text: string) =>
-      screen.queryAllByText(text, { selector: '[data-part="bubble"]' });
+      screen.queryAllByText(text, { selector: '[data-part="bubble-body"]' });
 
     function deferredSend() {
       let answer: (r: Response) => void = () => {};
@@ -516,7 +568,7 @@ describe("the conversation page (ConversationPage)", () => {
       expect(line()).toBeNull();
     });
 
-    it("a second ↵ while the first send waits for its run queues instead of sending (L1)", async () => {
+    it("a second ↵ while the first send waits for its run posts a message too (L1)", async () => {
       let n = 1;
       const calls = api({
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
@@ -524,18 +576,17 @@ describe("the conversation page (ConversationPage)", () => {
           const b = bodyOf(c) as { text: string; clientMessageId: string };
           return json(202, { event: userMsg(++n, b.text, { clientMessageId: b.clientMessageId }) });
         },
-        [`POST ${BASE}/queue`]: () => json(201, { item: null }),
       });
       await renderChat();
       await screen.findByText("hi");
       const user = userEvent.setup();
       await user.type(input(), "one{Enter}");
       await user.type(input(), "two{Enter}");
-      await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
+      await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(2));
       expect(
         posts(calls, `${BASE}/messages`).map((c) => (bodyOf(c) as { text: string }).text),
-      ).toEqual(["one"]);
-      expect(bodyOf(posts(calls, `${BASE}/queue`)[0])).toMatchObject({ text: "two" });
+      ).toEqual(["one", "two"]);
+      expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
     });
 
     it("right after a send the composer is in running mode and the status says running (L2)", async () => {
@@ -548,7 +599,7 @@ describe("the conversation page (ConversationPage)", () => {
       fireEvent.change(input(), { target: { value: "next" } });
       fireEvent.keyDown(input(), { key: "Enter" });
       expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
-      expect(input().getAttribute("placeholder")).toBe("↵ to queue, Ctrl+↵ to send now");
+      expect(input().getAttribute("placeholder")).toBe(en.chat.runningHint);
       expect(status()).toContain(en.chat.status.running);
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
       // the log has the message, its run has not started: still running, all three agree
@@ -560,7 +611,7 @@ describe("the conversation page (ConversationPage)", () => {
       expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
     });
 
-    it("a paused queue means no run is coming: no line, the status follows the log (round 2, 3)", async () => {
+    it("a paused leftover queue does not hold a message: it waits for its run (run input D1)", async () => {
       api({
         [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
         [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: true }),
@@ -575,8 +626,8 @@ describe("the conversation page (ConversationPage)", () => {
       await screen.findByText("hi");
       await userEvent.setup().type(input(), "next{Enter}");
       await vi.waitFor(() => expect(container.querySelector("[data-pending]")).toBeNull());
-      expect(container.querySelector('[data-part="working-line"]')).toBeNull();
-      expect(screen.queryByRole("button", { name: en.chat.stop })).toBeNull();
+      expect(container.querySelector('[data-part="working-line"]')).not.toBeNull();
+      expect(screen.getByRole("button", { name: en.chat.stop })).toBeTruthy();
     });
 
     it("a run that never starts: the line goes 60 s after this tab's send (the backstop)", async () => {
@@ -833,6 +884,41 @@ describe("the conversation page (ConversationPage)", () => {
     await vi.waitFor(() => expect(title(/^Kept/)).not.toBeNull());
     expect(title(/^Quarterly numbers/)).toBeNull();
     expect(await screen.findByText(en.errors.internal)).toBeTruthy();
+  });
+
+  it("while the run waits for a person the status bar's elapsed time stops at the wait (no running timer)", async () => {
+    const at = (e: ReturnType<typeof ev>, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            at(userMsg(1, "hi"), 0),
+            at(runStarted(2), 1),
+            at(
+              ev(3, "question_asked", {
+                step: 0,
+                callId: "c2",
+                questionId: "q1",
+                form: { title: "t", fields: [] },
+                expiresAt: "2026-10-27T00:00:00.000Z",
+              }),
+              8,
+            ),
+          ],
+        }),
+    });
+    await renderChat("en");
+    await screen.findByText("hi");
+    // 7 s of work before the question; the days since then are waiting, not working
+    expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
+    expect(screen.getAllByText(en.chat.status.waiting).length).toBeGreaterThan(0);
+    // a later render (the answer typed, a refetch) reads the same: the wait never ticks
+    await act(() => new Promise((r) => setTimeout(r, 1100)));
+    act(() => FakeEventSource.instances[0]?.emit("changed", { what: "queue" }));
+    expect(screen.getByText("Turn 1 · 7s elapsed")).toBeTruthy();
   });
 
   it("a run starting, waiting and ending tells the sidebar (its state dot follows)", async () => {
@@ -1265,7 +1351,7 @@ describe("a new conversation (/chat)", () => {
     });
     expect(agentChip("Second agent").getAttribute("aria-pressed")).toBe("true");
     // the agents row changes it (the composer has no agent picker here)
-    expect(screen.queryByRole("button", { name: `${en.chat.pickAgent}: Second agent` })).toBeNull();
+    expect(screen.queryByRole("button", { name: /: Second agent$/ })).toBeNull();
     await userEvent.setup().click(agentChip("Echo agent"));
     expect(agentChip("Echo agent").getAttribute("aria-pressed")).toBe("true");
     expect(input().getAttribute("placeholder")).toBe("What should Echo agent do?");
@@ -1299,7 +1385,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     fireEvent.keyDown(input(), { key: "Enter" });
     expect(input()).toHaveProperty("value", "");
     expect(document.querySelector('[data-part="new-conversation-body"]')).toBeNull();
-    const bubble = screen.getByText("start", { selector: '[data-part="bubble"]' });
+    const bubble = screen.getByText("start", { selector: '[data-part="bubble-body"]' });
     expect(bubble.closest("[data-pending]")).not.toBeNull();
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
   });
@@ -1329,7 +1415,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     const { calls } = await renderRouteEmptyCache("/chat/c9", snapshotDefaults("c9"), {
       client: d.client,
     });
-    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(screen.getByText("start", { selector: '[data-part="bubble-body"]' })).toBeTruthy();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=1`]);
     // the first message was sent from this tab: the working line carries over the navigation
     expect(document.querySelector('[data-part="working-line"]')).not.toBeNull();
@@ -1370,7 +1456,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
       client: d.client,
     });
     // painted from the seed: the bubble, never the thread's loading state
-    expect(screen.getByText("start", { selector: '[data-part="bubble"]' })).toBeTruthy();
+    expect(screen.getByText("start", { selector: '[data-part="bubble-body"]' })).toBeTruthy();
     expect(container.querySelector('[data-part="loading-turn"]')).toBeNull();
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${C9}/stream?after=2`]);
     await new Promise((r) => setTimeout(r, 20));
@@ -1401,7 +1487,7 @@ describe("the first message from /chat (conversation send spec §2.1)", () => {
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     await act(async () => d.answer(json(500, { error: { code: "internal", message: "boom" } })));
     await vi.waitFor(() => expect(input()).toHaveProperty("value", "start"));
-    expect(screen.queryByText("start", { selector: '[data-part="bubble"]' })).toBeNull();
+    expect(screen.queryByText("start", { selector: '[data-part="bubble-body"]' })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
   });
 });
@@ -1457,7 +1543,7 @@ describe("the conversation page in the app frame", () => {
     // jsdom has no layout: pick the submenu item with the keyboard (see design menu-submenu tests)
     (await screen.findByRole("menuitemradio", { name: "Beta" })).focus();
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(router.push).not.toHaveBeenCalled();
     // the old org's conversation stays until the new document replaces it
     expect(screen.getByText("hi")).toBeTruthy();
@@ -1625,9 +1711,9 @@ describe("run rows (spec §6.16.23)", () => {
     runStarted(2),
     ev(3, "run_failed", { error: { code: "model.auth", message: "401 Unauthorized: bad key" } }),
   ];
-  const as = (role: string, opts: { id?: string; enterprise?: boolean } = {}) => ({
+  const as = (role: string, opts: { id?: string; superAdmin?: boolean } = {}) => ({
     ...ME,
-    account: { ...ME.account, id: opts.id ?? "a9", isEnterpriseAdmin: opts.enterprise ?? false },
+    account: { ...ME.account, id: opts.id ?? "a9", isSuperAdmin: opts.superAdmin ?? false },
     memberships: [{ ...(ME.memberships[0] as (typeof ME.memberships)[number]), role }],
   });
   const row = () => document.querySelector<HTMLElement>("[data-entry='run']") as HTMLElement;
@@ -1660,7 +1746,7 @@ describe("run rows (spec §6.16.23)", () => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("a failed run is open: the localized error, the raw text behind its toggle, Retry and the links (an owner who is an enterprise admin)", async () => {
+  it("a failed run is open: the localized error, the raw text behind its toggle, Retry and the links (an owner who is a super admin)", async () => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
     await renderChat();
     const region = within(row()).getByRole("region", { name: "Run details" });
@@ -1688,8 +1774,8 @@ describe("run rows (spec §6.16.23)", () => {
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
     ["an org admin: the trajectory", as("admin"), true, false],
     [
-      "an enterprise admin who is a plain member: the fix entry only",
-      as("member", { enterprise: true }),
+      "a super admin who is a plain member: the fix entry only",
+      as("member", { superAdmin: true }),
       false,
       true,
     ],

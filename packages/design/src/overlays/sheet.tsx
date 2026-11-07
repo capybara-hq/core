@@ -2,6 +2,7 @@ import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useDesignLink, useDesignT } from "../provider";
 import { Dialog } from "./dialog";
 import { useFocusReturn } from "./focus-return";
@@ -82,9 +83,11 @@ export function Sheet({
                 />
               </span>
             </div>
-            {tabs ? <div className="cb-sheet-tabs">{tabs}</div> : null}
-            <div className="cb-sheet-body">{children}</div>
-            {footer ? <div className="cb-sheet-foot">{footer}</div> : null}
+            <BoxScope kind="sheet">
+              {tabs ? <div className="cb-sheet-tabs">{tabs}</div> : null}
+              <div className="cb-sheet-body">{children}</div>
+              {footer ? <div className="cb-sheet-foot">{footer}</div> : null}
+            </BoxScope>
           </RD.Content>
         </RD.Portal>
       </RD.Root>

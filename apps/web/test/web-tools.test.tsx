@@ -8,6 +8,7 @@ import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
+import { fieldOptionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -53,7 +54,7 @@ const PREVIEWERS = { [`GET ${ORG}/file-previewers`]: () => json(200, { items: []
 const settle = () => new Promise((r) => setTimeout(r, 50));
 
 describe("org extensions page: default providers (web tools spec §6)", () => {
-  beforeEach(() => resetNavigation("/settings/extensions"));
+  beforeEach(() => resetNavigation("/extensions"));
 
   it.each(["zh", "en"] as const)(
     "two candidates and none chosen: Not selected with the hint; choosing PUTs the default (%s)",
@@ -82,11 +83,11 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           return noContent();
         },
       });
-      await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), { locale });
       const section = await screen.findByRole("region", { name: m.title });
       const select = within(section).getByRole("combobox", { name: m.points.webSearch });
       expect(select).toHaveProperty("value", "");
-      expect(within(select).getByRole("option", { name: m.none })).toBeTruthy();
+      expect(fieldOptionLabels(select)).toContain(m.none);
       expect(
         within(section).getByText(m.noneHint.replace("{point}", m.points.webSearch)),
       ).toBeTruthy();
@@ -94,14 +95,14 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
       expect(within(section).queryByRole("combobox", { name: m.points.webFetch })).toBeNull();
 
       const user = userEvent.setup();
-      await user.selectOptions(select, "fake-web-2");
+      await pickOption(select, "fake-web-2", user);
       await vi.waitFor(() =>
         expect(bodyOf(calls.find((c) => c.method === "PUT" && c.url.endsWith("/default")))).toEqual(
           { extension: "fake-web-2" },
         ),
       );
       await vi.waitFor(() => expect(select).toHaveProperty("value", "fake-web-2"));
-      expect(within(select).queryByRole("option", { name: m.none })).toBeNull();
+      expect(fieldOptionLabels(select)).not.toContain(m.none);
       expect(
         within(section).queryByText(m.noneHint.replace("{point}", m.points.webSearch)),
       ).toBeNull();
@@ -125,14 +126,10 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
     const select = await screen.findByRole("combobox", { name: m.points.webSearch });
     expect(select).toHaveProperty("value", "fake-web-2");
-    expect(
-      within(select).getByRole("option", {
-        name: m.unavailable.replace("{extension}", "fake-web-2"),
-      }),
-    ).toBeTruthy();
+    expect(fieldOptionLabels(select)).toContain(m.unavailable.replace("{extension}", "fake-web-2"));
     expect(screen.getByText(m.noneHint.replace("{point}", m.points.webSearch))).toBeTruthy();
   });
 
@@ -147,8 +144,8 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
           ],
         }),
     });
-    await renderRouteWithCache("/settings/extensions", lastStubRoutes(), { locale: "en" });
-    await screen.findByRole("region", { name: "fake-web" });
+    await renderRouteWithCache("/extensions", lastStubRoutes(), { locale: "en" });
+    await screen.findByRole("row", { name: /fake-web/ });
     await vi.waitFor(() =>
       expect(screen.queryByRole("region", { name: en.extensions.pointDefaults.title })).toBeNull(),
     );
@@ -172,7 +169,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
       [`GET ${ORG}/file-previewers`]: () => json(200, { items: [] }),
     };
     const browser = expectNoFirstPaintFetch();
-    const { calls } = await renderRouteWithCache("/settings/extensions", routes);
+    const { calls } = await renderRouteWithCache("/extensions", routes);
     expect(calls.map((c) => c.url)).toContain(`${ORG}/extension-points`);
     expect(screen.getByRole("region", { name: en.extensions.pointDefaults.title })).toBeTruthy();
     await settle();
@@ -180,7 +177,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
   });
 
   it("an empty cache reads the defaults with the extensions, then shows the section", async () => {
-    await renderRouteEmptyCache("/settings/extensions", {
+    await renderRouteEmptyCache("/extensions", {
       [`GET ${ORG}/extensions`]: () =>
         json(200, { extensions: [webExtension("fake-web"), webExtension("fake-web-2")] }),
       [`GET ${ORG}/extension-points`]: () =>
@@ -220,12 +217,13 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
         }),
       [`PUT ${ORG}/extension-points/web-search/default`]: () => noContent(),
     });
-    const { client } = await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    const { client } = await renderRouteWithCache("/extensions", lastStubRoutes());
     const spy = vi.spyOn(client, "invalidateQueries");
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       await screen.findByRole("combobox", { name: en.extensions.pointDefaults.points.webSearch }),
       "fake-web-2",
+      user,
     );
     const k = keys.org("o1");
     await vi.waitFor(() =>
@@ -243,7 +241,7 @@ describe("org extensions page: default providers (web tools spec §6)", () => {
       [`GET ${ORG}/extension-points`]: () => json(200, { points: [] }),
       [`PUT ${ORG}/extensions/fake-web`]: () => json(200, { extension: webExtension("fake-web") }),
     });
-    const { client } = await renderRouteWithCache("/settings/extensions", lastStubRoutes());
+    const { client } = await renderRouteWithCache("/extensions", lastStubRoutes());
     const spy = vi.spyOn(client, "invalidateQueries");
     const user = userEvent.setup();
     await user.click(

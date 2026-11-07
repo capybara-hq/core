@@ -1,4 +1,4 @@
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -177,6 +177,34 @@ const view = (id: string, description: string, status: string, extra = {}) => ({
   ...extra,
 });
 
+/** The agent tree the page reads with sub-agents (AC3 fix round 1: the agents chip counts it). */
+const treeOf = (id: string, children: { id: string; status: string }[]) => ({
+  root: {
+    id,
+    description: "",
+    agentType: null,
+    status: "running",
+    model: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: 0,
+    tokens: 0,
+    toolCalls: 0,
+    children: children.map((c) => ({
+      ...c,
+      description: c.id,
+      agentType: "general-purpose",
+      model: null,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: 0,
+      tokens: 0,
+      toolCalls: 0,
+      children: [],
+    })),
+  },
+});
+
 function api(
   extra: Record<string, (c: Call) => Response> = {},
   opts: { parent?: ConversationEvent[]; child?: ConversationEvent[] } = {},
@@ -198,6 +226,14 @@ function api(
       json(200, {
         usage: { inputTokens: 1000, outputTokens: 200, cacheReadTokens: 34, cacheWriteTokens: 0 },
       }),
+    [`GET ${PARENT}/agent-tree`]: () =>
+      json(
+        200,
+        treeOf("c1", [
+          { id: "ch2", status: "running" },
+          { id: "ch1", status: "idle" },
+        ]),
+      ),
     [`GET ${CHILD}`]: () =>
       json(200, CONV("ch2", { parentConversationId: "c1", subagentType: "general-purpose" })),
     [`GET ${CHILD}/events`]: () => json(200, { events: opts.child ?? childEvents(true) }),
@@ -435,8 +471,8 @@ describe("sub-agents on the conversation page", () => {
     expect(panel.querySelector('[data-entry="tools"]')?.getAttribute("data-tool-keys")).toBe(
       "Bash",
     );
-    expect(panel.textContent).toContain(en.subagents.view.readOnly);
-    // read-only: no composer inside, the child's own stream
+    // no read-only copy (AC1); no composer inside, the child's own stream
+    expect(panel.textContent).not.toMatch(/read-only|can't message/i);
     expect(within(panel).queryByRole("textbox")).toBeNull();
     expect(FakeEventSource.instances.some((s) => s.url.startsWith(`${CHILD}/stream`))).toBe(true);
     await user.click(within(panel).getByRole("button", { name: en.subagents.view.stop }));
@@ -455,6 +491,47 @@ describe("sub-agents on the conversation page", () => {
     // the panel opens at once (the hash); its body re-renders when the child's log arrives
     const panel = await childPanelWith((p) => within(p).getByText("All tests pass."));
     expect(within(panel).queryByRole("button", { name: en.subagents.view.stop })).toBeNull();
+  });
+
+  it("a child waiting for an approval: the panel's time stops at the wait and says so, no spinner", async () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 9, 26, 6, 0, 0) + s * 1000).toISOString(),
+    });
+    // the child worked 6 s, then asked for an approval (days ago: all of it waiting)
+    const child = [
+      ...childEvents(true)
+        .slice(0, 4)
+        .map((e) => at(e, e.type === "run_started" ? 10 : e.seq)),
+      at(
+        ev(
+          5,
+          "approval_requested",
+          {
+            step: 1,
+            callId: "x1",
+            approvalId: "ap1",
+            toolKey: "Bash",
+            expiresAt: "2026-10-27T00:00:00.000Z",
+          },
+          "run-ch2",
+          "ch2",
+        ),
+        16,
+      ),
+    ];
+    api({}, { child });
+    window.history.replaceState(null, "", "/chat/c1#subagent=ch2");
+    await renderChat();
+    const meta = () =>
+      screen
+        .getByRole("complementary", { name: "Check tests" })
+        .querySelector('[data-part="panel-meta"]') as HTMLElement;
+    await childPanelWith(() => expect(meta().textContent).toBe("Waiting for approval · 6s"));
+    expect(meta().querySelector('[data-part="spinner"]')).toBeNull();
+    // it does not tick while the child waits
+    await act(() => new Promise((r) => setTimeout(r, 1100)));
+    expect(meta().textContent).toBe("Waiting for approval · 6s");
   });
 
   it("an org agent's name in the task line links to the agent", async () => {

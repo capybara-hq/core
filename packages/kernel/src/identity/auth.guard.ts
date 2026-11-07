@@ -7,10 +7,10 @@ import { ApiTokenService } from "./api-tokens.js";
 import { ACCESS_COOKIE } from "./cookies.js";
 import {
   ALLOW_SERVICE_KEY,
-  ENTERPRISE_ADMIN_KEY,
   type Principal,
   PUBLIC_KEY,
   SESSION_ONLY_KEY,
+  SUPER_ADMIN_KEY,
 } from "./principal.js";
 import { SessionService } from "./sessions.js";
 
@@ -23,7 +23,7 @@ const BEARER_RE = /^Bearer\s+(\S+)$/i;
 /** 凭据解析的结果；`cookie` 为 true 表示经 Cookie 认证（需要 CSRF 检查）。 */
 type Resolved = { principal: Principal; cookie: boolean } | undefined;
 
-/** 解析凭据要用的服务（{@link AuthGuard} 与 {@link authorizeEnterpriseAdmin} 共用）。 */
+/** 解析凭据要用的服务（{@link AuthGuard} 与 {@link authorizeSuperAdmin} 共用）。 */
 export interface AuthServices {
   accounts: AccountsService;
   sessions: SessionService;
@@ -73,14 +73,11 @@ async function resolvePrincipal(req: FastifyRequest, s: AuthServices): Promise<R
 }
 
 /**
- * 在读请求体之前（Fastify `onRequest`）按 `@EnterpriseAdmin` 路由的规则认证：无凭据 / 凭据无效 → `auth.required`
- * 等，Cookie 认证的非安全请求要求 CSRF 头，服务令牌与非企业管理员 → `forbidden`。插件包上传用它：
+ * 在读请求体之前（Fastify `onRequest`）按 `@SuperAdmin` 路由的规则认证：无凭据 / 凭据无效 → `auth.required`
+ * 等，Cookie 认证的非安全请求要求 CSRF 头，服务令牌与非超级管理员 → `forbidden`。插件包上传用它：
  * 未认证的大请求体不被读入内存。之后 {@link AuthGuard} 照常再判一次。
  */
-export async function authorizeEnterpriseAdmin(
-  req: FastifyRequest,
-  s: AuthServices,
-): Promise<void> {
+export async function authorizeSuperAdmin(req: FastifyRequest, s: AuthServices): Promise<void> {
   const resolved = await resolvePrincipal(req, s);
   if (!resolved) throw new ApiError("auth.required", "Authentication required");
   if (resolved.cookie && !SAFE_METHODS.has(req.method.toUpperCase())) requireCsrf(req);
@@ -88,7 +85,26 @@ export async function authorizeEnterpriseAdmin(
   if (p.kind === "service") {
     throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
   }
-  if (!p.account.isEnterpriseAdmin) throw new ApiError("forbidden", "Enterprise admin required");
+  if (!p.account.isSuperAdmin) throw new ApiError("forbidden", "Super admin required");
+}
+
+/**
+ * Before the body is read (Fastify `onRequest`), for an org's package upload (an `@OrgAction`
+ * route of a human-only action): authenticated like {@link authorizeSuperAdmin}, a person (service
+ * tokens -> `forbidden`), CSRF for cookies. Returns the principal for the org role check that also
+ * runs before the body (ruling P3-29); `OrgGuard` and the service's lock re-check it afterwards.
+ */
+export async function authenticateOrgUploader(
+  req: FastifyRequest,
+  s: AuthServices,
+): Promise<Principal> {
+  const resolved = await resolvePrincipal(req, s);
+  if (!resolved) throw new ApiError("auth.required", "Authentication required");
+  if (resolved.cookie && !SAFE_METHODS.has(req.method.toUpperCase())) requireCsrf(req);
+  if (resolved.principal.kind === "service") {
+    throw new ApiError("forbidden", "Service tokens cannot access this endpoint");
+  }
+  return resolved.principal;
 }
 
 /**
@@ -100,7 +116,7 @@ export async function authorizeEnterpriseAdmin(
  *    （便于登出 / 刷新）；PG / Redis 故障等其他异常照常抛出。
  * 4. 路由约束：service principal 只能访问 `@AllowService` 路由（否则 `forbidden`）；
  *    `@SessionOnly` 要求 Web 会话：个人令牌 → `auth.session_required`，服务令牌（即使路由经 `@OrgAction`
- *    隐含 `@AllowService`）→ `forbidden`；`@EnterpriseAdmin` 要求企业管理员（`forbidden`）。
+ *    隐含 `@AllowService`）→ `forbidden`；`@SuperAdmin` 要求超级管理员（`forbidden`）。
  * 5. `@Public` 路由的非安全方法无论是否带 Cookie 都要求 CSRF 头。
  * 账号状态每个请求都从 PG 实时读取，不在进程内缓存。插件路由 `/plugins/*` 不经过 Nest，不受此守卫约束。
  */
@@ -149,8 +165,8 @@ export class AuthGuard implements CanActivate {
     if (flag(SESSION_ONLY_KEY) && !(p.kind === "user" && p.via === "session")) {
       throw new ApiError("auth.session_required", "This endpoint requires a web session");
     }
-    if (flag(ENTERPRISE_ADMIN_KEY) && !(p.kind === "user" && p.account.isEnterpriseAdmin)) {
-      throw new ApiError("forbidden", "Enterprise admin required");
+    if (flag(SUPER_ADMIN_KEY) && !(p.kind === "user" && p.account.isSuperAdmin)) {
+      throw new ApiError("forbidden", "Super admin required");
     }
     return true;
   }

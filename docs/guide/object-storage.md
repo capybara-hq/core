@@ -4,7 +4,7 @@ Object storage is provided by an `object-store@1` extension, with the default im
 
 The local `docker/compose.dev.yaml` ships the official SeaweedFS image (`chrislusf/seaweedfs`, pinned by tag plus digest): the S3 API is at `localhost:8333`, the credentials are `capybara` / `capybara-secret`, and the filer's file browser is at <http://localhost:8888>. The one-shot container `createbuckets` creates the bucket `capybara`. Tests use the same image (`startTestS3()`), and `CAPYBARA_TEST_S3_IMAGE` can switch it to a private image source. To enable it:
 
-`object-store-s3` is a bootstrap plugin and doesn't need to be listed in `CAPYBARA_EXTENSIONS` (a starting kernel installs it, see [Development](../development.md)); you only give the deployment-level config (the enterprise admin can also fill it in in the admin console):
+`object-store-s3` is a bootstrap plugin and doesn't need to be listed in `CAPYBARA_EXTENSIONS` (a starting kernel installs it, see [Development](../development.md)); you only give the deployment-level config (the super admin can also fill it in in the admin console):
 
 ```bash
 export CAPYBARA_EXTENSION_CONFIG='{"object-store-s3":{"endpoint":"http://localhost:8333","region":"us-east-1","bucket":"capybara","accessKeyId":"capybara","secretAccessKey":"capybara-secret","forcePathStyle":true}}'

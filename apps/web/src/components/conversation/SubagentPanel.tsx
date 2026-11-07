@@ -7,6 +7,7 @@ import {
   StatusBar,
   SubagentTask,
   subagentDuration,
+  subagentWaitingLabel,
   useNow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
@@ -20,8 +21,10 @@ import {
   buildTimeline,
   latestModel,
   latestUsage,
+  runStats,
   toolKeysOf,
   usedTokens,
+  workedMsAt,
 } from "../../lib/timeline";
 import { useToolInfo } from "../../lib/tool-info";
 import { Thread } from "./Thread";
@@ -116,20 +119,12 @@ function ChildRecord({
   )?.payload as Started | undefined;
   const model = latestModel(child.events);
   const active = child.running || child.waiting;
-  // re-read every second while active (the header's running time)
-  const now = useNow(active ? 1000 : 0);
-  // the latest run: its start, and its end once it is over
-  let runStart: number | undefined;
-  let runEnd: number | undefined;
-  for (const e of child.events) {
-    if (e.type === "run_started") {
-      runStart = Date.parse(e.createdAt);
-      runEnd = undefined;
-    } else if (e.type === "run_finished" || e.type === "run_failed" || e.type === "run_aborted") {
-      runEnd = Date.parse(e.createdAt);
-    }
-  }
-  const ms = runStart === undefined ? undefined : (active ? now : (runEnd ?? now)) - runStart;
+  // the latest run's working time (waits for a person left out, as the status bar counts it):
+  // it ticks each second only while the child works and stops at a wait
+  const stats = useMemo(() => runStats(child.events), [child.events]);
+  const now = useNow(stats.resumedAt !== null ? 1000 : 0);
+  const ms = workedMsAt(stats, now) ?? undefined;
+  const waitingFor = child.waiting ? stats.waitingFor : null;
   const usage = latestUsage(child.events);
   const window_ = usage
     ? contextWindowOf({ provider: usage.provider, model: usage.model })
@@ -144,9 +139,12 @@ function ChildRecord({
       title={title}
       onBack={onBack}
       meta={
-        ms === undefined ? undefined : (
+        ms === undefined ? undefined : waitingFor !== null ? (
+          // waiting for a person: the waiting word instead of the spinner, the time stopped
+          `${subagentWaitingLabel(waitingFor, locale)} · ${subagentDuration(ms, locale)}`
+        ) : (
           <>
-            {active ? <Spinner /> : null}
+            {child.running ? <Spinner /> : null}
             {subagentDuration(ms, locale)}
           </>
         )
@@ -163,7 +161,8 @@ function ChildRecord({
       body="subagent"
       footer={
         <StatusBar
-          context={t("readOnly")}
+          // no read-only copy (AC1): the missing composer says it
+          context=""
           version=""
           system={pct === null ? [] : [tc("contextPct", { n: pct })]}
         />

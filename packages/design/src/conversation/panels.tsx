@@ -3,6 +3,7 @@ import { Button, IconButton } from "../controls/button";
 import { useSkeletonAnnounces } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { BoxScope, useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
 import { LoadFailed } from "./file-preview";
 import { TypeBadge } from "./files";
@@ -109,7 +110,7 @@ export function InlineCard({
         data-embed={embed ? "true" : undefined}
         data-state={state}
       >
-        {body}
+        <BoxScope kind="inline-card">{body}</BoxScope>
       </div>
     </div>
   );
@@ -189,8 +190,15 @@ export function PropertySection({
         {...(onRetry ? { onRetry } : {})}
       />
     );
+  // In the narrow properties sheet (a box already) a section is a heading and hairline group.
+  const inBox = useInBox() !== null;
   return (
-    <section className="cb-property-section" data-part="property-section" data-state={state}>
+    <section
+      className="cb-property-section"
+      data-part="property-section"
+      data-state={state}
+      data-inset={inBox ? "box" : undefined}
+    >
       <h3 className="cb-property-head">
         <span className="cb-property-title" data-part="property-title">
           {title}
@@ -199,7 +207,7 @@ export function PropertySection({
           <span className={valueTone === "muted" ? "cb-muted" : undefined}>{value}</span>
         ) : null}
       </h3>
-      {body}
+      <BoxScope kind="property-section">{body}</BoxScope>
     </section>
   );
 }
@@ -414,48 +422,57 @@ export function RightPanel({
     );
   if (state === "loading") content = <SkeletonBars />;
   return (
-    <aside className="cb-rpanel" data-part="right-panel" aria-label={label ?? title} tabIndex={-1}>
-      <header className="cb-rpanel-head" data-part="panel-head">
-        {onBack ? (
-          <IconButton
-            label={t("panel.back")}
-            icon={<Icon name="chevron-left" size={16} />}
-            onClick={onBack}
-          />
-        ) : null}
-        {badge ? <TypeBadge label={badge} /> : null}
-        {titleNode}
-        {meta !== undefined ? (
-          <span className="cb-faint cb-small cb-rpanel-meta" data-part="panel-meta">
-            {meta}
-          </span>
-        ) : null}
-        <span className="cb-rpanel-grow" />
-        {actions}
-        {onFullscreen ? (
-          <IconButton
-            label={t("panel.fullscreen")}
-            icon={<Icon name="maximize-2" size={16} />}
-            onClick={onFullscreen}
-          />
-        ) : null}
-        <IconButton
-          label={t("overlay.close")}
-          icon={<Icon name="x" size={16} />}
-          onClick={onClose}
-        />
-      </header>
-      <div
-        className="cb-rpanel-body"
-        data-part="panel-body"
-        data-pad={state === "ready" ? body : "pad"}
-        data-state={state}
-        aria-busy={state === "loading" ? true : undefined}
+    // A full-height pane holds content like a page (spec §1): no box around what it holds, even
+    // when the narrow layout puts the pane in a Sheet.
+    <BoxScope kind={null}>
+      <aside
+        className="cb-rpanel"
+        data-part="right-panel"
+        aria-label={label ?? title}
+        tabIndex={-1}
       >
-        {content}
-      </div>
-      {footer ? <div className="cb-rpanel-footer">{footer}</div> : null}
-    </aside>
+        <header className="cb-rpanel-head" data-part="panel-head">
+          {onBack ? (
+            <IconButton
+              label={t("panel.back")}
+              icon={<Icon name="chevron-left" size={16} />}
+              onClick={onBack}
+            />
+          ) : null}
+          {badge ? <TypeBadge label={badge} /> : null}
+          {titleNode}
+          {meta !== undefined ? (
+            <span className="cb-faint cb-small cb-rpanel-meta" data-part="panel-meta">
+              {meta}
+            </span>
+          ) : null}
+          <span className="cb-rpanel-grow" />
+          {actions}
+          {onFullscreen ? (
+            <IconButton
+              label={t("panel.fullscreen")}
+              icon={<Icon name="maximize-2" size={16} />}
+              onClick={onFullscreen}
+            />
+          ) : null}
+          <IconButton
+            label={t("overlay.close")}
+            icon={<Icon name="x" size={16} />}
+            onClick={onClose}
+          />
+        </header>
+        <div
+          className="cb-rpanel-body"
+          data-part="panel-body"
+          data-pad={state === "ready" ? body : "pad"}
+          data-state={state}
+          aria-busy={state === "loading" ? true : undefined}
+        >
+          {content}
+        </div>
+        {footer ? <div className="cb-rpanel-footer">{footer}</div> : null}
+      </aside>
+    </BoxScope>
   );
 }
 

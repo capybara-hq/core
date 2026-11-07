@@ -112,7 +112,7 @@ export interface ReconstructOptions {
    * eval worker reads the current one). Another version than the logged one is a candidate change
    * (`subagent_changed`).
    */
-  subagentTemplate?: { id: string; version: number };
+  subagentTemplate?: SubagentTemplateRef;
   /**
    * A child case under another agent version (`agentVersion` differs): that version's own
    * definition, compared with the logged sub-agent for `subagent_changed` (the candidate
@@ -368,8 +368,22 @@ export function subagentStartedOf(
   return e?.type === "subagent_started" ? e.payload : undefined;
 }
 
-const sameTemplate = (logged: SubagentStarted["template"], t: { id: string; version: number }) =>
-  logged.source !== "plugin" || (logged.id === t.id && logged.version === t.version);
+/**
+ * A plugin template child's template as a new dispatch would use it: the selected id, the version
+ * and the platform template whose content it is (absent: the org's own template; plugin scope
+ * phase 2, a linked copy shares its id with both sources, whose version numbers may collide).
+ */
+export interface SubagentTemplateRef {
+  id: string;
+  version: number;
+  platformTemplateId?: string;
+}
+
+const sameTemplate = (logged: SubagentStarted["template"], t: SubagentTemplateRef) =>
+  logged.source !== "plugin" ||
+  (logged.id === t.id &&
+    logged.version === t.version &&
+    (logged.platformTemplateId ?? null) === (t.platformTemplateId ?? null));
 
 const pinsOf = (d: AgentDefinition): string[] =>
   [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
@@ -476,7 +490,7 @@ export function subagentCaseChanged(
     changed: boolean;
     definition: AgentDefinition;
     agentVersion: number;
-    subagentTemplate?: { id: string; version: number };
+    subagentTemplate?: SubagentTemplateRef;
     subagentVersion?: AgentDefinition;
   },
 ): boolean {

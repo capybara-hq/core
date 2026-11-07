@@ -16,6 +16,7 @@ import { ApiError } from "../../errors.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
 import { PINNED_SKILLS_LIMITS } from "../../skills/catalog.js";
+import { selectedSkills } from "../../skills/usable.js";
 import { AGENT_TOOL, CHILD_REMOVED_TOOLS } from "../../tools/builtin-names.js";
 import type { ProviderRegistry } from "../providers.js";
 import type { RosterEntry } from "./roster.js";
@@ -173,7 +174,8 @@ type TemplateLike = {
     | "model"
     | "effort"
     | "maxSteps"
-    | "skills"]?: AgentTemplate[K] | undefined;
+    | "skills"
+    | "selectedSkills"]?: AgentTemplate[K] | undefined;
 };
 
 interface SkillRow {
@@ -196,27 +198,17 @@ async function pinnedFor(
   a: { orgId: string; parent: AgentDefinition; parentAgentId: string },
   refs: readonly string[],
   byName: { plugin: string | undefined } | null,
+  /** Further names the template lists (`selectedSkills`): resolved the same way, never pinned. */
+  selected: readonly string[] = [],
 ): Promise<{ pinned: string[]; warnings: string[] }> {
-  if (refs.length === 0) return { pinned: [], warnings: [] };
-  const orgSkills = a.parent.skills?.orgSkills ?? [];
+  if (refs.length === 0 && selected.length === 0) return { pinned: [], warnings: [] };
+  // org and agent skills, linked org copies and platform skills on in the org (phase 2), by id
   const rows: SkillRow[] = (
-    await db
-      .selectFrom("skills as s")
-      .innerJoin("skill_versions as v", (j) =>
-        j.onRef("v.skill_id", "=", "s.id").onRef("v.version", "=", "s.current_version"),
-      )
-      .leftJoin("catalog_items as c", "c.id", "s.catalog_item_id")
-      .select(["s.id", "s.name", "s.scope", "v.manifest", "c.name as plugin"])
-      .where("s.org_id", "=", a.orgId)
-      .where("s.deleted_at", "is", null)
-      .where((eb) => {
-        const own = eb.and([eb("s.scope", "=", "agent"), eb("s.agent_id", "=", a.parentAgentId)]);
-        return orgSkills.length === 0
-          ? own
-          : eb.or([own, eb.and([eb("s.scope", "=", "org"), eb("s.id", "in", orgSkills)])]);
-      })
-      .orderBy("s.id")
-      .execute()
+    await selectedSkills(db, {
+      orgId: a.orgId,
+      agentId: a.parentAgentId,
+      orgSkills: a.parent.skills?.orgSkills ?? [],
+    })
   ).map((r) => ({
     id: r.id,
     name: r.name,
@@ -268,6 +260,12 @@ async function pinnedFor(
     }
     total += r.bytes;
     pinned.push(r.id);
+  }
+  for (const ref of selected) {
+    if (refs.includes(ref)) continue;
+    if (!match(ref)) {
+      warnings.push(`The skill "${ref}" is not available: the agent does not select it.`);
+    }
   }
   return { pinned, warnings };
 }
@@ -354,8 +352,9 @@ function orgAgentDefinition(
   const own = a.orgAgent.definition;
   // prompt files are authoring data: the child's model sees only `instructions` (their join), and
   // `subagent_started.definition` keeps its shape (spec 2026-11-04 §3.3); its own `subagents`
-  // block stays: it is the roster the child dispatches from (agent map spec §4.1)
-  const { skills, instructionFiles: _files, ...rest } = own;
+  // block stays: it is the roster the child dispatches from (agent map spec §4.1); pending
+  // connectors are authoring data too (ruling P4-6)
+  const { skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
   const definition: AgentDefinition = {
     ...rest,
     // its own tools, not intersected with the parent's; only the child-removed ones go
@@ -421,7 +420,13 @@ export async function effectiveDefinition(
     );
     if (!row) throw new SubagentTypeGoneError(entry.type);
     template = row.template;
-    ref = { source: "plugin", id: row.id, version: row.version, plugin: row.plugin };
+    ref = {
+      source: "plugin",
+      id: row.id,
+      version: row.version,
+      ...(row.plugin ? { plugin: row.plugin } : {}),
+      ...(row.platformTemplateId !== undefined && { platformTemplateId: row.platformTemplateId }),
+    };
   }
 
   const connectors = await loadConnectors(d.db, a.orgId, parent.tools);
@@ -438,6 +443,7 @@ export async function effectiveDefinition(
     a,
     template?.skills ?? [],
     entry.source === "plugin" ? { plugin: entry.plugin } : null,
+    template?.selectedSkills ?? [],
   );
   const tier = a.tier ?? template?.model ?? "inherit";
   const m = await resolveTier(d, a.orgId, parent, tier);

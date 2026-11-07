@@ -4,10 +4,12 @@ import {
   type MarketplaceEntry,
   type MarketplaceManifest,
   type MarketplaceSource,
+  marketplaceEntryDeprecation,
   marketplaceEntryVersion,
   PLUGIN_MANIFEST_FILE,
   parseMarketplaceManifest,
   parsePluginManifest,
+  pluginDescription,
   SDK_VERSION,
   SEMVER_VERSION_RE,
 } from "@capybara-hq/plugin-sdk";
@@ -21,7 +23,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { DEPLOYMENT_SECRETS_ORG } from "../extensions/deployment-config-store.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -130,12 +132,19 @@ export interface MarketplaceEntryView {
   /** The entry's version (`version`, else the npm source's); null when it has none (the plugin's own). */
   version: string | null;
   summary: { en: string; zh?: string };
+  /** The entry's display name (copied from the plugin's `plugin.json`); null without one. */
+  displayName: { zh: string; en: string } | null;
   minKernel: string | null;
   homepage: string | null;
   permissions: { keys: string[]; sensitive: string[] } | null;
   source: MarketplaceSource;
   /** `claude-code` for an entry of a Claude Code marketplace (`.claude-plugin/marketplace.json`). */
   format: "capybara" | "claude-code";
+  /**
+   * The marketplace deprecates this version (`deprecated`, spec ruling Task 13): its reason, `null`
+   * without one; `null` when not deprecated. Importing it is refused (`marketplace.entry_deprecated`).
+   */
+  deprecated: { reason: string | null } | null;
   /** `minKernel` is satisfied by this deployment. */
   compatible: boolean;
   /** The kernel can import this entry's source now. */
@@ -143,7 +152,10 @@ export interface MarketplaceEntryView {
   reason?: MarketplaceEntryUnimportable;
   /** Imported as a catalog item (a non-deleted item with the same name) and its versions. */
   adopted: { itemId: string; versions: string[] } | null;
-  /** Adopted, and this compatible entry is newer than the newest imported version (never automatic). */
+  /**
+   * Adopted, and this compatible entry, not deprecated, is newer than the newest imported version
+   * (never automatic).
+   */
   newerAvailable: boolean;
   /**
    * "Content changed at the same version" (spec §5.3): a version of this entry's release is
@@ -441,6 +453,26 @@ export const HOST_VERSIONS = { kernel: KERNEL_VERSION, sdk: SDK_VERSION } as con
 export const entryCompatible = (e: Pick<MarketplaceEntry, "minKernel">): boolean =>
   e.minKernel === undefined || semver.gte(HOST_VERSIONS.kernel, e.minKernel);
 
+/** Whether the marketplace marks the entry deprecated (`deprecated: true` or with a reason). */
+export const entryDeprecated = (e: MarketplaceEntry): boolean =>
+  marketplaceEntryDeprecation(e) !== null;
+
+/**
+ * Refuses importing (or requesting) a deprecated marketplace entry: 409
+ * `marketplace.entry_deprecated`, its reason in the message and details.
+ */
+export function assertEntryNotDeprecated(e: MarketplaceEntry): void {
+  const d = marketplaceEntryDeprecation(e);
+  if (d === null) return;
+  const version = marketplaceEntryVersion(e);
+  throw new ApiError(
+    "marketplace.entry_deprecated",
+    `${e.name}${version !== null ? `@${version}` : ""} is deprecated by its marketplace` +
+      `${d.reason !== null ? `: ${d.reason}` : ""}; import another version`,
+    [{ entry: e.name, version, reason: d.reason }],
+  );
+}
+
 /**
  * The form of a marketplace address (spec §5.1): `owner/repo` (expanded to GitHub), an https URL
  * whose path ends in `.git`, or any URL with `form: "git"` is a git repository; anything else
@@ -481,7 +513,7 @@ export function hostAllowed(host: string, config: KernelConfig): boolean {
 }
 
 /** Why an entry is not importable from a marketplace of `form`, or undefined when it is. */
-function unimportable(
+export function unimportable(
   e: MarketplaceEntry,
   form: MarketplaceForm,
   config: KernelConfig,
@@ -509,9 +541,35 @@ export const sourceEffective = (
 ): boolean => row.enabled && (!row.builtin || config.marketplaces.official.enabled);
 
 /**
+ * The default entry of a marketplace plugin (`version` `""`: the entry without a version), the
+ * same order as the web's market row (`groupMarketplaceEntries`, apps/web/src/lib/catalog.ts):
+ * the newest `usable` versioned entry, a stable version before a prerelease; else the entry
+ * without a version that is not deprecated; else the newest versioned one that is not deprecated;
+ * else the entry without a version; else the newest.
+ */
+export function pickDefaultEntry<T extends { version: string }>(
+  entries: readonly T[],
+  o: { usable: (e: T) => boolean; deprecated: (e: T) => boolean },
+): T | undefined {
+  const versioned = entries
+    .filter((e) => e.version !== "")
+    .sort((a, b) => newestFirst(a.version, b.version));
+  const bare = entries.filter((e) => e.version === "");
+  return (
+    versioned.find((e) => o.usable(e) && semver.prerelease(e.version) === null) ??
+    versioned.find(o.usable) ??
+    bare.find((e) => !o.deprecated(e)) ??
+    versioned.find((e) => !o.deprecated(e)) ??
+    bare[0] ??
+    versioned[0]
+  );
+}
+
+/**
  * Reads a marketplace entry for import: `version` given -> the entry listing that version; omitted
- * -> the newest compatible versioned entry, else the entry without a version, else the newest
- * versioned one (refused later as incompatible). Marketplace missing -> `marketplace.not_found`;
+ * -> {@link pickDefaultEntry} over the compatible, importable entries that are not deprecated
+ * (a fallback is refused later as incompatible or deprecated). Marketplace missing ->
+ * `marketplace.not_found`;
  * marketplace disabled (official offline included), entry or version missing ->
  * `marketplace.entry_not_found`.
  */
@@ -550,13 +608,14 @@ export async function loadMarketplaceEntry(
   if (version !== undefined) {
     pickedRow = entries.find((e) => e.version === version);
   } else {
-    const versioned = entries
-      .filter((e) => e.version !== "")
-      .sort((a, b) => newestFirst(a.version, b.version));
-    pickedRow =
-      versioned.find((e) => entryCompatible(e.entry)) ??
-      entries.find((e) => e.version === "") ??
-      versioned[0];
+    pickedRow = pickDefaultEntry(entries, {
+      // compatible, importable, not deprecated
+      usable: (e) =>
+        entryCompatible(e.entry) &&
+        unimportable(e.entry, src.form, config) === undefined &&
+        !entryDeprecated(e.entry),
+      deprecated: (e) => entryDeprecated(e.entry),
+    });
   }
   const picked = pickedRow?.entry;
   if (!picked) {
@@ -582,9 +641,9 @@ export async function loadMarketplaceEntry(
 }
 
 /**
- * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, enterprise admins only): the official
+ * Marketplaces (D16 / C25 / C26, `/api/v1/admin/marketplaces/*`, super admins only): the official
  * marketplace (config `marketplaces.official.*`, synced at startup into the marketplace with id
- * `official`) and enterprise marketplaces (PG, optional token in secrets). A refresh (maintenance
+ * `official`) and custom marketplaces (PG, optional token in secrets). A refresh (maintenance
  * job `catalogs-refresh` every `marketplaces.refreshIntervalMinutes` minutes, or manual) tries the main
  * URL and then the mirrors with If-None-Match; on success it replaces that marketplace's cached
  * entries as a whole, when all fail (an invalid manifest included) it keeps the previous ones with
@@ -595,8 +654,8 @@ export async function loadMarketplaceEntry(
 export class MarketplacesService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(CatalogSourceLock) private readonly sourceLock: CatalogSourceLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KEYRING) private readonly keyring: Keyring,
@@ -679,7 +738,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Adds an enterprise marketplace (audit `marketplace.added`). URL and mirrors must be https,
+   * Adds a custom marketplace (audit `marketplace.added`). URL and mirrors must be https,
    * without user info. The form follows {@link marketplaceForm}; a git marketplace may name a `ref`
    * (branch or tag, default the remote HEAD) and has no mirrors.
    */
@@ -756,7 +815,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Updates an enterprise marketplace (audit `marketplace.updated`, listing the changed fields, the
+   * Updates a custom marketplace (audit `marketplace.updated`, listing the changed fields, the
    * token's value never recorded; not written when unchanged). `token: null` clears the token.
    * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL, form
    * or ref clears the ETag and the last commit (the next refresh reads everything again); a new URL
@@ -894,7 +953,7 @@ export class MarketplacesService {
   }
 
   /**
-   * Deletes an enterprise marketplace (audit `marketplace.removed`): its cached entries and token
+   * Deletes a custom marketplace (audit `marketplace.removed`): its cached entries and token
    * are deleted; imported catalog items are kept (their marketplace becomes null). Official can
    * only be disabled -> `marketplace.builtin`.
    */
@@ -1176,9 +1235,14 @@ export class MarketplacesService {
             m.errors,
           );
         }
+        const d = pluginDescription(m.description);
         entry = {
           name: m.name,
-          summary: { en: m.description.slice(0, SUMMARY_MAX) },
+          summary: {
+            en: d.en.slice(0, SUMMARY_MAX),
+            ...(d.zh !== undefined && { zh: d.zh.slice(0, SUMMARY_MAX) }),
+          },
+          ...(m.displayName !== undefined && { displayName: m.displayName }),
           version: m.version,
           source: { path: "." },
         };
@@ -1283,7 +1347,7 @@ export class MarketplacesService {
     return out;
   }
 
-  /** The token of an enterprise marketplace (undefined without one; official never has one). */
+  /** The token of a custom marketplace (undefined without one; official never has one). */
   async token(id: string): Promise<string | undefined> {
     return (await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
   }
@@ -1348,6 +1412,8 @@ export class MarketplacesService {
           eb(sql<string>`coalesce(e.npm, '')`, "ilike", like),
           eb(sql<string>`e.entry->'summary'->>'en'`, "ilike", like),
           eb(sql<string>`coalesce(e.entry->'summary'->>'zh', '')`, "ilike", like),
+          eb(sql<string>`coalesce(e.entry->'displayName'->>'en', '')`, "ilike", like),
+          eb(sql<string>`coalesce(e.entry->'displayName'->>'zh', '')`, "ilike", like),
         ]),
       );
     }
@@ -1412,19 +1478,26 @@ export class MarketplacesService {
         name: r.name,
         version,
         summary: e.summary,
+        displayName: e.displayName ?? null,
         minKernel: e.minKernel ?? null,
         homepage: e.homepage ?? null,
         permissions: e.permissions ?? null,
         source: e.source,
+        deprecated: marketplaceEntryDeprecation(e),
         format: r.claude === null ? "capybara" : "claude-code",
         compatible,
         importable,
         ...(reason !== undefined && { reason }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
         newerAvailable:
-          compatible && version !== null && top !== undefined && compareVersions(version, top) > 0,
+          compatible &&
+          !entryDeprecated(e) &&
+          version !== null &&
+          top !== undefined &&
+          compareVersions(version, top) > 0,
         contentChanged:
           adopted !== null &&
+          !entryDeprecated(e) &&
           entryContentChanged(
             e,
             {

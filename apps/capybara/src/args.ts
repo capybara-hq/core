@@ -14,7 +14,7 @@ export type Command =
       login: string;
       displayName: string;
       email?: string;
-      /** Skip (exit 0) when an active enterprise admin already exists. */
+      /** Skip (exit 0) when an active super admin already exists. */
       ifNone: boolean;
       /** Read the password from this file instead of stdin. */
       passwordFile?: string;
@@ -26,7 +26,7 @@ export type Command =
   | { command: "extensions-install"; target: string; yes: boolean }
   | { command: "extensions-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "plugins-list" }
-  | { command: "plugins-import"; target: string; yes: boolean; deployExtension: boolean }
+  | { command: "plugins-import"; target: string; yes: boolean }
   | { command: "help" };
 
 export const USAGE = `Usage:
@@ -42,15 +42,15 @@ export const USAGE = `Usage:
                                                per manifest: a re-run does nothing
   capybara admin create --login <login> --display-name <name> [--email <email>]
                          [--if-none] [--password-file <path>]
-                                               Create an enterprise admin; reads the password
+                                               Create a super admin; reads the password
                                                (one line) from stdin, e.g.
                                                echo "$PW" | capybara admin create ...
                                                --password-file reads it from a file instead
                                                (a trailing newline is stripped); --if-none
                                                exits 0 without changes when an active
-                                               enterprise admin already exists
-  capybara admin grant <login>                 Make a local account an enterprise admin
-  capybara admin revoke <login>                Revoke enterprise admin from a local account
+                                               super admin already exists
+  capybara admin grant <login>                 Make a local account a super admin
+  capybara admin revoke <login>                Revoke super admin from a local account
                                                (the last active one cannot be revoked)
   capybara extensions list                     List the deployment's extensions and their status
   capybara extensions install <file.tgz | npm:<name>[@<version>]> [--yes]
@@ -71,15 +71,15 @@ export const USAGE = `Usage:
                                                notify running replicas over Redis (they apply
                                                the change without a restart)
   capybara plugins list                        List the plugins in the catalog (latest version,
-                                               components, policy)
+                                               components, scope)
   capybara plugins import <file.tgz | npm:<name>[@<version>] | git:<url>[#<ref>][:<path>]>
-                    [--deploy-extension] [--yes]
+                    [--yes]
                                                Import a plugin into the catalog: shows the review
                                                (source, content digest, provenance, extension
                                                permissions, skills, connector templates,
                                                dependencies) and asks for confirmation unless
-                                               --yes; --deploy-extension also installs and
-                                               enables the plugin's extension on the deployment.
+                                               --yes; confirming also installs and enables the
+                                               plugin's extension on the deployment.
                                                git: reads a folder of an https repository (or
                                                owner/repo on GitHub) at a branch, tag or commit,
                                                under the marketplaces.* network rules
@@ -123,9 +123,6 @@ export function parseCli(argv: string[]): Command {
       "--yes is only valid for extensions approve, extensions install and plugins import",
     );
   }
-  if (command !== "plugins" && v["deploy-extension"] !== undefined) {
-    throw new UsageError("--deploy-extension is only valid for plugins import");
-  }
   if (command !== "bootstrap") {
     for (const opt of ["dir", "manifest"] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for bootstrap`);
@@ -144,9 +141,7 @@ export function parseCli(argv: string[]): Command {
     }
     if (sub === "list") {
       if (args.length > 0) throw new UsageError(`unexpected argument "${args[0]}"`);
-      if (v.yes !== undefined || v["deploy-extension"] !== undefined) {
-        throw new UsageError("--yes and --deploy-extension are only valid for plugins import");
-      }
+      if (v.yes !== undefined) throw new UsageError("--yes is only valid for plugins import");
       return { command: "plugins-list" };
     }
     const [target, ...extra] = args;
@@ -156,12 +151,7 @@ export function parseCli(argv: string[]): Command {
       );
     }
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-    return {
-      command: "plugins-import",
-      target,
-      yes: v.yes === true,
-      deployExtension: v["deploy-extension"] === true,
-    };
+    return { command: "plugins-import", target, yes: v.yes === true };
   }
   if (command === "extensions") {
     const [sub, ...args] = rest;
@@ -286,7 +276,6 @@ function parse(argv: string[]) {
       "if-none": { type: "boolean" },
       "password-file": { type: "string" },
       yes: { type: "boolean", short: "y" },
-      "deploy-extension": { type: "boolean" },
       dir: { type: "string" },
       manifest: { type: "string" },
       help: { type: "boolean", short: "h" },

@@ -4,7 +4,12 @@ import { FormSection, Stack } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import type { Agent, AgentDefinitionInput } from "../../lib/agents";
-import { PINNED_SKILLS_LIMITS, pinnedProblemsOf, type SkillSummary } from "../../lib/skills";
+import {
+  PINNED_SKILLS_LIMITS,
+  pinnedProblemsOf,
+  type SkillSummary,
+  skillAliases,
+} from "../../lib/skills";
 import { OrgSkillsPicker, OwnSkills, PinnedSkillsPicker, SkillWriteSwitch } from "../AgentSkills";
 import { useSession } from "../shell/session";
 import { sameJson, savedDefinition } from "./definition-parts";
@@ -51,7 +56,8 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
   const allSkills: SkillSummary[] = [...orgList.skills, ...own.skills];
   /** What the pinned picker may judge (stale pins): both lists read, undefined otherwise. */
   const pinnable = orgList.failed || own.failed ? undefined : allSkills;
-  const nameOfSkill = (id: string) => allSkills.find((s) => s.id === id)?.name ?? id;
+  const nameOfSkill = (id: string) =>
+    allSkills.find((s) => skillAliases(s).includes(id))?.name ?? id;
   const isPrivate = agent.visibility === "private";
   const edit = (fn: (cur: Draft) => Draft) => {
     save.begin();
@@ -148,11 +154,13 @@ function SkillsEdit({ data }: { data: AgentFormData }) {
         >
           <OrgSkillsPicker
             skills={orgList.skills}
+            offered={data.offered}
             value={d.orgSkills}
             onChange={onOrgSkillsChange}
           />
           <PinnedSkillsPicker
             skills={pinnable}
+            offered={data.offered}
             selected={[...d.orgSkills, ...own.skills.map((s) => s.id)]}
             value={d.pinned}
             onChange={(pinned) => edit((cur) => ({ ...cur, pinned }))}

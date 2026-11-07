@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 import { SkeletonGroup, type TabsProps } from "../display/index";
 import { useDesignT } from "../provider";
-import { Body, type PageHeaderProps, PageTabs } from "../shell/index";
+import { Body, type PageHeaderProps } from "../shell/index";
 import {
   type BlockShape,
   LoadingBlocks,
   LoadingCards,
-  LoadingInspector,
+  LoadingFacts,
   loadingHeader,
   TemplateHead,
 } from "./frame";
@@ -14,33 +14,40 @@ import {
 /** Content blocks a loading detail page draws when it is not told how many (spec §5.2). */
 const LOADING_BLOCKS = 2;
 
+/** What a loading detail page's facts look like: KeyValue placeholders (spec §5.2). */
+export type FactsShape = {
+  rows?: number;
+  keyWidth?: string;
+  columns?: 1 | 2;
+  /** A `prose` line over the rows (gap 12): the loaded facts start with the description. */
+  lead?: boolean;
+};
+
 /**
- * T3 详情：PageTabs + Content + Inspector. `loading` draws the page's frame while its data is on
- * the way (spec §5.2): the header keeps its rows (`header.loading`), the tabs stay real (they are
- * static per page), the content is `blocks` card-shaped blocks (default 2) in place of `children`,
- * and the inspector is a skeleton only when `inspector` is set (a real `inspector` stays; an object
- * gives its `rows` and `keyWidth`). A page whose tab has a known static structure passes `content`
- * (`BlockShape[]`) instead of `blocks`: those blocks are drawn in a gap-16 stack, as the loaded tab
- * stacks its parts, so nothing moves when the data lands. `stats` draws that many stat card
- * placeholders under the header for the metrics the page does not know yet (the header's own
- * `metrics` render for real instead).
+ * T3 Detail: the head's tab row + one centred column (spec §5.2; no right pane). `facts` is the object's facts
+ * block (a KeyValue, or the page's grouped KeyValues), drawn first in the column, right under the
+ * head, above the tab's content (`children`). `loading` draws the page's frame while its data is on
+ * the way: the header keeps its rows (`header.loading`), the tabs stay real (they are static per
+ * page), the content is `blocks` card-shaped blocks (default 2) in place of `children`, and the
+ * facts block is KeyValue placeholders only when `loading.facts` is set (a real `facts` stays; an
+ * object gives its `rows`, `keyWidth`, `columns` and `lead`). A page whose tab has a known static structure
+ * passes `content` (`BlockShape[]`) instead of `blocks`: those blocks are drawn in a gap-16 stack,
+ * as the loaded tab stacks its parts, so nothing moves when the data lands. `stats` draws that many
+ * stat card placeholders under the header for the metrics the page does not know yet (the header's
+ * own `metrics` render for real instead).
  */
 export function DetailPage({
   header,
   tabs,
-  inspector,
-  inspectorTitle,
-  onInspectorClose,
+  facts,
   loading,
   children,
 }: {
   header: PageHeaderProps;
   tabs: TabsProps;
-  inspector?: ReactNode;
-  inspectorTitle?: string;
-  onInspectorClose?: () => void;
+  facts?: ReactNode;
   loading?: {
-    inspector?: boolean | { rows?: number; keyWidth?: string };
+    facts?: boolean | FactsShape;
     blocks?: number;
     content?: BlockShape[];
     /** Stat card placeholders for the header's metrics, which come with the data. */
@@ -49,15 +56,11 @@ export function DetailPage({
   children?: ReactNode;
 }) {
   const t = useDesignT();
-  const shape = loading?.inspector;
-  const inspectorNode = shape ? (
-    <LoadingInspector {...(typeof shape === "object" ? shape : {})} />
-  ) : (
-    inspector
-  );
+  const shape = loading?.facts;
+  const factsNode = shape ? <LoadingFacts {...(typeof shape === "object" ? shape : {})} /> : facts;
   const body = (
     <Body
-      layout={inspectorNode != null ? "inspector" : "single"}
+      layout="single"
       contentPadded
       width="content"
       head={
@@ -65,14 +68,13 @@ export function DetailPage({
           header={loading ? loadingHeader(header) : header}
           statsInHead
           loadingStats={loading?.stats ?? 0}
-        >
-          <PageTabs {...tabs} />
-        </TemplateHead>
+          tabs={tabs}
+        />
       }
-      inspector={inspectorNode}
-      {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
-      {...(onInspectorClose ? { onInspectorClose } : {})}
     >
+      {factsNode != null && factsNode !== false ? (
+        <div data-part="detail-facts">{factsNode}</div>
+      ) : null}
       {loading ? (
         loading.content ? (
           <LoadingBlocks blocks={loading.content} />

@@ -82,7 +82,7 @@ export class MeController {
     // created at that moment may still name it)
     const current = memberships.some((m) => m.orgId === currentOrgId) ? currentOrgId : null;
     const { orgCreation } = await this.settings.get();
-    const canCreateOrg = orgCreation === "anyone" || p.account.isEnterpriseAdmin;
+    const canCreateOrg = orgCreation === "anyone" || p.account.isSuperAdmin;
     return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
   }
 

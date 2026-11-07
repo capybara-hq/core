@@ -1,0 +1,7 @@
+{
+  "admin": {
+    "role": "Enterprise admin",
+    "catalog": "Install plugins from the enterprise catalog.",
+    "ok": "Super admin and the platform catalog"
+  }
+}

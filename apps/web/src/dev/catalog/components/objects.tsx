@@ -9,7 +9,7 @@ export function ObjectsSection() {
     <Section title="对象列表 ObjectList" note="一行一个对象；空状态；需要处理的提示条">
       <Row label="ObjectList · 对象行（范围芯片、说明、元信息、最近使用、操作、菜单）">
         <Grid columns={1}>
-          <ObjectList label="Agent 列表">
+          <ObjectList label="智能体列表">
             <ObjectRow
               mark={{ text: "研" }}
               name="研究助手"
@@ -30,6 +30,29 @@ export function ObjectsSection() {
               trailing="3 天前"
               action={{ label: "对话", onSelect: noop }}
               menu={[{ label: "编辑", onSelect: noop }]}
+            />
+          </ObjectList>
+        </Grid>
+      </Row>
+      <Row label="ObjectRow · 进行中（行操作的加载态；菜单项进行中时菜单按钮转圈）">
+        <Grid columns={1}>
+          <ObjectList label="插件列表（进行中）">
+            <ObjectRow
+              mark={{ text: "会" }}
+              name="会议纪要"
+              description="整理会议录音，生成纪要和待办。"
+              meta={["2 技能", "本组织 · 组织自选"]}
+              state={{ label: "未启用", tone: "muted" }}
+              action={{ label: "启用", onSelect: noop, loading: true }}
+            />
+            <ObjectRow
+              mark={{ text: "你" }}
+              name="你好"
+              description="打个招呼。"
+              meta={["1 技能", "平台 · 组织自选"]}
+              state={{ label: "已启用", tone: "ok" }}
+              busy
+              menu={[{ label: "停用", danger: true, onSelect: noop }]}
             />
           </ObjectList>
         </Grid>
@@ -60,7 +83,7 @@ export function ObjectsSection() {
       </Row>
       <Row label="Callout · 说明 / 警告 / 失败">
         <Grid columns={1}>
-          <Callout tone="info">企业管理员不能查看对话内容。</Callout>
+          <Callout tone="info">超级管理员不能查看对话内容。</Callout>
           <Callout tone="warn" action={{ label: "去配置", onSelect: noop }}>
             openai-compatible 还没有配置模型地址和密钥：所有组织都还没有可用的模型。
           </Callout>
@@ -72,9 +95,9 @@ export function ObjectsSection() {
       <Row label="EmptyState">
         <Grid columns={1}>
           <EmptyState
-            text="还没有 agent"
-            hint="新建一个 agent，就能和它对话。"
-            action={{ label: "新建 agent", icon: "plus", variant: "primary", onSelect: noop }}
+            text="还没有智能体"
+            hint="新建一个智能体，就能和它对话。"
+            action={{ label: "新建智能体", icon: "plus", variant: "primary", onSelect: noop }}
           />
           <EmptyState
             size="compact"

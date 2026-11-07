@@ -10,16 +10,16 @@
 <body>
 <main class="r-page">
 <h1>Sidebar</h1>
-<p>Sidebar v3: the work, admin and setup contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 搜索 · primary items, 更多, conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
+<p>Sidebar v3: the work, admin and setup contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 智能体 · 技能 · 连接器 (no home item), 更多 (插件, 扩展, 渠道, 评测与运行, 组织设置), conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
 <div class="r-blocks">
 <section data-ref-block="sidebar-default" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2"}'></template>
 </section>
 <section data-ref-block="sidebar-item-hover" style="width:var(--cb-layout-sidebar);height:820px">
-  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "hover": "overview"}'></template>
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "hover": "connectors"}'></template>
 </section>
 <section data-ref-block="sidebar-item-focus" style="width:var(--cb-layout-sidebar);height:820px">
-  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "focus": "inbox"}'></template>
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "focus": "connectors"}'></template>
 </section>
 <section data-ref-block="sidebar-conversation-active" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"activeConversation": "cnv_r2"}'></template>
@@ -28,10 +28,13 @@
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "collapsed": ["agt_research"]}'></template>
 </section>
 <section data-ref-block="sidebar-more-open" style="width:520px;height:820px">
-  <template data-fixture="sidebar" data-opts='{"active": "connectors", "activeConversation": "cnv_r2", "moreOpen": true}'></template>
+  <template data-fixture="sidebar" data-opts='{"active": "plugins", "activeConversation": "cnv_r2", "moreOpen": true}'></template>
 </section>
 <section data-ref-block="sidebar-filter" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "filter": "waiting"}'></template>
+</section>
+<section data-ref-block="sidebar-filter-empty" style="width:var(--cb-layout-sidebar);height:820px">
+  <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "filter": "all", "query": "发票"}'></template>
 </section>
 <section data-ref-block="sidebar-archived" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2", "archived": true}'></template>
@@ -58,7 +61,7 @@
   <template data-fixture="sidebar" data-opts='{"context": "admin", "active": "accounts"}'></template>
 </section>
 <section data-ref-block="sidebar-rail" style="width:200px;height:820px">
-  <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "Agents", "tooltipTop": 271}'></template>
+  <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "智能体", "tooltipTop": 237}'></template>
 </section>
 <section data-ref-block="sidebar-drawer" style="width:640px;height:820px">
   <template data-fixture="drawer" data-opts='{"active": "connectors", "activeConversation": "cnv_r2"}'></template>

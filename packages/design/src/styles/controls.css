@@ -57,15 +57,6 @@
 .cb-grid[data-columns="form"] {
   grid-template-columns: 220px 1fr;
 }
-.cb-grid[data-columns="main-side"] {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  align-items: start;
-}
-@media (max-width: 959px) {
-  .cb-grid[data-columns="main-side"] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 .cb-grid[data-columns="list-detail"] {
   grid-template-columns: 220px minmax(0, 1fr);
   align-items: start;
@@ -103,6 +94,30 @@
 .cb-stack[data-gap="32"],
 .cb-grid[data-gap="32"] {
   gap: 32px;
+}
+
+/*
+ * A divided grid (spec §5.8 "List + editor"): a line-soft column divider space.4 from each column,
+ * running the full row height; once a list-detail grid stacks (below 640) it is a row divider.
+ */
+.cb-grid[data-divided="true"] {
+  column-gap: var(--cb-space-4);
+}
+.cb-grid[data-divided="true"] > * {
+  align-self: stretch;
+  min-width: 0;
+}
+.cb-grid[data-divided="true"] > * + * {
+  padding-left: var(--cb-space-4);
+  border-left: 1px solid var(--cb-line-soft);
+}
+@media (max-width: 639px) {
+  .cb-grid[data-divided="true"][data-columns="list-detail"] > * + * {
+    padding-top: var(--cb-space-4);
+    padding-left: 0;
+    border-top: 1px solid var(--cb-line-soft);
+    border-left: 0;
+  }
 }
 
 /* Cards and sections: the panel ground and a line-card hairline (spec §2.5). */
@@ -156,6 +171,12 @@
 .cb-text[data-variant="h2"] {
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+/* h3: a heading inside a box (a subsection, the open item of a list + editor; spec §2.2). */
+.cb-text[data-variant="h3"] {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
   font-weight: 500;
 }
 .cb-text[data-variant="body"] {
@@ -483,8 +504,11 @@
 .cb-stepper:hover {
   border-color: var(--cb-line-strong);
 }
+/* The Select is a button: its halo is keyboard focus (or the open list), never a click's focus
+   (spec §2.5); the text fields keep theirs while typed in. */
 .cb-input:focus-within,
-.cb-select:focus-within,
+.cb-select:focus-visible,
+.cb-select[aria-expanded="true"],
 .cb-textarea:focus-within,
 .cb-stepper:focus-within {
   border-color: var(--cb-accent);
@@ -503,7 +527,6 @@
   color: var(--cb-disabled);
 }
 .cb-input input,
-.cb-select select,
 .cb-textarea textarea,
 .cb-stepper input {
   flex: 1;
@@ -531,14 +554,53 @@
 .cb-input-affix:first-child {
   padding-right: 0;
 }
-.cb-select select {
-  appearance: none;
-  padding-right: 0;
-  cursor: pointer;
+/* Select (spec §6.2): a field-like button opening the anchored listbox (§6.16.3). Its root keeps
+   the old wrapper's layout (block-level flex: full width in a block, its content's width in a
+   row), the button fills it, so the list anchors to the bordered box itself. */
+.cb-select-root {
+  display: flex;
+  min-width: 0;
 }
-.cb-select select option {
-  background: var(--cb-panel);
-  color: var(--cb-ink);
+.cb-select {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  outline: none;
+}
+.cb-select[data-state="disabled"] {
+  cursor: not-allowed;
+}
+/* every option's label in one grid cell, only the current one visible: as wide as the widest
+   option, the current one cut with an ellipsis when the field is narrower */
+.cb-select-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--cb-field-height) - 2px);
+  align-items: center;
+  padding: 0 0 0 var(--cb-space-2);
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.cb-select-label {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  visibility: hidden;
+}
+.cb-select-label[data-current="true"] {
+  visibility: visible;
+}
+.cb-select-label[data-placeholder="true"] {
+  color: var(--cb-faint);
 }
 
 .cb-textarea {

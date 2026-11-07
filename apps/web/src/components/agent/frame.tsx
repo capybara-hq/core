@@ -4,6 +4,7 @@ import {
   type ActionRowProps,
   type FieldShape,
   type FormSectionLayout,
+  type ItemShape,
   type PageHeaderProps,
   SettingsPage,
 } from "@capybara-hq/design";
@@ -16,6 +17,7 @@ import {
   SECTION_DESCRIPTIONS,
   SECTION_FIELDS,
   SECTION_LAYOUTS,
+  type SectionShape,
   sectionHref,
   sectionsFor,
 } from "./sections";
@@ -42,16 +44,23 @@ export function useAgentPage(): AgentPageValue {
   return v;
 }
 
-/** A section's loading frame: its field layout, title, the description it knows and its layout. */
+/**
+ * A section's loading frame: its field layout (or its item rows, in a flush card), title, the
+ * description it knows and its layout.
+ */
 export function loadingSection(
   section: AgentSection,
-  fields: FieldShape[],
+  shape: SectionShape,
   t: (key: string) => string,
-): { fields: FieldShape[]; title: string; description?: string; layout?: FormSectionLayout } {
+): ({ fields: FieldShape[] } | { items: ItemShape[] }) & {
+  title: string;
+  description?: string;
+  layout?: FormSectionLayout;
+} {
   const description = SECTION_DESCRIPTIONS[section];
   const layout = SECTION_LAYOUTS[section];
   return {
-    fields,
+    ...(Array.isArray(shape) ? { fields: shape } : { items: shape.items }),
     title: t(`sections.${section}`),
     ...(description !== undefined ? { description: t(description) } : {}),
     ...(layout !== undefined ? { layout } : {}),

@@ -158,9 +158,70 @@ span.cb-title-btn {
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
 }
-/* A menu of free-text labels (the quick actions' 更多): long labels end in an ellipsis. */
-.cb-cmenu[data-bounded="true"] {
+/* A composer toolbar menu (§6.16.3): anchored to its trigger, at least its width and at most
+   min(320px, 100vw − 16px); the height capped by layout.menu-max-height and Radix's live room on
+   its side (it follows a resize, a zoom or a phone keyboard); the filter and the notes stay while
+   the list scrolls between them. */
+.cb-cmenu[data-anchored="true"] {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: var(--radix-dropdown-menu-trigger-width, 0);
   max-width: min(320px, calc(100vw - 16px));
+  max-height: min(
+    var(--cb-layout-menu-max-height),
+    var(--radix-dropdown-menu-content-available-height, var(--cb-layout-menu-max-height))
+  );
+  overflow: hidden;
+}
+/* Drawn open in place (the reference set): no live room to follow, so only the token caps it (the
+   page may have scrolled the trigger out of view, where Radix's room is 0). */
+.cb-cmenu[data-anchored="true"][data-inline="true"] {
+  max-height: var(--cb-layout-menu-max-height);
+}
+.cb-cmenu-list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-cmenu[data-anchored="true"] > .cb-cmenu-note {
+  flex: none;
+}
+.cb-cmenu[data-anchored="true"] .cb-cmenu-item {
+  min-width: 0;
+}
+.cb-cmenu-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-control-dense);
+  margin-bottom: var(--cb-space-1);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  outline: none;
+}
+.cb-cmenu-filter::placeholder {
+  color: var(--cb-faint);
+}
+.cb-cmenu-filter:focus-visible {
+  border-color: var(--cb-accent);
+}
+.cb-cmenu-empty {
+  padding: var(--cb-space-2) var(--cb-pad-default-x);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 .cb-cmenu-item {
   display: flex;
@@ -177,7 +238,12 @@ span.cb-title-btn {
 .cb-cmenu-item[data-highlighted] {
   background: var(--cb-hover);
 }
-.cb-cmenu-item[aria-checked="true"] {
+.cb-cmenu-item[data-disabled] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
+.cb-cmenu-item[aria-checked="true"],
+.cb-cmenu-item[aria-selected="true"] {
   background: var(--cb-selected);
 }
 .cb-cmenu-item > .cb-icon {
@@ -312,6 +378,45 @@ span.cb-title-btn {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
+/* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label;
+ * below 640 the dot (or the agent icon) and the count alone. */
+.cb-agents-chip.cb-btn .cb-btn-body {
+  gap: var(--cb-space-2);
+}
+.cb-agents-chip.cb-btn {
+  flex: none;
+}
+.cb-agents-chip-icon,
+.cb-agents-chip-count {
+  display: none;
+}
+.cb-agents-chip-icon {
+  align-items: center;
+}
+/* A picker's label gives way with an ellipsis when the row is short (a phone); the icon
+ * buttons (＋, quick actions, send) keep their square. */
+.cb-composer-bar > .cb-icon-btn {
+  flex: none;
+}
+.cb-composer-bar .cb-picker.cb-btn {
+  min-width: 0;
+}
+.cb-picker-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 639px) {
+  .cb-agents-chip-label {
+    display: none;
+  }
+  .cb-agents-chip-count {
+    display: inline;
+  }
+  .cb-agents-chip-icon {
+    display: inline-flex;
+  }
+}
 .cb-picker[data-locked="true"] {
   display: inline-flex;
   align-items: center;
@@ -423,6 +528,27 @@ span.cb-title-btn {
   background: var(--cb-panel);
   box-shadow: inset 0 0 0 1px var(--cb-line-card);
   color: var(--cb-ink);
+}
+/*
+ * Inside a box (the narrow properties sheet, spec §6.16.17) a section is a heading and hairline
+ * group on the sheet's ground: no ground, radius or hairline of its own, line-soft between groups.
+ */
+.cb-property-section[data-inset="box"] {
+  padding: var(--cb-space-3) 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.cb-property-section[data-inset="box"] + .cb-property-section[data-inset="box"] {
+  border-top: 1px solid var(--cb-line-soft);
+}
+/* In the sheet the hairline goes between the panel's children, so a section the page wraps (an
+   extension section's `data-extension-section` box) is split from its neighbours too. */
+.cb-conv-sheet > .cb-properties > * + * {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-property-section[data-inset="box"] .cb-table[data-framed="false"] {
+  --cb-table-ground: var(--cb-panel-2);
 }
 .cb-property-head {
   display: flex;
@@ -719,9 +845,11 @@ button.cb-property-row {
   box-shadow: var(--cb-shadow-sheet);
   outline: none;
 }
+/* The sheet is the box: its sections are heading and hairline groups (data-inset="box"). */
 .cb-conv-sheet > .cb-properties {
   width: 100%;
-  padding: var(--cb-space-4);
+  gap: 0;
+  padding: var(--cb-space-2) var(--cb-space-4);
   background: var(--cb-panel-2);
   border-left: 1px solid var(--cb-line-soft);
   flex: 1;

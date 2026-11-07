@@ -11,6 +11,7 @@ import { navigateBrowser } from "../../../lib/browser";
 import { usePreferences } from "../../../lib/preferences";
 import { setupStatusQuery } from "../../../lib/query/auth";
 import { resetSession } from "../../../lib/query/workspace";
+import { HOME_PATH } from "../../../lib/routes";
 import { broadcastSession } from "../../../lib/session-sync";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import { ServerSetupStatus } from "./status";
@@ -70,7 +71,7 @@ export default function SetupView() {
         onSuccess={() => {
           broadcastSession("signed-in");
           // A new session: drop the cache, then load the new document (ruling R4).
-          void resetSession(qc, () => navigateBrowser("/"));
+          void resetSession(qc, () => navigateBrowser(HOME_PATH));
         }}
       />
     );

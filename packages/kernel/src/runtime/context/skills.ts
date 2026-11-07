@@ -150,12 +150,19 @@ function catalogChanges(
 ) {
   const before = new Map(prev.map((s) => [s.id, s]));
   const after = new Map(next.map((s) => [s.id, s]));
-  const added = next.filter((s) => !before.has(s.id));
-  const removed = prev.filter((s) => !after.has(s.id));
+  // A skill renamed under its id (the platform components migration renames a clashing org skill)
+  // reads as its old name removed and its new name added: the model calls skills by name.
+  const renamed = (s: CatalogSkill, other: Map<string, CatalogSkill>) => {
+    const o = other.get(s.id);
+    return o !== undefined && o.name !== s.name;
+  };
+  const added = next.filter((s) => !before.has(s.id) || renamed(s, before));
+  const removed = prev.filter((s) => !after.has(s.id) || renamed(s, after));
   const updated = next.filter((s) => {
     const p = before.get(s.id);
     return (
       p !== undefined &&
+      p.name === s.name &&
       !pinnedIds?.has(s.id) &&
       (p.version !== s.version || p.description !== s.description || p.source !== s.source)
     );

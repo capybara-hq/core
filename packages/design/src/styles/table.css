@@ -10,8 +10,16 @@
 .cb-table[data-framed="false"] {
   --cb-table-ground: var(--cb-bg);
 }
-.cb-card .cb-table[data-framed="false"] {
+/* An unframed table inside a box takes the box's ground (sticky header, row hover base). */
+.cb-card .cb-table[data-framed="false"],
+.cb-form-section-fields .cb-table[data-framed="false"],
+.cb-dialog .cb-table[data-framed="false"],
+.cb-sheet .cb-table[data-framed="false"],
+.cb-property-section .cb-table[data-framed="false"] {
   --cb-table-ground: var(--cb-panel);
+}
+.cb-icard .cb-table[data-framed="false"] {
+  --cb-table-ground: var(--cb-raised);
 }
 
 /* The toolbar is as high as its controls (`control.default`), as the signed reference draws it. */
@@ -488,9 +496,31 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A version after the name: the name takes the ellipsis, the version stays whole. */
+.cb-cell-title-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-cell-title-line > .cb-cell-title-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cb-cell-title-trailing {
+  flex: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+}
 .cb-cell-title-desc {
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+.cb-cell-title-desc[data-mono="true"] {
+  font-family: var(--cb-font);
 }

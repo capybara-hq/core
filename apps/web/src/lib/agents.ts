@@ -117,18 +117,78 @@ export interface AgentSubagents {
 export interface AgentTemplateView {
   id: string;
   name: string;
-  plugin: string;
-  /** The roster type `<plugin>:<name>`. */
+  /** The plugin it came from; null for a template without one (its type is the bare name). */
+  plugin: string | null;
+  /** The roster type `<plugin>:<name>`, or the bare `<name>` without a plugin. */
   type: string;
   description: string;
   model: AgentTier;
   version: number;
+  /** `platform`: a platform template on in the org; `org`: the org's own (older kernels: absent). */
+  origin?: "org" | "platform";
+  /** A platform template: the ids of the org's copies linked to it (they select this template). */
+  linkedIds?: string[];
+  /** The catalog item (plugin) it came from, when any. */
+  catalogItemId?: string | null;
 }
 
 export const listAgentTemplates = (orgId: string) =>
   apiFetch<{ templates: AgentTemplateView[] }>(
     `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates`,
   );
+
+/**
+ * One template usable in the org (kernel `AgentTemplateDetail`, `GET …/agent-templates/:id`;
+ * not usable there -> 404 `component.not_found`): `owned` is the org's own template, whose org
+ * admins edit, delete and set 可共享 on it (rulings P4-12, P4-13); always false for a plugin's.
+ */
+export interface AgentTemplateDetail extends AgentTemplateView {
+  /** The served definition (SDK `AgentTemplate`; the web reads only what it shows). */
+  definition: Record<string, unknown>;
+  owner: { kind: "platform" } | { kind: "org"; orgId: string; name: string };
+  owned: boolean;
+  /** 可共享 (only meaningful when `owned`). */
+  shareable: boolean;
+  /** Shared already: promoted to a platform row (ruling P3-3). */
+  promoted: boolean;
+  /**
+   * In the org's usable set (agents can be created from it here); false when only its owner reads
+   * it (switched off in its own org). Absent from older kernels: usable.
+   */
+  usable?: boolean;
+}
+
+const templatePath = (orgId: string, id: string) =>
+  `/api/v1/orgs/${encodeURIComponent(orgId)}/agent-templates/${encodeURIComponent(id)}`;
+
+export const getAgentTemplate = (orgId: string, id: string) =>
+  apiFetch<{ template: AgentTemplateDetail }>(templatePath(orgId, id));
+
+/** Sets 可共享 on the org's own template (`agents.manage`). */
+export const setAgentTemplateShareable = (orgId: string, id: string, shareable: boolean) =>
+  apiFetch<{ id: string; shareable: boolean }>(`${templatePath(orgId, id)}/shareable`, {
+    method: "PUT",
+    body: JSON.stringify({ shareable }),
+  });
+
+/**
+ * What deleting the org's own template does (nothing written; P3 owner rules): `transferred` when
+ * it was shared and other orgs use it (`orgs`; it becomes the platform's), else `removed`; `agents`:
+ * the org's agents whose sub-agent roster names it. Agents created from it are never touched.
+ */
+export interface AgentTemplateDeletePreview {
+  outcome: "removed" | "transferred";
+  orgs: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+}
+
+export const previewAgentTemplateDelete = (orgId: string, id: string) =>
+  apiFetch<AgentTemplateDeletePreview>(`${templatePath(orgId, id)}/delete-preview`);
+
+export const deleteAgentTemplate = (orgId: string, id: string) =>
+  apiFetch<{ outcome: AgentTemplateDeletePreview["outcome"] }>(templatePath(orgId, id), {
+    method: "DELETE",
+  });
 
 /** Why `subagents` was refused (`agent.subagents_invalid` details). */
 export const SUBAGENTS_INVALID_REASONS = [
@@ -182,12 +242,51 @@ export interface Agent {
   /** The owner left the org and the agent went to an owner of the org until an admin reassigns it. */
   needsReassignment?: boolean;
   /** 定义里可能还有界面不认识的字段：修改时原样带回。 */
-  definition: AgentDefinitionInput & { fallback: ModelRef | null } & Record<string, unknown>;
+  definition: AgentDefinitionInput & { fallback: ModelRef | null } & {
+    /** Connectors the template needed and the org lacked (ruling P4-6); model-invisible. */
+    pendingConnectors?: PendingConnector[];
+  } & Record<string, unknown>;
+  /** The template it was created from (ruling P4-8); null (older kernels: absent) otherwise. */
+  createdFrom?: AgentProvenance | null;
   updatedAt: string;
+}
+
+/**
+ * Where an agent came from (kernel `AgentProvenance`, ruling P4-8): set once at create, never
+ * changed. `available`: the template is still usable in the org (the page links it only then).
+ */
+export interface AgentProvenance {
+  templateId: string;
+  version: number;
+  name: string;
+  available?: boolean;
+}
+
+/**
+ * A connector the template needed and the org lacked (kernel `PendingConnector`, ruling P4-6):
+ * made from a platform connector template (`source.template`, its id), or any connector of a
+ * protocol (`source.needs`); binding one (`POST …/pending-connectors/:key/bind`) resolves it.
+ */
+export interface PendingConnector {
+  key: string;
+  label: string;
+  source:
+    | { template: string }
+    | { needs: { protocol: "mcp" | "openapi"; endpoint: string; tools: string[]; label: string } };
+  /** The tools the agent takes once bound; absent = all. */
+  tools?: string[];
+  policies?: Record<string, TightenedPolicy>;
 }
 
 /** 内核返回的保存警告码（界面以 `agents.warnings.<code>` 翻译）。 */
 export type AgentWarning = "fallback_same_provider" | (string & {});
+
+/** The agent page section a save warning is about (the 模型 section owns the fallback). */
+export const WARNING_SECTION: Record<string, "model"> = { fallback_same_provider: "model" };
+
+/** The warnings of `codes` that belong to `section`: the others are shown where they belong. */
+export const warningsOf = (section: "model", codes: readonly AgentWarning[]): AgentWarning[] =>
+  codes.filter((c) => WARNING_SECTION[c] === section);
 
 /**
  * 模型参数声明（对应 plugin-sdk `model-params.ts` 的 `ModelParameter`；Web 层不 import SDK）。
@@ -416,3 +515,9 @@ export async function uploadAvatar(
   );
   return { uploadId: created.id };
 }
+
+/** The `/agents` page's tabs (ruling P4-14): 智能体, or 模板 (`?tab=templates`). */
+export type AgentsTab = "agents" | "templates";
+
+export const parseAgentsTab = (raw: string | undefined | null): AgentsTab =>
+  raw === "templates" ? "templates" : "agents";

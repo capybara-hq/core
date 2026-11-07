@@ -78,7 +78,7 @@ export type SidebarContext =
   | {
       kind: "work";
       org: SidebarOrg | null;
-      /** After New conversation: Home, Agents. */
+      /** After New conversation: Agents, Skills, Connectors (there is no home item). */
       primary: SidebarNavItem[];
       /** The 更多 flyout's fixed items. */
       more: SidebarNavItem[];
@@ -89,7 +89,7 @@ export type SidebarContext =
        * only while something is pending; current when `activeNav` is `inbox`.
        */
       inbox?: { href: string; count?: number; countMore?: boolean };
-      /** The admin console (enterprise admins): the entry above the account row. */
+      /** The admin console (super admins): the entry above the account row. */
       adminHref?: string;
     }
   | {
@@ -105,7 +105,7 @@ export type SidebarContext =
       home: { href: string };
       /** The required steps, then (after the "可以稍后再做" label) the optional ones. */
       steps: SetupStep[];
-      /** The admin console (enterprise admins): the entry above the account row. */
+      /** The admin console (super admins): the entry above the account row. */
       adminHref?: string;
     };
 
@@ -114,8 +114,9 @@ export type SidebarProps = {
   /** The "New conversation" item of the work context (label from design i18n). */
   newConversation?: { href: string };
   /**
-   * The current item's id; "" when a conversation is the current page; in the setup context a
-   * step id or `home`.
+   * The current item's id: `new` marks New conversation current (the new conversation, the
+   * workspace's home); "" when a conversation is the current page; in the setup context a step id
+   * or `home`.
    */
   activeNav: string;
   /** The work context's conversation section (unused in the admin and setup contexts). */
@@ -317,7 +318,7 @@ function SidebarPanel({
         <SidebarNav p={p} rail={rail} />
       )}
       {ctx.kind === "work" && !rail && p.conversations ? (
-        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
+        <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/chat"} />
       ) : (
         <div className="cb-sidebar-fill" />
       )}

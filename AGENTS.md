@@ -13,8 +13,10 @@ dependency rules), [tools/checks/README.md](tools/checks/README.md) (every custo
 skills; npm `@capybara-hq/plugin-*`); an **extension** is the in-process code inside a plugin
 (`defineExtension`, `ctx`, permissions); an **extension point** is a versioned contract
 (`channel@1`); the **catalog** is what a deployment imported for orgs to install; a **marketplace**
-lists importable plugins; "app" means only an external app calling the kernel over HTTP. Data
-locations keep their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` routes).
+lists importable plugins; "app" means only an external app calling the kernel over HTTP. The
+deployment layer is the **platform**, run by the **super admin** (超级管理员; never "enterprise
+admin"); an **org** sees the platform items on in it plus the items it owns. Data locations keep
+their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` routes).
 
 ## Repository map
 
@@ -73,7 +75,8 @@ Each line is the rule you must not miss; the skill has the rest.
 
 - **Language:** English for docs, code comments, identifiers and commit messages. When you touch a
   file, write new comments in English and translate the comments and test titles you edit (no bulk
-  translation). Model-facing text is always English; UI text goes through i18n (zh and en).
+  translation). Model-facing text is always English; UI text goes through i18n (zh and en); the zh UI
+  says 平台 / 超级管理员 / 智能体, never 企业 or the Latin word `agent` (`pnpm check:i18n`).
 - **Migrations:** plain SQL `NNNN_<snake_desc>.sql`, `IF [NOT] EXISTS`, applied files are immutable,
   kernel schema `capybara`, extension schema `plugin_<name>`.
   [writing-migrations](.agents/skills/writing-migrations/SKILL.md)
@@ -85,17 +88,26 @@ Each line is the rule you must not miss; the skill has the rest.
   (`pnpm check:kernel-conventions`). [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Web UI:** page = template + design components; apps/web writes no styles; every read is a
   TanStack Query `defineQuery`, every write `useAppMutation`; thin server `page.tsx` + client
-  `view.tsx` (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
+  `view.tsx`; one box is enough: never a box inside a box (`web-ui-box-in-box` and the jsdom guard
+  `findNestedBoxes`, both in [tools/checks/README.md](tools/checks/README.md))
+  (`pnpm check:web-ui`). [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible
   input needs a `DriftReason`. Run the zero-drift fixture tests before and after changing request
   building. [replay-evals](.agents/skills/replay-evals/SKILL.md)
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
-  never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`;
+  never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
+  (required ones are `builtin`, the rest optional preinstalls, off in every org until switched on);
   hooks observe or deny, never rewrite. [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
-  `packages/kernel/src/net`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
+  `packages/kernel/src/net`. A platform item's scope (`all` / `optional` / `named`) decides where it
+  is on; its skills, agent templates and connector templates are platform components, one version per
+  deployment, never copied into orgs; an org-owned item reaches another org only through the share
+  gate (`owner_org_id IS NULL OR shareable`). An agent template describes a whole agent: any member
+  creates a private copy from it (a missing connector becomes a pending entry, a setup request goes
+  to the org admins), org admins save agents as org templates; spec §15 of
+  `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the

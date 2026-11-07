@@ -26,6 +26,9 @@ const nextConfig = {
   outputFileTracingRoot: monorepoRoot,
   // 第一段的安装表单已由向导取代（否则 /apps/new 会落到应用详情的动态路由）
   redirects: async () => [
+    // There is no home page: the new conversation is the home (acceptance 2026-11-07). Temporary,
+    // so the browser keeps asking `/` should a home page come back. The query passes through.
+    { source: "/", destination: "/chat", permanent: false },
     { source: "/:locale(zh|en)/apps/new", destination: "/:locale/apps/install", permanent: false },
     // Personal settings moved from /settings/* to /account/* (old links, bookmarks, return URLs)
     ...["connections", "grants", "identities"].flatMap((page) => [
@@ -36,6 +39,27 @@ const nextConfig = {
         permanent: true,
       },
     ]),
+    // 智能体模板 became the 模板 tab of /agents and its detail the template page (ruling P4-14).
+    // Temporary: /agent-templates never shipped in a release, so no browser should cache the move.
+    { source: "/agent-templates", destination: "/agents?tab=templates", permanent: false },
+    {
+      source: "/:locale(zh|en)/agent-templates",
+      destination: "/:locale/agents?tab=templates",
+      permanent: false,
+    },
+    { source: "/agent-templates/:id", destination: "/agents/templates/:id", permanent: false },
+    {
+      source: "/:locale(zh|en)/agent-templates/:id",
+      destination: "/:locale/agents/templates/:id",
+      permanent: false,
+    },
+    // The template page's parent has no page of its own: its path segment means the 模板 tab.
+    { source: "/agents/templates", destination: "/agents?tab=templates", permanent: false },
+    {
+      source: "/:locale(zh|en)/agents/templates",
+      destination: "/:locale/agents?tab=templates",
+      permanent: false,
+    },
   ],
 };
 

@@ -55,7 +55,7 @@ function kernel(routes: Record<string, Route>) {
 }
 
 const ME = {
-  account: { id: "a1", displayName: "Grant", email: null, isEnterpriseAdmin: false },
+  account: { id: "a1", displayName: "Grant", email: null, isSuperAdmin: false },
   via: "session",
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],

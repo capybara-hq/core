@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "title": "Agents",
+    "new": "新建 agent",
+    "sub": "子 Agent 已完成",
+    "placeholder": "与 {agent} 新建会话",
+    "select": "{kind, select, agent {智能体} other {连接器}}",
+    "branch": "{kind, select, agent {这个 agent} other {连接器}}",
+    "code": "agent_template 与 subagents 不算",
+    "ok": "新建智能体"
+  }
+}

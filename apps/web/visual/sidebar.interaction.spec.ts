@@ -21,15 +21,20 @@ test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows
   // The brand row's search and inbox buttons come first, then the nav's one tab stop.
   await b.getByRole("link", { name: /^收件箱/ }).focus();
   await page.keyboard.press("Tab");
-  await expect(b.getByRole("link", { name: "Agents" })).toBeFocused();
-  // Nav order (acceptance round 2): 新会话, 首页, Agents, then the 更多 button.
+  await expect(b.getByRole("link", { name: "智能体" })).toBeFocused();
+  // Nav order (acceptance 2026-11-07): 新会话, 智能体, 技能, 连接器, then the 更多 button; no 首页.
+  await page.keyboard.press("ArrowDown");
+  await expect(b.getByRole("link", { name: "技能" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(b.getByRole("link", { name: "连接器" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(b.getByRole("button", { name: "更多", exact: true })).toBeFocused();
+  await expect(b.getByRole("link", { name: "首页" })).toHaveCount(0);
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
-  await expect(b.getByRole("link", { name: "首页" })).toBeFocused();
+  await expect(b.getByRole("link", { name: "技能" })).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page).toHaveURL(/at=overview/);
+  await expect(page).toHaveURL(/at=skills/);
 });
 
 test("group collapse animates its height over motion.expand", async ({ page }) => {
@@ -100,7 +105,7 @@ test("long titles truncate inside the 256 sidebar", async ({ page }) => {
 test("Home / End go to the first and last nav item", async ({ page }) => {
   await open(page);
   const b = block(page, "sidebar-default");
-  await b.getByRole("link", { name: "Agents" }).focus();
+  await b.getByRole("link", { name: "智能体" }).focus();
   // 更多 is a flyout button: the nav's last item (管理后台 sits outside the nav, above the
   // account row).
   await page.keyboard.press("End");
@@ -232,7 +237,7 @@ test.describe("viewport widths (full shell)", () => {
     await page.goto("/dev/ui/templates/list");
     await expect(page.locator('[data-part="sidebar"][data-mode="rail"]')).toBeVisible();
     await expect(page.locator('[data-part="sidebar"][data-mode="full"]')).toHaveCount(0);
-    await expect(page.getByRole("navigation", { name: "主导航" }).getByText("Agents")).toHaveCount(
+    await expect(page.getByRole("navigation", { name: "主导航" }).getByText("智能体")).toHaveCount(
       0,
     );
   });
@@ -282,8 +287,8 @@ test.describe("first paint without JavaScript", () => {
 
   // m6: below 640 the header's non-primary actions are folded at first paint, not after hydration.
   for (const [width, labels] of [
-    [600, ["更多操作", "新建 agent"]],
-    [1440, ["导入", "导出", "新建 agent"]],
+    [600, ["更多操作", "新建智能体"]],
+    [1440, ["导入", "导出", "新建智能体"]],
   ] as const) {
     test(`${width}: the page header shows ${labels.join(" / ")}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });

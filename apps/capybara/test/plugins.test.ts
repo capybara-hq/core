@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDb, kernelDb } from "@capybara-hq/kernel";
@@ -114,6 +115,31 @@ async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Pro
 
 const LEGACY = /pre-0\.1\.0 package format/;
 
+/**
+ * Whether a Redis key exists, in the database of `url` (bare RESP inline commands: the CLI tests
+ * have no Redis client).
+ */
+function redisExists(url: string, key: string): Promise<boolean> {
+  const u = new URL(url);
+  const db = u.pathname.replace("/", "") || "0";
+  return new Promise((resolve, reject) => {
+    const sock = connect(Number(u.port || 6379), u.hostname, () => {
+      sock.write(`SELECT ${db}\r\nEXISTS ${key}\r\n`);
+    });
+    let out = "";
+    sock.on("data", (d) => {
+      out += String(d);
+      // "+OK\r\n" then ":<n>\r\n"
+      const lines = out.split("\r\n");
+      if (lines.length >= 3) {
+        sock.end();
+        resolve(lines[1] === ":1");
+      }
+    });
+    sock.on("error", reject);
+  });
+}
+
 describe("capybara plugins list / import", () => {
   it("list shows the bootstrap plugins (imported into the catalog by bootstrap)", async () => {
     const r = await run(["plugins", "list"]);
@@ -122,7 +148,9 @@ describe("capybara plugins list / import", () => {
       "",
       ...boot.entries.map((e) =>
         expect.stringMatching(
-          new RegExp(`^${e.name}\\t${e.version.replaceAll(".", "\\.")}\\textension\\t\\w+$`),
+          new RegExp(
+            `^${e.name}\\t${e.version.replaceAll(".", "\\.")}\\textension\\t(all|optional|named)( builtin)?( disabled)?$`,
+          ),
         ),
       ),
     ]);
@@ -149,7 +177,34 @@ describe("capybara plugins list / import", () => {
     expect(r.stdout).toContain("Imported notes 1.2.0");
     const list = await run(["plugins", "list"]);
     expect(list.code, list.stderr).toBe(0);
-    expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\t\w+/);
+    expect(list.stdout).toMatch(/notes\t1\.2\.0\t1 skill\toptional/);
+  }, 90_000);
+
+  it("import --yes of a new version of an all item enqueues the item's scope sync", async () => {
+    const item = await query((db) =>
+      db
+        .selectFrom("catalog_items")
+        .select(["id", "scope_version"])
+        .where("name", "=", "notes")
+        .where("deleted_at", "is", null)
+        .executeTakeFirstOrThrow(),
+    );
+    await query((db) =>
+      db.updateTable("catalog_items").set({ scope: "all" }).where("id", "=", item.id).execute(),
+    );
+    const file = join(work, "notes-1.3.0.tgz");
+    await writeFile(file, await skillPlugin("notes", { version: "1.3.0" }));
+    const r = await run(["plugins", "import", file, "--yes"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Imported notes 1.3.0");
+    // the job of the item's scope version, as the admin console's confirm adds it (no worker runs
+    // in this test, so it waits in the queue)
+    expect(
+      await redisExists(
+        rd.url,
+        `bull:cap-kernel-plugin-scope:scope-item-${item.id}-${item.scope_version}`,
+      ),
+    ).toBe(true);
   }, 90_000);
 
   it("a template of another connector extension is imported with static checks only", async () => {
@@ -163,7 +218,7 @@ describe("capybara plugins list / import", () => {
     );
   }, 90_000);
 
-  it("a plugin with an extension: the review lists permissions; the snapshot is written with source cli", async () => {
+  it("a plugin with an extension: the review lists permissions; the snapshot is written with source cli, and it is installed and enabled", async () => {
     const file = join(work, "withext.tgz");
     await writeFile(file, await pluginTgz({ manifest: { name: "withext" }, extension: {} }));
     const r = await run(["plugins", "import", file, "--yes"]);
@@ -178,26 +233,15 @@ describe("capybara plugins list / import", () => {
         .executeTakeFirst(),
     );
     expect(snap).toEqual({ source: "cli", approved_by: null });
-    const installed = await query((db) =>
-      db.selectFrom("extension_installs").select("name").where("name", "=", "withext").execute(),
-    );
-    expect(installed).toEqual([]);
-  }, 90_000);
-
-  it("--deploy-extension installs and enables the plugin's extension", async () => {
-    const file = join(work, "deployed.tgz");
-    await writeFile(file, await pluginTgz({ manifest: { name: "deployed" }, extension: {} }));
-    const r = await run(["plugins", "import", file, "--yes", "--deploy-extension"]);
-    expect(r.code, r.stderr).toBe(0);
-    expect(r.stdout).toContain("Extension deployed 1.0.0 installed and enabled.");
+    expect(r.stdout).toContain("Extension withext 1.0.0 installed and enabled.");
     const row = await query((db) =>
       db
         .selectFrom("extension_installs")
         .select(["name", "desired_state"])
-        .where("name", "=", "deployed")
+        .where("name", "=", "withext")
         .executeTakeFirst(),
     );
-    expect(row).toEqual({ name: "deployed", desired_state: "enabled" });
+    expect(row).toEqual({ name: "withext", desired_state: "enabled" });
   }, 90_000);
 
   it("a plugin with files needs object storage; the error says so", async () => {
@@ -334,6 +378,7 @@ describe("capybara plugins import git:", () => {
       packageName: null,
       publisher: "git.example.com/acme",
       description: "Alpha",
+      descriptionZh: null,
       skills: [],
       connectorTemplates: [],
       dependencies: [],

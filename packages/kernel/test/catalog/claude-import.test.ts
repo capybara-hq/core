@@ -73,7 +73,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
 }, 240_000);
@@ -150,7 +150,7 @@ const confirm = (p: Prepared, extra: Record<string, unknown> = {}) =>
   admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${p.stagingId}/confirm`,
-    payload: { reviewHash: p.review.reviewHash, deployExtension: false, ...extra },
+    payload: { reviewHash: p.review.reviewHash, ...extra },
   });
 const groups = (r: TranslationReport) =>
   Object.fromEntries(
@@ -194,7 +194,9 @@ const SUPERPOWERS_GROUPS = {
   warnings: ["session_start_pin_hint SessionStart"],
 };
 
-describe("importing Claude Code plugins", () => {
+// Each case drives git over HTTP, the object store and the kernel end to end: about 1-2 s alone,
+// several times that in a full parallel run, past the local 5 s default (CI has 30 s).
+describe("importing Claude Code plugins", { timeout: 30_000 }, () => {
   it("importing superpowers from its Claude marketplace: format claude-code, no extension, report groups, license text, 7 skills and the command with suggestPinned false", async () => {
     const files = loadFixtureAsStrings("superpowers");
     await srv.commit("superpowers", files);

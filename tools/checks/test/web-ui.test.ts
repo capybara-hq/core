@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // design 是浏览器包（无扩展名导入）；names.ts 无 React 依赖，直接按相对路径取常量。
 import { PAGE_TEMPLATES } from "../../../packages/design/src/templates/names.js";
 import {
+  BOX_PENDING,
+  type BoxPending,
   checkWebUi,
   QUERY_PENDING,
   type QueryPending,
@@ -11,13 +14,19 @@ import {
   WEB_UI_TEMPLATES,
 } from "../src/web-ui.js";
 
-const run = (name: string, pending: SsrPending[] = [], queryPending: QueryPending[] = []) => {
+const run = (
+  name: string,
+  pending: SsrPending[] = [],
+  queryPending: QueryPending[] = [],
+  boxPending: BoxPending[] = [],
+) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
   return checkWebUi(
     join(dir, "apps/web/src"),
     join(dir, "packages/design/src"),
     pending,
     queryPending,
+    boxPending,
   );
 };
 
@@ -257,6 +266,122 @@ describe("checkWebUi", () => {
     });
     it("every QUERY_PENDING entry has a reason that names its task", () => {
       for (const e of QUERY_PENDING) expect(e.reason).toMatch(/Task \d+/);
+    });
+  });
+
+  describe('web-ui-box-in-box (spec §1 "One box is enough")', () => {
+    /** The findings of one fixture file (`boxes.tsx`: direct and through components). */
+    const at = (boxPending: BoxPending[] = [], file = "boxes.tsx") =>
+      run("box-in-box", [], [], boxPending)
+        .filter((x) => x.file.endsWith(`/${file}`))
+        .map((x) => [x.rule, x.line, x.message.split(":")[0]]);
+    it("flags a box inside a box: direct, through components, imports, re-exports and attributes", () =>
+      expect(at()).toEqual([
+        ["web-ui-box-in-box", 35, "<Card> inside <FormSection>"],
+        ["web-ui-box-in-box", 38, "<PurposeCard> (draws Card) inside <Card>"],
+        ["web-ui-box-in-box", 41, "<Notice> (draws ObjectList) inside <Sheet>"],
+        ["web-ui-box-in-box", 44, "<DataTable> inside <FormSection>"],
+        ["web-ui-box-in-box", 45, "<Table> (draws a DataTable) inside <FormSection>"],
+        ["web-ui-box-in-box", 48, "<CodeBlock> (framed) inside <Card>"],
+        ["web-ui-box-in-box", 51, "<FilePicker> inside <Card>"],
+        ["web-ui-box-in-box", 54, "<ReNotice> (draws ObjectList) inside <Card>"],
+        ["web-ui-box-in-box", 56, "<Card> inside <Card>"],
+      ]));
+    it("follows identifiers and calls: a const (a .map result), a helper, hook render functions, renamed children and slot props", () =>
+      expect(at([], "follow.tsx")).toEqual([
+        ["web-ui-box-in-box", 51, "<cards> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 53, "<renderCard> (draws Card) inside <Card>"],
+        // a hook in another file, then one in the same file passed to .map
+        ["web-ui-box-in-box", 55, "<editor> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 56, "<local> (draws Card) inside <FormSection>"],
+        // `{ children: body }`, a slot prop `aside`, and `props.footer`
+        ["web-ui-box-in-box", 59, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 61, "<Card> inside <Card>"],
+        ["web-ui-box-in-box", 62, "<Card> inside <Card>"],
+        // a component in a table cell's render function
+        ["web-ui-box-in-box", 66, "<Cell> (draws Card) inside <Sheet>"],
+        ["web-ui-box-in-box", 72, "<Card> inside <AgentMapDialog>"],
+      ]));
+    it("a CardGrid or an ObjectCard inside a box is a second box; the cards of a grid are judged by the grid alone (spec §6.34)", () =>
+      expect(at([], "cards.tsx")).toEqual([
+        ["web-ui-box-in-box", 15, "<CardGrid> inside <Card>"],
+        ["web-ui-box-in-box", 20, "<ObjectCard> inside <Sheet>"],
+        ["web-ui-box-in-box", 23, "<Grid> (draws CardGrid) inside <Card>"],
+      ]));
+    it("portals reset the outer box: a Card in a Menu, the command palette or the agent map's transcript in a Card is not reported", () => {
+      const src = readFileSync(
+        fileURLToPath(
+          new URL(
+            "../fixtures/web-ui/box-in-box/apps/web/src/components/follow.tsx",
+            import.meta.url,
+          ),
+        ),
+        "utf8",
+      ).split("\n");
+      const portals = src.findIndex((l) => l.startsWith("export function Portals")) + 1;
+      expect(portals).toBeGreaterThan(1);
+      expect(at([], "follow.tsx").filter((r) => Number(r[1]) >= portals)).toEqual([]);
+    });
+    it("recursive hooks finish and read their cycles as nothing; a parameter shadows an outer name; a Callout is not a second box; traits cut by a cycle are not kept", () =>
+      // useSelf returns what it returns itself, usePing / usePong each other's: before the guard
+      // either one crashed the whole check with a RangeError. `{cards}` in `.map((cards) => …)`
+      // is the parameter, not the module-level `cards`; a Callout inside a Card draws its unboxed
+      // form (it adapts inside a box like a CodeBlock).
+      expect(at([], "hooks.tsx")).toEqual([
+        ["web-ui-box-in-box", 30, "<drawn> (draws Card) inside <FormSection>"],
+        ["web-ui-box-in-box", 34, "<card> (draws Card) inside <FormSection>"],
+        // Loop1's traits first read inside the Loop1 / Loop2 cycle are not kept
+        ["web-ui-box-in-box", 68, "<Loop1> (draws Card) inside <FormSection>"],
+      ]));
+    it("names the fix", () => {
+      const f = run("box-in-box");
+      expect(f[0]?.message).toContain("ItemList");
+      expect(f[3]?.message).toContain("flush");
+    });
+    const entry = (inner: string, max: number): BoxPending => ({
+      path: "components/boxes.tsx",
+      inner,
+      max,
+      fix: "P1",
+    });
+    it("a pending entry hides up to max findings of its file and inner box", () => {
+      const f = at([entry("Card", 2)]).map((r) => r[2]);
+      expect(f).not.toContain("<Card> inside <FormSection>");
+      expect(f).not.toContain("<Card> inside <Card>");
+      expect(f).toContain("<PurposeCard> (draws Card) inside <Card>");
+    });
+    it("the ratchet: more findings than max are all reported with the allowance", () => {
+      const f = run("box-in-box", [], [], [entry("Card", 1)]).filter((x) =>
+        x.message.includes("allows 1"),
+      );
+      expect(f.map((x) => x.line)).toEqual([35, 56]);
+      expect(f[0]?.message).toContain('(pending "components/boxes.tsx" <Card> allows 1, found 2)');
+    });
+    it("web-ui-box-stale-pending: fewer findings than max say lower max, none say remove", () => {
+      const f = at([entry("Card", 3), entry("LinkCard", 1)]).filter(
+        (r) => r[0] === "web-ui-box-stale-pending",
+      );
+      expect(f.map((r) => r[2])).toEqual([
+        '2 box-in-box finding(s) left for "components/boxes.tsx" <Card>',
+        'no box-in-box finding left for "components/boxes.tsx" <LinkCard>',
+      ]);
+      expect(run("box-in-box", [], [], [entry("Card", 3)]).at(-1)?.message).toContain(
+        "lower max to 2 in BOX_PENDING",
+      );
+    });
+    it("web-ui-box-stale-pending: an entry whose file is gone", () => {
+      const f = run(
+        "box-in-box",
+        [],
+        [],
+        [{ path: "components/gone.tsx", inner: "Card", max: 1, fix: "P1" }],
+      ).filter((x) => x.rule === "web-ui-box-stale-pending");
+      expect(f.map((x) => x.message)).toEqual([
+        '"components/gone.tsx" <Card>: the file does not exist; remove the entry from BOX_PENDING in tools/checks/src/box-in-box.ts',
+      ]);
+    });
+    it("BOX_PENDING is empty since AB wave 2: the ratchet only shrinks and new code adds no entry", () => {
+      expect(BOX_PENDING).toEqual([]);
     });
   });
 });

@@ -26,7 +26,7 @@ const O = "/api/v1/orgs/o1";
 const T = "2026-10-19T12:00:00.000Z";
 const as = (role: string) => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const failing = () => json(500, { error: { code: "internal", message: "x" } });
@@ -200,15 +200,11 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     // the radio cards of tool search; the read-only note only for a member
-    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, cards: 0, switches: 0 }],
+    ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
     // the tool policy and egress radios, the resources' key-value
-    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, cards: 0, switches: 0 }],
+    ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
     // the kernel's five purposes as cards, each with its model select
-    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, cards: 5, switches: 0 }],
-    // the install cards (the template's default count)
-    ["/settings/plugins", `GET ${O}/plugin-installs`, { radios: 0, kv: 0, cards: 3, switches: 0 }],
-    // two extension groups, each its switch row
-    ["/settings/extensions", `GET ${O}/extensions`, { radios: 0, kv: 0, cards: 0, switches: 2 }],
+    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 5, switches: 0 }],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {
@@ -218,29 +214,26 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
       expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(shapes.radios);
       expect(document.querySelectorAll('[data-part="loading-key-value"]')).toHaveLength(shapes.kv);
-      expect(document.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(
-        shapes.cards,
-      );
+      expect(
+        document.querySelectorAll(
+          '[data-part="loading-item-list"] > [data-part="loading-item-row"]',
+        ),
+      ).toHaveLength(shapes.items);
       expect(document.querySelectorAll('[data-box="block"][style*="32px"]')).toHaveLength(
         shapes.switches,
       );
-      // extensions: each group's hint line and permission cards; plugins: each card's components
-      expect(document.querySelectorAll('[data-part="loading-group-card"]')).toHaveLength(
-        shapes.switches * 2,
-      );
+      // extensions: each group's hint line and permission rows; plugins: each item's components
+      expect(
+        document.querySelectorAll(
+          '[data-part="loading-item-group"] > [data-part="loading-item-row"]',
+        ),
+      ).toHaveLength(shapes.switches * 2);
       expect(
         // the hint is Text variant="prose": its slot is at the prose-small line (the body size)
         document.querySelectorAll(
           '.cb-form-section-fields > [data-part="skeleton-text"][data-size="body"]',
         ),
       ).toHaveLength(shapes.switches);
-      if (path === "/settings/plugins") {
-        for (const card of document.querySelectorAll('[data-part="loading-shaped-card"]')) {
-          expect(
-            card.querySelector(".cb-card-body > .cb-stack")?.lastElementChild?.children,
-          ).toHaveLength(3);
-        }
-      }
       await release();
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
     },
@@ -424,22 +417,6 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
-  it("/settings/plugins: a first render from the hydrated cache makes no browser read", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/plugins", ROUTES);
-    expect(screen.getByText(en.catalog.plugins.empty)).toBeTruthy();
-    await settle();
-    expect(browser).toEqual([]);
-  });
-
-  it("/settings/plugins: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/settings/plugins", `GET ${O}/plugin-installs`);
-    await expectLoading("SettingsPage", en.catalog.plugins.empty);
-    await release();
-    expect(await screen.findByText(en.catalog.plugins.empty)).toBeTruthy();
-    await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
-  });
-
   it("/settings/tokens: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/settings/tokens", ROUTES);
@@ -456,22 +433,22 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/extensions: a first render from the hydrated cache makes no browser read", async () => {
+  it("/extensions: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/extensions", {
+    await renderRouteWithCache("/extensions", {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
       [`GET ${O}/file-previewers`]: () => json(200, { items: [PREVIEWER] }),
     });
-    expect(screen.getByRole("region", { name: "Todo" })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /Todo/ })).toBeTruthy();
     expect(screen.getByRole("switch", { name: /Markdown/ })).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("/settings/extensions: previewers the kernel fails only hide their block (not read again on mount)", async () => {
+  it("/extensions: previewers the kernel fails only hide their block (not read again on mount)", async () => {
     const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/settings/extensions", {
+    await renderRouteWithCache("/extensions", {
       ...ROUTES,
       [`GET ${O}/file-previewers`]: failing,
     });
@@ -480,15 +457,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/settings/extensions: an empty cache shows the template's loading state, then the data", async () => {
-    const { release } = await renderHeld("/settings/extensions", `GET ${O}/extensions`);
-    await expectLoading("SettingsPage", en.extensions.empty);
+  it("/extensions: an empty cache shows the template's loading state, then the data", async () => {
+    const { release } = await renderHeld("/extensions", `GET ${O}/extensions`);
+    await expectLoading("ListPage", en.extensions.empty);
     await release();
     expect(await screen.findByText(en.extensions.empty)).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("/settings/extensions: disabling an extension writes it into the cache and invalidates what it brings", async () => {
+  it("/extensions: disabling an extension writes it into the cache and invalidates what it brings", async () => {
     const routes: Routes = {
       ...ROUTES,
       [`GET ${O}/extensions`]: () => json(200, { extensions: [EXTENSION] }),
@@ -500,7 +477,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       [`PUT ${O}/extensions/todo`]: () =>
         json(200, { extension: { ...EXTENSION, enabled: false } }),
     });
-    const { client } = await renderRouteWithCache("/settings/extensions", routes);
+    const { client } = await renderRouteWithCache("/extensions", routes);
     // the models and purposes are cached (as after a visit to /settings/models)
     client.setQueryData(["org", "o1", "models"], { providers: [] });
     client.setQueryData(["org", "o1", "orgPurposes"], { purposes: [] });
@@ -529,8 +506,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
-  ["/settings/plugins", "admin", false],
-  ["/settings/extensions", "admin", false],
+  ["/extensions", "member", false],
   ["/settings/tokens", "admin", false],
 ];
 
@@ -554,7 +530,7 @@ describe("the gates", () => {
         await settle();
         expect(router.replace).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
       }
     },
   );

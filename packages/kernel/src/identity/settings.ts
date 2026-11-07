@@ -8,7 +8,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { audit } from "./audit.js";
-import { EnterpriseAdminLock } from "./enterprise-admin.js";
+import { SuperAdminLock } from "./super-admin.js";
 
 /** 币种代码：ISO 4217 的三位大写字母（如 USD、CNY）。 */
 const CurrencyCode = z.string().regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 currency code");
@@ -51,11 +51,11 @@ export const SUBAGENT_LIMIT_OVERRIDE = z
   });
 export type SubagentLimitOverride = z.infer<typeof SUBAGENT_LIMIT_OVERRIDE>;
 
-/** 组织能否自建连接器 / 技能（C22）：`deny` 时只能从企业目录安装（T26 执行）。 */
+/** 组织能否自建连接器 / 技能（C22）：`deny` 时只能从平台目录安装（T26 执行）。 */
 const CustomPolicy = z.enum(["allow", "deny"]);
 
 export const DEPLOYMENT_SETTINGS = z.object({
-  orgCreation: z.enum(["anyone", "enterprise_admin"]).default("anyone"),
+  orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
   runConcurrencyOverrides: z.record(z.string().min(1), z.number().int().positive()).default({}),
   /** 模型价格表（`model_prices`）的币种；只用于显示估算成本，不做换算。 */
@@ -67,13 +67,18 @@ export const DEPLOYMENT_SETTINGS = z.object({
    * not given, use `subagents.*`. Read live on every dispatch and tool resolution.
    */
   subagentLimitOverrides: z.record(z.string().min(1), SUBAGENT_LIMIT_OVERRIDE).default({}),
-  /** 组织能否自建连接器（不经企业目录）。 */
+  /** 组织能否自建连接器（不经平台目录）。 */
   customConnectors: CustomPolicy.default("allow"),
   /**
-   * 组织能否自建技能（不经企业目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`SkillWrite`，私有 agent 的
+   * 组织能否自建技能（不经平台目录）：deny 时组织管理员不能上传技能包。agent 自写技能（`SkillWrite`，私有 agent 的
    * agent 级技能与共享 agent 经负责人审批的变更）不受此开关约束——那是 agent 定义的一部分，由 R3 / R4 把关。
    */
   customSkills: CustomPolicy.default("allow"),
+  /**
+   * Org admins may browse the marketplaces read-only and ask for an entry to be imported (plugin
+   * scope spec §5.1 rule 3). false hides the browse route and refuses those requests.
+   */
+  orgMarketplaceBrowse: z.boolean().default(true),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -89,7 +94,7 @@ const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
  */
 export const DEPLOYMENT_SETTINGS_PATCH = z
   .object({
-    orgCreation: z.enum(["anyone", "enterprise_admin"]).optional(),
+    orgCreation: z.enum(["anyone", "super_admin"]).optional(),
     runConcurrencyOverrides: z
       .record(z.string().min(1), z.number().int().positive().nullable())
       .optional(),
@@ -102,6 +107,7 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
       .optional(),
     customConnectors: CustomPolicy.optional(),
     customSkills: CustomPolicy.optional(),
+    orgMarketplaceBrowse: z.boolean().optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -153,7 +159,7 @@ export async function readSubagentLimitOverride(
 
 /**
  * When orgs may not create their own connectors / skills (deployment setting `customConnectors` /
- * `customSkills` is `deny`, C22) throws `catalog.custom_disabled`: install from the enterprise
+ * `customSkills` is `deny`, C22) throws `catalog.custom_disabled`: install from the platform
  * catalog only. Reads PG live every time (can read in the caller's transaction); an invalid stored
  * value counts as allow.
  */
@@ -172,10 +178,25 @@ export async function assertCustomAllowed(
     throw new ApiError(
       "catalog.custom_disabled",
       key === "customConnectors"
-        ? "Custom connectors are disabled in this deployment; install connectors from the enterprise catalog"
-        : "Custom skills are disabled in this deployment; install skills from the enterprise catalog",
+        ? "Custom connectors are disabled in this deployment; install connectors from the platform catalog"
+        : "Custom skills are disabled in this deployment; install skills from the platform catalog",
     );
   }
+}
+
+/**
+ * The deployment setting `orgMarketplaceBrowse`, read live from PG (in the caller's transaction
+ * when there is one); missing or invalid -> the default, true.
+ */
+export async function readOrgMarketplaceBrowse(db: KernelSchemaDb): Promise<boolean> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", "orgMarketplaceBrowse")
+    .executeTakeFirst();
+  if (!row) return true;
+  const parsed = z.boolean().safeParse(row.value);
+  return parsed.success ? parsed.data : true;
 }
 
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
@@ -197,7 +218,7 @@ export class SettingsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -226,7 +247,7 @@ export class SettingsService {
     return out as DeploymentSettings;
   }
 
-  /** Updates settings under the enterprise admin lock, re-checking the actor (else `forbidden`). */
+  /** Updates settings under the super admin lock, re-checking the actor (else `forbidden`). */
   async update(
     patch: DeploymentSettingsPatch,
     actorAccountId: string,
@@ -251,13 +272,16 @@ export class SettingsService {
     actorTokenId: string | undefined,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
-    // The enterprise admin lock serializes every settings write: the current overrides are read
+    // The super admin lock serializes every settings write: the current overrides are read
     // and merged under it, so no concurrent change is lost
     const next: Partial<DeploymentSettings> = {};
     if (patch.orgCreation !== undefined) next.orgCreation = patch.orgCreation;
     if (patch.priceCurrency !== undefined) next.priceCurrency = patch.priceCurrency;
     if (patch.customConnectors !== undefined) next.customConnectors = patch.customConnectors;
     if (patch.customSkills !== undefined) next.customSkills = patch.customSkills;
+    if (patch.orgMarketplaceBrowse !== undefined) {
+      next.orgMarketplaceBrowse = patch.orgMarketplaceBrowse;
+    }
     const {
       runConcurrencyOverrides: runPatch,
       sandboxLimitOverrides: sandboxPatch,

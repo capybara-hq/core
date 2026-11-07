@@ -12,6 +12,7 @@ import {
   Input,
   KeyValue,
   type MetricProps,
+  Sheet,
   Skeleton,
   Stack,
   StatusMark,
@@ -73,8 +74,8 @@ type Tab = (typeof TABS)[number];
  * and the results after first paint (`refetchInterval`: one read at a time, 5 s after a change,
  * doubling up to 30 s while nothing changes), and it can be cancelled. The table reads the light
  * view (no content blocks); the polling reads only rows changed since the last read
- * (`updatedSince`) and merges them by id. The "Results" tab lists every result; opening one loads
- * its full row in the inspector: the text diff (lineDiff + CodeBlock), the tool call diff, drift
+ * (`updatedSince`) and merges them by id. One centred column (no inspector). The "Results" tab
+ * lists every result; opening one loads its full row in a right-side Sheet: the text diff (lineDiff + CodeBlock), the tool call diff, drift
  * reasons, the judge's reason and the human label; a whole-run replay's result links to the eval
  * conversation's trajectory. The "Summary" tab is the summary and the candidate.
  */
@@ -215,10 +216,8 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
       <DetailPage
         header={{ path: [...scope, { label: "evals", href: "/evals" }], title: "" }}
         tabs={tabs}
-        inspectorTitle={t("run.inspector.title")}
-        // Nothing is selected yet: the loaded inspector is this hint
-        inspector={<InspectorHint />}
-        // The five header metrics, then the results tab: its table
+        // The five header metrics, then the results tab: its table (no facts block: what the page
+        // knows about the run is in the head)
         loading={{
           stats: 5,
           content: [
@@ -352,78 +351,87 @@ function EvalRunView({
   const columns = resultColumns(t, title);
 
   return (
-    <DetailPage
-      header={{
-        path: [
-          ...scope,
-          { label: "evals", href: "/evals" },
-          { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
-          { label: formatDateTime(run.createdAt, "full", timeZone) },
-        ],
-        title: t("run.title", { time: formatDateTime(run.createdAt, "full", timeZone) }),
-        status: (
-          <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />
-        ),
-        metrics,
-        ...(active && {
-          actions: [{ label: t("run.cancel"), variant: "default", onSelect: () => void cancel() }],
-        }),
-      }}
-      tabs={{
-        label: t("run.tabsLabel"),
-        items: TABS.map((x) => ({
-          id: x,
-          label: t(`run.tabs.${x}`),
-          ...(x === "results" && { count: rows.length }),
-        })),
-        value: tab,
-        onChange: (x) => onTab(x as Tab),
-      }}
-      inspectorTitle={t("run.inspector.title")}
-      inspector={
-        current === undefined ? (
-          <InspectorHint />
-        ) : (
-          <section aria-label={t("run.inspector.title")}>
-            <ResultPanel
-              key={current.id}
-              orgId={orgId}
-              runId={run.id}
-              mode={run.mode}
-              row={current}
-              title={title(current)}
-              onLabeled={labeled}
+    <>
+      <DetailPage
+        header={{
+          path: [
+            ...scope,
+            { label: "evals", href: "/evals" },
+            { label: data.setName ?? run.setId, href: `/evals/${encodeURIComponent(run.setId)}` },
+            { label: formatDateTime(run.createdAt, "full", timeZone) },
+          ],
+          title: t("run.title", { time: formatDateTime(run.createdAt, "full", timeZone) }),
+          status: (
+            <StatusMark status={evalRunMark(run.status)} label={t(`runStatus.${run.status}`)} />
+          ),
+          metrics,
+          ...(active && {
+            actions: [
+              { label: t("run.cancel"), variant: "default", onSelect: () => void cancel() },
+            ],
+          }),
+        }}
+        tabs={{
+          label: t("run.tabsLabel"),
+          items: TABS.map((x) => ({
+            id: x,
+            label: t(`run.tabs.${x}`),
+            ...(x === "results" && { count: rows.length }),
+          })),
+          value: tab,
+          onChange: (x) => onTab(x as Tab),
+        }}
+      >
+        <Stack gap={12}>
+          {notice}
+          {tab === "results" ? (
+            <DataTable<EvalResultRow>
+              label={t("run.resultsLabel")}
+              columns={columns}
+              rows={rows}
+              rowKey={(r) => r.id}
+              rowLabel={(r) => title(r)}
+              state="ready"
+              empty={{ title: t("run.resultsEmpty") }}
+              {...(current && { activeKey: current.id })}
+              onOpen={(r) => setSelected(r.id)}
             />
-          </section>
-        )
-      }
-    >
-      <Stack gap={12}>
-        {notice}
-        {tab === "results" ? (
-          <DataTable<EvalResultRow>
-            label={t("run.resultsLabel")}
-            columns={columns}
-            rows={rows}
-            rowKey={(r) => r.id}
-            rowLabel={(r) => title(r)}
-            state="ready"
-            empty={{ title: t("run.resultsEmpty") }}
-            {...(current && { activeKey: current.id })}
-            onOpen={(r) => setSelected(r.id)}
+          ) : (
+            <SummaryTab run={run} />
+          )}
+          {tab === "results" && data.next !== null ? (
+            <Stack direction="row">
+              <Button loading={loadingMore} onClick={onLoadMore}>
+                {t("run.loadMore")}
+              </Button>
+            </Stack>
+          ) : null}
+        </Stack>
+      </DetailPage>
+      {/* An open result is a right-side Sheet over the one column (spec §5.2: no inspector); a
+        click on another row shows that one in place. */}
+      <Sheet
+        open={current !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+        title={t("run.inspector.title")}
+        {...(current !== undefined && { meta: title(current) })}
+        width={720}
+      >
+        {current !== undefined ? (
+          <ResultPanel
+            key={current.id}
+            orgId={orgId}
+            runId={run.id}
+            mode={run.mode}
+            row={current}
+            title={title(current)}
+            onLabeled={labeled}
           />
-        ) : (
-          <SummaryTab run={run} />
-        )}
-        {tab === "results" && data.next !== null ? (
-          <Stack direction="row">
-            <Button loading={loadingMore} onClick={onLoadMore}>
-              {t("run.loadMore")}
-            </Button>
-          </Stack>
         ) : null}
-      </Stack>
-    </DetailPage>
+      </Sheet>
+    </>
   );
 }
 
@@ -541,18 +549,6 @@ function toolLine(e: ToolCallDiffEntry, kind: string): string {
  * 选中结果的查看器：按需读这一条的完整行（结果表只有轻量行）；轮询带回这一行的 `updatedAt` 变化时重读
  * （重读期间保留上一次的内容）。
  */
-/** The inspector while no result is open (the loading page draws it too: nothing is open yet). */
-function InspectorHint() {
-  const t = useTranslations("evals");
-  return (
-    <section aria-label={t("run.inspector.title")}>
-      <Text variant="prose" tone="muted">
-        {t("run.inspector.selectHint")}
-      </Text>
-    </section>
-  );
-}
-
 function ResultPanel({
   orgId,
   runId,

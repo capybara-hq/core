@@ -1,5 +1,5 @@
 import { apiFetch } from "./api";
-import type { LocalizedName } from "./catalog";
+import type { LocalizedName, PluginScope, SwitchPreview } from "./catalog";
 import type { JsonSchema } from "./json-schema";
 
 /**
@@ -52,24 +52,66 @@ export interface OrgExtension {
    * cannot be disabled (the kernel answers 409 `extension.required`); its org config can still be set.
    */
   required?: boolean;
+  /** The catalog plugin the extension ships in and its scope (builtin counts as `all`); null without one. */
+  catalogItem?: { itemId: string; scope: PluginScope } | null;
+  /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
+  switchable?: boolean;
+  /**
+   * The extension points it provides (`web-search@1`, names only), for every role: members get no
+   * permissions but this (older kernels leave it out; then the `provides` permission group).
+   */
+  provides?: string[];
+}
+
+/**
+ * The permission groups the 扩展 page sorts by capability: `provides` from its own field (members
+ * have it too), the rest (agent tools, UI views) from the permission list when the viewer has it.
+ */
+export function capabilityGroups(e: OrgExtension): PermissionGroup[] {
+  const rest = e.permissions.filter((g) => g.category !== "provides");
+  const points = e.provides ?? e.permissions.find((g) => g.category === "provides")?.items ?? [];
+  if (points.length === 0) return rest;
+  return [
+    {
+      category: "provides",
+      sensitive: false,
+      items: points,
+      entries: points.map((value) => ({ value, sensitive: false })),
+    },
+    ...rest,
+  ];
 }
 
 export interface PutOrgExtensionInput {
   enabled?: boolean;
   config?: Record<string, unknown>;
   force?: boolean;
+  /** The hash of the switch-off preview, to confirm switching the extension's plugin off. */
+  confirm?: string;
 }
 
 const base = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/extensions`;
 
 export const listOrgExtensions = (orgId: string) =>
-  apiFetch<{ extensions: OrgExtension[] }>(base(orgId));
+  apiFetch<{ extensions: OrgExtension[] }>(base(orgId)).then((r) => ({
+    // A member's list omits config, secrets, schema and permissions: fill the admin shape's empties
+    extensions: r.extensions.map((e) => ({
+      ...e,
+      config: e.config ?? null,
+      secrets: e.secrets ?? [],
+      orgConfigSchema: e.orgConfigSchema ?? null,
+      permissions: e.permissions ?? [],
+    })),
+  }));
 
 export const putOrgExtension = (orgId: string, plugin: string, input: PutOrgExtensionInput) =>
-  apiFetch<{ extension: OrgExtension }>(`${base(orgId)}/${encodeURIComponent(plugin)}`, {
-    method: "PUT",
-    body: JSON.stringify(input),
-  });
+  apiFetch<{ extension: OrgExtension } | SwitchPreview>(
+    `${base(orgId)}/${encodeURIComponent(plugin)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(input),
+    },
+  );
 
 /** 立即同步通讯录（202，后台任务）。 */
 export const syncDirectory = (orgId: string, plugin: string) =>
@@ -107,6 +149,32 @@ export const putExtensionPointDefault = (orgId: string, point: string, extension
     method: "PUT",
     body: JSON.stringify({ extension }),
   });
+
+/** One tool of an extension enabled in the org (kernel `ExtensionToolOffer`). Display only. */
+export interface ExtensionToolOffer {
+  /** The registered name: the `name` of a `{kind:"plugin"}` reference. */
+  name: string;
+  /** The model-visible key `plugin__<plugin>__<name>`, also the `toolPolicies` key. */
+  key: string;
+  title: string | null;
+  /** The first line of the tool's (English) description. */
+  description: string;
+  annotations: Record<string, boolean>;
+  defaultPolicy: "allow" | "ask";
+}
+
+/** An extension enabled in the org with the tools it registered (kernel `ExtensionToolsOffer`). */
+export interface ExtensionToolsOffer {
+  plugin: string;
+  displayName: LocalizedName;
+  tools: ExtensionToolOffer[];
+}
+
+/** The tools of the extensions enabled in the org (`agents.use`), grouped by extension. */
+export const listExtensionTools = (orgId: string) =>
+  apiFetch<{ extensions: ExtensionToolsOffer[] }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/tools/extensions`,
+  );
 
 /** Whether each `org-default` point has a provider for the org now (`agents.use`; no names). */
 export const listAvailableExtensionPoints = (orgId: string) =>

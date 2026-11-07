@@ -1,3 +1,4 @@
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,6 +7,7 @@ import zh from "../messages/zh.json";
 import { renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -154,7 +156,7 @@ describe("the agent page's Sub-agents section", () => {
     await user.type(within(s).getByRole("textbox", { name: S.inlineName }), "helper");
     await user.type(within(s).getByRole("textbox", { name: S.inlineDescription }), "Helps.");
     await user.type(within(s).getByRole("textbox", { name: S.inlineInstructions }), "Help out.");
-    await user.selectOptions(within(s).getByRole("combobox", { name: S.inlineModel }), "fast");
+    await pickOption(within(s).getByRole("combobox", { name: S.inlineModel }), "fast", user);
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
@@ -169,6 +171,31 @@ describe("the agent page's Sub-agents section", () => {
       inline: [{ name: "helper", description: "Helps.", instructions: "Help out.", model: "fast" }],
       agents: [{ agentId: "ag2", as: "analyst", description: "Answers data questions." }],
     });
+  });
+
+  it("a platform template is selected by its linked copy's id (never gone) and shows its badge", async () => {
+    const lead = agent("ag1", "Lead", {
+      definition: {
+        tools: [
+          { kind: "builtin", name: "AskUserQuestion" },
+          { kind: "builtin", name: "Agent" },
+        ],
+        subagents: { templates: ["tcopy"] },
+      },
+    });
+    stubApi({
+      ...routes(lead),
+      [`GET ${ORG}/agent-templates`]: () =>
+        json(200, {
+          templates: [{ ...TEMPLATES[0], origin: "platform", linkedIds: ["tcopy"] }],
+        }),
+    });
+    await renderEditAgent({ section: "subagents" });
+    const s = await section();
+    const box = await within(s).findByRole("checkbox", { name: /superpowers:code-reviewer/ });
+    expect(box).toHaveProperty("checked", true);
+    expect(within(s).getByText(S.platform)).toBeTruthy();
+    expect(within(s).queryByText(S.templateGone.replace("{id}", "tcopy"))).toBeNull();
   });
 
   it("an agent without sub-agent settings saves without a subagents block", async () => {
@@ -325,6 +352,15 @@ describe("the agent page's Sub-agents section", () => {
     );
     const unsaved = document.querySelector('[data-part="action-row-unsaved"]');
     expect(unsaved?.textContent ?? "").toBe("");
+    // one box (acceptance item AB): the inline template is a row of the form card, not a card
+    const list = within(s).getByRole("list", { name: S.inlineLabel });
+    // the list alone carries the name: no group of the same name around it
+    expect(within(s).queryByRole("group", { name: S.inlineLabel })).toBeNull();
+    const row = within(list).getByRole("group", { name: "helper" });
+    expect(row.closest('[data-part="item-list-row"]')).not.toBeNull();
+    expect(within(row).getByRole("textbox", { name: S.inlineName })).toBeTruthy();
+    expect(s.querySelector('[data-part="card"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("settings without the agent tool are kept, with a warning that they are unused", async () => {

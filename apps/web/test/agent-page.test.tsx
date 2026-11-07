@@ -1,13 +1,17 @@
-import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { DesignProvider, SettingsPage } from "@capybara-hq/design";
+import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
-import { AGENT_SECTIONS } from "../src/components/agent/sections";
+import { loadingSection } from "../src/components/agent/frame";
+import { AGENT_SECTIONS, READ_ONLY_FIELDS, SECTION_FIELDS } from "../src/components/agent/sections";
 import { agentFormDefaults, renderEditAgent } from "./support/agents";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME } from "./support/render";
+import { pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, sessionRoutes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -110,7 +114,7 @@ function routes(a = agent(), over: Record<string, () => Response | Promise<Respo
 
 const member = (role: "member" | "guest" = "member") => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 const nav = () => {
@@ -120,6 +124,14 @@ const nav = () => {
 };
 const current = () => nav().querySelector('[aria-current="page"]')?.textContent;
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
+/** The head's ⋯ menu (More actions): opens it, reads its items and closes it. */
+async function headMenu(): Promise<string[]> {
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: en.common.moreActions }));
+  const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent ?? "");
+  await user.keyboard("{Escape}");
+  return items;
+}
 
 beforeEach(() => resetNavigation("/agents/ag1"));
 afterEach(() => {
@@ -146,8 +158,9 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.getByRole("link", { name: P_.startChat }).getAttribute("href")).toBe(
       "/chat?agent=ag1",
     );
-    expect(screen.getByRole("link", { name: en.agents.runHistory })).toBeTruthy();
-    expect(screen.getByRole("button", { name: P_.reassign })).toBeTruthy();
+    // 开始对话 stays the primary; 运行记录, Change owner and Save as template sit in the ⋯ menu
+    expect(await headMenu()).toEqual([en.agents.runHistory, P_.reassign, en.agents.saveAs.action]);
+    expect(P_.reassign).toBe("Change owner");
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(current()).toBe(P_.sections["quick-actions"]);
     expect(screen.getByRole("region", { name: P_.sections["quick-actions"] })).toBeTruthy();
@@ -155,6 +168,24 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.getByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await view.navigate("/agents/ag1?s=nonsense");
     expect(current()).toBe(P_.sections.basics);
+  });
+
+  it("read-only quick actions load as item rows in a flush card, as they are drawn", () => {
+    const shape = READ_ONLY_FIELDS["quick-actions"] ?? SECTION_FIELDS["quick-actions"];
+    render(
+      <DesignProvider locale="en">
+        <SettingsPage
+          header={{ path: [], title: "Helper" }}
+          nav={[]}
+          activeNav="quick-actions"
+          loading={{ sections: [loadingSection("quick-actions", shape, (k) => k)] }}
+        />
+      </DesignProvider>,
+    );
+    const card = document.querySelector('[data-part="form-card"]') as HTMLElement;
+    expect(card.getAttribute("data-flush")).toBe("true");
+    expect(card.querySelectorAll('[data-part="loading-item-row"]')).toHaveLength(2);
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
   it("a non-editor sees only basics, quick actions and model, read-only", async () => {
@@ -176,10 +207,21 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.queryByRole("button", { name: en.agents.form.submit })).toBeNull();
     expect(screen.getByRole("link", { name: P_.startChat })).toBeTruthy();
     expect(screen.queryByRole("link", { name: en.agents.runHistory })).toBeNull();
-    expect(screen.queryByRole("button", { name: P_.reassign })).toBeNull();
+    expect(screen.queryByRole("button", { name: en.common.moreActions })).toBeNull();
+    expect(screen.queryByText(P_.reassign)).toBeNull();
     await view.navigate("/agents/ag1?s=quick-actions");
     expect(screen.getByText("Summarize")).toBeTruthy();
     expect(screen.queryByRole("button", { name: P_.quickActions.add })).toBeNull();
+    // one box (acceptance item AB): a flush card of item rows, the action's body in its row
+    const qa = screen.getByRole("region", { name: P_.sections["quick-actions"] });
+    expect(qa.querySelector('[data-part="form-card"]')?.getAttribute("data-flush")).toBe("true");
+    expect(qa.querySelector('[data-part="card"]')).toBeNull();
+    const list = within(qa).getByRole("list", { name: P_.quickActions.list });
+    expect(list.getAttribute("data-inset")).toBe("flush");
+    expect(
+      within(screen.getByRole("group", { name: "Summarize" })).getByText("Sum it."),
+    ).toBeTruthy();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     await view.navigate("/agents/ag1?s=model");
     expect(screen.getByText("model-fake / fake-1")).toBeTruthy();
     // a hidden section opens basics
@@ -271,7 +313,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
   });
 
-  it("the kernel's warnings after a basics save show in the section", async () => {
+  it("a model warning after a basics save is not shown in Basics", async () => {
     stubApi(
       routes(agent(), {
         [`PATCH ${ORG}/agents/ag1`]: ok({
@@ -284,7 +326,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
+    await vi.waitFor(() => expect(document.querySelector('[data-part="action-row"]')).toBeNull());
+    expect(screen.queryByText(en.agents.warnings.fallback_same_provider)).toBeNull();
   });
 
   it("leaving a dirty section asks to keep or discard", async () => {
@@ -411,7 +454,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(unload()).toBe(false);
   });
 
-  it("the save row shows only with changes; a definition section shows warnings and drops the row", async () => {
+  it("the save row shows only with changes; a definition section drops the row and shows no other section's warning", async () => {
     stubApi(
       routes(agent(), {
         [`PATCH ${ORG}/agents/ag1`]: ok({
@@ -433,10 +476,10 @@ describe("the agent page by section (agent profile design §3)", () => {
     await user.click(screen.getByRole("checkbox", { name: en.agents.form.builtin.SkillWrite }));
     expect(row()).not.toBeNull();
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    expect(await screen.findByText(en.agents.warnings.fallback_same_provider)).toBeTruthy();
     // saved: the section follows the saved agent, so nothing is left to save
     await vi.waitFor(() => expect(row()).toBeNull());
     expect(screen.queryByRole("button", { name: en.agents.form.continue })).toBeNull();
+    expect(screen.queryByText(en.agents.warnings.fallback_same_provider)).toBeNull();
   });
 
   it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {
@@ -499,9 +542,10 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
     await renderEditAgent();
     const user = userEvent.setup();
-    await user.selectOptions(
+    await pickOption(
       screen.getByRole("combobox", { name: en.agents.form.visibilityLabel }),
       "private",
+      user,
     );
     calls.length = 0;
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
@@ -788,8 +832,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(
       within(actions).getByRole("link", { name: en.agents.page.startChat }).getAttribute("href"),
     ).toBe("/chat?agent=ag1");
-    expect(within(actions).getByRole("link", { name: en.agents.runHistory })).toBeTruthy();
-    expect(within(actions).getByRole("button", { name: en.agents.page.reassign })).toBeTruthy();
+    // 运行记录 and Change owner: the ⋯ menu, as on the loaded page
+    expect(within(actions).getByRole("button", { name: en.common.moreActions })).toBeTruthy();
     await act(async () => release());
     expect(await screen.findByDisplayValue("Summarize")).toBeTruthy();
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());

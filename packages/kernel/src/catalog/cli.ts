@@ -6,6 +6,7 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
 } from "@capybara-hq/plugin-sdk";
+import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import { ApiError } from "../errors.js";
 import { planApprovals, snapshotCovers } from "../extensions/approvals.js";
@@ -14,18 +15,29 @@ import { assertSecretsReachable } from "../extensions/host.js";
 import { importExtensionModule, matchesSection } from "../extensions/instance.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { addJobOnce } from "../infra/queue/add-job-once.js";
+import { REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import { CatalogImportModule } from "./catalog.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
+import type { PluginScope } from "./scope.js";
+import { PLUGIN_SCOPE_QUEUE, scopeItemJob } from "./scope-sync.js";
 
 /** {@link openCatalogCli}'s result: the extension CLI context plus the catalog services. */
 export interface CatalogCli extends ExtensionCli {
   catalog: CatalogService;
   /** Plugin import (prepare / confirm). The CLI acts without an account (actor `null`). */
   imports: PluginImport;
+  /**
+   * After an import's confirm: enqueues the item's plugin scope sync, as the admin console's
+   * confirm does, when its scope turns it on by itself (`all` or `named`). A failure only warns
+   * (the next worker start enqueues every item); returns whether it was enqueued.
+   */
+  enqueueScopeSync(item: { id: string; scope: PluginScope }): Promise<boolean>;
 }
 
 /** What the CLI can do with the deployment's object store, and why not when it cannot. */
@@ -202,7 +214,7 @@ class CliStorage extends PrefixedStorage {
  * The CLI's plugin catalog context (`capybara plugins *`): {@link openExtensionCli} with the
  * catalog's {@link CatalogImportModule}, so {@link PluginImport} and {@link CatalogService} are the
  * kernel's providers. Imports run with actor `null` (the operator of the
- * deployment, like `capybara extensions install`: no enterprise-admin re-check, audits without an
+ * deployment, like `capybara extensions install`: no super-admin re-check, audits without an
  * actor, permission snapshots written with source `cli`). Files of the plugin (skills, connector
  * templates, icons) go to the deployment's object store, set up in-process from the declared or
  * installed object-store extension (see {@link loadCliObjectStore}; an installed package is synced
@@ -235,10 +247,31 @@ export async function openCatalogCli(
     const imports = cli.app.get(PluginImport);
     imports.useCliStorage(storage);
     const catalog = cli.app.get(CatalogService);
+    const db = cli.app.get(KernelDb);
+    const redis = cli.app.get<Redis>(REDIS);
     return {
       ...cli,
       catalog,
       imports,
+      async enqueueScopeSync(item) {
+        if (item.scope === "optional") return false;
+        try {
+          const row = await db.db
+            .selectFrom("catalog_items")
+            .select("scope_version")
+            .where("id", "=", item.id)
+            .executeTakeFirst();
+          if (!row) return false;
+          await addJobOnce(redis, PLUGIN_SCOPE_QUEUE, scopeItemJob(item.id, row.scope_version));
+          return true;
+        } catch (err) {
+          log.warn(
+            "cannot enqueue the plugin scope sync; the next worker start converges the orgs",
+            { itemId: item.id, err },
+          );
+          return false;
+        }
+      },
       async close() {
         await cli.close();
         await removeSyncDir();

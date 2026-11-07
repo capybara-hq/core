@@ -146,6 +146,7 @@ beforeAll(async () => {
     plugins: [
       entry("cat-a", pkgs["cat-a"] as Uint8Array, {
         permissions: { keys: ["permissions.secrets"], sensitive: ["permissions.secrets"] },
+        displayName: { zh: "甲目录", en: "Catalog A" },
       }),
       // archive sources: sha512 and sha256 SRI
       archiveEntry("cat-b", sri(pkgs["cat-b"] as Uint8Array)),
@@ -188,7 +189,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
   admin = await session(k, "root");
@@ -220,7 +221,7 @@ async function importAndConfirm(id: string, name: string, version?: string) {
   const c = await admin({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${res.json().stagingId}/confirm`,
-    payload: { reviewHash: res.json().review.reviewHash, deployExtension: false },
+    payload: { reviewHash: res.json().review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return { prepared: res.json(), confirmed: c.json() };
@@ -433,6 +434,16 @@ describe("企业清单：增删改与刷新", () => {
     });
     expect(byName.get("cat-b")).toMatchObject({ importable: true });
     expect(byName.get("cat-e")).toMatchObject({ compatible: false, importable: true });
+    // the entry's display name reaches the API (null without one) and is searchable
+    expect(byName.get("cat-a")).toMatchObject({ displayName: { zh: "甲目录", en: "Catalog A" } });
+    expect(byName.get("cat-b")).toMatchObject({ displayName: null });
+    for (const q of ["甲目录", "Catalog A"]) {
+      const found = await admin({
+        method: "GET",
+        url: `/api/v1/admin/marketplaces/entries?sourceId=${id}&q=${encodeURIComponent(q)}`,
+      });
+      expect(found.json().items.map((e: { name: string }) => e.name)).toEqual(["cat-a"]);
+    }
 
     const audits = await db
       .selectFrom("audit_events")
@@ -875,6 +886,97 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
+  it("a deprecated version: shown with its reason, never newer, refused at import with 409 marketplace.entry_deprecated", async () => {
+    cat.setManifest({
+      ...marketplaceManifest(),
+      plugins: [
+        entry("cat-a", pkgs["cat-a"] as Uint8Array),
+        entry(
+          "cat-a",
+          pkgs["cat-a@2"] as Uint8Array,
+          { deprecated: { reason: "broken" } },
+          "2.0.0",
+        ),
+        entry("cat-b", pkgs["cat-a"] as Uint8Array, { deprecated: true }),
+      ],
+    });
+    expect((await refresh(admin, id)).json().lastStatus).toBe("ok");
+    const refused = await importEntry(admin, id, "cat-a", "2.0.0");
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error.code).toBe("marketplace.entry_deprecated");
+    expect(refused.json().error.message).toContain("broken");
+    // without a version: the newest version that is not deprecated
+    const only = await importEntry(admin, id, "cat-b");
+    expect(only.statusCode, only.body).toBe(409);
+    expect(only.json().error.code).toBe("marketplace.entry_deprecated");
+    await nothingImported();
+    const { prepared } = await importAndConfirm(id, "cat-a");
+    expect(prepared.review.version).toBe("1.0.0");
+
+    const entries = await admin({
+      method: "GET",
+      url: `/api/v1/admin/marketplaces/entries?sourceId=${id}`,
+    });
+    expect(
+      entries
+        .json()
+        .items.map(
+          (e: { name: string; version: string; deprecated: unknown; newerAvailable: boolean }) => [
+            e.name,
+            e.version,
+            e.deprecated,
+            e.newerAvailable,
+          ],
+        ),
+    ).toEqual([
+      ["cat-a", "2.0.0", { reason: "broken" }, false],
+      ["cat-a", "1.0.0", null, false],
+      ["cat-b", "1.0.0", { reason: null }, false],
+    ]);
+    const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(items.json().items[0]).toMatchObject({
+      name: "cat-a",
+      latestMarketplaceVersion: "1.0.0",
+      newerInMarketplace: false,
+    });
+  });
+
+  it("the version to update to folds prereleases and skips what cannot be imported", async () => {
+    const a1 = pkgs["cat-a"] as Uint8Array;
+    const listing = (...plugins: unknown[]) => {
+      cat.setManifest({ ...marketplaceManifest(), plugins });
+      return refresh(admin, id);
+    };
+    // without a version: an unimportable stable (a path entry of an http marketplace) is passed by
+    await listing(entry("cat-a", a1), {
+      name: "cat-a",
+      version: "3.0.0",
+      summary: { en: "path" },
+      source: { path: "./cat-a" },
+    });
+    const { prepared } = await importAndConfirm(id, "cat-a");
+    expect(prepared.review.version).toBe("1.0.0");
+    const latest = async () => {
+      const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+      const it = items.json().items[0];
+      return [it.latestMarketplaceVersion, it.newerInMarketplace];
+    };
+    expect(await latest()).toEqual(["1.0.0", false]);
+    // a newer stable and a newer prerelease: the stable
+    await listing(
+      entry("cat-a", a1),
+      entry("cat-a", a1, {}, "1.1.0"),
+      entry("cat-a", a1, {}, "2.0.0-rc.0"),
+    );
+    expect(await latest()).toEqual(["1.1.0", true]);
+    // only a prerelease is newer: the imported stable stays the latest
+    await listing(entry("cat-a", a1), entry("cat-a", a1, {}, "2.0.0-rc.0"));
+    expect(await latest()).toEqual(["1.0.0", false]);
+    // no stable listed: the prerelease
+    await listing(entry("cat-a", a1, {}, "2.0.0-rc.0"));
+    expect(await latest()).toEqual(["2.0.0-rc.0", true]);
+  });
+
   it("条目 / 版本 / 来源不存在 404", async () => {
     const noEntry = await importEntry(admin, id, "nope");
     expect(noEntry.statusCode).toBe(404);
@@ -906,7 +1008,7 @@ describe("从清单引入", () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("非企业管理员 403", async () => {
+  it("非超级管理员 403", async () => {
     const calls = [
       member({ method: "GET", url: "/api/v1/admin/marketplaces" }),
       addMarketplace(member, { name: "X", url: cat.url }),

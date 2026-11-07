@@ -1,9 +1,13 @@
-import { AppShell, Card, Grid, Stack, Text } from "@capybara-hq/design";
+import { AppShell, ContentSection, Grid, Stack, Text } from "@capybara-hq/design";
 import type { ReactNode } from "react";
 import { COMMANDS } from "./fixtures";
 import { sidebarProps, statusFixture } from "./shell-fixture";
 
-/** 目录页外框：一张大卡片承载各分区（只用设计系统的布局原语，不写样式）。 */
+/**
+ * The catalog page's frame: a title over its sections on the page ground (only the design
+ * system's layout primitives, no styles). No card around it: a demo of a box must stand on the
+ * ground, never inside another box (spec §1 "One box is enough").
+ */
 export function CatalogPage({
   title,
   subtitle,
@@ -14,22 +18,19 @@ export function CatalogPage({
   children?: ReactNode;
 }) {
   return (
-    <Card
-      title={
-        <Stack gap={4}>
-          <Text variant="h1">{title}</Text>
-          <Text variant="small" tone="muted">
-            {subtitle}
-          </Text>
-        </Stack>
-      }
-    >
-      <Stack gap={24}>{children}</Stack>
-    </Card>
+    <Stack gap={24}>
+      <Stack gap={4}>
+        <Text variant="h1">{title}</Text>
+        <Text variant="small" tone="muted">
+          {subtitle}
+        </Text>
+      </Stack>
+      {children}
+    </Stack>
   );
 }
 
-/** 一个分区：`§ 标题 — 说明`。 */
+/** A section: `§ title`, its note as the help line, the demos on the page ground. */
 export function Section({
   title,
   note,
@@ -40,9 +41,9 @@ export function Section({
   children?: ReactNode;
 }) {
   return (
-    <Card title={note ? `§ ${title} — ${note}` : `§ ${title}`}>
+    <ContentSection title={`§ ${title}`} {...(note ? { description: note } : {})}>
       <Stack gap={16}>{children}</Stack>
-    </Card>
+    </ContentSection>
   );
 }
 
@@ -62,9 +63,9 @@ export function Row({ label, children }: { label: string; children?: ReactNode }
 
 /** Where the catalog's sidebar links go: the template that stands for each item. */
 const TEMPLATE_OF: Record<string, string> = {
-  overview: "overview",
   agents: "list",
   inbox: "inbox",
+  skills: "list",
   connectors: "list",
   evals: "trace",
   settings: "settings",

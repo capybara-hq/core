@@ -14,7 +14,7 @@ import { kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
-import { PW } from "../../helpers/runs.js";
+import { enableExtensions, PW } from "../../helpers/runs.js";
 
 /**
  * Task 15（双副本，独立进程）：在副本 0 发起连接、回调落在副本 1（state 在 Redis，不依赖进程内存）；
@@ -102,6 +102,9 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
     ).toBe(200);
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     const orgId = (org.json.org as { id: string }).id;
+    const enableDb = createDb(harness.dbUrl, 1);
+    await enableExtensions(enableDb, orgId, "fake-connector");
+    await enableDb.destroy();
     const base = `/api/v1/orgs/${orgId}`;
     const app = await at(0, "POST", `${base}/connectors`, {
       name: "Docs",

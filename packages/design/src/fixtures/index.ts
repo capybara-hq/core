@@ -17,7 +17,7 @@ export type FixtureNavItem = {
   href: string;
   icon: IconName;
   count?: number;
-  audience: "all" | "member" | "admin" | "enterprise";
+  audience: "all" | "member" | "admin" | "superAdmin";
   /**
    * After New conversation (`primary`), inside the 更多 flyout (`more`), or an icon button in the
    * brand row (`brand`: the inbox).
@@ -25,9 +25,12 @@ export type FixtureNavItem = {
   place: "primary" | "more" | "brand";
 };
 
-/** The work context's navigation in the web-order spec §2.1 order (extension pages follow 更多's). */
+/**
+ * The work context's navigation in the web-order spec §2.1 order, as apps/web draws it (acceptance
+ * 2026-11-07: no home item; 智能体, 技能, 连接器 after New conversation, the rest in the 更多 flyout,
+ * extension pages after 更多's).
+ */
 export const NAV_FIXTURE: FixtureNavItem[] = [
-  { id: "overview", label: "首页", href: "/", icon: "home", audience: "all", place: "primary" },
   {
     id: "inbox",
     label: "收件箱",
@@ -39,7 +42,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
   },
   {
     id: "agents",
-    label: "Agents",
+    label: "智能体",
     href: "/agents",
     icon: "agent",
     audience: "all",
@@ -51,7 +54,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     href: "/skills",
     icon: "skills",
     audience: "member",
-    place: "more",
+    place: "primary",
   },
   {
     id: "connectors",
@@ -59,13 +62,21 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     href: "/connectors",
     icon: "connector",
     audience: "all",
+    place: "primary",
+  },
+  {
+    id: "plugins",
+    label: "插件",
+    href: "/plugins",
+    icon: "catalog",
+    audience: "member",
     place: "more",
   },
   {
-    id: "catalog",
-    label: "插件",
-    href: "/catalog",
-    icon: "catalog",
+    id: "extensions",
+    label: "扩展",
+    href: "/extensions",
+    icon: "extension",
     audience: "member",
     place: "more",
   },
@@ -90,7 +101,7 @@ export const NAV_FIXTURE: FixtureNavItem[] = [
     label: "组织设置",
     href: "/settings/organization",
     icon: "settings",
-    audience: "admin",
+    audience: "member",
     place: "more",
   },
 ];
@@ -100,7 +111,7 @@ export const ORG_SWITCHER_FIXTURE = {
   name: FIXTURE_ORG,
   initial: "示",
   slug: "demo",
-  role: "所有者",
+  role: "组织所有者",
 };
 
 /** The admin context's items (web-order spec §2.2). */
@@ -109,7 +120,7 @@ export const ADMIN_NAV_FIXTURE: { id: string; label: string; href: string; icon:
   { id: "accounts", label: "账号", href: "/admin/accounts", icon: "user" },
   { id: "orgs", label: "组织", href: "/admin/orgs", icon: "building" },
   { id: "extensions", label: "扩展", href: "/admin/extensions", icon: "extension" },
-  { id: "catalog", label: "企业目录", href: "/admin/catalog", icon: "catalog" },
+  { id: "catalog", label: "平台目录", href: "/admin/catalog", icon: "catalog" },
   { id: "marketplaces", label: "市场", href: "/admin/marketplaces", icon: "store" },
   { id: "models", label: "模型", href: "/admin/models", icon: "cpu" },
   { id: "settings", label: "部署设置", href: "/admin/settings", icon: "sliders" },
@@ -132,21 +143,21 @@ export type FixtureSetupStep = {
 };
 
 /**
- * The setup sidebar's steps (web-SSR spec §4, per role): an enterprise admin who is also an org
+ * The setup sidebar's steps (web-SSR spec §4, per role): a super admin who is also an org
  * admin, after the model (done, an agent to create, the optional steps), and a member before any
  * model (both steps waiting with their reasons, one optional step).
  */
 export const SETUP_STEPS_FIXTURE: Record<"admin" | "member", FixtureSetupStep[]> = {
   admin: [
     { id: "model", label: "配置模型", state: "done" },
-    { id: "agent", label: "新建 agent", state: "todo" },
+    { id: "agent", label: "新建智能体", state: "todo" },
     { id: "channels", label: "连接渠道", state: "todo", optional: true },
     { id: "members", label: "邀请成员", state: "todo", optional: true },
     { id: "catalog", label: "安装插件", state: "todo", optional: true },
   ],
   member: [
     { id: "model", label: "配置模型", state: "waiting", reason: "等待管理员配置模型" },
-    { id: "agent", label: "新建 agent", state: "waiting", reason: "先配置模型" },
+    { id: "agent", label: "新建智能体", state: "waiting", reason: "先配置模型" },
     { id: "connections", label: "我的连接", state: "todo", optional: true },
   ],
 };
@@ -295,6 +306,8 @@ export const SIDEBAR_COPY = {
   filter: "筛选会话",
   filterQuery: "按标题搜索",
   states: ["全部", "运行中", "等待我"],
+  noMatch: "没有匹配的会话",
+  clearFilter: "清除筛选",
   archived: "已归档",
   adminScope: "整个部署 · /admin",
   back: "回到工作区",
@@ -346,7 +359,7 @@ export const LIST_PAGE_FIXTURE: {
   rowActions: string;
 } = {
   title: "连接器",
-  description: "把 MCP、OpenAPI 等外部服务接进来，agent 就能调用它们的工具。",
+  description: "把 MCP、OpenAPI 等外部服务接进来，智能体就能调用它们的工具。",
   primaryAction: "添加连接器",
   secondaryAction: "导入",
   metrics: [
@@ -376,7 +389,7 @@ export const LIST_PAGE_FIXTURE: {
     status: "状态",
     tools: "工具",
     calls7d: "7 天调用",
-    owner: "负责人",
+    owner: "所有者",
   },
   rows: [
     {
@@ -493,7 +506,7 @@ export const FORM_PAGE_FIXTURE: {
     { label: "agents", href: "/agents" },
     { label: "研究助手" },
   ],
-  title: "编辑 Agent",
+  title: "编辑智能体",
   sections: [
     {
       title: "基本信息",
@@ -504,7 +517,7 @@ export const FORM_PAGE_FIXTURE: {
           id: "name",
           label: "名称",
           value: "研究助手",
-          error: "组织里已经有一个叫「研究助手」的 agent。",
+          error: "组织里已经有一个叫「研究助手」的智能体。",
         },
         {
           kind: "textarea",
@@ -588,7 +601,7 @@ export const FORM_PAGE_FIXTURE: {
 
 export const PAGE_HEADER_FIXTURE = {
   title: "Agents",
-  pathTitle: "编辑 Agent",
+  pathTitle: "编辑智能体",
   /** The views and the search of a list page's tab row (the narrow block, spec §4.2). */
   tabs: [
     { id: "all", label: "全部", count: 6 },
@@ -610,7 +623,7 @@ export const STATUS_FIXTURE = {
 
 export const CONTROLS_FIXTURE = {
   buttons: [
-    { variant: "primary", label: "新建 agent" },
+    { variant: "primary", label: "新建智能体" },
     { variant: "secondary", label: "部署" },
     { variant: "default", label: "导出" },
     { variant: "ghost", label: "取消" },
@@ -623,6 +636,23 @@ export const CONTROLS_FIXTURE = {
   switchLabel: "在沙箱里运行",
   switchOn: "已开启",
   switchOff: "已关闭",
+};
+
+/**
+ * The form Select's reference blocks (spec §6.2): one field with three options; the long list
+ * (`long`) is LONG_MODELS_FIXTURE's 100 models with its selected one.
+ */
+export const SELECT_FIXTURE = {
+  label: "可见范围",
+  options: [
+    { value: "private", label: "仅自己" },
+    { value: "org", label: "组织内所有成员" },
+    { value: "public", label: "公开" },
+  ],
+  value: "org",
+  placeholder: "选择可见范围",
+  error: "请选择可见范围。",
+  longLabel: "模型",
 };
 
 export * from "./conversation";

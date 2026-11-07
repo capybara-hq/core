@@ -11,6 +11,7 @@ import {
   zh,
 } from "./support/chat";
 import { mainNavLink } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 安装向导的 ActionRow（主操作 / 上一步都在这里）。 */
@@ -30,7 +31,7 @@ async function installMcp(page: Page, name: string, slug: string, url: string) {
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await expect(
     page.getByRole("combobox", { name: zh.connectors.form.authTypeLabel, exact: true }),
-  ).toHaveValue("none");
+  ).toHaveAttribute("value", "none");
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await expect(page.getByRole("table", { name: w.toolsTitle })).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.install }).click();
@@ -71,7 +72,7 @@ test("MCP 连接器 → agent 引用 → destructive 工具触发审批 → 批�
   const policy = page.getByRole("combobox", {
     name: zh.connectors.tools.policyLabel.replace("{tool}", "mcp__fixture__delete_item"),
   });
-  await expect(policy).toHaveValue("ask");
+  await expect(policy).toHaveAttribute("value", "ask");
 
   // 2. 新建 agent，在 agent 页面的「工具」分组里引用该连接器的全部工具
   await newAgent(page, "Tool agent");
@@ -124,15 +125,16 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
   await signIn(page);
 
-  // 安装连接器（slug docs）并新建引用它的 agent
-  await installMcp(page, "Docs", "docs", mcpUrl);
+  // Install the connector and an agent using it; slug kb, as catalog-flow's crm plugin already
+  // made a connector with the slug docs in this org
+  await installMcp(page, "Docs", "kb", mcpUrl);
   const input = await chatWithAgent(page, "Docs agent", "Docs");
 
-  // 1. `/` → 面板 → /docs:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
+  // 1. `/` → 面板 → /kb:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
   await input.press("/");
   // the label, then the description (phase D palette items; the skills group comes first)
-  await page.getByRole("option", { name: /^\/docs:summarize/ }).click();
-  const dialog = page.getByRole("dialog", { name: "/docs:summarize" });
+  await page.getByRole("option", { name: /^\/kb:summarize/ }).click();
+  const dialog = page.getByRole("dialog", { name: "/kb:summarize" });
   await dialog.getByLabel(/topic/).fill("cats");
   await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();
   await expect(input).toHaveValue("Summarize cats");
@@ -143,7 +145,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await input.press("@");
   // 同一个假服务也被上一个用例装成了 Fixture：按连接器分组取 Docs 的那条
   await page
-    .getByRole("group", { name: "Docs" })
+    .getByRole("group", { name: "Docs", exact: true })
     .getByRole("option", { name: "Handbook · docs://handbook" })
     .click();
   await expect(page.getByRole("group", { name: zh.chat.files })).toContainText("@Handbook");
@@ -152,7 +154,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await expect(replies(page).last()).toContainText("Handbook");
 
   // 3. elicitation：工具调用途中请用户填表 → 回答后工具重新发起并拿到答案
-  await input.fill("tool:mcp__docs__signup:{}");
+  await input.fill("tool:mcp__kb__signup:{}");
   await input.press("Enter");
   const question = page.locator('[data-role="question"]');
   await expect(question).toHaveCount(1);
@@ -184,16 +186,16 @@ test("带工具的对话结束后，管理员打开运行记录：瀑布里有�
   await page.getByRole("link", { name: zh.evals.runHistory }).click();
   await expect(page).toHaveURL(/\/trajectories$/);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  await page
-    .getByRole("combobox", { name: zh.trajectories.filters.agent })
-    .selectOption({ label: "Trace agent" });
+  await selectOption(page.getByRole("combobox", { name: zh.trajectories.filters.agent }), {
+    label: "Trace agent",
+  });
   const table = page.getByRole("table", { name: zh.trajectories.title });
   await expect(table.getByRole("row")).toHaveCount(2); // 表头 + 一个对话
   await expect(async () => {
     await page.reload();
-    await page
-      .getByRole("combobox", { name: zh.trajectories.filters.agent })
-      .selectOption({ label: "Trace agent" });
+    await selectOption(page.getByRole("combobox", { name: zh.trajectories.filters.agent }), {
+      label: "Trace agent",
+    });
     await expect(table.getByText(`${zh.trajectories.status.completed}`)).toBeVisible({
       timeout: 2000,
     });

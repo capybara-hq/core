@@ -14,7 +14,6 @@ import {
   type HeaderAction,
   PageHeader,
   type PageHeaderProps,
-  PageTabs,
   StatCards,
   StatusBar,
   useStatusBar,
@@ -43,8 +42,8 @@ const sidebar = {
     kind: "work" as const,
     org: { name: "Acme", initial: "A", slug: "acme", role: "所有者", menu: [] },
     primary: [
-      { id: "overview", label: "首页", href: "/", icon: "home" as const },
       { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
+      { id: "skills", label: "技能", href: "/skills", icon: "skills" as const },
     ],
     more: [{ id: "settings", label: "组织设置", href: "/settings", icon: "settings" as const }],
   },
@@ -179,6 +178,41 @@ describe("AppShell", () => {
 });
 
 describe("PageHeader", () => {
+  it("while another action runs, the head's other buttons are disabled, never a dead click", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "admin" }]}
+        title="pdf"
+        actions={[
+          { label: "启用", variant: "default", onSelect: () => {}, loading: true },
+          { label: "设置范围", variant: "default", onSelect: () => {}, disabled: true },
+        ]}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "设置范围" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("an action whose call is running shows the Button's loading state and is disabled", () => {
+    zh(
+      <PageHeader
+        path={[{ label: "admin" }]}
+        title="pdf"
+        actions={[
+          { label: "启用", variant: "default", onSelect: () => {}, loading: true },
+          { label: "设置范围", variant: "default", onSelect: () => {} },
+        ]}
+      />,
+    );
+    const on = screen.getByRole("button", { name: "启用" }) as HTMLButtonElement;
+    expect(on.getAttribute("aria-busy")).toBe("true");
+    expect(on.disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "设置范围" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
   it("renders the path with separators and marks the last segment current", () => {
     zh(
       <PageHeader
@@ -489,13 +523,6 @@ describe("StatCards", () => {
   it("six metrics throw", () => {
     const m = Array.from({ length: 6 }, (_, i) => ({ label: `m${i}`, value: i }));
     expect(() => zh(<StatCards metrics={m} />)).toThrow();
-  });
-});
-
-describe("PageTabs", () => {
-  it("渲染标签", () => {
-    zh(<PageTabs label="详情" items={[{ id: "a", label: "概览" }]} value="a" />);
-    expect(screen.getByRole("tab", { name: "概览" })).toBeTruthy();
   });
 });
 

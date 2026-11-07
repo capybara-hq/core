@@ -15,7 +15,7 @@ import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
 const MEM_CONNECTOR = fileURLToPath(
   new URL("../fixtures/plugins/mem-connector/index.ts", import.meta.url),
@@ -111,10 +111,12 @@ async function session(login: string): Promise<Req> {
   return req;
 }
 
-async function createOrg(req: Req, name = "Acme"): Promise<string> {
+async function createOrg(req: Req, name = "Acme", enableKinds = true): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
-  return (res.json() as { org: { id: string } }).org.id;
+  const id = (res.json() as { org: { id: string } }).org.id;
+  if (enableKinds) await enableConnectorExtensions(k, id);
+  return id;
 }
 
 async function memberSession(orgId: string, login: string, role: "admin" | "member" | "guest") {
@@ -323,6 +325,52 @@ describe("连接器 HTTP", () => {
     const outReq = await session("out");
     const nf = await outReq({ method: "GET", url: `/api/v1/orgs/${orgId}/connectors` });
     expect(nf.statusCode).toBe(404);
+  });
+
+  it("kinds: only the connector kinds whose extension is enabled in the org; admins only", async () => {
+    const ownerReq = await session("owner");
+    const orgId = await createOrg(ownerReq, "Acme", false);
+    const url = `/api/v1/orgs/${orgId}/connectors/kinds`;
+    const before = await ownerReq({ method: "GET", url });
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.json()).toEqual({ kinds: [] });
+
+    await sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
+      VALUES ('mem-connector', ${orgId}, true)`.execute(raw);
+    const after = await ownerReq({ method: "GET", url });
+    expect(after.json()).toEqual({ kinds: [{ kind: "mem", plugin: "mem-connector" }] });
+
+    const member = await memberSession(orgId, "mem", "member");
+    const denied = await member.req({ method: "GET", url });
+    expect(denied.statusCode).toBe(403);
+  });
+
+  it("create and preview refuse a kind whose extension is off in the org", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req, "Acme", false);
+    const url = `/api/v1/orgs/${orgId}/connectors`;
+    const created = await req({ method: "POST", url, payload: docsConnector });
+    expect(created.statusCode, created.body).toBe(409);
+    expect(errCode(created)).toBe("connector.kind_unavailable");
+    const previewed = await req({
+      method: "POST",
+      url: `${url}/preview`,
+      payload: { connector: "mem", endpoint: { server: "docs" } },
+    });
+    expect(previewed.statusCode, previewed.body).toBe(409);
+    expect(errCode(previewed)).toBe("connector.kind_unavailable");
+
+    await enableConnectorExtensions(k, orgId);
+    const ok = await req({ method: "POST", url, payload: docsConnector });
+    expect(ok.statusCode, ok.body).toBe(201);
+    // a custom connector names no platform connector template (ruling P4-7), in the list too
+    expect(ok.json().connector.platformTemplateId).toBeNull();
+    const listed = await req({ method: "GET", url });
+    expect(
+      (listed.json().connectors as { platformTemplateId: string | null }[]).map(
+        (c) => c.platformTemplateId,
+      ),
+    ).toEqual([null]);
   });
 
   it("A4：连接失败 → 502 connector.connect_failed，什么都不写（含凭据）", async () => {

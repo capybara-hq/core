@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
-import { cancelPendingRequests } from "../catalog/requests.service.js";
+import { OwnedItems } from "../catalog/owned-items.js";
+import { cancelPendingRequests } from "../catalog/request-rules.js";
+import { PluginScopeSync } from "../catalog/scope-sync.js";
 import type { OrgsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { EvalBudget } from "../evals/budget.js";
@@ -74,8 +76,8 @@ async function slugGuard<T>(p: Promise<T>): Promise<T> {
 }
 
 /**
- * Organizations: create, read, update and soft delete. A soft delete emits `org.deleted` on
- * {@link KernelEvents} after the commit.
+ * Organizations: create, read, update and soft delete. A new org's plugin scope sync is enqueued
+ * after the commit; a soft delete emits `org.deleted` on {@link KernelEvents} after the commit.
  */
 @Injectable()
 export class OrgsService {
@@ -88,6 +90,10 @@ export class OrgsService {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** Cancels the deleted org's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
+    /** A new org gets the plugins its scope offers it (the scope sync, after the commit). */
+    @Inject(PluginScopeSync) private readonly scopeSync: Pick<PluginScopeSync, "enqueueOrg">,
+    /** What the deleted org owns is transferred or removed in the delete's transaction (P3-20). */
+    @Inject(OwnedItems) private readonly ownedItems: Pick<OwnedItems, "onOrgDeleted">,
   ) {}
 
   /**
@@ -112,11 +118,8 @@ export class OrgsService {
     // read in the context's transaction: a caller holding a connection asking the pool for a
     // second one could exhaust it under load
     const { orgCreation } = await this.settings.get();
-    if (orgCreation === "enterprise_admin" && !actor.isEnterpriseAdmin) {
-      throw new ApiError(
-        "org.creation_disabled",
-        "Only enterprise admins can create organizations",
-      );
+    if (orgCreation === "super_admin" && !actor.isSuperAdmin) {
+      throw new ApiError("org.creation_disabled", "Only super admins can create organizations");
     }
     const name = checkName(input.name);
     const slug = input.slug ?? slugFromName(name);
@@ -138,6 +141,7 @@ export class OrgsService {
       target: row.id,
       detail: { slug, name },
     });
+    afterCommit(() => this.scopeSync.enqueueOrg(row.id));
     return toOrg(row);
   }
 
@@ -155,7 +159,7 @@ export class OrgsService {
     return rows.map((r) => ({ ...toOrg(r), role: r.role }));
   }
 
-  /** 全部（未软删除的）组织及成员数（企业管理员用）。 */
+  /** 全部（未软删除的）组织及成员数（超级管理员用）。 */
   async listAll(): Promise<(Org & { memberCount: number })[]> {
     const rows = await this.db
       .selectFrom("orgs")
@@ -232,9 +236,12 @@ export class OrgsService {
 
   /**
    * Soft delete (needs owner, decided live under the org lock): in the same transaction revokes
-   * the org's service tokens, cancels its running eval runs and pending catalog requests, and
-   * clears sessions' current org pointing at it; after the commit emits `org.deleted` (channel
-   * connections go with the org: the runtime's connection reads filter deleted orgs).
+   * the org's service tokens, cancels its running eval runs and pending catalog requests, clears
+   * sessions' current org pointing at it, and transfers or removes the plugins and promoted
+   * components it owns ({@link OwnedItems.onOrgDeleted}, P3-20: shared ones become the platform's,
+   * the others are removed, a removed plugin's extension taken out by its cleanup job after the
+   * commit); after the commit emits `org.deleted` (channel connections go with the org: the
+   * runtime's connection reads filter deleted orgs).
    */
   async softDelete(orgId: string, actor: Account, actorTokenId?: string): Promise<void> {
     await this.softDeleteIn(orgId, actor, actorTokenId);
@@ -252,6 +259,10 @@ export class OrgsService {
       .set({ deleted_at: sql<Date>`now()` })
       .where("id", "=", orgId)
       .execute();
+    // after the org is marked deleted, so it counts as no user of what it shared (P3-18)
+    await this.ownedItems.onOrgDeleted(orgId, actor.id, {
+      ...(actorTokenId !== undefined && { actorTokenId }),
+    });
     await this.apiTokens.revokeAllForOrg(orgId);
     // eval runs of a deleted org stop spending: cancelled explicitly (audited with the reason)
     await this.evalBudget.cancelRuns(
@@ -259,7 +270,7 @@ export class OrgsService {
       { accountId: actor.id, ...(actorTokenId !== undefined && { tokenId: actorTokenId }) },
       "org_deleted",
     );
-    // pending catalog requests (including those passed to enterprise admins) are cancelled too
+    // pending catalog requests (including those passed to super admins) are cancelled too
     await cancelPendingRequests(
       this.db.db,
       { orgId },

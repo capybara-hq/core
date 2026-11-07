@@ -30,9 +30,9 @@ const setupSidebar = () => document.querySelector('[data-part="sidebar"][data-co
 const workSidebar = () => document.querySelector('[data-part="sidebar"][data-context="work"]');
 const step = (label: string) =>
   within(screen.getByRole("main")).getByText(label).closest("li") as HTMLElement;
-const memberMe = (role: string, enterprise = false): Me => ({
+const memberMe = (role: string, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -108,7 +108,7 @@ describe("setup layout scope", () => {
     expect(workSidebar()).toBeNull();
     const home = setupSidebar()?.querySelector('[data-part="nav-item"]') as HTMLElement;
     expect(home.textContent).toBe("开始之前");
-    expect(home.getAttribute("href")).toBe("/");
+    expect(home.getAttribute("href")).toBe("/chat");
     expect(router.replace).not.toHaveBeenCalled();
   });
 
@@ -134,21 +134,23 @@ describe("setup layout scope", () => {
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" }),
     );
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
   });
 
   it("routes: home, steps, redirects and the admin console", () => {
-    expect(setupRouteOf("/")).toBe("home");
+    // the setup home is the workspace's home, the new conversation; `/` is no page (next.config
+    // redirects it to `/chat` first), so the frame never sees it as home
     expect(setupRouteOf("/chat")).toBe("home");
+    expect(setupRouteOf("/")).toBe("redirect");
     for (const p of [
       "/settings/models",
       "/settings/members",
       "/agents/new",
       "/agents/a1",
       "/channels/new",
-      "/catalog",
-      "/catalog/x",
-      "/catalog/x/install",
+      "/plugins",
+      "/plugins/x",
+      "/plugins/x/enable",
       "/account/connections",
     ])
       expect(setupRouteOf(p), p).toBe("step");
@@ -167,7 +169,7 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
       optional: el.getAttribute("data-optional") === "true",
     }));
   for (const [who, me, readiness] of [
-    ["enterprise admin", ME, NOT_READY],
+    ["super admin", ME, NOT_READY],
     ["org admin", memberMe("admin"), PROVIDER_ONLY],
     ["member", memberMe("member"), PROVIDER_ONLY],
     ["guest", memberMe("guest"), NOT_READY],
@@ -207,7 +209,7 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
 });
 
 describe("the checklist by role", () => {
-  it("an enterprise admin configures the model in the admin console", async () => {
+  it("a super admin configures the model in the admin console", async () => {
     renderFrame();
     const model = step(sl.steps.model);
     expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
@@ -297,7 +299,7 @@ describe("the checklist by role", () => {
     expect(router.refresh).toHaveBeenCalledTimes(1);
     view.update(shellOf(ME, { readiness: NOT_READY }));
     expect(router.refresh).toHaveBeenCalledTimes(1);
-    go("/catalog");
+    go("/plugins");
     view.update(shellOf(ME, { readiness: NOT_READY }));
     expect(router.refresh).toHaveBeenCalledTimes(2);
     cleanup();
@@ -315,7 +317,7 @@ describe("the checklist by role", () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 
-  it("an enterprise admin reaches the admin console from the setup sidebar", () => {
+  it("a super admin reaches the admin console from the setup sidebar", () => {
     renderFrame();
     expect(setupSidebar()?.querySelector('a[href="/admin"]')).not.toBeNull();
     cleanup();

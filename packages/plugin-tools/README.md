@@ -41,21 +41,28 @@ capybara-plugin release [--dry-run] [--provenance] [--out <dir>] [--auto] [--roo
   plugin itself and files inside the plugin, by import, package-name string or path) and the
   release metadata (`plugin-release-metadata`: a public plugin has a `description`, a `license`, an
   https `homepage` and `repository` `{ type: "git", url: <the root package.json's
-  repository.url>, directory: <its dir> }`; `example-*` plugins are private). `--base <ref>` also fails when the diff edits, deletes or renames an applied
+  repository.url>, directory: <its dir> }`; `example-*` plugins are private; its `plugin.json`
+  has a `displayName`, and `release-description-zh` warns, without failing, when its `description`
+  has no `zh`). Warnings are printed under `passed with N warning(s)`. `--base <ref>` also fails when the diff edits, deletes or renames an applied
   migration, or adds one numbered at or below the highest number of its directory at `<ref>`. No plugin found is an error. A plugin may list `@capybara-hq/plugin-tools` (like
   `@capybara-hq/testing`) in its devDependencies.
 - **sync-versions**: after `changeset version` (which bumps only `package.json`), copies each
   plugin's version into its `.capybara-plugin/plugin.json` and its extension manifest
   (`src/index.ts`, `  version: "x"`), which the packer requires equal.
-- **marketplace**: `--write` appends to `.capybara-plugin/marketplace.json` (`--file`) one npm entry
-  per public plugin version it does not list yet (`name`, `version`, `summary`, `homepage`,
+- **marketplace**: `--write` keeps one npm entry per public plugin in
+  `.capybara-plugin/marketplace.json` (`--file`), its current version (`name`, `version`,
+  `summary` from the `plugin.json` `description`, `displayName` from `plugin.json`, `homepage`,
   `permissions`, `source.npm` with the sha512 of a reproducible pack), formatted as Biome formats
-  it; `--check` fails when an entry is missing (`marketplace-missing`) or the file does not parse
-  (`marketplace-invalid`). A version already listed is not compared with the tree: once
+  it: a plugin whose version moved gets its entry replaced in place, its other versions are
+  dropped, a listed entry's `summary` / `displayName` are refreshed from `plugin.json`
+  (`marketplace-display-stale` in `--check`; source and integrity untouched), and entries of
+  plugins not in the tree are kept. `--check` fails when a plugin's
+  current version is missing or not its only entry (`marketplace-missing`) or the file does not
+  parse (`marketplace-invalid`). A version already listed is not compared with the tree: once
   published, its bytes are the release gate's business. `--check --base <rev>` (pull requests)
-  also requires the entries at `<rev>` to stay unchanged and first, in order
-  (`marketplace-append-only`), and the entries added since to match their packs
-  (`marketplace-integrity`). Entries of versions no longer in the tree are kept.
+  also requires a plugin's version to only increase over the versions `<rev>` lists
+  (`marketplace-version-decrease`), a version `<rev>` lists to keep its integrity, and the entries
+  added since to match their packs (`marketplace-integrity`).
 - **release**: publishes every non-private workspace package whose version is not on npm yet:
   plugins (the packages under `plugins/`) as their plugin tgz, libraries through `pnpm pack`, with
   the dist-tag rule (prerelease `next`, backport `release-<major>.<minor>`, else `latest`), then

@@ -9,10 +9,10 @@ import { type Account, AccountsService } from "../identity/accounts.js";
 import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
 import {
@@ -42,11 +42,11 @@ import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
   /**
-   * Extensions an enterprise admin has to act on (pending approval or configuration, failed, missing
+   * Extensions a super admin has to act on (pending approval or configuration, failed, missing
    * dependency, replicas disagree); see `extensionNeedsAction`.
    */
   extensionsNeedingAction: number;
-  /** Catalog requests waiting for an enterprise admin (stage deployment, pending). */
+  /** Catalog requests waiting for a super admin (stage deployment, pending). */
   catalogRequestsPending: number;
   orgs: number;
   accounts: number;
@@ -63,14 +63,14 @@ const CreateAccountSchema = z.object({
   password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
   displayName: z.string().trim().min(1).max(100),
   email: z.email().max(254).optional(),
-  enterpriseAdmin: z.boolean().optional(),
+  superAdmin: z.boolean().optional(),
 });
 class CreateAccountBody extends createZodDto(CreateAccountSchema, "CreateAccountBody") {}
 
 const UpdateAccountSchema = z.object({
   displayName: z.string().trim().min(1).max(100).optional(),
   status: z.enum(["active", "disabled"]).optional(),
-  isEnterpriseAdmin: z.boolean().optional(),
+  isSuperAdmin: z.boolean().optional(),
 });
 class UpdateAccountBody extends createZodDto(UpdateAccountSchema, "UpdateAccountBody") {}
 
@@ -83,11 +83,11 @@ class DeploymentSettingsBody extends createZodDto(SettingsSchema, "DeploymentSet
 const ModelPriceBody = createZodDto(MODEL_PRICE_PUT, "ModelPricePut");
 
 /**
- * 企业管理员端点（`/api/v1/admin/*`）：只接受企业管理员的 Web 会话或个人令牌；
+ * 超级管理员端点（`/api/v1/admin/*`）：只接受超级管理员的 Web 会话或个人令牌；
  * 服务令牌一律 `forbidden`（未标 `@AllowService`）。
  */
 @Controller("api/v1/admin")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class AdminController {
   constructor(
     @Inject(AccountsService) private readonly accounts: AccountsService,
@@ -150,7 +150,7 @@ export class AdminController {
         password: body.password,
         displayName: body.displayName,
         ...(body.email !== undefined && { email: body.email }),
-        ...(body.enterpriseAdmin !== undefined && { enterpriseAdmin: body.enterpriseAdmin }),
+        ...(body.superAdmin !== undefined && { superAdmin: body.superAdmin }),
       },
       actor.account.id,
       patTokenId(actor),
@@ -158,7 +158,7 @@ export class AdminController {
     return { account };
   }
 
-  /** 改显示名 / 状态 / 企业管理员；停用时同时吊销该账号的全部会话与个人令牌。 */
+  /** 改显示名 / 状态 / 超级管理员；停用时同时吊销该账号的全部会话与个人令牌。 */
   @Patch("accounts/:accountId")
   async updateAccount(
     @CurrentPrincipal() principal: Principal,
@@ -169,7 +169,7 @@ export class AdminController {
     const patch: Parameters<AccountsService["update"]>[1] = {
       ...(body.displayName !== undefined && { displayName: body.displayName }),
       ...(body.status !== undefined && { status: body.status }),
-      ...(body.isEnterpriseAdmin !== undefined && { isEnterpriseAdmin: body.isEnterpriseAdmin }),
+      ...(body.isSuperAdmin !== undefined && { isSuperAdmin: body.isSuperAdmin }),
     };
     // 停用时账号状态、会话与个人令牌的吊销在同一个 PG 事务里完成
     const { account, revokedSessionIds } = await this.accounts.updateAccount(

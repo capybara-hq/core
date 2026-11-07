@@ -17,7 +17,7 @@ import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
 
 export const ME: Me = {
-  account: { id: "a1", displayName: "Grant", email: null, isEnterpriseAdmin: true },
+  account: { id: "a1", displayName: "Grant", email: null, isSuperAdmin: true },
   via: "session",
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "owner" }],

@@ -1,5 +1,5 @@
 import { IconButton } from "../controls/button";
-import { Select } from "../controls/inputs";
+import { Select } from "../controls/select";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 

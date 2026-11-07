@@ -102,11 +102,24 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
 
 const input = () => screen.getByRole("textbox", { name: en.chat.inputLabel, hidden: true });
 const row = () => screen.queryByRole("group", { name: "Choose an agent" });
-const quick = () => screen.queryByRole("group", { name: "Common tasks" });
-const titles = () =>
-  within(quick() as HTMLElement)
-    .getAllByRole("button")
+/** The quick actions: a zap button in the composer's control row (spec §6.16.27). */
+const quick = () => screen.queryByRole("button", { name: "Common tasks" });
+/** Opens the quick actions menu and reads its titles, then closes it with Escape. */
+async function titles(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(quick() as HTMLElement);
+  const menu = await screen.findByRole("menu", { name: "Common tasks" });
+  const out = within(menu)
+    .getAllByRole("menuitem")
     .map((b) => b.textContent);
+  await user.keyboard("{Escape}");
+  await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  return out;
+}
+/** Picks a quick action from the zap menu. */
+async function pick(user: ReturnType<typeof userEvent.setup>, title: string) {
+  await user.click(quick() as HTMLElement);
+  await user.click(await screen.findByRole("menuitem", { name: title }));
+}
 
 beforeEach(() => {
   resetNavigation("/chat");
@@ -147,14 +160,19 @@ describe("the new conversation page (agent profile design §4)", () => {
       "More +2",
     ]);
     expect(chips[0]?.getAttribute("aria-pressed")).toBe("true");
-    // Beta's quick actions: the first four, then More
-    expect(titles()).toEqual(["Plan", "Review", "Draft", "Polish", "More"]);
+    // Beta's quick actions: a zap button right after the effort picker, its menu lists all five
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    expect(bar.contains(quick())).toBe(true);
+    const parts = [...bar.children].map((e) => e.getAttribute("data-part"));
+    expect(parts[parts.indexOf("quick-actions") - 1]).toBe("picker");
+    expect(await titles(userEvent.setup())).toEqual(["Plan", "Review", "Draft", "Polish", "Ship"]);
     // the composer has no agent picker; the model picker stays
-    expect(screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickAgent}`) })).toBeNull();
+    expect(bar.textContent).not.toContain("Beta");
     expect(input().getAttribute("placeholder")).toBe("What should Beta do?");
-    // top to bottom: greeting, agents, quick actions, composer
+    // top to bottom: greeting, agents, composer (no line of quick actions between them)
     const body = container.querySelector('[data-part="new-conversation-body"]') as HTMLElement;
-    const order = [body.querySelector("h2"), row(), quick(), input()] as HTMLElement[];
+    expect(body.querySelector('[data-part="quick-action"]')).toBeNull();
+    const order = [body.querySelector("h2"), row(), input()] as HTMLElement[];
     for (let i = 1; i < order.length; i++) {
       expect(
         (order[i - 1] as HTMLElement).compareDocumentPosition(order[i] as HTMLElement) &
@@ -171,11 +189,11 @@ describe("the new conversation page (agent profile design §4)", () => {
     await renderRouteWithCache("/chat", routes());
     const user = userEvent.setup();
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "Alpha" }));
-    expect(titles()).toEqual(["Summarize", "Translate"]);
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
     // the composer takes the focus, ready to type
     expect(document.activeElement).toBe(input());
-    // an agent with no quick actions hides the line; one picked in the panel focuses the composer
+    expect(await titles(user)).toEqual(["Summarize", "Translate"]);
+    // an agent with no quick actions has no zap button; one picked in the panel focuses the composer
     await user.click(within(row() as HTMLElement).getByRole("button", { name: "More +2" }));
     await user.click(await screen.findByRole("option", { name: /Gamma/ }));
     expect(quick()).toBeNull();
@@ -198,7 +216,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     );
     await screen.findByRole("heading", { name: /Grant/ });
     expect(row()).toBeNull();
-    expect(titles()).toEqual(["Summarize", "Translate"]);
+    expect(await titles(userEvent.setup())).toEqual(["Summarize", "Translate"]);
     expect(input().getAttribute("placeholder")).toBe("What should Alpha do?");
   });
 
@@ -207,9 +225,11 @@ describe("the new conversation page (agent profile design §4)", () => {
     await renderRouteWithCache("/chat", routes());
     const user = userEvent.setup();
     await user.type(input(), "my draft");
-    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Review" }));
+    await pick(user, "Review");
     expect(input()).toHaveProperty("value", "Review body");
-    expect(document.activeElement).toBe(input());
+    // the menu closes and leaves the focus in the composer it filled
+    expect(screen.queryByRole("menu")).toBeNull();
+    await vi.waitFor(() => expect(document.activeElement).toBe(input()));
     // one undo step: the previous text comes back, and a second ⌘Z is the browser's own
     fireEvent.keyDown(input(), { key: "z", metaKey: true });
     expect(input()).toHaveProperty("value", "my draft");
@@ -217,17 +237,18 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(again).toBe(true);
     expect(input()).toHaveProperty("value", "my draft");
     // Ctrl+Z too; an edit after the pick leaves ⌘Z to the browser
-    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Plan" }));
+    await pick(user, "Plan");
     expect(input()).toHaveProperty("value", "Plan body");
     fireEvent.keyDown(input(), { key: "z", ctrlKey: true });
     expect(input()).toHaveProperty("value", "my draft");
-    await user.click(within(quick() as HTMLElement).getByRole("button", { name: "Plan" }));
+    await pick(user, "Plan");
+    await vi.waitFor(() => expect(document.activeElement).toBe(input()));
     await user.type(input(), "!");
     expect(fireEvent.keyDown(input(), { key: "z", metaKey: true })).toBe(true);
     expect(input()).toHaveProperty("value", "Plan body!");
   });
 
-  it("an agent with avatar null shows its initial in the row, list, title bar and sidebar", async () => {
+  it("an agent with avatar null shows its initial in the row, the cards, title bar and sidebar", async () => {
     const plain = {
       agents: [
         agent("ag1", "echo agent", { avatar: null }),
@@ -249,11 +270,16 @@ describe("the new conversation page (agent profile design §4)", () => {
     ).toBe("owl");
     cleanup();
 
-    // the agent list rows (28)
-    await renderRouteWithCache("/agents", { [`GET ${ORG}/agents`]: () => json(200, plain) });
+    // the agent cards (40, ruling P4-15)
+    await renderRouteWithCache("/agents", {
+      [`GET ${ORG}/agents`]: () => json(200, plain),
+      [`GET ${ORG}/members`]: () => json(200, { members: [] }),
+      [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [] }),
+      [`GET ${ORG}/components`]: () => json(200, { components: [] }),
+    });
     const listRow = screen.getByText("echo agent").closest("li");
     expect(initialIn(listRow)).toBe("E");
-    expect(listRow?.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("28");
+    expect(listRow?.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("40");
     cleanup();
 
     // the conversation title bar, next to the agent name (16)

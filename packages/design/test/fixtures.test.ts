@@ -89,18 +89,20 @@ describe("@capybara-hq/design/fixtures", () => {
       expect(icons.has(n.icon), n.icon).toBe(true);
     const ids = fixtures.NAV_FIXTURE.map((n) => n.id);
     expect(new Set(ids).size).toBe(ids.length);
+    // no home item; 技能 and 连接器 sit under 智能体 (acceptance 2026-11-07)
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "primary").map((n) => n.id)).toEqual([
-      "overview",
       "agents",
+      "skills",
+      "connectors",
     ]);
     // the inbox is a brand-row icon button (acceptance round 2, B2)
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "brand").map((n) => n.id)).toEqual([
       "inbox",
     ]);
     expect(fixtures.NAV_FIXTURE.filter((n) => n.place === "more").map((n) => n.id)).toEqual([
-      "skills",
-      "connectors",
-      "catalog",
+      "plugins",
+      "extensions",
+      // 智能体模板 is the 模板 tab of 智能体, no 更多 item (ruling P4-14)
       "channels",
       "evals",
       "settings",
@@ -110,7 +112,7 @@ describe("@capybara-hq/design/fixtures", () => {
       "账号",
       "组织",
       "扩展",
-      "企业目录",
+      "平台目录",
       "市场",
       "模型",
       "部署设置",

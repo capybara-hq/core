@@ -9,6 +9,7 @@ import type { TrajectoryRun } from "../src/lib/trajectories";
 import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
+import { fieldOptionLabels, optionLabels, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -293,7 +294,7 @@ describe("新建评测集（FormPage）", () => {
     expect(container.querySelector('[data-template="FormPage"]')).not.toBeNull();
     const user = userEvent.setup();
     const agent = await screen.findByRole("combobox", { name: E.form.agentLabel });
-    await waitFor(() => expect((agent as HTMLSelectElement).value).toBe("ag1"));
+    await waitFor(() => expect((agent as HTMLButtonElement).value).toBe("ag1"));
     await user.type(
       screen.getByRole("textbox", { name: new RegExp(E.form.nameLabel) }),
       "Regression",
@@ -340,7 +341,7 @@ describe("新建评测集: a create form", () => {
     await renderRouteWithCache("/evals/new?agentId=ag2", lastStubRoutes());
     const agent = (await screen.findByRole("combobox", {
       name: E.form.agentLabel,
-    })) as HTMLSelectElement;
+    })) as HTMLButtonElement;
     expect(agent.value).toBe("ag2");
   });
 });
@@ -372,6 +373,32 @@ describe("评测集详情（DetailPage）", () => {
     expect(router.push).toHaveBeenLastCalledWith("/evals/runs/er1");
   });
 
+  it("one centred column: the description, then the facts, at the top; a custom rubric folds", async () => {
+    stubApi(
+      routes({
+        [`GET ${SETS}/s1`]: () =>
+          json(200, { set: { ...SET, rubric: "Be exact.\nCite the doc.", cases: CASES } }),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/evals/s1", lastStubRoutes());
+    await screen.findByRole("table", { name: E.set.casesLabel });
+    expect(screen.queryByRole("complementary")).toBeNull();
+    const facts = container.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(container.querySelector('[data-part="content"]')?.firstElementChild).toBe(facts);
+    // the description is the block's first line, before the rows
+    const description = within(facts).getByText("Nightly checks");
+    const rows = facts.querySelectorAll('[data-part="key-value-row"]');
+    expect(rows).toHaveLength(2);
+    expect(description.compareDocumentPosition(rows[0] as Node)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(await within(facts).findByText("Helper")).toBeTruthy();
+    // the custom rubric is folded under the rows; opening it shows the whole text
+    expect(within(facts).queryByText(/Cite the doc/)).toBeNull();
+    await userEvent.setup().click(within(facts).getByRole("button", { name: E.set.rubric }));
+    expect(within(facts).getByText(/Cite the doc/)).toBeTruthy();
+  });
+
   it("从对话抽样：弹窗提交参数，提示加入与跳过的个数并重读", async () => {
     let reads = 0;
     const calls = stubApi(
@@ -391,9 +418,10 @@ describe("评测集详情（DetailPage）", () => {
     const count = within(dialog).getByRole("spinbutton", { name: E.sample.count });
     await user.clear(count);
     await user.type(count, "5");
-    await user.selectOptions(
+    await pickOption(
       within(dialog).getByRole("combobox", { name: E.sample.status }),
       "failed",
+      user,
     );
     await user.click(within(dialog).getByRole("button", { name: E.sample.submit }));
     expect(await screen.findByText(fill(E.sample.done, { added: 3, skipped: 1 }))).toBeTruthy();
@@ -563,17 +591,13 @@ describe("运行向导（WizardPage）", () => {
       const user = userEvent.setup();
       // 1. 模式与候选
       const model = await screen.findByRole("combobox", { name: m.wizard.model });
-      await waitFor(() => expect(within(model).getAllByRole("option").length).toBeGreaterThan(1));
+      await waitFor(() => expect(fieldOptionLabels(model).length).toBeGreaterThan(1));
       await user.click(screen.getByRole("radio", { name: new RegExp(m.mode.step) }));
-      await user.selectOptions(model, "model-fake/fake-2");
+      await pickOption(model, "model-fake/fake-2", user);
       // 选了候选模型后出现它的参数（复用 ModelParams）
       expect(await screen.findByText(locale === "zh" ? "级别" : "Level")).toBeTruthy();
       const version = screen.getByRole("combobox", { name: m.wizard.version });
-      expect(
-        within(version)
-          .getAllByRole("option")
-          .map((o) => o.textContent),
-      ).toEqual([m.wizard.versionKeep, "v3", "v2", "v1"]);
+      expect(await optionLabels(version, user)).toEqual([m.wizard.versionKeep, "v3", "v2", "v1"]);
       const region = within(container.querySelector(".cb-actionrow") as HTMLElement);
       await user.click(region.getByRole("button", { name: m.wizard.next }));
       // 2. 评委与上限
@@ -783,7 +807,7 @@ describe("评测运行（DetailPage）", () => {
   });
 
   it.each(["zh", "en"] as const)(
-    "结果表与 Inspector：文本差异、工具差异、评委理由；页头指标（%s）",
+    "结果表与结果抽屉：文本差异、工具差异、评委理由；页头指标（%s）",
     async (locale) => {
       const m = msgs[locale].evals;
       stubApi(routes(() => evalRun(), [result()]));
@@ -805,8 +829,18 @@ describe("评测运行（DetailPage）", () => {
       expect(metric(m.run.metrics.judgePass).getByText("100%")).toBeTruthy();
       expect(metric(m.run.metrics.humanPass).getByText("—")).toBeTruthy();
 
-      await userEvent.setup().click(within(row).getByText(m.run.mismatch));
-      const region = await screen.findByRole("region", { name: m.run.inspector.title });
+      // one column: no inspector beside the table; a result opens in a right-side Sheet
+      expect(screen.queryByRole("complementary")).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+      const user = userEvent.setup();
+      await user.click(within(row).getByText(m.run.mismatch));
+      const sheet = await screen.findByRole("dialog", { name: m.run.inspector.title });
+      expect(
+        within(sheet).getByText("Delete the stale item", { selector: ".cb-sheet-meta" }),
+      ).toBeTruthy();
+      // the Sheet is the one named landmark: no region of the same name inside it
+      expect(within(sheet).queryByRole("region")).toBeNull();
+      const region = sheet;
       const inspector = within(region);
       // 文本差异：lineDiff + CodeBlock（标注走 i18n）；工具差异的代码块不带标注
       const blocks = region.querySelectorAll("figure");
@@ -822,6 +856,10 @@ describe("评测运行（DetailPage）", () => {
       // 评委理由
       expect(inspector.getByText("Deleted the wrong item.")).toBeTruthy();
       expect(inspector.getByText("2")).toBeTruthy();
+      // closing the Sheet clears the open result
+      const close = locale === "zh" ? "关闭" : "Close";
+      await user.click(within(sheet).getByRole("button", { name: close }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     },
   );
 
@@ -862,7 +900,7 @@ describe("评测运行（DetailPage）", () => {
     const table = await screen.findByRole("table", { name: E.run.resultsLabel });
     const user = userEvent.setup();
     await user.click(await within(table).findByText("Delete the stale item"));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     await user.type(
       inspector.getByRole("textbox", { name: new RegExp(E.run.inspector.note) }),
       "Looks right",
@@ -1099,7 +1137,7 @@ describe("评测运行（DetailPage）", () => {
     const row = await within(table).findByRole("row", { name: /Delete the stale item/ });
     expect(within(row).getByText(E.run.wholeRun)).toBeTruthy();
     await userEvent.setup().click(within(row).getByText(E.run.wholeRun));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     expect(inspector.getByText(E.run.inspector.noTextDiff)).toBeTruthy();
     expect(inspector.getByText(E.run.inspector.noToolCalls)).toBeTruthy();
     expect(
@@ -1113,7 +1151,7 @@ describe("评测运行（DetailPage）", () => {
     await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), { locale });
     const table = await screen.findByRole("table", { name: m.run.resultsLabel });
     await userEvent.setup().click(await within(table).findByText(m.run.mismatch));
-    const inspector = within(await screen.findByRole("region", { name: m.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: m.run.inspector.title }));
     expect(
       await inspector.findByText(
         `${m.drift.system_hash}${m.run.inspector.driftSeparator}brand_new_reason`,
@@ -1163,7 +1201,7 @@ describe("评测运行（DetailPage）", () => {
     await userEvent
       .setup({ advanceTimers: vi.advanceTimersByTime })
       .click(within(table).getByRole("row", { name: /Delete the stale item/ }));
-    const inspector = within(await screen.findByRole("region", { name: E.run.inspector.title }));
+    const inspector = within(await screen.findByRole("dialog", { name: E.run.inspector.title }));
     await waitFor(() =>
       expect(calls.filter((c) => c.url === `${RUN}/results/res1`)).toHaveLength(1),
     );

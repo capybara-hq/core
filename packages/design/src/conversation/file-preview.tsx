@@ -2,6 +2,7 @@ import type { JSX, ReactNode } from "react";
 import { Button, IconButton } from "../controls/button";
 import { formatBytes } from "../display/attachments";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { Menu } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { isSafeImageSrc, TypeBadge, typeBadge } from "./files";
@@ -137,37 +138,41 @@ export function FilePreviewFrame({
     body = children;
   }
   return (
-    <aside className="cb-rpanel" data-part="right-panel" aria-label={h.name}>
-      <header className="cb-rpanel-head" data-part="panel-head">
-        <TypeBadge label={h.badge} />
-        {title}
-        {h.version ? <span className="cb-faint cb-small cb-rpanel-meta">{h.version}</span> : null}
-        <span className="cb-rpanel-grow" />
-        {previewerSwitch}
-        <IconButton
-          icon={<Icon name="download" size={16} />}
-          label={t("files.download")}
-          onClick={h.onDownload}
-        />
-        <IconButton
-          icon={<Icon name="maximize-2" size={16} />}
-          label={t("files.fullscreen")}
-          onClick={h.onFullscreen}
-        />
-        <IconButton
-          icon={<Icon name="x" size={16} />}
-          label={t("overlay.close")}
-          onClick={h.onClose}
-        />
-      </header>
-      <div
-        className="cb-rpanel-body"
-        data-state={state}
-        aria-busy={state === "loading" ? true : undefined}
-      >
-        {body}
-      </div>
-    </aside>
+    // A full-height pane like RightPanel (spec §1): what it previews is on a page again, also
+    // when the narrow layout puts it in the properties sheet.
+    <BoxScope kind={null}>
+      <aside className="cb-rpanel" data-part="right-panel" aria-label={h.name}>
+        <header className="cb-rpanel-head" data-part="panel-head">
+          <TypeBadge label={h.badge} />
+          {title}
+          {h.version ? <span className="cb-faint cb-small cb-rpanel-meta">{h.version}</span> : null}
+          <span className="cb-rpanel-grow" />
+          {previewerSwitch}
+          <IconButton
+            icon={<Icon name="download" size={16} />}
+            label={t("files.download")}
+            onClick={h.onDownload}
+          />
+          <IconButton
+            icon={<Icon name="maximize-2" size={16} />}
+            label={t("files.fullscreen")}
+            onClick={h.onFullscreen}
+          />
+          <IconButton
+            icon={<Icon name="x" size={16} />}
+            label={t("overlay.close")}
+            onClick={h.onClose}
+          />
+        </header>
+        <div
+          className="cb-rpanel-body"
+          data-state={state}
+          aria-busy={state === "loading" ? true : undefined}
+        >
+          {body}
+        </div>
+      </aside>
+    </BoxScope>
   );
 }
 

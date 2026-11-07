@@ -110,6 +110,34 @@ const skillRecord = (over: Record<string, unknown> = {}) => ({
 const invocation = (seq: number, text = RENDERED, skill = skillRecord()) =>
   userMsg(seq, text, { skill });
 
+/** The agent tree the page reads with sub-agents (AC3 fix round 1: the agents chip counts it). */
+const treeOf = (id: string, children: { id: string; status: string }[]) => ({
+  root: {
+    id,
+    description: "",
+    agentType: null,
+    status: "running",
+    model: null,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: 0,
+    tokens: 0,
+    toolCalls: 0,
+    children: children.map((c) => ({
+      ...c,
+      description: c.id,
+      agentType: "general-purpose",
+      model: null,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: 0,
+      tokens: 0,
+      toolCalls: 0,
+      children: [],
+    })),
+  },
+});
+
 function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = {}) {
   return stubApi({
     [`GET ${BASE}`]: () => json(200, CONV()),
@@ -118,6 +146,7 @@ function api(extra: Record<string, (c: Call) => Response | Promise<Response>> = 
     [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${BASE}/tools`]: () => json(200, { tools: [] }),
     [`GET ${BASE}/subagents`]: () => json(200, { subagents: [] }),
+    [`GET ${BASE}/agent-tree`]: () => json(200, treeOf("c1", [])),
     [`GET ${INVOCABLE}`]: () => json(200, SKILLS),
     [`GET ${ORG}/connectors/prompts`]: () => json(200, PROMPTS),
     ...extra,
@@ -271,7 +300,7 @@ describe("a lone /", () => {
     expect(posts(calls, `${BASE}/messages`)).toHaveLength(0);
   });
 
-  it("with no skills and no prompts the menu says the agent has nothing to run", async () => {
+  it("with no skills and no prompts the menu explains why and links an editor to the agent's skills", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
@@ -282,7 +311,38 @@ describe("a lone /", () => {
     await userEvent.setup().type(input(), "/");
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText(en.chat.noInvocable)).toBeTruthy();
+    // The owner of the agent can edit it: the next step is its skills section
+    const link = within(dialog).getByRole("link", { name: en.chat.noInvocableAction });
+    expect(link.getAttribute("href")).toBe("/agents/ag1?s=skills");
   });
+
+  it.each(["en"] as const)(
+    "someone who cannot edit the agent reads the explanation without a link (%s)",
+    async (locale) => {
+      const m = { zh, en }[locale].chat;
+      api({
+        [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+        [`GET ${INVOCABLE}`]: () => json(200, { skills: [] }),
+        [`GET ${ORG}/connectors/prompts`]: () => json(200, { prompts: [], unavailable: [] }),
+      });
+      // a member who does not own the agent (owned by a1)
+      await renderChatRoute({
+        locale,
+        me: {
+          account: { id: "a2", displayName: "Mia", email: null, isSuperAdmin: false },
+          via: "session",
+          currentOrgId: "o1",
+          memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],
+          canCreateOrg: true,
+        },
+      });
+      await screen.findByText("hi");
+      await userEvent.setup().type(input(), "/");
+      const dialog = await screen.findByRole("dialog");
+      expect(await within(dialog).findByText(m.noInvocableReadOnly)).toBeTruthy();
+      expect(within(dialog).queryByRole("link")).toBeNull();
+    },
+  );
 });
 
 describe("typed /name", () => {
@@ -395,28 +455,15 @@ describe("a pending send", () => {
   });
 });
 
-describe("queueing an invocation", () => {
-  it("↵ while running queues with the skill; the queued bubble shows the chip", async () => {
-    let items: unknown[] = [];
+describe("an invocation while running", () => {
+  it("↵ while running posts the invocation as a message; the pending bubble shows the chip", async () => {
+    let answer: (r: Response) => void = () => {};
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
-      [`GET ${BASE}/queue`]: () => json(200, { items, paused: false }),
-      [`POST ${BASE}/queue`]: (c) => {
-        const item = {
-          id: "q1",
-          text: "9",
-          files: [],
-          attachments: [],
-          clientMessageId: (bodyOf(c) as { clientMessageId: string }).clientMessageId,
-          model: null,
-          effort: null,
-          createdAt: "2026-10-26T06:00:00.000Z",
-          position: 1,
-          skill: { name: "fix-issue", arguments: "9", mode: "inline" },
-        };
-        items = [item];
-        return json(201, { item });
-      },
+      [`POST ${BASE}/messages`]: () =>
+        new Promise<Response>((r) => {
+          answer = r;
+        }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
@@ -424,22 +471,22 @@ describe("queueing an invocation", () => {
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
     await user.type(input(), "9{Enter}");
-    expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
     });
-    const list = await screen.findByRole("group", { name: en.chat.queueLabel });
-    await vi.waitFor(() =>
-      expect(
-        list.querySelector('[data-queue-item="q1"] [data-part="bubble-skill"]')?.textContent,
-      ).toBe("/fix-issue"),
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
+    expect(document.querySelector('[data-pending] [data-part="bubble-skill"]')?.textContent).toBe(
+      "/fix-issue",
     );
+    await act(async () => answer(json(202, { event: invocation(3) })));
   });
 
-  it("a typed /name args with ↵ while running queues the invocation", async () => {
+  it("a typed /name args with ↵ while running posts the invocation", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi"), runStarted(2)] }),
-      [`POST ${BASE}/queue`]: () => json(201, { item: null }),
+      [`POST ${BASE}/messages`]: () => json(202, { event: invocation(3) }),
     });
     await renderChatRoute();
     await screen.findByText("hi");
@@ -447,14 +494,17 @@ describe("queueing an invocation", () => {
     await user.click(input());
     await user.paste("/fix-issue 9");
     await user.keyboard("{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${BASE}/queue`)).toHaveLength(1));
-    expect(sentMessage(posts(calls, `${BASE}/queue`)[0] as Call)).toEqual({
+    await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
+    expect(sentMessage(posts(calls, `${BASE}/messages`)[0] as Call)).toEqual({
       text: "9",
       skill: { name: "fix-issue" },
     });
+    expect(posts(calls, `${BASE}/queue`)).toHaveLength(0);
   });
+});
 
-  it("a queue paused because the head's skill can no longer be invoked says so", async () => {
+describe("a leftover queued invocation", () => {
+  it("shows the chip; paused because its skill can no longer be invoked, it says so", async () => {
     api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
       [`GET ${BASE}/queue`]: () =>
@@ -480,6 +530,9 @@ describe("queueing an invocation", () => {
     await renderChatRoute({ locale: "zh" });
     expect(await screen.findByText(zh.chat.queuePaused.skill_not_invocable)).toBeTruthy();
     expect(screen.queryByText(/运行已停止/)).toBeNull();
+    expect(
+      document.querySelector('[data-leftover="q1"] [data-part="bubble-skill"]')?.textContent,
+    ).toBe("/fix-issue");
   });
 });
 

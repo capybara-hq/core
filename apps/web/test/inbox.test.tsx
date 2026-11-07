@@ -279,7 +279,7 @@ describe("收件箱：技能变更", () => {
       expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       await userEvent
         .setup()
-        .click(within(table).getByText(`${m.inbox.skillChange.label} · notes-style`));
+        .click(within(table).getByText("notes-style", { selector: ".cb-cell-title-name" }));
       const card = await vi.waitFor(() => {
         const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
         if (!el) throw new Error("no card");
@@ -391,6 +391,124 @@ describe("收件箱：技能变更", () => {
   });
 });
 
+describe("inbox: a renamed skill (org admins)", () => {
+  const notice = {
+    id: "n1",
+    kind: "skill_renamed",
+    createdAt: T,
+    skillRenamed: {
+      skillId: "k1",
+      from: "pdf",
+      to: "pdf-org",
+      platformSkillId: "p1",
+      plugin: "docs",
+    },
+  };
+  const withNotice = (open: boolean) => ({
+    items: open ? [{ type: "skill_renamed", id: "n1", createdAt: T, notice }] : [],
+    truncated: false,
+  });
+
+  it.each(LOCALES)("shows the rename and dismisses it (%s)", async (locale) => {
+    const m = msgs[locale];
+    let open = true;
+    const { calls } = await renderInbox(
+      {
+        [LIST]: () => json(200, withNotice(open)),
+        "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss": () => {
+          open = false;
+          return noContent();
+        },
+      },
+      { locale },
+    );
+    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    // the row leads with the new name; the kind and the old name come second
+    expect(within(table).getByText("pdf-org", { selector: ".cb-cell-title-name" })).toBeTruthy();
+    expect(within(table).getByText(`${m.inbox.skillRenamed.label} · pdf`)).toBeTruthy();
+    const title = m.inbox.skillRenamed.title.replace("{from}", "pdf").replace("{to}", "pdf-org");
+    expect(await screen.findByText(title)).toBeTruthy();
+    const row = screen.getByRole("region", {
+      name: locale === "zh" ? "待提交改动" : "Pending changes",
+    });
+    await userEvent
+      .setup()
+      .click(within(row).getByRole("button", { name: m.inbox.skillRenamed.dismiss }));
+    expect(await screen.findByText(m.inbox.skillRenamed.dismissed)).toBeTruthy();
+    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss",
+      "GET /api/v1/orgs/o1/inbox",
+    ]);
+  });
+});
+
+describe("inbox: my decided requests", () => {
+  const request = (status: "approved" | "rejected", reason: string | null = null) => ({
+    id: "r1",
+    orgId: "o1",
+    orgName: "Acme",
+    kind: "enable",
+    item: { id: "11111111-1111-4111-8111-111111111111", name: "crm", displayName: null },
+    entry: null,
+    status,
+    note: "",
+    reason,
+    requestedBy: "a1",
+    requestedByName: "Grant",
+    decidedBy: "a2",
+    decidedAt: T,
+    stagingId: null,
+    createdAt: T,
+  });
+  const withDecided = (r: ReturnType<typeof request> | null) => ({
+    items:
+      r === null ? [] : [{ type: "catalog_request_decided", id: r.id, createdAt: T, request: r }],
+    truncated: false,
+  });
+
+  it.each(LOCALES)("an approved request shows and is dismissed (%s)", async (locale) => {
+    const m = msgs[locale];
+    let open: ReturnType<typeof request> | null = request("approved");
+    const { calls } = await renderInbox(
+      {
+        [LIST]: () => json(200, withDecided(open)),
+        "POST /api/v1/orgs/o1/catalog-requests/r1/dismiss": () => {
+          open = null;
+          return noContent();
+        },
+      },
+      { locale },
+    );
+    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    expect(within(table).getByText("crm", { selector: ".cb-cell-title-name" })).toBeTruthy();
+    expect(
+      within(table).getByText(
+        `${m.inbox.requestDecided.label} · ${m.inbox.requestDecided.approved}`,
+      ),
+    ).toBeTruthy();
+    expect(
+      await screen.findByText(m.inbox.requestDecided.titleApproved.replace("{name}", "crm")),
+    ).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: m.inbox.requestDecided.dismiss }));
+    expect(await screen.findByText(m.inbox.empty)).toBeTruthy();
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "POST /api/v1/orgs/o1/catalog-requests/r1/dismiss",
+      "GET /api/v1/orgs/o1/inbox",
+    ]);
+  });
+
+  it("a rejected request shows the reason", async () => {
+    await renderInbox({ [LIST]: () => json(200, withDecided(request("rejected", "Not now."))) });
+    expect(
+      await screen.findByText(en.inbox.requestDecided.titleRejected.replace("{name}", "crm")),
+    ).toBeTruthy();
+    expect(screen.getByText("Not now.")).toBeTruthy();
+  });
+});
+
 describe("the inbox from the cache", () => {
   it("a first render from the hydrated cache makes no browser read; a refused skill change detail shows its error", async () => {
     const browser = expectNoFirstPaintFetch();
@@ -476,5 +594,300 @@ describe("已记住的授权（SettingsPage）", () => {
     );
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
     expect(await screen.findByText(m.connections.grants.empty)).toBeTruthy();
+  });
+});
+
+type N = (typeof msgs)["en"]["inbox"]["orgNotice"];
+
+describe("inbox: org notices of phase 3 (org admins)", () => {
+  type Case = {
+    kind: string;
+    detail: Record<string, unknown>;
+    label: (n: N) => string;
+    row: string;
+    title: (n: N, a: string) => string;
+    extra?: (n: N) => string;
+  };
+  const ref = { kind: "plugin", id: "i1" };
+  const cases: Case[] = [
+    {
+      kind: "item_shared",
+      detail: { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      label: (n) => n.itemSharedLabel,
+      row: "crm",
+      title: (n) => n.itemSharedTitle.replace("{name}", "crm").replace("{org}", "Beta"),
+    },
+    {
+      kind: "item_shared",
+      detail: { ref, name: "crm", org: "all_orgs" },
+      label: (n) => n.itemSharedLabel,
+      row: "crm",
+      title: (n) => n.itemSharedAllTitle.replace("{name}", "crm"),
+    },
+    {
+      kind: "shared_item_updated",
+      detail: {
+        ref,
+        name: "crm",
+        from: "1.0.0",
+        to: "1.1.0",
+        owner: { kind: "org", orgId: "o9", name: "Acme" },
+      },
+      label: (n) => n.sharedItemUpdatedLabel,
+      row: "crm",
+      title: (n) =>
+        n.sharedItemUpdatedTitle
+          .replace("{owner}", "Acme")
+          .replace("{name}", "crm")
+          .replace("{from}", "v1.0.0")
+          .replace("{to}", "v1.1.0"),
+      extra: () => "Acme",
+    },
+    {
+      kind: "upload_confirmed",
+      detail: { itemId: "i1", name: "crm", version: "2.0.0" },
+      label: (n) => n.uploadConfirmedLabel,
+      row: "crm",
+      title: (n) => n.uploadConfirmedTitle.replace("{name}", "crm").replace("{version}", "v2.0.0"),
+    },
+    {
+      kind: "upload_rejected",
+      detail: { itemId: "i1", name: "crm", version: "2.0.0", reason: "too broad" },
+      label: (n) => n.uploadRejectedLabel,
+      row: "crm",
+      title: (n) => n.uploadRejectedTitle.replace("{name}", "crm").replace("{version}", "v2.0.0"),
+      extra: () => "too broad",
+    },
+  ];
+
+  it.each(LOCALES.flatMap((locale) => cases.map((c, i) => [locale, c.kind, i] as const)))(
+    "shows %s %s (case %i) and dismisses it",
+    async (locale, _kind, i) => {
+      const c = cases[i] as Case;
+      const n = msgs[locale].inbox.orgNotice;
+      let open = true;
+      const notice = { id: "n1", kind: c.kind, createdAt: T, detail: c.detail };
+      const { calls } = await renderInbox(
+        {
+          [LIST]: () =>
+            json(200, {
+              items: open ? [{ type: c.kind, id: "n1", createdAt: T, notice }] : [],
+              truncated: false,
+            }),
+          "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss": () => {
+            open = false;
+            return noContent();
+          },
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      // The row leads with the item's name; what kind of notice it is comes second
+      const name = within(table).getByText(c.row, { selector: ".cb-cell-title-name" });
+      const row = name.closest("tr") as HTMLElement;
+      expect(row.textContent).toContain(c.label(n));
+      // a neutral column header: rows are requests and notices alike
+      expect(
+        within(table).getByRole("columnheader", { name: msgs[locale].inbox.columns.item }),
+      ).toBeTruthy();
+      expect(await screen.findByText(c.title(n, ""))).toBeTruthy();
+      if (c.extra) expect(screen.getAllByText(c.extra(n)).length).toBeGreaterThan(0);
+      await userEvent.setup().click(screen.getByRole("button", { name: n.dismiss }));
+      expect(await screen.findByText(n.dismissed)).toBeTruthy();
+      expect(calls.map((x) => `${x.method} ${x.url}`)[0]).toBe(
+        "POST /api/v1/orgs/o1/inbox/notices/n1/dismiss",
+      );
+    },
+  );
+
+  it.each([
+    [
+      "zh",
+      "item_shared",
+      { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      "Beta 现在可以使用 crm",
+      null,
+    ],
+    ["zh", "item_shared", { ref, name: "crm", org: "all_orgs" }, "所有组织现在可以使用 crm", null],
+    [
+      "zh",
+      "shared_item_updated",
+      {
+        ref,
+        name: "crm",
+        from: "1.0.0",
+        to: "1.1.0",
+        owner: { kind: "org", orgId: "o9", name: "Acme" },
+      },
+      "Acme 更新了 crm：v1.0.0 → v1.1.0",
+      null,
+    ],
+    [
+      "zh",
+      "shared_item_updated",
+      { ref, name: "crm", from: "1", to: "2", owner: { kind: "platform" } },
+      "平台 更新了 crm：v1 → v2",
+      null,
+    ],
+    [
+      "zh",
+      "upload_confirmed",
+      { itemId: "i1", name: "crm", version: "2.0.0" },
+      "超级管理员已确认 crm v2.0.0",
+      null,
+    ],
+    [
+      "zh",
+      "upload_rejected",
+      { itemId: "i1", name: "crm", version: "2.0.0", reason: "权限太宽" },
+      "超级管理员未通过 crm v2.0.0",
+      "权限太宽",
+    ],
+    [
+      "en",
+      "item_shared",
+      { ref, name: "crm", org: { id: "o2", name: "Beta" } },
+      "Beta can now use crm",
+      null,
+    ],
+    [
+      "en",
+      "item_shared",
+      { ref, name: "crm", org: "all_orgs" },
+      "All organizations can now use crm",
+      null,
+    ],
+    [
+      "en",
+      "upload_rejected",
+      { itemId: "i1", name: "crm", version: "2.0.0", reason: null },
+      "The super admin did not approve crm v2.0.0",
+      null,
+    ],
+  ] as const)("%s %s reads as the spec says (%s)", async (locale, kind, detail, title, reason) => {
+    const n = msgs[locale].inbox.orgNotice;
+    const notice = { id: "n1", kind, createdAt: T, detail };
+    await renderInbox(
+      {
+        [LIST]: () =>
+          json(200, { items: [{ type: kind, id: "n1", createdAt: T, notice }], truncated: false }),
+      },
+      { locale },
+    );
+    expect(await screen.findByText(title)).toBeTruthy();
+    if (reason !== null) expect(screen.getAllByText(reason).length).toBeGreaterThan(0);
+    if (kind === "upload_rejected" && reason === null)
+      expect(screen.queryByText(n.reason)).toBeNull();
+  });
+
+  it.each(LOCALES)(
+    "an upload notice names the plugin by its display name and the version as v0.1.0, never cut (%s)",
+    async (locale) => {
+      const n = msgs[locale].inbox.orgNotice;
+      const displayName = { zh: "会议纪要", en: "Meeting minutes" };
+      const notice = {
+        id: "n1",
+        kind: "upload_confirmed",
+        createdAt: T,
+        detail: { itemId: "i1", name: "acc-minutes", displayName, version: "0.1.0" },
+      };
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(200, {
+              items: [{ type: "upload_confirmed", id: "n1", createdAt: T, notice }],
+              truncated: false,
+            }),
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const name = within(table).getByText(displayName[locale]);
+      expect(name.getAttribute("title")).toBe(displayName[locale]);
+      const version = within(name.closest("tr") as HTMLElement).getByText("v0.1.0");
+      expect(version.getAttribute("data-part")).toBe("cell-title-trailing");
+      expect(within(table).queryByText("acc-minutes", { exact: false })).toBeNull();
+      expect(
+        await screen.findByText(
+          n.uploadConfirmedTitle
+            .replace("{name}", displayName[locale])
+            .replace("{version}", "v0.1.0"),
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "item_shared and shared_item_updated name a plugin by its display name (%s)",
+    async (locale) => {
+      const n = msgs[locale].inbox.orgNotice;
+      const displayName = { zh: "客户管理", en: "CRM suite" };
+      const shared = {
+        id: "n1",
+        kind: "item_shared",
+        createdAt: T,
+        detail: { ref, name: "acc-crm", displayName, org: { id: "o2", name: "Beta" } },
+      };
+      const updated = {
+        id: "n2",
+        kind: "shared_item_updated",
+        createdAt: T,
+        detail: {
+          ref,
+          name: "acc-crm",
+          displayName,
+          from: "1.0.0",
+          to: "1.1.0",
+          owner: { kind: "org", orgId: "o9", name: "Acme" },
+        },
+      };
+      await renderInbox(
+        {
+          [LIST]: () =>
+            json(200, {
+              items: [
+                { type: "item_shared", id: "n1", createdAt: T, notice: shared },
+                { type: "shared_item_updated", id: "n2", createdAt: T, notice: updated },
+              ],
+              truncated: false,
+            }),
+        },
+        { locale },
+      );
+      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const names = within(table).getAllByText(displayName[locale], {
+        selector: ".cb-cell-title-name",
+      });
+      expect(names).toHaveLength(2);
+      expect(within(table).queryByText("acc-crm", { exact: false })).toBeNull();
+      expect(within(names[1]?.closest("tr") as HTMLElement).getByText("v1.1.0")).toBeTruthy();
+      expect(
+        await screen.findByText(
+          n.itemSharedTitle.replace("{name}", displayName[locale]).replace("{org}", "Beta"),
+        ),
+      ).toBeTruthy();
+    },
+  );
+
+  it("an unknown notice kind renders a generic notice and an unknown item type is skipped", async () => {
+    const n = msgs.en.inbox.orgNotice;
+    await renderInbox({
+      [LIST]: () =>
+        json(200, {
+          items: [
+            {
+              type: "future_kind",
+              id: "n1",
+              createdAt: T,
+              notice: { id: "n1", kind: "future_kind", createdAt: T, detail: {} },
+            },
+            { type: "mystery", id: "x1", createdAt: T },
+          ],
+          truncated: false,
+        }),
+    });
+    const table = await screen.findByRole("table", { name: msgs.en.inbox.listLabel });
+    expect(within(table).getByText(n.unknownLabel)).toBeTruthy();
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
   });
 });

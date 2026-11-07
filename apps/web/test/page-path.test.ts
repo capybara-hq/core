@@ -4,23 +4,23 @@ import { describe, expect, it } from "vitest";
 import { APP_PAGES, buildPagePath, routeSegments } from "../src/components/shell/path";
 
 describe("buildPagePath", () => {
-  it("puts the org slug first and links it to the root", () => {
+  it("puts the org slug first and links it home (the new conversation)", () => {
     expect(
       buildPagePath("org", "capybara", [
         { label: "agents", href: "/agents" },
         { label: "研究助手" },
       ]),
     ).toEqual([
-      { label: "capybara", href: "/" },
+      { label: "capybara", href: "/chat" },
       { label: "agents", href: "/agents" },
       { label: "研究助手" },
     ]);
   });
 
-  it("uses ~ for the home page and for an org page without an org", () => {
+  it("uses ~ for personal pages and for an org page without an org", () => {
     expect(buildPagePath("home", "capybara", [])).toEqual([{ label: "~" }]);
     expect(buildPagePath("org", undefined, [{ label: "agents" }])).toEqual([
-      { label: "~", href: "/" },
+      { label: "~", href: "/chat" },
       { label: "agents" },
     ]);
   });

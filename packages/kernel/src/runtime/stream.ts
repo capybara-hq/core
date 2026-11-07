@@ -14,6 +14,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { isUiBusMessage, uiFrame } from "../ui/registry.js";
+import { type LiveDraft, RunDrafts } from "./run-drafts.js";
 
 /** 一次 SSE 连接的输出端（由 HTTP 层包装原始响应）。 */
 export interface SseOutput {
@@ -38,6 +39,8 @@ export interface ConversationStreamsDeps {
   access(orgId: string, conversationId: string, viewerAccountId: string): Promise<boolean>;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
+  /** The live drafts of the conversation's running run (sent once, after the open catch-up). */
+  drafts(conversationId: string): Promise<LiveDraft[]>;
 }
 
 export interface StreamParams {
@@ -106,6 +109,9 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
 const eventFrame = (e: ConversationEvent): string =>
   `id: ${e.seq}\nevent: event\ndata: ${JSON.stringify(e)}\n\n`;
 
+const draftFrame = (d: LiveDraft): string =>
+  `event: draft\ndata: ${JSON.stringify({ runId: d.runId, step: d.step, text: d.text, thinking: d.thinking })}\n\n`;
+
 /**
  * 会话事件流（SSE）：本进程持有的连接集合，停机时一并关闭。
  * 跨副本的数据只经 PG（事件日志）与内核 bus（`conv.<id>`）流动，进程内只保存连接本身的资源
@@ -130,6 +136,7 @@ export class ConversationStreams {
     @Inject(ConversationAccess) access: Pick<ConversationAccess, "isAccessible">,
     @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
+    @Inject(RunDrafts) drafts: Pick<RunDrafts, "live">,
     @Optional() @Inject(GracefulShutdown) shutdown?: Pick<GracefulShutdown, "signal">,
   ) {
     this.d = {
@@ -138,6 +145,7 @@ export class ConversationStreams {
       access: (orgId, conversationId, viewer) => access.isAccessible(orgId, conversationId, viewer),
       config,
       log,
+      drafts: (conversationId) => drafts.live(conversationId),
     };
     if (shutdown?.signal.aborted) this.closeAll();
     else shutdown?.signal.addEventListener("abort", () => this.closeAll(), { once: true });
@@ -221,6 +229,9 @@ class Connection implements StreamHandle {
       this.openGate = resolve;
     });
     this.enqueue(() => this.catchUp());
+    // live drafts (spec 2026-11-07 §3.2): after the catch-up, before any delta (deltas are queued
+    // behind this); a delta also in the draft is dropped by the client by its offset
+    this.enqueue(() => this.sendDrafts());
   }
 
   async subscribe(): Promise<void> {
@@ -325,6 +336,22 @@ class Connection implements StreamHandle {
       }
       if (evs.length < PAGE || this.closed) return;
     }
+  }
+
+  /** One `event: draft` per step of the running run whose `assistant_message` is not logged. */
+  private async sendDrafts(): Promise<void> {
+    let drafts: LiveDraft[];
+    try {
+      drafts = await this.d.drafts(this.p.conversationId);
+    } catch (err) {
+      // a convenience: without it the client resumes from the next delta (and asks for the draft)
+      this.d.log.warn("conversation stream cannot read live drafts", {
+        conversationId: this.p.conversationId,
+        err,
+      });
+      return;
+    }
+    for (const d of drafts) this.write(draftFrame(d));
   }
 
   /** 发最后一帧错误并关闭（未发完的排队输出随关闭丢弃）。 */

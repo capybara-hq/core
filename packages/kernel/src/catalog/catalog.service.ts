@@ -8,17 +8,24 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb, SourceFormat } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
-import type { AdminExtensionView } from "../extensions/permission-view.js";
+import { PluginInstallLock } from "../extensions/locks.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
-import { countInstalls, itemView, marketplaceLatest } from "./catalog-items.js";
+import {
+  countInstalls,
+  itemConfirmations,
+  itemScopeFacts,
+  itemView,
+  marketplaceLatest,
+  versionUsable,
+} from "./catalog-items.js";
 import type { TranslationReport } from "./claude/report.js";
 import {
   expandGitUrl,
@@ -36,6 +43,7 @@ import {
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
 import {
+  assertEntryNotDeprecated,
   entryCompatible,
   entrySourceHost,
   HOST_VERSIONS,
@@ -44,8 +52,10 @@ import {
   MarketplacesService,
   pluginNameFrom,
 } from "./marketplaces.service.js";
+import { type Owner, releaseExtensionClaim } from "./ownership.js";
 import { PluginImport, type PluginReview, type ReviewProvenance } from "./plugin-import.js";
-import { cancelPendingRequests } from "./requests.service.js";
+import { cancelPendingRequests } from "./request-rules.js";
+import type { PluginScope } from "./scope.js";
 import { newestFirst } from "./versions.js";
 
 /** Item policy (C22): allow (default for new imports) / needs_approval / disabled (no new installs; existing ones stay). */
@@ -57,8 +67,49 @@ export interface CatalogItemView {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /** The English description (the plugin.json description's `en`, or the plain string). */
   description: string;
+  /**
+   * The Chinese description of the latest version (its plugin.json `description.zh`, read from the
+   * stored manifest); null without one. The UI shows it in Chinese, else `description`.
+   */
+  descriptionZh: string | null;
+  /** The old item policy, kept for reading only (scope and `disabled` replaced it). */
   policy: CatalogPolicy;
+  /** Who the plugin is offered to (`all` for a builtin plugin). */
+  scope: PluginScope;
+  /** The orgs of a `named` scope (empty otherwise). */
+  scopeOrgs: string[];
+  /** Shipped with the deployment (a required bootstrap plugin): scope `all`, never changed. */
+  builtin: boolean;
+  /** Stopped on the whole deployment by the super admin (its scope is kept). */
+  disabled: boolean;
+  /**
+   * Orgs outside a `named` item's list see it as requestable (`not_offered`); false hides it from
+   * them (spec §5.1 rule 1). Irrelevant for other scopes.
+   */
+  shownToOthers: boolean;
+  /** The platform, or the org that owns it (ruling P3-1; deleted orgs by their name). */
+  owner: Owner;
+  /**
+   * An org-owned item's owner shares it with other orgs (the share gate `owner = platform OR
+   * shareable`, P3-1); false for platform items, which pass the gate anyway.
+   */
+  shareable: boolean;
+  /** An org's upload carrying an extension waits for the super admin's confirmation (P3-9). */
+  awaitingConfirmation: boolean;
+  /** The org-uploaded version that waits for that confirmation (null: none). */
+  pendingVersion: string | null;
+  /** Orgs it is on in: orgs with a live plugin install of it (every org for a builtin plugin). */
+  enabledOrgs: number;
+  /**
+   * Its extension waits for a person's confirmation: not installed on the deployment, its
+   * permission set not covered by the approved snapshot, or (builtin) only approved by the
+   * bootstrap step. Confirm with `POST items/:id/confirm`.
+   */
+  pending: boolean;
+  /** The digest to send with the confirmation; null unless `pending` and the package is readable. */
+  permissionsHash: string | null;
   latestVersion: string;
   /** Every version, newest first (semver; equal but for build metadata: the later import first). */
   versions: string[];
@@ -70,7 +121,7 @@ export interface CatalogItemView {
   /** The latest version's source (file / npm / marketplace). */
   source: string;
   /**
-   * The marketplace an item was imported from (`official` or an enterprise marketplace id); null
+   * The marketplace an item was imported from (`official` or a custom marketplace id); null
    * when imported by hand or when that marketplace was deleted.
    */
   marketplaceId: string | null;
@@ -90,7 +141,19 @@ export interface CatalogItemView {
    * §5.3). Importing it again records `<version>+git.<sha12>` / `+sha256.<12>`.
    */
   contentChanged: boolean;
+  /** What the latest version's plugin.json brings (read-only; dependencies are not components). */
+  componentCounts: ComponentCounts;
+  /** The format the latest version was read from (`claude-code`: translated from Claude Code). */
+  sourceFormat: SourceFormat;
   updatedAt: string;
+}
+
+/** The components of a plugin version, by kind (spec §3). */
+export interface ComponentCounts {
+  extension: 0 | 1;
+  skills: number;
+  connectorTemplates: number;
+  agentTemplates: number;
 }
 
 /**
@@ -149,7 +212,15 @@ export interface CatalogItemVersionView {
 /** Item detail (deleted items included: `deletedAt` set). */
 export interface CatalogItemDetail {
   /** `packageName` is null for a git plugin without package.json. */
-  item: CatalogItemView & { packageName: string | null; deletedAt: string | null };
+  item: CatalogItemView & {
+    packageName: string | null;
+    deletedAt: string | null;
+    /**
+     * The version the platform's components come from (spec §7.1): set by the import that created
+     * the item and by each platform update; importing a newer version does not move it.
+     */
+    platformVersion: string;
+  };
   versions: CatalogItemVersionView[];
 }
 
@@ -234,24 +305,28 @@ export const CATALOG_LIST_DEFAULT_LIMIT = 200;
 export const CATALOG_LIST_MAX_LIMIT = 1000;
 
 /**
- * Enterprise catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, enterprise admins only). One
+ * Platform catalog items (D9 / C21 / C22, `/api/v1/admin/catalog/*`, super admins only). One
  * kind: every item is a plugin (spec §4), imported through {@link PluginImport} (prepare -> confirm,
- * one review); this service lists and shows items, changes policy, deletes, installs an item's
- * extension on the deployment, and prepares marketplace imports. Stateless, shared by every replica.
+ * one review, whose confirm installs the plugin's extension); this service lists and shows items,
+ * deletes, and prepares marketplace imports (scope and disable: `CatalogScopeService`). Stateless,
+ * shared by every replica.
  */
 @Injectable()
 export class CatalogService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the caller's transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the caller's transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
-    @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
+    /** The deployment's extensions with their approvals (what is pending confirmation). */
+    @Inject(ExtensionAdmin) private readonly admin: ExtensionAdmin,
     /** Plugin import (a marketplace entry goes through its prepare). */
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    /** The token of an enterprise marketplace (sent only to its URL's origin). */
+    /** The token of a custom marketplace (sent only to its URL's origin). */
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
+    /** Serializes a claim release with an install of that name still committing (F10). */
+    @Inject(PluginInstallLock) private readonly installLock: PluginInstallLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -277,7 +352,8 @@ export class CatalogService {
   /**
    * Prepares the import of one marketplace entry (C25 / C26, spec §5.2): `version` defaults to the
    * newest compatible version the marketplace lists for `name`; the entry must be compatible with
-   * the host (`marketplace.incompatible`); an npm source is downloaded from the configured registry
+   * the host (`marketplace.incompatible`) and not deprecated (`marketplace.entry_deprecated`, 409; the
+   * confirm does not read the marketplace again); an npm source is downloaded from the configured registry
    * and an archive source from its URL, both always verified against the marketplace's integrity
    * (`marketplace.integrity_mismatch`, nothing written). A `path` source is read from the git
    * marketplace's repository at its last refreshed commit (an http marketplace has none:
@@ -312,6 +388,7 @@ export class CatalogService {
         `${entry.name}${version !== null ? `@${version}` : ""} needs kernel >= ${entry.minKernel}; this deployment runs kernel ${HOST_VERSIONS.kernel}`,
       );
     }
+    assertEntryNotDeprecated(entry);
     const src = entry.source;
     const host = entrySourceHost(entry);
     if (host !== undefined && !hostAllowed(host, config)) {
@@ -538,15 +615,34 @@ export class CatalogService {
    * defaults to 0; use the returned array directly when only the first page is needed.
    */
   async list(
-    q: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
+    q: { includeDeleted?: boolean; limit?: number; offset?: number; pending?: boolean } = {},
   ): Promise<CatalogItemView[]> {
     return (await this.page(q)).items;
   }
 
   /** Same as {@link list}, plus the offset of the next page (null when there is none). */
   async page(
-    q: { includeDeleted?: boolean; limit?: number; offset?: number } = {},
+    q: { includeDeleted?: boolean; limit?: number; offset?: number; pending?: boolean } = {},
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
+    // `pending`: every item waiting for a confirmation (one list, not paged: the pending set is small)
+    if (q.pending === true) {
+      const all = await this.page({
+        ...(q.includeDeleted && { includeDeleted: true }),
+        limit: CATALOG_LIST_MAX_LIMIT,
+      });
+      const items = [...all.items];
+      let next = all.nextOffset;
+      while (next !== null) {
+        const more = await this.page({
+          ...(q.includeDeleted && { includeDeleted: true }),
+          limit: CATALOG_LIST_MAX_LIMIT,
+          offset: next,
+        });
+        items.push(...more.items);
+        next = more.nextOffset;
+      }
+      return { items: items.filter((i) => i.pending), nextOffset: null };
+    }
     const limit = Math.min(
       Math.max(1, q.limit ?? CATALOG_LIST_DEFAULT_LIMIT),
       CATALOG_LIST_MAX_LIMIT,
@@ -575,6 +671,10 @@ export class CatalogService {
         "integrity",
         "source_detail",
         "imported_at",
+        "manifest",
+        "source_format",
+        "applied_at",
+        "rejected_at",
       ])
       .where(
         "item_id",
@@ -582,17 +682,32 @@ export class CatalogService {
         items.map((i) => i.id),
       )
       .execute();
+    const platformOwned = new Set(items.filter((i) => i.owner_org_id === null).map((i) => i.id));
     const byItem = new Map<string, (typeof versions)[number][]>();
     for (const v of versions) {
+      // a platform item offers only versions it may use (a transferred org item's rejected or
+      // never-applied uploads stay out, ruling P3-52); an org item's pending ones show in 待确认
+      if (platformOwned.has(v.item_id) && !versionUsable(v)) continue;
       const list = byItem.get(v.item_id) ?? [];
       list.push(v);
       byItem.set(v.item_id, list);
     }
     const installs = await countInstalls(this.db, items, byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), items, byItem);
+    const facts = await itemScopeFacts(
+      this.db,
+      items,
+      await itemConfirmations(this.admin, items, byItem),
+    );
     return {
       items: items.map((i) =>
-        itemView(i, byItem.get(i.id) ?? [], installs.get(i.id) ?? 0, latest.get(i.id)),
+        itemView(
+          i,
+          byItem.get(i.id) ?? [],
+          installs.get(i.id) ?? 0,
+          latest.get(i.id),
+          facts.get(i.id),
+        ),
       ),
       nextOffset,
     };
@@ -607,11 +722,13 @@ export class CatalogService {
       .where("id", "=", itemId)
       .executeTakeFirst();
     if (!item) throw notFound();
-    const rows = await this.db
-      .selectFrom("catalog_item_versions")
-      .selectAll()
-      .where("item_id", "=", itemId)
-      .execute();
+    const rows = (
+      await this.db
+        .selectFrom("catalog_item_versions")
+        .selectAll()
+        .where("item_id", "=", itemId)
+        .execute()
+    ).filter((v) => item.owner_org_id !== null || versionUsable(v));
     rows.sort((a, b) =>
       newestFirst(
         { version: a.version, importedAt: a.imported_at },
@@ -621,11 +738,23 @@ export class CatalogService {
     const byItem = new Map([[item.id, rows]]);
     const installs = await countInstalls(this.db, [item], byItem);
     const latest = await marketplaceLatest(this.db, this.config.get(), [item], byItem);
+    const facts = await itemScopeFacts(
+      this.db,
+      [item],
+      await itemConfirmations(this.admin, [item], byItem),
+    );
     return {
       item: {
-        ...itemView(item, rows, installs.get(item.id) ?? 0, latest.get(item.id)),
+        ...itemView(
+          item,
+          rows,
+          installs.get(item.id) ?? 0,
+          latest.get(item.id),
+          facts.get(item.id),
+        ),
         packageName: item.package_name,
         deletedAt: item.deleted_at?.toISOString() ?? null,
+        platformVersion: item.platform_synced_version ?? item.latest_version,
       },
       versions: rows.map((v) => ({
         version: v.version,
@@ -649,53 +778,6 @@ export class CatalogService {
   }
 
   /**
-   * Changes the policy (audit `catalog.policy_changed`, not written when unchanged). Deleted /
-   * missing -> `catalog.item_not_found`.
-   */
-  async setPolicy(
-    actor: string,
-    itemId: string,
-    policy: CatalogPolicy,
-    opts: ActorOpts = {},
-  ): Promise<CatalogItemView> {
-    if (!UUID_RE.test(itemId)) throw notFound();
-    await this.writePolicy(actor, itemId, policy, opts);
-    return this.view(itemId);
-  }
-
-  @Transactional()
-  private async writePolicy(
-    actor: string,
-    itemId: string,
-    policy: CatalogPolicy,
-    opts: ActorOpts,
-  ): Promise<void> {
-    const t = this.db;
-    await this.adminLock.lockAndAuthorize(actor);
-    const row = await t
-      .selectFrom("catalog_items")
-      .select(["name", "policy"])
-      .where("id", "=", itemId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!row) throw notFound();
-    if (row.policy === policy) return;
-    await t
-      .updateTable("catalog_items")
-      .set({ policy, updated_at: sql<Date>`now()` as unknown as Date })
-      .where("id", "=", itemId)
-      .execute();
-    await audit(t, {
-      actorAccountId: actor,
-      ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
-      action: "catalog.policy_changed",
-      target: itemId,
-      detail: { name: row.name, from: row.policy, to: policy },
-    });
-  }
-
-  /**
    * Deletes the item (soft delete, audit `catalog.removed`; requests still pending are cancelled in
    * the same transaction): versions and stored files are kept (installed components still refer to
    * them), organizations no longer see it; the same name can later be imported again as a new
@@ -708,73 +790,62 @@ export class CatalogService {
 
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
-    const t = this.db;
     await this.adminLock.lockAndAuthorize(actor);
+    if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
+  }
+
+  /**
+   * The soft delete of {@link remove} in the caller's transaction, without its super admin check
+   * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
+   * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
+   * extension name claim of a first upload still waiting released (ruling P3-37, F10), pending
+   * requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
+   * item's name, or null when it is gone already.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async removeIn(
+    actor: string | null,
+    itemId: string,
+    opts: ActorOpts & { reason?: string } = {},
+  ): Promise<{ name: string } | null> {
+    const t = this.db;
+    const now = sql<Date>`now()` as unknown as Date;
     const row = await t
       .updateTable("catalog_items")
       .set({
-        deleted_at: sql<Date>`now()` as unknown as Date,
-        updated_at: sql<Date>`now()` as unknown as Date,
+        deleted_at: now,
+        updated_at: now,
+        pending_version: null,
+        pending_by: null,
+        pending_at: null,
       })
       .where("id", "=", itemId)
       .where("deleted_at", "is", null)
-      .returning(["name"])
+      .returning(["name", "awaiting_confirmation", "package_name", "owner_org_id"])
       .executeTakeFirst();
-    if (!row) throw notFound();
+    if (!row) return null;
+    // An org upload still waiting: free the name when nothing is installed under its claim
+    // (ruling P3-37, pre-flight F10). Under the install lock, so an install a running confirmation
+    // is committing is seen: that claim stays for its take-out or the cleanup job
+    if (row.awaiting_confirmation && row.package_name !== null) {
+      await this.installLock.lock(row.name);
+      await releaseExtensionClaim(t, row.name, row.package_name);
+    }
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {
       actorAccountId: actor,
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      // an org-owned item's removal shows in its owner org's audit log too
+      ...(row.owner_org_id !== null && { orgId: row.owner_org_id }),
       action: "catalog.removed",
       target: itemId,
-      detail: { name: row.name },
+      detail: {
+        name: row.name,
+        ...(row.owner_org_id !== null && { ownerOrgId: row.owner_org_id }),
+        ...(opts.reason !== undefined && { reason: opts.reason }),
+      },
     });
-  }
-
-  /**
-   * Installs the extension of one version of an item on the deployment
-   * (`ExtensionAdminOps.install`: a new install is disabled, a version change keeps the desired
-   * state; audit `extension.installed`), with the install record linked to the item (F-AA). The
-   * returned status may be `pending_approval` when the version's permissions are not approved yet.
-   * A version without an extension -> `catalog.no_extension`; item or version missing ->
-   * `catalog.item_not_found`.
-   */
-  async installToDeployment(
-    actor: string,
-    itemId: string,
-    version: string,
-    opts: ActorOpts = {},
-  ): Promise<AdminExtensionView> {
-    if (!UUID_RE.test(itemId)) throw notFound();
-    const item = await this.db
-      .selectFrom("catalog_items")
-      .select(["id", "name"])
-      .where("id", "=", itemId)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!item) throw notFound();
-    const v = await this.db
-      .selectFrom("catalog_item_versions")
-      .select("extension_sha256")
-      .where("item_id", "=", itemId)
-      .where("version", "=", version)
-      .executeTakeFirst();
-    if (!v) {
-      throw new ApiError("catalog.item_not_found", `Version ${version} of this item not found`);
-    }
-    if (v.extension_sha256 === null) {
-      throw new ApiError(
-        "catalog.no_extension",
-        `Plugin ${item.name} ${version} has no extension; there is nothing to install on the deployment`,
-      );
-    }
-    return this.ops.install(item.name, v.extension_sha256, actor, opts.actorTokenId, {
-      catalogItemId: itemId,
-    });
-  }
-
-  private async view(itemId: string): Promise<CatalogItemView> {
-    return (await this.get(itemId)).item;
+    return { name: row.name };
   }
 }

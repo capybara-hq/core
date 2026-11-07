@@ -5,6 +5,7 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, CellTitle, type Column, DataTable, DesignProvider } from "../src/index";
+import { optionLabels, pickOption } from "./support/select";
 
 afterEach(cleanup);
 
@@ -250,6 +251,68 @@ describe("DataTable rows", () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it("an interactive column's control works without opening the row", async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    const onSwitch = vi.fn();
+    plain({
+      onOpen,
+      columns: [
+        ...columns,
+        {
+          key: "on",
+          header: "开关",
+          interactive: true,
+          cell: (r) => (
+            <button type="button" onClick={() => onSwitch(r.id)}>
+              {`switch ${r.id}`}
+            </button>
+          ),
+        },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "switch a" }));
+    expect(onSwitch).toHaveBeenCalledWith("a");
+    expect(onOpen).not.toHaveBeenCalled();
+    await user.click(screen.getByText("Alpha"));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("CellTitle mono: the description is mono (an id or a version)", () => {
+    plain({
+      columns: [
+        {
+          key: "name",
+          header: "名称",
+          cell: (r) => <CellTitle title={r.name} description={`${r.id} · v1.0.0`} mono />,
+        },
+      ],
+    });
+    expect(screen.getByText("a · v1.0.0").getAttribute("data-mono")).toBe("true");
+    expect(screen.getByRole("row", { name: /Alpha/ })).toBeTruthy();
+  });
+
+  it("CellTitle trailing: a version after the name never takes the ellipsis; the name does", () => {
+    plain({
+      columns: [
+        {
+          key: "name",
+          header: "名称",
+          cell: (r) => <CellTitle title={r.name} trailing="v0.1.0" description="上传已确认" />,
+        },
+      ],
+    });
+    const name = screen.getByText("Alpha");
+    expect(name.getAttribute("title")).toBe("Alpha");
+    const version = within(name.closest("tr") as HTMLElement).getByText("v0.1.0");
+    expect(version.getAttribute("data-part")).toBe("cell-title-trailing");
+    // one line: the name, then the version beside it
+    expect(version.parentElement).toBe(name.parentElement);
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    const rule = css.slice(css.indexOf(".cb-cell-title-trailing {"));
+    expect(rule.slice(0, rule.indexOf("}"))).toContain("flex: none");
+  });
+
   it("勾选行 data-state 含 checked", () => {
     render(<Harness initial={["a"]} />);
     const r1 = screen.getByText("Alpha").closest("tr") as HTMLElement;
@@ -492,12 +555,17 @@ describe("清理：行的 aria 状态、行内控件 roving tabindex、默认空
 });
 
 describe("row grounds of a table inside a card", () => {
-  it("rows paint their state through --cb-row-ground; a card table's ground is the panel", async () => {
+  it("rows paint their state through --cb-row-ground; a boxed table's ground is its box's", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/table.css"), "utf8");
+    // A card, a form card, a dialog, a sheet and a property section: the panel; an inline card:
+    // raised (spec §6.6, §1 "One box is enough").
     expect(css).toMatch(
-      /\.cb-card \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-panel\);/,
+      /\.cb-card \.cb-table\[data-framed="false"\],\s*\.cb-form-section-fields \.cb-table\[data-framed="false"\],\s*\.cb-dialog \.cb-table\[data-framed="false"\],\s*\.cb-sheet \.cb-table\[data-framed="false"\],\s*\.cb-property-section \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-panel\);/,
+    );
+    expect(css).toMatch(
+      /\.cb-icard \.cb-table\[data-framed="false"\] \{\s*--cb-table-ground: var\(--cb-raised\);/,
     );
     expect(css).toMatch(/\.cb-table-row:hover \{\s*--cb-row-ground: var\(--cb-hover\);/);
     expect(css).toMatch(
@@ -590,10 +658,10 @@ describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
     await user.click(within(bar).getByRole("checkbox", { name: "全选" }));
     expect(screen.getByText("已选 3 项")).toBeTruthy();
     // sort: the sortable columns, each way
-    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLSelectElement;
-    expect([...select.options].map((o) => o.textContent)).toEqual(["名称 升序", "名称 降序"]);
+    const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLButtonElement;
+    expect(await optionLabels(select, user)).toEqual(["名称 升序", "名称 降序"]);
     expect(select.value).toBe("name:asc");
-    await user.selectOptions(select, "name:desc");
+    await pickOption(select, "name:desc", user);
     expect(onChange).toHaveBeenCalledWith("name", "desc");
   });
 

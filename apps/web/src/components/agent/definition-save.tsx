@@ -1,6 +1,6 @@
 "use client";
 
-import { type ActionRowProps, Callout, Card, Stack, Text } from "@capybara-hq/design";
+import { type ActionRowProps, Callout } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
@@ -91,8 +91,7 @@ export function useDefinitionSave(): DefinitionSave {
 }
 
 /**
- * Above a definition section's fields: the kernel's warnings after a save (a danger card), and a
- * failed save's error (a conflict offers the reload; `extra` lists lines no field shows).
+X save's error (a conflict offers the reload; `extra` lists lines no field shows).
  */
 export function SaveFeedback({
   save,
@@ -105,20 +104,9 @@ export function SaveFeedback({
 }) {
   const t = useTranslations("agents");
   const errorMessage = useErrorMessage();
-  const { error, warnings } = save;
+  const { error } = save;
   return (
     <>
-      {warnings.length > 0 && (
-        <Card tone="danger" title={t("form.warningsTitle")}>
-          <Stack gap={4}>
-            {warnings.map((w) => (
-              <Text key={w} tone="warn" icon="circle-alert">
-                {t.has(`warnings.${w}`) ? t(`warnings.${w}`) : t("warnings.unknown", { code: w })}
-              </Text>
-            ))}
-          </Stack>
-        </Card>
-      )}
       {error === null ? null : error instanceof ApiClientError && CONFLICT_CODES.has(error.code) ? (
         <Callout tone="fail" action={{ label: t("page.reload"), onSelect: onReload }}>
           {errorMessage(error)}

@@ -42,9 +42,9 @@ const twoOrgs: Me = {
   ...ME,
   memberships: [...ME.memberships, { orgId: "o2", slug: "beta", name: "Beta", role: "member" }],
 };
-const as = (role: string, enterprise = false): Me => ({
+const as = (role: string, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -147,7 +147,7 @@ describe("session-changing actions", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "当前组织：Acme，切换组织" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(router.push).not.toHaveBeenCalled();
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o2" });
     expect(posted).toEqual([expect.objectContaining({ kind: "org-switched" })]);
@@ -184,7 +184,7 @@ describe("session-changing actions", () => {
     await user.type(within(dialog).getByRole("textbox"), "New");
     expect(submit.disabled).toBe(false);
     await user.click(submit);
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/v1/orgs"],
       ["PUT", "/api/v1/me/current-org"],
@@ -236,7 +236,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
     }));
   const s = sl.steps;
 
-  it("an enterprise admin who is also an org admin", () => {
+  it("a super admin who is also an org admin", () => {
     renderFrame(shellOf(ME, { readiness: NOT_READY }));
     expect(rows()).toEqual([
       { id: "model", state: "todo", href: "/admin/extensions", optional: false, text: s.model },
@@ -249,7 +249,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
       },
       { id: "channels", state: "todo", href: "/channels/new", optional: true, text: s.channels },
       { id: "members", state: "todo", href: "/settings/members", optional: true, text: s.members },
-      { id: "catalog", state: "todo", href: "/catalog", optional: true, text: s.catalog },
+      { id: "catalog", state: "todo", href: "/plugins", optional: true, text: s.catalog },
     ]);
   });
 
@@ -261,7 +261,7 @@ describe("the setup sidebar's steps per role (web-SSR spec §4)", () => {
       ["agent", "waiting", null],
       ["channels", "todo", "/channels/new"],
       ["members", "todo", "/settings/members"],
-      ["catalog", "todo", "/catalog"],
+      ["catalog", "todo", "/plugins"],
     ]);
     expect(r[0]?.text).toBe(`${s.model}${sl.model.needsDeploymentAdmin}`);
   });
@@ -445,7 +445,7 @@ describe("cross-tab session sync", () => {
     const other = new Bus("capybara-session");
     act(() => other.postMessage({ kind: "org-switched", from: "another-tab", at: 1 }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(1));
-    expect(navigateBrowser).toHaveBeenCalledWith("/");
+    expect(navigateBrowser).toHaveBeenCalledWith("/chat");
     expect(router.push).not.toHaveBeenCalled();
     act(() => other.postMessage({ kind: "signed-out", from: "another-tab", at: 2 }));
     await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledTimes(2));

@@ -47,7 +47,7 @@ import {
 import { CLAUDE_FIXTURES, loadFixtureAsStrings } from "./claude-fixtures.js";
 
 /**
- * Spec §12, phase B acceptance, end to end on one kernel: an enterprise admin adds the superpowers
+ * Spec §12, phase B acceptance, end to end on one kernel: a super admin adds the superpowers
  * repository (the checked-in fixture on a local fake git server, no network) as a git marketplace
  * and imports superpowers through the one review; an org installs it; an agent pins
  * using-superpowers; model-fake loads brainstorming by its qualified and its plain name; replaying
@@ -114,7 +114,7 @@ beforeAll(async () => {
     login: "root",
     password: PW,
     displayName: "R",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   admin = await session(k, "root");
   orgId = await createOrg(admin);
@@ -208,7 +208,6 @@ describe("phase B acceptance: superpowers from a git marketplace", { timeout: 12
       url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
       payload: {
         reviewHash: review.reviewHash,
-        deployExtension: false,
         pinnedSuggestions: ["using-superpowers"],
       },
     });

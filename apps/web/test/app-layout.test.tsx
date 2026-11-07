@@ -71,6 +71,7 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/agent-templates`]: () => json(200, { templates: [] }),
     [`GET ${O}/agents`]: () => json(200, { agents: [] }),
     [`GET ${O}/members`]: () => json(200, { members: [] }),
+    [`GET ${O}/components`]: () => json(200, { components: [] }),
     [`GET ${O}/attachments/limits`]: () => json(200, { available: false }),
     // and the setup step /settings/models (the purposes)
     [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
@@ -91,11 +92,12 @@ afterEach(() => vi.unstubAllGlobals());
 describe("the (app) layout's setup redirect", () => {
   it("a route that is no setup route goes to / while the org is not ready", async () => {
     shellRoutes(NOT_READY);
-    await expect(layoutAt("/connectors?tab=mine")).rejects.toThrow("REDIRECT /");
+    await expect(layoutAt("/connectors?tab=mine")).rejects.toThrow("REDIRECT /chat");
   });
 
   it("setup routes (home, steps) and the admin console render; a ready org renders anything", async () => {
-    for (const path of ["/", "/chat", "/settings/models", "/agents/new", "/admin/extensions"]) {
+    // `/` is no page: next.config redirects it to `/chat` before the layout runs
+    for (const path of ["/chat", "/settings/models", "/agents/new", "/admin/extensions"]) {
       shellRoutes(NOT_READY);
       await expect(layoutAt(path), path).resolves.toBeTruthy();
     }

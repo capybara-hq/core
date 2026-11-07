@@ -98,11 +98,9 @@ describe("0053_subagents", () => {
       sql`insert into capybara.agent_template_versions (template_id, version, definition, source_format)
         values ('t1', 2, '{}'::jsonb, 'x')`.execute(db),
     ).rejects.toThrow(/source_format/);
-    // every template comes from a plugin
-    await expect(
-      sql`insert into capybara.agent_templates (id, org_id, name, current_version)
-        values ('t0', 'o1', 'no-plugin', 1)`.execute(db),
-    ).rejects.toThrow(/plugin_name/);
+    // 0053 required a plugin; 0081 (platform components) allows a template without one (bare type)
+    await sql`insert into capybara.agent_templates (id, org_id, name, current_version)
+      values ('t0', 'o1', 'no-plugin', 1)`.execute(db);
     // one live template per (org, plugin, name)
     await expect(
       sql`insert into capybara.agent_templates (id, org_id, name, plugin_name, current_version)

@@ -7,9 +7,15 @@ import type { Route } from "../ctx/create-ctx.js";
 import { ApiError, errorBody } from "../errors.js";
 import { AccountsService } from "../identity/accounts.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
-import { type AuthServices, authorizeEnterpriseAdmin } from "../identity/auth.guard.js";
+import {
+  type AuthServices,
+  authenticateOrgUploader,
+  authorizeSuperAdmin,
+} from "../identity/auth.guard.js";
 import { SessionService } from "../identity/sessions.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { withLogContext } from "../log-context.js";
+import { authorizeOrgAction } from "../orgs/org.guard.js";
 import { redactPath } from "./error.filter.js";
 import { type GatewayRoutes, registerGatewayRoutes } from "./gateway-routes.js";
 import {
@@ -58,7 +64,7 @@ export interface CreateHttpAppOptions {
   replicaId?: string | undefined;
   /**
    * The size limit for package uploads ({@link PACKAGE_UPLOAD_ROUTES}: extension packages and
-   * enterprise catalog packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
+   * platform catalog packages, `application/octet-stream`), i.e. `packages.maxBytes`. The route
    * bodyLimit is one byte more: a package exactly one byte over reaches the handler and returns
    * `extension.package_too_large`; larger ones are refused by Fastify itself (413
    * `payload_too_large`).
@@ -70,14 +76,25 @@ export interface CreateHttpAppOptions {
 export const EXTENSION_PACKAGE_UPLOAD_ROUTE = "/api/v1/admin/extensions/packages/file";
 /** The plugin package upload route of the catalog import (Fastify route template). */
 export const CATALOG_UPLOAD_ROUTE = "/api/v1/admin/catalog/import/file";
+/** The platform skill version upload route (a skill package zip as the raw body). */
+export const COMPONENT_SKILL_UPLOAD_ROUTE = "/api/v1/admin/components/skill/:id/versions";
 /**
  * The upload routes that take raw bytes (`application/octet-stream`, limit `packages.maxBytes`,
- * the enterprise admin is authenticated before the body is read).
+ * the super admin is authenticated before the body is read).
  */
 export const PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([
   EXTENSION_PACKAGE_UPLOAD_ROUTE,
   CATALOG_UPLOAD_ROUTE,
+  COMPONENT_SKILL_UPLOAD_ROUTE,
 ]);
+
+/** An org admin's plugin package upload (spec §14, ruling P3-7; a tgz as the raw body). */
+export const ORG_PLUGIN_UPLOAD_ROUTE = "/api/v1/orgs/:orgId/catalog/uploads/file";
+/**
+ * The org routes that take raw package bytes (limit `packages.maxBytes`): before the body is read
+ * the caller is authenticated as a person with the org role of `catalog.upload` (ruling P3-29).
+ */
+export const ORG_PACKAGE_UPLOAD_ROUTES: ReadonlySet<string> = new Set([ORG_PLUGIN_UPLOAD_ROUTE]);
 
 /** Paths without an access log line (probes). */
 const QUIET_PATHS = new Set(["/healthz", "/readyz"]);
@@ -152,11 +169,12 @@ export async function createHttpApp(
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
     }
-    if (PACKAGE_UPLOAD_ROUTES.has(r.url) && opts.packageMaxBytes !== undefined) {
+    const upload = PACKAGE_UPLOAD_ROUTES.has(r.url) || ORG_PACKAGE_UPLOAD_ROUTES.has(r.url);
+    if (upload && opts.packageMaxBytes !== undefined) {
       r.bodyLimit = opts.packageMaxBytes + 1;
     }
   });
-  // 读请求体之前：包上传（插件包、企业目录包）先认证（未认证 / 非企业管理员的大请求体不读进内存）；其余内核路由不收
+  // 读请求体之前：包上传（插件包、平台目录包）先认证（未认证 / 非超级管理员的大请求体不读进内存）；其余内核路由不收
   // application/octet-stream（415）。插件路由 /plugins/* 在自己的作用域里收任何类型，不受影响
   let authServices: AuthServices | undefined;
   const services = (): AuthServices => {
@@ -178,7 +196,24 @@ export async function createHttpApp(
     if (!req.url.startsWith("/api/")) return;
     if (req.method === "POST" && PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
       try {
-        await authorizeEnterpriseAdmin(req, services());
+        await authorizeSuperAdmin(req, services());
+      } catch (e) {
+        return sendError(reply, e, req.method, req.url);
+      }
+      return;
+    }
+    if (req.method === "POST" && ORG_PACKAGE_UPLOAD_ROUTES.has(req.routeOptions.url ?? "")) {
+      try {
+        // the org admin role before the body (ruling P3-29): no one else makes the kernel buffer
+        // a package-sized body
+        const principal = await authenticateOrgUploader(req, services());
+        const orgId = (req.params as Record<string, string | undefined>).orgId ?? "";
+        await authorizeOrgAction(
+          app.get(KernelDb, { strict: false }).db,
+          principal,
+          orgId,
+          "catalog.upload",
+        );
       } catch (e) {
         return sendError(reply, e, req.method, req.url);
       }

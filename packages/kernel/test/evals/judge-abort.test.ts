@@ -61,7 +61,7 @@ it("停机中止在途的评委请求：按估算计费", async () => {
     login: "ent",
     password: PW,
     displayName: "E",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;

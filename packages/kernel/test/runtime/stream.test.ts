@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
 import {
   ConversationStreams,
@@ -42,12 +43,15 @@ const params = {
 
 /** The provider over test doubles (its constructor takes the injected dependencies). */
 const streamsWith = (
-  d: Omit<ConversationStreamsDeps, "config" | "eventLog"> & {
+  d: Omit<ConversationStreamsDeps, "config" | "eventLog" | "drafts"> & {
     eventLog: ConversationStreamsDeps["eventLog"];
     config: () => typeof config;
+    drafts?: ConversationStreamsDeps["drafts"];
   },
 ) =>
-  new ConversationStreams(d.eventLog, d.bus, { isAccessible: d.access }, { get: d.config }, d.log);
+  new ConversationStreams(d.eventLog, d.bus, { isAccessible: d.access }, { get: d.config }, d.log, {
+    live: d.drafts ?? (async () => []),
+  });
 
 const flush = () => new Promise((r) => setTimeout(r, 10));
 
@@ -198,5 +202,105 @@ describe("ConversationStreams", () => {
     expect(out.end).toHaveBeenCalledTimes(1);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(streams.size).toBe(0);
+  });
+
+  it("after the catch-up, one `event: draft` per live draft, before any delta", async () => {
+    let handler: ((m: unknown) => unknown) | undefined;
+    const ev = {
+      conversationId: "c",
+      seq: 3,
+      type: "model_call",
+      runId: "r",
+      payload: {},
+      createdAt: new Date(0),
+    } as unknown as ConversationEvent;
+    let readAt: number | undefined;
+    const calls: string[] = [];
+    const out = output();
+    out.write.mockImplementation((c: string) => {
+      out.chunks.push(c);
+    });
+    const streams = streamsWith({
+      eventLog: {
+        readAfter: async (_c: string, after: number) => {
+          calls.push(`readAfter ${after}`);
+          return after < 3 ? [ev] : [];
+        },
+      },
+      bus: busWith(async (_t, h) => {
+        handler = h;
+        return async () => {};
+      }),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+      drafts: async (conversationId: string) => {
+        readAt = calls.length;
+        calls.push(`drafts ${conversationId}`);
+        return [{ runId: "r", step: 1, text: "Hel", thinking: "hm" }];
+      },
+    });
+    const h = await streams.open(params, out);
+    // a delta that arrives before the stream begins is forwarded after the draft
+    handler?.({ kind: "delta", runId: "r", step: 1, delta: "text", text: "lo", offset: 3 });
+    h.begin();
+    await flush();
+    expect(readAt).toBe(1);
+    expect(out.chunks).toEqual([
+      `id: 3\nevent: event\ndata: ${JSON.stringify(ev)}\n\n`,
+      `event: draft\ndata: ${JSON.stringify({ runId: "r", step: 1, text: "Hel", thinking: "hm" })}\n\n`,
+      `event: delta\ndata: ${JSON.stringify({ runId: "r", step: 1, delta: "text", text: "lo", offset: 3 })}\n\n`,
+    ]);
+    h.close();
+  });
+
+  it("reads the drafts once, on open: a later events notice sends no draft", async () => {
+    let handler: ((m: unknown) => unknown) | undefined;
+    const drafts = vi.fn(async () => []);
+    const out = output();
+    const streams = streamsWith({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(async (_t, h) => {
+        handler = h;
+        return async () => {};
+      }),
+      access: async () => true,
+      config: () => config,
+      log: { warn: () => {} },
+      drafts,
+    });
+    const h = await streams.open(params, out);
+    h.begin();
+    await flush();
+    handler?.({ kind: "events", toSeq: 9 });
+    await flush();
+    expect(drafts).toHaveBeenCalledTimes(1);
+    expect(out.chunks.some((c) => c.startsWith("event: draft"))).toBe(false);
+    h.close();
+  });
+
+  it("a failed draft read is logged and the stream goes on", async () => {
+    const warn = vi.fn();
+    const out = output();
+    const streams = streamsWith({
+      eventLog: { readAfter: async () => [] },
+      bus: busWith(async () => async () => {}),
+      access: async () => true,
+      config: () => config,
+      log: { warn },
+      drafts: async () => {
+        throw new Error("redis down");
+      },
+    });
+    const h = await streams.open(params, out);
+    h.begin();
+    await flush();
+    expect(warn).toHaveBeenCalledWith(
+      "conversation stream cannot read live drafts",
+      expect.objectContaining({ conversationId: "c" }),
+    );
+    expect(out.abort).not.toHaveBeenCalled();
+    expect(streams.size).toBe(1);
+    h.close();
   });
 });

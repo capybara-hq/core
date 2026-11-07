@@ -73,6 +73,16 @@ export class OrgLock {
     }
     return { org, role: m.role };
   }
+
+  /**
+   * {@link lockAndAuthorize} for an account; for the kernel itself (`null`: a job acting for no
+   * person, such as the plugin scope sync) only the lock, since no role applies.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockFor(orgId: string, actor: string | null, action: OrgAction): Promise<void> {
+    if (actor === null) await this.lock(orgId);
+    else await this.lockAndAuthorize(orgId, actor, action);
+  }
 }
 
 /** The one {@link OrgLock}: identity (service tokens), orgs and the other domains import it. */

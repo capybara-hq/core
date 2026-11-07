@@ -10,8 +10,9 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { FastifyRequest } from "fastify";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { AllowService } from "../identity/principal.js";
+import { AllowService, type Principal } from "../identity/principal.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { type OrgAction as Action, can, HUMAN_ONLY, type OrgRole } from "./roles.js";
 
@@ -46,6 +47,49 @@ export const CurrentOrg: () => ParameterDecorator = createParamDecorator(
 const notFound = () => new ApiError("org.not_found", "Organization not found");
 
 /**
+ * The org role check of {@link OrgGuard}, read live from PG: the caller's role in `orgId` (a
+ * person's membership, a service token's own org and role) allows `action`, else 404
+ * `org.not_found` (missing, soft-deleted, not a member: existence is not disclosed) or 403
+ * `forbidden` (HUMAN_ONLY for a service token, role too low). Also run before the body of an org
+ * package upload is read (ruling P3-29).
+ */
+export async function authorizeOrgAction(
+  db: Pick<KernelSchemaDb, "selectFrom">,
+  p: Principal,
+  orgId: string,
+  action: Action,
+): Promise<OrgRole> {
+  let role: OrgRole;
+  if (p.kind === "service") {
+    if (p.orgId !== orgId) throw notFound();
+    const live = await db
+      .selectFrom("orgs")
+      .select("id")
+      .where("id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!live) throw notFound();
+    if (HUMAN_ONLY.has(action)) {
+      throw new ApiError("forbidden", "Service tokens cannot perform this action");
+    }
+    role = p.role;
+  } else {
+    const m = await db
+      .selectFrom("memberships")
+      .innerJoin("orgs", "orgs.id", "memberships.org_id")
+      .select("memberships.role")
+      .where("memberships.org_id", "=", orgId)
+      .where("memberships.account_id", "=", p.account.id)
+      .where("orgs.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!m) throw notFound();
+    role = m.role;
+  }
+  if (!can(role, action)) throw new ApiError("forbidden", "Insufficient organization role");
+  return role;
+}
+
+/**
  * 组织守卫：每个请求实时从 PG 读组织与成员角色（不缓存）。
  * - 组织不存在、已软删除、或调用者不是成员 → 404 `org.not_found`（不泄露组织是否存在）。
  * - user principal 的角色取 memberships；service principal 只认令牌所属组织，角色取令牌上的 role。
@@ -70,33 +114,7 @@ export class OrgGuard implements CanActivate {
     const orgId = (req.params as Record<string, string | undefined>).orgId;
     if (!orgId) throw new Error("OrgGuard: route has no :orgId parameter");
 
-    let role: OrgRole;
-    if (p.kind === "service") {
-      if (p.orgId !== orgId) throw notFound();
-      const live = await this.db
-        .selectFrom("orgs")
-        .select("id")
-        .where("id", "=", orgId)
-        .where("deleted_at", "is", null)
-        .executeTakeFirst();
-      if (!live) throw notFound();
-      if (HUMAN_ONLY.has(action)) {
-        throw new ApiError("forbidden", "Service tokens cannot perform this action");
-      }
-      role = p.role;
-    } else {
-      const m = await this.db
-        .selectFrom("memberships")
-        .innerJoin("orgs", "orgs.id", "memberships.org_id")
-        .select("memberships.role")
-        .where("memberships.org_id", "=", orgId)
-        .where("memberships.account_id", "=", p.account.id)
-        .where("orgs.deleted_at", "is", null)
-        .executeTakeFirst();
-      if (!m) throw notFound();
-      role = m.role;
-    }
-    if (!can(role, action)) throw new ApiError("forbidden", "Insufficient organization role");
+    const role = await authorizeOrgAction(this.db.db, p, orgId, action);
     req.org = { orgId, role };
     return true;
   }

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
+import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignLocale, useDesignT } from "../provider";
 import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
@@ -37,8 +38,11 @@ export type AgentMapNode = {
 /** The root's own background tasks (the same rows as the properties panel's). */
 export type AgentMapBackground = BackgroundTaskItem;
 
-/** The dialog width of each level: the tree, one agent's summary, its transcript. */
-const LEVEL_SIZE = { tree: 1100, detail: 760, transcript: 1060 } as const;
+/**
+ * The dialog width of each level: the tree 1100; one agent's summary and its transcript the
+ * conversation's column (`layout.chat`) plus the dialog's own padding (`chat`, agent-map.css).
+ */
+const LEVEL_SIZE = { tree: "1100", detail: "chat", transcript: "chat" } as const;
 
 const STATUSES: AgentMapStatus[] = ["running", "waiting", "completed", "failed", "aborted"];
 
@@ -62,7 +66,8 @@ export type AgentMapDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   /**
-   * The level shown: the width follows it (1100 / 760 / 1060). The tree's head (title, close) is
+   * The level shown: the width follows it (the tree 1100; levels 2 and 3 the conversation's column
+   * plus the dialog's padding). The tree's head (title, close) is
    * the frame's; levels 2 and 3 draw their own ({@link AgentDetail}, {@link TranscriptFrame}).
    */
   level: "tree" | "detail" | "transcript";
@@ -164,13 +169,21 @@ export function AgentMapDialog({
     const title = head?.querySelector<HTMLElement>('[data-part="agent-map-title"]');
     (back ?? title)?.focus();
   }, [current, t]);
+  // Levels 1 and 2 are a dialog box (spec §1); level 3's thread is a pane ({@link TranscriptFrame}).
+  // The tree level pads what it shows (the tree, or a page's loading bars or error line).
   const body = (
-    <>
+    <BoxScope kind="dialog">
       {level === "tree" ? (
-        <AgentMapHead title={t("agentMap.title")} onClose={() => onOpenChange(false)} />
-      ) : null}
-      {children}
-    </>
+        <>
+          <AgentMapHead title={t("agentMap.title")} onClose={() => onOpenChange(false)} />
+          <div className="cb-amap-content" data-part="agent-map-content">
+            {children}
+          </div>
+        </>
+      ) : (
+        children
+      )}
+    </BoxScope>
   );
   if (inline) {
     if (!open) return null;
@@ -274,9 +287,14 @@ export function AgentMapTree({
     background.some((b) => b.status === "running"),
     now,
   );
+  // the sub-agents only, the root (the conversation) not counted: the same number as the
+  // composer's agents chip (§6.16.29, AC3 ruling 4)
+  const agents = countNodes(root) - 1;
   const count = [
-    fillCopy(t("agentMap.count"), { n: countNodes(root) }),
-    fillCopy(t("agentMap.running"), { n: countRunning(root) }),
+    fillCopy(t(agents === 1 ? "agentsChip.one" : "agentsChip.many"), { n: agents }),
+    fillCopy(t("agentMap.running"), {
+      n: root.children.reduce((s, c) => s + countRunning(c), 0),
+    }),
     t("agentMap.hint"),
   ].join(" · ");
 
@@ -507,6 +525,33 @@ function DetailSection({
   );
 }
 
+/**
+ * Stop (`danger`) while the agent runs; while a stop is under way the Button's loading state
+ * (spinner, disabled, `aria-busy`), so it cannot be pressed again and does not disappear.
+ */
+function StopButton({
+  onStop,
+  stopping,
+  density,
+}: {
+  onStop: (() => void) | undefined;
+  stopping: boolean;
+  density?: "dense";
+}): JSX.Element | null {
+  const t = useDesignT();
+  if (!onStop && !stopping) return null;
+  return (
+    <Button
+      variant="danger"
+      {...(density ? { density } : {})}
+      loading={stopping}
+      {...(onStop && !stopping ? { onClick: onStop } : {})}
+    >
+      {t("agentMap.stop")}
+    </Button>
+  );
+}
+
 export type AgentDetailProps = {
   node: AgentMapNode;
   agentType: string;
@@ -531,6 +576,11 @@ export type AgentDetailProps = {
   onOpenTranscript(): void;
   /** Absent: the agent has finished and "Open transcript" fills the footer. */
   onStop?: () => void;
+  /**
+   * A stop is under way (from the click until the agent's terminal event, or the request fails):
+   * Stop stays, in the Button's loading state (disabled, busy), even without `onStop`.
+   */
+  stopping?: boolean;
   /** The clock for the running call and tasks (default: the time now, ticking while one runs). */
   now?: number;
 };
@@ -555,6 +605,7 @@ export function AgentDetail({
   onOpenParent,
   onOpenTranscript,
   onStop,
+  stopping = false,
   now,
 }: AgentDetailProps): JSX.Element {
   const t = useDesignT();
@@ -648,11 +699,7 @@ export function AgentDetail({
       </div>
       <div className="cb-amap-foot" data-part="agent-detail-foot">
         <Button onClick={onOpenTranscript}>{t("agentMap.openTranscript")}</Button>
-        {onStop ? (
-          <Button variant="danger" onClick={onStop}>
-            {t("agentMap.stop")}
-          </Button>
-        ) : null}
+        <StopButton onStop={onStop} stopping={stopping} />
       </div>
     </>
   );
@@ -675,13 +722,16 @@ export type TranscriptFrameProps = {
   onClose(): void;
   /** Absent: the agent has finished (no Stop). */
   onStop?: () => void;
+  /** A stop is under way: Stop stays, in the Button's loading state (as {@link AgentDetail}). */
+  stopping?: boolean;
   /** The thread: the conversation's timeline components, built like every timeline. */
   children: ReactNode;
 };
 
 /**
  * Level 3 of the agent map (§6.16.28): the agent's transcript as the conversation page draws its
- * thread, framed by the head (one meta line) and a read-only status line instead of a composer.
+ * thread, framed by the head (one meta line) and, instead of a composer, a status line with the
+ * context use and Stop (none when it has neither).
  */
 export function TranscriptFrame({
   node,
@@ -693,10 +743,12 @@ export function TranscriptFrame({
   onBack,
   onClose,
   onStop,
+  stopping = false,
   children,
 }: TranscriptFrameProps): JSX.Element {
   const t = useDesignT();
   const meta = useMeta(node, agentType, inBackground);
+  const stop = onStop !== undefined || stopping;
   return (
     <>
       <AgentMapHead
@@ -715,26 +767,24 @@ export function TranscriptFrame({
           </p>
         }
       />
+      {/* a pane, like RightPanel: the thread renders exactly as in the main chat (spec §1) */}
       <div className="cb-amap-transcript" data-part="agent-transcript">
-        <div className="cb-conv-thread" data-part="thread">
-          {children}
+        <BoxScope kind={null}>
+          <div className="cb-conv-thread" data-part="thread">
+            {children}
+          </div>
+        </BoxScope>
+      </div>
+      {contextPercent !== undefined || stop ? (
+        <div className="cb-amap-status" data-part="agent-transcript-status">
+          {contextPercent !== undefined ? (
+            <span data-part="agent-context">
+              {fillCopy(t("agentMap.context"), { n: Math.round(contextPercent) })}
+            </span>
+          ) : null}
+          <StopButton onStop={onStop} stopping={stopping} density="dense" />
         </div>
-      </div>
-      <div className="cb-amap-status" data-part="agent-transcript-status">
-        <span className="cb-amap-status-text">
-          {fillCopy(t("agentMap.readOnly"), { parent: spawnedBy.label })}
-        </span>
-        {contextPercent !== undefined ? (
-          <span data-part="agent-context">
-            {fillCopy(t("agentMap.context"), { n: Math.round(contextPercent) })}
-          </span>
-        ) : null}
-        {onStop ? (
-          <Button variant="danger" density="dense" onClick={onStop}>
-            {t("agentMap.stop")}
-          </Button>
-        ) : null}
-      </div>
+      ) : null}
     </>
   );
 }

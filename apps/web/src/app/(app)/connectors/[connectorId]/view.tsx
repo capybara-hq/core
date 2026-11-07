@@ -63,7 +63,8 @@ const POLICIES = ["allow", "ask", "deny"] as const satisfies readonly ToolPolicy
 type Update = (input: UpdateConnectorInput) => Promise<ConnectorDetail>;
 
 /**
- * `/connectors/[connectorId]`：连接器详情（DetailPage）：工具（启停、默认策略）、复核（定义变化的新旧对比）、
+ * `/connectors/[connectorId]`: a connector's detail (DetailPage, one centred column): the facts
+ * (connector, endpoint, auth, credential) first, then the tabs 工具（启停、默认策略）、复核（定义变化的新旧对比）、
  * 凭据（含 OAuth 客户端轮换）、设置（改名、启停、删除）。From the query cache (the layout prefetched it
  * on a first load); a missing connector is the not-found state. A change the kernel answers with
  * the connector replaces the cached one; a credential change reads it again.
@@ -135,11 +136,10 @@ function Connector({
           value: tab,
           onChange: (id) => setTab(id as Tab),
         }}
-        inspectorTitle={t("detail.inspectorTitle")}
-        // The tools tab (its table, the refresh button for those who manage connectors) and the
-        // inspector's facts (slug, connector, endpoint, auth, credential; ownership comes with data)
+        // The facts (connector, endpoint, auth, credential; ownership comes with the data), then
+        // the tools tab (its table, the refresh button for those who manage connectors)
         loading={{
-          inspector: { rows: 5, keyWidth: "10ch" },
+          facts: { rows: 4, keyWidth: "10ch" },
           content: [
             {
               kind: "table",
@@ -186,8 +186,7 @@ function Connector({
         value: tab,
         onChange: (id) => setTab(id as Tab),
       }}
-      inspectorTitle={t("detail.inspectorTitle")}
-      inspector={<ConnectorInspector app={app} />}
+      facts={<ConnectorFacts app={app} />}
     >
       {tab === "tools" ? (
         <ToolsTab
@@ -207,14 +206,17 @@ function Connector({
   );
 }
 
-function ConnectorInspector({ app }: { app: ConnectorDetail }) {
+/**
+ * The connector's facts at the top of the column (spec §5.2). The slug is the head's count and the
+ * status the head's mark, so neither is repeated here.
+ */
+function ConnectorFacts({ app }: { app: ConnectorDetail }) {
   const t = useTranslations("connectors");
   const ownership = app.auth.type === "none" ? null : app.auth.ownership;
   return (
     <KeyValue
       keyWidth="10ch"
       rows={[
-        { k: t("inspector.slug"), v: app.slug },
         { k: t("inspector.connector"), v: app.connector },
         { k: t("inspector.endpoint"), v: app.endpoint.url ?? "—" },
         { k: t("inspector.auth"), v: t(`auth.${app.auth.type}`) },

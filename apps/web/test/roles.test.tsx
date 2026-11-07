@@ -6,9 +6,6 @@ import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import NewAgentPage from "../src/app/(app)/agents/new/page";
-import CatalogInstallPage from "../src/app/(app)/catalog/[itemId]/install/page";
-import CatalogItemPage from "../src/app/(app)/catalog/[itemId]/page";
-import CatalogPage from "../src/app/(app)/catalog/page";
 import ChannelDetailPage from "../src/app/(app)/channels/[id]/page";
 import NewChannelPage from "../src/app/(app)/channels/new/page";
 import ChannelsPage from "../src/app/(app)/channels/page";
@@ -19,11 +16,13 @@ import EvalRunWizardPage from "../src/app/(app)/evals/[setId]/run/page";
 import NewEvalSetPage from "../src/app/(app)/evals/new/page";
 import EvalsPage from "../src/app/(app)/evals/page";
 import EvalRunPage from "../src/app/(app)/evals/runs/[runId]/page";
-import ExtensionsSettingsPage from "../src/app/(app)/settings/extensions/page";
+import ExtensionsPage from "../src/app/(app)/extensions/page";
+import PluginEnablePage from "../src/app/(app)/plugins/[itemId]/enable/page";
+import PluginItemPage from "../src/app/(app)/plugins/[itemId]/page";
+import PluginsPage from "../src/app/(app)/plugins/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
 import OrganizationPage from "../src/app/(app)/settings/organization/page";
-import PluginsSettingsPage from "../src/app/(app)/settings/plugins/page";
 import SandboxPage from "../src/app/(app)/settings/sandbox/page";
 import TokensPage from "../src/app/(app)/settings/tokens/page";
 import SkillPage from "../src/app/(app)/skills/[id]/page";
@@ -31,6 +30,7 @@ import SkillsPage from "../src/app/(app)/skills/page";
 import TrajectoryPage from "../src/app/(app)/trajectories/[conversationId]/page";
 import TrajectoriesPage from "../src/app/(app)/trajectories/page";
 import { HydrateCache } from "../src/components/HydrateCache";
+import { NoAccess } from "../src/components/NoAccess";
 import { setApiTransport } from "../src/lib/api";
 import type { OrgRole } from "../src/lib/members";
 import { makeQueryClient } from "../src/lib/query/client";
@@ -41,6 +41,7 @@ import { agentFormDefaults } from "./support/agents";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
+import { pickOption } from "./support/select";
 import type { Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -65,9 +66,9 @@ vi.mock("next/navigation", () => ({
 const ROLES = ["guest", "member", "admin", "owner"] as const;
 const RANK = { guest: 0, member: 1, admin: 2, owner: 3 } as const;
 
-export const meAs = (role: OrgRole, enterprise = false): Me => ({
+export const meAs = (role: OrgRole, superAdmin = false): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: enterprise },
+  account: { ...ME.account, isSuperAdmin: superAdmin },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -198,18 +199,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     "admin",
     zh.roles.need.admin,
   ],
-  [
-    "/settings/extensions",
-    route("/settings/extensions", () => ExtensionsSettingsPage()),
-    "admin",
-    zh.roles.need.admin,
-  ],
-  [
-    "/settings/plugins",
-    route("/settings/plugins", () => PluginsSettingsPage()),
-    "admin",
-    zh.roles.need.admin,
-  ],
+  ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",
@@ -236,16 +226,16 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     "member",
     zh.roles.need.member,
   ],
-  ["/catalog", route("/catalog", () => CatalogPage()), "member", zh.roles.need.member],
+  ["/plugins", route("/plugins", () => PluginsPage()), "member", zh.roles.need.member],
   [
-    "/catalog/i1",
-    route("/catalog/i1", () => CatalogItemPage(params({ itemId: "i1" }))),
+    "/plugins/i1",
+    route("/plugins/i1", () => PluginItemPage(params({ itemId: "i1" }))),
     "member",
     zh.roles.need.member,
   ],
   [
-    "/catalog/i1/install",
-    route("/catalog/i1/install", () => CatalogInstallPage(params({ itemId: "i1" }))),
+    "/plugins/i1/enable",
+    route("/plugins/i1/enable", () => PluginEnablePage(params({ itemId: "i1" }))),
     "admin",
     zh.roles.need.admin,
   ],
@@ -265,6 +255,20 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
 
 const noAccess = () =>
   document.querySelector('[data-template="StatusPage"][data-kind="no-access"]');
+
+describe("NoAccess names the page by its nav label", () => {
+  it.each([
+    ["/channels", zh.nav.channels],
+    ["/settings/organization", zh.nav.settings],
+    // New conversation has no nav message of its own: the head says no access
+    ["/chat", zh.roles.noAccess.title],
+    ["/p/example-board/board", zh.roles.noAccess.title],
+  ])("%s → %s", (path, title) => {
+    resetNavigation(path);
+    renderPage(<NoAccess need="member" />, { locale: "zh", me: meAs("guest") });
+    expect(screen.getByRole("heading", { level: 1, name: title })).toBeTruthy();
+  });
+});
 
 describe("role gate: pages a role may not open", () => {
   for (const [path, Page, min, need] of PAGES) {
@@ -335,38 +339,22 @@ const AGENT = (id: string, owner = "someone") => ({
   updatedAt: "2026-10-01T00:00:00Z",
 });
 const O = "/api/v1/orgs/o1";
+/** What `/agents` reads besides the agents for members up: the members and the templates. */
+const agentsPageReads = (): Record<string, unknown> => ({
+  [`GET ${O}/members`]: { members: [] },
+  [`GET ${O}/agent-templates`]: { templates: [] },
+  [`GET ${O}/components`]: { components: [] },
+});
 
 describe("role-dependent actions", () => {
   for (const role of ROLES) {
     const canCreate = role !== "guest";
     it(`/agents · ${role}: 新建 Agent ${canCreate ? "shown" : "hidden"}`, async () => {
-      routes = { [`GET ${O}/agents`]: { agents: [] } };
+      routes = { [`GET ${O}/agents`]: { agents: [] }, ...agentsPageReads() };
       resetNavigation("/agents");
       await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
       await screen.findByText(zh.agents.empty);
       expect(screen.queryAllByRole("link", { name: zh.agents.new }).length > 0).toBe(canCreate);
-    });
-
-    it(`overview · ${role}: 新建 Agent and 组织设置 ${canCreate ? "shown" : "hidden"}`, async () => {
-      const ok = (body: unknown) => () => reply(200, body);
-      const gone = () => reply(404, { error: { code: "not_found", message: "x" } });
-      resetNavigation("/");
-      await renderRouteWithCache(
-        "/",
-        {
-          [`GET ${O}/agents`]: ok({ agents: [AGENT("ag1")] }),
-          [`GET ${O}/models`]: ok({ providers: [] }),
-          [`GET ${O}/inbox`]: ok({ items: [], truncated: false }),
-          [`GET ${O}/conversations/groups`]: ok({ groups: [] }),
-          [`GET ${O}/skills`]: gone,
-          [`GET ${O}/connectors`]: gone,
-          [`GET ${O}/members`]: gone,
-        },
-        { locale: "zh", me: meAs(role) },
-      );
-      screen.getByText("Agent ag1");
-      expect(screen.queryByRole("link", { name: zh.home.newAgent }) !== null).toBe(canCreate);
-      expect(screen.queryByRole("link", { name: zh.home.orgSettings }) !== null).toBe(canCreate);
     });
   }
 });
@@ -402,7 +390,21 @@ const MEMBERS = {
   ],
 };
 
-describe("agents: edit, read-only and 更换负责人", () => {
+/** The agent head's ⋯ menu (更多操作): opens it and reads its items, then closes it. */
+async function moreItems(): Promise<string[]> {
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: zh.common.moreActions }));
+  const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent ?? "");
+  await user.keyboard("{Escape}");
+  return items;
+}
+/** 更改所有者 from the agent head's ⋯ menu. */
+async function changeOwner(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole("button", { name: zh.common.moreActions }));
+  await user.click(await screen.findByRole("menuitem", { name: zh.agents.page.reassign }));
+}
+
+describe("agents: edit, read-only and 更改所有者", () => {
   const agentPage = async (
     role: OrgRole,
     owner: string,
@@ -434,19 +436,29 @@ describe("agents: edit, read-only and 更换负责人", () => {
       await agentPage(role, "someone", {}, edits ? "" : "?s=model");
       if (edits) {
         expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
-        expect(screen.getByRole("button", { name: zh.agents.page.reassign })).toBeTruthy();
+        // 运行记录, 更改所有者 and 另存为模板 sit in the head's ⋯ menu beside 开始对话
+        expect(await moreItems()).toEqual([
+          zh.agents.runHistory,
+          zh.agents.page.reassign,
+          zh.agents.saveAs.action,
+        ]);
       } else {
         expect(await screen.findByText("p / m")).toBeTruthy();
         expect(screen.queryByRole("button", { name: zh.agents.form.submit })).toBeNull();
-        expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+        expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
+        expect(screen.queryByText(zh.agents.page.reassign)).toBeNull();
       }
     });
   }
 
-  it("a member who owns the agent edits it, without 更换负责人", async () => {
+  it("a member who owns the agent edits it, without 更改所有者 (运行记录 alone is a button)", async () => {
     await agentPage("member", "a1");
     expect(await screen.findByRole("textbox", { name: zh.agents.form.nameLabel })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.agents.page.reassign })).toBeNull();
+    // no menu of one: the lone 运行记录 stays a button
+    expect(screen.queryByRole("button", { name: zh.common.moreActions })).toBeNull();
+    expect(screen.getByRole("link", { name: zh.agents.runHistory })).toBeTruthy();
+    expect(screen.queryByText(zh.agents.page.reassign)).toBeNull();
+    expect(screen.queryByText(zh.agents.saveAs.action)).toBeNull();
   });
 
   it("a guest who still owns an agent cannot edit it (agents.create is member up)", async () => {
@@ -457,20 +469,26 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("an admin changes the owner: picks a member (no anonymous guests) and posts it", async () => {
     await agentPage("admin", "someone");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(select).queryByRole("option", { name: /Anonymous/ })).toBeNull();
-    await user.selectOptions(select, "a2");
+    await pickOption(select, "a2", user);
     await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
     await vi.waitFor(() => expect(calls).toContain(`POST ${O}/agents/x1/owner`));
     expect(await screen.findByText(zh.agents.reassign.done)).toBeTruthy();
+    // the agent is read again (and the agents list, when it is cached)
+    await vi.waitFor(() =>
+      expect(calls.slice(calls.indexOf(`POST ${O}/agents/x1/owner`))).toContain(
+        `GET ${O}/agents/x1`,
+      ),
+    );
   });
 
   it("an agent that needs reassignment can be confirmed to its current owner", async () => {
     await agentPage("admin", "a2", { needsReassignment: true });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     const submit = within(dialog).getByRole("button", { name: zh.agents.reassign.submit });
@@ -482,7 +500,7 @@ describe("agents: edit, read-only and 更换负责人", () => {
   it("without needsReassignment the current owner is not a change", async () => {
     await agentPage("admin", "a2");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.page.reassign }));
+    await changeOwner(user);
     const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
     await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
     expect(within(dialog).getByRole("button", { name: zh.agents.reassign.submit })).toHaveProperty(
@@ -491,49 +509,68 @@ describe("agents: edit, read-only and 更换负责人", () => {
     );
   });
 
-  for (const role of ROLES) {
-    const admin = role === "admin" || role === "owner";
-    it(`agent row · ${role}: 编辑 only through the name, 更换负责人 ${admin ? "as a button" : "hidden"}`, async () => {
-      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] } };
+  // The card's ⋯ (ruling P4-16 as amended): 设置 for whoever may change it, 运行记录 for org admins
+  // and a member owner; the owner is changed on the agent page only, never from the list
+  // (acceptance item P), for any role. A menu of one is a second button.
+  const cardCases: [OrgRole, string, string[]][] = [
+    ["guest", "someone", []],
+    ["member", "someone", []],
+    ["member", "a1", [zh.agents.settings, zh.agents.runHistory]],
+    ["admin", "someone", [zh.agents.settings, zh.agents.runHistory]],
+    ["owner", "someone", [zh.agents.settings, zh.agents.runHistory]],
+  ];
+  for (const [role, owner, items] of cardCases) {
+    it(`agent card · ${role}${owner === "a1" ? " (its owner)" : ""}: 开始会话, the card opens the agent, ⋯ ${items.length === 0 ? "none" : items.join(" / ")}`, async () => {
+      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1", owner)] }, ...agentsPageReads() };
       resetNavigation("/agents");
       await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs(role) });
-      await screen.findByText("Agent ag1");
-      // 开始会话 is the row's action; the menu never repeats it
-      expect(screen.getAllByRole("button", { name: zh.agents.chat })).toHaveLength(1);
-      // The name links to the edit page for whoever may edit; 编辑 is never offered twice
-      const nameLink = screen.queryByRole("link", { name: "Agent ag1" });
-      expect(nameLink?.getAttribute("href") ?? null).toBe(role === "guest" ? null : "/agents/ag1");
-      expect(screen.queryByRole("button", { name: zh.agents.edit })).toBeNull();
-      expect(screen.queryByRole("link", { name: zh.agents.edit })).toBeNull();
-      // No menu of one: the admins' lone 更换负责人 is a button
-      expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
-      expect(screen.queryByRole("button", { name: zh.agents.reassign.action }) !== null).toBe(
-        admin,
+      const card = (await screen.findByText("Agent ag1")).closest("li") as HTMLElement;
+      // the whole card opens the agent's page (read-only for whoever may only use it)
+      expect(within(card).getByRole("link", { name: "Agent ag1" }).getAttribute("href")).toBe(
+        "/agents/ag1",
       );
+      expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
+        "/chat?agent=ag1",
+      );
+      const more = within(card).queryByRole("button", { name: "更多操作" });
+      if (items.length === 0) {
+        expect(more).toBeNull();
+        expect(within(card).queryAllByRole("button")).toEqual([]);
+        return;
+      }
+      const user = userEvent.setup();
+      await user.click(more as HTMLElement);
+      const menu = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
+      // the leading items; 另存为模板 (org admins) may follow them
+      expect(menu.slice(0, items.length)).toEqual(items);
+      expect(screen.queryByRole("menuitem", { name: zh.agents.page.reassign })).toBeNull();
+      await user.keyboard("{Escape}");
     });
   }
-});
 
-describe("agents list: 更换负责人", () => {
-  it("reassign invalidates the agents list and the agent: the list is read again", async () => {
-    routes = {
-      [`GET ${O}/agents`]: { agents: [AGENT("ag1", "a1")] },
-      [`GET ${O}/members`]: MEMBERS,
-      [`POST ${O}/agents/ag1/owner`]: { agent: AGENT("ag1", "a2") },
-    };
-    resetNavigation("/agents");
-    await renderRouteWithCache("/agents", served(), { locale: "zh", me: meAs("admin") });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: zh.agents.reassign.action }));
-    const dialog = await screen.findByRole("dialog", { name: zh.agents.reassign.title });
-    const select = await within(dialog).findByRole("combobox", { name: zh.agents.reassign.owner });
-    await user.selectOptions(select, "a2");
-    calls = [];
-    await user.click(within(dialog).getByRole("button", { name: zh.agents.reassign.submit }));
-    await vi.waitFor(() =>
-      expect(calls).toEqual([`POST ${O}/agents/ag1/owner`, `GET ${O}/agents`]),
-    );
-  });
+  for (const role of ROLES) {
+    const member = role !== "guest";
+    it(`/agents · ${role}: ${member ? "the tabs 智能体 / 模板" : "the agents only, no tabs (guests cannot create)"}`, async () => {
+      routes = { [`GET ${O}/agents`]: { agents: [AGENT("ag1")] }, ...agentsPageReads() };
+      resetNavigation("/agents?tab=templates");
+      await renderRouteWithCache("/agents?tab=templates", served(), {
+        locale: "zh",
+        me: meAs(role),
+      });
+      if (member) {
+        expect(await screen.findByRole("tab", { name: /模板/ })).toBeTruthy();
+        expect(screen.getByRole("tab", { name: /模板/ }).getAttribute("aria-selected")).toBe(
+          "true",
+        );
+        expect(await screen.findByText(zh.agents.templates.empty)).toBeTruthy();
+      } else {
+        // the address asks for the templates, a guest gets the agents
+        expect(await screen.findByText("Agent ag1")).toBeTruthy();
+        expect(screen.queryByRole("tab")).toBeNull();
+        expect(calls.some((c) => c.includes("/agent-templates"))).toBe(false);
+      }
+    });
+  }
 });
 
 describe("trajectories: only the tabs the role can use", () => {

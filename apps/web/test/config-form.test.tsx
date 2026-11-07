@@ -71,9 +71,13 @@ describe("ConfigForm without hints", () => {
   it("labels from keys, nested objects as groups, arrays of objects as repeaters, unions as JSON", () => {
     draw(PLAIN, { region: "eu", endpoints: [{ name: "a", url: "http://a" }], when: 3 });
     expect((screen.getByLabelText(/^region/) as HTMLInputElement).value).toBe("eu");
-    // the nested object is a titled card holding its own field
-    expect(screen.getByText("limits")).toBeTruthy();
-    expect(screen.getByLabelText("burst")).toBeTruthy();
+    // the nested object is a subsection (an h3 over its fields under the guide), never a card
+    // (spec §1 "One box is enough")
+    const limits = screen.getByRole("region", { name: "limits" });
+    expect(limits.getAttribute("data-part")).toBe("subsection");
+    expect(within(limits).getByRole("heading", { level: 3, name: "limits" })).toBeTruthy();
+    expect(within(limits).getByLabelText("burst")).toBeTruthy();
+    expect(document.querySelector('[data-part="card"]')).toBeNull();
     // array of objects: a repeater with one item, never a JSON textarea
     const list = screen.getByRole("group", { name: "endpoints" });
     const item = within(list).getByRole("group", { name: "Item 1" });

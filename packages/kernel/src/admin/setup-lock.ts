@@ -8,7 +8,7 @@ const SETUP_LOCK = "capybara.setup";
 
 /**
  * The deployment setup lock (one provider per transaction-scoped lock): serializes the web setup
- * wizard and the CLI's `admin create --if-none`, so concurrent runs create exactly one enterprise
+ * wizard and the CLI's `admin create --if-none`, so concurrent runs create exactly one super
  * admin. Joins the caller's transaction (`mandatory`), which holds it until it ends.
  */
 @Injectable()

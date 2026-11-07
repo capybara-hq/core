@@ -54,7 +54,7 @@ describe("页面模板根节点与页头", () => {
       <DetailPage
         header={header}
         tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "标签" }}
-        inspector={<div>i</div>}
+        facts={<div>i</div>}
       >
         x
       </DetailPage>,
@@ -313,7 +313,7 @@ describe("widths, stat cards and the form without anchors", () => {
       <DetailPage
         header={header}
         tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
-        inspector={<div>i</div>}
+        facts={<div>i</div>}
       >
         x
       </DetailPage>,
@@ -324,6 +324,28 @@ describe("widths, stat cards and the form without anchors", () => {
     expect(content.getAttribute("data-width")).toBe("content");
     expect(head.closest(".cb-body-main")).not.toBeNull();
     expect(head.closest(".cb-body-main")).toBe(content.closest(".cb-body-main"));
+  });
+
+  it("DetailPage: the facts are a block at the top of the one centred column, no right pane", () => {
+    zh(
+      <DetailPage
+        header={header}
+        tabs={{ items: [{ id: "a", label: "概要" }], value: "a", label: "t" }}
+        facts={<dl>FACTS</dl>}
+      >
+        <p>TAB</p>
+      </DetailPage>,
+    );
+    expect(document.querySelector(".cb-body-inspector")).toBeNull();
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    const facts = content.firstElementChild as HTMLElement;
+    expect(facts.getAttribute("data-part")).toBe("detail-facts");
+    expect(facts.textContent).toBe("FACTS");
+    expect(facts.nextElementSibling?.textContent).toBe("TAB");
+    // no 详情 button opening a sheet below 1280 either: the facts are always in the column
+    expect(screen.queryByRole("button", { name: "详情" })).toBeNull();
   });
 
   it("ListPage renders StatCards after the header when metrics are given", () => {
@@ -390,16 +412,8 @@ describe("WizardPage", () => {
 });
 
 describe("其他模板行为", () => {
-  it("DetailPage / InboxPage 透传 onInspectorClose", async () => {
+  it("InboxPage passes onInspectorClose through", async () => {
     const onClose = vi.fn();
-    const tabs = { items: [{ id: "a", label: "概要" }], value: "a", label: "标签" };
-    const { unmount } = zh(
-      <DetailPage header={header} tabs={tabs} inspector={<div>i</div>} onInspectorClose={onClose}>
-        x
-      </DetailPage>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    unmount();
     zh(
       <InboxPage
         header={header}
@@ -411,7 +425,7 @@ describe("其他模板行为", () => {
       </InboxPage>,
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("InboxPage with no items: one page empty state instead of the list + detail split", () => {
@@ -443,7 +457,9 @@ describe("其他模板行为", () => {
   it("the template head has one padding rule: the content padding, no page gutter", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
     const head = /\.cb-template-head \{([^}]*)\}/.exec(css)?.[1] ?? "";
-    expect(head).toContain("padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-space-3);");
+    expect(head).toContain(
+      "padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);",
+    );
     expect(head).toContain("scrollbar-gutter: stable;");
     expect(css).not.toContain('.cb-template-head[data-width="content"]');
   });
@@ -799,5 +815,22 @@ describe("PendingState (the neutral loading state)", () => {
     expect(el.querySelectorAll('[data-part="pending-bar"]')).toHaveLength(0);
     act(() => vi.advanceTimersByTime(1));
     expect(el.querySelectorAll('[data-part="pending-bar"]').length).toBeGreaterThan(0);
+  });
+});
+
+describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
+  it("the rail is the list column, 320 wide on the inbox (wider than a filter rail's 240)", () => {
+    render(
+      <DesignProvider locale="zh">
+        <InboxPage header={{ path: [{ label: "admin" }], title: "收件箱" }} list={<div>l</div>}>
+          <div>c</div>
+        </InboxPage>
+      </DesignProvider>,
+    );
+    expect(document.querySelector(".cb-body-rail")?.getAttribute("data-part")).toBe("rail");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    const at = css.indexOf('.cb-template[data-template="InboxPage"] .cb-body-rail {');
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(css.slice(at, css.indexOf("}", at))).toContain("width: 320px");
   });
 });

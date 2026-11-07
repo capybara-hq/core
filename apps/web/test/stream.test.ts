@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
+import { DRAFT_RETRY_MS, DRAFT_SLOW_RETRY_MS } from "../src/lib/live-drafts";
+import { fetchRunDrafts } from "../src/lib/run-drafts";
 import {
   type ChatState,
   initialChatState,
@@ -8,6 +10,8 @@ import {
   type StreamDelta,
 } from "../src/lib/stream";
 import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";
+
+vi.mock("../src/lib/run-drafts", () => ({ fetchRunDrafts: vi.fn() }));
 
 /** The thread of a state (the timeline builder over its events and drafts). */
 const chatItems = (s: ChatState): TimelineEntry[] =>
@@ -198,6 +202,34 @@ describe("reduceChat", () => {
     expect(s).toMatchObject({ running: false, waiting: true });
     s = apply(s, [finished(6)]);
     expect(s).toMatchObject({ running: false, waiting: false });
+  });
+
+  it("overlapping waits: the run waits until every open approval / question is answered (as runStats counts)", () => {
+    const ask = (seq: number, approvalId: string) =>
+      ev(seq, "approval_requested", {
+        step: 0,
+        callId: `c-${approvalId}`,
+        approvalId,
+        toolKey: "mcp__x__y",
+        expiresAt: "2026-10-19T00:00:00.000Z",
+      });
+    const decide = (seq: number, approvalId: string) =>
+      ev(seq, "approval_decided", {
+        approvalId,
+        callId: `c-${approvalId}`,
+        decision: "approved",
+        byAccountId: "u1",
+      });
+    let s = apply(initialChatState, [started(1), ask(2, "a1"), ask(3, "a2")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    // one of two decided: still waiting for the other
+    s = apply(s, [decide(4, "a1")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    // a decision for a wait that is not open changes nothing
+    s = apply(s, [decide(5, "a1")]);
+    expect(s).toMatchObject({ running: false, waiting: true });
+    s = apply(s, [decide(6, "a2")]);
+    expect(s).toMatchObject({ running: true, waiting: false });
   });
 
   it("乱序：终态先于 run_started 到达仍判定为未运行", () => {
@@ -394,5 +426,360 @@ describe("openConversationStream", () => {
     es.readyState = 2;
     es.emit("error");
     expect(onError).toHaveBeenCalledWith({});
+  });
+});
+
+describe("reduceChat: live drafts", () => {
+  const at = (
+    text: string,
+    offset: number,
+    channel: "text" | "thinking" = "text",
+  ): StreamDelta => ({
+    runId: RUN,
+    step: 0,
+    delta: channel,
+    text,
+    offset,
+  });
+  const draft = (text: string, thinking = "", replace = true): StreamDelta => ({
+    runId: RUN,
+    step: 0,
+    delta: "draft",
+    text,
+    thinking,
+    replace,
+  });
+
+  it("a replacing draft sets the step's draft; deltas then add only what it does not hold", () => {
+    const s = apply(
+      initialChatState,
+      [started(1)],
+      delta("stale"),
+      draft("Hello wor", "hmm"),
+      at("world", 6),
+      at("!", 11),
+    );
+    expect(s.drafts).toEqual([{ runId: RUN, step: 0, text: "Hello world!", thinking: "hmm" }]);
+  });
+
+  it("a repeated delta changes nothing (same state)", () => {
+    const s = apply(initialChatState, [started(1)], at("abc", 0));
+    expect(reduceChat(s, { kind: "delta", delta: at("abc", 0) })).toBe(s);
+    expect(reduceChat(s, { kind: "delta", delta: at("b", 1) })).toBe(s);
+  });
+
+  it("text and thinking offsets are per channel", () => {
+    const s = apply(
+      initialChatState,
+      [started(1)],
+      draft("abc", "xy"),
+      at("z", 2, "thinking"),
+      at("y", 1, "thinking"),
+      at("d", 3),
+    );
+    expect(s.drafts[0]).toMatchObject({ text: "abcd", thinking: "xyz" });
+  });
+
+  it("reload at the step's end: a draft of a step the log finalized is ignored", () => {
+    const s = apply(
+      initialChatState,
+      [user(1, "q"), started(2), assistant(3, 0, "final")],
+      draft("fin"),
+    );
+    expect(s.drafts).toEqual([]);
+    expect(texts(s)).toEqual(["user:q", "prose:final"]);
+  });
+
+  it("the assistant_message replaces a draft (never both)", () => {
+    const s = apply(initialChatState, [started(1)], draft("fin"), [assistant(2, 0, "final")]);
+    expect(texts(s)).toEqual(["prose:final"]);
+  });
+
+  it("a resync keeps a channel it is a prefix of, and replaces one it is not", () => {
+    const resync = (text: string, thinking: string): StreamDelta => ({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      text,
+      thinking,
+      resync: true,
+    });
+    const s = apply(initialChatState, [started(1)], draft("Hello world", "deep"));
+    expect(apply(s, resync("Hello wor", "de")).drafts[0]).toMatchObject({
+      text: "Hello world",
+      thinking: "deep",
+    });
+    expect(apply(s, resync("Hi", "de")).drafts[0]).toMatchObject({ text: "Hi", thinking: "deep" });
+    expect(apply(s, resync("Hello world!", "deep")).drafts[0]?.text).toBe("Hello world!");
+    expect(apply(initialChatState, [started(1)], resync("abc", "")).drafts[0]?.text).toBe("abc");
+  });
+
+  it("an empty replacing draft leaves no draft", () => {
+    const s = apply(initialChatState, [started(1)], at("abc", 0), draft(""));
+    expect(s.drafts).toEqual([]);
+  });
+
+  it("a merging draft never shrinks a channel; a channel left out is kept", () => {
+    const s = apply(
+      initialChatState,
+      [started(1)],
+      draft("Hello wor", "deep"),
+      draft("Hel", "", false),
+    );
+    expect(s.drafts[0]).toMatchObject({ text: "Hello wor", thinking: "deep" });
+    const longer = apply(s, draft("Hello world", "de", false));
+    expect(longer.drafts[0]).toMatchObject({ text: "Hello world", thinking: "deep" });
+    const one = apply(longer, {
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      thinking: "new",
+      replace: true,
+    });
+    expect(one.drafts[0]).toMatchObject({ text: "Hello world", thinking: "new" });
+  });
+});
+
+describe("openConversationStream: live drafts", () => {
+  const read = vi.mocked(fetchRunDrafts);
+  let es: FakeEventSource;
+  let out: StreamDelta[];
+  let close: () => void;
+
+  /** What the page would show: the handed-on updates over the log so far. */
+  const shown = (events: ConversationEvent[] = [started(1)]) =>
+    out.reduce(
+      (s, d) => reduceChat(s, { kind: "delta", delta: d }),
+      apply(initialChatState, events),
+    );
+  const at = (text: string, offset: number, channel: "text" | "thinking" = "text", step = 0) => ({
+    runId: RUN,
+    step,
+    delta: channel,
+    text,
+    offset,
+  });
+  const frame = (text: string, thinking = "", step = 0) => ({ runId: RUN, step, text, thinking });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", FakeEventSource);
+    read.mockReset();
+    out = [];
+    close = openConversationStream("o1", "c1", 1, {
+      onEvent: vi.fn(),
+      onDelta: (d) => out.push(d),
+    });
+    es = FakeEventSource.instances[0] as FakeEventSource;
+    es.emit("open");
+  });
+  afterEach(() => {
+    close();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    FakeEventSource.instances = [];
+  });
+
+  it("a snapshot then deltas: the exact text, overlaps trimmed, repeats dropped", () => {
+    es.emit("draft", frame("Hello wor", "think"));
+    es.emit("delta", at("Hello", 0));
+    es.emit("delta", at("world", 6));
+    es.emit("delta", at("world", 6));
+    es.emit("delta", at("!", 11));
+    es.emit("delta", at("ing", 5, "thinking"));
+    expect(out).toEqual([
+      { runId: RUN, step: 0, delta: "draft", text: "Hello wor", thinking: "think", resync: true },
+      { runId: RUN, step: 0, delta: "text", text: "ld", offset: 9 },
+      { runId: RUN, step: 0, delta: "text", text: "!", offset: 11 },
+      { runId: RUN, step: 0, delta: "thinking", text: "ing", offset: 5 },
+    ]);
+    expect(shown().drafts).toEqual([
+      { runId: RUN, step: 0, text: "Hello world!", thinking: "thinking" },
+    ]);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a step's first delta on a connection replaces what an earlier connection left", () => {
+    es.emit("delta", at("new", 0));
+    expect(out).toEqual([{ runId: RUN, step: 0, delta: "draft", text: "new", replace: true }]);
+    es.emit("delta", at(" text", 3));
+    const before = reduceChat(apply(initialChatState, [started(1)]), {
+      kind: "delta",
+      delta: { runId: RUN, step: 0, delta: "text", text: "old execution" },
+    });
+    const s = out.reduce((st, d) => reduceChat(st, { kind: "delta", delta: d }), before);
+    expect(s.drafts[0]?.text).toBe("new text");
+  });
+
+  it("a gap reads the draft again; a short read is retried until it covers the held deltas", async () => {
+    read
+      .mockResolvedValueOnce([{ step: 0, text: "abc", thinking: "" }])
+      .mockResolvedValueOnce([{ step: 0, text: "abcde", thinking: "" }]);
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("fg", 5));
+    es.emit("delta", at("h", 7));
+    es.emit("delta", at("ef", 4));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith("o1", "c1", RUN);
+    // still short: what follows on is shown, nothing past the gap
+    expect(shown().drafts[0]?.text).toBe("abc");
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[1] ?? 0);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(shown().drafts[0]?.text).toBe("abcdefgh");
+    es.emit("delta", at("i", 8));
+    expect(out.at(-1)).toEqual({ runId: RUN, step: 0, delta: "text", text: "i", offset: 8 });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(shown().drafts[0]?.text).toBe("abcdefghi");
+  });
+
+  it("a delta past the start of an unknown step reads the draft first", async () => {
+    read.mockResolvedValueOnce([{ step: 0, text: "Hel", thinking: "t" }]);
+    es.emit("delta", at("lo", 3));
+    expect(out).toEqual([]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello", thinking: "t" }]);
+  });
+
+  it("the step finalized while a gap waits: no more reads, a late draft is ignored", async () => {
+    read.mockResolvedValue([]);
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("zz", 9));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    es.emit("event", assistant(2, 0, "ab...zz"));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(read).toHaveBeenCalledTimes(1);
+    const n = out.length;
+    es.emit("draft", frame("ab...z"));
+    es.emit("delta", at("q", 0));
+    expect(out).toHaveLength(n);
+    expect(texts(shown([started(1), assistant(2, 0, "ab...zz")]))).toEqual(["prose:ab...zz"]);
+  });
+
+  it("text and thinking offsets are independent: no cross-channel gap or repeat", () => {
+    es.emit("draft", frame("abc", "x"));
+    es.emit("delta", at("y", 1, "thinking"));
+    es.emit("delta", at("d", 3));
+    es.emit("delta", at("x", 0, "thinking"));
+    es.emit("delta", at("z", 2, "thinking"));
+    expect(read).not.toHaveBeenCalled();
+    expect(shown().drafts[0]).toMatchObject({ text: "abcd", thinking: "xyz" });
+  });
+
+  it("after the quick reads, a slow read every few seconds recovers while the step streams", async () => {
+    read.mockResolvedValue([{ step: 0, text: "ab", thinking: "" }]);
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("zz", 9));
+    const quick = DRAFT_RETRY_MS.reduce((a, b) => a + b, 0);
+    await vi.advanceTimersByTimeAsync(quick + 100);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length);
+    es.emit("delta", at("zzz", 11));
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS - 200);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length);
+    expect(shown().drafts[0]?.text).toBe("ab");
+    read.mockResolvedValue([{ step: 0, text: "abcdefghi", thinking: "" }]);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length + 1);
+    expect(shown().drafts[0]?.text).toBe("abcdefghizzzzz");
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(DRAFT_RETRY_MS.length + 1);
+  });
+
+  it("the slow reads stop when the run ends", async () => {
+    read.mockResolvedValue([]);
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("zz", 9));
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS.reduce((a, b) => a + b, 0) + 100);
+    es.emit("event", aborted(2));
+    const n = read.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(DRAFT_SLOW_RETRY_MS * 3);
+    expect(read).toHaveBeenCalledTimes(n);
+  });
+
+  it("a gap in one channel holds only that channel: the other's deltas go on", async () => {
+    let answer: (v: { step: number; text: string; thinking: string }[]) => void = () => {};
+    read.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    es.emit("draft", frame("ab", "x"));
+    es.emit("delta", at("zz", 5));
+    es.emit("delta", at("y", 1, "thinking"));
+    es.emit("delta", at("q", 7));
+    es.emit("delta", at("z", 2, "thinking"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts[0]).toMatchObject({ text: "ab", thinking: "xyz" });
+    answer([{ step: 0, text: "abcde", thinking: "xy" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown().drafts[0]).toMatchObject({ text: "abcdezzq", thinking: "xyz" });
+  });
+
+  it("a reconnect whose draft read fails or comes back empty keeps the draft shown", async () => {
+    es.emit("draft", frame("Hello wor", "hmm"));
+    // the browser reconnects; this time the server sends no `event: draft`
+    es.emit("open");
+    read.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce([]);
+    es.emit("delta", at("ld", 9));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[1] ?? 0);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello wor", thinking: "hmm" }]);
+    read.mockResolvedValueOnce([{ step: 0, text: "Hello wor", thinking: "hmm" }]);
+    await vi.advanceTimersByTimeAsync(DRAFT_RETRY_MS[2] ?? 0);
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Hello world", thinking: "hmm" }]);
+  });
+
+  it("a reconnect's frame that lags the screen keeps the longer text; another one replaces", () => {
+    es.emit("draft", frame("Hello wor", "hmm"));
+    es.emit("delta", at("ld", 9));
+    es.emit("delta", at("mmm", 3, "thinking"));
+    // the browser reconnects within the page: the store is up to 200 ms behind the screen
+    es.emit("open");
+    es.emit("draft", frame("Hello wor", "hmm"));
+    expect(shown().drafts).toEqual([
+      { runId: RUN, step: 0, text: "Hello world", thinking: "hmmmmm" },
+    ]);
+    es.emit("delta", at("ld", 9));
+    expect(shown().drafts[0]?.text).toBe("Hello world");
+    // not a prefix (a new attempt of the step): it replaces that channel, the other stays longer
+    es.emit("open");
+    es.emit("draft", frame("Bonjour", "hmm"));
+    expect(shown().drafts).toEqual([{ runId: RUN, step: 0, text: "Bonjour", thinking: "hmmmmm" }]);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a channel starting at offset 0 on a reconnect replaces that channel only", () => {
+    es.emit("draft", frame("answer so far", "old thought"));
+    es.emit("open");
+    es.emit("delta", at("new", 0, "thinking"));
+    expect(out.at(-1)).toEqual({
+      runId: RUN,
+      step: 0,
+      delta: "draft",
+      thinking: "new",
+      replace: true,
+    });
+    expect(shown().drafts[0]).toMatchObject({ text: "answer so far", thinking: "new" });
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("step_reset drops the step; its next delta starts over from offset 0", () => {
+    es.emit("draft", frame("first try"));
+    es.emit("delta", { runId: RUN, step: 0, delta: "step_reset" });
+    es.emit("delta", at("again", 0));
+    expect(shown().drafts[0]?.text).toBe("again");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("a read answered after the run ended changes nothing", async () => {
+    let answer: (v: { step: number; text: string; thinking: string }[]) => void = () => {};
+    read.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    es.emit("draft", frame("ab"));
+    es.emit("delta", at("zz", 9));
+    await vi.advanceTimersByTimeAsync(0);
+    es.emit("event", finished(2));
+    const n = out.length;
+    answer([{ step: 0, text: "abcdefghi", thinking: "" }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(out).toHaveLength(n);
   });
 });

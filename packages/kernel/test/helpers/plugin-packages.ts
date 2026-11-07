@@ -195,6 +195,8 @@ export interface LifePkgOptions {
    * `<name> <version> denies`; anything else is allowed.
    */
   policy?: boolean;
+  /** Skills the plugin carries besides its extension (`skills/<name>/SKILL.md`). */
+  skills?: string[];
 }
 
 /**
@@ -302,10 +304,23 @@ export default defineExtension({
 });
 `;
   const migrations = o.migrations ?? [];
+  const skills = o.skills ?? [];
   return pluginTgz({
-    manifest: { name, version: o.version },
+    manifest: {
+      name,
+      version: o.version,
+      ...(skills.length > 0 && { skills: skills.map((s) => ({ path: `./skills/${s}` })) }),
+    },
     ...(o.packageName !== undefined && { packageName: o.packageName }),
-    files: Object.fromEntries(migrations.map((m) => [`migrations/${m.file}`, m.sql])),
+    files: {
+      ...Object.fromEntries(migrations.map((m) => [`migrations/${m.file}`, m.sql])),
+      ...Object.fromEntries(
+        skills.map((s) => [
+          `skills/${s}/SKILL.md`,
+          `---\nname: ${s}\ndescription: Skill ${s} of ${name}.\n---\n\n# ${s}\n\nVersion ${o.version}.\n`,
+        ]),
+      ),
+    },
     extension: {
       manifest: staticManifestOf(real) as unknown as Record<string, unknown>,
       entry,

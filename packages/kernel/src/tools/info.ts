@@ -3,6 +3,7 @@ import {
   extensionToolKey,
   type LocalizedName,
   parseToolKey,
+  type ToolAnnotations,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -14,7 +15,8 @@ import { UUID_RE } from "../ui/registry.js";
 import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
 import { pluginDisplayNames } from "./display-names.js";
 import { isLegacyBuiltinKey, LEGACY_BUILTINS, type LegacyBuiltin } from "./legacy-keys.js";
-import { ToolRegistry } from "./registry.js";
+import { toolKeyIssue } from "./naming.js";
+import { policyFromAnnotations, ToolRegistry } from "./registry.js";
 
 /**
  * Tool presentation metadata for the conversation page (UI refresh B, design spec §6.16.9): the
@@ -216,3 +218,74 @@ export class ConversationToolInfo {
     return toolInfo({ db: this.db.db, registry: this.registry }, orgId, keys);
   }
 }
+
+/** One tool of {@link OrgExtensionTools}. Display only, for the agent form. */
+export interface ExtensionToolOffer {
+  /** The tool's registered name (the `name` of a `{kind:"plugin"}` reference). */
+  name: string;
+  /** The model-visible key, `plugin__<plugin>__<name>` (the `toolPolicies` key). */
+  key: string;
+  /** The declared display title (`ToolSpec.title`), or null. */
+  title: string | null;
+  /** The first non-empty line of the tool's description (English, model-facing text). */
+  description: string;
+  annotations: ToolAnnotations;
+  /** The tool's default policy: its `defaultPolicy`, else derived from the annotations. */
+  defaultPolicy: "allow" | "ask";
+}
+
+/** One extension of {@link OrgExtensionTools} with its tools, in registration order. */
+export interface ExtensionToolsOffer {
+  plugin: string;
+  /** The plugin's catalog display name, else its name. */
+  displayName: LocalizedName;
+  tools: ExtensionToolOffer[];
+}
+
+/**
+ * `GET /orgs/:orgId/tools/extensions`: the tools an agent of this org can reference by
+ * `{kind:"plugin"}` and get at run time, grouped by extension: the extensions loaded on this
+ * replica and enabled in the org (`enabled.ts`, through the host), each with the tools it
+ * registered whose key is valid (`ToolRegistry.forAgent` reports the others unavailable).
+ */
+@Injectable()
+export class OrgExtensionTools {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(ToolRegistry)
+    private readonly registry: Pick<ToolRegistry, "extensionToolSpecs" | "enabledExtensions">,
+  ) {}
+
+  async list(orgId: string): Promise<ExtensionToolsOffer[]> {
+    const enabled = await this.registry.enabledExtensions(orgId);
+    const groups = new Map<string, ExtensionToolOffer[]>();
+    for (const t of this.registry.extensionToolSpecs()) {
+      if (!enabled.has(t.plugin)) continue;
+      const key = extensionToolKey(t.plugin, t.spec.name);
+      if (toolKeyIssue(key) !== null) continue;
+      const tools = groups.get(t.plugin) ?? [];
+      if (tools.some((x) => x.name === t.spec.name)) continue;
+      tools.push({
+        name: t.spec.name,
+        key,
+        title: display(t.spec).title,
+        description: firstLine(t.spec.description),
+        annotations: { ...(t.spec.annotations ?? {}) },
+        defaultPolicy: t.spec.defaultPolicy ?? policyFromAnnotations(t.spec.annotations),
+      });
+      groups.set(t.plugin, tools);
+    }
+    const names = await pluginDisplayNames(this.db.db, [...groups.keys()]);
+    return [...groups].map(([plugin, tools]) => ({
+      plugin,
+      displayName: names.get(plugin) ?? { zh: plugin, en: plugin },
+      tools,
+    }));
+  }
+}
+
+const firstLine = (s: string): string =>
+  (typeof s === "string" ? s : "")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l !== "") ?? "";

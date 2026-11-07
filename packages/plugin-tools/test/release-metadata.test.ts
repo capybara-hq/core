@@ -19,6 +19,7 @@ describe("plugin-release-metadata", () => {
     const f = run(root);
     expect(f.filter((x) => x.rule !== "plugin-release-metadata").map((x) => x.rule)).toEqual([
       "release-display-name",
+      "release-description-zh",
     ]);
     expect(f.map((x) => [relative(root, x.file), x.message.split(":")[0]])).toEqual([
       ["plugins/example-demo/package.json", "plugins/example-demo must not be published"],
@@ -27,6 +28,10 @@ describe("plugin-release-metadata", () => {
       [
         "plugins/no-display-name/.capybara-plugin/plugin.json",
         'plugins/no-display-name is published and needs a "displayName" in .capybara-plugin/plugin.json',
+      ],
+      [
+        "plugins/no-zh-description/.capybara-plugin/plugin.json",
+        "plugins/no-zh-description is published and its description has no zh",
       ],
       ["plugins/wrong-dir/package.json", 'plugins/wrong-dir is published and needs "repository"'],
       [
@@ -56,6 +61,22 @@ describe("plugin-release-metadata", () => {
     ]);
     // clean: the private example-demo has a plugin.json without displayName and passes
     expect(run(fixture("clean"))).toEqual([]);
+  });
+
+  it("release-description-zh: a public plugin's description without zh is a warning, not an error", () => {
+    const root = fixture("violations");
+    const f = run(root).filter((x) => x.rule === "release-description-zh");
+    expect(f).toEqual([
+      {
+        file: join(root, "plugins/no-zh-description/.capybara-plugin/plugin.json"),
+        line: 1,
+        rule: "release-description-zh",
+        severity: "warning",
+        message: expect.stringContaining('"description": { "en": …, "zh": … }'),
+      },
+    ]);
+    // every other finding is an error
+    expect(run(root).filter((x) => x.severity !== undefined)).toEqual(f);
   });
 
   it("a root package.json without repository.url is reported once", () => {

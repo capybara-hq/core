@@ -4,12 +4,12 @@
 #      plugins bootstrap.json pins from npm and installs them, once) but creates no admin (web setup hint), the
 #      setup wizard is open and requires CAPYBARA_SETUP_TOKEN (refused without it, works with
 #      it), every service becomes healthy, two worker replicas (--scale worker=2);
-#   2. `up` again with the password file: init creates the enterprise admin (bootstrap is already
+#   2. `up` again with the password file: init creates the super admin (bootstrap is already
 #      done and does nothing); log in through web;
 #   3. install model-fake from a local tgz with `compose run api extensions install`, enable it, and
 #      without restarting anything both workers load it and a conversation turn completes;
 #   4. a third `up`: init exits 0 again, bootstrap still ran only once, and there is still exactly
-#      one enterprise admin;
+#      one super admin;
 #   5. object storage on the web origin (the bootstrap plugin object-store-s3): an attachment's
 #      presigned upload and download go through web's proxy (the client uses another Host than the
 #      signed one, like behind a front proxy);
@@ -133,7 +133,7 @@ wait_healthy() {
 
 psql_q() { dc exec -T postgres psql -U capybara -d capybara -tAc "$1" | tr -d '[:space:]'; }
 admin_count() {
-  psql_q "SELECT count(*) FROM capybara.accounts WHERE is_enterprise_admin AND status = 'active'"
+  psql_q "SELECT count(*) FROM capybara.accounts WHERE is_super_admin AND status = 'active'"
 }
 init_exit() { docker inspect -f '{{.State.ExitCode}}' "$(dc ps -a -q init)"; }
 # init_log_has TEXT: init's log contains TEXT. Read into a variable first: with pipefail, `dc logs |
@@ -164,7 +164,7 @@ init_log_has "Bootstrap done" || fail "init did not finish the bootstrap step"
 bootstrap_once
 echo "    init bootstrapped openai-compatible and object-store-s3 (required, enabled)"
 [ "$(dc ps -q worker | grep -c .)" = "2" ] || fail "expected two worker containers"
-[ "$(admin_count)" = "0" ] || fail "an enterprise admin exists without a password file"
+[ "$(admin_count)" = "0" ] || fail "a super admin exists without a password file"
 
 # 127.0.0.1, not the public URL's "localhost": the Host web sees differs from the signed one.
 WEB="http://127.0.0.1:$WEB_PORT"
@@ -200,10 +200,10 @@ out="$(api POST /api/v1/setup "{$SETUP_BODY,\"setupToken\":\"$SETUP_TOKEN\"}")"
 [ "$(admin_count)" = "1" ] || fail "setup with the token did not create the admin"
 echo "    setup page: refused without the token (403), created the admin with it (201)"
 # Reopen setup for the password-file step below: demote the web-created admin (test-only shortcut).
-psql_q "UPDATE capybara.accounts SET is_enterprise_admin = false WHERE display_name = 'Web Admin'" >/dev/null
+psql_q "UPDATE capybara.accounts SET is_super_admin = false WHERE display_name = 'Web Admin'" >/dev/null
 [ "$(admin_count)" = "0" ] || fail "could not demote the web-created admin"
 
-echo "==> up with the password file: init creates the enterprise admin"
+echo "==> up with the password file: init creates the super admin"
 echo "CAPYBARA_INIT_ADMIN_PASSWORD_FILE=$PW_FILE" >>"$ENV_FILE"
 # Compose doesn't recreate a container when only a secret's source file changes (documented in
 # .env.example): recreate init, then a plain `up` (which runs init once more and skips).
@@ -211,11 +211,11 @@ dc up -d --force-recreate --no-deps init
 dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit)"
-init_log_has "enterprise admin created" || fail "init did not create the admin"
+init_log_has "super admin created" || fail "init did not create the admin"
 # init was recreated above, so this log is the new container's run only
 init_log_has "Bootstrap already done" || fail "init did not skip the bootstrap step"
 bootstrap_once
-[ "$(admin_count)" = "1" ] || fail "expected one enterprise admin, got $(admin_count)"
+[ "$(admin_count)" = "1" ] || fail "expected one super admin, got $(admin_count)"
 out="$(api POST /api/v1/auth/login "{\"login\":\"$ADMIN\",\"password\":\"$PW\"}")"
 [ "${out%% *}" = "200" ] || fail "admin login through web: $out"
 echo "    admin login through web: 200"
@@ -320,14 +320,14 @@ st="$(curl -sS -o /dev/null -w '%{http_code}' -X PUT --data x "$WEB/capybara/ker
 [ "$st" = "405" ] || fail "PUT through the object-store proxy: $st (expected 405)"
 echo "    presigned upload and download through web (other Host than signed); PUT 405; nosniff, CSP"
 
-echo "==> third up: init exits 0, still one enterprise admin"
+echo "==> third up: init exits 0, still one super admin"
 dc up -d --scale worker=2
 wait_healthy api worker gateway web
 [ "$(init_exit)" = "0" ] || fail "init exited with $(init_exit) on the third up"
 init_log_has "already exists; skipped" || fail "init did not skip the admin"
 # The log holds every run of this container; that bootstrap did not run again is the DB count
 bootstrap_once
-[ "$(admin_count)" = "1" ] || fail "expected one enterprise admin after the third up, got $(admin_count)"
+[ "$(admin_count)" = "1" ] || fail "expected one super admin after the third up, got $(admin_count)"
 
 echo "==> networks: web reaches only api and the S3 gateway; sandbox-proxy on the internal network only"
 dc --profile sandbox up -d --no-deps sandbox-proxy

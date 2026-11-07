@@ -17,9 +17,12 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/agent-templates`]: ok({ templates: [] }),
     [`GET ${ORG}/agents`]: ok({ agents: [] }),
     [`GET ${ORG}/members`]: ok({ members: [] }),
+    // the platform components offered to the org (the editor's unavailable ids)
+    [`GET ${ORG}/components`]: ok({ components: [] }),
     [`GET ${ORG}/agents/${agentId}/skills`]: ok({ skills: [] }),
     [`GET ${ORG}/channels`]: ok({ channels: [] }),
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
+    [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
     [`GET ${ORG}/attachments/limits`]: ok({
       types: ["image/png"],
       maxBytes: 1,

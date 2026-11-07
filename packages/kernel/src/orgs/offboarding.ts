@@ -2,6 +2,7 @@ import { DIRECTORY_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import { retargetSetupRequests } from "../agents/pending-connector-requests.js";
 import { EventLog } from "../conversations/event-log.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
@@ -245,6 +246,12 @@ export class Offboarding {
       .where("deleted_at", "is", null)
       .returning("id")
       .execute();
+    // their connector setup requests follow them to the org owner (ruling P4-T6-4)
+    await retargetSetupRequests(
+      this.db.db,
+      agents.map((a) => a.id),
+      owner.account_id,
+    );
 
     const threads = await this.db
       .updateTable("channel_threads")

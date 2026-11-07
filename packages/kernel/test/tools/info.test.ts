@@ -16,7 +16,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
 // Tool presentation metadata for the conversation page (UI refresh B, Task 4):
 // GET /orgs/:orgId/conversations/:id/tools?keys=… -> titles, kinds, key arguments and sources.
@@ -109,6 +109,7 @@ async function setup(): Promise<{ req: Req; orgId: string; conversationId: strin
   const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Acme" } });
   expect(org.statusCode).toBe(201);
   const orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableConnectorExtensions(k, orgId);
   const agent = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

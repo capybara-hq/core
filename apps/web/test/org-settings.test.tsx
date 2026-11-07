@@ -77,8 +77,6 @@ describe("组织设置（SettingsPage）", () => {
       nav.members,
       nav.models,
       nav.groupCapabilities,
-      nav.extensions,
-      nav.plugins,
       nav.sandbox,
     ];
     let at = -1;
@@ -93,7 +91,7 @@ describe("组织设置（SettingsPage）", () => {
     await screen.findByText(en.orgSettings.readonly);
     expect(screen.getByRole("link", { name: nav.members })).toBeTruthy();
     expect(screen.getByRole("link", { name: nav.sandbox })).toBeTruthy();
-    for (const hidden of [nav.models, nav.extensions, nav.plugins]) {
+    for (const hidden of [nav.models, nav.tokens]) {
       expect(screen.queryByRole("link", { name: hidden })).toBeNull();
     }
   });

@@ -12,6 +12,7 @@ import type { EventLog } from "../../src/conversations/event-log.js";
 import {
   cleanTitle,
   TITLE_MAX_ATTEMPTS,
+  TITLE_MAX_WIDTH,
   TITLE_PROMPT,
   titleAttemptDue,
   titleExcerpt,
@@ -116,19 +117,37 @@ describe("titleExcerpt / cleanTitle", () => {
     const x = titleExcerpt("a".repeat(1500), "b".repeat(10));
     expect(x).toContain(`${"a".repeat(1000)}…`);
     expect(x).not.toContain("a".repeat(1001));
-    expect(TITLE_PROMPT).toMatch(/^Write a title of at most 8 words/);
+    expect(TITLE_PROMPT).toMatch(/short topic of what the user asked/);
+    expect(TITLE_PROMPT).toMatch(/not the reply/);
+    expect(TITLE_PROMPT).toMatch(/noun phrase/);
+    expect(TITLE_PROMPT).toMatch(/at most 6 words or about 16 CJK characters/);
+    expect(TITLE_PROMPT).toMatch(/no sentence, no list/);
     expect(cleanTitle('"Quarterly report."\nmore')).toBe("Quarterly report");
     expect(cleanTitle("\n  Title: 季度报告。 ")).toBe("季度报告");
     expect(cleanTitle("a​b\u0007c")).toBe("abc");
     // ZWNJ / ZWJ are kept, bidi controls dropped (review M3)
     expect(cleanTitle("می\u200Cخواهم\u200F")).toBe("می\u200Cخواهم");
     expect(cleanTitle("👨\u200D👩")).toBe("👨\u200D👩");
-    expect(cleanTitle("x".repeat(200))).toHaveLength(120);
+    expect(cleanTitle("x".repeat(200))).toHaveLength(TITLE_MAX_WIDTH);
     expect(cleanTitle(' \n"" ')).toBeNull();
     // counted in code points: a cut never leaves half a surrogate pair
     const emoji = cleanTitle("😀".repeat(130)) as string;
-    expect(Array.from(emoji)).toHaveLength(120);
+    expect(Array.from(emoji)).toHaveLength(TITLE_MAX_WIDTH / 2);
     expect(emoji).not.toMatch(/[\uD800-\uDBFF]$/);
+  });
+
+  it("caps a generated title by display width: CJK counts 2, cut on a character, no ellipsis", () => {
+    const cjk = cleanTitle(
+      "我可以使用以下工具搜索网络读取网页向您提问管理任务清单维护技能文件列表",
+    ) as string;
+    expect(Array.from(cjk)).toHaveLength(24);
+    expect(cjk).toBe("我可以使用以下工具搜索网络读取网页向您提问管理任");
+    expect(cjk).not.toMatch(/[.…]$/);
+    expect(cleanTitle("字".repeat(24))).toBe("字".repeat(24));
+    const mixed = cleanTitle(`${"a".repeat(47)}字字`) as string;
+    expect(mixed).toBe("a".repeat(47));
+    expect(cleanTitle("word ".repeat(30))?.length).toBeLessThanOrEqual(TITLE_MAX_WIDTH);
+    expect(cleanTitle("Short title")).toBe("Short title");
   });
 });
 

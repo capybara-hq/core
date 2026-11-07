@@ -14,6 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { CatalogService } from "../../src/catalog/catalog.service.js";
+import { CatalogScopeService } from "../../src/catalog/catalog-scope.service.js";
 import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -30,7 +31,7 @@ import { PW, type Req, runConfig, session, startKernel, type TestKernel } from "
 import { skillPlugin } from "./packages.js";
 
 /**
- * The enterprise catalog's items (one kind: every item is a plugin): list and detail, policy,
+ * The platform catalog's items (one kind: every item is a plugin): list and detail, scope,
  * delete, installing an item's extension on the deployment, and the import entry points that are
  * not about the review itself (plugin-import.test.ts covers the review).
  */
@@ -112,7 +113,7 @@ beforeAll(async () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" })).id;
@@ -157,7 +158,7 @@ const confirm = (req: Req, stagingId: string, reviewHash: string) =>
   req({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${stagingId}/confirm`,
-    payload: { reviewHash, deployExtension: false },
+    payload: { reviewHash },
   });
 
 /** prepare (file or npm response) -> confirm; returns the item. */
@@ -312,36 +313,24 @@ describe("items", () => {
   });
 });
 
-describe("installing an item's extension on the deployment", () => {
+describe("importing an item's extension", () => {
   beforeAll(resetCatalog);
 
-  it("calls the extension install, the install records the item; a version without an extension is 409 catalog.no_extension", async () => {
+  it("confirm installs and enables it, linked to the item; install-deployment and the policy route are gone (404)", async () => {
     const item = await importFile(toolsUi);
-    expect(item).toMatchObject({ name: "fake-tools-ui", latestVersion: "0.1.0" });
+    expect(item).toMatchObject({ name: "fake-tools-ui", latestVersion: "0.1.0", pending: false });
     const pkg = await db
       .selectFrom("extension_packages")
       .selectAll()
       .where("sha256", "=", sha256(toolsUi))
       .executeTakeFirstOrThrow();
     expect(pkg).toMatchObject({ source: "catalog", source_ref: `${item.id}@0.1.0` });
-    const res = await admin({
-      method: "POST",
-      url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
-      payload: { version: "0.1.0" },
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    // The import's review approved the permissions
-    expect(res.json()).toMatchObject({
-      name: "fake-tools-ui",
-      version: "0.1.0",
-      status: "disabled",
-    });
     const row = await db
       .selectFrom("extension_installs")
       .selectAll()
       .where("name", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
-    expect(row.catalog_item_id).toBe(item.id);
+    expect(row).toMatchObject({ catalog_item_id: item.id, desired_state: "enabled" });
     expect(
       await db
         .selectFrom("extension_catalog_sources")
@@ -357,21 +346,107 @@ describe("installing an item's extension on the deployment", () => {
       .where("name", "=", "fake-tools-ui")
       .executeTakeFirstOrThrow();
     expect(kept.catalog_item_id).toBe(item.id);
-    const missing = await admin({
+    const gone = await admin({
       method: "POST",
       url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
-      payload: { version: "9.9.9" },
+      payload: { version: "0.1.0" },
     });
-    expect(missing.statusCode).toBe(404);
+    expect(gone.statusCode).toBe(404);
+    const policy = await admin({
+      method: "PUT",
+      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
+      payload: { policy: "disabled" },
+    });
+    expect(policy.statusCode).toBe(404);
+  });
 
-    const skill = await importFile(await skillPlugin("pdf-tools"));
-    const none = await admin({
+  it("pending: an item whose extension is not installed on the deployment", async () => {
+    await k.app.get(ExtensionAdminOps).disable("fake-tools-ui", null);
+    await k.app.get(ExtensionAdminOps).uninstall("fake-tools-ui", null);
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(
+      list.json().items.find((i: { name: string }) => i.name === "fake-tools-ui"),
+    ).toMatchObject({ pending: true });
+  });
+
+  it("confirm installs and enables a pending, never-deployed item and writes a web snapshot", async () => {
+    const list = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    const item = list.json().items.find((i: { name: string }) => i.name === "fake-tools-ui");
+    expect(item).toMatchObject({ pending: true });
+    expect(item.permissionsHash).toMatch(/^[0-9a-f]{16}$/);
+    const stale = await admin({
       method: "POST",
-      url: `/api/v1/admin/catalog/items/${skill.id}/install-deployment`,
-      payload: { version: "1.0.0" },
+      url: `/api/v1/admin/catalog/items/${item.id}/confirm`,
+      payload: { permissionsHash: "0000000000000000" },
     });
-    expect(none.statusCode).toBe(409);
-    expect(none.json().error.code).toBe("catalog.no_extension");
+    expect(stale.json().error.code).toBe("extension.approval_stale");
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select("name")
+        .where("name", "=", "fake-tools-ui")
+        .execute(),
+    ).toEqual([]);
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${item.id}/confirm`,
+      payload: { permissionsHash: item.permissionsHash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ pending: false, permissionsHash: null });
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select(["desired_state", "catalog_item_id"])
+        .where("name", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ desired_state: "enabled", catalog_item_id: item.id });
+    expect(
+      await db
+        .selectFrom("extension_permission_snapshots")
+        .select("source")
+        .where("plugin", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ source: "web" });
+    const none = await admin({ method: "GET", url: "/api/v1/admin/catalog/items?pending=true" });
+    expect(none.json().items).toEqual([]);
+  });
+
+  it("a confirm that stopped before the enable is retried: installed, approved and disabled -> enabled", async () => {
+    await k.app.get(ExtensionAdminOps).disable("fake-tools-ui", null);
+    const id = (
+      await db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("name", "=", "fake-tools-ui")
+        .executeTakeFirstOrThrow()
+    ).id;
+    const hash = (
+      await admin({ method: "GET", url: "/api/v1/admin/extensions/fake-tools-ui" })
+    ).json().reviewHash;
+    const ok = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${id}/confirm`,
+      payload: { permissionsHash: hash },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json().pending).toBe(false);
+    expect(
+      (
+        await db
+          .selectFrom("extension_installs")
+          .select("desired_state")
+          .where("name", "=", "fake-tools-ui")
+          .executeTakeFirstOrThrow()
+      ).desired_state,
+    ).toBe("enabled");
+    // enabled and covered: nothing to confirm
+    const again = await admin({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${id}/confirm`,
+      payload: { permissionsHash: hash },
+    });
+    expect(again.json().error.code).toBe("extension.not_pending");
   });
 
   it("importing the same fake-tools-ui version from npm is 409 catalog.version_exists", async () => {
@@ -381,30 +456,17 @@ describe("installing an item's extension on the deployment", () => {
   });
 });
 
-describe("policy, delete and permissions", () => {
+describe("scope, delete and permissions", () => {
   beforeAll(resetCatalog);
 
-  it("the policy change is audited; a bad policy is 400; a deleted item is hidden and the name can be imported again", async () => {
+  it("a bad scope is 400; a deleted item is hidden and the name can be imported again", async () => {
     const item = await importFile(await skillPlugin("pdf-tools"));
-    const put = await admin({
-      method: "PUT",
-      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
-      payload: { policy: "needs_approval" },
-    });
-    expect(put.statusCode, put.body).toBe(200);
-    expect(put.json().policy).toBe("needs_approval");
     const bad = await admin({
       method: "PUT",
-      url: `/api/v1/admin/catalog/items/${item.id}/policy`,
-      payload: { policy: "maybe" },
+      url: `/api/v1/admin/catalog/items/${item.id}/scope`,
+      payload: { scope: "maybe", scopeHash: "x" },
     });
     expect(bad.statusCode).toBe(400);
-    const audit = await db
-      .selectFrom("audit_events")
-      .select(["action", "detail"])
-      .where("action", "=", "catalog.policy_changed")
-      .execute();
-    expect(audit[0]?.detail).toEqual({ name: "pdf-tools", from: "allow", to: "needs_approval" });
 
     const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` });
     expect(del.statusCode).toBe(204);
@@ -431,7 +493,7 @@ describe("policy, delete and permissions", () => {
     expect(res.json().error.code).toBe("catalog.item_not_found");
   });
 
-  it("non enterprise admins get 403 (reads and writes)", async () => {
+  it("non super admins get 403 (reads and writes)", async () => {
     const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
     const calls = [
       prepareFile(member, await skillPlugin("x", { version: "5.0.0" })),
@@ -439,16 +501,21 @@ describe("policy, delete and permissions", () => {
       member({ method: "GET", url: "/api/v1/admin/catalog/items" }),
       member({ method: "GET", url: `/api/v1/admin/catalog/items/${item.id}` }),
       member({
+        method: "POST",
+        url: `/api/v1/admin/catalog/items/${item.id}/scope/preview`,
+        payload: { scope: "all" },
+      }),
+      member({
         method: "PUT",
-        url: `/api/v1/admin/catalog/items/${item.id}/policy`,
-        payload: { policy: "disabled" },
+        url: `/api/v1/admin/catalog/items/${item.id}/scope`,
+        payload: { scope: "all", scopeHash: "x" },
+      }),
+      member({
+        method: "PUT",
+        url: `/api/v1/admin/catalog/items/${item.id}/disabled`,
+        payload: { disabled: false },
       }),
       member({ method: "DELETE", url: `/api/v1/admin/catalog/items/${item.id}` }),
-      member({
-        method: "POST",
-        url: `/api/v1/admin/catalog/items/${item.id}/install-deployment`,
-        payload: { version: "1.0.0" },
-      }),
     ];
     for (const res of await Promise.all(calls)) {
       expect(res.statusCode, res.body).toBe(403);
@@ -458,10 +525,10 @@ describe("policy, delete and permissions", () => {
     expect(huge.statusCode, huge.body).toBe(403);
   });
 
-  it("re-checked when run: an actor no longer an enterprise admin gets forbidden on writes", async () => {
+  it("re-checked when run: an actor no longer a super admin gets forbidden on writes", async () => {
     const item = await db.selectFrom("catalog_items").select("id").executeTakeFirstOrThrow();
     await expect(
-      k.app.get(CatalogService).setPolicy(memberId, item.id, "disabled"),
+      k.app.get(CatalogScopeService).setDisabled(memberId, item.id, { disabled: false }),
     ).rejects.toMatchObject({
       code: "forbidden",
     });

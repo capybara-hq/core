@@ -393,7 +393,7 @@ export const KernelConfigSchema = z.object({
               }),
             ),
         })
-        // Same rule as an enterprise marketplace: a git marketplace has no mirrors.
+        // Same rule as a custom marketplace: a git marketplace has no mirrors.
         .refine((o) => o.mirrors.length === 0 || !isGitMarketplaceUrl(o.url), {
           message:
             "a git marketplace has no mirrors (point marketplaces.official.url at a mirror repository instead)",

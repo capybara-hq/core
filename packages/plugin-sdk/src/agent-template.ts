@@ -31,6 +31,65 @@ export interface AgentTemplate {
   maxSteps?: number;
   /** Skill names preloaded (pinned) in the sub-agent. */
   skills?: string[];
+  /** Further skill names the agent uses (not preloaded; P4-1). */
+  selectedSkills?: string[];
+  /** Connectors the agent needs: a connector template of the plugin, or a described need. */
+  connectors?: AgentTemplateConnector[];
+  /** The sub-agents the agent gets in its roster. */
+  subagents?: AgentTemplateSubagents;
+  /** `provider/model`: the concrete model an org template was saved with. */
+  modelRef?: string;
+  /** The agent profile's quick actions (same shape and limits). */
+  quickActions?: AgentTemplateQuickAction[];
+  /** The agent's instruction files. */
+  instructionFiles?: AgentTemplateInstructionFile[];
+}
+
+/** A quick action of the agent profile. */
+export interface AgentTemplateQuickAction {
+  title: string;
+  body: string;
+}
+
+/** An instruction file of the agent. */
+export interface AgentTemplateInstructionFile {
+  name: string;
+  content: string;
+}
+
+/**
+ * A connector entry of a template: a connector template id (`<id>` or `<plugin>:<id>`) or a need.
+ * `policies` tighten the connector's tools by tool name (`ask` / `deny`), applied once it is bound.
+ */
+export type AgentTemplateConnector =
+  | { template: string; tools?: string[]; policies?: Record<string, "ask" | "deny"> }
+  | {
+      needs: {
+        protocol: "mcp" | "openapi";
+        endpoint: string;
+        tools: string[];
+        label: string;
+      };
+      policies?: Record<string, "ask" | "deny">;
+    };
+
+/** A sub-agent type described inside a template. */
+export interface AgentTemplateInlineSubagent {
+  name: string;
+  description: string;
+  instructions: string;
+  /** Tool keys allowed (an allowlist; `[]` = no tools); absent = all of the agent's tools. */
+  tools?: string[];
+  /** Skill names. */
+  skills: string[];
+  model: AgentTemplateTier;
+}
+
+export interface AgentTemplateSubagents {
+  general?: boolean;
+  /** Template types as the roster writes them (`<plugin>:<name>` or `<name>`). */
+  types?: string[];
+  inline?: AgentTemplateInlineSubagent[];
 }
 
 /** Limits of agent templates. */
@@ -44,6 +103,23 @@ export const AGENT_TEMPLATE_LIMITS = {
   skills: 3,
   /** Entries of `tools` and of `disallowedTools`. */
   tools: 200,
+  /** Entries of `selectedSkills`. */
+  selectedSkills: 32,
+  /** Entries of `connectors`. */
+  connectors: 16,
+  /** `subagents.types` plus `subagents.inline`. */
+  subagentTypes: 16,
+  /** Characters of one inline sub-agent's instructions. */
+  inlineInstructionsChars: 100_000,
+  /** Tools named by a connector entry (its `tools`, and the keys of its `policies`). */
+  connectorTools: 200,
+  /** Quick actions, as the agent profile limits them. */
+  quickActions: 9,
+  quickActionTitleChars: 40,
+  quickActionBodyChars: 20_000,
+  /** Instruction files and their joined size, as the agent limits them. */
+  instructionFiles: 20,
+  instructionFilesChars: 100_000,
 } as const;
 
 /** The name rule of a template (the catalog item name rule). */
@@ -51,9 +127,16 @@ export const AGENT_TEMPLATE_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 const TIERS: readonly AgentTemplateTier[] = ["inherit", "fast", "standard", "capable"];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-const FRONTMATTER_MAX_CHARS = 64 * 1024;
+/** Room for sub-agents described inline (up to 16 x 100 000 characters of instructions, P4-1). */
+const FRONTMATTER_MAX_CHARS = 2 * 1024 * 1024;
 /** The kernel's tool key rule (model-visible keys): no dots, no whitespace, at most 64 chars. */
 const TOOL_KEY_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+const distinct = (v: readonly unknown[]) => new Set(v).size === v.length;
+const NAME_REF_RE = /^[a-z0-9][a-z0-9-]{0,63}(:[a-z0-9][a-z0-9-]{0,63})?$/;
+const MODEL_REF_RE = /^[^/\s]+\/\S+$/;
+/** The name rule of an instruction file (the agent's rule, mirrored). */
+export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE = /^[^/\\]{1,64}\.md$/;
 
 const chars = (s: string) => [...s].length;
 const isToolKey = (v: unknown): v is string => typeof v === "string" && TOOL_KEY_RE.test(v);
@@ -136,10 +219,260 @@ export function parseAgentTemplate(
   }
   if (fm.skills !== undefined) {
     const s = fm.skills;
-    if (Array.isArray(s) && s.length <= L.skills && s.every(isSkillName)) out.skills = s;
+    if (Array.isArray(s) && s.length <= L.skills && s.every(isSkillName) && distinct(s))
+      out.skills = s;
     else errors.push(`skills must list at most ${L.skills} skill names`);
+  }
+
+  if (fm.selectedSkills !== undefined) {
+    const s = fm.selectedSkills;
+    if (Array.isArray(s) && s.length <= L.selectedSkills && s.every(isSkillName) && distinct(s)) {
+      out.selectedSkills = s;
+    } else errors.push(`selectedSkills must list at most ${L.selectedSkills} skill names`);
+  }
+  if (fm.connectors !== undefined) {
+    const c = readConnectors(fm.connectors, errors);
+    if (c) out.connectors = c;
+  }
+  if (fm.subagents !== undefined) {
+    const s = readSubagents(fm.subagents, errors);
+    if (s) out.subagents = s;
+  }
+  if (fm.modelRef !== undefined) {
+    if (
+      typeof fm.modelRef === "string" &&
+      fm.modelRef.length <= 200 &&
+      MODEL_REF_RE.test(fm.modelRef)
+    ) {
+      out.modelRef = fm.modelRef;
+    } else errors.push("modelRef must be <provider>/<model>");
+  }
+  if (fm.quickActions !== undefined) {
+    const q = readQuickActions(fm.quickActions, errors);
+    if (q) out.quickActions = q;
+  }
+  if (fm.instructionFiles !== undefined) {
+    const f = readInstructionFiles(fm.instructionFiles, errors);
+    if (f) out.instructionFiles = f;
   }
 
   if (errors.length > 0) return { errors };
   return { template: out };
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+const isStr = (v: unknown, max: number): v is string =>
+  typeof v === "string" && v.trim() !== "" && chars(v) <= max;
+const strList = (v: unknown, max: number, itemMax: number): v is string[] =>
+  Array.isArray(v) && v.length <= max && v.every((x) => isStr(x, itemMax));
+
+const connectorPolicies = (v: unknown): v is Record<string, "ask" | "deny"> =>
+  isObj(v) &&
+  Object.keys(v).length <= AGENT_TEMPLATE_LIMITS.connectorTools &&
+  Object.entries(v).every(([k, p]) => isStr(k, 128) && (p === "ask" || p === "deny"));
+const connectorPoliciesRule = `must map at most ${AGENT_TEMPLATE_LIMITS.connectorTools} tool names to ask or deny`;
+
+function readConnectors(v: unknown, errors: string[]): AgentTemplateConnector[] | undefined {
+  const L = AGENT_TEMPLATE_LIMITS;
+  if (!Array.isArray(v) || v.length > L.connectors) {
+    errors.push(`connectors must be a list of at most ${L.connectors} entries`);
+    return undefined;
+  }
+  const out: AgentTemplateConnector[] = [];
+  let ok = true;
+  v.forEach((e, i) => {
+    const at = `connectors[${i}]`;
+    if (!isObj(e)) {
+      errors.push(`${at} must be { template } or { needs }`);
+      ok = false;
+    } else if ("template" in e) {
+      if (typeof e.template !== "string" || !NAME_REF_RE.test(e.template)) {
+        errors.push(`${at}.template must be a connector template id (<id> or <plugin>:<id>)`);
+        ok = false;
+      } else if (e.tools !== undefined && !strList(e.tools, L.connectorTools, 128)) {
+        errors.push(`${at}.tools must list at most ${L.connectorTools} tool names`);
+        ok = false;
+      } else if (e.policies !== undefined && !connectorPolicies(e.policies)) {
+        errors.push(`${at}.policies ${connectorPoliciesRule}`);
+        ok = false;
+      } else {
+        out.push({
+          template: e.template,
+          ...(e.tools !== undefined && { tools: e.tools as string[] }),
+          ...(e.policies !== undefined && {
+            policies: { ...(e.policies as Record<string, "ask" | "deny">) },
+          }),
+        });
+      }
+    } else if ("needs" in e) {
+      const n = e.needs;
+      if (!isObj(n)) {
+        errors.push(`${at}.needs must be an object`);
+        ok = false;
+      } else if (n.protocol !== "mcp" && n.protocol !== "openapi") {
+        errors.push(`${at}.needs.protocol must be mcp or openapi`);
+        ok = false;
+      } else if (!isStr(n.endpoint, 2048)) {
+        errors.push(`${at}.needs.endpoint must be a non-empty string of at most 2048 characters`);
+        ok = false;
+      } else if (!strList(n.tools, L.connectorTools, 128)) {
+        errors.push(`${at}.needs.tools must list at most ${L.connectorTools} tool names`);
+        ok = false;
+      } else if (!isStr(n.label, 80)) {
+        errors.push(`${at}.needs.label must be a non-empty string of at most 80 characters`);
+        ok = false;
+      } else if (e.policies !== undefined && !connectorPolicies(e.policies)) {
+        errors.push(`${at}.policies ${connectorPoliciesRule}`);
+        ok = false;
+      } else {
+        out.push({
+          needs: {
+            protocol: n.protocol,
+            endpoint: n.endpoint,
+            tools: n.tools as string[],
+            label: n.label,
+          },
+          ...(e.policies !== undefined && {
+            policies: { ...(e.policies as Record<string, "ask" | "deny">) },
+          }),
+        });
+      }
+    } else {
+      errors.push(`${at} must have template or needs`);
+      ok = false;
+    }
+  });
+  return ok ? out : undefined;
+}
+
+function readSubagents(v: unknown, errors: string[]): AgentTemplateSubagents | undefined {
+  const L = AGENT_TEMPLATE_LIMITS;
+  if (!isObj(v)) {
+    errors.push("subagents must be an object");
+    return undefined;
+  }
+  const out: AgentTemplateSubagents = {};
+  const n0 = errors.length;
+  if (v.general !== undefined) {
+    if (typeof v.general === "boolean") out.general = v.general;
+    else errors.push("subagents.general must be true or false");
+  }
+  if (v.types !== undefined) {
+    if (
+      Array.isArray(v.types) &&
+      v.types.every((t) => typeof t === "string" && NAME_REF_RE.test(t)) &&
+      distinct(v.types)
+    ) {
+      out.types = v.types as string[];
+    } else errors.push("subagents.types must list sub-agent type names");
+  }
+  if (v.inline !== undefined) {
+    if (!Array.isArray(v.inline)) errors.push("subagents.inline must be a list");
+    else {
+      const inline: AgentTemplateInlineSubagent[] = [];
+      v.inline.forEach((e, i) => {
+        const at = `subagents.inline[${i}]`;
+        if (!isObj(e)) {
+          errors.push(`${at} must be an object`);
+          return;
+        }
+        const before = errors.length;
+        if (typeof e.name !== "string" || !AGENT_TEMPLATE_NAME_RE.test(e.name)) {
+          errors.push(`${at}.name must match ^[a-z0-9][a-z0-9-]{0,63}$`);
+        }
+        if (!isStr(e.description, L.descriptionChars)) {
+          errors.push(
+            `${at}.description must be a non-empty string of at most ${L.descriptionChars} characters`,
+          );
+        }
+        if (
+          typeof e.instructions !== "string" ||
+          e.instructions.trim() === "" ||
+          chars(e.instructions) > L.inlineInstructionsChars
+        ) {
+          errors.push(
+            `${at}.instructions must be a non-empty string of at most ${L.inlineInstructionsChars} characters`,
+          );
+        }
+        if (e.tools !== undefined && !toolList(e.tools)) {
+          errors.push(`${at}.tools must be ${toolListRule}`);
+        }
+        if (
+          !(
+            Array.isArray(e.skills) &&
+            e.skills.length <= L.skills &&
+            e.skills.every(isSkillName) &&
+            distinct(e.skills)
+          )
+        ) {
+          errors.push(`${at}.skills must list at most ${L.skills} skill names`);
+        }
+        if (!TIERS.includes(e.model as AgentTemplateTier)) {
+          errors.push(`${at}.model must be one of ${TIERS.join(", ")}`);
+        }
+        if (errors.length === before) inline.push(e as unknown as AgentTemplateInlineSubagent);
+      });
+      out.inline = inline;
+    }
+  }
+  if ((out.types?.length ?? 0) + (out.inline?.length ?? 0) > L.subagentTypes) {
+    errors.push(`subagents.types and subagents.inline together must be at most ${L.subagentTypes}`);
+  }
+  return errors.length === n0 ? out : undefined;
+}
+
+function readQuickActions(v: unknown, errors: string[]): AgentTemplateQuickAction[] | undefined {
+  const L = AGENT_TEMPLATE_LIMITS;
+  if (!Array.isArray(v) || v.length > L.quickActions) {
+    errors.push(`quickActions must be a list of at most ${L.quickActions} entries`);
+    return undefined;
+  }
+  const n0 = errors.length;
+  const out: AgentTemplateQuickAction[] = [];
+  v.forEach((e, i) => {
+    if (
+      isObj(e) &&
+      isStr(e.title, L.quickActionTitleChars) &&
+      isStr(e.body, L.quickActionBodyChars)
+    ) {
+      out.push({ title: e.title, body: e.body });
+    } else {
+      errors.push(
+        `quickActions[${i}] must have a title (at most ${L.quickActionTitleChars} characters) and a body (at most ${L.quickActionBodyChars})`,
+      );
+    }
+  });
+  return errors.length === n0 ? out : undefined;
+}
+
+function readInstructionFiles(
+  v: unknown,
+  errors: string[],
+): AgentTemplateInstructionFile[] | undefined {
+  const L = AGENT_TEMPLATE_LIMITS;
+  if (!Array.isArray(v) || v.length > L.instructionFiles) {
+    errors.push(`instructionFiles must be a list of at most ${L.instructionFiles} entries`);
+    return undefined;
+  }
+  const n0 = errors.length;
+  const out: AgentTemplateInstructionFile[] = [];
+  let total = 0;
+  v.forEach((e, i) => {
+    if (
+      isObj(e) &&
+      typeof e.name === "string" &&
+      AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE.test(e.name) &&
+      typeof e.content === "string"
+    ) {
+      total += chars(e.content);
+      out.push({ name: e.name, content: e.content });
+    } else {
+      errors.push(`instructionFiles[${i}] must have a name (<name>.md) and a content string`);
+    }
+  });
+  if (errors.length === n0 && total > L.instructionFilesChars) {
+    errors.push(`instructionFiles must total at most ${L.instructionFilesChars} characters`);
+  }
+  return errors.length === n0 ? out : undefined;
 }

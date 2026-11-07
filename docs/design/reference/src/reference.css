@@ -337,6 +337,34 @@ textarea {
   color: var(--cb-muted);
   pointer-events: none;
 }
+/* Select (§6.2): the field is a button; its list hangs space.1 under it, at least its width. */
+.r-select-stage {
+  position: relative;
+}
+.r-select-field {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  text-align: start;
+  cursor: pointer;
+}
+.r-select-field .cb-icon {
+  color: var(--cb-muted);
+}
+.r-select-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.r-select-list {
+  top: calc(100% + var(--cb-space-1));
+  left: 0;
+  box-sizing: border-box;
+  min-width: 100%;
+}
+.r-menu-item[aria-selected="true"] {
+  background: var(--cb-selected);
+}
 .r-field-pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -688,8 +716,18 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-1);
   min-height: 0;
-  padding-top: var(--cb-space-2);
+  /* the scroll box runs to the sidebar's edges (its scrollbar on the border), the divider inset */
+  margin: 0 calc(-1 * var(--cb-space-2));
+  padding: var(--cb-space-2) var(--cb-space-2) 0;
   border-top: 1px solid var(--cb-line-soft);
+  border-image: linear-gradient(
+      to right,
+      transparent var(--cb-space-2),
+      var(--cb-line-soft) var(--cb-space-2),
+      var(--cb-line-soft) calc(100% - var(--cb-space-2)),
+      transparent calc(100% - var(--cb-space-2))
+    )
+    1;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--cb-line) transparent;
@@ -830,6 +868,11 @@ textarea {
 .r-sb-empty-text {
   margin: 0;
   color: var(--cb-ink);
+}
+.r-sb-empty[data-state="no-match"] {
+  align-items: center;
+  padding: var(--cb-space-8) var(--cb-pad-dense-x);
+  text-align: center;
 }
 .r-sb-hint {
   margin: 0;
@@ -1006,11 +1049,14 @@ textarea {
 
 /* ── Page header ─────────────────────────────────────────────────────────── */
 
+/* Head rhythm (spec §4.2): one layout.head-* token per pair of rows, no gap of the column. */
 .r-ph {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-1);
   min-width: 0;
+}
+.r-ph-crumb + .r-ph-row {
+  margin-top: var(--cb-layout-head-path);
 }
 .r-ph-crumb {
   display: flex;
@@ -1048,7 +1094,7 @@ textarea {
   font-weight: 600;
 }
 .r-ph-desc {
-  margin: var(--cb-space-1) 0 0;
+  margin: var(--cb-layout-head-description) 0 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1353,6 +1399,14 @@ textarea {
 .r-content[data-width="content"] {
   max-width: var(--cb-layout-content);
 }
+/* The page head in a full page: layout.head-content (head-tabs-content below a tab row) to the
+   first block, in place of the column's space.3 (spec §4.2). */
+.r-content > .r-ph + * {
+  margin-top: calc(var(--cb-layout-head-content) - var(--cb-space-3));
+}
+.r-content > .r-ph:has(> .r-ph-tabs) + * {
+  margin-top: calc(var(--cb-layout-head-tabs-content) - var(--cb-space-3));
+}
 
 /* ── Icon grid ───────────────────────────────────────────────────────────── */
 
@@ -1648,43 +1702,8 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* Quick actions (§6.16.27): quiet muted small links, ink on hover; 更多's menu below it. */
-.r-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-4);
-  min-width: 0;
-  min-height: var(--cb-control-dense);
-}
-.r-quick-action {
-  flex: 0 1 auto;
-  min-width: 0;
-  height: var(--cb-control-dense);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--cb-muted);
-  font: inherit;
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.r-quick-action[data-state="hover"] {
-  color: var(--cb-ink);
-}
-.r-quick-more-wrap {
-  position: relative;
-  flex: none;
-  display: inline-flex;
-}
-.r-quick-menu {
-  top: calc(100% + var(--cb-space-1));
-  left: 0;
-  min-width: 160px;
-  max-width: min(320px, calc(100vw - 16px));
-}
+/* Quick actions (§6.16.27): the composer's zap icon button; its menu is an anchored one
+   (§6.16.3, .r-anchored-menu), sized like the pickers'. */
 /* Avatar (§6.30): a preset on its ground or the initial square; the picker's 48 px tiles. */
 .r-avatar-row {
   display: flex;
@@ -2079,6 +2098,21 @@ textarea {
 .r-bubble-details {
   max-width: 75%;
   color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* A long message (§6.16.6 states long / expanded, AC4): clamped at layout.bubble-clamp, the last
+ * line fading; 展开 / 收起 under the bubble. */
+.r-bubble-body {
+  white-space: pre-wrap;
+}
+.r-bubble-body[data-expanded="false"] {
+  max-height: var(--cb-layout-bubble-clamp);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+  mask-image: linear-gradient(black calc(100% - var(--cb-type-prose-line)), transparent);
+}
+.r-bubble-more {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -2532,6 +2566,27 @@ textarea {
   color: var(--cb-muted);
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-2);
+}
+/* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it;
+ * below 640 the dot (or the agent icon) and the count alone. */
+.r-agents-chip {
+  gap: var(--cb-space-2);
+  flex: none;
+}
+.r-agents-chip-icon,
+.r-agents-chip-count {
+  display: none;
+}
+@media (max-width: 639px) {
+  .r-agents-chip-label {
+    display: none;
+  }
+  .r-agents-chip-count {
+    display: inline;
+  }
+  .r-agents-chip-icon {
+    display: inline-flex;
+  }
 }
 .r-picker[data-locked] {
   display: inline-flex;
@@ -3124,6 +3179,52 @@ textarea {
   position-anchor: --r-open-trigger;
   left: anchor(left);
 }
+/* §6.16.3: an anchored menu hangs from its trigger (above it here, the conversation page's
+   case), at least the trigger's width, at most min(320px, 100vw − 16px). */
+.r-menu-stage > .r-anchored-menu {
+  bottom: calc(anchor(top) + var(--cb-space-1));
+  min-width: anchor-size(width);
+  max-width: min(320px, calc(100vw - 16px));
+}
+.r-menu-stage[data-tall] {
+  padding-top: 380px;
+}
+.r-menu-capped {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-height: var(--cb-layout-menu-max-height);
+  overflow: hidden;
+}
+.r-menu-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.r-menu-capped > .r-menu-note {
+  flex: none;
+}
+.r-menu-filter {
+  flex: none;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-control-dense);
+  margin-bottom: var(--cb-space-1);
+  padding: 0 var(--cb-pad-dense-x);
+  border: 1px solid var(--cb-accent);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  outline: none;
+}
+.r-menu-filter::placeholder {
+  color: var(--cb-faint);
+}
 .r-subpanel {
   display: flex;
   flex-direction: column;
@@ -3223,6 +3324,27 @@ textarea {
   z-index: var(--cb-z-sheet);
   width: var(--cb-layout-panel);
   box-shadow: var(--cb-shadow-sheet);
+}
+/* The properties panel in the narrow sheet (spec §6.16.17): one box, its sections hairline groups. */
+.r-props-sheet {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--cb-line-soft);
+  background: var(--cb-panel-2);
+}
+.r-props-sheet > .r-props {
+  flex: 1;
+  gap: 0;
+  width: 100%;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.r-psec[data-inset="box"] {
+  padding: var(--cb-space-3) 0;
+  border-radius: 0;
+  background: transparent;
+}
+.r-psec[data-inset="box"] + .r-psec[data-inset="box"] {
+  border-top: 1px solid var(--cb-line-soft);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3395,7 +3517,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   row-gap: var(--cb-space-2);
-  margin-top: var(--cb-space-3);
+  margin-top: var(--cb-layout-head-tabs);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .r-ph-tabs .r-search {
@@ -3906,8 +4028,13 @@ textarea {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
+/* The template head: space.5 above it, layout.head-content (or layout.head-tabs-content below a
+   tab row) between it and the body, whose first block adds no space of its own (spec §4.2). */
 .r-tpl-head {
-  padding: 0 var(--cb-content-pad, 32px);
+  padding: var(--cb-space-5) var(--cb-content-pad, 32px) var(--cb-layout-head-content);
+}
+.r-tpl-head:has(.r-ph-tabs) {
+  padding-bottom: var(--cb-layout-head-tabs-content);
 }
 .r-tpl-body {
   display: flex;
@@ -3920,11 +4047,12 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-3);
   min-width: 0;
-  padding: var(--cb-space-4) var(--cb-content-pad, 32px);
+  padding: 0 var(--cb-content-pad, 32px) var(--cb-space-4);
 }
 .r-tpl-rail {
   flex: none;
-  width: 240px;
+  /* the inbox's list column (spec §5.7); only template-inbox draws this rail */
+  width: 320px;
   border-right: 1px solid var(--cb-line-soft);
 }
 .r-tpl-inspector {
@@ -4165,14 +4293,12 @@ textarea {
 .r-skel-text[data-size="prose"] {
   height: var(--cb-type-prose-line);
 }
-/* A list page's body is not padded at the top (the header's own space is the gap). */
-.r-tpl-main[data-flat] {
-  padding-top: 0;
-}
 .r-tpl-head[data-stats] {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-3);
+}
+.r-tpl-head[data-stats] > .r-stats {
+  margin-top: var(--cb-layout-head-content);
 }
 .r-trace {
   display: grid;
@@ -4227,13 +4353,43 @@ textarea {
   padding: var(--cb-pad-default-y) var(--cb-pad-default-x);
   border: 1px solid transparent;
 }
+.r-content-section {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+}
+.r-content-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+}
+.r-content-section-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+.r-content-section-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  font-variant-numeric: tabular-nums;
+}
+.r-content-section-description,
+.r-content-section-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 
 /* ── Agent map (spec §6.16.28) ── */
 .r-amap-dialog {
   display: flex;
   flex-direction: column;
   width: 1100px;
-  padding: var(--cb-space-5) var(--cb-space-6);
   background: var(--cb-panel);
   border: 1px solid var(--cb-line-strong);
   border-radius: var(--cb-radius-md);
@@ -4244,6 +4400,16 @@ textarea {
   align-items: center;
   gap: var(--cb-space-2);
 }
+/* The tree's head: the dialog head's padding and rule (§6.7); the body pads itself. */
+.r-amap-dialog > .r-amap-head {
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-amap-body {
+  display: flex;
+  flex-direction: column;
+  padding: var(--cb-space-4);
+}
 .r-amap-title {
   flex: 1;
   margin: 0;
@@ -4253,7 +4419,7 @@ textarea {
   font-weight: 500;
 }
 .r-amap-count {
-  margin: var(--cb-space-1) 0 var(--cb-space-4);
+  margin: 0 0 var(--cb-space-3);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
 }
@@ -4424,7 +4590,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: var(--cb-space-4);
-  margin-top: var(--cb-space-4);
+  margin-top: var(--cb-space-3);
   color: var(--cb-faint);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
@@ -4435,22 +4601,21 @@ textarea {
   gap: var(--cb-space-2);
 }
 
-/* Agent map levels 2 and 3 (§6.16.28): one agent's summary and its transcript frame. */
+/* Agent map levels 2 and 3 (§6.16.28): one agent's summary and its transcript frame, as wide as
+   the conversation's column plus the body padding and the border. */
 .r-amap-dialog[data-level="detail"],
 .r-amap-dialog[data-level="transcript"] {
-  padding: 0;
+  width: calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px);
 }
 .r-amap-dialog[data-level="detail"] {
-  width: 760px;
   height: 600px;
 }
 .r-amap-dialog[data-level="transcript"] {
-  width: 1060px;
   height: 640px;
 }
 .r-amap-dhead {
   flex: none;
-  padding: var(--cb-space-5) var(--cb-space-6) var(--cb-space-3);
+  padding: var(--cb-space-2) var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .r-amap-dhead .r-amap-title {
@@ -4485,7 +4650,7 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-4);
 }
 .r-amap-latest {
   margin: 0 0 var(--cb-space-3);
@@ -4554,7 +4719,7 @@ textarea {
   display: flex;
   flex: none;
   gap: var(--cb-space-3);
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-3) var(--cb-space-4);
   border-top: 1px solid var(--cb-line-soft);
 }
 .r-amap-dfoot > .r-btn {
@@ -4564,7 +4729,7 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4) var(--cb-layout-gutter);
+  padding: var(--cb-space-4);
 }
 .r-amap-thread {
   display: flex;
@@ -4585,10 +4750,429 @@ textarea {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-.r-amap-status-text {
+.r-amap-status > .r-btn {
+  margin-left: auto;
+}
+
+/* ── One box is enough (spec §1 principle 7): the groupings inside a box ── */
+
+.r-boxcard {
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+}
+.r-boxcard-head {
+  padding: var(--cb-space-2) var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+  font-weight: 500;
+}
+.r-boxcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-4);
+}
+.r-badge-warn {
+  padding: 0 6px;
+  border: 1px solid var(--cb-warn);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-warn);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-warn {
+  color: var(--cb-warn);
+}
+
+/* ItemList (spec §6.33): rows split by line-soft, never cards. */
+.r-item-list {
+  margin: -8px 0;
+  padding: 0;
+  list-style: none;
+}
+.r-item-list[data-inset="flush"] {
+  margin: 0;
+}
+.r-item-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-roomy);
+  padding: var(--cb-space-2) 0;
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-item-row:first-child {
+  border-top: 0;
+}
+.r-item-row[data-shape="item"] {
+  display: block;
+  padding: var(--cb-space-3) 0;
+}
+.r-item-list > .r-item-row[data-shape="item"]:first-child {
+  padding-top: var(--cb-space-2);
+}
+.r-item-list > .r-item-row[data-shape="item"]:last-child {
+  padding-bottom: var(--cb-space-2);
+}
+.r-item-list[data-inset="flush"] > .r-item-row[data-shape="item"] {
+  padding: var(--cb-space-4);
+}
+.r-item-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.r-item-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.r-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-control-dense);
+}
+.r-item-titles {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-item-title {
+  color: var(--cb-ink);
+}
+.r-item-row[data-shape="item"] .r-item-title {
+  font-weight: 500;
+}
+.r-item-code,
+.r-item-meta,
+.r-item-status {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-item-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin-top: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  margin-top: var(--cb-space-3);
+}
+/* CodeBlock inside a box (spec §6.9): a panel-2 tint, no line. */
+.r-codeblock {
+  margin: 0;
+  border: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+}
+.r-codeblock[data-framed="false"] {
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel-2);
+}
+.r-codeblock-lang {
+  padding: 2px 8px 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: 16px;
+}
+.r-codeblock pre {
+  margin: 0;
+  padding: 8px;
+  font: inherit;
+  white-space: pre;
+}
+
+/* Subsection (spec §6.32): a heading, its help, the content under the guide or to the edges. */
+.r-subsection {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+}
+.r-subsection-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-subsection-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+}
+.r-subsection-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 500;
+  line-height: var(--cb-type-body-line);
+}
+.r-subsection-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-subsection-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-subsection-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+}
+.r-subsection[data-variant="guide"] > .r-subsection-body {
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
+}
+.r-subsection[data-variant="flush"] {
+  row-gap: 0;
+}
+.r-subsection[data-variant="flush"] > .r-subsection-head {
+  padding: var(--cb-space-3);
+}
+.r-subsection[data-variant="flush"] + .r-subsection[data-variant="flush"] {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-subsection .r-table {
+  background: transparent;
+}
+
+/* Repeater divided (spec §6.26): the cards variant inside a box. */
+.r-rep[data-variant="divided"] .r-rep-list {
+  gap: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-item {
+  padding: var(--cb-space-3) 0;
+  border: 0;
+  border-radius: 0;
+}
+.r-rep[data-variant="divided"] li + li .r-rep-item {
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-rep[data-variant="divided"] li:first-child .r-rep-item {
+  padding-top: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-head {
+  padding: 0;
+  border-bottom: 0;
+}
+.r-rep[data-variant="divided"] .r-rep-body {
+  padding: var(--cb-space-2) 0 0;
+}
+.r-item-lines .r-ink {
+  color: var(--cb-ink);
+}
+/* A stacked form section (spec §5.3): the head above the card at the full width. */
+.r-form-section-stacked {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--cb-space-3);
+}
+
+/* Callout (spec §6.19): the tinted bar on the page ground; inside a box the warn / fail line. */
+.r-callout {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-radius: var(--cb-radius-md);
+  color: var(--cb-ink);
+}
+.r-callout[data-tone="warn"] {
+  background: color-mix(in srgb, var(--cb-warn) 15%, transparent);
+}
+.r-callout[data-tone="info"] {
+  background: var(--cb-panel);
+  color: var(--cb-muted);
+}
+.r-callout[data-tone="warn"] > i {
+  color: var(--cb-warn);
+}
+.r-callout[data-tone="info"] > i {
+  color: var(--cb-faint);
+}
+.r-callout-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--cb-font-prose);
+}
+.r-callout[data-framed="false"] {
+  align-items: flex-start;
+  gap: var(--cb-space-1);
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+.r-callout[data-framed="false"][data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.r-callout[data-framed="false"] > .r-callout-text {
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.r-callout[data-framed="false"] > i {
+  margin-top: 4px;
+}
+.r-callout[data-framed="false"] > .r-btn {
+  align-self: center;
+  margin-left: var(--cb-space-2);
+}
+
+/* CardGrid and ObjectCard (spec §6.34, ruling P4-15): cards on the page ground, one box each. */
+.r-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-card-min)), 1fr));
+  gap: var(--cb-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-ocard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--cb-space-4);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+.r-ocard-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.r-ocard-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+}
+.r-ocard-avatar[data-kind="icon"] {
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-ocard-link {
+  flex: 1;
+  min-width: 0;
+  color: var(--cb-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.r-ocard-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-ocard-head > .r-ocard-name {
+  flex: 1;
+  min-width: 0;
+}
+.r-ocard-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+}
+.r-ocard-desc[data-skeleton] {
+  display: flex;
+  flex-direction: column;
+}
+.r-ocard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-width: 0;
+  min-height: var(--cb-control-dense);
+  margin-top: auto;
+}
+.r-ocard-foot > .r-btn,
+.r-ocard-foot > .r-icon-btn,
+.r-ocard-foot > .r-skel-box {
+  flex: none;
+}
+.r-ocard-meta {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* A phone (the `narrow` block, 390): one column, 40 px tap targets. */
+[data-narrow] .r-card-grid {
+  grid-template-columns: 1fr;
+}
+[data-narrow] .r-ocard-foot > .r-btn,
+[data-narrow] .r-ocard-foot > .r-icon-btn {
+  min-width: 40px;
+  height: 40px;
+}
+/* The page empty state (spec §6.18): the line-art capybara over the words, centered. */
+.r-empty-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: calc(var(--cb-space-8) * 2) var(--cb-space-4);
+  color: var(--cb-ink);
+  text-align: center;
+}
+.r-empty-art {
+  display: flex;
+  margin-bottom: var(--cb-space-1);
+}
+.r-logo-line {
+  display: block;
+  fill: none;
+  stroke: var(--cb-faint);
+  stroke-width: 1;
+}
+.r-empty-words {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+}
+.r-empty-text,
+.r-empty-hint {
+  margin: 0;
+  font-family: var(--cb-font-prose);
+}
+.r-empty-hint {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-empty-action {
+  display: flex;
+  margin-top: var(--cb-space-1);
 }

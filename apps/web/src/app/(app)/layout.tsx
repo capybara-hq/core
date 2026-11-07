@@ -7,6 +7,7 @@ import { AppFrame } from "../../components/shell/AppFrame";
 import { KernelStarting } from "../../components/shell/KernelStarting";
 import { setupReady } from "../../lib/agents";
 import { matchRoute } from "../../lib/query/routes";
+import { HOME_PATH } from "../../lib/routes";
 import { currentPath } from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
 import { getShell } from "../../lib/server/session";
@@ -30,11 +31,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   });
   // The kernel cannot answer (starting, restarting): a frame that retries by itself (ruling R2).
   if (shell.kind === "unavailable") return <KernelStarting />;
-  // While the org is not ready, a route that is no setup route goes home before anything streams
-  // (web-SSR spec §4). Client navigations don't re-render the layout: `useWorkspace()` covers them.
+  // While the org is not ready, a route that is no setup route goes home (the new conversation,
+  // where the frame draws the setup home) before anything streams (web-SSR spec §4). Client
+  // navigations don't re-render the layout: `useWorkspace()` covers them.
   const pathname = path.split(/[?#]/)[0] ?? "/";
   if (shell.org !== null && shell.readiness !== null && !setupReady(shell.readiness)) {
-    if (setupRouteOf(pathname) === "redirect") redirect("/");
+    if (setupRouteOf(pathname) === "redirect") redirect(HOME_PATH);
   }
   // No page serves the path. `[...rest]` throws `notFound()` itself, below this layout, so its 404
   // renders inside the App Shell.

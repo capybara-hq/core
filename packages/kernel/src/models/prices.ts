@@ -3,13 +3,13 @@ import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 
 /**
- * 一个模型的价格（C2）：每百万 token，币种为部署设置 `priceCurrency`。由企业管理员录入，插件不声明价格。
+ * 一个模型的价格（C2）：每百万 token，币种为部署设置 `priceCurrency`。由超级管理员录入，插件不声明价格。
  * 缓存读 / 写价为 null 时按输入价计。
  */
 export interface ModelPrice {
@@ -70,7 +70,7 @@ export class PricesService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
   ) {}
 
   /** 全部价格，按 provider、model 排序。 */
@@ -104,7 +104,7 @@ export class PricesService {
   }
 
   /**
-   * 设置或删除（`price: null`）一个模型的价格：事务内取企业管理员锁并复核发起人仍是活跃企业管理员
+   * 设置或删除（`price: null`）一个模型的价格：事务内取超级管理员锁并复核发起人仍是活跃超级管理员
    * （否则 `forbidden`），写审计 `model_price.updated` / `model_price.deleted`。
    */
   async put(
@@ -123,7 +123,7 @@ export class PricesService {
     await this.write(check.data, actorAccountId, actorTokenId);
   }
 
-  /** The write of {@link put}, under the enterprise admin lock. */
+  /** The write of {@link put}, under the super admin lock. */
   @Transactional()
   private async write(
     v: ModelPricePut,

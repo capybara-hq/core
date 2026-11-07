@@ -247,15 +247,29 @@
   text-align: center;
 }
 
-/* Conversations: the only part that scrolls; a line-soft divider above. */
+/*
+ * Conversations: the only part that scrolls; a line-soft divider above. The scroll box runs out
+ * over the sidebar's space.2 side padding to its edges, so the scrollbar sits on the right border
+ * instead of inset over the rows' ends, and pads its content back by the same space.2; the divider
+ * (a border image) keeps the inset of the account row's.
+ */
 .cb-sidebar-convs {
   display: flex;
   flex: 1;
   flex-direction: column;
   gap: var(--cb-space-1);
   min-height: 0;
-  padding-top: var(--cb-space-2);
+  margin: 0 calc(-1 * var(--cb-space-2));
+  padding: var(--cb-space-2) var(--cb-space-2) 0;
   border-top: 1px solid var(--cb-line-soft);
+  border-image: linear-gradient(
+      to right,
+      transparent var(--cb-space-2),
+      var(--cb-line-soft) var(--cb-space-2),
+      var(--cb-line-soft) calc(100% - var(--cb-space-2)),
+      transparent calc(100% - var(--cb-space-2))
+    )
+    1;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--cb-scroll-thumb) transparent;
@@ -285,9 +299,12 @@
   gap: var(--cb-space-1);
   padding: 0 var(--cb-space-1);
 }
+/* The list: agent groups at the section's gap (space.1), so collapsed groups, the filter row, the
+   list and the archived back row share one rhythm; a group's rows stay contiguous. */
 .cb-sidebar-convs-body {
   display: flex;
   flex-direction: column;
+  gap: var(--cb-space-1);
 }
 .cb-sidebar-archived {
   display: flex;
@@ -317,9 +334,6 @@
 .cb-sidebar-org:focus-visible {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
-}
-.cb-sidebar-group + .cb-sidebar-group {
-  margin-top: var(--cb-space-2);
 }
 .cb-sidebar-group-head {
   display: flex;
@@ -469,6 +483,16 @@
 }
 .cb-sidebar-empty {
   padding: 0 var(--cb-space-1);
+}
+/* A filter matching nothing: the compact EmptyState in its in-list form, as the DataTable's empty
+   area draws it (§6.6): centered in the list, space.8 above and below. */
+.cb-sidebar-empty[data-state="no-match"] {
+  padding: var(--cb-space-8) 0;
+}
+.cb-sidebar-empty[data-state="no-match"] > .cb-empty-state[data-size="compact"] {
+  align-items: center;
+  padding: 0;
+  text-align: center;
 }
 .cb-sidebar-loading {
   display: flex;

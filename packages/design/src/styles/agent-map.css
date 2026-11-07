@@ -2,8 +2,10 @@
    tree with elbow connectors, the root's background tasks and the legend; level 2's summary and
    level 3's transcript frame. */
 
+/* The frame has no padding at any level: the head, body and footer pad themselves in the compact
+   dialog rhythm (§6.7: head space.2 space.4, body space.4, footer space.3 space.4). */
 .cb-amap-dialog {
-  padding: var(--cb-space-5) var(--cb-space-6);
+  padding: 0;
 }
 .cb-amap-dialog[data-inline="true"] {
   position: static;
@@ -12,11 +14,11 @@
   max-height: none;
   animation: none;
 }
-/* Levels 2 and 3: no frame padding; the head, body and footer pad themselves, at one height so
+/* Levels 2 and 3: as wide as the conversation's column plus the body's padding and the border,
+   so the transcript's thread fills the dialog with no empty side gutters; one height each, so
    the dialog does not jump while the agent works. */
-.cb-amap-dialog[data-level="detail"],
-.cb-amap-dialog[data-level="transcript"] {
-  padding: 0;
+.cb-amap-dialog[data-size="chat"] {
+  width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));
 }
 .cb-amap-dialog[data-level="detail"] {
   height: min(600px, calc(100vh - 32px));
@@ -25,14 +27,13 @@
   height: min(640px, calc(100vh - 32px));
 }
 
-/* The head of every level: [back] [dot] title close, then the meta lines past the back button. */
+/* The head of every level: [back] [dot] title close, then the meta lines past the back button;
+   the dialog head's padding and rule (§6.7). */
 .cb-amap-head {
   display: flex;
   flex: none;
   flex-direction: column;
-}
-.cb-amap-head[data-back="true"] {
-  padding: var(--cb-space-5) var(--cb-space-6) var(--cb-space-3);
+  padding: var(--cb-space-2) var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-amap-head-line {
@@ -54,6 +55,14 @@
   font-weight: 500;
 }
 
+/* The tree level's body: the tree, or the page's loading bars or error line, padded space.4. */
+.cb-amap-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--cb-space-4);
+}
 .cb-amap {
   display: flex;
   flex: 1 1 auto;
@@ -61,7 +70,7 @@
   min-height: 0;
 }
 .cb-amap-count {
-  margin: var(--cb-space-1) 0 var(--cb-space-4);
+  margin: 0 0 var(--cb-space-3);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
 }
@@ -281,7 +290,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--cb-space-4);
-  margin: var(--cb-space-4) 0 0;
+  margin: var(--cb-space-3) 0 0;
   padding: 0;
   list-style: none;
   color: var(--cb-faint);
@@ -326,7 +335,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-4);
 }
 .cb-amap-latest {
   margin: 0 0 var(--cb-space-3);
@@ -413,7 +422,7 @@
   display: flex;
   flex: none;
   gap: var(--cb-space-3);
-  padding: var(--cb-space-3) var(--cb-space-6);
+  padding: var(--cb-space-3) var(--cb-space-4);
   border-top: 1px solid var(--cb-line-soft);
 }
 /* "Open transcript" fills the row alone (a finished agent) or shares it with Stop. */
@@ -423,13 +432,14 @@
 
 /* ── Level 3: the transcript frame ── */
 
-/* The thread as the conversation page draws it (.cb-conv-thread), without the composer. */
+/* The thread as the conversation page draws it (.cb-conv-thread), without the composer: the
+   dialog is as wide as the thread plus this padding, so the thread fills it. */
 .cb-amap-transcript {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4) var(--cb-layout-gutter);
+  padding: var(--cb-space-4);
 }
 .cb-amap-status {
   display: flex;
@@ -443,12 +453,9 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-.cb-amap-status-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+/* Stop at the end of the line, after the context use when it is known. */
+.cb-amap-status > .cb-btn {
+  margin-left: auto;
 }
 
 /* ── The Agent call block in the stream (§6.16.15, agent map spec §9.5) ── */

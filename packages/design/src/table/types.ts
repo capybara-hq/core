@@ -15,6 +15,11 @@ export type Column<T> = {
    * stay readable (a model's capabilities), never for names or ids.
    */
   wrap?: boolean;
+  /**
+   * The cell holds its own control (a switch): a click inside it does not open the row
+   * (`onOpen`), so the control works without opening the row's Sheet.
+   */
+  interactive?: boolean;
 };
 
 export type SortDir = "asc" | "desc";
@@ -44,8 +49,10 @@ export type DataTableProps<T> = {
   /** Row height step (spec §6.6): dense 28, default 32, roomy 44 (two lines or a thumbnail). */
   rowHeight?: "dense" | "default" | "roomy";
   /**
-   * Default true: the table sits on the `panel` ground. false: no ground of its own, for a table
-   * inside a Card or flush with the content area.
+   * true: the table sits on the `panel` ground. false: no ground of its own, for a table inside a
+   * box or flush with the content area. Default: framed on the page ground and in a pane,
+   * unframed inside a box (a Card, a flush form card, a Dialog or Sheet, an inline card, a
+   * property section; spec §6.6, §1 "One box is enough").
    */
   framed?: boolean;
 };

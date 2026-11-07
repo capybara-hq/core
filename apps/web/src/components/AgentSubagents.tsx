@@ -1,12 +1,14 @@
 "use client";
 
 import {
+  Badge,
   Button,
-  Card,
   Checkbox,
   Field,
   FormSection,
   Input,
+  ItemList,
+  ItemListItem,
   Select,
   Stack,
   Switch,
@@ -27,6 +29,7 @@ import {
   type SubagentsInvalidReason,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
+import { type OrgComponent, unavailableComponent } from "../lib/components";
 import type { Member } from "../lib/members";
 import { useSectionDraft } from "./agent/useSectionDraft";
 
@@ -151,6 +154,8 @@ function buildSubagents(
  * the plugin agent templates, the org agents and the members (for the owners' names).
  */
 export interface SubagentsFormData {
+  /** The platform components offered to the org (an off template reads as unavailable). */
+  offered?: OrgComponent[] | null;
   templates: AgentTemplateView[] | null;
   agents: Agent[] | null;
   members: Member[] | null;
@@ -330,46 +335,62 @@ export function useSubagentsForm(
                   {t("templatesNone")}
                 </Text>
               )}
-              {templateList.map((tpl) => (
-                <Checkbox
-                  key={tpl.id}
-                  checked={templates.includes(tpl.id)}
-                  onChange={(on) =>
-                    setTemplates((cur) =>
-                      on ? [...cur, tpl.id] : cur.filter((id) => id !== tpl.id),
-                    )
-                  }
-                  label={
-                    <Stack gap={0}>
-                      <Text>{`${tpl.type} · ${tierLabel(tpl.model)}`}</Text>
-                      <Text variant="small" tone="muted">
-                        {tpl.description}
-                      </Text>
-                    </Stack>
-                  }
-                />
-              ))}
+              {/* A platform template is selected by its id or an org copy linked to it (older
+                  agents); unticking removes every alias, ticking adds the platform id */}
+              {templateList.map((tpl) => {
+                const aliases = [tpl.id, ...(tpl.linkedIds ?? [])];
+                return (
+                  <Stack key={tpl.id} direction="row" gap={8} align="center">
+                    <Checkbox
+                      checked={aliases.some((id) => templates.includes(id))}
+                      onChange={(on) =>
+                        setTemplates((cur) =>
+                          on ? [...cur, tpl.id] : cur.filter((id) => !aliases.includes(id)),
+                        )
+                      }
+                      label={
+                        <Stack gap={0}>
+                          <Text>{`${tpl.type} · ${tierLabel(tpl.model)}`}</Text>
+                          <Text variant="small" tone="muted">
+                            {tpl.description}
+                          </Text>
+                        </Stack>
+                      }
+                    />
+                    {tpl.origin === "platform" && <Badge>{t("platform")}</Badge>}
+                  </Stack>
+                );
+              })}
               {templates
-                .filter((id) => !templateList.some((x) => x.id === id))
-                .map((id) => (
-                  <Checkbox
-                    key={id}
-                    checked
-                    onChange={() => setTemplates((cur) => cur.filter((x) => x !== id))}
-                    label={t("templateGone", { id })}
-                  />
-                ))}
+                .filter((id) => !templateList.some((x) => x.id === id || x.linkedIds?.includes(id)))
+                .map((id) => {
+                  // a platform template off in the org (or its copy) is unavailable, not gone
+                  const off = unavailableComponent(data.offered, "agent_template", id);
+                  return (
+                    <Checkbox
+                      key={id}
+                      checked
+                      onChange={() => setTemplates((cur) => cur.filter((x) => x !== id))}
+                      label={
+                        off !== undefined
+                          ? t("templateUnavailable", { name: off.name })
+                          : t("templateGone", { id })
+                      }
+                    />
+                  );
+                })}
               {listProblems("subagents.templates")}
             </Stack>
           </div>
-          {/* biome-ignore lint/a11y/useSemanticElements: fieldset has browser default styles; apps/web writes none */}
-          <div role="group" aria-label={t("inlineLabel")}>
-            <Stack gap={8}>
-              <Text variant="small" tone="muted">
-                {t("inlineLabel")}
-              </Text>
+          {/* The inline templates' list carries their name (no group of the same name around it) */}
+          <Stack gap={8}>
+            <Text variant="small" tone="muted">
+              {t("inlineLabel")}
+            </Text>
+            {/* Rows inside the form card, not cards (spec §1 "One box is enough") */}
+            <ItemList label={t("inlineLabel")}>
               {inline.map((x, i) => (
-                <Card
+                <ItemListItem
                   // biome-ignore lint/suspicious/noArrayIndexKey: drafts have no id; order is the roster order
                   key={i}
                   title={x.name || t("inlineNew")}
@@ -451,20 +472,20 @@ export function useSubagentsForm(
                         </Text>
                       ))}
                   </Stack>
-                </Card>
+                </ItemListItem>
               ))}
-              <Stack direction="row" gap={8}>
-                <Button
-                  disabled={inline.length >= INLINE_MAX}
-                  onClick={() =>
-                    setInline((cur) => [...cur, { name: "", description: "", instructions: "" }])
-                  }
-                >
-                  {t("addInline")}
-                </Button>
-              </Stack>
+            </ItemList>
+            <Stack direction="row" gap={8}>
+              <Button
+                disabled={inline.length >= INLINE_MAX}
+                onClick={() =>
+                  setInline((cur) => [...cur, { name: "", description: "", instructions: "" }])
+                }
+              >
+                {t("addInline")}
+              </Button>
             </Stack>
-          </div>
+          </Stack>
           {/* biome-ignore lint/a11y/useSemanticElements: fieldset has browser default styles; apps/web writes none */}
           <div role="group" aria-label={t("agentsLabel")}>
             <Stack gap={8}>

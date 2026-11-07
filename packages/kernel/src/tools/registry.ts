@@ -339,6 +339,30 @@ export class ToolRegistry {
   }
 
   /**
+   * The connector kinds `orgId` can create connectors of: the `connector@1` implementations loaded
+   * on this replica whose extension is enabled in the org (the first implementation of a kind, as
+   * {@link findConnector} picks it), sorted by kind.
+   */
+  async connectorKindsFor(orgId: string): Promise<{ kind: string; plugin: string }[]> {
+    const enabled = await this.enabledPlugins(orgId);
+    const out = new Map<string, string>();
+    for (const e of this.extensions.list("connector")) {
+      const kind = (e.impl as Connector | undefined)?.kind;
+      if (typeof kind !== "string" || out.has(kind)) continue;
+      out.set(kind, e.plugin);
+    }
+    return [...out]
+      .filter(([, plugin]) => enabled.has(plugin))
+      .map(([kind, plugin]) => ({ kind, plugin }))
+      .sort((a, b) => a.kind.localeCompare(b.kind));
+  }
+
+  /** True when `kind` is one of {@link connectorKindsFor}: loaded here and enabled in the org. */
+  async connectorKindAvailable(orgId: string, kind: string): Promise<boolean> {
+    return (await this.connectorKindsFor(orgId)).some((k) => k.kind === kind);
+  }
+
+  /**
    * 保存 agent 时校验工具引用（只看「存在」，停用 / 待复核 / 插件未启用等运行时状态不拒绝，由 `forAgent` 报不可用）：
    * - 内置：名字在 {@link BUILTIN_TOOL_NAMES} 中；
    * - 插件：插件已加载且注册了该工具，key 合法；
@@ -658,6 +682,11 @@ export class ToolRegistry {
     const cfg = this.config;
     const config = cfg ?? { get: () => ({ subagents: SUBAGENT_LIMIT_DEFAULTS }) };
     return (await subagentLimits(this.db.db, config, orgId)).maxConcurrentPerConversation;
+  }
+
+  /** The extensions enabled in the org (`extensions/enabled.ts`, through the host). */
+  async enabledExtensions(orgId: string): Promise<Set<string>> {
+    return this.host.enabledPlugins(orgId);
   }
 
   /** Plugins the organization enabled (built-in plugins always count as enabled, C14). */

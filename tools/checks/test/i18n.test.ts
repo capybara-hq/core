@@ -3,11 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkI18n, flattenKeys } from "../src/i18n.js";
+import { checkDesignI18n, checkI18n, flattenKeys } from "../src/i18n.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/i18n/${name}`, import.meta.url));
 const webMessages = fileURLToPath(new URL("../../../apps/web/messages", import.meta.url));
+const designMessages = fileURLToPath(
+  new URL("../../../packages/design/src/i18n.ts", import.meta.url),
+);
 
 const tmp: string[] = [];
 afterEach(() => {
@@ -145,8 +148,65 @@ describe("checkI18n", () => {
     ]);
   });
 
+  it("企业 in a zh message -> i18n-zh-enterprise (zh only; en may say enterprise)", () => {
+    const f = checkI18n(fixture("zh-enterprise"));
+    expect(f.map((x) => x.rule)).toEqual(["i18n-zh-enterprise", "i18n-zh-enterprise"]);
+    expect(f.every((x) => x.file.endsWith("zh.json"))).toBe(true);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "admin.role",
+      "admin.catalog",
+    ]);
+    expect(f[0]?.message).toContain("超级管理员");
+    expect(f[0]?.line).toBe(3);
+  });
+
+  it("the Latin word agent in a zh message -> i18n-zh-agent; placeholders and select keys are not text", () => {
+    const f = checkI18n(fixture("zh-agent"));
+    expect(f.map((x) => x.rule)).toEqual(Array(4).fill("i18n-zh-agent"));
+    expect(f.every((x) => x.file.endsWith("zh.json"))).toBe(true);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "agents.title",
+      "agents.new",
+      "agents.sub",
+      "agents.branch",
+    ]);
+    expect(f[1]?.message).toContain("智能体");
+  });
+
   it("JSON 解析失败 -> i18n-invalid-json", () => {
     const d = dirWith({ "zh.json": '{"a":"x"}', "en.json": "{" });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-invalid-json"]);
+  });
+});
+
+describe("checkDesignI18n", () => {
+  it("applies the zh word rules to the design system's zh strings; en and placeholders pass", () => {
+    const file = join(fixture("design-zh"), "i18n.ts");
+    const f = checkDesignI18n(file);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["i18n-zh-agent", 4],
+      ["i18n-zh-enterprise", 5],
+    ]);
+    expect(f.every((x) => x.file === file)).toBe(true);
+    expect(f[0]?.message).toContain("nav.agents");
+    expect(f[1]?.message).toContain("平台");
+  });
+
+  it("an entry of the zh object that is not a plain string literal cannot be confirmed", () => {
+    const file = join(fixture("design-unreadable"), "i18n.ts");
+    const f = checkDesignI18n(file);
+    expect(f.map((x) => [x.rule, x.line])).toEqual([["i18n-design-unreadable", 3]]);
+    expect(f[0]?.message).toContain("cannot be confirmed statically");
+  });
+
+  it("a file without a zh object is reported", () => {
+    const d = dirWith({ "i18n.ts": "export const en = {};\n" });
+    expect(checkDesignI18n(join(d, "i18n.ts")).map((x) => x.rule)).toEqual([
+      "i18n-design-unreadable",
+    ]);
+  });
+
+  it("the design system's zh strings pass", () => {
+    expect(checkDesignI18n(designMessages)).toEqual([]);
   });
 });

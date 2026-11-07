@@ -8,6 +8,7 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { buildKernelApp, closeKernelApp, createKernelApp } from "../../src/app.js";
+import { PLUGIN_SCOPE_QUEUE } from "../../src/catalog/scope-sync.js";
 import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
@@ -45,6 +46,7 @@ const KERNEL_QUEUES = [
   EVAL_QUEUE_NAME,
   MAINTENANCE_QUEUE_NAME,
   CHANNEL_QUEUE_NAME,
+  PLUGIN_SCOPE_QUEUE,
 ];
 
 let pgc: TestContainer;
@@ -214,6 +216,8 @@ describe("role modules", () => {
       "DirectoryScanJob",
       "GatewayCheckJob",
       "OffboardSweepJob",
+      "OwnedPluginCleanup",
+      "PlatformMigration",
       "PluginsReconcileJob",
       "SandboxSweepJobs",
       "StoragePurgeJob",
@@ -228,7 +232,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(12);
+    expect(jobHosts).toHaveLength(14);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);

@@ -6,9 +6,18 @@ export function CellTitle({
   title,
   description,
   initial,
+  mono = false,
+  trailing,
 }: {
   title: string;
+  /**
+   * A short mono label after the title on its line (a version, `v0.1.0`): it never takes the
+   * ellipsis, the title does (spec §6.6).
+   */
+  trailing?: string;
   description?: string;
+  /** The description is an id or a version (`plugin · v1.0.0`): mono instead of prose. */
+  mono?: boolean;
   /** One character drawn on a `selected` tile before the text (e.g. the name's first letter). */
   initial?: string;
 }) {
@@ -20,11 +29,26 @@ export function CellTitle({
         </span>
       ) : null}
       <span className="cb-cell-title-text">
-        <span className="cb-cell-title-name" title={title}>
-          {title}
-        </span>
+        {trailing ? (
+          <span className="cb-cell-title-line">
+            <span className="cb-cell-title-name" title={title}>
+              {title}
+            </span>
+            <span className="cb-cell-title-trailing" data-part="cell-title-trailing">
+              {trailing}
+            </span>
+          </span>
+        ) : (
+          <span className="cb-cell-title-name" title={title}>
+            {title}
+          </span>
+        )}
         {description ? (
-          <span className="cb-cell-title-desc" title={description}>
+          <span
+            className="cb-cell-title-desc"
+            data-mono={mono ? "true" : undefined}
+            title={description}
+          >
             {description}
           </span>
         ) : null}

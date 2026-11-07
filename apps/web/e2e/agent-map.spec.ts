@@ -74,6 +74,8 @@ test("agent map: open a child from its call block, its transcript, back to the t
     /SubagentHandback/,
   );
   await expect(transcript.getByRole("textbox")).toHaveCount(0);
+  // no read-only copy (AC1): the missing composer says it
+  await expect(transcript.getByText(/只读|转达/)).toHaveCount(0);
 
   // 3. back to its summary, back to the tree
   await transcript.getByRole("button", { name: designZh("agentMap.back") }).click();
@@ -85,11 +87,17 @@ test("agent map: open a child from its call block, its transcript, back to the t
   const map = dialog(page, designZh("agentMap.title"));
   await expect(map.getByText(SLOW)).toBeVisible();
 
-  // 4. open the slow one and stop it: it stops, and Stop is gone
+  // 4. open the slow one and stop it (AC5): the request reaches the kernel (202), the agent's end
+  // arrives through its stream, and Stop is gone
   await map.getByText(SLOW).click();
   const slow = dialog(page, SLOW);
-  await slow.getByRole("button", { name: designZh("agentMap.stop") }).click();
-  await expect(slow.getByRole("button", { name: designZh("agentMap.stop") })).toHaveCount(0);
+  const stopButton = slow.getByRole("button", { name: designZh("agentMap.stop") });
+  const aborted = page.waitForResponse(
+    (r) => r.request().method() === "POST" && /\/conversations\/[^/]+\/abort$/.test(r.url()),
+  );
+  await stopButton.click();
+  expect((await aborted).status()).toBe(202);
+  await expect(stopButton).toHaveCount(0);
   await expect(slow.locator('[data-part="agent-meta"]').first()).toContainText(
     designZh("agentMap.status.aborted"),
   );

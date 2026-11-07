@@ -106,5 +106,13 @@ export const SIZES = {
     "file-card": 240,
     thumb: 56,
     "inline-image": 360,
+    "menu-max-height": 328,
+    "bubble-clamp": 208,
+    "head-path": 12,
+    "head-description": 4,
+    "head-tabs": 16,
+    "head-tabs-content": 16,
+    "head-content": 24,
+    "card-min": 280,
   },
 } as const;

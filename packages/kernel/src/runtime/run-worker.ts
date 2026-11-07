@@ -3,11 +3,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
-import {
-  type ConversationBusMessage,
-  conversationTopic,
-  EventLog,
-} from "../conversations/event-log.js";
+import { EventLog } from "../conversations/event-log.js";
 import {
   type AbsorbableEvent,
   type ConversationEvent,
@@ -43,6 +39,7 @@ import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.
 import { RunError, type StreamSink } from "./model-call.js";
 import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
+import { RunDrafts, streamSink } from "./run-drafts.js";
 import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
 import type { RunJobData } from "./run-jobs.js";
 import { RunQueue } from "./run-queue.js";
@@ -174,6 +171,8 @@ export class RunWorker {
     @Inject(ToolPipeline) private readonly pipeline: Pick<ToolPipeline, "stopOpenAgentCalls">,
     @Inject(RunFinish) private readonly finisher: Pick<RunFinish, "finish">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The steps' live drafts this process writes for the runs it executes. */
+    @Inject(RunDrafts) private readonly drafts: RunDrafts,
     @Optional() @Inject(RUN_HOOKS) private readonly hooks?: RunHooks,
   ) {
     this.loop = loops.create(steps.deps);
@@ -227,30 +226,11 @@ export class RunWorker {
   }
 
   /**
-   * 流式增量发布到会话频道（与 `{ kind: "events" }` 共用 `conv.<id>`），任意副本上的订阅方都能收到。
-   * 发布失败只记日志：增量只是草稿，最终内容以日志中的 assistant_message 为准。
+   * The run's stream sink: deltas on the conversation's topic (any replica's subscribers get them)
+   * and the steps' live drafts in Redis ({@link streamSink}, spec 2026-11-07 §3.2).
    */
   private sinkFor(conversationId: string): StreamSink {
-    // 本次运行执行中推出的文本字符数（按步，step_reset 清零）：本进程正在执行的这次运行自己的计数
-    let at = { runId: "", step: -1, chars: 0 };
-    return (d) => {
-      if (at.runId !== d.runId || at.step !== d.step || d.kind === "step_reset") {
-        at = { runId: d.runId, step: d.step, chars: 0 };
-      }
-      const offset = at.chars;
-      if (d.kind === "text") at.chars += d.text?.length ?? 0;
-      const msg: ConversationBusMessage = {
-        kind: "delta",
-        runId: d.runId,
-        step: d.step,
-        delta: d.kind,
-        ...(d.text !== undefined && { text: d.text }),
-        ...(d.kind === "text" && { offset }),
-      };
-      this.bus
-        .publish(conversationTopic(conversationId), msg)
-        .catch((err) => this.log.warn("stream delta publish failed", { conversationId, err }));
-    };
+    return streamSink(conversationId, { bus: this.bus, drafts: this.drafts, log: this.log });
   }
 
   /**
@@ -826,6 +806,9 @@ export class RunWorker {
           payload: { error: { code: err.code, message: err.message } },
         });
         return "finished";
+      } finally {
+        // the execution here ended: what this process held of the run's drafts goes
+        this.drafts.release(runId);
       }
       if (state.abandoned) return "abandoned";
       // 锁在运行中丢失：无论 loop 返回什么都不写终态，任务回到队列由持锁者续跑。

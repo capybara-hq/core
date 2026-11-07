@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
 import { useRouter } from "../../i18n/navigation";
+import { adminInboxCountQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
@@ -13,7 +14,7 @@ import { ADMIN_PAGES, type AdminPageId } from "../admin-nav";
 
 /**
  * Who sees a nav item: `all` everyone, `member` members and up (not guests), `admin` org admins
- * and owners. The admin console is for enterprise admins (`me.account.isEnterpriseAdmin`, apart
+ * and owners. The admin console is for super admins (`me.account.isSuperAdmin`, apart
  * from the org role).
  */
 type NavAudience = "all" | "member" | "admin";
@@ -21,10 +22,12 @@ type NavAudience = "all" | "member" | "admin";
 export type NavLevel = "guest" | "member" | "admin";
 
 /**
- * The work context's navigation (web order §2.1): only routes that exist. `primary` items follow
- * New conversation; `more` items sit in the 更多 flyout (then the extension pages). Search and the
- * inbox are icon buttons in the brand row. Items are hidden by the current org role through `audience` (cosmetic only; the kernel
- * decides). The admin console is the entry above the account row, for enterprise admins.
+ * The work context's navigation (web order §2.1, acceptance 2026-11-07): only routes that exist.
+ * `primary` items follow New conversation (智能体, 技能, 连接器; there is no home page: the new
+ * conversation is the home, and `/` redirects to `/chat`); `more` items sit in the 更多 flyout (then
+ * the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
+ * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
+ * console is the entry above the account row, for super admins.
  */
 const NAV: readonly {
   id: string;
@@ -34,7 +37,6 @@ const NAV: readonly {
   icon: IconName;
   section: "primary" | "more";
 }[] = [
-  { id: "overview", key: "overview", href: "/", audience: "all", icon: "home", section: "primary" },
   {
     id: "agents",
     key: "agents",
@@ -50,7 +52,7 @@ const NAV: readonly {
     href: "/skills",
     audience: "member",
     icon: "skills",
-    section: "more",
+    section: "primary",
   },
   {
     id: "connectors",
@@ -58,15 +60,25 @@ const NAV: readonly {
     href: "/connectors",
     audience: "all",
     icon: "connector",
-    section: "more",
+    section: "primary",
   },
-  // Plugins (the org's catalog view): members browse and request, org admins install
+  // Plugins (what the platform offers this org): members browse and ask, org admins switch them
   {
-    id: "catalog",
-    key: "catalog",
-    href: "/catalog",
+    id: "plugins",
+    key: "plugins",
+    href: "/plugins",
     audience: "member",
     icon: "catalog",
+    section: "more",
+  },
+  // Extensions: members see their state (the kernel's org.extensions.read projection), org admins
+  // also switch and configure them (org.extensions.manage)
+  {
+    id: "extensions",
+    key: "extensions",
+    href: "/extensions",
+    audience: "member",
+    icon: "extension",
     section: "more",
   },
   {
@@ -107,6 +119,16 @@ export function navLevelOf(me: {
   return role === "member" ? "member" : "guest";
 }
 
+/**
+ * The `nav.*` message key naming the nav item `id`, or
+ * undefined for an item without a nav label of its own: `new` (New conversation, labelled by the
+ * design system), an extension page, none.
+ */
+export function navMessageKey(id: string): string | undefined {
+  if (id === "inbox" || id === "admin") return id;
+  return NAV.find((n) => n.id === id)?.key;
+}
+
 /** How often the inbox count is read again (in the browser; no server state involved). */
 const PENDING_POLL_MS = 30_000;
 
@@ -122,11 +144,13 @@ const decode = (s: string) => {
 };
 
 /**
- * The nav item the route belongs to: `/settings/*` is Organization settings, trajectories are Evals, an
- * extension page `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation
- * (`/chat/*`) is none (its sidebar row is current instead).
+ * The nav item the route belongs to: the new conversation (`/chat`, the home) is New conversation
+ * (`new`), `/settings/*` is Organization settings, trajectories are Evals, an extension page
+ * `/p/<plugin>/<id>` is its Extensions item `ext:<plugin>/<id>`; a conversation (`/chat/<id>`) is
+ * none (its sidebar row is current instead).
  */
 export function activeNavOf(pathname: string): string {
+  if (pathname === "/chat") return "new";
   if (under(pathname, "/chat")) return "";
   const ext = /^\/p\/([^/]+)\/([^/]+)/.exec(pathname);
   if (ext?.[1] !== undefined && ext[2] !== undefined)
@@ -138,9 +162,10 @@ export function activeNavOf(pathname: string): string {
   if (under(pathname, "/channels")) return "channels";
   if (under(pathname, "/evals") || under(pathname, "/trajectories")) return "evals";
   if (under(pathname, "/admin")) return "admin";
-  if (under(pathname, "/catalog")) return "catalog";
+  if (under(pathname, "/plugins")) return "plugins";
+  if (under(pathname, "/extensions")) return "extensions";
   if (under(pathname, "/connectors")) return "connectors";
-  return pathname === "/" ? "overview" : "";
+  return "";
 }
 
 /**
@@ -166,6 +191,23 @@ export function usePendingApprovals(orgId: string): {
     [qc, orgId],
   );
   return { count: data?.count ?? 0, more: data?.more ?? false, refresh };
+}
+
+/**
+ * The super admin's inbox count for the admin sidebar's 收件箱 item (`GET /admin/inbox/count`, a
+ * number rather than the page's items, so it is not capped at the page's 100): read again every
+ * 30 s while `enabled` (under `/admin`); undefined while it loads, when the read failed or when not
+ * enabled. The sidebar draws a count above 99 as `99+`.
+ */
+export function useAdminInboxCount(enabled: boolean): number | undefined {
+  const query = adminInboxCountQuery();
+  const { data } = useQuery({
+    ...query,
+    enabled,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: enabled ? PENDING_POLL_MS : false,
+  });
+  return enabled ? data?.total : undefined;
 }
 
 /** 插件页面的路由：`/p/<插件>/<贡献 id>`。 */
@@ -219,24 +261,36 @@ export function statusPrompt(login: string, slug: string | null, pathname: strin
 
 const ADMIN_ICONS: Record<AdminPageId, IconName> = {
   overview: "gauge",
+  inbox: "inbox",
   accounts: "user",
   orgs: "building",
+  plugins: "catalog",
   extensions: "extension",
-  catalog: "catalog",
-  marketplaces: "store",
+  skills: "skills",
+  "connector-templates": "connector",
+  "agent-templates": "agent",
   models: "cpu",
   settings: "sliders",
 };
 
-/** The admin context's items (web order §2.2), from the admin pages. */
-export function useAdminItems(): SidebarNavItem[] {
+/**
+ * The admin context's items (web order §2.2), from the admin pages. `counts` puts a count on an
+ * item: 收件箱 shows what waits on the platform, 插件 what waits in its 待确认 tab (spec §9).
+ */
+export function useAdminItems(
+  counts: Partial<Record<AdminPageId, number | undefined>> = {},
+): SidebarNavItem[] {
   const t = useTranslations("admin.nav");
-  return ADMIN_PAGES.map((p) => ({
-    id: p.id,
-    label: t(p.id),
-    href: p.href,
-    icon: ADMIN_ICONS[p.id],
-  }));
+  return ADMIN_PAGES.map((p) => {
+    const count = counts[p.id];
+    return {
+      id: p.id,
+      label: t(p.id),
+      href: p.href,
+      icon: ADMIN_ICONS[p.id],
+      ...(count !== undefined && count > 0 ? { count } : {}),
+    };
+  });
 }
 
 /** The admin item a route belongs to: the longest matching href (`/admin` only by itself). */
@@ -249,14 +303,14 @@ export function activeAdminOf(pathname: string, items: { id: string; href: strin
 
 /**
  * The work context's navigation (primary items, 更多, the admin entry) and the command palette.
- * `enterpriseAdmin`: the account is an enterprise admin, so the admin entry shows (cosmetic;
+ * `superAdmin`: the account is a super admin, so the admin entry shows (cosmetic;
  * `/api/v1/admin/*` is decided by the kernel).
  */
 export function useNav(
   pending = 0,
   level: NavLevel = "guest",
   pendingMore = false,
-  enterpriseAdmin = false,
+  superAdmin = false,
 ): {
   primary: SidebarNavItem[];
   more: SidebarNavItem[];
@@ -281,7 +335,7 @@ export function useNav(
   const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
   const primary = items.filter((n) => n.section === "primary").map(strip);
   const more = items.filter((n) => n.section === "more").map(strip);
-  const admin = enterpriseAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
+  const admin = superAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
@@ -321,5 +375,5 @@ export function useNav(
       ],
     },
   ].filter((g) => g.items.length > 0);
-  return { primary, more, inbox, ...(enterpriseAdmin ? { adminHref: "/admin" } : {}), commands };
+  return { primary, more, inbox, ...(superAdmin ? { adminHref: "/admin" } : {}), commands };
 }

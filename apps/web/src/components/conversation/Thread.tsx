@@ -104,7 +104,7 @@ export type ThreadProps = {
   onRetry?(d: FailedRun): void;
   /**
    * The main thread's run rows link out (spec §6.16.23): 查看轨迹 for the roles the kernel lets
-   * read the trajectory (the agent's owner decides for members), 去配置模型服务 for enterprise
+   * read the trajectory (the agent's owner decides for members), 去配置模型服务 for super
    * admins. Absent (a sub-agent's record), the rows link nowhere. `trajectory: false` (a
    * sub-agent conversation, whose trajectory the kernel gates on the parent's agent) drops 查看轨迹.
    */
@@ -638,7 +638,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           ),
         ];
         const details =
-          e.instructions !== undefined || e.waitsFor !== undefined ? (
+          e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
               {e.instructions !== undefined ? (
                 <Disclosure summary={t("skillInstructions")}>
@@ -652,11 +652,17 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                   {t("skillWaits", { skill: e.waitsFor })}
                 </Text>
               ) : null}
+              {e.pending && e.waitsFor === undefined ? (
+                <Text variant="small" tone="faint">
+                  {t("interjectionPending")}
+                </Text>
+              ) : null}
             </>
           ) : undefined;
         return (
           <UserBubble
             text={e.text}
+            {...(e.pending ? { queued: true } : {})}
             {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
             {...(e.skill ? { skill: e.skill.label } : {})}
             {...(details !== undefined ? { details } : {})}

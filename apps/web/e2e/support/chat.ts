@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { selectOption } from "./select";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
 export const zh = JSON.parse(
@@ -36,15 +37,15 @@ export const toolGroup = (page: Page, key: string): Locator =>
   page.locator(`[data-entry="tools"][data-tool-keys~="${key}"]`);
 
 /**
- * Opens a new conversation with the agent from the Agents list (the row action 对话): the page
- * is `/chat?agent=<id>` and nothing is created before the first send.
+ * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a
+ * link): the page is `/chat?agent=<id>` and nothing is created before the first send.
  */
 export async function startChat(page: Page, agentName: string): Promise<void> {
   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
   await page
     .getByRole("listitem")
     .filter({ hasText: agentName })
-    .getByRole("button", { name: zh.agents.chat, exact: true })
+    .getByRole("link", { name: zh.agents.chat, exact: true })
     .click();
   await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
@@ -66,9 +67,10 @@ export async function newAgent(page: Page, name: string): Promise<string> {
   await page.goto("/agents/new");
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   await page.getByRole("textbox", { name: zh.agents.form.nameLabel, exact: true }).fill(name);
-  await page
-    .getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true })
-    .selectOption("model-fake/fake-1");
+  await selectOption(
+    page.getByRole("combobox", { name: zh.agents.form.modelLabel, exact: true }),
+    "model-fake/fake-1",
+  );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   await expect(page).toHaveURL(/\/agents\/[^/?#]+\?s=prompt$/);
   await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
@@ -99,7 +101,8 @@ export async function saveSection(page: Page): Promise<void> {
 
 /**
  * Sends with ↵ and waits for the bubble (the first send also creates the conversation). While a
- * run is going ↵ queues instead (conversation send design D1): use {@link interject} there.
+ * run is going the message is an interjection the run takes in at its next step (run input spec
+ * 2026-11-07 D1); ⌘↵ / Ctrl+↵ sends the same way (D2).
  */
 export async function send(page: Page, text: string, keys = "Enter"): Promise<void> {
   const input = composer(page);
@@ -109,9 +112,8 @@ export async function send(page: Page, text: string, keys = "Enter"): Promise<vo
   await expect(page).toHaveURL(/\/chat\/[^/?#]+(#.*)?$/);
 }
 
-/** Sends now while a run is going (an interjection: ⌘↵ / Ctrl+↵) and waits for the bubble. */
-export const interject = (page: Page, text: string): Promise<void> =>
-  send(page, text, "ControlOrMeta+Enter");
+/** Sends while a run is going (an interjection; ↵ like any send) and waits for the bubble. */
+export const interject = (page: Page, text: string): Promise<void> => send(page, text);
 
 /**
  * Waits until the CSS animations on `target` and inside it have finished (an expand opens with a

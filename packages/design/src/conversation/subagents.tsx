@@ -150,6 +150,11 @@ export function subagentDuration(ms: number, locale: Locale): string {
   return fillCopy(t["subagent.durationMS"], { m, s: String(s).padStart(2, "0") });
 }
 
+/** What a waiting sub-agent waits for, as its row says it ("等待批准" / "Waiting for approval"). */
+export function subagentWaitingLabel(kind: SubagentWaitKind, locale: Locale): string {
+  return messages[locale][`subagent.waiting.${kind}`];
+}
+
 const active = (r: SubagentRowData) =>
   r.status === "queued" || r.status === "running" || r.status === "waiting";
 

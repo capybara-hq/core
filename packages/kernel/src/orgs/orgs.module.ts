@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { CatalogModule } from "../catalog/catalog.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { EvalBudgetModule } from "../evals/budget.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
@@ -35,6 +36,8 @@ import { OrgSettingsService } from "./settings.service.js";
     SandboxModule,
     // cancels the deleted org's eval runs
     EvalBudgetModule,
+    // a new org's plugin scope sync (the producer; the worker role consumes it)
+    CatalogModule,
     // the producer side of directory-sync jobs (the maintenance processor consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],

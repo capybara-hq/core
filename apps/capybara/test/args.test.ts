@@ -20,6 +20,12 @@ describe("parseCli", () => {
     expect(parseCli(["start", "-h"])).toEqual({ command: "help" });
   });
 
+  it("the help names the deployment role super admin", () => {
+    expect(USAGE).toContain("Make a local account a super admin");
+    expect(USAGE).toContain("Revoke super admin from a local account");
+    expect(USAGE).not.toMatch(/enterprise/i);
+  });
+
   it("admin create", () => {
     expect(parseCli(["admin", "create", "--login", "root", "--display-name", "Root"])).toEqual({
       command: "admin-create",
@@ -146,16 +152,16 @@ describe("parseCli", () => {
       command: "plugins-import",
       target: "./a.tgz",
       yes: false,
-      deployExtension: false,
     });
-    expect(
-      parseCli(["plugins", "import", "npm:@acme/a@1.0.0", "--deploy-extension", "-y"]),
-    ).toEqual({
+    expect(parseCli(["plugins", "import", "npm:@acme/a@1.0.0", "-y"])).toEqual({
       command: "plugins-import",
       target: "npm:@acme/a@1.0.0",
       yes: true,
-      deployExtension: true,
     });
+    // The import always deploys the extension: the old flag is an unknown option
+    expect(() =>
+      parseCli(["plugins", "import", "npm:@acme/a@1.0.0", "--deploy-extension"]),
+    ).toThrow();
     for (const sub of ["approve", "review", "enable", "disable", "uninstall", "state"]) {
       expect(() => parseCli(["plugins", sub, "slack", "--yes"])).toThrow(UsageError);
     }
@@ -163,9 +169,6 @@ describe("parseCli", () => {
     expect(() => parseCli(["plugins", "import"])).toThrow(/needs a package/);
     expect(() => parseCli(["plugins", "import", "a", "b"])).toThrow(/unexpected argument/);
     expect(() => parseCli(["plugins", "list", "--yes"])).toThrow(UsageError);
-    expect(() => parseCli(["extensions", "install", "a", "--deploy-extension"])).toThrow(
-      /only valid for plugins import/,
-    );
     expect(USAGE).toContain("capybara extensions install");
     expect(USAGE).toContain("capybara plugins import");
   });

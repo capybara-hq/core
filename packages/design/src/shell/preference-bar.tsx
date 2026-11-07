@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { Select } from "../controls/inputs";
+import { Select } from "../controls/select";
 import { Icon } from "../icons/icon";
 import type { Theme } from "../theme";
 

@@ -698,6 +698,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         version: z.number().int().positive().optional(),
         plugin: z.string().optional(),
         /**
+         * Plugin scope phase 2: the platform template whose content a `plugin` child ran (a
+         * platform template, or an org copy linked to one, recorded under the copy's `id`). Absent
+         * = the org's own template (and in every older event). Eval metadata, not model-visible.
+         */
+        platformTemplateId: z.string().optional(),
+        /**
          * Phase D: the child runs a forked skill a person invoked (display and eval metadata, not
          * model-visible).
          */

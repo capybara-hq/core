@@ -25,6 +25,7 @@ import {
   SkillIntegrityError,
 } from "../tools/builtins/skill-load.js";
 import { invocationOf, type ResolvedSkill, resolveSkills } from "./catalog.js";
+import { skillFileStore } from "./usable.js";
 
 /**
  * A person's skill invocation (phase D spec §3, §4): the `/` menu's list of the agent's invocable
@@ -361,11 +362,9 @@ export class SkillInvoker {
     this.storage.assertAvailable();
     let bytes: Uint8Array;
     try {
-      bytes = await readSkillFile(
-        this.storage.kernel(orgId),
-        `${r.skill.source}${SKILL_ENTRY_FILE}`,
-        md,
-      );
+      // a platform version (`platform:<prefix>`) is read from deployment/ (ruling D2)
+      const { store, prefix } = skillFileStore(this.storage, orgId, r.skill.source);
+      bytes = await readSkillFile(store, `${prefix}${SKILL_ENTRY_FILE}`, md);
     } catch (e) {
       if (e instanceof SkillIntegrityError) throw unreadable("failed its integrity check");
       if (e instanceof ApiError) throw e;

@@ -13,11 +13,10 @@ import {
   UserBubble,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ProviderModels } from "../../lib/agents";
-import { ApiClientError } from "../../lib/api";
 import {
   type AgentTreeNode,
   abortRun,
@@ -31,6 +30,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import {
   agentTreeQuery,
   backgroundTasksQuery,
+  catchUpEvents,
   hasBackgroundTasks,
   modelsQuery,
 } from "../../lib/query/conversation";
@@ -38,6 +38,7 @@ import { keys as queryKeys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import type { RightTarget } from "../../lib/right-area";
+import { useStopUnderWay } from "../../lib/stop";
 import {
   buildEventTimeline,
   latestUsage,
@@ -277,27 +278,66 @@ function latestText(entries: readonly TimelineEntry[]): string {
 /** Run ends the stream shows as failed (`subagent_finished` with a limit's status). */
 const LIMIT_ENDS = new Set(["max_steps", "max_duration", "budget"]);
 
-/**
- * The agent's own status from its log once it has one (the tree is read again only now and then).
- * A message or a background task's end after the last run's end, with no run started yet, is a
- * restart or a wake that is queued: the log has no word for it, the tree has (`queued`, running).
- */
-function liveStatus(
-  tree: AgentMapStatus,
-  log: { loading: boolean; running: boolean; waiting: boolean; events: ConversationEvent[] },
-): AgentMapStatus {
-  if (log.loading) return tree;
-  if (log.waiting) return "waiting";
-  if (log.running) return "running";
+/** What an agent's own log says of its status. */
+export type LogWord =
+  /** No word: the log is loading, or no run of it has ended yet (a queued first run). */
+  | { kind: "tree" }
+  /** The log's own word: a run is open (running, waiting), or the latest run's end. */
+  | { kind: "log"; status: AgentMapStatus }
+  /**
+   * A message or a background task's end (`seq`) after the latest run's end (`ended`), with no
+   * run started since: a restart or a wake that may be queued. Only a tree read after `seq` was
+   * seen can say so; until then the log's end stands.
+   */
+  | { kind: "restart"; seq: number; ended: AgentMapStatus };
+
+/** A terminal event's word, or null for any other event. */
+function endOf(e: ConversationEvent): AgentMapStatus | null {
+  if (e.type === "run_finished") return LIMIT_ENDS.has(e.payload.reason) ? "failed" : "completed";
+  if (e.type === "run_failed") return "failed";
+  if (e.type === "run_aborted") return "aborted";
+  return null;
+}
+
+/** What the agent's log says of its status (the tree is read again only now and then). */
+export function logWord(log: {
+  loading: boolean;
+  running: boolean;
+  waiting: boolean;
+  events: readonly ConversationEvent[];
+}): LogWord {
+  if (log.loading) return { kind: "tree" };
+  if (log.waiting) return { kind: "log", status: "waiting" };
+  if (log.running) return { kind: "log", status: "running" };
+  let restart: number | null = null;
   for (let i = log.events.length - 1; i >= 0; i--) {
     const e = log.events[i];
-    if (e?.type === "user_message" || e?.type === "background_task_finished") return tree;
-    if (e?.type === "run_finished")
-      return LIMIT_ENDS.has(e.payload.reason) ? "failed" : "completed";
-    if (e?.type === "run_failed") return "failed";
-    if (e?.type === "run_aborted") return "aborted";
+    if (e === undefined) continue;
+    if (restart === null && (e.type === "user_message" || e.type === "background_task_finished"))
+      restart = e.seq;
+    const ended = endOf(e);
+    if (ended !== null)
+      return restart === null
+        ? { kind: "log", status: ended }
+        : { kind: "restart", seq: restart, ended };
   }
-  return tree;
+  return { kind: "tree" };
+}
+
+/**
+ * The agent's status (AC5: one source per moment, so the head and Stop never flip): the log's
+ * word once it has one; the tree's while the log has none; after a run's end followed by a
+ * message or a task's end, the tree's only when it was read after that event was seen
+ * (`treeFresh`), never an older active word.
+ */
+export function liveStatus(
+  tree: AgentMapStatus,
+  word: LogWord,
+  treeFresh: boolean,
+): AgentMapStatus {
+  if (word.kind === "tree") return tree;
+  if (word.kind === "log") return word.status;
+  return treeFresh ? tree : word.ended;
 }
 
 /** The tool calls of a timeline in call order, as level 2 lists them. */
@@ -371,6 +411,7 @@ function AgentLevel({
   const locale = useLocale() === "zh" ? "zh" : "en";
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const qc = useQueryClient();
   const id = treeNode.id;
   const child = useConversation(orgId, id);
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
@@ -401,7 +442,32 @@ function AgentLevel({
         .reverse(),
     [bg.data],
   );
-  const status = liveStatus(treeNode.status, child);
+  // The tree's reads (this observer only listens: the map's own query reads it).
+  const treeQ = useMemo(() => agentTreeQuery(orgId, rootId), [orgId, rootId]);
+  // How many answers the tree's query has had (an equal answer counts too), from the cache: the
+  // map's own query reads it.
+  const subscribe = useCallback((cb: () => void) => qc.getQueryCache().subscribe(cb), [qc]);
+  const readCount = useCallback(
+    () => qc.getQueryState(treeQ.queryKey)?.dataUpdateCount ?? 0,
+    [qc, treeQ.queryKey],
+  );
+  const treeReads = useSyncExternalStore(subscribe, readCount, readCount);
+  const word = logWord(child);
+  const restartSeq = word.kind === "restart" ? word.seq : null;
+  // When a restart (or wake) event is first seen: the tree's read count then. The read in flight
+  // may have started before the event; invalidating cancels it and reads again, so only a read
+  // counted after this one can speak for the restart.
+  const [restartSeen, setRestartSeen] = useState<{ seq: number; reads: number } | null>(null);
+  useEffect(() => {
+    if (restartSeq === null) return;
+    // counted now, before the invalidation below can land an answer
+    const reads = readCount();
+    setRestartSeen((r) => (r?.seq === restartSeq ? r : { seq: restartSeq, reads }));
+    void qc.invalidateQueries({ queryKey: treeQ.queryKey });
+  }, [restartSeq, qc, treeQ.queryKey, readCount]);
+  const treeFresh =
+    restartSeen !== null && restartSeen.seq === restartSeq && treeReads > restartSeen.reads;
+  const status = liveStatus(treeNode.status, word, treeFresh);
   const node: AgentMapNode = { ...treeNode, status };
   // a fork skill's child (its task carries the invocation) runs in the foreground
   const inBackground = !child.events.some(
@@ -410,29 +476,51 @@ function AgentLevel({
       e.payload.dispatch !== undefined &&
       e.payload.skill !== undefined,
   );
+  const active = status === "running" || status === "waiting";
+  // A merged re-read of what the stop changes: the child's log from its cached end (never a
+  // wholesale refetch: an event the stream appends meanwhile survives), its row and the tree.
+  const resync = useCallback(
+    () =>
+      Promise.all([
+        catchUpEvents(qc, orgId, id),
+        qc.invalidateQueries({ queryKey: treeQ.queryKey }),
+        qc.invalidateQueries({ queryKey: queryKeys.org(orgId).conversation(id).row() }),
+      ]),
+    [qc, orgId, id, treeQ.queryKey],
+  );
+  // A stop under way: from the click until the agent's run ends in its log, the request fails,
+  // or the bounded fallback (a re-read after STOP_FALLBACK_MS) lets Stop be pressed again.
+  const stopState = useStopUnderWay(id, child.events, resync);
+  const stopping = stopState.requested && active;
+  const { release } = stopState;
   const stopMutation = useAppMutation({
     fn: () => abortRun(orgId, id),
     // the tree shows the stop as soon as the kernel has it; the agent's terminal event comes
     // through its own stream, open at this level
-    invalidates: () => [
-      agentTreeQuery(orgId, rootId).queryKey,
-      queryKeys.org(orgId).conversation(id).row(),
-    ],
+    invalidates: () => [treeQ.queryKey, queryKeys.org(orgId).conversation(id).row()],
+    // at the hook level: the report survives the level being closed while the request runs
+    onError: (e) => {
+      release();
+      if (e.code === "run.not_active") {
+        // Nothing in this subtree runs: what the page shows is stale. Read it again, so the
+        // status settles to the kernel's and Stop goes.
+        resync().catch((err: unknown) =>
+          console.warn("agent map: re-read after run.not_active failed", err),
+        );
+        return;
+      }
+      // The browser's own reason ("Failed to fetch", "Load failed") for diagnosis.
+      console.warn("agent map: stop failed", e.code, e);
+      toast.error(t("stopFailed", { reason: errorMessage(e) }));
+    },
   });
   const { mutate } = stopMutation;
-  const stop = useCallback(
-    () =>
-      mutate(undefined, {
-        onError: (e) => {
-          // the run just ended: its terminal event arrives through the stream
-          if (!(e instanceof ApiClientError && e.code === "run.not_active"))
-            toast.error(errorMessage(e));
-        },
-      }),
-    [mutate, toast, errorMessage],
-  );
-  const active = status === "running" || status === "waiting";
-  const onStop = active && !stopMutation.isPending ? { onStop: stop } : {};
+  const { begin } = stopState;
+  const stop = useCallback(() => {
+    begin();
+    mutate(undefined);
+  }, [begin, mutate]);
+  const onStop = active && !stopping ? { onStop: stop } : {};
   const openParent = (pid: string) =>
     onNavigate(pid === rootId ? { kind: "agents" } : { kind: "agents", id: pid });
   const close = () => onNavigate(null);
@@ -454,6 +542,7 @@ function AgentLevel({
         onBack={() => onNavigate({ kind: "agents", id })}
         onClose={close}
         {...onStop}
+        stopping={stopping}
       >
         {child.loading ? (
           <SkeletonBars />
@@ -495,6 +584,7 @@ function AgentLevel({
       onOpenParent={openParent}
       onOpenTranscript={() => onNavigate({ kind: "agents", id, transcript: true })}
       {...onStop}
+      stopping={stopping}
     />
   );
 }

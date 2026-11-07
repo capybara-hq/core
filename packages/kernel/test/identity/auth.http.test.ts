@@ -62,7 +62,7 @@ beforeEach(async () => {
     login: "admin",
     password: PW,
     displayName: "Admin",
-    enterpriseAdmin: true,
+    superAdmin: true,
   });
   alice = await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" });
 });

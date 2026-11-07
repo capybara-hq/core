@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ConnectorTemplateSpec } from "@capybara-hq/plugin-sdk";
+import type { ConnectorTemplateSpec, PluginManifest } from "@capybara-hq/plugin-sdk";
 import {
   type FakeMcpServer,
   fakeExtensionEntry,
@@ -14,19 +14,30 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { expect } from "vitest";
+import { putTemplateVersionIn } from "../../src/agents/templates.js";
+import {
+  readCatalogAgentTemplates,
+  readCatalogFiles,
+  skillOf,
+} from "../../src/catalog/catalog-content.js";
+import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { packagePath } from "../../src/packages/tgz.js";
+import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { pluginTgz } from "../helpers/plugin-packages.js";
+import { type ExtensionTgzOpts, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createOrg,
+  enableConnectorExtensions,
   PW,
   type Req,
   runConfig,
@@ -57,10 +68,10 @@ export interface OrgEnv {
   k: TestKernel;
   db: KernelSchemaDb;
   mcp: FakeMcpServer;
-  /** 企业管理员（也是组织所有者）。 */
+  /** 超级管理员（也是组织所有者）。 */
   root: Req;
   rootId: string;
-  /** 组织管理员（不是企业管理员）。 */
+  /** 组织管理员（不是超级管理员）。 */
   boss: Req;
   bossId: string;
   /** 组织成员。 */
@@ -70,7 +81,18 @@ export interface OrgEnv {
   stop(): Promise<void>;
 }
 
-export async function startOrgEnv(): Promise<OrgEnv> {
+/**
+ * Starts the environment; `overrides` are merged into the kernel config (e.g. `packages` with a
+ * fake npm registry, `marketplaces`, `tools`).
+ */
+export async function startOrgEnv(
+  overrides: {
+    packages?: Record<string, unknown>;
+    marketplaces?: Record<string, unknown>;
+    /** Replaces the `tools` config (default `{ timeoutMs: 5_000 }`). */
+    tools?: Record<string, unknown>;
+  } = {},
+): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
   let rd: TestContainer | undefined;
   let s3: TestS3 | undefined;
@@ -125,6 +147,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       },
       tools: { timeoutMs: 5_000 },
       http: { port: 0, publicUrl: "https://capybara.example.com" },
+      ...overrides,
     },
   );
   const k = await startKernel(config, { env: {} });
@@ -134,7 +157,7 @@ export async function startOrgEnv(): Promise<OrgEnv> {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     })
   ).id;
   const bossId = (await accounts.createLocal({ login: "boss", password: PW, displayName: "B" })).id;
@@ -177,12 +200,15 @@ export async function startOrgEnv(): Promise<OrgEnv> {
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   await truncateTables(
     env.db,
-    "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
+    "capybara.plugin_install_components, capybara.plugin_installs, capybara.agent_template_versions, capybara.agent_templates, capybara.extension_catalog_sources, capybara.catalog_requests, capybara.catalog_org_grants, capybara.catalog_item_org_switches, capybara.catalog_item_scope_orgs, capybara.plugin_import_staging, capybara.catalog_item_versions, capybara.catalog_items, capybara.skill_versions, capybara.skills, capybara.platform_skill_versions, capybara.platform_skills, capybara.platform_agent_template_versions, capybara.platform_agent_templates, capybara.platform_connector_templates, capybara.component_scope_orgs, capybara.component_org_switches, capybara.connector_tools, capybara.connectors, capybara.extension_org_configs, capybara.deployment_settings, capybara.audit_events",
   );
   await env.k.app.get(StorageService).deployment().deletePrefix("directory/");
+  await env.k.app.get(StorageService).deployment().deletePrefix("platform/");
+  // The test plugins' templates name the deployed connector extension; the org has it on
+  await enableConnectorExtensions(env.k, env.orgId);
 }
 
-/** Imports a plugin tgz as the enterprise admin (prepare -> confirm); returns the item id. */
+/** Imports a plugin tgz as the super admin (prepare -> confirm); returns the item id. */
 export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<string> {
   const r = await env.root({
     method: "POST",
@@ -194,7 +220,7 @@ export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<stri
   const c = await env.root({
     method: "POST",
     url: `/api/v1/admin/catalog/imports/${r.json().stagingId}/confirm`,
-    payload: { reviewHash: r.json().review.reviewHash, deployExtension: false },
+    payload: { reviewHash: r.json().review.reviewHash },
   });
   expect(c.statusCode, c.body).toBe(201);
   return (c.json() as { item: { id: string } }).item.id;
@@ -202,17 +228,54 @@ export async function importPlugin(env: OrgEnv, bytes: Uint8Array): Promise<stri
 
 type Policy = "allow" | "needs_approval" | "disabled";
 
+/**
+ * Sets the old item policy and the disabled flag directly in the database (no scope sync runs, so
+ * existing installs stay): the org side's checks of a disabled item, and the requests that still
+ * read `needs_approval`. The admin route (`PUT items/:id/disabled`) is covered by
+ * admin-scope.test.ts.
+ */
 export async function setPolicy(env: OrgEnv, itemId: string, policy: Policy): Promise<void> {
-  const r = await env.root({
-    method: "PUT",
-    url: `/api/v1/admin/catalog/items/${itemId}/policy`,
-    payload: { policy },
-  });
-  expect(r.statusCode).toBe(200);
+  await env.db
+    .updateTable("catalog_items")
+    .set({ policy, disabled: policy === "disabled" })
+    .where("id", "=", itemId)
+    .execute();
+}
+
+/** Sets an item's scope (and, for `named`, the orgs it lists) directly in the database. */
+export async function setScope(
+  env: OrgEnv,
+  itemId: string,
+  scope: "all" | "optional" | "named",
+  orgs: string[] = [],
+): Promise<void> {
+  // a scope change bumps scope_version, as the service's does: the sync job id is per version, so an
+  // enqueue after this never folds into a job of the old scope still running (BullMQ dedupes by id)
+  await env.db
+    .updateTable("catalog_items")
+    .set({ scope, scope_version: sql<number>`scope_version + 1` })
+    .where("id", "=", itemId)
+    .execute();
+  await env.db.deleteFrom("catalog_item_scope_orgs").where("item_id", "=", itemId).execute();
+  if (orgs.length > 0) {
+    await env.db
+      .insertInto("catalog_item_scope_orgs")
+      .values(orgs.map((org_id) => ({ item_id: itemId, org_id })))
+      .execute();
+  }
+}
+
+/** Marks an item builtin directly in the database (a required bootstrap plugin: scope all). */
+export async function setBuiltin(env: OrgEnv, itemId: string): Promise<void> {
+  await env.db
+    .updateTable("catalog_items")
+    .set({ builtin: true, scope: "all" })
+    .where("id", "=", itemId)
+    .execute();
 }
 
 /**
- * Imports a skills-only plugin as the enterprise admin (plugin `name`, default `pdf-tools`, with
+ * Imports a skills-only plugin as the super admin (plugin `name`, default `pdf-tools`, with
  * one skill `skillName`, default the plugin name); returns the item id.
  */
 export async function importSkill(
@@ -234,7 +297,7 @@ export async function importSkill(
 export const TEMPLATE_ID = "github-mcp";
 
 /**
- * Imports a templates-only plugin as the enterprise admin (template {@link TEMPLATE_ID}:
+ * Imports a templates-only plugin as the super admin (template {@link TEMPLATE_ID}:
  * fake-connector, endpoint url editable, bearer; plugin `name`, default `github-mcp`); returns the
  * item id.
  */
@@ -255,24 +318,17 @@ export async function importTemplate(
 }
 
 /**
- * The real path end to end: an extension-only plugin imported into the catalog -> its extension
- * installed on the deployment (`extension_installs.catalog_item_id` and the source table) -> enabled
- * on the deployment, waiting for this replica to load it.
+ * The real path end to end: an extension-only plugin imported into the catalog, whose confirm
+ * installs its extension on the deployment (`extension_installs.catalog_item_id` and the source
+ * table) and enables it; waits for this replica to load it. `extension`: {@link pluginTgz}'s.
  */
 export async function importDeployedPlugin(
   env: OrgEnv,
   name: string,
+  extension: ExtensionTgzOpts = {},
 ): Promise<{ itemId: string; sha256: string }> {
-  const bytes = await pluginTgz({ manifest: { name }, extension: {} });
+  const bytes = await pluginTgz({ manifest: { name }, extension });
   const itemId = await importPlugin(env, bytes);
-  const inst = await env.root({
-    method: "POST",
-    url: `/api/v1/admin/catalog/items/${itemId}/install-deployment`,
-    payload: { version: "1.0.0" },
-  });
-  expect(inst.statusCode, inst.body).toBe(200);
-  const en = await env.root({ method: "POST", url: `/api/v1/admin/extensions/${name}/enable` });
-  expect(en.statusCode, en.body).toBe(200);
   await waitFor(async () => env.k.app.get(ExtensionHost).current(name) !== undefined, 15_000, name);
   return { itemId, sha256: createHash("sha256").update(bytes).digest("hex") };
 }
@@ -318,6 +374,11 @@ export async function seedPlugin(
     pinned?: string[];
     /** The version's `source_format` (default capybara). */
     sourceFormat?: "capybara" | "claude-code";
+    /**
+     * Write the new item's platform components, as an import's confirm does (default true; only
+     * for a new item, `addTo` never does).
+     */
+    platform?: boolean;
   } = {},
 ): Promise<string> {
   const id = o.addTo ?? randomUUID();
@@ -385,6 +446,7 @@ export async function seedPlugin(
         description: "CRM bundle",
         latest_version: version,
         policy: o.policy ?? "allow",
+        disabled: o.policy === "disabled",
       })
       .execute();
   }
@@ -409,7 +471,93 @@ export async function seedPlugin(
       ...(o.sourceFormat !== undefined && { source_format: o.sourceFormat }),
     })
     .execute();
+  if (o.addTo === undefined && o.platform !== false) {
+    await env.k.app.get(PlatformComponents).syncFromVersion(id, version, { initial: true });
+  }
   return id;
+}
+
+/**
+ * The org copies an install made before plugin scope phase 2 (installs no longer write them): the
+ * installed version's skills and agent templates as org rows with the item's provenance, recorded
+ * in the org's live install of `itemId` (created, or a version added to an existing one). For the
+ * tests of what still handles such copies (per-org upgrades, uninstalls, the migration).
+ */
+export async function legacyCopies(
+  env: OrgEnv,
+  orgId: string,
+  itemId: string,
+  actor: string | null = env.rootId,
+): Promise<void> {
+  const a = await env.db
+    .selectFrom("plugin_installs as a")
+    .innerJoin("catalog_items as i", "i.id", "a.item_id")
+    .select(["a.id", "a.version", "i.name"])
+    .where("a.org_id", "=", orgId)
+    .where("a.item_id", "=", itemId)
+    .where("a.status", "=", "installed")
+    .executeTakeFirstOrThrow();
+  const v = await env.db
+    .selectFrom("catalog_item_versions")
+    .select(["manifest", "object_prefix", "files", "version", "source_format"])
+    .where("item_id", "=", itemId)
+    .where("version", "=", a.version)
+    .executeTakeFirstOrThrow();
+  const storage = env.k.app.get(StorageService);
+  const record = (c: {
+    kind: "skill" | "agent_template";
+    ref: string;
+    created: boolean;
+    version: number | null;
+  }) =>
+    env.db
+      .insertInto("plugin_install_components")
+      .values({
+        install_id: a.id,
+        kind: c.kind,
+        ref: c.ref,
+        created: c.created,
+        skill_version: c.created ? null : c.version,
+      })
+      .onConflict((oc) => oc.columns(["install_id", "kind", "ref"]).doNothing())
+      .execute();
+  for (const t of await readCatalogAgentTemplates(storage, v)) {
+    const r = await putTemplateVersionIn(
+      env.db,
+      {
+        orgId,
+        plugin: a.name,
+        catalogItemId: itemId,
+        catalogVersion: a.version,
+        sourceFormat: v.source_format,
+      },
+      t.template,
+    );
+    await record({
+      kind: "agent_template",
+      ref: r.id,
+      created: r.created,
+      version: r.changed ? r.version : null,
+    });
+  }
+  const manifest = v.manifest as PluginManifest;
+  for (const sk of manifest.skills ?? []) {
+    const files = await readCatalogFiles(storage, v.object_prefix, v.files, packagePath(sk.path));
+    const r = await env.k.app.get(SkillsService).createVersionFromFiles(
+      orgId,
+      actor,
+      { ...skillOf(files), files },
+      {
+        catalog: {
+          itemId,
+          version: a.version,
+          format: v.source_format,
+          suggestPinned: sk.pinned === true,
+        },
+      },
+    );
+    await record({ kind: "skill", ref: r.skill.id, created: r.created, version: r.version });
+  }
 }
 
 export const install = (
@@ -422,18 +570,6 @@ export const install = (
     method: "POST",
     url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/install`,
     payload: body,
-  });
-
-export const requestItem = (
-  req: Req,
-  env: OrgEnv,
-  itemId: string,
-  note?: string,
-): ReturnType<Req> =>
-  req({
-    method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/requests`,
-    payload: note === undefined ? {} : { note },
   });
 
 export async function auditActions(env: OrgEnv): Promise<string[]> {

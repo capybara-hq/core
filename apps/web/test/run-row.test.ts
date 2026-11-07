@@ -7,8 +7,8 @@ import {
 } from "../src/lib/run-row";
 import type { RunData } from "../src/lib/timeline";
 
-const me = (role: string, opts: { id?: string; enterprise?: boolean } = {}) => ({
-  account: { id: opts.id ?? "a1", isEnterpriseAdmin: opts.enterprise ?? false },
+const me = (role: string, opts: { id?: string; superAdmin?: boolean } = {}) => ({
+  account: { id: opts.id ?? "a1", isSuperAdmin: opts.superAdmin ?? false },
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", role }],
 });
@@ -26,8 +26,8 @@ describe("run row role gating (the kernel's rules)", () => {
     expect(canViewTrajectory(me("admin"), undefined)).toBe(true);
   });
 
-  it("the model-service fix entry: enterprise admins only, for a model setup error", () => {
-    expect(canConfigureModels(me("member", { enterprise: true }))).toBe(true);
+  it("the model-service fix entry: super admins only, for a model setup error", () => {
+    expect(canConfigureModels(me("member", { superAdmin: true }))).toBe(true);
     expect(canConfigureModels(me("owner"))).toBe(false);
     for (const code of ["model.auth", "model.unconfigured", "run.model_unavailable"])
       expect(isModelSetupError(code)).toBe(true);

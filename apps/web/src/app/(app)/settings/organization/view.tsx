@@ -36,6 +36,7 @@ import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { orgSettingsQuery } from "../../../../lib/query/settings";
 import { resetSession, useWorkspace } from "../../../../lib/query/workspace";
+import { HOME_PATH } from "../../../../lib/routes";
 import { broadcastSession } from "../../../../lib/session-sync";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
@@ -234,12 +235,13 @@ function DeleteOrg({ orgId }: { orgId: string }) {
             // DangerConfirm shows the message: the localized one, never the kernel's English
             throw new Error(errorMessage(e));
           }
-          // The kernel cleared the current org with the org: a full navigation to `/` (the org
-          // chooser), told to the other tabs (ruling R4). The dialog stays busy until the unload.
+          // The kernel cleared the current org with the org: a full navigation home (the org
+          // chooser covers it), told to the other tabs (ruling R4). The dialog stays busy until
+          // the unload.
           toast.success(t("delete.done"));
           broadcastSession("org-switched");
           // The browser's one client (the provider's): drop the old org's cache before leaving.
-          await resetSession(browserQueryClient(), () => navigateBrowser("/"));
+          await resetSession(browserQueryClient(), () => navigateBrowser(HOME_PATH));
           await new Promise<never>(() => {});
         }}
       />

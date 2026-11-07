@@ -18,6 +18,7 @@ import type {
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
+import { PersonWaits } from "./person-waits";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -61,6 +62,13 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  * - Background Bash (background Bash spec §5): a `Bash` call with `run_in_background: true` is a
  *   row with `background` (its task id from the result), `TaskOutput` / `TaskStop` rows name the
  *   task's description, and `background_task_finished` is a `background` notice entry.
+ * - Interjections (run input spec D4): a person's message logged while a run is going stands where
+ *   the model took it in, not at its `seq`: right before the first `model_call` whose
+ *   `request.absorbedUpToSeq` covers it (a call without the field covers everything before it), so
+ *   it sits below the step that was streaming when it was sent. Not taken in yet while the run goes
+ *   on, it is `pending` and stands after the streaming drafts; a run that ends without taking it in
+ *   leaves it after the run's row, where it starts the next run. A fork invocation stands before its
+ *   dispatch.
  */
 
 export type ApprovalDecision = Extract<ConversationEvent, { type: "approval_decided" }>["payload"];
@@ -230,7 +238,11 @@ export type RunData = {
   runId: string | null;
   /** The run's last model call, else the model it started with; null when the log has neither. */
   model: ModelRef | null;
-  /** From `run_started` to the terminal event (waits for a person included); null without a start. */
+  /**
+   * The run's working time: from `run_started` to the terminal event without its waits for a
+   * person (an approval or a question, until answered), the same derivation as the status bar's
+   * elapsed time ({@link runStats}), so the two agree; null without a start.
+   */
   durationMs: number | null;
   /** Null when the run reported no usage. */
   tokens: RunTokens | null;
@@ -264,6 +276,11 @@ export type TimelineEntry =
       instructions?: string;
       /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
       waitsFor?: string;
+      /**
+       * Sent while a run is going and not taken in yet (spec D4: 待处理): the entry stands after the
+       * streaming drafts, at the bottom, until a model call takes it in or the run ends.
+       */
+      pending?: true;
       /**
        * Sent by another agent, not a person: a parent's `SendMessage` in a sub-agent's log (agent
        * map spec §9.4), its conversation id and name when known.
@@ -462,13 +479,20 @@ export interface EventTimeline {
   modelOf(runId: string | null, step: number): ModelRef | null;
 }
 
+const isPending = (e: TimelineEntry | undefined): boolean =>
+  e?.kind === "user" && e.pending === true;
+
 /**
- * The streaming drafts after the log's entries (they always come last). Cheap: the page memoizes
+ * The streaming drafts after the log's entries, before the pending interjections (spec D4: a
+ * message the streaming step never saw stands below it). Cheap: the page memoizes
  * {@link buildEventTimeline} over the events and adds the drafts on each delta frame, so a token
  * does not rebuild the timeline (final review I3); the log's entry objects stay the same.
  */
 export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]): TimelineEntry[] {
-  const out = base.entries.slice();
+  // the pending interjections are the log's last entries (buildEventTimeline puts them there)
+  let tail = base.entries.length;
+  while (tail > 0 && isPending(base.entries[tail - 1])) tail--;
+  const out = base.entries.slice(0, tail);
   let added = false;
   for (const d of drafts) {
     if (d.text === "" && d.thinking === "") continue;
@@ -487,7 +511,9 @@ export function withDrafts(base: EventTimeline, drafts: readonly TimelineDraft[]
       out.push({ kind: "prose", key: `d${d.runId}:${d.step}`, text: d.text, streaming: true });
     }
   }
-  return added ? out : base.entries;
+  if (!added) return base.entries;
+  for (let i = tail; i < base.entries.length; i++) out.push(base.entries[i] as TimelineEntry);
+  return out;
 }
 
 /** Events of a run that are its output (what replaces the working line, spec §2.2). */
@@ -529,20 +555,19 @@ export function awaitedMessage(
 
 /**
  * A message this tab sent waits for its run ({@link awaitedMessage}), unless no run is coming:
- * the queue is paused (the kernel holds the conversation's sends), or {@link AWAIT_RUN_MS} passed
- * since this tab sent it without a `run_started` (a backstop: the page then follows the log
- * alone). Both times are this tab's clock (`now` and the send time in `sentHere`).
+ * {@link AWAIT_RUN_MS} passed since this tab sent it without a `run_started` (a backstop: the page
+ * then follows the log alone). Both times are this tab's clock (`now` and the send time in
+ * `sentHere`).
  */
 export function awaitingRun(
   events: readonly ConversationEvent[],
   sentHere: ReadonlyMap<string, number>,
-  s: { paused: boolean; now: number },
+  now: number,
 ): boolean {
-  if (s.paused) return false;
   const u = awaitedMessage(events, sentHere);
   if (u?.type !== "user_message" || u.payload.clientMessageId === undefined) return false;
   const sentAt = sentHere.get(u.payload.clientMessageId);
-  return sentAt !== undefined && s.now - sentAt <= AWAIT_RUN_MS;
+  return sentAt !== undefined && now - sentAt <= AWAIT_RUN_MS;
 }
 
 /** The run in progress per the log (started, not ended), or null. */
@@ -570,14 +595,13 @@ export function workingLineVisible(
     waiting: boolean;
     pending: number;
     sentHere: ReadonlyMap<string, number>;
-    paused: boolean;
     now: number;
   },
 ): boolean {
   if (s.waiting) return false;
   if (s.pending > 0) return true;
   const run = activeRun(events);
-  if (run === null) return awaitingRun(events, s.sentHere, s);
+  if (run === null) return awaitingRun(events, s.sentHere, s.now);
   if (drafts.some((d) => d.runId === run.runId && (d.text !== "" || d.thinking !== "")))
     return false;
   const open = new Set<string>();
@@ -655,15 +679,35 @@ export function buildEventTimeline(
   const forks = new Map<number, { label: string; dispatched: boolean; reported: boolean }>();
   /** The highest user seq a model call took in (`model_call.request.absorbedUpToSeq`). */
   let absorbed = 0;
-  /** What the log says so far of each run (its row's model, start and tokens). */
+  /** The run going at this point of the log (started, not ended), or null. */
+  let current: string | null = null;
+  /**
+   * Interjections (spec D4) not placed yet, in seq order: a person's bubble logged while
+   * {@link current} was going, held until a model call takes it in or its run ends.
+   */
+  const held: Extract<TimelineEntry, { kind: "user" }>[] = [];
+  /** Places the held interjections with a seq up to `upTo` (taken in there). */
+  const placeHeld = (upTo: number) => {
+    let n = 0;
+    while (n < held.length && (held[n] as (typeof held)[number]).seq <= upTo) n++;
+    if (n > 0) out.push(...held.splice(0, n));
+  };
+  /** Places every held interjection (its run ended without taking it in: it starts the next). */
+  const placeAllHeld = () => placeHeld(Number.POSITIVE_INFINITY);
+  /** What the log says so far of each run (its row's model, working time and tokens). */
   const runs = new Map<
     string,
-    { startedAt: number | null; model: ModelRef | null; tokens: RunTokens | null }
+    {
+      /** Its working time (waits for a person left out); null before its start. */
+      clock: RunClock | null;
+      model: ModelRef | null;
+      tokens: RunTokens | null;
+    }
   >();
   const runOf = (runId: string) => {
     let r = runs.get(runId);
     if (r === undefined) {
-      r = { startedAt: null, model: null, tokens: null };
+      r = { clock: null, model: null, tokens: null };
       runs.set(runId, r);
     }
     return r;
@@ -672,10 +716,12 @@ export function buildEventTimeline(
     e: ConversationEvent,
   ): Pick<RunData, "runId" | "model" | "durationMs" | "tokens" | "at"> => {
     const r = e.runId === null ? undefined : runs.get(e.runId);
+    // the run's working time, as the status bar counts it (waits for a person left out)
+    r?.clock?.end(Date.parse(e.createdAt));
     return {
       runId: e.runId,
       model: r?.model ?? null,
-      durationMs: r?.startedAt == null ? null : Math.max(0, Date.parse(e.createdAt) - r.startedAt),
+      durationMs: r?.clock == null ? null : Math.max(0, r.clock.workedMs),
       tokens: r?.tokens ?? null,
       at: e.createdAt,
     };
@@ -746,12 +792,19 @@ export function buildEventTimeline(
 
   for (const e of events) {
     const key = `e${e.seq}`;
+    // a wait for a person stops the run's clock until it is answered
+    if (e.runId !== null) runs.get(e.runId)?.clock?.apply(e, Date.parse(e.createdAt));
     switch (e.type) {
       case "run_started":
         if (e.runId !== null) {
+          // a new run: what an earlier run (ended without a terminal event) left stands before it
+          if (e.runId !== current) placeAllHeld();
+          current = e.runId;
           const r = runOf(e.runId);
           // A resumed run writes no second run_started; keep the first start.
-          if (r.startedAt === null) r.startedAt = Date.parse(e.createdAt);
+          const at = Date.parse(e.createdAt);
+          if (r.clock === null) r.clock = new RunClock(at);
+          else r.clock.restart(at);
           if (r.model === null) r.model = e.payload.model;
           models.set(e.runId, e.payload.model);
           if (e.payload.triggerAccountId !== undefined)
@@ -762,6 +815,9 @@ export function buildEventTimeline(
         }
         break;
       case "model_call":
+        // the interjections this request took in stand before its output (a call logged before
+        // the field took in everything before it, as the kernel reads it)
+        placeHeld(e.payload.request?.absorbedUpToSeq ?? e.seq);
         absorbed = Math.max(absorbed, e.payload.request?.absorbedUpToSeq ?? 0);
         if (e.runId !== null) {
           const k = stepKey(e.runId, e.payload.step);
@@ -830,7 +886,9 @@ export function buildEventTimeline(
           } else {
             plainUsers.push(entry);
           }
-          out.push(entry);
+          // sent while a run goes: it stands where a model call takes it in (spec D4)
+          if (current !== null) held.push(entry);
+          else out.push(entry);
         }
         if (skill?.mode === "fork") {
           forks.set(e.seq, { label: `/${skill.name}`, dispatched: false, reported: false });
@@ -1066,6 +1124,8 @@ export function buildEventTimeline(
       case "subagent_dispatched": {
         const invokedSeq = e.payload.invokedSeq;
         if (invokedSeq !== undefined) {
+          // its run took the invocation in: the bubble (and what came before it) stands above
+          placeHeld(invokedSeq);
           // a person's fork invocation: no `agent` call, the row stands at the dispatch
           const f = forks.get(invokedSeq);
           if (f) f.dispatched = true;
@@ -1332,6 +1392,16 @@ export function buildEventTimeline(
       default:
         break;
     }
+    if (TERMINAL.has(e.type) && e.runId !== null && e.runId === current) {
+      // the run ended without taking them in: they stand after its row and start the next run
+      current = null;
+      placeAllHeld();
+    }
+  }
+  // Not taken in yet while their run goes on: pending, at the bottom (after the drafts).
+  for (const h of held) {
+    h.pending = true;
+    out.push(h);
   }
 
   // A plain message not sent to the model yet, before a fork whose sub-agent is working: the
@@ -1426,6 +1496,67 @@ export interface RunStats {
   endedAt: number | null;
   /** How the last run ended (null while active or before any run). */
   last: "finished" | "failed" | "aborted" | null;
+  /**
+   * The current or last run's working time up to {@link resumedAt} (ms): its span without the
+   * time it waited for a person (an approval, a question), which is not working.
+   */
+  workedMs: number;
+  /**
+   * When the current run last started working (ms): its start, or the end of its last wait. Null
+   * while it waits for a person, after it ended and before any run, so nothing ticks then.
+   */
+  resumedAt: number | null;
+  /** What the current run waits for while it waits for a person, else null. */
+  waitingFor: "approval" | "input" | null;
+}
+
+/** The running time the status bar shows: worked time, plus the open working stretch. */
+export const workedMsAt = (s: RunStats, now: number): number | null =>
+  s.startedAt === null ? null : s.workedMs + (s.resumedAt === null ? 0 : now - s.resumedAt);
+
+/**
+ * One run's working time: from its start to its end without its waits for a person (an approval,
+ * a question; {@link PersonWaits}). The status bar's elapsed time and the run row's duration both
+ * read it, so the two agree.
+ */
+class RunClock {
+  /** Working time before {@link resumedAt}. */
+  workedMs = 0;
+  /** When the run last started working; null while it waits and after it ended. */
+  resumedAt: number | null;
+  private readonly waits = new PersonWaits();
+
+  /** What it waits for while it waits for a person, else null. */
+  get waitingFor(): "approval" | "input" | null {
+    return this.waits.kind;
+  }
+
+  constructor(at: number) {
+    this.resumedAt = at;
+  }
+
+  /** A repeated `run_started` of the same run (a resumed run writes none, but be safe). */
+  restart(at: number): void {
+    if (!this.waits.waiting) this.resumedAt ??= at;
+  }
+
+  /** An event of the run: a wait starts or its last open wait ends. */
+  apply(e: ConversationEvent, at: number): void {
+    const change = this.waits.apply(e);
+    if (change === "start") {
+      if (this.resumedAt !== null) this.workedMs += at - this.resumedAt;
+      this.resumedAt = null;
+    } else if (change === "end") {
+      this.resumedAt = at;
+    }
+  }
+
+  /** The run's terminal event. */
+  end(at: number): void {
+    if (this.resumedAt !== null) this.workedMs += at - this.resumedAt;
+    this.resumedAt = null;
+    this.waits.clear();
+  }
 }
 
 export function runStats(events: readonly ConversationEvent[]): RunStats {
@@ -1434,22 +1565,39 @@ export function runStats(events: readonly ConversationEvent[]): RunStats {
   let endedAt: number | null = null;
   let last: RunStats["last"] = null;
   let active: string | null = null;
+  let clock: RunClock | null = null;
   for (const e of events) {
+    const at = Date.parse(e.createdAt);
     if (e.type === "run_started") {
       // A resumed run writes no second run_started; a new runId is a new turn.
-      if (e.runId !== active) turns += 1;
+      if (e.runId !== active || clock === null) {
+        turns += 1;
+        clock = new RunClock(at);
+      } else clock.restart(at);
       active = e.runId;
-      startedAt = Date.parse(e.createdAt);
+      startedAt = at;
       endedAt = null;
       last = null;
-    } else if (TERMINAL.has(e.type) && e.runId !== null && e.runId === active) {
-      endedAt = Date.parse(e.createdAt);
+    } else if (e.runId === null || e.runId !== active) {
+    } else if (TERMINAL.has(e.type)) {
+      clock?.end(at);
+      endedAt = at;
       last =
         e.type === "run_finished" ? "finished" : e.type === "run_failed" ? "failed" : "aborted";
       active = null;
+    } else {
+      clock?.apply(e, at);
     }
   }
-  return { turns, startedAt, endedAt, last };
+  return {
+    turns,
+    startedAt,
+    endedAt,
+    last,
+    workedMs: Math.max(0, clock?.workedMs ?? 0),
+    resumedAt: clock?.resumedAt ?? null,
+    waitingFor: active === null ? null : (clock?.waitingFor ?? null),
+  };
 }
 
 export { toolKeysOf } from "./tool-keys";

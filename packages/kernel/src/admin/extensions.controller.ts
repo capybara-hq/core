@@ -11,10 +11,10 @@ import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js
 import type { AdminExtensionView } from "../extensions/permission-view.js";
 import {
   CurrentPrincipal,
-  EnterpriseAdmin,
   type Principal,
   patTokenId,
   requireUser,
+  SuperAdmin,
 } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
@@ -70,14 +70,14 @@ class ExtensionConfigBody extends createZodDto(ConfigSchema, "ExtensionConfigBod
 class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImportBody") {}
 
 /**
- * Deployment-level extension management (`/api/v1/admin/extensions/*`, enterprise admins): package
+ * Deployment-level extension management (`/api/v1/admin/extensions/*`, super admins): package
  * import (upload / npm, returns the review), the extension list and detail, web permission approval
  * (D8), install / enable / disable / uninstall (only writes the desired state and publishes
  * `kernel.plugins.changed`; every replica reconciles, no restart; replicas may still be converging
  * when the call returns).
  */
 @Controller("api/v1/admin/extensions")
-@EnterpriseAdmin()
+@SuperAdmin()
 export class AdminExtensionsController {
   constructor(
     @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,

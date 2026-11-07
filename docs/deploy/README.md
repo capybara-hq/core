@@ -76,18 +76,18 @@ docker compose ps -a     # createbuckets and init exit 0; everything else become
 
 Open `http://localhost:3000` (`CAPYBARA_WEB_PORT` changes the port).
 
-### The first enterprise admin
+### The first super admin
 
-There are two ways to create the first enterprise admin:
+There are two ways to create the first super admin:
 
 - **Web setup page (default).** With no password file, `init` only migrates, runs the bootstrap step
   (see [Extensions](#extensions)) and prints
   `init: no admin password file ...`. The web app opens on the setup page, which creates the
-  enterprise admin and, optionally, the first organization. It asks for the setup token:
+  super admin and, optionally, the first organization. It asks for the setup token:
   `CAPYBARA_SETUP_TOKEN` from `.env`, which compose passes to `api` as `auth.setupToken`. Without the
   right token, setup is refused (403 `setup.token_invalid`), so whoever reaches the port first can't
   take the deployment over. If you leave `CAPYBARA_SETUP_TOKEN` empty, no token is needed and the
-  first visitor becomes the enterprise admin.
+  first visitor becomes the super admin.
 - **Password file.** `init` creates the admin before anything is reachable, so the setup page is
   already closed and the setup token is moot:
 
@@ -102,7 +102,7 @@ There are two ways to create the first enterprise admin:
 
   On every `up`, `init` runs `capybara migrate`, `capybara bootstrap`, then
   `capybara admin create --if-none --password-file /run/secrets/admin_password`. That creates the admin
-  once and logs `enterprise admin already exists; skipped` on later starts. Relative paths are relative
+  once and logs `super admin already exists; skipped` on later starts. Relative paths are relative
   to `compose.yaml`. `init` runs as root, so mode 600 is fine.
 
   - **After the first start**, change the password in the web app and overwrite the file
@@ -117,7 +117,7 @@ There are two ways to create the first enterprise admin:
   - When the variable is unset, compose mounts `/dev/null` in its place, and `init` treats that as "no
     file". `/dev/null` doesn't exist on Windows hosts, so there you must always set
     `CAPYBARA_INIT_ADMIN_PASSWORD_FILE`.
-  - If the login is already taken by an account that isn't an active enterprise admin,
+  - If the login is already taken by an account that isn't an active super admin,
     `admin create --if-none` fails (`account.login_taken`) instead of skipping. Choose another login.
 
 A failing `init` (for example PostgreSQL older than 15, a bootstrap package that can't be downloaded,
@@ -369,7 +369,12 @@ Every extension is installed from a plugin package (an npm-pack tgz with
 restart.
 
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
-`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512.
+`object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
+as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
+`connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
+enabled on the deployment, but each organization gets them off until an org admin switches them on
+(catalog scope `optional`), and a super admin may disable or uninstall them; an uninstalled one
+is not reinstalled by later bootstrap runs.
 The image carries no packages: the bootstrap step obtains them once per manifest. They are not built
 into the CLI any more.
 
@@ -380,9 +385,9 @@ into the CLI any more.
   registry; `packages.npmToken` for a private one) and must match its pinned sha512. Only the pin is
   trusted; the registry's own metadata is not. npm downloads don't use `net.httpsProxy`: behind a proxy
   set `NODE_USE_ENV_PROXY=1` and `HTTPS_PROXY` on the kernel containers.
-  - **Offline deployments:** run `npm pack @capybara-hq/plugin-openai-compatible@<version>` and
-    `npm pack @capybara-hq/plugin-object-store-s3@<version>` (the versions `bootstrap.json` pins) on a
-    machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
+  - **Offline deployments:** run `npm pack @capybara-hq/plugin-<name>@<version>` for every entry of
+    `bootstrap.json` (its pinned versions; an optional entry left out only fails with a warning and is
+    retried on the next start) on a machine with npm access, copy the files into a host directory and mount it at `/app/bootstrap`
     on `init` (and on any kernel service that might run the step first), e.g.
     `volumes: ["./bootstrap:/app/bootstrap:ro"]` in a `compose.override.yaml`. Or point
     `CAPYBARA_PACKAGES__NPM_REGISTRY` at an internal mirror serving the same tarballs.
@@ -405,7 +410,7 @@ into the CLI any more.
   to install; a failed optional one is logged and retried on the next start.
 - Both are **required**: enabled in every organization, existing and future, and they can't be
   disabled or uninstalled (409 `extension.required`; the admin console shows them as "Required").
-  An enterprise admin can still upgrade them, and they still need their deployment config
+  A super admin can still upgrade them, and they still need their deployment config
   (`object-store-s3`: endpoint, bucket and credentials, which compose sets with
   `CAPYBARA_EXTENSION_CONFIG__OBJECT_STORE_S3__*`; or from the admin console). `capybara extensions list`
   shows them with source `bootstrap` and state `required`.
@@ -418,8 +423,10 @@ into the CLI any more.
 Every other official plugin is published on npm as `@capybara-hq/plugin-<name>` and installed at
 runtime:
 
-- **Admin console:** Admin → Extensions → Install extension. Upload a `.tgz` or enter an npm package name and
-  version, review the permissions, then install, approve and enable.
+- **Admin console:** Admin → Plugins → Import (`/admin/plugins/import`): importing a plugin installs and
+  enables its extension, and the Admin → Extensions page manages the installed ones (there is no
+  separate install wizard there). Upload a `.tgz` or enter an npm package name and version, review the
+  permissions, then confirm.
 - **CLI**, inside a running kernel container:
 
   ```bash
@@ -445,7 +452,7 @@ runtime:
   read-only and nothing is imported without an admin. An offline deployment sets
   `CAPYBARA_MARKETPLACES__OFFICIAL__ENABLED=false` (with `docker/compose.yaml`:
   `CAPYBARA_OFFICIAL_MARKETPLACE=false` in `.env`): the admin console's marketplaces page then shows
-  it as offline and the kernel never fetches it. Enterprise marketplaces, npm installs and manual
+  it as offline and the kernel never fetches it. Custom marketplaces, npm installs and manual
   uploads work either way, and the bootstrap plugins need no network at all.
 
 Extension lifecycle, permissions and the trust model are described in
@@ -456,11 +463,14 @@ Extension lifecycle, permissions and the trust model are described in
 Plugins that orgs install themselves (skills, connector templates, an extension, dependencies on
 other plugins) go through the catalog:
 
-- **Admin console:** Admin → Catalog → Import. Upload a `.tgz`, enter an npm package, or import a
+- **Admin console:** Admin → Plugins → Import (`/admin/plugins/import`). Upload a `.tgz`, enter an npm package, or import a
   folder straight from a git repository (URL or `owner/repo`, an optional branch, tag or commit, and
   the plugin's path). Review the whole plugin once (source, content digest, npm provenance, extension
-  permissions, skills, connector templates, dependencies), then confirm, optionally installing and
-  enabling its extension on the deployment at the same time. A direct git import creates no
+  permissions, skills, connector templates, dependencies), then confirm: that installs and
+  enables its extension on the deployment (a version older than the deployed one is added to the
+  catalog only). A new plugin defaults to scope 组织自选 (optional); the admin sets the scope (all
+  orgs, optional, named orgs) afterwards on the plugin's page, with a preview of the orgs and agents
+  affected. A direct git import creates no
   marketplace and tracks no updates; to follow a repo, add it as a marketplace.
 - **Marketplaces:** Admin → Marketplaces adds either a `marketplace.json` URL (the http form, with
   optional mirrors) or a git repository (the git form: an https git URL, or `owner/repo` for GitHub,
@@ -478,8 +488,8 @@ other plugins) go through the catalog:
   `<version>+git.<sha12>` (archives and npm: `+sha256.<12>`), and the version already imported is
   never overwritten. Org admins then upgrade their installs in place (Settings → Installed
   plugins → Upgrade), or roll a declarative plugin back to an older version. A plugin with an
-  extension follows the deployment: install the new extension version on the deployment first (with
-  `--deploy-extension` or from the catalog item); orgs can then upgrade only to the catalog version
+  extension follows the deployment: importing the new version installs its extension on the
+  deployment (the import's confirm always does); orgs can then upgrade only to the catalog version
   carrying that extension, and their installs show "upgrade pending" until they do.
 - **npm provenance:** for npm sources, the review shows "built from `<repo>@<commit>` by `<workflow>`"
   from the registry's attestations when it has them, and "provenance not checked" otherwise
@@ -525,7 +535,7 @@ other plugins) go through the catalog:
 - **CLI**, inside a running kernel container:
 
   ```bash
-  docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm --deploy-extension
+  docker compose exec api node /app/bin/capybara.mjs plugins import npm:@acme/plugin-crm
   docker compose exec api node /app/bin/capybara.mjs plugins import 'git:https://gitlab.corp.example/tools/plugins.git#main:plugins/crm'
   docker compose exec api node /app/bin/capybara.mjs plugins list
   ```

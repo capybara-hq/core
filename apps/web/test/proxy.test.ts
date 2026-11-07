@@ -321,6 +321,35 @@ describe("extension package upload (POST /api/v1/admin/extensions/packages/file)
     expect(seen[0]?.body.length).toBe(big.length);
   });
 
+  it("an org plugin upload (/api/v1/orgs/:orgId/catalog/uploads/file) gets the same raised limit; other org catalog paths keep the default", async () => {
+    const big = new Uint8Array(3 * 1024 * 1024).fill(3);
+    const res = await POST(
+      new Request("http://web.example/api/v1/orgs/org-1/catalog/uploads/file", {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: big,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(seen[0]?.body.length).toBe(big.length);
+    for (const path of [
+      "/api/v1/orgs/org-1/catalog/uploads/file/x",
+      "/api/v1/orgs/org-1/sub/catalog/uploads/file",
+      "/api/v1/orgs//catalog/uploads/file",
+      "/api/v1/orgs/org-1/catalog/uploads/abc/confirm",
+    ]) {
+      const other = await POST(
+        new Request(`http://web.example${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: big,
+        }),
+      );
+      expect(other.status, path).toBe(413);
+    }
+    expect(seen).toHaveLength(1);
+  });
+
   it("the removed plugin prepare route (/api/v1/admin/catalog/plugins/prepare/file) keeps the default limit", async () => {
     const big = new Uint8Array(3 * 1024 * 1024).fill(5);
     const res = await POST(

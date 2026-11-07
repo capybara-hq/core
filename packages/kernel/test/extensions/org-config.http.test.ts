@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -63,7 +64,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 beforeEach(async () => {
-  await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
+  await truncateTables(
+    raw,
+    "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.catalog_items, capybara.extension_catalog_sources",
+  );
   await redis.flushdb();
   owner = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
 });
@@ -153,14 +157,56 @@ describe("组织插件配置 HTTP", () => {
     expect(lines.join("\n")).not.toContain(SECRET);
   });
 
-  it("member → 403；非成员 → 404；服务令牌（admin 角色）→ 403", async () => {
+  it("member reads the list without config, secrets, schema or permissions; guest 403; PUT 403", async () => {
     const ownerReq = await session("owner");
     const orgId = await createOrg(ownerReq);
+    const put = await ownerReq({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+      payload: body,
+    });
+    expect(put.statusCode).toBe(200);
     const m = await accounts.createLocal({ login: "mem", password: PW, displayName: "M" });
     await members.add(orgId, m.id, "member", owner.id);
     const memReq = await session("mem");
     const a = await memReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
-    expect(a.statusCode).toBe(403);
+    expect(a.statusCode).toBe(200);
+    const list = (a.json() as { extensions: Record<string, unknown>[] }).extensions;
+    expect(list.map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+    for (const e of list) {
+      for (const f of ["config", "secrets", "orgConfigSchema", "permissions"])
+        expect(e).not.toHaveProperty(f);
+      // the extension point names only: what the 扩展 page sorts by capability
+      expect(e.provides).toEqual(expect.any(Array));
+      expect(e).toMatchObject({ enabled: expect.any(Boolean), version: expect.any(String) });
+    }
+    expect(a.body).not.toContain(SECRET);
+    expect(a.body).not.toContain("app-1");
+    // the admin keeps the full view
+    const adminList = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+    const full = (adminList.json() as { extensions: Record<string, unknown>[] }).extensions;
+    // members get the same points the admin's permission list names
+    for (const e of full) {
+      const groups = e.permissions as { category: string; items: string[] }[];
+      const points = groups.filter((g) => g.category === "provides").flatMap((g) => g.items);
+      expect(e.provides).toEqual(points);
+      expect(list.find((x) => x.plugin === e.plugin)?.provides).toEqual(points);
+    }
+    expect(full.some((e) => (e.provides as string[]).length > 0)).toBe(true);
+    expect(full.find((e) => e.plugin === "orgcfg")).toMatchObject({
+      config: { appId: "app-1" },
+      secrets: expect.any(Array),
+      orgConfigSchema: expect.any(Object),
+    });
+
+    // guests read nothing of the catalog or skills either: member is the floor
+    const g = await accounts.createLocal({ login: "gst", password: PW, displayName: "G" });
+    await members.add(orgId, g.id, "guest", owner.id);
+    const gReq = await session("gst");
+    expect(
+      (await gReq({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).statusCode,
+    ).toBe(403);
+
     const b = await memReq({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
@@ -187,6 +233,13 @@ describe("组织插件配置 HTTP", () => {
       payload: body,
     });
     expect(d.statusCode).toBe(403);
+    // the read action is not a service-token action either
+    const e = await k.http.inject({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/extensions`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(e.statusCode).toBe(403);
   });
 
   it("错误码：未加载插件 404、无 org schema 传 config 400、配置不合法 400 带 details、未知字段 400", async () => {
@@ -223,5 +276,162 @@ describe("组织插件配置 HTTP", () => {
     });
     expect(extra.statusCode).toBe(400);
     expect(errCode(extra)).toBe("validation_failed");
+  });
+
+  describe("plugin scope", () => {
+    /** A live catalog item of the extension (its source), with the scope and the listed orgs. */
+    async function seedItem(
+      plugin: string,
+      scope: "all" | "optional" | "named",
+      orgs: string[] = [],
+      builtin = false,
+      itemName = plugin,
+    ): Promise<string> {
+      const id = randomUUID();
+      await db
+        .insertInto("catalog_items")
+        .values({
+          id,
+          name: itemName,
+          package_name: `@acme/plugin-${itemName}`,
+          publisher: "Acme",
+          description: "Test",
+          latest_version: "1.0.0",
+          scope,
+          builtin,
+        })
+        .execute();
+      await db.insertInto("extension_catalog_sources").values({ plugin, item_id: id }).execute();
+      if (orgs.length > 0) {
+        await db
+          .insertInto("catalog_item_scope_orgs")
+          .values(orgs.map((org_id) => ({ item_id: id, org_id })))
+          .execute();
+      }
+      return id;
+    }
+
+    it("a named plugin's extension is absent for an org not on its list, present for one that is", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "named", [orgId]);
+      const itemId = await seedItem("fixture", "named", []);
+      const list = async () =>
+        (
+          (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` })).json() as {
+            extensions: {
+              plugin: string;
+              catalogItem: { scope: string } | null;
+              switchable: boolean;
+            }[];
+          }
+        ).extensions;
+      const out = await list();
+      expect(out.map((e) => e.plugin)).toEqual(["orgcfg"]);
+      expect(out[0]).toMatchObject({ catalogItem: { scope: "named" }, switchable: true });
+      await db
+        .updateTable("catalog_items")
+        .set({ scope: "optional" })
+        .where("id", "=", itemId)
+        .execute();
+      expect((await list()).map((e) => e.plugin)).toEqual(["fixture", "orgcfg"]);
+    });
+
+    it("enabled:false on an all plugin is plugin.scope_locked; an extension without an item is unchanged", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "all");
+      const locked = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(locked.statusCode).toBe(409);
+      expect(errCode(locked)).toBe("plugin.scope_locked");
+      const direct = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/fixture`,
+        payload: { enabled: true },
+      });
+      expect(direct.statusCode).toBe(200);
+      expect(direct.json()).toMatchObject({
+        extension: { plugin: "fixture", enabled: true, catalogItem: null, switchable: true },
+      });
+    });
+
+    it("an extension sourced from several items: an all item locks it on; any item offered makes it visible", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "optional", [], false, "orgcfg-a");
+      await seedItem("orgcfg", "all", [], false, "orgcfg-b");
+      const locked = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(locked.statusCode).toBe(409);
+      expect(errCode(locked)).toBe("plugin.scope_locked");
+      const list = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(
+        (list.json() as { extensions: Record<string, unknown>[] }).extensions.find(
+          (e) => e.plugin === "orgcfg",
+        ),
+      ).toMatchObject({ switchable: false, catalogItem: { scope: "all" } });
+      // named without the org + optional: visible through the optional one
+      await seedItem("fixture", "named", [], false, "fixture-a");
+      await seedItem("fixture", "optional", [], false, "fixture-b");
+      const again = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(
+        (again.json() as { extensions: { plugin: string }[] }).extensions.map((e) => e.plugin),
+      ).toContain("fixture");
+    });
+
+    it("optional: enabled:false records the switch off (no install to preview)", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      const itemId = await seedItem("orgcfg", "optional");
+      const r = await req({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/orgcfg`,
+        payload: { enabled: false },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      expect(
+        await db
+          .selectFrom("catalog_item_org_switches")
+          .select("enabled")
+          .where("item_id", "=", itemId)
+          .executeTakeFirst(),
+      ).toEqual({ enabled: false });
+    });
+
+    it("the admin list reports scope, enabledOrgs and builtin", async () => {
+      const req = await session("owner");
+      const orgId = await createOrg(req);
+      await seedItem("orgcfg", "optional");
+      await db
+        .insertInto("extension_org_configs")
+        .values({ plugin: "orgcfg", org_id: orgId, enabled: true, config: null })
+        .execute();
+      await accounts.createLocal({
+        login: "root",
+        password: PW,
+        displayName: "Root",
+        superAdmin: true,
+      });
+      const root = await session("root");
+      const res = await root({ method: "GET", url: "/api/v1/admin/extensions" });
+      expect(res.statusCode).toBe(200);
+      const items = (res.json() as { extensions: Record<string, unknown>[] }).extensions;
+      expect(items.find((e) => e.name === "orgcfg")).toMatchObject({
+        scope: "optional",
+        enabledOrgs: 1,
+        builtin: false,
+      });
+      expect(items.find((e) => e.name === "fixture")).toMatchObject({
+        scope: null,
+        enabledOrgs: 0,
+      });
+    });
   });
 });

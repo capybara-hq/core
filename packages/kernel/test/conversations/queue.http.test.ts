@@ -6,7 +6,13 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { QUEUE_MAX_ITEMS } from "../../src/conversations/queue.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { conversationsFor, eventLogFor, legacyDbFor, queueFor } from "../helpers/conversations.js";
+import {
+  conversationsFor,
+  eventLogFor,
+  legacyDbFor,
+  queueFor,
+  seedQueued,
+} from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, handlesFor } from "../helpers/identity.js";
@@ -45,6 +51,7 @@ let k: TestKernel;
 let owner: Req;
 let other: Req;
 let ownerId: string;
+let otherId: string;
 let ownerCookie: () => string;
 let orgId: string;
 let agentId: string;
@@ -64,8 +71,7 @@ beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
-  const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
-    .id;
+  otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" })).id;
   const jar = cookieJar();
   owner = asUser(k.http, jar);
   const login = await owner({
@@ -90,8 +96,8 @@ interface Item {
   attachments: unknown[];
 }
 const base = (conv: string) => `/api/v1/orgs/${orgId}/conversations/${conv}/queue`;
-const enqueue = (conv: string, text: string, clientMessageId = randomUUID(), as = owner) =>
-  as({ method: "POST", url: base(conv), payload: { text, clientMessageId } });
+const enqueue = (conv: string, text: string, clientMessageId = randomUUID(), as = ownerId) =>
+  seedQueued(k.app, orgId, conv, as, { text, clientMessageId });
 const queueOf = async (conv: string) => {
   const r = await owner({ method: "GET", url: base(conv) });
   expect(r.statusCode, r.body).toBe(200);
@@ -232,6 +238,54 @@ describe("queued messages", { timeout: 60_000 }, () => {
     await owner({ method: "POST", url: `${base(conv)}/resume` });
     await waitForTerminal(db, conv, 3, 30_000);
     expect(await userTexts(conv)).toEqual(["stall", "echo:b2", "echo:c"]);
+  });
+
+  it("POST …/queue during a run is an interjection: logged at once, queues nothing, answers { event }", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, SLOW);
+    await runStatus(conv, "running");
+    const clientMessageId = randomUUID();
+    const post = () =>
+      owner({ method: "POST", url: base(conv), payload: { text: "echo:inter", clientMessageId } });
+    const r = await post();
+    expect(r.statusCode, r.body).toBe(202);
+    const out = r.json() as { event: ConversationEvent; item?: unknown };
+    expect(out.event.type).toBe("user_message");
+    expect(out.item).toBeUndefined();
+    expect(await userTexts(conv)).toEqual([SLOW, "echo:inter"]);
+    expect(await queueOf(conv)).toEqual({ items: [], paused: false });
+    // a retry with the same clientMessageId writes nothing more
+    const again = await post();
+    expect(again.statusCode, again.body).toBe(202);
+    expect((await userTexts(conv)).filter((t) => t === "echo:inter")).toHaveLength(1);
+    // the model takes it in at its next step (here: the next run's first step)
+    const seq = (await eventsOf(db, conv)).find(
+      (e) => e.type === "user_message" && JSON.stringify(e).includes("echo:inter"),
+    )?.seq as number;
+    await waitFor(
+      async () =>
+        (await eventsOf(db, conv)).some(
+          (e) =>
+            e.type === "model_call" &&
+            ((e.payload as { request?: { absorbedUpToSeq?: number } }).request?.absorbedUpToSeq ??
+              0) >= seq,
+        ),
+      30_000,
+      "a model call that took the interjection in",
+    );
+  });
+
+  it("POST …/queue on an idle conversation starts a run like a direct send", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const r = await owner({
+      method: "POST",
+      url: base(conv),
+      payload: { text: "echo:idle", clientMessageId: randomUUID() },
+    });
+    expect(r.statusCode, r.body).toBe(202);
+    await waitForTerminal(db, conv, 1, 20_000);
+    expect(await userTexts(conv)).toEqual(["echo:idle"]);
+    expect((await queueOf(conv)).items).toEqual([]);
   });
 
   it("send now turns an item into an interjection; the first item stays first", async () => {
@@ -433,7 +487,7 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
     const conv = await createConv(other, orgId, agentId);
     await postMessage(other, orgId, conv, SLOW);
     await runStatus(conv, "running");
-    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
+    expect((await enqueue(conv, "echo:after", randomUUID(), otherId)).statusCode).toBe(201);
     // the agent is no longer visible to the author (members only, not listed)
     await db
       .updateTable("agents")
@@ -456,7 +510,6 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
     const conv = await createConv(other, orgId, agentId);
     await postMessage(other, orgId, conv, SLOW);
     await runStatus(conv, "running");
-    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
     const otherId = (
       await db
         .selectFrom("conversations")
@@ -464,6 +517,7 @@ describe("queued messages and the author's access (review I1, M5)", { timeout: 6
         .where("id", "=", conv)
         .executeTakeFirstOrThrow()
     ).account_id;
+    expect((await enqueue(conv, "echo:after", randomUUID(), otherId)).statusCode).toBe(201);
     const removed = await owner({
       method: "DELETE",
       url: `/api/v1/orgs/${orgId}/members/${otherId}`,
@@ -491,8 +545,6 @@ describe("offboarding and queue dispatch lock in the same order (final review m2
       .set({ queue_paused: true })
       .where("id", "=", conv)
       .execute();
-    expect((await enqueue(conv, "echo:after", randomUUID(), other)).statusCode).toBe(201);
-    expect(await queueRows(conv)).toHaveLength(1);
     const otherId = (
       await db
         .selectFrom("conversations")
@@ -500,6 +552,8 @@ describe("offboarding and queue dispatch lock in the same order (final review m2
         .where("id", "=", conv)
         .executeTakeFirstOrThrow()
     ).account_id;
+    expect((await enqueue(conv, "echo:after", randomUUID(), otherId)).statusCode).toBe(201);
+    expect(await queueRows(conv)).toHaveLength(1);
     // a dispatcher holds the conversation row lock (it would delete the head item next)
     let release!: () => void;
     const held = new Promise<void>((r) => {

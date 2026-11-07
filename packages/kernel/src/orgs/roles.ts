@@ -17,6 +17,7 @@ export type OrgAction =
   | "org.members.manage"
   | "org.invitations.manage"
   | "org.tokens.manage"
+  | "org.extensions.read"
   | "org.extensions.manage"
   | "agents.create"
   | "agents.use"
@@ -33,7 +34,8 @@ export type OrgAction =
   | "org.models.manage"
   | "catalog.read"
   | "catalog.request"
-  | "catalog.decide";
+  | "catalog.decide"
+  | "catalog.upload";
 
 /** 每个动作所需的最低角色。 */
 export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
@@ -43,6 +45,8 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "org.members.manage": "admin",
   "org.invitations.manage": "admin",
   "org.tokens.manage": "admin",
+  // the 扩展 page for members: state only, no config / secrets / schema (the list projects by role)
+  "org.extensions.read": "member",
   "org.extensions.manage": "admin",
   "org.delete": "owner",
   "org.transfer": "owner",
@@ -69,11 +73,13 @@ export const ACTION_MIN_ROLE: Record<OrgAction, OrgRole> = {
   "evals.manage": "admin",
   // 本组织的模型用途映射（覆盖部署默认，如评委用途 eval）
   "org.models.manage": "admin",
-  // 企业目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
+  // 平台目录（组织视角）：成员浏览（看不到 disabled）与申请；组织管理员决定成员申请（F-AF）。
   // 安装另按条目种类要求 skills.manage / connectors.manage / org.extensions.manage（服务里在组织行锁内复核）
   "catalog.read": "member",
   "catalog.request": "member",
   "catalog.decide": "admin",
+  // An org admin uploads a plugin package the org owns (spec §14.1 item 1, ruling P3-7)
+  "catalog.upload": "admin",
 };
 
 /** 服务令牌也可执行的动作：只读的 org.read、org.members.read，以及使用 agent 的 agents.use。 */

@@ -14,7 +14,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
-import { EnterpriseAdminLock } from "../identity/enterprise-admin.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -147,8 +147,8 @@ export class ExtensionDeploymentConfigService {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The enterprise admin lock (identity/enterprise-admin.ts): joins the transaction. */
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    /** The super admin lock (identity/super-admin.ts): joins the transaction. */
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(PluginDeploymentConfigLock) private readonly configLock: PluginDeploymentConfigLock,
     @Inject(KEYRING) private readonly keyring: Keyring,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
@@ -234,7 +234,7 @@ export class ExtensionDeploymentConfigService {
    * is re-encrypted whole, then validated with `values`; the audit lists the record's path, no keys.
    * A path no hint names -> 400 `validation_failed`; one in the startup config -> 409
    * `extension.config_readonly`.
-   * In a transaction, first `lockEnterpriseAdminsAndAuthorize` (re-checks the enterprise admin under
+   * In a transaction, first `lockSuperAdminsAndAuthorize` (re-checks the super admin under
    * the lock), then an advisory lock per extension; audit `extension.deployment_config_updated`
    * (detail only `changedPaths`). After the commit publishes {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC} and
    * applies it on this replica right away.

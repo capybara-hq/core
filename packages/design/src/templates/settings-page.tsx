@@ -5,8 +5,8 @@ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { type FormSectionLayout, LoadingFormSection } from "./form-page";
 import {
-  type CardShape,
   type FieldShape,
+  type ItemShape,
   LOADING_CARDS,
   LoadingShapedCards,
   loadingActionRow,
@@ -32,9 +32,10 @@ export type SettingsNavGroup = {
  * rows, the sub-nav and the header's description stay real (they are static per page), an
  * ActionRow stays with its buttons disabled, and `sections` (one entry per section, its field
  * count, and the `title` / `description` the page already knows) are placeholders in the
- * sections' own frame in place of `children`; a section that lists cards takes `cards` instead of
- * `fields`. A page that is a stack of titled cards (no sections) passes `cards`: the cards'
- * `CardShape`s, or one `shape` repeated `count` times (default {@link LOADING_CARDS}, 3); they
+ * sections' own frame in place of `children`; a section that lists items takes `items` instead of
+ * `fields` (item rows in a flush card, never cards in the card: spec §1). A page that is a stack
+ * of titled cards on the page ground (no sections) passes `cards`: the cards' `ItemShape`s, or one
+ * `shape` repeated `count` times (default {@link LOADING_CARDS}, 3); they
  * stand in a 16-gap stack, as the loaded cards do. Without either the children render as they are (each `FormSection` or list says for
  * itself whether it is loading). One busy announcement.
  */
@@ -53,13 +54,14 @@ export function SettingsPage({
   loading?: {
     sections?: {
       fields?: number | FieldShape[];
-      cards?: CardShape[];
+      /** A section that lists items (the model purposes): item rows in a flush card. */
+      items?: ItemShape[];
       title?: string;
       description?: string;
       /** The loaded section's `FormSection` layout (default `columns`). */
       layout?: FormSectionLayout;
     }[];
-    cards?: CardShape[] | { shape?: CardShape; count?: number };
+    cards?: ItemShape[] | { shape?: ItemShape; count?: number };
   };
   children?: ReactNode;
 }) {
@@ -128,7 +130,7 @@ export function SettingsPage({
                       ? loading.cards
                       : Array.from(
                           { length: loading.cards.count ?? LOADING_CARDS },
-                          () => (loading.cards as { shape?: CardShape }).shape ?? {},
+                          () => (loading.cards as { shape?: ItemShape }).shape ?? {},
                         )
                   }
                 />

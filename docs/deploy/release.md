@@ -117,8 +117,9 @@ when `bootstrap.json` or `docker/**` changes). A change to the socket proxy conf
 `capybara-hq/plugins` first (`plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg`, with a test
 against the real proxy), then a core PR changes `docker/sandbox-proxy/haproxy.cfg` (and the copy
 inlined in `docker/compose.yaml`, `check:compose-haproxy`) and moves `marketplace.commit` and the
-compose contexts to a plugins commit that has it. The pins can keep their versions: the plugins
-repository's `marketplace.json` keeps every published version. No image bakes the proxy config (it
+compose contexts to a plugins commit that has it. The pins must be the versions that commit's
+`marketplace.json` lists (one entry per plugin, its current version), so the pins usually move
+with it. No image bakes the proxy config (it
 is a compose `configs` entry), so this needs no changeset.
 
 ### Gates that keep the order (all in code)
@@ -210,6 +211,17 @@ workspace entries); `--mode dry-run` builds everything regardless.
 The two jobs are deliberately separate. `changeset version` rewrites versions in the `version-pr`
 checkout. The `publish` job checks out exactly `github.sha` on a fresh runner and refuses to run with
 uncommitted `package.json` changes, so only reviewed versions ship.
+
+### Order across repositories, and downtime
+
+- **Core first.** Release core (kernel, plugin-sdk, plugin-tools, plugin-model-fake) and upgrade the
+  deployed kernels before `capybara-hq/plugins` publishes plugins whose `plugin.json` `description` is
+  an object (`{ en, zh? }`): older kernels reject it. The same goes for the official marketplace
+  dropping older versions of a plugin: kernels that still need them must be upgraded first.
+- **No rolling upgrade across the super-admin rename.** Migration 0080 renames a column of
+  `accounts` (the old admin flag becomes `is_super_admin`), so a replica of the old version cannot
+  run against the migrated schema. Replace all replicas at once (stop, migrate,
+  start) for this version; expect a short downtime.
 
 ### The compose image tag
 

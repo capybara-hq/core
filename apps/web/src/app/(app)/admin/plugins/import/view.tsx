@@ -1,0 +1,590 @@
+"use client";
+
+import {
+  AttachmentChip,
+  Button,
+  Card,
+  Checkbox,
+  Field,
+  FilePicker,
+  Input,
+  RadioGroup,
+  Stack,
+  Text,
+  useToast,
+  versionLabel,
+  WizardPage,
+} from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
+import { ErrorFrame } from "../../../../../components/ErrorFrame";
+import { FormError } from "../../../../../components/form-error";
+import { NoAccess } from "../../../../../components/NoAccess";
+import { PluginReviewBody } from "../../../../../components/PluginReviewBody";
+import { ScopeFields } from "../../../../../components/PluginScopeDialog";
+import { usePagePath } from "../../../../../components/shell/path";
+import { Link, useRouter } from "../../../../../i18n/navigation";
+import { ApiClientError, type ApiErrorDetail, issueLines } from "../../../../../lib/api";
+import {
+  confirmPluginImport,
+  importPageHref,
+  type PluginConfirmResult,
+  type PluginPrepared,
+  type PluginReview,
+  type PluginScope,
+  pluginReviewSensitive,
+  preparePluginGit,
+  preparePluginNpm,
+  uploadPluginPackage,
+} from "../../../../../lib/catalog";
+import {
+  deploymentRequestsQuery,
+  extensionChangeKeys,
+  stagedImportQuery,
+} from "../../../../../lib/query/admin";
+import { pluginScopeChangeKeys } from "../../../../../lib/query/catalog";
+import { retryOnMountOf } from "../../../../../lib/query/client";
+import { keys } from "../../../../../lib/query/keys";
+import { useAppMutation } from "../../../../../lib/query/mutation";
+import { useAdmin } from "../../../../../lib/query/workspace";
+import { useErrorMessage } from "../../../../../lib/use-error-message";
+
+type Step = 0 | 1 | 2;
+type Problem = { message: string; extra: string[] };
+/**
+ * The staged import named by `?staging=<id>`: none (null), the loaded review, or why it could not
+ * be loaded (`problem`, the kernel's error as sent).
+ */
+export type StagedImport = PluginPrepared | null | { problem: StagedFailure };
+export interface StagedFailure {
+  status: number;
+  code: string;
+  message: string;
+  details: ApiErrorDetail[];
+  rawDetails: unknown[];
+}
+/** What the page shows for the staged import: the review, or the problem as drawn. */
+type Staged = PluginPrepared | null | { problem: Problem };
+
+/**
+ * `/admin/plugins/import` ("Upload plugin package", and the review of a marketplace entry or an approved
+ * `import` request): bring a plugin in (super admins, WizardPage), reviewed as a whole in one
+ * pass:
+ * 1. choose the plugin package: upload a tgz, give an npm package name, or read it straight from git
+ *    (a one-off import: an https git URL or `owner/repo`, an optional branch / tag / commit and
+ *    directory; no marketplace is added) (prepare stages it for 24 hours) and the address becomes
+ *    `?staging=<id>`. A marketplace entry is prepared on the
+ *    Marketplace tab (or by approving an org's `import` request), which opens this page with `?staging=<id>`; the page loads that staged review
+ *    (and a marketplace import's permission mismatch) from the kernel
+ *    (`GET admin/catalog/imports/:stagingId`) and skips this step. An expired or confirmed one
+ *    says so and offers a new import;
+ * 2. review: the extension (its action on the deployment and its permissions, sensitive items
+ *    highlighted), the skills, the connector templates (endpoint and auth) and the dependencies
+ *    (with the catalog version each resolves to); a warning when the marketplace's permission
+ *    summary differs from the package; where it comes from (the git host, repo and commit, pinned
+ *    or following a branch) and the npm provenance ("built from <repo>@<sha> by <workflow>", or
+ *    why it was not checked, with a warning when a git marketplace's repository differs from the
+ *    attested one); a build version (`1.0.0+git.<sha12>`) says the release has other content;
+ *    A Claude Code plugin also shows its translation report (five groups with reasons), its
+ *    `repository` (display only, from the plugin, not verified); every plugin shows the root
+ *    LICENSE text (collapsed), each skill's SKILL.md (collapsed) and the "suggest pinned"
+ *    checkboxes (expanded by default when the plugin has a SessionStart hook); a changed choice is
+ *    sent at confirm as `pinnedSuggestions`;
+ * 3. confirm: the scope (spec §5; default "Organizations choose", or "Selected organizations" = the requesting org for a staging
+ *    prepared by approving an org's `import` request); confirming installs and enables the
+ *    extension (an import below the deployed version only joins the catalog, said as a notice);
+ *    with sensitive items, "I understand the sensitive items" must be checked too.
+ * The staged import comes from the query cache (the layout prefetched it on a first load); a
+ * refusal (4xx: expired, already confirmed) is the page's own problem with a restart. A prepared
+ * import is written into the cache before the address names it; confirming reads the catalog (and
+ * what a deployed extension brings) again.
+ */
+export default function PluginImportView({ staging }: { staging: string | null }) {
+  const gate = useAdmin();
+  if (gate.kind === "pending") return null;
+  if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
+  if (staging === null) return <PluginImportWizard initial={null} orgId={gate.me.currentOrgId} />;
+  return <StagedImportRead staging={staging} orgId={gate.me.currentOrgId} />;
+}
+
+function StagedImportRead({ staging, orgId }: { staging: string; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("catalog.admin.review");
+  const tw = useTranslations("admin.extensions.wizard");
+  const o = stagedImportQuery(staging);
+  const q = useQuery({ ...o, retryOnMount: retryOnMountOf(o.queryKey) });
+  const e = q.error;
+  // A refusal (expired, confirmed, not found) is the page's own problem, even over a cached review.
+  if (e && e.status >= 400 && e.status < 500) {
+    const { status, code, message, details, rawDetails } = e;
+    return (
+      <PluginImportWizard
+        initial={{ problem: { status, code, message, details, rawDetails } }}
+        orgId={orgId}
+      />
+    );
+  }
+  if (q.data !== undefined) return <PluginImportWizard initial={q.data} orgId={orgId} />;
+  if (e) return <ErrorFrame reset={() => void q.refetch()} />;
+  // The review step while its staged import loads (the source step is skipped for it).
+  return (
+    <WizardPage
+      header={{
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
+        title: t("title"),
+      }}
+      steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
+      current={1}
+      actionRow={{
+        cancel: { label: tw("cancel"), onSelect: () => {} },
+        primary: { label: tw("next"), onSelect: () => {} },
+      }}
+      // The review stack: the plugin line over its facts (package, origin, provenance), then the
+      // five component sections (extension, skills, connector templates, agent templates,
+      // dependencies).
+      loading={{
+        content: [
+          { kind: "lines", lines: 4 },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+          { kind: "list" },
+        ],
+      }}
+    />
+  );
+}
+
+function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: string | null }) {
+  const scope = usePagePath("admin");
+  const t = useTranslations("catalog.admin.review");
+  const tw = useTranslations("admin.extensions.wizard");
+  const router = useRouter();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const catalogLines = useCatalogErrorLines();
+  const problem = (e: unknown): Problem => ({
+    message: errorMessage(e),
+    extra: [...issueLines(e), ...catalogLines(e)],
+  });
+
+  // The staged import named in the address was read on the server: the review is shown at once.
+  const [staged, setStaged] = useState<Staged>(() =>
+    initial !== null && "problem" in initial
+      ? {
+          problem: problem(
+            new ApiClientError(
+              initial.problem.status,
+              initial.problem.code,
+              initial.problem.message,
+              initial.problem.details,
+              initial.problem.rawDetails,
+            ),
+          ),
+        }
+      : initial,
+  );
+  const loaded = initial !== null && !("problem" in initial) ? initial : null;
+  const [step, setStep] = useState<Step>(loaded === null ? 0 : 1);
+  const [source, setSource] = useState<"file" | "npm" | "git">("file");
+  const [file, setFile] = useState<File | null>(null);
+  const [pkg, setPkg] = useState("");
+  const [version, setVersion] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitRef, setGitRef] = useState("");
+  const [gitPath, setGitPath] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<Problem>();
+  const [prepared, setPrepared] = useState<PluginPrepared | null>(loaded);
+  /** Skill names ticked "suggest pinned" (starts from the plugin's own suggestion). */
+  const [pinned, setPinned] = useState<string[]>(() =>
+    loaded === null ? [] : suggestedPinned(loaded.review),
+  );
+  const [ack, setAck] = useState(false);
+  /** The scope the admin picked; until then the default (see `defaultScope`). */
+  const [scopeChoice, setScopeChoice] = useState<{ scope: PluginScope; orgs: string[] }>();
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<Problem>();
+  const [result, setResult] = useState<PluginConfirmResult | null>(null);
+  const qc = useQueryClient();
+  // Prepares only stage the import (nothing cached changes until it is confirmed).
+  const prepareNpm = useAppMutation({
+    fn: (v: { pkg: string; version: string }) => preparePluginNpm(v.pkg, v.version),
+    invalidates: () => [],
+  });
+  const prepareGit = useAppMutation({
+    fn: (v: { url: string; ref: string; path: string }) => preparePluginGit(v.url, v.ref, v.path),
+    invalidates: () => [],
+  });
+  // A confirmed import is a new catalog item or version (and maybe an extension on the
+  // deployment), it may answer an org's request (the Pending tab and the nav count); the staged import is
+  // gone.
+  const confirm = useAppMutation({
+    fn: (v: { stagingId: string; body: Parameters<typeof confirmPluginImport>[1] }) =>
+      confirmPluginImport(v.stagingId, v.body),
+    invalidates: () => [
+      ...pluginScopeChangeKeys(orgId),
+      keys.deployment().catalogRequests(),
+      keys.deployment().marketplaceEntriesAll(),
+      ...extensionChangeKeys(orgId),
+    ],
+    onSuccess: (_, v) => qc.removeQueries({ queryKey: stagedImportQuery(v.stagingId).queryKey }),
+  });
+
+  const accept = (p: PluginPrepared) => {
+    setPrepared(p);
+    setPinned(suggestedPinned(p.review));
+    setAck(false);
+    setStep(1);
+  };
+
+  /** Starts a new import on this page (the address drops `?staging`). */
+  const restart = () => {
+    setStaged(null);
+    setPrepared(null);
+    setResult(null);
+    setSubmitError(undefined);
+    setFetchError(undefined);
+    setStep(0);
+    router.replace("/admin/plugins/import");
+  };
+
+  const fetchReview = async () => {
+    setFetchError(undefined);
+    setFetching(true);
+    try {
+      let p: PluginPrepared;
+      if (source === "file") {
+        if (file === null) return;
+        p = await uploadPluginPackage(file);
+      } else if (source === "npm") {
+        p = await prepareNpm.mutateAsync({ pkg: pkg.trim(), version: version.trim() });
+      } else {
+        p = await prepareGit.mutateAsync({
+          url: gitUrl.trim(),
+          ref: gitRef.trim(),
+          path: gitPath.trim(),
+        });
+      }
+      // The address names the staged import (a reload comes back to the review, read from the
+      // cache). Written with history.replaceState like useUrlTab: a router navigation would re-key
+      // the page and remount this wizard, losing a step taken before it lands.
+      qc.setQueryData(stagedImportQuery(p.stagingId).queryKey, p);
+      window.history.replaceState(window.history.state, "", importPageHref(p.stagingId));
+      accept(p);
+    } catch (e) {
+      setFetchError(problem(e));
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const review = prepared?.review ?? null;
+  // The pending requests, once there is a review (a section: none while it loads or failed)
+  const rq = deploymentRequestsQuery();
+  const requestsRead = useQuery({
+    ...rq,
+    enabled: prepared !== null,
+    retryOnMount: retryOnMountOf(rq.queryKey),
+  });
+  const requests = requestsRead.data?.requests;
+  // Until the requests are read the default is not known: the confirm waits for them (a failed read
+  // sends no scope, so the kernel's own default applies)
+  const requestsPending = prepared !== null && requests === undefined && !requestsRead.isError;
+  const sendScope = scopeChoice !== undefined || requests !== undefined;
+  // A staging prepared by approving an org's `import` request offers the plugin to that org by
+  // default (the kernel's default too, spec §5.1 rule 3); any other import: "Organizations choose".
+  const linked =
+    prepared === null
+      ? undefined
+      : requests?.find((r) => r.kind === "import" && r.stagingId === prepared.stagingId);
+  const target =
+    scopeChoice ??
+    (linked !== undefined
+      ? { scope: "named" as const, orgs: [linked.orgId] }
+      : { scope: "optional" as const, orgs: [] });
+  const scopeInvalid = target.scope === "named" && target.orgs.length === 0;
+  const sensitive = review !== null && pluginReviewSensitive(review);
+  const deployable = review?.extension !== undefined && review.extension.action !== "keep";
+  // Loaded from the address: there is no source step to go back to
+  const fromElsewhere = staged !== null;
+  const stagedProblem =
+    typeof staged === "object" && staged !== null && "problem" in staged ? staged.problem : null;
+
+  const submit = async () => {
+    if (prepared === null) return;
+    setSubmitting(true);
+    setSubmitError(undefined);
+    try {
+      const r = await confirm.mutateAsync({
+        stagingId: prepared.stagingId,
+        body: {
+          reviewHash: prepared.review.reviewHash,
+          ...(sendScope && { scope: target.scope }),
+          ...(sendScope && target.scope === "named" && { orgs: target.orgs }),
+          // only a changed choice: omitted keeps the plugin's own suggestion
+          ...(!sameNames(pinned, suggestedPinned(prepared.review)) && {
+            pinnedSuggestions: prepared.review.skills
+              .map((s) => s.name)
+              .filter((n) => pinned.includes(n)),
+          }),
+        },
+      });
+      toast.success(t("done", { name: r.item.name }));
+      if (r.deploy === null || r.deploy.result !== "failed") {
+        router.push(`/admin/plugins/${r.item.id}`);
+      } else setResult(r);
+    } catch (e) {
+      setSubmitError(problem(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cancel = { label: tw("cancel"), onSelect: () => router.push("/admin/plugins") };
+  const back = () => {
+    setSubmitError(undefined);
+    setStep((s) => (s > 0 ? ((s - 1) as Step) : s));
+  };
+  const actionRow =
+    step === 0
+      ? {
+          cancel,
+          primary: {
+            label: t("fetch"),
+            onSelect: () => void fetchReview(),
+            loading: fetching,
+            disabled:
+              fetching ||
+              fromElsewhere ||
+              (source === "file"
+                ? file === null
+                : source === "npm"
+                  ? pkg.trim() === ""
+                  : gitUrl.trim() === ""),
+          },
+        }
+      : step === 1
+        ? {
+            cancel,
+            ...(!fromElsewhere && { secondary: { label: tw("back"), onSelect: back } }),
+            primary: { label: tw("next"), onSelect: () => setStep(2) },
+          }
+        : {
+            cancel,
+            secondary: { label: tw("back"), onSelect: back, disabled: submitting },
+            primary: {
+              label: t("confirm"),
+              onSelect: () => void submit(),
+              loading: submitting,
+              disabled:
+                submitting ||
+                result !== null ||
+                requestsPending ||
+                scopeInvalid ||
+                (sensitive && !ack),
+            },
+          };
+
+  return (
+    <WizardPage
+      header={{
+        path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: "import" }],
+        title: t("title"),
+      }}
+      steps={[t("steps.source"), t("steps.review"), t("steps.confirm")]}
+      current={step}
+      actionRow={actionRow}
+    >
+      {step === 0 &&
+        (stagedProblem !== null ? (
+          <Card tone="danger">
+            <Stack gap={8}>
+              <FormError message={stagedProblem.message} extra={stagedProblem.extra} />
+              <Text tone="muted">{t("gone")}</Text>
+              <Stack direction="row">
+                <Button onClick={restart}>{t("restart")}</Button>
+              </Stack>
+            </Stack>
+          </Card>
+        ) : (
+          <Stack gap={16}>
+            <Card title={t("sourceLabel")}>
+              <RadioGroup
+                label={t("sourceLabel")}
+                variant="card"
+                value={source}
+                onChange={(v) => {
+                  setSource(v as "file" | "npm" | "git");
+                  setFetchError(undefined);
+                }}
+                options={[
+                  { value: "file", label: t("sourceFile"), description: t("sourceFileHint") },
+                  { value: "npm", label: t("sourceNpm"), description: t("sourceNpmHint") },
+                  { value: "git", label: t("sourceGit"), description: t("sourceGitHint") },
+                ]}
+              />
+            </Card>
+            {source === "file" ? (
+              <FilePicker
+                label={tw("choose")}
+                dropLabel={tw("drop")}
+                accept=".tgz,application/gzip,application/x-gzip"
+                disabled={fetching}
+                onFiles={(files) => {
+                  setFile(files[0] ?? null);
+                  setFetchError(undefined);
+                }}
+              >
+                {file !== null && (
+                  <AttachmentChip
+                    name={file.name}
+                    size={file.size}
+                    status="ready"
+                    onRemove={() => setFile(null)}
+                  />
+                )}
+              </FilePicker>
+            ) : source === "git" ? (
+              <Stack gap={12}>
+                <Field label={t("gitUrl")} help={t("gitUrlHelp")}>
+                  <Input
+                    value={gitUrl}
+                    placeholder="owner/repo"
+                    onChange={(e) => setGitUrl(e.target.value)}
+                  />
+                </Field>
+                <Field label={t("gitRef")} help={t("gitRefHelp")} optional>
+                  <Input value={gitRef} onChange={(e) => setGitRef(e.target.value)} />
+                </Field>
+                <Field label={t("gitPath")} help={t("gitPathHelp")} optional>
+                  <Input value={gitPath} onChange={(e) => setGitPath(e.target.value)} />
+                </Field>
+              </Stack>
+            ) : (
+              <Stack gap={12}>
+                <Field label={tw("npmPackage")}>
+                  <Input value={pkg} onChange={(e) => setPkg(e.target.value)} />
+                </Field>
+                <Field label={tw("npmVersion")} help={tw("npmVersionHelp")}>
+                  <Input value={version} onChange={(e) => setVersion(e.target.value)} />
+                </Field>
+              </Stack>
+            )}
+            {fetchError !== undefined && <ProminentError problem={fetchError} />}
+          </Stack>
+        ))}
+      {step === 1 && review !== null && (
+        <PluginReviewBody
+          review={review}
+          mismatch={prepared?.permissionsMismatch ?? null}
+          pinned={pinned}
+          onPinned={setPinned}
+        />
+      )}
+      {step === 2 && review !== null && (
+        <Stack gap={16}>
+          <Text>{t("plugin", { name: review.name, version: versionLabel(review.version) })}</Text>
+          {review.extension === undefined ? (
+            <Text tone="muted">{t("noExtension")}</Text>
+          ) : review.extension.olderThanDeployed === true ? (
+            <Text variant="prose" tone="warn">
+              {t("olderThanDeployed")}
+            </Text>
+          ) : !deployable ? (
+            <Text tone="muted">
+              {t("keepExtension", {
+                name: review.extension.name,
+                version: versionLabel(review.extension.currentVersion ?? review.extension.version),
+              })}
+            </Text>
+          ) : (
+            <Text variant="small" tone="muted">
+              {t("deployOn")}
+            </Text>
+          )}
+          <Card title={t("scopeTitle")}>
+            <Stack gap={8}>
+              {linked !== undefined && (
+                <Text variant="small" tone="muted">
+                  {t("requestDefault", { org: linked.orgName })}
+                </Text>
+              )}
+              <ScopeFields
+                scope={target.scope}
+                orgs={target.orgs}
+                onScope={(next) =>
+                  setScopeChoice({ scope: next, orgs: next === "named" ? target.orgs : [] })
+                }
+                onOrgs={(next) => setScopeChoice({ scope: "named", orgs: next })}
+                disabled={submitting || result !== null}
+              />
+              {scopeInvalid && (
+                <Text variant="small" tone="muted">
+                  {t("namedNeedsOrg")}
+                </Text>
+              )}
+            </Stack>
+          </Card>
+          {sensitive && (
+            <Stack gap={8}>
+              <Text variant="prose" tone="warn">
+                {t("ackHint")}
+              </Text>
+              <Checkbox checked={ack} onChange={setAck} label={t("ack")} />
+            </Stack>
+          )}
+          {submitError !== undefined && <ProminentError problem={submitError} />}
+          {result?.deploy && (
+            <Card title={t("deployResult")}>
+              <Stack gap={4}>
+                <Text tone="fail">
+                  {t("deployFailed", {
+                    name: result.deploy.name,
+                    version: versionLabel(result.deploy.version),
+                    code: result.deploy.code ?? "",
+                  })}
+                </Text>
+                {result.deploy.message !== undefined && (
+                  <Text variant="small" tone="muted">
+                    {result.deploy.message}
+                  </Text>
+                )}
+                {result.deploy.note !== undefined && (
+                  <Text variant="small" tone="warn">
+                    {result.deploy.note}
+                  </Text>
+                )}
+                <Text>
+                  <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
+                </Text>
+              </Stack>
+            </Card>
+          )}
+        </Stack>
+      )}
+    </WizardPage>
+  );
+}
+
+/**
+ * A prominent error (e.g. `marketplace.integrity_mismatch`, `catalog.legacy_format`): the error row
+ * in a danger card.
+ */
+function ProminentError({ problem }: { problem: Problem }) {
+  return (
+    <Card tone="danger">
+      <FormError message={problem.message} extra={problem.extra} />
+    </Card>
+  );
+}
+
+/** The skills the plugin itself suggests as pinned. */
+const suggestedPinned = (r: PluginReview): string[] =>
+  r.skills.filter((s) => s.suggestPinned === true).map((s) => s.name);
+
+const sameNames = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((n) => b.includes(n));

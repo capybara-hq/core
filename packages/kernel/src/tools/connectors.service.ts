@@ -11,7 +11,8 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { z } from "zod";
-import { assertItemInstallable } from "../catalog/requests.service.js";
+import { connectorTemplateState } from "../catalog/component-state.js";
+import { assertItemInstallable } from "../catalog/request-rules.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -115,6 +116,11 @@ export interface ConnectorSummary {
   endpoint: unknown;
   auth: ConnectorAuth;
   status: "active" | "disabled";
+  /**
+   * The platform connector template it was made from (`connectors.platform_template_id`), null for
+   * a custom one: the web offers it for a pending connector of that template (ruling P4-7).
+   */
+  platformTemplateId: string | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -134,7 +140,7 @@ export interface CreateConnectorInput {
   auth: ConnectorAuth;
   credential?: unknown;
   /**
-   * Install from an enterprise catalog connector template (T26, filled in by the catalog service,
+   * Install from a platform catalog connector template (T26, filled in by the catalog service,
    * not accepted over HTTP): the connector records its source item and version, the item policy is
    * re-checked in the transaction (a template inside an app passes the app item); once the tool
    * snapshot exists, `defaultToolPolicies` set the default policies (`policy_source 'template'`).
@@ -142,6 +148,14 @@ export interface CreateConnectorInput {
    * (`catalog.custom_disabled`).
    */
   template?: ConnectorTemplateRef | undefined;
+  /**
+   * The name and slug are chosen under the org lock (one more connector from a template, ruling
+   * P4-T6-10; not accepted over HTTP; `slug` must be absent): the first free of `name` (else
+   * `display`) with its derived slug, then `<display> 2` with `_2`, `3` with `_3`, … (a given
+   * `name` is kept, only its slug suffixed), among the org's live connectors and the installed
+   * plugins' names. Chosen after the outbound calls, so a race never repeats them.
+   */
+  slugDefault?: { display: string; name?: string | undefined } | undefined;
 }
 
 /** 连接器来自哪个目录条目的哪个模板。 */
@@ -153,11 +167,17 @@ export interface ConnectorTemplateRef {
   defaultToolPolicies?: Record<string, ToolPolicy> | undefined;
   /** The item whose policy approves this install (a dependency's template: the installed plugin). */
   approvedBy?: string | undefined;
+  /**
+   * One more connector from a platform connector template (ruling P4-T6-8): the template must be
+   * on in the org, re-checked under the org lock (`component.off` / `component.not_found`).
+   */
+  mustBeOn?: boolean | undefined;
 }
 
 /**
- * A connector updated to another version of its catalog template (an org plugin upgrade, package
- * ecosystem spec §10): only template-owned fields change (endpoint preset, auth preset, default tool
+ * A connector updated to another version of its catalog template (the platform plugin update fans
+ * a changed template out to every connector with its `platform_template_id`, ruling E2): only
+ * template-owned fields change (endpoint preset, auth preset, default tool
  * policies still at the template default); the name, slug, status, tools and credentials stay,
  * unless `resetCredentials`.
  */
@@ -377,6 +397,42 @@ export class ConnectorsService {
     return row !== undefined;
   }
 
+  /**
+   * The first free default name and slug ({@link CreateConnectorInput.slugDefault}), read in the
+   * caller's transaction under the org lock.
+   */
+  private async freeName(
+    t: KernelSchemaDb,
+    orgId: string,
+    d: { display: string; name?: string | undefined },
+  ): Promise<{ name: string; slug: string }> {
+    const base = deriveSlug(d.name ?? d.display) ?? deriveSlug(d.display);
+    if (base === null) {
+      throw fail("slug", `Cannot derive a slug from the name; provide one. ${SLUG_RULE}`);
+    }
+    const taken = new Set(
+      (
+        await t
+          .selectFrom("connectors")
+          .select("slug")
+          .where("org_id", "=", orgId)
+          .where("deleted_at", "is", null)
+          .execute()
+      ).map((r) => r.slug),
+    );
+    for (const m of this.extensions.manifests()) taken.add(m.name);
+    for (let n = 1; ; n++) {
+      const suffix = n === 1 ? "" : `_${n}`;
+      const slug = `${base.slice(0, 24 - suffix.length).replace(/_+$/, "")}${suffix}`;
+      if (!isValidSlug(slug) || taken.has(slug)) continue;
+      const nth = ` ${n}`;
+      const name =
+        d.name ??
+        (n === 1 ? d.display : `${[...d.display].slice(0, 80 - nth.length).join("")}${nth}`);
+      return { name: [...name].slice(0, 80).join(""), slug };
+    }
+  }
+
   private resolveSlug(input: CreateConnectorInput): string {
     if (input.slug !== undefined) {
       if (!isValidSlug(input.slug)) throw fail("slug", SLUG_RULE);
@@ -511,7 +567,8 @@ export class ConnectorsService {
   ): { slug: string; endpoint: unknown; owner?: CredentialOwner; secret?: StaticSecret } {
     const slug = this.resolveSlug(input);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
-    if (this.extensions.manifests().some((m) => m.name === slug)) {
+    // a defaulted slug skips plugin names itself (`freeName`)
+    if (!input.slugDefault && this.extensions.manifests().some((m) => m.name === slug)) {
       throw fail("slug", `Slug "${slug}" is the name of an installed plugin; choose another`);
     }
     const auth = input.auth;
@@ -573,21 +630,21 @@ export class ConnectorsService {
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     // 自建被禁止时先拒绝（事务里再复核一次）：不该为此触发外连
     if (!input.template) await assertCustomAllowed(this.db, "customConnectors");
+    await this.assertKindAvailable(orgId, input.connector);
     const { slug, endpoint, owner, secret } = this.checkCreateInput(actorAccountId, input);
     const id = randomUUID();
     const auth = input.auth;
     const publicUrl = this.config.get().http.publicUrl;
-    // 先做不需要连接的检查：冲突的 slug 不该触发一次外连
-    if (await this.slugTaken(this.db, orgId, slug)) {
+    // 先做不需要连接的检查：冲突的 slug 不该触发一次外连 (a defaulted slug is chosen under the lock)
+    if (!input.slugDefault && (await this.slugTaken(this.db, orgId, slug))) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
     }
     const oauth = isOAuth(auth)
       ? await this.prepareOAuth(auth, endpoint, input.credential, publicUrl as string)
       : undefined;
-    let rows: SnapshotRow[] = [];
-    let issues: ToolIssue[] = [];
+    let listed: { specs: unknown; resources: boolean } | undefined;
     if (auth.type !== "oauth_code") {
-      const listed = await this.drift.listTools(
+      listed = await this.drift.listTools(
         input.connector,
         endpoint,
         async () => {
@@ -600,7 +657,6 @@ export class ConnectorsService {
         },
         { orgId, slug },
       );
-      ({ rows, issues } = snapshot(slug, listed.specs, listed.resources));
     }
 
     return this.createIn(orgId, actorAccountId, input, actorTokenId, {
@@ -610,8 +666,7 @@ export class ConnectorsService {
       owner,
       secret,
       oauth,
-      rows,
-      issues,
+      listed,
     });
   }
 
@@ -629,11 +684,11 @@ export class ConnectorsService {
       owner: CredentialOwner | undefined;
       secret: StaticSecret | undefined;
       oauth: OAuthSetup | undefined;
-      rows: SnapshotRow[];
-      issues: ToolIssue[];
+      /** The tool listing (none for an authorization-code connector). */
+      listed: { specs: unknown; resources: boolean } | undefined;
     },
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
-    const { id, slug, endpoint, owner, secret, oauth, rows, issues } = c;
+    const { id, endpoint, owner, secret, oauth } = c;
     const auth = input.auth;
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
@@ -645,8 +700,46 @@ export class ConnectorsService {
         input.template.approvedBy ?? input.template.itemId,
       );
     } else await assertCustomAllowed(t, "customConnectors");
-    if (await this.slugTaken(t, orgId, slug)) {
+    let slug = c.slug;
+    let name = input.name;
+    if (input.slugDefault) ({ slug, name } = await this.freeName(t, orgId, input.slugDefault));
+    else if (await this.slugTaken(t, orgId, slug)) {
       throw new ApiError("connector.slug_taken", "Connector slug is already taken");
+    }
+    // the snapshot's keys name the final slug
+    const { rows, issues } =
+      c.listed === undefined
+        ? { rows: [] as SnapshotRow[], issues: [] as ToolIssue[] }
+        : snapshot(slug, c.listed.specs, c.listed.resources);
+    // A connector made from a platform connector template stays linked to it (ruling E2)
+    const tpl = input.template;
+    const platformTemplate =
+      tpl?.templateId !== undefined
+        ? await t
+            .selectFrom("platform_connector_templates")
+            .select("id")
+            .where("catalog_item_id", "=", tpl.itemId)
+            .where("template_id", "=", tpl.templateId)
+            .where("deleted_at", "is", null)
+            .executeTakeFirst()
+        : undefined;
+    if (tpl?.mustBeOn) {
+      const state =
+        platformTemplate === undefined
+          ? "absent"
+          : await connectorTemplateState(t, orgId, platformTemplate.id);
+      if (state === "absent") {
+        throw new ApiError(
+          "component.not_found",
+          "The connector template does not exist or is not available in this organization",
+        );
+      }
+      if (state === "off") {
+        throw new ApiError(
+          "component.off",
+          "This connector template is off in this organization; switch it (or its plugin) on first",
+        );
+      }
     }
     await t
       .insertInto("connectors")
@@ -654,13 +747,14 @@ export class ConnectorsService {
         id,
         org_id: orgId,
         slug,
-        name: input.name,
+        name,
         connector: input.connector,
         endpoint: JSON.stringify(endpoint),
         auth: JSON.stringify(auth),
         created_by: actorAccountId,
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
+        platform_template_id: platformTemplate?.id ?? null,
         // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
         template_tool_policies: input.template?.defaultToolPolicies
           ? JSON.stringify(input.template.defaultToolPolicies)
@@ -704,7 +798,7 @@ export class ConnectorsService {
   }
 
   /**
-   * Checks a template update before anything is written (an org plugin upgrade): the endpoint
+   * Checks a template update before anything is written (the platform plugin update): the endpoint
    * against the connector's schema, and with `resetCredentials` the new credential's shape, or for
    * OAuth the client setup (discovery, dynamic registration or the client credentials token; an
    * outbound failure -> 502 `connector.connect_failed`). Writes nothing.
@@ -834,6 +928,25 @@ export class ConnectorsService {
     });
   }
 
+  /** Refuses a loaded kind whose extension is not enabled in the org (the same notion as {@link kinds}). */
+  private async assertKindAvailable(orgId: string, kind: string): Promise<void> {
+    if (!this.registry.findConnector(kind)) return; // unknown kinds fail in parseEndpoint
+    if (!(await this.registry.connectorKindAvailable(orgId, kind))) {
+      throw new ApiError(
+        "connector.kind_unavailable",
+        `Connector kind "${kind}" is not enabled for this organization; enable its plugin first`,
+      );
+    }
+  }
+
+  /**
+   * The connector kinds the org can create connectors of (the install wizard's protocol step): a
+   * kind is listed when its `connector@1` extension is loaded and enabled in the org.
+   */
+  kinds(orgId: string): Promise<{ kind: string; plugin: string }[]> {
+    return this.registry.connectorKindsFor(orgId);
+  }
+
   /**
    * Previews a connector (Ruling A20, for the install wizard): after checking the connector, the
    * endpoint (credential pattern check included) and the credential shape, reads the endpoint
@@ -848,6 +961,7 @@ export class ConnectorsService {
   async preview(orgId: string, input: PreviewConnectorInput): Promise<ConnectorPreview> {
     // 部署禁止组织自建连接器时也不替组织去连任意端点（目录安装不走预览）
     await assertCustomAllowed(this.db, "customConnectors");
+    await this.assertKindAvailable(orgId, input.connector);
     const endpoint = this.parseEndpoint(input.connector, input.endpoint);
     const connector = this.registry.findConnector(input.connector);
     if (!connector) throw fail("connector", `Unknown connector "${input.connector}"`);
@@ -994,6 +1108,7 @@ export class ConnectorsService {
       endpoint: endpointView(r.endpoint),
       auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
+      platformTemplateId: r.platform_template_id ?? null,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
@@ -1231,7 +1346,8 @@ export class ConnectorsService {
   async removeIn(
     orgId: string,
     connectorId: string,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync uninstalling a plugin). */
+    actorAccountId: string | null,
     actorTokenId?: string,
     reason?: string,
   ): Promise<void> {

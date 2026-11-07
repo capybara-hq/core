@@ -59,10 +59,13 @@ function mount(initial: Props) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
   );
-  return renderHook((p: Props) => useAgentTree("o1", "c1", p.events, p.progress, true), {
-    wrapper,
-    initialProps: initial,
-  });
+  return renderHook(
+    (p: Props) => useAgentTree("o1", "c1", p.events, p.progress, { enabled: true, open: true }),
+    {
+      wrapper,
+      initialProps: initial,
+    },
+  );
 }
 
 /** Lets the fetches and their answers settle (fake timers: microtasks only). */
@@ -142,6 +145,88 @@ describe("useAgentTree", () => {
     await act(async () => await vi.advanceTimersByTimeAsync(TREE_PROGRESS_MS * 10));
     await settle();
     expect(reads()).toBe(1);
+  });
+});
+
+describe("useAgentTree with the map closed (the agents chip, AC3 fix round 1)", () => {
+  type ClosedProps = Props & { open: boolean };
+  function mountClosed(initial: ClosedProps) {
+    const qc = makeQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    return renderHook(
+      (p: ClosedProps) =>
+        useAgentTree("o1", "c1", p.events, p.progress, { enabled: true, open: p.open }),
+      { wrapper, initialProps: initial },
+    );
+  }
+  const step = async () =>
+    await act(async () => await vi.advanceTimersByTimeAsync(TREE_PROGRESS_MS));
+
+  it("reads once and on each sub-agent event; known agents' steps and re-renders read nothing", async () => {
+    calls = stubApi({ [`GET ${TREE}`]: () => json(200, { root: deepTree("running") }) });
+    const { rerender, result } = mountClosed({ events: [dispatched], progress: {}, open: false });
+    await settle();
+    expect(reads()).toBe(1);
+    expect(result.current.root?.children[0]?.id).toBe("ch1");
+    for (let i = 1; i <= 30; i++) {
+      rerender({
+        events: [dispatched],
+        progress: { ch1: { step: i }, gc1: { step: i } },
+        open: false,
+      });
+      await act(async () => await vi.advanceTimersByTimeAsync(100));
+    }
+    await step();
+    await settle();
+    // the tree shows a grandchild running, but a closed map never trails it
+    await act(async () => await vi.advanceTimersByTimeAsync(TREE_PROGRESS_MS * 10));
+    expect(reads()).toBe(1);
+    rerender({ events: [dispatched, finished], progress: { ch1: { step: 30 } }, open: false });
+    await settle();
+    expect(reads()).toBe(2);
+  });
+
+  it("a step of an agent the tree lacks reads once; one it shows waiting reads once per answer", async () => {
+    calls = stubApi({ [`GET ${TREE}`]: () => json(200, { root: deepTree("waiting") }) });
+    const { rerender } = mountClosed({ events: [dispatched], progress: {}, open: false });
+    await settle();
+    expect(reads()).toBe(1);
+    // a new grandchild: one read, however many steps
+    for (let i = 1; i <= 5; i++) {
+      rerender({ events: [dispatched], progress: { gc2: { step: i } }, open: false });
+      await act(async () => await vi.advanceTimersByTimeAsync(50));
+    }
+    await step();
+    await settle();
+    expect(reads()).toBe(2);
+    rerender({ events: [dispatched], progress: { gc2: { step: 9 } }, open: false });
+    await step();
+    await settle();
+    expect(reads()).toBe(2);
+    // the waiting grandchild moved on (someone decided): one read for this answer
+    rerender({
+      events: [dispatched],
+      progress: { gc2: { step: 9 }, gc1: { step: 1 } },
+      open: false,
+    });
+    await step();
+    await settle();
+    expect(reads()).toBe(3);
+  });
+
+  it("opening the map reads it once more, then the open map's rules apply", async () => {
+    const { rerender } = mountClosed({ events: [dispatched], progress: {}, open: false });
+    await settle();
+    expect(reads()).toBe(1);
+    rerender({ events: [dispatched], progress: {}, open: true });
+    await settle();
+    expect(reads()).toBe(2);
+    rerender({ events: [dispatched], progress: { ch1: { step: 1 } }, open: true });
+    await step();
+    await settle();
+    expect(reads()).toBe(3);
   });
 });
 

@@ -20,15 +20,14 @@ test("extension config form: the list shows the display name with the id as meta
   // 1. The list row reads the display name; the id stays visible as meta
   await page.goto("/admin/extensions");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  const link = page.getByRole("link", { name: "表单样例" });
-  const row = page.locator("li").filter({ has: link });
+  const row = page.getByRole("row").filter({ hasText: "表单样例" });
   await expect(row).toHaveCount(1);
   await expect(row).toContainText("fake-config-form");
   await expect(row).toContainText(P.status.pending_config);
 
-  // 2. The detail page opens on the config tab (pending configuration)
-  await link.click();
-  await expect(page).toHaveURL(/\/admin\/extensions\/fake-config-form$/);
+  // 2. The detail page opens on the config tab (pending configuration); the row itself opens a
+  //    preview Sheet, so go to the page directly
+  await page.goto("/admin/extensions/fake-config-form");
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   await page.getByRole("tab", { name: P.detail.tabs.config }).click();
 

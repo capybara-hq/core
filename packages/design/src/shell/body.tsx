@@ -126,7 +126,7 @@ export function Body({
               />
             </div>
           ) : (
-            <aside className="cb-body-rail" data-responsive={resp("from-960")}>
+            <aside className="cb-body-rail" data-part="rail" data-responsive={resp("from-960")}>
               {railCollapsible ? (
                 <div className="cb-body-rail-head">
                   <IconButton

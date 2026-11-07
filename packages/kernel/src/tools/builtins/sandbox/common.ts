@@ -47,7 +47,7 @@ export interface SandboxToolDeps {
     stopper: Pick<BackgroundTaskStopper, "stop">;
   };
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
-  storage: Pick<StorageService, "kernel" | "available">;
+  storage: Pick<StorageService, "kernel" | "deployment" | "available">;
   /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
     Partial<Pick<EventLog, "publishChanged">>;

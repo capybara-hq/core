@@ -194,10 +194,17 @@ export class SubagentMessages {
         return refused(SEND_MESSAGE_REFUSALS.notAvailable(child.id, agentType));
       current = gates.checked.definition;
     } else {
-      const roster = await resolveRoster(this.db, ctx.orgId, ctx.agent);
+      const roster = await resolveRoster(this.db, ctx.orgId, ctx.agent, this.deps.log);
+      // a plugin template by its template id: an org template's, a linked copy's own or a
+      // platform template's, or an alias of the entry
       const entry =
         template.source === "plugin"
-          ? roster.find((e) => e.source === "plugin" && e.templateId === template.id)
+          ? roster.find(
+              (e) =>
+                e.source === "plugin" &&
+                template.id !== undefined &&
+                (e.templateId === template.id || e.aliasTemplateIds?.includes(template.id)),
+            )
           : findType(roster, agentType);
       if (entry?.source !== template.source) {
         return refused(SEND_MESSAGE_REFUSALS.notAvailable(child.id, agentType));

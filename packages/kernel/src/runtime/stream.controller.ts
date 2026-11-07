@@ -1,15 +1,19 @@
+import type { Logger } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Headers, Inject, Param, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { ConversationAccess } from "../conversations/access.js";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZQuery } from "../infra/validation/zod-params.js";
+import { ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { type LiveDraft, type RunDraft, RunDrafts } from "./run-drafts.js";
 import { ConversationStreams } from "./stream.js";
 
 const BEARER_RE = /^Bearer\s+(\S+)$/i;
@@ -28,12 +32,20 @@ function parseLastEventId(v: string): number {
   return n;
 }
 
+const DraftParams = z.object({
+  id: z.string().min(1).max(100),
+  runId: z.string().min(1).max(100),
+});
+
 class ConversationStreamQueryDto extends createZodDto(StreamQuery, "ConversationStreamQuery") {}
+class RunDraftParamsDto extends createZodDto(DraftParams, "RunDraftParams") {}
 
 /**
  * 会话事件流（SSE）：`GET /api/v1/orgs/:orgId/conversations/:id/stream?after=<seq>`，`agents.use`，只有会话所有者可用。
  * - 打开时不阻塞地调用一次 ensureRun（`ConversationsService.kickRun`），停在「运行中」的孤儿运行由此被清理；
  * - 先订阅会话频道、再回放 `after`（或优先的 `Last-Event-ID`）之后的事件：`id: <seq>` / `event: event`；
+ * - after that catch-up, one `event: draft` (`data: {"runId","step","text","thinking"}`) per step of
+ *   the running run whose `assistant_message` is not logged (live drafts, spec 2026-11-07 §3.2);
  *   之后收到 `events` 通知就补读新事件（按 seq 去重），收到增量就发 `event: delta`，收到界面刷新
  *   （插件 `ctx.ui.invalidate`）就发 `event: ui`（`data: {"plugin","contribution"}`）；
  * - 每 `runtime.sseHeartbeatMs` 发 `: ping` 注释；每 `runtime.sseRecheckMs` 复核凭据（会话未吊销 / 令牌仍有效，
@@ -48,7 +60,46 @@ export class ConversationStreamController {
     @Inject(SessionService) private readonly sessions: SessionService,
     @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
+    @Inject(ConversationAccess) private readonly access: ConversationAccess,
+    @Inject(RunDrafts) private readonly drafts: RunDrafts,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
+
+  /**
+   * The live drafts of one run (spec 2026-11-07 §3.2): `{ drafts: { step, text, thinking }[] }`,
+   * the steps still streaming whose `assistant_message` is not logged (none once the run is no
+   * longer running). What a stream client asks for when a delta's `offset` is past its draft.
+   * The stream's access rule (the conversation is visible to the viewer, else 404
+   * `conversation.not_found`); a run not of this conversation → 404 `run.not_found`.
+   */
+  @Get(":id/runs/:runId/draft")
+  @OrgAction("agents.use")
+  async draft(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(RunDraftParamsDto) params: z.infer<typeof DraftParams>,
+  ): Promise<{ drafts: RunDraft[] }> {
+    const p = requireUser(principal);
+    if (!(await this.access.isAccessible(org.orgId, params.id, p.account.id))) {
+      throw new ApiError("conversation.not_found", "Conversation not found");
+    }
+    if (!(await this.drafts.runOf(params.id, params.runId))) {
+      throw new ApiError("run.not_found", "Run not found");
+    }
+    let live: LiveDraft[];
+    try {
+      live = await this.drafts.live(params.id, params.runId);
+    } catch (err) {
+      // a convenience, like the stream's: no drafts rather than an error (the log stays the truth)
+      this.log.warn("cannot read live drafts", {
+        conversationId: params.id,
+        runId: params.runId,
+        err,
+      });
+      live = [];
+    }
+    return { drafts: live.map(({ step, text, thinking }) => ({ step, text, thinking })) };
+  }
 
   @Get(":id/stream")
   @OrgAction("agents.use")

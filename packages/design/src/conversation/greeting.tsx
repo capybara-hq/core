@@ -15,7 +15,7 @@ export type GreetingProps = {
    * picks the line on the client), the line's box holds an empty placeholder of the same height.
    */
   text?: string | null;
-  /** The line below; default 「选一个 agent，或从常用任务开始」; `null` draws none. */
+  /** The line below; default 「选一个智能体开始」; `null` draws none. */
   sub?: string | null;
   /** Draws the reduced-motion form whatever the system says (the reference set's state). */
   still?: boolean;

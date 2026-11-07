@@ -46,7 +46,7 @@ const count = (selector: string) => document.querySelectorAll(selector).length;
 describe("DetailPage loading", () => {
   it("DetailPage loading draws the frame and no children", () => {
     zh(
-      <DetailPage header={header} tabs={tabs} loading={{ inspector: true }}>
+      <DetailPage header={header} tabs={tabs} loading={{ facts: true }}>
         <p>REAL CONTENT</p>
       </DetailPage>,
     );
@@ -54,38 +54,55 @@ describe("DetailPage loading", () => {
     expect(document.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(parts("page-header")).toHaveLength(1);
     expect(parts("content")).toHaveLength(1);
-    expect(count(".cb-body-inspector")).toBe(1);
+    // one centred column: no right pane, the facts block is in the column
+    expect(count(".cb-body-inspector")).toBe(0);
+    expect(parts("detail-facts")).toHaveLength(1);
     // The default is two card-shaped blocks, and the group announces once.
     expect(count('[data-part="loading-card"]')).toBe(2);
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
   });
 
-  it("takes the block count as given, and no inspector unless flagged", () => {
+  it("takes the block count as given, and no facts block unless flagged", () => {
     zh(<DetailPage header={header} tabs={tabs} loading={{ blocks: 3 }} />);
     expect(count('[data-part="loading-card"]')).toBe(3);
-    expect(count(".cb-body-inspector")).toBe(0);
+    expect(parts("detail-facts")).toHaveLength(0);
   });
 
   it("tabs stay real while loading", () => {
-    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: true }} />);
     expect(screen.getByRole("tab", { name: "概要" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: "运行" })).toBeTruthy();
   });
 
-  it("the inspector placeholder is KeyValue's own box", () => {
-    zh(<DetailPage header={header} tabs={tabs} loading={{ inspector: true }} />);
-    const dl = document.querySelector('[data-part="loading-inspector"]');
+  it("the facts placeholder is KeyValue's own box, first in the column before the blocks", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: true }} />);
+    const facts = document.querySelector('[data-part="detail-facts"]');
+    const dl = facts?.querySelector('[data-part="loading-key-value"]');
     expect(dl?.tagName).toBe("DL");
     expect(dl?.className).toBe("cb-kv");
     expect(dl?.querySelectorAll(".cb-kv-row")).toHaveLength(4);
     expect(dl?.querySelector(".cb-kv-key")).not.toBeNull();
     expect(dl?.querySelector(".cb-kv-value")).not.toBeNull();
+    const content = document.querySelector('[data-part="content"]');
+    expect(content?.firstElementChild).toBe(facts);
   });
 
-  it("a real inspector stays while loading unless it is flagged", () => {
-    zh(<DetailPage header={header} tabs={tabs} inspector={<p>REAL INSPECTOR</p>} loading={{}} />);
-    expect(screen.getByText("REAL INSPECTOR")).toBeTruthy();
+  it("lead draws a prose line over the rows, gap 12, as a description-first facts block", () => {
+    zh(<DetailPage header={header} tabs={tabs} loading={{ facts: { rows: 2, lead: true } }} />);
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    const stack = facts.firstElementChild as HTMLElement;
+    expect(stack.getAttribute("data-gap")).toBe("12");
+    const [lead, kv] = Array.from(stack.children) as HTMLElement[];
+    expect(lead?.getAttribute("data-size")).toBe("prose");
+    expect(kv?.getAttribute("data-part")).toBe("loading-key-value");
+    expect(kv?.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(2);
+  });
+
+  it("a real facts block stays while loading unless it is flagged", () => {
+    zh(<DetailPage header={header} tabs={tabs} facts={<p>REAL FACTS</p>} loading={{}} />);
+    expect(screen.getByText("REAL FACTS")).toBeTruthy();
+    expect(document.querySelector('[data-part="detail-facts"]')?.textContent).toBe("REAL FACTS");
   });
 
   it("stats draws stat card placeholders under the header; known metrics render for real", () => {
@@ -168,17 +185,26 @@ describe("DetailPage / WizardPage content blocks", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  it("the inspector takes its row count and key width", () => {
+  it("the facts placeholder takes its row count and key width, above the content blocks", () => {
     zh(
       <DetailPage
         header={header}
         tabs={tabs}
-        loading={{ inspector: { rows: 7, keyWidth: "10ch" } }}
+        loading={{
+          facts: { rows: 7, keyWidth: "10ch" },
+          content: [{ kind: "table", label: "副本", columns: cols }],
+        }}
       />,
     );
-    expect(parts("loading-inspector-row")).toHaveLength(7);
-    const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
-    expect(key.style.width).toBe("10ch");
+    const facts = document.querySelector('[data-part="detail-facts"]') as HTMLElement;
+    expect(facts.querySelectorAll('[data-part="key-value-row"]')).toHaveLength(7);
+    expect((facts.querySelector("dt") as HTMLElement).style.width).toBe("10ch");
+    // the facts come first, then the tab's blocks
+    const content = document.querySelector('[data-part="content"]') as HTMLElement;
+    expect(content.firstElementChild).toBe(facts);
+    expect(
+      facts.compareDocumentPosition(document.querySelector('[data-empty="loading"]') as Node),
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("a wizard step with content draws the blocks, no card", () => {
@@ -219,20 +245,6 @@ describe("OverviewPage loading", () => {
     expect(count('[data-part="loading-card"]')).toBe(1);
   });
 
-  it("mainSide draws the placeholders in the main-side grid the loaded page uses", () => {
-    zh(<OverviewPage header={header} loading={{ stats: 0, mainSide: { main: 2, side: 1 } }} />);
-    const grid = document.querySelector('[data-template="OverviewPage"] .cb-grid');
-    expect(grid?.getAttribute("data-columns")).toBe("main-side");
-    const columns = [...(grid?.children ?? [])];
-    expect(columns.map((c) => c.className)).toEqual(["cb-stack", "cb-stack"]);
-    expect(columns.map((c) => c.getAttribute("data-gap"))).toEqual(["16", "16"]);
-    expect(columns.map((c) => c.querySelectorAll('[data-part="loading-card"]').length)).toEqual([
-      2, 1,
-    ]);
-    expect(count('[data-part="loading-card"]')).toBe(3);
-    expect(parts("stat-card")).toHaveLength(0);
-  });
-
   it("keep renders the children as they are under the stat slots, without blocks", () => {
     zh(
       <OverviewPage header={header} loading={{ stats: 4, keep: true }}>
@@ -245,7 +257,7 @@ describe("OverviewPage loading", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  it("without mainSide the sections stack in one column", () => {
+  it("the sections stack in one column", () => {
     zh(<OverviewPage header={header} loading={{ sections: 2 }} />);
     expect(document.querySelector('[data-template="OverviewPage"] .cb-grid')).toBeNull();
   });
@@ -420,16 +432,39 @@ describe("FormPage / FormSection loading", () => {
     expect(parts("action-row-errors")).toHaveLength(0);
   });
 
-  it("a section that lists cards draws titled card placeholders in its card", () => {
+  it("a section that lists items draws item row placeholders in a flush card, never cards", () => {
     zh(
-      <FormSection id="a" title="用途" loading={{ cards: [{ lines: 2 }, { lines: 3 }] }}>
-        <p>REAL CARD</p>
+      <FormSection
+        id="a"
+        title="用途"
+        loading={{ items: [{ lines: 2 }, { lines: 3, actions: 1, field: { control: "select" } }] }}
+      >
+        <p>REAL ROW</p>
       </FormSection>,
     );
-    expect(screen.queryByText("REAL CARD")).toBeNull();
+    expect(screen.queryByText("REAL ROW")).toBeNull();
     const card = document.querySelector('[data-part="form-card"]');
-    expect(card?.querySelectorAll('[data-part="loading-shaped-card"]')).toHaveLength(2);
-    expect(count('[data-part="loading-field"]')).toBe(0);
+    // The flush card holds a flush ItemList: rows padded space.4, split by line-soft (spec §5.8).
+    expect(card?.getAttribute("data-flush")).toBe("true");
+    const list = card?.querySelector(':scope > [data-part="loading-item-list"]');
+    expect(list?.className).toBe("cb-item-list");
+    expect(list?.getAttribute("data-inset")).toBe("flush");
+    const rows = list?.querySelectorAll(':scope > [data-part="loading-item-row"]');
+    expect(rows).toHaveLength(2);
+    expect(rows?.[0]?.getAttribute("data-shape")).toBe("item");
+    // The second row: a title slot and one action slot on its title line, two lines and a select.
+    const second = rows?.[1] as Element;
+    const head = second.querySelector(".cb-item-list-head");
+    expect(head?.querySelector('[data-part="skeleton-text"]')?.getAttribute("style")).toContain(
+      "45%",
+    );
+    expect(head?.querySelectorAll('[data-part="skeleton-box"]')).toHaveLength(1);
+    // the lines in the meta lines' box, the field in the body's box (the loaded row's boxes)
+    expect(
+      second.querySelectorAll(".cb-item-list-lines > [data-part='skeleton-text']"),
+    ).toHaveLength(3);
+    expect(second.querySelector(".cb-item-list-body > .cb-field")).not.toBeNull();
+    expect(count(".cb-card")).toBe(0);
   });
 
   it("a loading section keeps its title and description real", () => {
@@ -687,7 +722,7 @@ describe("SettingsPage loading", () => {
           sections: [
             {
               title: "用途",
-              cards: [
+              items: [
                 { lines: 2, lineSize: "small", field: { control: "select" } },
                 { lines: 3, lineSize: "small", field: { control: "select" } },
               ],
@@ -696,19 +731,25 @@ describe("SettingsPage loading", () => {
         }}
       />,
     );
-    const inSection = document.querySelectorAll(
-      '.cb-form-section-fields > [data-part="loading-shaped-card"]',
+    // A section that lists items: item rows in a flush card, never cards (spec §1, §5.8).
+    expect(document.querySelector(".cb-form-section-fields")?.getAttribute("data-flush")).toBe(
+      "true",
     );
-    expect(inSection).toHaveLength(2);
-    // the lines (gap 4) then the field (gap 12)
-    const body = inSection[1]?.querySelector(".cb-card-body > .cb-stack");
-    expect(body?.getAttribute("data-gap")).toBe("12");
-    expect(body?.firstElementChild?.getAttribute("data-gap")).toBe("4");
-    expect(body?.firstElementChild?.children).toHaveLength(3);
-    expect(body?.querySelector('[data-part="loading-field"]')).not.toBeNull();
+    const rows = document.querySelectorAll(
+      '.cb-form-section-fields > [data-part="loading-item-list"] > [data-part="loading-item-row"]',
+    );
+    expect(rows).toHaveLength(2);
+    expect(document.querySelectorAll(".cb-form-section-fields .cb-card")).toHaveLength(0);
+    // the lines in the meta lines' box (space.1 apart), then the field in the body's box
+    const lines = rows[1]?.querySelectorAll(".cb-item-list-lines > [data-part='skeleton-text']");
+    expect(lines).toHaveLength(3);
+    expect(lines?.[0]?.getAttribute("data-size")).toBe("small");
+    expect(
+      rows[1]?.querySelector('.cb-item-list-body > [data-part="loading-field"]'),
+    ).not.toBeNull();
   });
 
-  it("text and card-group shapes: a hint line at the prose-small line, and a labelled stack of untitled cards (default 2)", () => {
+  it("text and item-group shapes: a hint line at the prose-small line, and a labelled ItemList of rows (default 2)", () => {
     zh(
       <SettingsPage
         header={header}
@@ -716,7 +757,7 @@ describe("SettingsPage loading", () => {
         activeNav="general"
         loading={{
           sections: [
-            { fields: [{ control: "switch" }, { control: "text" }, { control: "card-group" }] },
+            { fields: [{ control: "switch" }, { control: "text" }, { control: "item-group" }] },
           ],
         }}
       />,
@@ -729,15 +770,18 @@ describe("SettingsPage loading", () => {
     const group = kids[2];
     expect(group?.getAttribute("data-gap")).toBe("8");
     expect(group?.firstElementChild?.getAttribute("data-size")).toBe("small");
-    const cards = group?.querySelectorAll('[data-part="loading-group-card"]') ?? [];
-    expect(cards).toHaveLength(2);
-    expect(cards[0]?.parentElement?.getAttribute("data-gap")).toBe("12");
-    // each card: a body line over two small lines
-    const lines = [...(cards[0]?.querySelectorAll('[data-part="skeleton-text"]') ?? [])];
+    // ItemList's own rows split by hairlines inside the form card, never cards (spec §1)
+    const list = group?.querySelector('[data-part="loading-item-group"]');
+    expect(list?.className).toBe("cb-item-list");
+    const rows = list?.querySelectorAll('[data-part="loading-item-row"]') ?? [];
+    expect(rows).toHaveLength(2);
+    expect(card?.querySelectorAll(".cb-card")).toHaveLength(0);
+    // each row: a body title line over two small lines
+    const lines = [...(rows[0]?.querySelectorAll('[data-part="skeleton-text"]') ?? [])];
     expect(lines.map((l) => l.getAttribute("data-size"))).toEqual(["body", "small", "small"]);
   });
 
-  it("list-editor shape: list rows, add and count beside a titled editor card (name, 16-line textarea)", () => {
+  it("list-editor shape: list rows, add and count, a column divider, then the open item's name, fields and 16-line textarea with no card", () => {
     zh(
       <SettingsPage
         header={header}
@@ -752,6 +796,7 @@ describe("SettingsPage loading", () => {
     // the loaded layout's own grid: a 220 px list beside the editor, one column on phones
     expect(grid?.getAttribute("data-columns")).toBe("list-detail");
     expect(grid?.getAttribute("data-gap")).toBe("16");
+    expect(grid?.getAttribute("data-divided")).toBe("true");
     const [list, card] = [...(grid?.children ?? [])];
     expect(list?.getAttribute("data-gap")).toBe("8");
     const repeater = list?.querySelector('[data-part="loading-repeater"]');
@@ -761,7 +806,12 @@ describe("SettingsPage loading", () => {
       "dense",
     );
     expect(list?.lastElementChild?.getAttribute("data-size")).toBe("small");
-    expect(card?.getAttribute("data-part")).toBe("loading-list-editor-card");
+    // No editor card (spec §5.8 "List + editor"): the h3 name slot over the fields, gap 12.
+    expect(card?.getAttribute("data-part")).toBe("loading-list-editor-detail");
+    expect(card?.className).toBe("cb-stack");
+    expect(card?.getAttribute("data-gap")).toBe("12");
+    expect(card?.firstElementChild?.getAttribute("data-part")).toBe("skeleton-text");
+    expect(grid?.querySelector(".cb-card")).toBeNull();
     const fields = card?.querySelectorAll('[data-part="loading-field"]') ?? [];
     expect(fields).toHaveLength(2);
     expect(fields[0]?.querySelector("[data-box]")?.getAttribute("data-box")).toBe("default");
@@ -1257,7 +1307,7 @@ describe("ListPage loading keep", () => {
     zh(
       <ListPage header={header} loading={{ keep: true }}>
         <FormSection id="a" title="甲" loading={{ fields: 2 }} />
-        <FormSection id="b" title="乙" loading={{ cards: [{ lines: 1 }] }} />
+        <FormSection id="b" title="乙" loading={{ items: [{ lines: 1 }] }} />
         <DataTable<never> label="表" state="loading" columns={[]} rows={[]} rowKey={() => ""} />
       </ListPage>,
     );

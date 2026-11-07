@@ -7,6 +7,7 @@ import {
   type AgentMapNode,
   AgentMapTree,
   AgentRow,
+  AgentsChip,
   type AgentToolCallRow,
   AppShell,
   AttachmentStrip,
@@ -37,6 +38,7 @@ import {
   ReferenceBoard,
   RightPanel,
   type RightPanelSwitcher,
+  SkeletonBars,
   Spinner,
   StatusBar,
   SubagentGroup,
@@ -55,11 +57,13 @@ import {
 } from "@capybara-hq/design";
 import {
   AGENT_MAP_FIXTURE,
+  AGENTS_CHIP_FIXTURE,
   CONV_COPY,
   CONV_FIXTURE,
   FILE_FIXTURE,
   type FixtureFile,
   type FixtureSubagent,
+  LONG_MODELS_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PROSE_FIXTURE,
@@ -68,6 +72,7 @@ import {
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
+import { FormError } from "../../components/form-error";
 import { Block, bytes, csvText, NEW_CONVERSATION_AGENTS, NOW, toRow } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
 import { RefBlock } from "./ref-block";
@@ -206,7 +211,7 @@ const agentMapDetailBackground: AgentMapBackground[] = AD.background.map((b) => 
   startedAt: NOW - b.durationMs,
 }));
 
-function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
+function AgentMapDetailBlock({ finished, stopping }: { finished?: boolean; stopping?: boolean }) {
   const node: AgentMapNode = finished
     ? { ...agentMapSelected, status: "completed" }
     : agentMapSelected;
@@ -225,7 +230,8 @@ function AgentMapDetailBlock({ finished }: { finished?: boolean }) {
         onClose={noop}
         onOpenParent={noop}
         onOpenTranscript={noop}
-        {...(finished ? {} : { onStop: noop })}
+        {...(finished || stopping ? {} : { onStop: noop })}
+        {...(stopping ? { stopping: true } : {})}
         now={NOW}
       />
     </AgentMapDialog>
@@ -288,13 +294,27 @@ function agentMapBlocks(): ReactNode {
           <AgentMapTree root={AM.deep} background={[]} onOpen={noop} now={NOW} />
         </AgentMapDialog>
       </RefBlock>
-      <RefBlock id="agent-map-detail" width={792} height={632} pad>
+      {/* the page's own loading bars and error line, in the tree level's padded body */}
+      <RefBlock id="agent-map-loading" width={1132} height={200} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <SkeletonBars />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-failed" width={1132} height={140} pad>
+        <AgentMapDialog open inline onOpenChange={noop} level="tree">
+          <FormError message="智能体图加载失败。" />
+        </AgentMapDialog>
+      </RefBlock>
+      <RefBlock id="agent-map-detail" width={786} height={632} pad>
         <AgentMapDetailBlock />
       </RefBlock>
-      <RefBlock id="agent-map-finished" width={792} height={632} pad>
+      <RefBlock id="agent-map-finished" width={786} height={632} pad>
         <AgentMapDetailBlock finished />
       </RefBlock>
-      <RefBlock id="agent-map-transcript" width={1092} height={672} pad>
+      <RefBlock id="agent-map-stopping" width={786} height={632} pad>
+        <AgentMapDetailBlock stopping />
+      </RefBlock>
+      <RefBlock id="agent-map-transcript" width={786} height={672} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="transcript">
           <TranscriptFrame
             node={agentMapSelected}
@@ -386,12 +406,11 @@ function modelLabel(provider: string, id: string): string {
   );
 }
 
-function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
+function pickers(state: ComposerState, open?: "agent" | "model" | "effort" | "long") {
   const model = state === "no-effort" ? C.noEffortModel : C.selected;
   const agent: PickerProps = {
     label: K.agent,
     value: C.agent.name,
-    ...(state === "new" ? {} : { locked: { hint: K.agentLocked } }),
     groups: [
       { items: C.agents.map((a) => ({ id: a.id, label: a.name, checked: a.id === C.agent.id })) },
     ],
@@ -399,22 +418,39 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
     onPick: noop,
     referenceOpen: open === "agent",
   };
-  const modelPicker: PickerProps = {
+  const long = LONG_MODELS_FIXTURE;
+  const longPicker: PickerProps = {
     label: K.model,
-    value: modelLabel(model.provider, model.model),
-    groups: C.models.map((g, gi) => ({
+    value:
+      long.groups.flatMap((g) => g.models).find((m) => m.id === long.selected)?.label ??
+      long.selected,
+    groups: long.groups.map((g) => ({
       label: g.label,
-      items: g.models.map((m, mi) => ({
-        id: `${g.provider}/${m.id}`,
-        label: m.label,
-        ...(gi === 0 && mi === 0 ? { tag: "agent 默认" } : {}),
-        checked: g.provider === model.provider && m.id === model.model,
-      })),
+      items: g.models.map((m) => ({ id: m.id, label: m.label, checked: m.id === long.selected })),
     })),
     note: K.modelHint,
     onPick: noop,
-    referenceOpen: open === "model",
+    referenceOpen: true,
   };
+  const modelPicker: PickerProps =
+    open === "long"
+      ? longPicker
+      : {
+          label: K.model,
+          value: modelLabel(model.provider, model.model),
+          groups: C.models.map((g, gi) => ({
+            label: g.label,
+            items: g.models.map((m, mi) => ({
+              id: `${g.provider}/${m.id}`,
+              label: m.label,
+              ...(gi === 0 && mi === 0 ? { tag: "智能体默认" } : {}),
+              checked: g.provider === model.provider && m.id === model.model,
+            })),
+          })),
+          note: K.modelHint,
+          onPick: noop,
+          referenceOpen: open === "model",
+        };
   const efforts = C.models[0]?.models[0]?.efforts ?? [];
   const effort: PickerProps = {
     label: K.effort,
@@ -432,14 +468,17 @@ function pickers(state: ComposerState, open?: "agent" | "model" | "effort") {
     onPick: noop,
     referenceOpen: open === "effort",
   };
+  // the agent picker only in a new conversation: after the first message the title bar's path
+  // names the agent (issue U)
+  const agentPart = state === "new" ? { agent } : {};
   return state === "no-effort"
-    ? { agent, model: modelPicker }
-    : { agent, model: modelPicker, effort };
+    ? { ...agentPart, model: modelPicker }
+    : { ...agentPart, model: modelPicker, effort };
 }
 
 function composerProps(
   state: ComposerState,
-  open?: "agent" | "model" | "effort",
+  open?: "agent" | "model" | "effort" | "long",
 ): ComposerBoxProps {
   const value =
     state === "attachments"
@@ -453,7 +492,7 @@ function composerProps(
     onChange: noop,
     placeholder:
       state === "new" ? K.newPlaceholder.replace("研究助手", C.agent.name) : K.placeholder,
-    ...(state === "running" ? { hint: K.queueHint } : {}),
+    ...(state === "running" ? { hint: K.runningHint } : {}),
     ...(state === "attachments" && image && pdf
       ? {
           // The reference draws these chips without remove buttons; the product passes onRemove.
@@ -534,6 +573,107 @@ function commandPaletteBlocks(): ReactNode {
   );
 }
 
+/** The composer of a new conversation (no agent picker) holding the agent's quick actions. */
+function QuickActionsComposer({ open }: { open?: boolean }) {
+  const { agent: _agent, ...rest } = composerProps("new").pickers;
+  return (
+    <ComposerBox
+      {...composerProps("new")}
+      pickers={rest}
+      quickActions={
+        <QuickActions
+          items={NEW_CONVERSATION_FIXTURE.quickActions}
+          onPick={noop}
+          {...(open ? { referenceOpen: true } : {})}
+        />
+      }
+    />
+  );
+}
+
+/** The quick actions (§6.16.27): the zap button after the effort picker, and its menu above. */
+function quickActionsBlocks(): ReactNode {
+  return (
+    <>
+      <Block id="quick-actions-default">
+        <QuickActionsComposer />
+      </Block>
+      <Block
+        id="quick-actions-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="quick-actions"]' }}
+      >
+        <QuickActionsComposer />
+      </Block>
+      {/* room above the composer for the menu, as the picker menus are staged */}
+      <Block id="quick-actions-menu" offsetTop={220}>
+        <QuickActionsComposer open />
+      </Block>
+    </>
+  );
+}
+
+/** A conversation's composer with the agents chip after the effort picker (§6.16.29, AC3). */
+function AgentsChipComposer({
+  running,
+  waiting,
+  quick,
+}: {
+  running: number;
+  waiting: number;
+  /** The quick actions too (the narrow block's fullest control row). */
+  quick?: boolean;
+}) {
+  return (
+    <ComposerBox
+      {...composerProps("idle")}
+      {...(quick
+        ? {
+            quickActions: (
+              <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+            ),
+          }
+        : {})}
+      agents={
+        <AgentsChip
+          count={AGENTS_CHIP_FIXTURE.count}
+          running={running}
+          waiting={waiting}
+          onOpen={noop}
+        />
+      }
+    />
+  );
+}
+
+/** The agents chip (§6.16.29): settled, a sub-agent running, one waiting, and hover. */
+function agentsChipBlocks(): ReactNode {
+  const A = AGENTS_CHIP_FIXTURE;
+  return (
+    <>
+      <Block id="agents-chip-default">
+        <AgentsChipComposer running={0} waiting={0} />
+      </Block>
+      <Block id="agents-chip-running">
+        <AgentsChipComposer running={A.running} waiting={A.waiting} />
+      </Block>
+      <Block id="agents-chip-waiting">
+        <AgentsChipComposer running={0} waiting={A.waiting} />
+      </Block>
+      <Block
+        id="agents-chip-hover"
+        force={{ pseudo: ["hover"], selector: '[data-part="agents-chip"]' }}
+      >
+        <AgentsChipComposer running={0} waiting={0} />
+      </Block>
+      {/* Phones: measured in a 390 window; the chip is the dot and the count, the model label
+          gives way with an ellipsis, the send button stays inside (AC3 fix round 1). */}
+      <RefBlock id="agents-chip-narrow" width={390} pad>
+        <AgentsChipComposer running={A.running} waiting={A.waiting} quick />
+      </RefBlock>
+    </>
+  );
+}
+
 function pickerMenuBlocks(): ReactNode {
   return (
     <>
@@ -542,6 +682,10 @@ function pickerMenuBlocks(): ReactNode {
           <ComposerBox {...composerProps(m === "agent" ? "new" : "idle", m)} />
         </Block>
       ))}
+      {/* 100 models: the filter, the capped list scrolled to the checked one, the note kept */}
+      <Block id="picker-menu-long" offsetTop={380}>
+        <ComposerBox {...composerProps("idle", "long")} />
+      </Block>
     </>
   );
 }
@@ -943,7 +1087,15 @@ function rightPanelBlocks(): ReactNode {
 
 // ── Template ────────────────────────────────────────────────────────────────
 
-type TemplateState = "properties" | "file-panel" | "subagent-panel" | "new" | "sheet" | "loading";
+type TemplateState =
+  | "properties"
+  | "file-panel"
+  | "subagent-panel"
+  | "new"
+  | "sheet"
+  // the properties panel in the narrow sheet: its sections are heading and hairline groups
+  | "properties-sheet"
+  | "loading";
 
 function thread(kind: "main" | "file" | "subagent"): ReactNode {
   if (kind === "subagent")
@@ -993,7 +1145,11 @@ function thread(kind: "main" | "file" | "subagent"): ReactNode {
 
 function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }) {
   const [right, setRight] = useState<ConversationPageProps["right"]>(
-    state === "properties" ? "properties" : state === "new" ? "none" : "panel",
+    state === "properties" || state === "properties-sheet"
+      ? "properties"
+      : state === "new"
+        ? "none"
+        : "panel",
   );
   const [panel, setPanel] = useState<string>(state === "subagent-panel" ? "subagent" : "files");
   const isNew = state === "new";
@@ -1044,14 +1200,16 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
       commands={COMMANDS}
       status={{ context: "", version: X.version }}
       ownStatusBar
-      {...(state === "sheet" ? { reference: { rail: true } as const } : {})}
+      {...(state === "sheet" || state === "properties-sheet"
+        ? { reference: { rail: true } as const }
+        : {})}
     >
       <ConversationPage
         titleBar={titleBar}
         {...(isNew
           ? {
-              // The new conversation page (agent profile design §4): the greeting, the agents
-              // row and the selected agent's quick actions over the composer.
+              // The new conversation page (agent profile design §4): the greeting and the agents
+              // row over the composer, which holds the selected agent's quick actions.
               newConversation: {
                 greeting: <Greeting text={NEW_CONVERSATION_FIXTURE.greeting} still />,
                 agents: (
@@ -1061,9 +1219,6 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
                     recent={NEW_CONVERSATION_FIXTURE.recent}
                     onSelect={noop}
                   />
-                ),
-                quickActions: (
-                  <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
                 ),
               },
             }
@@ -1083,6 +1238,13 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
             <ComposerBox
               {...c}
               pickers={isNew ? pickers : c.pickers}
+              {...(isNew
+                ? {
+                    quickActions: (
+                      <QuickActions items={NEW_CONVERSATION_FIXTURE.quickActions} onPick={noop} />
+                    ),
+                  }
+                : {})}
               send={sendDisabled ? { ...c.send, disabled: true } : c.send}
             />
           );
@@ -1111,7 +1273,10 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         {...(live
           ? {}
           : {
-              layout: state === "sheet" ? ("sheet" as const) : ("inline" as const),
+              layout:
+                state === "sheet" || state === "properties-sheet"
+                  ? ("sheet" as const)
+                  : ("inline" as const),
               reference: true,
             })}
       />
@@ -1126,6 +1291,7 @@ function templateConversationBlocks(): ReactNode {
     "subagent-panel",
     "new",
     "sheet",
+    "properties-sheet",
     "loading",
   ];
   return (
@@ -1134,7 +1300,7 @@ function templateConversationBlocks(): ReactNode {
         <RefBlock
           key={s}
           id={`template-conversation-${s}`}
-          width={s === "sheet" ? 1100 : 1280}
+          width={s === "sheet" || s === "properties-sheet" ? 1100 : 1280}
           height={820}
         >
           <TemplateBlock state={s} />
@@ -1159,6 +1325,8 @@ export const CONVERSATION_PAGE_BLOCKS = {
   composer: composerBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
+  "quick-actions": quickActionsBlocks,
+  "agents-chip": agentsChipBlocks,
   "inline-card": inlineCardBlocks,
   "property-section": propertySectionBlocks,
   "background-task": backgroundTaskBlocks,

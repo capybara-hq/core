@@ -19,7 +19,7 @@ import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, orgSettingsFor } from "../helpers/identity.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 import { kernelDbFor } from "../helpers/tools.js";
 
 const MEM_CONNECTOR = fileURLToPath(
@@ -109,6 +109,7 @@ beforeEach(async () => {
 });
 
 async function installConnector(slug: string): Promise<string> {
+  await enableConnectorExtensions(k, orgId);
   const res = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/connectors`,
@@ -182,6 +183,7 @@ describe("ToolRegistry", () => {
         { kind: "connector" as const, connectorId, tools: "all" as const },
       ],
     };
+    await enablePlugin("mem-connector", false);
     const before = await registry.forAgent(orgId, def);
     expect(before.tools.map((t) => t.key)).toEqual([
       "AskUserQuestion",
@@ -361,7 +363,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       deployment: {
         sandboxEgress: { mode: "allowlist", allowHosts: baseCfg.sandbox.limits.allowHosts },
       },
-      // 组织级沙箱限额只读（C19）：没有企业管理员的覆盖时取部署默认
+      // 组织级沙箱限额只读（C19）：没有超级管理员的覆盖时取部署默认
       sandboxLimits: {
         cpu: baseCfg.sandbox.limits.cpu,
         memoryMb: baseCfg.sandbox.limits.memoryMb,

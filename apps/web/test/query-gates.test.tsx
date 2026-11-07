@@ -34,7 +34,7 @@ const kernelError = (status: number, code: string) =>
 
 const asRole = (role: string): Me => ({
   ...ME,
-  account: { ...ME.account, isEnterpriseAdmin: false },
+  account: { ...ME.account, isSuperAdmin: false },
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
 });
 
@@ -79,7 +79,7 @@ describe("useWorkspace", () => {
     const qc = seeded(ME, NOT_READY);
     const gated = renderHook(() => useWorkspace(), { wrapper: wrapper(qc) });
     expect(gated.result.current).toEqual({ kind: "pending" });
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
 
     router.replace.mockClear();
     const setup = renderHook(() => useWorkspace({ setup: "home" }), { wrapper: wrapper(qc) });
@@ -101,11 +101,11 @@ describe("useWorkspace", () => {
 });
 
 describe("useAdmin", () => {
-  it("only enterprise admins pass", () => {
+  it("only super admins pass", () => {
     const yes = renderHook(() => useAdmin(), { wrapper: wrapper(seeded(ME)) });
     expect(yes.result.current).toEqual({ kind: "ok", me: ME });
     const no = renderHook(() => useAdmin(), { wrapper: wrapper(seeded(asRole("owner"))) });
-    expect(no.result.current).toEqual({ kind: "noAccess", need: "enterprise" });
+    expect(no.result.current).toEqual({ kind: "noAccess", need: "superAdmin" });
   });
 });
 

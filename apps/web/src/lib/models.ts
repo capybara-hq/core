@@ -6,7 +6,7 @@ import { modelLabel } from "./extension-label";
 
 /**
  * 模型、价格与用途映射（内核 `admin/admin.controller.ts` 与 `models/purposes.controller.ts`）：
- * - 后台（企业管理员）：`GET /admin/models`（供应商带状态 + 价格表 + 币种）、`PUT /admin/model-prices`、
+ * - 后台（超级管理员）：`GET /admin/models`（供应商带状态 + 价格表 + 币种）、`PUT /admin/model-prices`、
  *   `GET/PUT /admin/model-purposes[/:purpose]`（部署默认）；
  * - 组织（组织管理员，`org.models.manage`）：`GET/PUT /orgs/:orgId/model-purposes[/:purpose]`（组织覆盖）。
  * 价格为每百万 token 的单价，币种为部署设置 `priceCurrency`；成本按价格估算（C2）。

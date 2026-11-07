@@ -9,6 +9,7 @@ export type LinkComponent = ComponentType<{
   children: ReactNode;
   "aria-current"?: "page" | undefined;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   title?: string;
   target?: string;
   rel?: string;

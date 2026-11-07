@@ -1,8 +1,9 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
-import { type Agent, setupReady } from "../agents";
+import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { ChannelConnection } from "../channels";
-import { type ConnectorSummary, personalConnectors } from "../connectors";
+import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
+import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation, ConversationEvent } from "../conversations";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
@@ -14,6 +15,7 @@ import { identitiesQuery, toolGrantsQuery } from "./account";
 import {
   adminAccountsQuery,
   adminExtensionsQuery,
+  adminInboxQuery,
   adminModelsQuery,
   adminOrgsQuery,
   adminOverviewQuery,
@@ -25,14 +27,26 @@ import {
   extensionConfigQuery,
   marketplaceEntriesQuery,
   marketplacesQuery,
+  pendingPluginsQuery,
   stagedImportQuery,
 } from "./admin";
-import { agentConnectorQueries, agentFormQueries, agentQuery, agentsQuery } from "./agents";
+import {
+  agentConnectorQueries,
+  agentFormQueries,
+  agentQuery,
+  agentsQuery,
+  agentTemplateQuery,
+  agentTemplatesQuery,
+  availableExtensionPointsQuery,
+  extensionToolsQuery,
+} from "./agents";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
-import { orgCatalogItemQuery, orgCatalogQuery } from "./catalog";
+import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
+import { adminComponentsQuery, componentVersionsQuery, orgComponentsQuery } from "./components";
 import {
   attachmentLimitsQuery,
+  connectorKindsQuery,
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
@@ -52,9 +66,9 @@ import {
   evalSetQuery,
   evalSetsQuery,
 } from "./evals";
+import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
-import { overviewQueries } from "./overview";
 import {
   extensionPointDefaultsQuery,
   invitationsQuery,
@@ -111,29 +125,17 @@ const q = <T>(o: UseQueryOptions<T, ApiClientError>) =>
 const atLeast = (me: Me | null, min: OrgRole): boolean =>
   me !== null && roleAtLeast(myRole(me), min);
 
-/** Whether the session is an enterprise admin's (the admin console reads nothing for anyone else). */
-const enterprise = (me: Me | null): boolean => me?.account.isEnterpriseAdmin === true;
+/** Whether the session is a super admin's (the admin console reads nothing for anyone else). */
+const superAdmin = (me: Me | null): boolean => me?.account.isSuperAdmin === true;
+
+/** The admin 插件 head's counts: the plugins waiting for a confirmation and the pending requests. */
+const pluginsHead = () => [q(pendingPluginsQuery()), q(deploymentRequestsQuery())];
 
 /**
  * Every `page.tsx` under `app/(app)` and `app/(auth)`, one entry each (a test walks the app dir).
  * Patterns are string literals: the query checks read them statically.
  */
 export const ROUTES: readonly RouteEntry[] = [
-  {
-    pattern: "/",
-    // The overview, once the org is ready (until then the frame draws the setup home here and the
-    // page reads nothing): readiness is the shell's read, so this waits for it.
-    queries: () => [],
-    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ orgId }, qc) => {
-      if (orgId === null) return;
-      const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
-      if (!setupReady(readiness)) return;
-      await Promise.all(
-        overviewQueries(orgId).map((o) => qc.prefetchQuery({ ...o, retry: false })),
-      );
-    },
-  },
   {
     pattern: "/account/connections",
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
@@ -164,89 +166,194 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin",
-    // Enterprise admins (no org needed): the four numbers.
-    queries: ({ me }) => (enterprise(me) ? [q(adminOverviewQuery())] : []),
+    // Super admins (no org needed): the four numbers.
+    queries: ({ me }) => (superAdmin(me) ? [q(adminOverviewQuery())] : []),
   },
   {
     pattern: "/admin/accounts",
-    queries: ({ me }) => (enterprise(me) ? [q(adminAccountsQuery())] : []),
-  },
-  {
-    pattern: "/admin/catalog",
-    // The items and the marketplaces that name their sources (a section).
-    queries: ({ me }) => (enterprise(me) ? [q(catalogItemsQuery()), q(marketplacesQuery())] : []),
-  },
-  {
-    pattern: "/admin/catalog/[itemId]",
-    // The item, and the marketplaces and the catalog its dependencies are looked up in (sections).
-    queries: ({ me, params }) =>
-      enterprise(me) && params.itemId !== undefined
-        ? [q(catalogItemQuery(params.itemId)), q(marketplacesQuery()), q(catalogItemsQuery())]
-        : [],
-  },
-  {
-    pattern: "/admin/catalog/import",
-    // `?staging=<id>`: the staged import's review (no staging: the source step reads nothing).
-    queries: ({ me, search }) => {
-      const staging = search.get("staging") ?? "";
-      return enterprise(me) && staging !== "" ? [q(stagedImportQuery(staging))] : [];
-    },
-  },
-  {
-    pattern: "/admin/catalog/requests",
-    queries: ({ me }) => (enterprise(me) ? [q(deploymentRequestsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminAccountsQuery())] : []),
   },
   {
     pattern: "/admin/extensions",
-    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminExtensionsQuery())] : []),
   },
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab).
     queries: ({ me, params }) =>
-      enterprise(me) && params.name !== undefined
+      superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
   },
   {
-    pattern: "/admin/extensions/install",
-    // The installed extensions (a name clash or an upgrade); `?upgrade=` needs no read.
-    queries: ({ me }) => (enterprise(me) ? [q(adminExtensionsQuery())] : []),
-  },
-  {
-    pattern: "/admin/marketplaces",
-    queries: ({ me }) => (enterprise(me) ? [q(marketplacesQuery())] : []),
-  },
-  {
-    pattern: "/admin/marketplaces/entries",
-    // The entries of the address's source and search, and the marketplaces (a section: the tabs).
-    queries: ({ me, search }) =>
-      enterprise(me)
-        ? [
-            q(
-              marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
-            ),
-            q(marketplacesQuery()),
-          ]
-        : [],
+    pattern: "/admin/inbox",
+    // Super admins (no org needed): what waits on the platform.
+    queries: ({ me }) => (superAdmin(me) ? [q(adminInboxQuery())] : []),
   },
   {
     pattern: "/admin/models",
-    queries: ({ me }) => (enterprise(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
   },
   {
     pattern: "/admin/orgs",
     // The orgs and the deployment settings (their overrides).
     queries: ({ me }) =>
-      enterprise(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
+      superAdmin(me) ? [q(adminOrgsQuery()), q(deploymentSettingsQuery())] : [],
+  },
+  {
+    pattern: "/admin/skills",
+    // The platform skills and the orgs that name their named scopes (a section).
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("skill")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/skills/[id]",
+    // The skills (the component is one of them), its versions and the orgs (its scope, the dialog).
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("skill")),
+            q(componentVersionsQuery("skill", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/connector-templates",
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("connector_template")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/connector-templates/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("connector_template")),
+            q(componentVersionsQuery("connector_template", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/agent-templates",
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(adminComponentsQuery("agent_template")), q(adminOrgsQuery())] : [],
+  },
+  {
+    pattern: "/admin/agent-templates/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("agent_template")),
+            q(componentVersionsQuery("agent_template", params.id)),
+            q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins",
+    // The items, the head's counts (pending plugins, requests), and the marketplaces and orgs
+    // that name the rows' sources and named scopes (sections).
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [q(catalogItemsQuery()), ...pluginsHead(), q(marketplacesQuery()), q(adminOrgsQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/[itemId]",
+    // The item, the marketplaces (its source), the catalog (its dependencies, the head's count),
+    // the orgs (its named scope, the scope dialog) and the platform components (the components
+    // table's scope column and links).
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.itemId !== undefined
+        ? [
+            q(catalogItemQuery(params.itemId)),
+            q(marketplacesQuery()),
+            q(catalogItemsQuery()),
+            q(adminOrgsQuery()),
+            q(adminComponentsQuery("skill")),
+            q(adminComponentsQuery("connector_template")),
+            q(adminComponentsQuery("agent_template")),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/import",
+    // `?staging=<id>`: the staged import's review, the pending requests (a staging prepared for
+    // an org's request defaults to that org) and the orgs (the scope); no staging: the source
+    // step reads nothing.
+    queries: ({ me, search }) => {
+      const staging = search.get("staging") ?? "";
+      return superAdmin(me) && staging !== ""
+        ? [q(stagedImportQuery(staging)), q(deploymentRequestsQuery()), q(adminOrgsQuery())]
+        : [];
+    },
+  },
+  {
+    pattern: "/admin/plugins/market",
+    // The entries of the address's source and search, the marketplaces (the source tabs) and the
+    // head's counts.
+    queries: ({ me, search }) =>
+      superAdmin(me)
+        ? [
+            q(
+              marketplaceEntriesQuery(search.get("sourceId") ?? "", (search.get("q") ?? "").trim()),
+            ),
+            q(marketplacesQuery()),
+            q(catalogItemsQuery()),
+            ...pluginsHead(),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/plugins/pending",
+    // The plugins waiting for a confirmation and the requests (the page and the head's counts),
+    // the items (the head's count).
+    queries: ({ me }) => (superAdmin(me) ? [...pluginsHead(), q(catalogItemsQuery())] : []),
+  },
+  {
+    pattern: "/admin/plugins/sources",
+    queries: ({ me }) => (superAdmin(me) ? [q(marketplacesQuery())] : []),
   },
   {
     pattern: "/admin/settings",
-    queries: ({ me }) => (enterprise(me) ? [q(deploymentSettingsQuery())] : []),
+    queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
   },
   {
     pattern: "/agents",
-    queries: ({ orgId }) => (orgId === null ? [] : [q(agentsQuery(orgId))]),
+    // Both tabs paint at once (ruling P4-14; the head counts both): the agents, and for members up
+    // the members (the cards' owner names), the usable templates and the platform ones offered to
+    // the org (a section). Guests get the agents only (no tabs).
+    queries: ({ orgId, me }) =>
+      orgId === null
+        ? []
+        : [
+            q(agentsQuery(orgId)),
+            ...(atLeast(me, "member")
+              ? [
+                  q(membersQuery(orgId)),
+                  q(agentTemplatesQuery(orgId)),
+                  q(orgComponentsQuery(orgId, { kind: "agent_template" })),
+                ]
+              : []),
+          ],
+    // Org admins: the detail of each template that may be the org's own (its 编辑 / 可共享 /
+    // 删除 depend on `owned` and `shareable`), so the cards' menus paint complete
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, me }, qc) => {
+      if (orgId === null || !atLeast(me, "admin")) return;
+      const templates = qc.getQueryData<{ templates: AgentTemplateView[] }>(
+        agentTemplatesQuery(orgId).queryKey,
+      );
+      if (templates === undefined) return;
+      const offered = qc.getQueryData<{ components: OrgComponent[] }>(
+        orgComponentsQuery(orgId, { kind: "agent_template" }).queryKey,
+      );
+      const ids = usableRows(templates.templates, offered?.components)
+        .filter((r) => maybeOwnTemplate(r, orgId))
+        .flatMap((r) => (r.item !== undefined ? [r.item.id] : []));
+      await Promise.all(ids.map((id) => qc.prefetchQuery(agentTemplateQuery(orgId, id))));
+    },
   },
   {
     pattern: "/agents/[id]",
@@ -262,12 +369,16 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || id === undefined || me === null) return;
       const agent = qc.getQueryData<Agent>(agentQuery(orgId, id).queryKey);
       if (agent === undefined || !canEditAgent(me, agent)) return;
+      // the owner who may not configure connectors sees the setup request's state (ruling P4-7)
+      const asksAdmins =
+        (agent.definition.pendingConnectors ?? []).length > 0 && !canManageConnectors(me);
       await Promise.all(
         [
           ...agentFormQueries(orgId, id),
           ...agentConnectorQueries(orgId, agent),
           q(channelsQuery(orgId)),
           q(attachmentLimitsQuery(orgId)),
+          ...(asksAdmins ? [q(setupRequestQuery(orgId, id))] : []),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
@@ -281,30 +392,38 @@ export const ROUTES: readonly RouteEntry[] = [
         : [...agentFormQueries(orgId), q(attachmentLimitsQuery(orgId))],
   },
   {
+    pattern: "/agents/templates/[id]",
+    // Members up (guests get no access): the template (a 404 when the org cannot use it) and the
+    // components offered to the org (a platform template off here, the connector templates'
+    // names; a section).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.id === undefined || !atLeast(me, "member")
+        ? []
+        : [q(agentTemplateQuery(orgId, params.id)), q(orgComponentsQuery(orgId, {}))],
+    // An owner-org admin edits it: every section's reads (the models, the org skills, the
+    // enabled extensions' tools, which web tools the org can serve, the usable templates)
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId, params, me }, qc) => {
+      const id = params.id;
+      if (orgId === null || id === undefined || !atLeast(me, "admin")) return;
+      const t = qc.getQueryData<{ owned: boolean }>(agentTemplateQuery(orgId, id).queryKey);
+      if (t?.owned !== true) return;
+      await Promise.all(
+        [
+          q(modelsQuery(orgId)),
+          q(skillsQuery(orgId)),
+          q(extensionToolsQuery(orgId)),
+          q(availableExtensionPointsQuery(orgId)),
+          q(agentTemplatesQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
+      );
+    },
+  },
+  {
     pattern: "/bind/[token]",
     // The pending binding (signed out, the bind layout sends the visitor to sign-in first).
     queries: ({ params }) =>
       params.token === undefined ? [] : [q(pendingBindingQuery(params.token))],
-  },
-  {
-    pattern: "/catalog",
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(orgCatalogQuery(orgId))],
-  },
-  {
-    pattern: "/catalog/[itemId]",
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.itemId === undefined || !atLeast(me, "member")
-        ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId))],
-  },
-  {
-    pattern: "/catalog/[itemId]/install",
-    // Org admins: the item and the org's extensions (the wizard's extension step).
-    queries: ({ orgId, me, params }) =>
-      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
-        ? []
-        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
   },
   {
     pattern: "/channels",
@@ -401,12 +520,13 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/connectors/install",
-    // Org admins; `?template=<item id>` installs a catalog template: its item and the org's
-    // extensions (the wizard's extension step).
+    // Org admins: the connector kinds the wizard offers; `?template=<item id>` installs a catalog
+    // template instead: its item and the org's extensions (the wizard's extension step).
     queries: ({ orgId, me, search }) => {
       const itemId = search.get("template") ?? "";
-      return orgId === null || itemId === "" || !atLeast(me, "admin")
-        ? []
+      if (orgId === null || !atLeast(me, "admin")) return [];
+      return itemId === ""
+        ? [q(connectorKindsQuery(orgId))]
         : [q(orgCatalogItemQuery(orgId, itemId)), q(orgExtensionsQuery(orgId))];
     },
   },
@@ -487,6 +607,21 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
+    pattern: "/extensions",
+    // Members: the extensions' state; org admins also the default providers and the file
+    // previewers (sections).
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : !atLeast(me, "admin")
+          ? [q(orgExtensionsQuery(orgId))]
+          : [
+              q(orgExtensionsQuery(orgId)),
+              q(extensionPointDefaultsQuery(orgId)),
+              q(orgFilePreviewersQuery(orgId)),
+            ],
+  },
+  {
     pattern: "/inbox",
     queries: ({ orgId }) => (orgId === null ? [] : [q(inboxQuery(orgId))]),
     // The first item is selected at once: its skill change's detail when it is one.
@@ -527,16 +662,48 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
-    pattern: "/settings/extensions",
-    // Org admins: the extensions, the default providers and the file previewers (sections).
+    pattern: "/plugins",
+    // Members up; org admins also read the org's extensions (a row's 组织配置 and whether 启用
+    // asks for input) and the marketplace entries (the 市场 tab; a 404 when browsing is off).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "admin")
+      orgId === null || !atLeast(me, "member")
         ? []
         : [
-            q(orgExtensionsQuery(orgId)),
-            q(extensionPointDefaultsQuery(orgId)),
-            q(orgFilePreviewersQuery(orgId)),
+            q(orgCatalogQuery(orgId)),
+            ...(atLeast(me, "admin")
+              ? [q(orgExtensionsQuery(orgId)), q(orgMarketplaceEntriesQuery(orgId, "", ""))]
+              : []),
           ],
+  },
+  {
+    pattern: "/plugins/[itemId]",
+    // Members up; org admins also read the installs (the installed section) and the extensions.
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "member")
+        ? []
+        : [
+            q(orgCatalogItemQuery(orgId, params.itemId)),
+            q(orgComponentsQuery(orgId, { itemId: params.itemId })),
+            ...(atLeast(me, "admin")
+              ? [q(pluginInstallsQuery(orgId)), q(orgExtensionsQuery(orgId))]
+              : []),
+          ],
+  },
+  {
+    pattern: "/plugins/[itemId]/connectors",
+    // Org admins: the item (the templates that miss a connector).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId))],
+  },
+  {
+    pattern: "/plugins/[itemId]/enable",
+    // Org admins: the item and the org's extensions (the wizard's extension step).
+    queries: ({ orgId, me, params }) =>
+      orgId === null || params.itemId === undefined || !atLeast(me, "admin")
+        ? []
+        : [q(orgCatalogItemQuery(orgId, params.itemId)), q(orgExtensionsQuery(orgId))],
   },
   {
     pattern: "/settings/members",
@@ -559,11 +726,6 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
   },
   {
-    pattern: "/settings/plugins",
-    queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "admin") ? [] : [q(pluginInstallsQuery(orgId))],
-  },
-  {
     pattern: "/settings/sandbox",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
@@ -580,8 +742,11 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/skills",
+    // Members up: the library and the platform skills offered to the org (a section).
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(skillsQuery(orgId))],
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(skillsQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "skill" }))],
   },
   {
     pattern: "/skills/[id]",

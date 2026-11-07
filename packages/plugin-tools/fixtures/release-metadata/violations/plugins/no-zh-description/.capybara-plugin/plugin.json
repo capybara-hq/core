@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "no-zh-description",
+  "displayName": {
+    "zh": "无中文描述",
+    "en": "No zh description"
+  },
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Published with an English description only"
+}

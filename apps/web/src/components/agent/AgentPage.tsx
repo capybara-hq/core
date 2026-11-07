@@ -7,6 +7,7 @@ import { useRouter } from "../../i18n/navigation";
 import { type Agent, avatarValue } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
+import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
@@ -47,7 +48,8 @@ export function guardedHref(e: MouseEvent, a: Element): string | null {
 
 /**
  * The agent page (agent profile design §3): the head (avatar, name, description; 开始对话 for
- * everyone, 运行记录 and 重新指派负责人 for the owner and org admins), the section nav, and the open
+ * everyone, then a ⋯ menu with 运行记录 for the owner and org admins and 更改所有者 for org
+ * admins), the section nav, and the open
  * section. Leaving a section with unsaved edits through the nav asks to keep or discard them.
  */
 export function AgentPage({
@@ -70,6 +72,7 @@ export function AgentPage({
   const [dirty, setDirty] = useState(false);
   const [leaving, setLeaving] = useState<string | null>(null);
   const [reassigning, setReassigning] = useState(false);
+  const [savingAs, setSavingAs] = useState(false);
   const describedBy = useId();
 
   // While the section holds unsaved edits, any in-app link (section nav, sidebar, path, the head's
@@ -113,26 +116,29 @@ export function AgentPage({
     title: name,
     ...(description !== "" ? { description } : {}),
     avatar: <Avatar value={avatarValue(agent, orgId)} name={name} size={40} />,
+    // 开始对话 is the primary; 运行记录, 更改所有者 and 另存为模板 (agents.manage: org admins only) share the ⋯
+    // menu beside it (a lone one is a button: no menu of one)
     actions: [
-      ...(canViewRuns
-        ? [
-            {
-              label: t("agents.runHistory"),
-              variant: "default" as const,
-              href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
-            },
-          ]
-        : []),
-      // agents.manage: org admins only
-      ...(admin
-        ? [
-            {
-              label: t("agents.page.reassign"),
-              variant: "default" as const,
-              onSelect: () => setReassigning(true),
-            },
-          ]
-        : []),
+      {
+        label: t("common.moreActions"),
+        menu: [
+          ...(canViewRuns
+            ? [
+                {
+                  label: t("agents.runHistory"),
+                  href: `/trajectories?agentId=${encodeURIComponent(agent.id)}`,
+                },
+              ]
+            : []),
+          ...(admin
+            ? [
+                { label: t("agents.page.reassign"), onSelect: () => setReassigning(true) },
+                // 另存为模板 (agents.manage: org admins, ruling P4-9)
+                { label: t("agents.saveAs.action"), onSelect: () => setSavingAs(true) },
+              ]
+            : []),
+        ],
+      },
       {
         label: t("agents.page.startChat"),
         variant: "primary" as const,
@@ -192,6 +198,9 @@ export function AgentPage({
           needsReassignment={agent.needsReassignment === true}
           onClose={() => setReassigning(false)}
         />
+      ) : null}
+      {savingAs ? (
+        <SaveAsTemplateDialog orgId={orgId} agent={agent} onClose={() => setSavingAs(false)} />
       ) : null}
     </AgentPageContext.Provider>
   );

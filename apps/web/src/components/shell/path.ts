@@ -2,18 +2,23 @@
 
 import { useContext } from "react";
 import { usePathname } from "../../i18n/navigation";
+import { HOME_PATH } from "../../lib/routes";
 import { SessionContext } from "./session";
 
 /** One segment of the page head's path line (design `PageHeaderProps.path`). */
 export type PathSegment = { label: string; href?: string };
 
-/** Where a page lives: a workspace page (the org slug), the home page (`~`), or the admin console. */
+/**
+ * Where a page lives: a workspace page (the org slug), a personal page (`~`), or the admin
+ * console.
+ */
 export type PathScope = "org" | "home" | "admin";
 
 /**
  * The path of a page head (spec §2.4): the scope first, then the page and the object. `rest` are the
  * segments after the scope, route words (`agents`) or object names; segments with an `href` link.
- * The scope links to its root (`/` for an org, `/admin` for the admin console); `~` does not.
+ * The scope links to its root (home, the new conversation, for an org; `/admin` for the admin
+ * console); `~` does not.
  */
 export function buildPagePath(
   scope: PathScope,
@@ -25,7 +30,7 @@ export function buildPagePath(
       ? { label: "~" }
       : scope === "admin"
         ? { label: "/admin", href: "/admin" }
-        : { label: orgSlug ?? "~", href: "/" };
+        : { label: orgSlug ?? "~", href: HOME_PATH };
   return [first, ...rest];
 }
 
@@ -49,30 +54,33 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * which have no page, read as plain text.
  */
 export const APP_PAGES: readonly string[] = [
-  "/",
   "/account/connections",
   "/account/grants",
   "/account/identities",
   "/admin",
   "/admin/accounts",
-  "/admin/catalog",
-  "/admin/catalog/[itemId]",
-  "/admin/catalog/import",
-  "/admin/catalog/requests",
+  "/admin/agent-templates",
+  "/admin/agent-templates/[id]",
+  "/admin/connector-templates",
+  "/admin/connector-templates/[id]",
   "/admin/extensions",
   "/admin/extensions/[name]",
-  "/admin/extensions/install",
-  "/admin/marketplaces",
-  "/admin/marketplaces/entries",
+  "/admin/inbox",
   "/admin/models",
   "/admin/orgs",
+  "/admin/plugins",
+  "/admin/plugins/[itemId]",
+  "/admin/plugins/import",
+  "/admin/plugins/market",
+  "/admin/plugins/pending",
+  "/admin/plugins/sources",
   "/admin/settings",
+  "/admin/skills",
+  "/admin/skills/[id]",
   "/agents",
   "/agents/[id]",
   "/agents/new",
-  "/catalog",
-  "/catalog/[itemId]",
-  "/catalog/[itemId]/install",
+  "/agents/templates/[id]",
   "/channels",
   "/channels/[id]",
   "/channels/new",
@@ -87,13 +95,16 @@ export const APP_PAGES: readonly string[] = [
   "/evals/[setId]/run",
   "/evals/new",
   "/evals/runs/[runId]",
+  "/extensions",
   "/inbox",
   "/p/[plugin]/[id]",
-  "/settings/extensions",
+  "/plugins",
+  "/plugins/[itemId]",
+  "/plugins/[itemId]/connectors",
+  "/plugins/[itemId]/enable",
   "/settings/members",
   "/settings/models",
   "/settings/organization",
-  "/settings/plugins",
   "/settings/sandbox",
   "/settings/tokens",
   "/skills",

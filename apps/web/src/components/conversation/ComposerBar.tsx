@@ -20,12 +20,12 @@ import { useTranslations } from "next-intl";
 import {
   type ChangeEvent,
   type KeyboardEvent,
+  type ReactNode,
   type Ref,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { ApiClientError } from "../../lib/api";
 import { fileContentType } from "../../lib/attachments";
@@ -132,11 +132,6 @@ export const isUndoKey = (e: {
 /** The name a picked skill is invoked by: `<plugin>:<name>` for a plugin's skill. */
 const invokeName = (s: InvocableSkill) => (s.plugin ? `${s.plugin}:${s.name}` : s.name);
 
-const isMac = () =>
-  typeof navigator !== "undefined" &&
-  /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-const noSubscribe = () => () => {};
-
 /** Blob previews of the draft's images, revoked when the file leaves the draft or on unmount. */
 function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
   const urls = useRef(new Map<string, string>());
@@ -173,9 +168,9 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 /**
  * The composer (spec §5.2, §6.16.2): text, the attachment strip, the pickers and send / stop.
  *
- * Keys: ↵ sends when idle and queues while a run is going (conversation send spec §2.3); ⌘↵ /
- * Ctrl+↵ sends, interjecting while a run is going; Shift+↵ is a newline; nothing happens while an
- * IME is composing.
+ * Keys: ↵ and ⌘↵ / Ctrl+↵ send; while a run is going the message is an interjection the run takes
+ * in at its next step (run input spec 2026-11-07 D1, D2; there is no queue); Shift+↵ is a newline;
+ * nothing happens while an IME is composing.
  *
  * Carried over from the old composer: each draft keeps one `clientMessageId` until it is sent or
  * changed (the kernel dedupes retries); `/` in an empty composer lists the agent's skills, then
@@ -193,12 +188,14 @@ function useObjectUrls(files: DraftFile[]): ReadonlyMap<string, string> {
 export function ComposerBar({
   orgId,
   agentId,
+  skillsHref,
   conversationId,
   running,
   stop,
   onSend,
-  onQueue,
   pickers,
+  quickActions,
+  agents,
   placeholder,
   sendDisabled,
   initialDraft,
@@ -208,16 +205,24 @@ export function ComposerBar({
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
   agentId?: string | undefined;
+  /**
+   * The agent's skills section, for someone who can edit the agent: the `/` menu with nothing to
+   * invoke links it (spec §5 rule 11: an org skill must be selected on the agent). Undefined for
+   * someone who cannot edit it (the menu only explains).
+   */
+  skillsHref?: string | undefined;
   /** The conversation, once it exists and is the caller's (its trial drafts apply). */
   conversationId?: string | undefined;
-  /** A run is going (or waiting for a person): ↵ queues, ⌘↵ interjects, send becomes stop. */
+  /** A run is going (or waiting for a person): ↵ interjects, the hint says so, send becomes stop. */
   running: boolean;
   stop?: { onStop(): void; stopping: boolean };
   onSend(m: ComposerMessage): Promise<SendResult>;
-  /** Queue the message (↵ while running); absent before the conversation exists. */
-  onQueue?(m: ComposerMessage): Promise<SendResult>;
   /** The agent picker is absent on the new conversation page (its agents row picks). */
   pickers: { agent?: PickerProps; model: PickerProps; effort?: PickerProps };
+  /** The selected agent's quick actions (`QuickActions`), after the effort picker. */
+  quickActions?: ReactNode;
+  /** The agent map's entry (`AgentsChip`, AC3), after the quick actions; a conversation's only. */
+  agents?: ReactNode;
   placeholder: string;
   /** Nothing can be sent yet (a new conversation whose agent, or a thread, is still loading). */
   sendDisabled?: boolean;
@@ -232,7 +237,6 @@ export function ComposerBar({
   const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const mac = useSyncExternalStore(noSubscribe, isMac, () => true);
   const [text, setText] = useState(initialDraft?.text ?? "");
   const [attachments, setAttachments] = useState<DraftAttachment[]>(
     initialDraft?.attachments ?? [],
@@ -298,7 +302,7 @@ export function ComposerBar({
     (value === "" || value === "/") &&
     (files.length === 0 || attachments.length > 0);
 
-  async function submit(how: "send" | "queue") {
+  async function submit() {
     const sentText = text;
     const sentSkill = skill;
     const sentAttachments = attachments;
@@ -381,9 +385,8 @@ export function ComposerBar({
         },
       };
     };
-    const post = (m: ComposerMessage) => (how === "queue" && onQueue ? onQueue(m) : onSend(m));
     try {
-      let r = await post(message(args, invoke));
+      let r = await onSend(message(args, invoke));
       if (
         !r.ok &&
         typedInvoke &&
@@ -393,7 +396,7 @@ export function ComposerBar({
         // A typed `/name` from a stale list (the skill was deselected since it was read): an
         // unknown name is sent as text (spec §3.2), and the list is read again.
         void loadSkills(true);
-        r = await post(message(value, undefined));
+        r = await onSend(message(value, undefined));
       }
       if (r.ok) {
         draft.current = undefined;
@@ -420,9 +423,8 @@ export function ComposerBar({
     }
     if (e.key !== "Enter" || e.nativeEvent.isComposing || e.shiftKey) return;
     e.preventDefault();
-    // While a run is going ↵ queues for after the turn and ⌘↵ / Ctrl+↵ sends now (interjects).
-    const modified = e.metaKey || e.ctrlKey;
-    void submit(!modified && running && onQueue ? "queue" : "send");
+    // ↵ and ⌘↵ / Ctrl+↵ alike: while a run is going the message is an interjection (D1, D2).
+    void submit();
   }
 
   function openPalette(which: Exclude<Palette, null>, pos: number) {
@@ -615,7 +617,7 @@ export function ComposerBar({
     ),
   ];
 
-  const hint = running ? t(mac ? "queueHintMac" : "queueHint") : undefined;
+  const hint = running ? t("runningHint") : undefined;
   const textEl = useRef<HTMLTextAreaElement>(null);
   /**
    * The text a fill replaced, while the fill's text is unedited. A controlled textarea's value set
@@ -676,6 +678,8 @@ export function ComposerBar({
           }}
           attachDisabled={!drafts.limits.available}
           pickers={pickers}
+          {...(quickActions !== undefined ? { quickActions } : {})}
+          {...(agents !== undefined ? { agents } : {})}
           send={
             running && stop
               ? { mode: "stop", busy: stop.stopping, onClick: stop.onStop }
@@ -683,7 +687,7 @@ export function ComposerBar({
                   // Never busy: the message is pending in the thread, not in the composer.
                   mode: "send",
                   disabled: sendDisabled === true || drafts.blocking || empty(text.trim()),
-                  onClick: () => void submit("send"),
+                  onClick: () => void submit(),
                 }
           }
           textareaRef={textEl}
@@ -716,7 +720,14 @@ export function ComposerBar({
           }
         }}
         groups={groups}
-        {...(palette === "prompts" && groups.length === 0 ? { emptyText: t("noInvocable") } : {})}
+        {...(palette === "prompts" && groups.length === 0
+          ? skillsHref !== undefined
+            ? {
+                emptyText: t("noInvocable"),
+                emptyAction: { label: t("noInvocableAction"), href: skillsHref },
+              }
+            : { emptyText: t("noInvocableReadOnly") }
+          : {})}
       />
       <Dialog
         open={argsFor !== null}

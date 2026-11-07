@@ -14,9 +14,13 @@ import {
   AgentMapTree,
   type AgentToolCallRow,
   agentMapTokens,
+  Card,
+  CodeBlock,
   DesignProvider,
+  SkeletonBars,
   TranscriptFrame,
 } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(cleanup);
 
@@ -90,7 +94,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     ).toEqual(words);
   });
 
-  it('the header counts agents and running ones ("6 个智能体 · 2 个运行中")', () => {
+  it('the header counts the sub-agents and running ones, the root not counted ("5 个智能体 · 1 个运行中")', () => {
     // Three of the six run in the fixture; drop the review to match the mockup's count.
     const two: AgentMapNode = {
       ...root,
@@ -101,10 +105,15 @@ describe("AgentMapTree (§6.16.28)", () => {
       ),
     };
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />);
-    expect(screen.getByText("6 个智能体 · 2 个运行中 · 点击查看详情")).toBeTruthy();
+    expect(screen.getByText("5 个智能体 · 1 个运行中 · 点击查看详情")).toBeTruthy();
     cleanup();
     wrap(<AgentMapTree root={two} background={[]} onOpen={() => {}} now={NOW} />, "en");
-    expect(screen.getByText("6 agents · 2 running · Click a node for details")).toBeTruthy();
+    expect(screen.getByText("5 agents · 1 running · Click a node for details")).toBeTruthy();
+    cleanup();
+    // one sub-agent: the chip's singular
+    const one: AgentMapNode = { ...root, children: [{ ...(root.children[0] as AgentMapNode) }] };
+    wrap(<AgentMapTree root={one} background={[]} onOpen={() => {}} now={NOW} />, "en");
+    expect(screen.getByText("1 agent · 0 running · Click a node for details")).toBeTruthy();
   });
 
   it("background tasks render under the root column", () => {
@@ -207,8 +216,8 @@ describe("AgentMapDialog (§6.16.28)", () => {
     const dialog = screen.getByRole("dialog", { name: "智能体图" });
     expect(dialog.getAttribute("data-size")).toBe("1100");
     for (const [level, size] of [
-      ["detail", "760"],
-      ["transcript", "1060"],
+      ["detail", "chat"],
+      ["transcript", "chat"],
     ] as const) {
       rerender(
         <DesignProvider locale="zh">
@@ -230,6 +239,19 @@ describe("AgentMapDialog (§6.16.28)", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("the tree level pads what a page shows while it reads the tree (loading bars, an error)", () => {
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree">
+        <SkeletonBars />
+      </AgentMapDialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "智能体图" });
+    const content = dialog.querySelector('[data-part="agent-map-content"]') as HTMLElement;
+    expect(content.querySelector(".cb-skeleton-list")).not.toBeNull();
+    // the head stays outside the padded body
+    expect(content.querySelector('[data-part="agent-map-head"]')).toBeNull();
   });
 
   it("the inline frame and the portal frame draw the same head", () => {
@@ -322,10 +344,23 @@ describe("AgentMapDialog (§6.16.28)", () => {
       resolve(import.meta.dirname, "../src/styles/overlays.css"),
       "utf8",
     );
-    for (const w of [760, 1060, 1100]) {
-      expect(overlays).toContain(`.cb-dialog[data-size="${w}"]`);
-      expect(overlays).toContain(`width: min(${w}px, calc(100vw - 32px));`);
-    }
+    expect(overlays).toContain('.cb-dialog[data-size="1100"]');
+    expect(overlays).toContain("width: min(1100px, calc(100vw - 32px));");
+    // Levels 2 and 3: the conversation's column plus the body padding and the border (AC2).
+    expect(rule('.cb-amap-dialog[data-size="chat"]')).toContain(
+      "width: min(calc(var(--cb-layout-chat) + 2 * var(--cb-space-4) + 2px), calc(100vw - 32px));",
+    );
+  });
+
+  it("pads in the compact dialog rhythm: head space.2 space.4, body space.4, footer space.3 space.4 (AC6)", () => {
+    expect(rule(".cb-amap-dialog")).toMatch(/padding: 0;/);
+    expect(rule(".cb-amap-head")).toMatch(/padding: var\(--cb-space-2\) var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-content")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap")).not.toMatch(/padding/);
+    expect(rule(".cb-amap-detail")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-foot")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
+    // the transcript's thread fills the dialog: no layout gutter on either side
+    expect(rule(".cb-amap-transcript")).toMatch(/padding: var\(--cb-space-4\);/);
   });
 });
 
@@ -434,6 +469,22 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     expect(onStop).toHaveBeenCalled();
   });
 
+  it("stopping: Stop stays in the Button's loading state, disabled and busy, and cannot be pressed", async () => {
+    const onStop = vi.fn();
+    const { rerender } = wrap(detail({ onStop, stopping: true }));
+    const stop = screen.getByRole("button", { name: "停止" });
+    expect(stop.hasAttribute("disabled")).toBe(true);
+    expect(stop.getAttribute("aria-busy")).toBe("true");
+    expect(stop.getAttribute("data-state")).toBe("loading");
+    await userEvent.click(stop);
+    expect(onStop).not.toHaveBeenCalled();
+    // without onStop (the status already reads stopped elsewhere) a stop under way still shows
+    rerender(
+      <DesignProvider locale="zh">{detail({ stopping: true }, { stop: false })}</DesignProvider>,
+    );
+    expect(screen.getByRole("button", { name: "停止" }).getAttribute("aria-busy")).toBe("true");
+  });
+
   it("a finished agent has no stop button", () => {
     const done: AgentMapNode = { ...invoice, status: "completed" };
     wrap(detail({ node: done }, { stop: false }));
@@ -506,13 +557,12 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     </TranscriptFrame>
   );
 
-  it('shows the read-only line "子智能体只读 · 不能和它对话，请让 <parent> 转达" and no composer', async () => {
+  it("the status line holds the context use and Stop, no read-only copy, and no composer (AC1)", async () => {
     const onStop = vi.fn();
     wrap(frame({ onStop }));
     const status = document.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
-    expect(
-      within(status).getByText("子智能体只读 · 不能和它对话，请让 整理季度经营报告 转达"),
-    ).toBeTruthy();
+    expect(status.textContent).toBe("上下文 31%停止");
+    expect(status.textContent).not.toMatch(/只读|转达/);
     expect(within(status).getByText("上下文 31%")).toBeTruthy();
     await userEvent.click(within(status).getByRole("button", { name: "停止" }));
     expect(onStop).toHaveBeenCalled();
@@ -533,18 +583,27 @@ describe("TranscriptFrame (§6.16.28, level 3)", () => {
     );
     expect(screen.queryByRole("button", { name: "停止" })).toBeNull();
     expect(screen.queryByText(/上下文/)).toBeNull();
+    // nothing to show: no status line at all
+    expect(document.querySelector('[data-part="agent-transcript-status"]')).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));
     expect(onBack).toHaveBeenCalled();
   });
 
   it("speaks English", () => {
     wrap(frame(), "en");
-    expect(
-      screen.getByText(
-        "Read-only sub-agent · You can't talk to it; ask 整理季度经营报告 to pass it on",
-      ),
-    ).toBeTruthy();
+    expect(screen.queryByText(/Read-only|pass it on/)).toBeNull();
     expect(screen.getByText("Context 31%")).toBeTruthy();
+  });
+
+  it("stopping: the dense Stop stays in its loading state", async () => {
+    const onStop = vi.fn();
+    wrap(frame({ onStop, stopping: true }));
+    const status = document.querySelector('[data-part="agent-transcript-status"]') as HTMLElement;
+    const stop = within(status).getByRole("button", { name: "停止" });
+    expect(stop.getAttribute("aria-busy")).toBe("true");
+    expect(stop.getAttribute("data-density")).toBe("dense");
+    await userEvent.click(stop);
+    expect(onStop).not.toHaveBeenCalled();
   });
 
   it("the spawning agent is a link when onOpenParent is given", async () => {
@@ -758,5 +817,41 @@ describe("AgentCallBlock (§6.16.15)", () => {
     expect(screen.getByRole("button", { name: "View in agent map" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
     expect(document.querySelector('[data-part="tool-io-label"]')?.textContent).toBe("IN");
+  });
+});
+
+describe("the transcript is a pane (box-in-box review)", () => {
+  it("a CodeBlock in the transcript frame inside the dialog stays framed, and nothing nests", () => {
+    // mounted inside a Card: the box context reaches through the portal, the pane resets it
+    wrap(
+      <Card>
+        <AgentMapDialog open onOpenChange={() => {}} level="transcript">
+          <TranscriptFrame
+            node={invoice}
+            agentType={D.agentType}
+            spawnedBy={D.spawnedBy}
+            onBack={() => {}}
+            onClose={() => {}}
+          >
+            <CodeBlock language="bash" text="pnpm test" />
+          </TranscriptFrame>
+        </AgentMapDialog>
+      </Card>,
+    );
+    const code = document.querySelector('[data-part="code-block"]') as HTMLElement;
+    expect(code.closest(".cb-dialog")).not.toBeNull();
+    expect(code.getAttribute("data-framed")).toBe("true");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("levels 1 and 2 are a dialog box: a CodeBlock there draws its unboxed form", () => {
+    wrap(
+      <AgentMapDialog open onOpenChange={() => {}} level="tree">
+        <CodeBlock language="bash" text="pnpm test" />
+      </AgentMapDialog>,
+    );
+    const code = document.querySelector('[data-part="code-block"]') as HTMLElement;
+    expect(code.getAttribute("data-framed")).toBe("false");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 });

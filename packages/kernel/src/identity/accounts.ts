@@ -8,24 +8,24 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { audit } from "./audit.js";
-import { EnterpriseAdminLock, EnterpriseAdminLockModule } from "./enterprise-admin.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
+import { SuperAdminLock, SuperAdminLockModule } from "./super-admin.js";
 
 export interface Account {
   id: string;
   displayName: string;
   email: string | null;
   status: "active" | "disabled";
-  isEnterpriseAdmin: boolean;
+  isSuperAdmin: boolean;
   createdAt: Date;
 }
 
-/** 企业管理员可改的账号字段。 */
+/** 超级管理员可改的账号字段。 */
 export type AccountPatch = {
   displayName?: string;
   status?: "active" | "disabled";
-  isEnterpriseAdmin?: boolean;
+  isSuperAdmin?: boolean;
 };
 
 /** 构造 `Account` 所需的 accounts 列（供跨表查询 select 使用）。 */
@@ -34,13 +34,13 @@ export const ACCOUNT_COLUMNS = [
   "accounts.display_name",
   "accounts.email",
   "accounts.status",
-  "accounts.is_enterprise_admin",
+  "accounts.is_super_admin",
   "accounts.created_at",
 ] as const;
 
 type AccountRow = Pick<
   Selectable<AccountsTable>,
-  "id" | "display_name" | "email" | "status" | "is_enterprise_admin" | "created_at"
+  "id" | "display_name" | "email" | "status" | "is_super_admin" | "created_at"
 >;
 
 export function toAccount(r: AccountRow): Account {
@@ -49,7 +49,7 @@ export function toAccount(r: AccountRow): Account {
     displayName: r.display_name,
     email: r.email,
     status: r.status,
-    isEnterpriseAdmin: r.is_enterprise_admin,
+    isSuperAdmin: r.is_super_admin,
     createdAt: r.created_at,
   };
 }
@@ -65,7 +65,7 @@ export interface LocalAccountInput {
   password: string;
   displayName: string;
   email?: string;
-  enterpriseAdmin?: boolean;
+  superAdmin?: boolean;
 }
 
 interface PreparedLocal {
@@ -97,7 +97,7 @@ export class AccountsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(EnterpriseAdminLock) private readonly adminLock: EnterpriseAdminLock,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(SetupLock) private readonly setupLock: SetupLock,
   ) {}
 
@@ -117,8 +117,8 @@ export class AccountsService {
   }
 
   /**
-   * An enterprise admin creates a local account (optionally an enterprise admin): under the
-   * enterprise admin lock, re-checks that the actor is still an active enterprise admin (else
+   * A super admin creates a local account (optionally a super admin): under the
+   * super admin lock, re-checks that the actor is still an active super admin (else
    * `forbidden`), creates the account and audits `account.created`. The hash is computed before
    * the lock.
    */
@@ -143,51 +143,48 @@ export class AccountsService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "account.created",
       target: a.id,
-      detail: { enterpriseAdmin: a.isEnterpriseAdmin },
+      detail: { superAdmin: a.isSuperAdmin },
     });
     return a;
   }
 
   /**
-   * CLI: creates an enterprise admin without checking whether the deployment is set up; a taken
+   * CLI: creates a super admin without checking whether the deployment is set up; a taken
    * login → `account.login_taken`.
    */
-  async createEnterpriseAdmin(input: EnterpriseAdminInput): Promise<Account> {
-    return this.insertEnterpriseAdmin(input, await this.hashNewPassword(input.password));
+  async createSuperAdmin(input: SuperAdminInput): Promise<Account> {
+    return this.insertSuperAdmin(input, await this.hashNewPassword(input.password));
   }
 
   /**
-   * CLI `admin create --if-none`: creates an enterprise admin only when no active one exists. The
+   * CLI `admin create --if-none`: creates a super admin only when no active one exists. The
    * check and the insert run in one transaction under {@link SetupLock}, the lock the web setup
    * takes, so concurrent runs (and a concurrent web setup) create exactly one. Returns undefined
-   * when an active enterprise admin already exists; a taken login still throws
+   * when an active super admin already exists; a taken login still throws
    * `account.login_taken`.
    */
-  async createEnterpriseAdminIfNone(input: EnterpriseAdminInput): Promise<Account | undefined> {
-    return this.createEnterpriseAdminIfNoneIn(input, await this.hashNewPassword(input.password));
+  async createSuperAdminIfNone(input: SuperAdminInput): Promise<Account | undefined> {
+    return this.createSuperAdminIfNoneIn(input, await this.hashNewPassword(input.password));
   }
 
   @Transactional()
-  private async createEnterpriseAdminIfNoneIn(
-    input: EnterpriseAdminInput,
+  private async createSuperAdminIfNoneIn(
+    input: SuperAdminInput,
     passwordHash: string,
   ): Promise<Account | undefined> {
     await this.setupLock.lock();
-    if ((await this.countEnterpriseAdmins()) > 0) return undefined;
-    return this.insertEnterpriseAdmin(input, passwordHash);
+    if ((await this.countSuperAdmins()) > 0) return undefined;
+    return this.insertSuperAdmin(input, passwordHash);
   }
 
   @Transactional()
-  private async insertEnterpriseAdmin(
-    input: EnterpriseAdminInput,
-    passwordHash: string,
-  ): Promise<Account> {
+  private async insertSuperAdmin(input: SuperAdminInput, passwordHash: string): Promise<Account> {
     const account = await this.createLocal(
       {
         login: input.login,
         password: input.password,
         displayName: input.displayName,
-        enterpriseAdmin: true,
+        superAdmin: true,
         ...(input.email !== undefined && { email: input.email }),
       },
       passwordHash,
@@ -195,7 +192,7 @@ export class AccountsService {
     await audit(this.db.db, {
       action: "account.created",
       target: account.id,
-      detail: { enterpriseAdmin: true, via: "cli" },
+      detail: { superAdmin: true, via: "cli" },
     });
     return account;
   }
@@ -221,7 +218,7 @@ export class AccountsService {
         "accounts.email",
         "accounts.email_verified",
         "accounts.status",
-        "accounts.is_enterprise_admin",
+        "accounts.is_super_admin",
         "accounts.created_at",
         "accounts.updated_at",
         "local_passwords.password_hash",
@@ -322,7 +319,7 @@ export class AccountsService {
   }
 
   /**
-   * An enterprise admin changes an account. Disabling (`status: "disabled"`) revokes the
+   * A super admin changes an account. Disabling (`status: "disabled"`) revokes the
    * account's sessions (`sessions.revoked_at`) and personal tokens in **the same PG transaction**,
    * all or nothing; returns the revoked session ids, whose Redis markers the caller writes after
    * the commit (the fast path; a failure is only a warning: auth reads PG).
@@ -334,7 +331,7 @@ export class AccountsService {
     actorAccountId: string,
     actorTokenId?: string,
   ): Promise<{ account: Account; revokedSessionIds: string[] }> {
-    // Every enterprise admin write is serialized by one lock and re-checks the actor under it: two
+    // Every super admin write is serialized by one lock and re-checks the actor under it: two
     // admins revoking each other concurrently cannot leave none, and a just-revoked admin's
     // request in flight fails
     await this.adminLock.lockAndAuthorize(actorAccountId);
@@ -352,16 +349,16 @@ export class AccountsService {
   }
 
   /**
-   * The CLI's `capybara admin grant|revoke <login>` (no actor account): changes the enterprise
-   * admin flag by local login under the enterprise admin lock; revoking keeps the
-   * {@link updateAccount} "last active enterprise admin" check (`account.last_enterprise_admin`),
+   * The CLI's `capybara admin grant|revoke <login>` (no actor account): changes the super
+   * admin flag by local login under the super admin lock; revoking keeps the
+   * {@link updateAccount} "last active super admin" check (`account.last_super_admin`),
    * decided under the lock, so it cannot race a web revoke into none. Audit `account.updated`
    * without an actor, `detail.via = "cli"`. Already in the target state → no change and no audit
    * (`changed: false`). Unknown login → `account.not_found`.
    */
-  async setEnterpriseAdminByLogin(
+  async setSuperAdminByLogin(
     login: string,
-    isEnterpriseAdmin: boolean,
+    isSuperAdmin: boolean,
   ): Promise<{ account: Account; changed: boolean }> {
     let external: string;
     try {
@@ -369,13 +366,13 @@ export class AccountsService {
     } catch {
       throw new ApiError("account.not_found", "Account not found");
     }
-    return this.setEnterpriseAdminIn(external, isEnterpriseAdmin);
+    return this.setSuperAdminIn(external, isSuperAdmin);
   }
 
   @Transactional()
-  private async setEnterpriseAdminIn(
+  private async setSuperAdminIn(
     external: string,
-    isEnterpriseAdmin: boolean,
+    isSuperAdmin: boolean,
   ): Promise<{ account: Account; changed: boolean }> {
     await this.adminLock.lock();
     const before = await this.db
@@ -386,10 +383,10 @@ export class AccountsService {
       .where("identities.external_id", "=", external)
       .executeTakeFirst();
     if (!before) throw new ApiError("account.not_found", "Account not found");
-    if (before.is_enterprise_admin === isEnterpriseAdmin) {
+    if (before.is_super_admin === isSuperAdmin) {
       return { account: toAccount(before), changed: false };
     }
-    const patch = { isEnterpriseAdmin };
+    const patch = { isSuperAdmin };
     const { account } = await this.applyUpdate(before, patch, {
       detail: { ...patch, via: "cli" },
     });
@@ -405,12 +402,12 @@ export class AccountsService {
     return Number(r.n);
   }
 
-  /** Active (status = active) enterprise admins, in the context's transaction when there is one. */
-  async countEnterpriseAdmins(): Promise<number> {
+  /** Active (status = active) super admins, in the context's transaction when there is one. */
+  async countSuperAdmins(): Promise<number> {
     const r = await this.db
       .selectFrom("accounts")
       .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("is_enterprise_admin", "=", true)
+      .where("is_super_admin", "=", true)
       .where("status", "=", "active")
       .executeTakeFirstOrThrow();
     return Number(r.n);
@@ -427,7 +424,7 @@ export class AccountsService {
         id,
         display_name: input.displayName,
         email: input.email ?? null,
-        is_enterprise_admin: input.enterpriseAdmin ?? false,
+        is_super_admin: input.superAdmin ?? false,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -476,8 +473,8 @@ export class AccountsService {
   }
 
   /**
-   * Changes the account under the enterprise admin lock the caller holds: updates the row,
-   * re-checks "the last active enterprise admin", audits `account.updated`; disabling revokes the
+   * Changes the account under the super admin lock the caller holds: updates the row,
+   * re-checks "the last active super admin", audits `account.updated`; disabling revokes the
    * account's sessions and personal tokens.
    */
   @Transactional({ propagation: "mandatory" })
@@ -490,20 +487,17 @@ export class AccountsService {
     const values: Updateable<AccountsTable> = { updated_at: new Date() };
     if (patch.displayName !== undefined) values.display_name = patch.displayName;
     if (patch.status !== undefined) values.status = patch.status;
-    if (patch.isEnterpriseAdmin !== undefined) values.is_enterprise_admin = patch.isEnterpriseAdmin;
+    if (patch.isSuperAdmin !== undefined) values.is_super_admin = patch.isSuperAdmin;
     const row = await this.db
       .updateTable("accounts")
       .set(values)
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirstOrThrow();
-    const wasActiveAdmin = before.is_enterprise_admin && before.status === "active";
-    const isActiveAdmin = row.is_enterprise_admin && row.status === "active";
-    if (wasActiveAdmin && !isActiveAdmin && (await this.countEnterpriseAdmins()) === 0) {
-      throw new ApiError(
-        "account.last_enterprise_admin",
-        "Cannot remove the last active enterprise admin",
-      );
+    const wasActiveAdmin = before.is_super_admin && before.status === "active";
+    const isActiveAdmin = row.is_super_admin && row.status === "active";
+    if (wasActiveAdmin && !isActiveAdmin && (await this.countSuperAdmins()) === 0) {
+      throw new ApiError("account.last_super_admin", "Cannot remove the last active super admin");
     }
     await audit(this.db.db, {
       ...(auditAs.actorAccountId !== undefined && { actorAccountId: auditAs.actorAccountId }),
@@ -536,8 +530,8 @@ export class AccountsService {
   }
 }
 
-/** Input of the CLI enterprise admin creation. */
-export interface EnterpriseAdminInput {
+/** Input of the CLI super admin creation. */
+export interface SuperAdminInput {
   login: string;
   password: string;
   displayName: string;
@@ -550,7 +544,7 @@ export interface EnterpriseAdminInput {
  * `createLocalAccount` import it alone.
  */
 @Module({
-  imports: [SetupLockModule, EnterpriseAdminLockModule],
+  imports: [SetupLockModule, SuperAdminLockModule],
   providers: [AccountsService],
   exports: [AccountsService],
 })

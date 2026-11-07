@@ -10,7 +10,8 @@ import {
   assertPluginSourcesInstallable,
   disabledPluginItems,
   pluginItemDisabled,
-} from "../catalog/requests.service.js";
+} from "../catalog/request-rules.js";
+import { type PluginScope, visibleTo } from "../catalog/scope.js";
 import { changedPaths, configFields, getPath, secretValues } from "../config/fields.js";
 import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -31,6 +32,7 @@ import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import type { PermissionSet } from "./permission-set.js";
 import { type PermissionGroup, permissionGroups } from "./permission-view.js";
+import { type ExtensionPluginItem, itemLocked, pluginItemsOf } from "./plugin-items.js";
 
 export { type ConfigIssue, toIssues };
 
@@ -63,6 +65,10 @@ export interface OrgExtensionView {
    * disabled here (`extension.required`); its org config, when it has one, can still be set.
    */
   required: boolean;
+  /** The catalog plugin the extension ships in and its scope (builtin counts as `all`); null without one. */
+  catalogItem: { itemId: string; scope: PluginScope } | null;
+  /** The org admin can switch it (the plugin's switch): never for an `all` / builtin plugin. */
+  switchable: boolean;
 }
 
 /** `put` 的输入：`config` 中的密钥字段缺省 = 保留原值、`null` = 清除、其他值 = 新值。 */
@@ -76,7 +82,7 @@ export interface OrgExtensionInput {
 /** `put` 的内部选项（不来自 HTTP）。 */
 export interface OrgExtensionPutOptions {
   /**
-   * Enable through this enterprise catalog item (the extension's own item, or an app item: plugins
+   * Enable through this platform catalog item (the extension's own item, or an app item: plugins
    * in an app follow the app item's policy, C22). When omitted, judged by every source item in
    * `extension_catalog_sources` (the strictest wins); an extension not installed through the catalog
    * is not bound by catalog policy.
@@ -95,9 +101,33 @@ export interface OrgExtensionPutOptions {
    * transaction) reads `skipped` after `put` returns: no concurrent uninstall fits in between.
    */
   ifDisabled?: { skipped: boolean };
+  /**
+   * Check the role and the config (the given `config`, or with `enabled: true` the stored one,
+   * merged with the stored secrets, against the schema) and write nothing: lets a caller that must
+   * do another write first fail without a side effect. The rules for newly enabling (catalog policy,
+   * dependencies) are left to that write: the plugin install that enables it checks them.
+   */
+  validateOnly?: boolean;
 }
 
 type Obj = Record<string, unknown>;
+
+/**
+ * The scope part of an org view: the extension's primary plugin and whether the org can switch it.
+ * With several source items, one that is `all` or builtin locks the extension on (scope `all`).
+ */
+function scopeFields(
+  items: readonly ExtensionPluginItem[] | undefined,
+  required: boolean,
+): Pick<OrgExtensionView, "catalogItem" | "switchable"> {
+  const primary = items?.[0];
+  if (!primary) return { catalogItem: null, switchable: !required };
+  const locked = required || items.some(itemLocked);
+  return {
+    catalogItem: { itemId: primary.id, scope: locked ? "all" : primary.scope },
+    switchable: !locked,
+  };
+}
 
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -209,17 +239,42 @@ export class OrgExtensionConfigs {
     // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
     const required = await requiredExtensions(t);
     const loaded = this.host.manifests();
-    const views = loaded.map((m) =>
-      this.view(
-        m,
-        rows.find((r) => r.plugin === m.name),
-        setKeys,
-        required.has(m.name),
-      ),
+    const items = await pluginItemsOf(t, [
+      ...loaded.map((m) => m.name),
+      ...installed.map((i) => i.name),
+    ]);
+    // An extension whose plugin the org is not offered (a `named` plugin without it) is absent
+    const listed = new Set(
+      (
+        await t
+          .selectFrom("catalog_item_scope_orgs")
+          .select("item_id")
+          .where("org_id", "=", orgId)
+          .execute()
+      ).map((r) => r.item_id),
     );
+    const seen = (name: string) => {
+      const of = items.get(name);
+      if (!of) return true;
+      return (
+        required.has(name) ||
+        of.some((i) => visibleTo({ scope: i.builtin ? "all" : i.scope }, listed.has(i.id)))
+      );
+    };
+    const views = loaded
+      .filter((m) => seen(m.name))
+      .map((m) =>
+        this.view(
+          m,
+          rows.find((r) => r.plugin === m.name),
+          setKeys,
+          required.has(m.name),
+          items.get(m.name),
+        ),
+      );
     const names = new Set(loaded.map((m) => m.name));
     const unavailable = installed
-      .filter((i) => !names.has(i.name))
+      .filter((i) => !names.has(i.name) && seen(i.name))
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(
         (i): OrgExtensionView => ({
@@ -234,9 +289,30 @@ export class OrgExtensionConfigs {
           orgConfigSchema: null,
           available: false,
           required: required.has(i.name),
+          ...scopeFields(items.get(i.name), required.has(i.name)),
         }),
       );
     return [...views, ...unavailable];
+  }
+
+  /**
+   * How an `enabled` write of this extension is handled: `direct` through {@link put} (a required
+   * bootstrap plugin keeps `extension.required`; an extension without a live item is config-declared;
+   * several live items keep the direct write, the strictest source rules applying), `locked` (a live
+   * item is `all` or builtin and the write switches off: `plugin.scope_locked`), or `item` (the single
+   * plugin whose org switch it is).
+   */
+  async switchPlan(
+    plugin: string,
+    enabled: boolean,
+  ): Promise<{ kind: "direct" } | { kind: "locked" } | { kind: "item"; itemId: string }> {
+    const t = this.db;
+    if ((await requiredExtensions(t)).has(plugin)) return { kind: "direct" };
+    const items = (await pluginItemsOf(t, [plugin])).get(plugin);
+    if (!items) return { kind: "direct" };
+    if (!enabled && items.some(itemLocked)) return { kind: "locked" };
+    const [only] = items;
+    return items.length === 1 && only ? { kind: "item", itemId: only.id } : { kind: "direct" };
   }
 
   /**
@@ -254,7 +330,8 @@ export class OrgExtensionConfigs {
     orgId: string,
     plugin: string,
     input: OrgExtensionInput,
-    actorAccountId: string,
+    /** null: the kernel itself (the plugin scope sync installing a plugin), no role check. */
+    actorAccountId: string | null,
     actorTokenId?: string,
     opts: OrgExtensionPutOptions = {},
   ): Promise<OrgExtensionView> {
@@ -275,14 +352,14 @@ export class OrgExtensionConfigs {
     plugin: string,
     manifest: ExtensionManifest,
     input: OrgExtensionInput,
-    actorAccountId: string,
+    actorAccountId: string | null,
     actorTokenId: string | undefined,
     opts: OrgExtensionPutOptions,
   ): Promise<OrgExtensionView> {
     const schema = manifest.config?.org;
     let seen: { schema: z.ZodTypeAny; config: unknown } | undefined;
     const t = this.db;
-    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.extensions.manage");
+    await this.orgLock.lockFor(orgId, actorAccountId, "org.extensions.manage");
     const row = await t
       .selectFrom("extension_org_configs")
       .select(["enabled", "config"])
@@ -290,26 +367,17 @@ export class OrgExtensionConfigs {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const required = (await requiredExtensions(t)).has(plugin);
+    const item = (await pluginItemsOf(t, [plugin])).get(plugin);
     if (required && input.enabled === false) throw requiredError(plugin);
     if (opts.ifDisabled && (row?.enabled === true || required)) {
       opts.ifDisabled.skipped = true;
-      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required);
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
     }
     // A required plugin is enabled whatever the row said (it may predate `required`)
     const enabled = required || (input.enabled ?? row?.enabled ?? false);
-    // 新启用来自企业目录的插件：按条目策略与授予复核（C22；已启用的不受影响）
-    if (input.enabled === true && row?.enabled !== true && !required) {
-      // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
-      const killed = await disabledPluginItems(t, [plugin]);
-      if (killed.length > 0) throw pluginItemDisabled(killed);
-      // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
-      if (opts.viaItem !== undefined) {
-        await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
-      } else await assertPluginSourcesInstallable(t, orgId, plugin);
-    }
-    if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
-    else if (input.enabled === false && !input.force) {
-      await this.assertNoEnabledDependents(t, orgId, manifest);
+    // validateOnly: the rules for (newly) enabling and disabling belong to the write that follows
+    if (!opts.validateOnly) {
+      await this.assertSwitchRules(t, orgId, manifest, input, row, required, opts);
     }
     let plain: Obj | null = row?.config ?? null;
     let changed: string[] = [];
@@ -347,7 +415,7 @@ export class OrgExtensionConfigs {
         next = r.data as Obj;
       }
       seen = { schema, config: next };
-      if (input.config !== undefined) {
+      if (!opts.validateOnly && input.config !== undefined) {
         changed = changedPaths(schema, before, next);
         plain = structuredClone(next);
         for (const p of paths) {
@@ -357,6 +425,10 @@ export class OrgExtensionConfigs {
           else await secrets.set(orgId, secretKey(plugin, p), JSON.stringify(v));
         }
       }
+    }
+    // Also without an org config schema: nothing is written
+    if (opts.validateOnly) {
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
     }
     // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
     const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
@@ -402,7 +474,7 @@ export class OrgExtensionConfigs {
       .where("plugin", "=", plugin)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required);
+    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required, item);
     // Only once the root transaction committed (an outer caller's too): a rolled-back write
     // registers no secrets and disconnects nothing
     afterCommit(async () => {
@@ -410,6 +482,36 @@ export class OrgExtensionConfigs {
       await this.afterPut(orgId, plugin, view.enabled);
     });
     return view;
+  }
+
+  /**
+   * The rules of a write that switches: newly enabling an extension from the platform catalog
+   * re-checks the item policy and grants (C22; one already enabled is unaffected), enabling needs
+   * the dependencies enabled, disabling (without `force`) no enabled dependents.
+   */
+  private async assertSwitchRules(
+    t: KernelSchemaDb,
+    orgId: string,
+    manifest: ExtensionManifest,
+    input: OrgExtensionInput,
+    row: { enabled: boolean } | undefined,
+    required: boolean,
+    opts: OrgExtensionPutOptions,
+  ): Promise<void> {
+    const plugin = manifest.name;
+    if (input.enabled === true && row?.enabled !== true && !required) {
+      // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
+      const killed = await disabledPluginItems(t, [plugin]);
+      if (killed.length > 0) throw pluginItemDisabled(killed);
+      // 经某个条目安装：只看该条目（应用里的插件按应用条目，C22）；直接启用：全部来源里最严格的生效
+      if (opts.viaItem !== undefined) {
+        await assertItemInstallable(t, orgId, opts.viaItem, opts.approvedBy ?? opts.viaItem);
+      } else await assertPluginSourcesInstallable(t, orgId, plugin);
+    }
+    if (input.enabled === true) await this.assertDependenciesEnabled(t, orgId, manifest);
+    else if (input.enabled === false && !input.force) {
+      await this.assertNoEnabledDependents(t, orgId, manifest);
+    }
   }
 
   /**
@@ -516,7 +618,7 @@ export class OrgExtensionConfigs {
   async disableIn(
     orgId: string,
     plugin: string,
-    actorAccountId: string,
+    actorAccountId: string | null,
     reason: string,
   ): Promise<boolean> {
     const t = this.db;
@@ -634,6 +736,7 @@ export class OrgExtensionConfigs {
     row: { enabled: boolean; config: Obj | null } | undefined,
     setKeys: ReadonlySet<string>,
     required: boolean,
+    items: readonly ExtensionPluginItem[] | undefined,
   ): OrgExtensionView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
@@ -653,6 +756,7 @@ export class OrgExtensionConfigs {
       orgConfigSchema: schema ? this.formSchema(m.name, m.version, schema) : null,
       available: true,
       required,
+      ...scopeFields(items, required),
     };
   }
 

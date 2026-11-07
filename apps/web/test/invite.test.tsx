@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe("接受邀请页（AuthPage）", () => {
   it.each(["zh", "en"] as const)(
-    "已登录：显示组织与角色；接受 → POST accept → 切到该组织 → 进入首页（%s）",
+    "signed in: shows the org and role; accept → POST accept → switch to the org → home, the new conversation (%s)",
     async (locale) => {
       const m = msgs[locale];
       const calls = stubApi({
@@ -63,7 +63,7 @@ describe("接受邀请页（AuthPage）", () => {
       expect(accept.getAttribute("data-variant")).toBe("primary");
       await userEvent.setup().click(accept);
       // A new current org: the whole document is reloaded (ruling R4).
-      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+      await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
       expect(router.replace).not.toHaveBeenCalled();
       expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({});
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ orgId: "o9" });
@@ -85,7 +85,7 @@ describe("接受邀请页（AuthPage）", () => {
     );
   });
 
-  it("未登录：新建账号并加入 → POST accept 带注册信息 → 切到该组织 → 进入首页", async () => {
+  it("signed out: create an account and join → POST accept with the sign-up → switch to the org → home", async () => {
     const m = en.invite;
     const calls = stubApi({
       [`GET ${PREVIEW}`]: () => json(200, INVITE),
@@ -101,7 +101,7 @@ describe("接受邀请页（AuthPage）", () => {
     await user.type(screen.getByLabelText(m.passwordLabel), "a-very-long-password");
     await user.type(screen.getByLabelText(m.displayNameLabel), "Carol");
     await user.click(screen.getByRole("button", { name: m.signup }));
-    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/"));
+    await vi.waitFor(() => expect(navigateBrowser).toHaveBeenCalledWith("/chat"));
     expect(bodyOf(calls.find((c) => c.url === ACCEPT))).toEqual({
       login: "carol",
       password: "a-very-long-password",
@@ -133,17 +133,20 @@ describe("接受邀请页（AuthPage）", () => {
     ["invitation.invalid", 404],
     ["invitation.expired", 410],
     ["invitation.used", 409],
-  ] as const)("链接失效（%s）：显示原因与回首页按钮，不显示接受", async (code, status) => {
-    stubApi({
-      [`GET ${PREVIEW}`]: () => json(status, { error: { code, message: "x" } }),
-      "GET /api/v1/me": () => json(200, ME),
-    });
-    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
-    expect(await screen.findByText(en.invite.invalidTitle)).toBeTruthy();
-    const [group, key] = code.split(".") as ["invitation", "invalid" | "expired" | "used"];
-    expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
-    await userEvent.setup().click(screen.getByRole("button", { name: en.invite.goHome }));
-    expect(router.replace).toHaveBeenCalledWith("/");
-  });
+  ] as const)(
+    "an invalid link (%s): the reason and a way home, no accept",
+    async (code, status) => {
+      stubApi({
+        [`GET ${PREVIEW}`]: () => json(status, { error: { code, message: "x" } }),
+        "GET /api/v1/me": () => json(200, ME),
+      });
+      await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+      expect(await screen.findByText(en.invite.invalidTitle)).toBeTruthy();
+      const [group, key] = code.split(".") as ["invitation", "invalid" | "expired" | "used"];
+      expect(screen.getByText(`${en.errors[group][key]}`)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: en.invite.accept })).toBeNull();
+      await userEvent.setup().click(screen.getByRole("button", { name: en.invite.goHome }));
+      expect(router.replace).toHaveBeenCalledWith("/chat");
+    },
+  );
 });

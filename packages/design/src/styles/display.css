@@ -36,6 +36,11 @@
 .cb-tab:focus-visible {
   outline-offset: -2px;
 }
+/* A tab a pointer focused draws no ring, whatever the browser's :focus-visible heuristics say
+   (spec §2.5; acceptance issue Y); a key press or leaving the tab drops the mark. */
+.cb-tab[data-pointer-focus="true"]:focus-visible {
+  outline: none;
+}
 .cb-tab:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--cb-hover);
   color: var(--cb-ink);
@@ -742,6 +747,17 @@
   font: inherit;
   white-space: pre;
 }
+/* Inside a box (spec §6.9): a panel-2 tint with no line, radius sm; the language label is split
+   from the code by spacing alone. */
+.cb-code[data-framed="false"] {
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel-2);
+}
+.cb-code[data-framed="false"] > .cb-code-lang {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
 /* <code> 的 UA 样式是 font-family: monospace（系统字体）：与外层 Sarasa 的基线 / 行高不一致，
    且 Linux 下系统等宽字体的度量不稳定（行距在 20 / 21px 间跳），一律继承设计字体。 */
 .cb-code-pre code {
@@ -754,6 +770,11 @@
   width: 100%;
   border: 1px solid var(--cb-line);
   background: var(--cb-panel);
+}
+/* Inside a box the box is the embed's frame (spec §6.9): no border, no ground of its own. */
+.cb-embed[data-framed="false"] {
+  border: 0;
+  background: transparent;
 }
 
 /* 对话附件（spec §6.9）：输入框里的上传条目 */
@@ -1200,4 +1221,130 @@ a.cb-attachment:hover {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+
+/* ContentSection (spec §6.31): a heading in the h2 step over its content; help and empty lines
+   small and muted, so a heading never reads like the text under it. */
+.cb-content-section {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-content-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-content-section-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  font-weight: 500;
+  line-height: var(--cb-type-h2-line);
+}
+.cb-content-section-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cb-type-small-line);
+}
+.cb-content-section-actions {
+  display: flex;
+  gap: var(--cb-space-2);
+  margin-left: auto;
+}
+.cb-content-section-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-content-section-empty {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/*
+ * Subsection (spec §6.32): a group inside one box, never a second card. The heading row (an h3 in
+ * the body step, 500), a small muted help line, then the content space.2 below: under a 1px line
+ * guide (the Disclosure body, §6.5) in a padded box; to the edges in a flush one, the heading row
+ * padded space.3 (in line with a table's first column) and a line-soft hairline between
+ * consecutive subsections.
+ */
+.cb-subsection {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-subsection-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-subsection-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-subsection-title {
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 500;
+  line-height: var(--cb-type-body-line);
+}
+.cb-subsection-count {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--cb-type-small-line);
+}
+.cb-subsection-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  margin-left: auto;
+}
+.cb-subsection-description {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-subsection-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+/* A loading heading (LoadingSubsection): the title's slot holds one body-line skeleton bar. */
+.cb-subsection-heading[data-loading="true"] {
+  align-items: center;
+}
+.cb-subsection-heading[data-loading="true"] > .cb-subsection-title {
+  display: flex;
+  flex: 1;
+}
+.cb-subsection[data-variant="guide"] > .cb-subsection-body {
+  padding-left: var(--cb-space-2);
+  border-left: 1px solid var(--cb-line);
+}
+.cb-subsection[data-variant="flush"] {
+  row-gap: 0;
+}
+.cb-subsection[data-variant="flush"] > .cb-subsection-head {
+  padding: var(--cb-space-3);
+}
+.cb-subsection[data-variant="flush"] + .cb-subsection[data-variant="flush"] {
+  border-top: 1px solid var(--cb-line-soft);
 }

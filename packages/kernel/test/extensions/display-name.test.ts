@@ -110,7 +110,7 @@ describe("extension display names", { timeout: 120_000 }, () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     k = await startKernel(
       resolveConfig(

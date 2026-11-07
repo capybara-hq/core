@@ -40,29 +40,29 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake } from "../helpers/plugin-packages.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from "./packages.js";
 
 /**
- * M6 segment 3 acceptance (dual replica, enterprise catalog): two kernel replicas in separate
+ * M6 segment 3 acceptance (dual replica, platform catalog): two kernel replicas in separate
  * processes (api / worker) share PG / Redis / the plugin directory, with
  * `extensionPermissions.autoApprove: false`; the core fakes of `@capybara-hq/testing` stand in for
  * official plugins: bootstrap fake-object-store (SeaweedFS), config-declared model-fake and
  * fake-connector (an MCP client, kind `fake`); a fake npm registry, a fake official marketplace
- * (`marketplaces.official.url` points at it) plus one enterprise marketplace, and a fake MCP server.
- * Everything goes through HTTP (the enterprise marketplace is refreshed on B through its refresh
+ * (`marketplaces.official.url` points at it) plus one custom marketplace, and a fake MCP server.
+ * Everything goes through HTTP (the custom marketplace is refreshed on B through its refresh
  * route, the same `MarketplacesService.refresh` the periodic `catalogs-refresh` job runs; in the
  * rename regression the "old agent version" and the "snapshot case" have no HTTP write path and are
  * written to the DB directly, as in the T22 / T3 tests).
  *
  * 1. Import (every plugin through prepare -> confirm): on A, a templates-only plugin from npm and a
  *    skills-only plugin from a file; on B, refresh the official marketplace and import an entry
- *    (fake-dep-provider, extension only); after B refreshes the enterprise marketplace, A sees
+ *    (fake-dep-provider, extension only); after B refreshes the custom marketplace, A sees
  *    the new entries; importing an entry with a tampered integrity -> 502
  *    `marketplace.integrity_mismatch`, nothing written;
  * 2. A plugin with every component: on A, import `fake-tools-ui` (its extension + a connector
- *    template + a skill, depending on fake-dep-provider already in the catalog) from the enterprise
+ *    template + a skill, depending on fake-dep-provider already in the catalog) from the custom
  *    marketplace, one review, its extension deployed, both replicas load it without a restart; an
  *    org admin installs it on B: extension enabled, connector created with a tool snapshot, skill
  *    stored; the agent calls the connector tool and the extension tool, and `Skill` reads the
@@ -70,17 +70,18 @@ import { bundlePlugin, mcpTemplate, SVG_ICON, skillPlugin, templatePlugin } from
  * 3. Uninstall: the connector is referenced by an agent -> `kept` lists it (used_by_agents), the
  *    extension and the skill are removed, the agent still runs (dependency components arrive with Task 5);
  * 4. Policy and requests: the template item is needs_approval, a member request -> org admin
- *    approval (moved up) -> install possible only after enterprise admin approval; a member requests
+ *    approval (moved up) -> install possible only after super admin approval; a member requests
  *    a skill, installed after approval; with `customConnectors: deny` a custom connector gets 403;
  * 5. Private agent with `writePolicy: "ask"`: `SkillWrite` creates an approval that takes effect
  *    once approved;
  * 6. Rename regression: T22's `pre-rename` fixture replays a single step with drift []; a
  *    single-step eval with it as the case shows no drift; an old agent version saved with
  *    `{kind:"app"}` runs on both replicas;
- * 7. Org upgrade across replicas (phase A1, spec §10): a declarative plugin (a skill and a connector
- *    template) installed at 1.0.0 on B is upgraded to 2.0.0 through A; B then shows the install at
- *    2.0.0 with nothing newer, the skill's new version (`Skill` in a run on B reads it), the
- *    connector's new template default and its kept credential.
+ * 7. Platform update across replicas (spec §7, plugin scope phase 2 Task 7): a declarative plugin
+ *    (a skill and a connector template) installed at 1.0.0 on B is updated to 2.0.0 for the whole
+ *    deployment through A; B then shows the install at 2.0.0, the skill's new content (`Skill` in a
+ *    run on B reads it, same id, the agent unchanged), the connector's new template default and its
+ *    kept credential.
  *
  * "Without a restart": the replica ids (regenerated at each kernel start) and child process pids
  * stay the same from start to end.
@@ -159,7 +160,7 @@ const npmEntry = (
   source: { npm: { package: pkg, version, integrity: sri(tgz) } },
 });
 
-describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, () => {
+describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, () => {
   let pgc: TestContainer;
   let rdc: TestContainer;
   let s3: TestS3;
@@ -340,7 +341,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         login: "root",
         password: PW,
         displayName: "Root",
-        enterpriseAdmin: true,
+        superAdmin: true,
       })
     ).id;
     ids.boss = (
@@ -386,7 +387,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   }, 120_000);
 
   /**
-   * The enterprise marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a
+   * The custom marketplace: the fake-tools-ui plugin with every component; with `withTampered` also a
    * skill entry whose integrity is another package's.
    */
   function acmeManifest(withTampered: boolean) {
@@ -409,10 +410,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
   }
 
   /** Confirms a staged import (prepare response) on replica `i`; returns the confirm body. */
-  const confirmImport = (i: 0 | 1, staged: Json, deployExtension = false) =>
+  const confirmImport = (i: 0 | 1, staged: Json) =>
     ok("root", i, "POST", `/api/v1/admin/catalog/imports/${staged.stagingId as string}/confirm`, {
       reviewHash: (staged.review as { reviewHash: string }).reviewHash,
-      deployExtension,
     });
 
   let orgId = "";
@@ -508,17 +508,13 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       { version: "0.1.0" },
     );
     expect(imported.status, JSON.stringify(imported.json)).toBe(200);
-    const counterItem = ((await confirmImport(1, imported.json)).item as { id: string }).id;
-    // Installed on the deployment (the import's review approved its permissions), then enabled:
-    // the fake-tools-ui plugin depends on it
-    await ok("root", 1, "POST", `/api/v1/admin/catalog/items/${counterItem}/install-deployment`, {
-      version: "0.1.0",
-    });
-    expect((await view("fake-dep-provider", 1)).status).toBe("disabled");
-    await ok("root", 1, "POST", "/api/v1/admin/extensions/fake-dep-provider/enable");
+    // The confirm installs and enables it on the deployment (the import's review approved its
+    // permissions): the fake-tools-ui plugin depends on it
+    const confirmedDep = await confirmImport(1, imported.json);
+    expect(confirmedDep.deploy).toMatchObject({ name: "fake-dep-provider", result: "enabled" });
     await waitFor(() => loadedOnBoth("fake-dep-provider", "0.1.0"), 30_000, "counter on both", 100);
 
-    // An enterprise marketplace: no entries before its first refresh; after a refresh on B, A sees
+    // A custom marketplace: no entries before its first refresh; after a refresh on B, A sees
     // them; a new entry in the manifest shows on A after the next refresh
     const added = await ok("root", 1, "POST", "/api/v1/admin/marketplaces", {
       name: "Acme",
@@ -541,7 +537,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     await waitFor(
       async () => (await entriesOnA()).includes("fake-tools-ui"),
       30_000,
-      "a refresh on B updated the enterprise catalog",
+      "a refresh on B updated the platform catalog",
       200,
     );
     expect(acme.requests.length).toBeGreaterThan(before);
@@ -580,7 +576,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, ids.boss, "admin", ids.root);
     await testMembers(db).add(orgId, ids.mem, "member", ids.root);
-    await ok("boss", 1, "PUT", `${base}/extensions/fake-dep-provider`, { enabled: true });
+    // Enabled without a plugin install (the row, as an enable before the plugin existed left it):
+    // `PUT extensions/:name {enabled}` is the plugin's switch and would install it
+    await db
+      .insertInto("extension_org_configs")
+      .values({ plugin: "fake-dep-provider", org_id: orgId, enabled: true, config: null })
+      .execute();
+    // The app's connector template is for the connector extension, which the org has on
+    await enableExtensions(raw, orgId, "fake-connector");
   });
 
   it("2. 应用包：引入、一次审阅装到部署（两边不重启加载），B 上组织安装，agent 用到连接器、扩展工具与技能", async () => {
@@ -605,7 +608,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(review.dependencies).toEqual([
       { name: "fake-dep-provider", range: "^0.1.0", resolved: "0.1.0" },
     ]);
-    const confirmed = await confirmImport(0, staged.json, true);
+    const confirmed = await confirmImport(0, staged.json);
     appItem = (confirmed.item as { id: string }).id;
     expect(confirmed.deploy).toMatchObject({
       name: "fake-tools-ui",
@@ -658,7 +661,11 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("enabled", "=", true)
       .orderBy("plugin")
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider", "fake-tools-ui"]);
+    expect(enabled.map((r) => r.plugin)).toEqual([
+      "fake-connector",
+      "fake-dep-provider",
+      "fake-tools-ui",
+    ]);
     const conn = await db
       .selectFrom("connectors")
       .select(["id", "slug", "catalog_item_id"])
@@ -734,10 +741,10 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       { kind: "connector", ref: connectorId, reason: "used_by_agents" },
       { kind: "extension", ref: "fake-dep-provider", reason: "pre_existing" },
     ]);
+    // phase 2: the plugin's skill is a platform component; it goes off in the org with the plugin
     expect(byKey(rep.removed as { kind: string; ref: string }[])).toEqual([
       { kind: "extension", ref: "fake-tools-ui" },
       { kind: "plugin", ref: counterInstallId },
-      { kind: "skill", ref: appSkillId },
     ]);
     const enabled = await db
       .selectFrom("extension_org_configs")
@@ -745,14 +752,9 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       .where("org_id", "=", orgId)
       .where("enabled", "=", true)
       .execute();
-    expect(enabled.map((r) => r.plugin)).toEqual(["fake-dep-provider"]);
-    const liveSkill = await db
-      .selectFrom("skills")
-      .select("id")
-      .where("id", "=", appSkillId)
-      .where("deleted_at", "is", null)
-      .execute();
-    expect(liveSkill).toEqual([]);
+    expect(enabled.map((r) => r.plugin).sort()).toEqual(["fake-connector", "fake-dep-provider"]);
+    const listed = (await ok("boss", 1, "GET", `${base}/skills`)).skills as { id: string }[];
+    expect(listed.map((x) => x.id)).not.toContain(appSkillId);
     expect((await ok("boss", 1, "GET", `${base}/plugin-installs`)).installs).toEqual([]);
     // agent 仍能运行：连接器工具照常可用
     const conv = await newConv("boss", 1, agentId);
@@ -776,10 +778,14 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(dangling.isError).toBe(true);
   });
 
-  it("4. 策略与申请：模板两级审批后才能安装；成员申请技能批准后入库；customConnectors deny 时自建 403", async () => {
-    await ok("root", 0, "PUT", `/api/v1/admin/catalog/items/${templateItem}/policy`, {
-      policy: "needs_approval",
-    });
+  it("4. 开关与范围：disabled 的模板不能装（两个副本一样）；开启后经 switch 装入；技能经 switch 入库；customConnectors deny 时自建 403", async () => {
+    // Disabled on the deployment (written directly: this case is about the org side on both
+    // replicas; the admin route and its sync are covered by admin-scope.test.ts)
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("id", "=", templateItem)
+      .execute();
     const connectorBody = {
       connectors: {
         "github-mcp": {
@@ -789,22 +795,6 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         },
       },
     };
-    // 成员申请 → 组织管理员批准：条目需审批且本组织没有授予 → 升级到企业管理员
-    const asked = await ok("mem", 0, "POST", `${base}/catalog/${templateItem}/requests`, {
-      note: "Need GitHub",
-    });
-    const reqId = (asked.request as { id: string }).id;
-    expect(asked.request).toMatchObject({ stage: "org", status: "pending" });
-    const orgDecided = await ok("boss", 1, "POST", `${base}/catalog-requests/${reqId}/decide`, {
-      decision: "approve",
-    });
-    expect(orgDecided.request).toMatchObject({ stage: "deployment", status: "pending" });
-    // 企业管理员批准之前不能安装：202，什么都没建
-    const pending = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
-      ...connectorBody,
-    });
-    expect(pending.status, JSON.stringify(pending.json)).toBe(202);
-    expect(pending.json.request).toMatchObject({ id: reqId, stage: "deployment" });
     const liveConnectors = () =>
       db
         .selectFrom("connectors")
@@ -812,30 +802,31 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
         .where("org_id", "=", orgId)
         .where("deleted_at", "is", null)
         .execute();
+    for (const i of [0, 1] as const) {
+      const off = await at("boss", i, "PUT", `${base}/catalog/${templateItem}/switch`, {
+        enabled: true,
+        inputs: connectorBody,
+      });
+      expect(off.status, JSON.stringify(off.json)).toBe(409);
+      expect(errCode(off)).toBe("plugin.disabled");
+    }
     expect(await liveConnectors()).toHaveLength(1);
-    const inboxAdmin = (await ok("root", 1, "GET", "/api/v1/admin/catalog/requests")).requests as {
-      id: string;
-    }[];
-    expect(inboxAdmin.map((r) => r.id)).toEqual([reqId]);
-    const decided = await ok("root", 1, "POST", `/api/v1/admin/catalog/requests/${reqId}/decide`, {
-      decision: "approve",
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: false })
+      .where("id", "=", templateItem)
+      .execute();
+    const installed = await at("boss", 0, "PUT", `${base}/catalog/${templateItem}/switch`, {
+      enabled: true,
+      inputs: connectorBody,
     });
-    expect(decided.request).toMatchObject({ status: "approved" });
-    const installed = await at("boss", 0, "POST", `${base}/catalog/${templateItem}/install`, {
-      ...connectorBody,
-    });
-    expect(installed.status, JSON.stringify(installed.json)).toBe(201);
+    expect(installed.status, JSON.stringify(installed.json)).toBe(200);
     expect(await liveConnectors()).toHaveLength(2);
 
-    // 成员申请技能 → 组织管理员批准 → 安装入库
-    const sk = await ok("mem", 1, "POST", `${base}/catalog/${skillItem}/requests`, {});
-    const skReq = (sk.request as { id: string }).id;
-    const skDecided = await ok("boss", 0, "POST", `${base}/catalog-requests/${skReq}/decide`, {
-      decision: "approve",
+    const skInst = await at("boss", 1, "PUT", `${base}/catalog/${skillItem}/switch`, {
+      enabled: true,
     });
-    expect(skDecided.request).toMatchObject({ stage: "org", status: "approved" });
-    const skInst = await at("boss", 1, "POST", `${base}/catalog/${skillItem}/install`, {});
-    expect(skInst.status, JSON.stringify(skInst.json)).toBe(201);
+    expect(skInst.status, JSON.stringify(skInst.json)).toBe(200);
     const lib = (await ok("mem", 0, "GET", `${base}/skills`)).skills as { name: string }[];
     expect(lib.map((s) => s.name)).toContain("sql-helper");
 
@@ -1010,7 +1001,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     expect(replicaIds.map((r) => r.replica_id).sort()).toEqual([...bootIds.values()].sort());
   });
 
-  it("7. upgrade across replicas: installed at 1.0.0 on B, upgraded to 2.0.0 through A; B sees the version, the new skill content, the new template default and the kept credential", async () => {
+  it("7. platform update across replicas: installed at 1.0.0 on B, updated to 2.0.0 through A; B sees the version, the new skill content, the new template default and the kept credential", async () => {
     const kitMd = (v: string) =>
       `---\nname: kit-notes\ndescription: Keep kit notes.\n---\n# kit-notes ${v}\n\nSteps ${v}.\n`;
     const kit = (version: string, search: "allow" | "ask") =>
@@ -1028,7 +1019,6 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const kitItem = (v1.item as { id: string }).id;
     // B: installed at 1.0.0, an agent selects the skill
     const inst = await at("boss", 1, "POST", `${base}/catalog/${kitItem}/install`, {
-      version: "1.0.0",
       connectors: {
         "kit-docs": {
           name: "Kit Docs",
@@ -1054,7 +1044,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       ((await ok("boss", i, "GET", `${base}/plugin-installs`)).installs as InstallView[]).find(
         (x) => x.id === installId,
       );
-    expect(await installOn(1)).toMatchObject({ version: "1.0.0", upgradeAvailable: "2.0.0" });
+    expect(await installOn(1)).toMatchObject({ version: "1.0.0", upgradeAvailable: null });
     const skill = (
       (await ok("boss", 1, "GET", `${base}/skills`)).skills as {
         id: string;
@@ -1091,22 +1081,28 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
     const r1 = await call("boss", 1, before, "Skill", { skill: "kit-notes" }, 1);
     expect(String(r1.content)).toContain("Steps 1.0.0.");
 
-    // A: preview and upgrade
-    const p = await ok("boss", 0, "POST", `${base}/plugin-installs/${installId}/upgrade/preview`, {
+    // A: the super admin previews and confirms the platform update
+    const p = await ok("root", 0, "POST", `/api/v1/admin/catalog/items/${kitItem}/update/preview`, {
       version: "2.0.0",
     });
     expect(p).toMatchObject({ from: "1.0.0", to: "2.0.0" });
-    expect(p.components).toEqual([
-      { kind: "skill", ref: "kit-notes", change: "changed" },
-      { kind: "connector", ref: "kit-docs", change: "changed" },
+    expect(
+      (p.components as { kind: string; name: string; change: string }[]).map((c) => [
+        c.kind,
+        c.name,
+        c.change,
+      ]),
+    ).toEqual([
+      ["skill", "kit-notes", "upgrade"],
+      ["connector_template", "kit-docs", "upgrade"],
     ]);
-    const up = await ok("boss", 0, "POST", `${base}/plugin-installs/${installId}/upgrade`, {
+    const up = await ok("root", 0, "PUT", `/api/v1/admin/catalog/items/${kitItem}/update`, {
       version: "2.0.0",
       diffHash: p.diffHash,
     });
-    expect(up.install).toMatchObject({ version: "2.0.0", status: "installed" });
+    expect(up).toMatchObject({ itemId: kitItem, version: "2.0.0" });
 
-    // B sees the upgrade: the install, the org catalog, the skill, the connector
+    // B sees the update: the install, the org catalog, the skill, the connector
     expect(await installOn(1)).toMatchObject({
       version: "2.0.0",
       status: "installed",
@@ -1126,6 +1122,7 @@ describe("M6 第三段双副本验收（企业目录）", { timeout: 240_000 }, 
       name: string;
       currentVersion: number;
     }[];
+    // the platform skill moved: same id, its next version
     expect(skills.find((x) => x.name === "kit-notes")).toMatchObject({
       id: skill?.id,
       currentVersion: 2,

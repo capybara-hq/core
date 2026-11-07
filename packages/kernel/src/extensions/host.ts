@@ -282,7 +282,7 @@ function warnPending(log: KernelDeps["log"], p: PendingExtension): void {
     return;
   }
   log.warn(
-    "extension not loaded: permissions awaiting approval (an enterprise admin approves it in the admin console, or run `capybara extensions review`, then `capybara extensions approve <name>`; running replicas load it without a restart)",
+    "extension not loaded: permissions awaiting approval (a super admin approves it in the admin console, or run `capybara extensions review`, then `capybara extensions approve <name>`; running replicas load it without a restart)",
     { plugin: p.plugin, version: p.version, reason: p.reason, added: p.added, removed: p.removed },
   );
 }

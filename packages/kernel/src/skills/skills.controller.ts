@@ -1,6 +1,12 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
-import { Controller, Delete, Get, HttpCode, Inject, Param, Post } from "@nestjs/common";
+import {
+  hasControlChars,
+  isSkillName,
+  MEDIA_NAME_MAX_CHARS,
+  SKILL_LIMITS,
+} from "@capybara-hq/plugin-sdk";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
+import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
 import {
   type CreatedAttachment,
   SKILL_PACKAGE_UPLOAD_MAX_BYTES,
@@ -12,8 +18,9 @@ import {
   requireUser,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { SKILL_WRITE_MAX_BYTES } from "../tools/builtins/skill-write.js";
 import {
   type SkillDetail,
   type SkillSummary,
@@ -31,9 +38,31 @@ const UploadBody = z
     size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
   })
   .strict();
-const CreateBody = z.object({ uploadId: z.string().min(1).max(100) }).strict();
+const CreateBody = z
+  .object({
+    uploadId: z.string().min(1).max(100).optional(),
+    name: z
+      .string()
+      .refine(isSkillName, "name must be 1-64 lowercase letters, digits and single hyphens")
+      .optional(),
+    description: z.string().min(1).max(SKILL_LIMITS.descriptionMaxChars).optional(),
+    body: z.string().max(SKILL_WRITE_MAX_BYTES).optional(),
+    shareable: z.boolean().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.uploadId !== undefined
+        ? v.name === undefined && v.description === undefined && v.body === undefined
+        : v.name !== undefined && v.description !== undefined && v.body !== undefined,
+    "send either { uploadId } or { name, description, body }",
+  );
 class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
 class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
+const IdParams = z.object({ id: z.string().min(1).max(100) });
+const ShareableBody = z.object({ shareable: z.boolean() }).strict();
+class SkillIdParams extends createZodDto(IdParams, "SkillIdParams") {}
+class SkillShareableBody extends createZodDto(ShareableBody, "SkillShareableBody") {}
 
 /**
  * The org skill library (`/api/v1/orgs/:orgId/skills`, human users only):
@@ -46,14 +75,19 @@ class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
  *      `POST /attachments/:id/finalize`, or skip it and let the next step finalize);
  *   3. `POST /` `{ uploadId }` unpacks and checks it, creating a skill or adding a version to the
  *      skill with the same name;
- *   `DELETE /:id` soft-deletes (the web asks for confirmation, R3).
+ *   `DELETE /:id` soft-deletes (the web asks for confirmation, R3; `GET /:id/delete-preview` says
+ *   what it does), `PUT /:id/shareable` sets 可共享 (plugin scope phase 3, ruling P3-6).
  * When the deployment setting `customSkills` is deny, registering an upload and creating both
  * return 403 `catalog.custom_disabled` (decided in the service, re-checked inside the org row lock
- * on create); installing skills from the enterprise catalog is unaffected.
+ * on create); installing skills from the platform catalog is unaffected.
  */
 @Controller("api/v1/orgs/:orgId/skills")
 export class SkillsController {
-  constructor(@Inject(SkillsService) private readonly skills: SkillsService) {}
+  constructor(
+    @Inject(SkillsService) private readonly skills: SkillsService,
+    /** The org's own items: 可共享 and the delete of a promoted skill (rulings P3-3, P3-19). */
+    @Inject(OwnedItems) private readonly owned: OwnedItems,
+  ) {}
 
   @Post("uploads")
   @OrgAction("skills.manage")
@@ -74,7 +108,17 @@ export class SkillsController {
     @ZBody(SkillCreateBody) body: z.infer<typeof CreateBody>,
   ): Promise<UploadedSkill> {
     const p = requireUser(principal);
-    return this.skills.upload(org.orgId, p.account.id, body.uploadId, patTokenId(p));
+    const tokenId = patTokenId(p);
+    if (body.uploadId !== undefined) {
+      return this.skills.upload(org.orgId, p.account.id, body.uploadId, tokenId, body.shareable);
+    }
+    return this.skills.createFromText(org.orgId, p.account.id, {
+      name: body.name as string,
+      description: body.description as string,
+      body: body.body as string,
+      ...(body.shareable !== undefined && { shareable: body.shareable }),
+      ...(tokenId !== undefined && { actorTokenId: tokenId }),
+    });
   }
 
   @Get()
@@ -98,6 +142,51 @@ export class SkillsController {
     return this.skills.get(org.orgId, id);
   }
 
+  /**
+   * Sets 可共享 on the org's own skill (`{ shareable }` -> 200 `{ id, shareable }`): only an org
+   * skill of the org's own (P3-6: an agent's skill or a copy of another owner's platform skill ->
+   * 409 `catalog.not_owned`); one it promoted writes its platform row too (ruling P3-2).
+   */
+  @Put(":id/shareable")
+  @OrgAction("skills.manage")
+  async setShareable(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(SkillIdParams) params: z.infer<typeof IdParams>,
+    @ZBody(SkillShareableBody) body: z.infer<typeof ShareableBody>,
+  ): Promise<{ id: string; shareable: boolean }> {
+    const p = requireUser(principal);
+    const tokenId = patTokenId(p);
+    await this.owned.setShareable(
+      org.orgId,
+      p.account.id,
+      { kind: "skill", id: params.id },
+      body.shareable,
+      tokenId !== undefined ? { actorTokenId: tokenId } : {},
+    );
+    return { id: params.id, shareable: body.shareable };
+  }
+
+  /**
+   * What deleting the skill does (pre-flight F19, P3-19; nothing written): `outcome`
+   * `transferred` when it was shared and another org uses it (`orgs`), else `removed`; `agents`
+   * the org's agents that lose it.
+   */
+  @Get(":id/delete-preview")
+  @OrgAction("skills.manage")
+  async deletePreview(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(SkillIdParams) params: z.infer<typeof IdParams>,
+  ): Promise<OwnedSkillDeletePreview> {
+    requireUser(principal);
+    return this.owned.previewSkillDelete(org.orgId, params.id);
+  }
+
+  /**
+   * Soft-deletes the skill; one the org shared that another org uses is transferred to the
+   * platform first (P3-19, platform notice `ownership_transferred`). 204.
+   */
   @Delete(":id")
   @HttpCode(204)
   @OrgAction("skills.manage")
@@ -107,6 +196,12 @@ export class SkillsController {
     @Param("id") id: string,
   ): Promise<void> {
     const p = requireUser(principal);
-    await this.skills.softDelete(org.orgId, id, p.account.id, patTokenId(p));
+    const tokenId = patTokenId(p);
+    await this.owned.deleteSkill(
+      org.orgId,
+      p.account.id,
+      id,
+      tokenId !== undefined ? { actorTokenId: tokenId } : {},
+    );
   }
 }

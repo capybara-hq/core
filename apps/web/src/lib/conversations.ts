@@ -536,7 +536,7 @@ export const createConversation = (orgId: string, agentId: string) =>
     body: JSON.stringify({ agentId }),
   });
 
-/** What a message carries besides its text (`POST …/messages`, the first message, the queue). */
+/** What a message carries besides its text (`POST …/messages`, the first message). */
 export interface MessageInput {
   text: string;
   clientMessageId: string;
@@ -716,7 +716,10 @@ export const postMessage = (orgId: string, id: string, m: MessageInput) =>
     body: JSON.stringify(messageBody(m)),
   });
 
-/** A queued message (kernel `QueueItem`): not in the log until it is sent. */
+/**
+ * A message an older version queued (kernel `QueueItem`): not in the log until the kernel sends it
+ * after a run. Nothing new is queued (run input spec 2026-11-07 D3); the web only lists leftovers.
+ */
 export interface QueueItem {
   id: string;
   text: string;
@@ -738,32 +741,6 @@ export type QueuePauseReason = "run_ended" | "author_cannot_send" | "skill_not_i
 export const listQueue = (orgId: string, id: string) =>
   apiFetch<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }>(
     `${one(orgId, id)}/queue`,
-  );
-
-/**
- * Queues a message (⌘↵ while running); an idle conversation sends it at once (`event`). A model /
- * effort pick goes with it and applies when it is sent.
- */
-export const enqueueMessage = (orgId: string, id: string, m: Omit<MessageInput, "retryOf">) =>
-  apiFetch<{ item: QueueItem | null; event?: ConversationEvent }>(`${one(orgId, id)}/queue`, {
-    method: "POST",
-    body: JSON.stringify(messageBody(m)),
-  });
-
-export const editQueued = (orgId: string, id: string, itemId: string, text: string) =>
-  apiFetch<{ item: QueueItem }>(`${one(orgId, id)}/queue/${encodeURIComponent(itemId)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ text }),
-  });
-
-export const deleteQueued = (orgId: string, id: string, itemId: string) =>
-  apiFetch<void>(`${one(orgId, id)}/queue/${encodeURIComponent(itemId)}`, { method: "DELETE" });
-
-/** "Send now": the queued message becomes an interjection. */
-export const sendQueuedNow = (orgId: string, id: string, itemId: string) =>
-  apiFetch<{ event: ConversationEvent }>(
-    `${one(orgId, id)}/queue/${encodeURIComponent(itemId)}/send`,
-    { method: "POST" },
   );
 
 /** "Continue sending" after a pause. */

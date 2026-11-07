@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import { newAgent } from "./support/chat";
 import { mainNavLink } from "./support/nav";
+import { selectOption } from "./support/select";
 import { signIn } from "./support/sign-in";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -61,26 +62,22 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
 }) => {
   await signIn(page);
 
-  // 1. 组织插件：先填组织级配置（通讯录地址），再启用；权限清单里工具与密钥被标为敏感
-  await page.goto("/settings/extensions");
-  await expect(page.locator('[data-template="SettingsPage"]')).toBeVisible();
-  const section = page.getByRole("region", { name: "fake-im", exact: true });
-  const perms = section.getByRole("region", {
-    name: zh.extensions.permissionsLabel.replace("{plugin}", "fake-im"),
-  });
-  await expect(perms.getByText("· post_announcement")).toBeVisible();
-  await section.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
-  await section
-    .getByRole("button", { name: zh.extensions.saveLabel.replace("{plugin}", "fake-im") })
+  // 1. The org's 扩展 page: fake-im is pending configuration (its switch is read-only); its row opens
+  //    a Sheet with the org config form, and 保存并启用 saves the directory URL and switches it on
+  await page.goto("/extensions");
+  await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
+  const row = page.getByRole("row").filter({ hasText: "fake-im" });
+  await row.click();
+  const sheet = page.getByRole("dialog", { name: "fake-im", exact: true });
+  await sheet.getByRole("textbox", { name: /^url/ }).fill(im.book("acme").url);
+  await sheet
+    .getByRole("button", { name: zh.extensions.saveAndEnableLabel.replace("{plugin}", "fake-im") })
     .click();
-  await expect(
-    page.getByText(zh.extensions.configSaved.replace("{plugin}", "fake-im")),
-  ).toBeVisible();
-  const enable = section.getByRole("switch", {
+  const enable = row.getByRole("switch", {
     name: zh.extensions.enableLabel.replace("{plugin}", "fake-im"),
   });
-  await enable.click();
   await expect(enable).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
 
   // 2. 新建一个 agent（model-fake）
   await newAgent(page, "IM agent");
@@ -91,16 +88,17 @@ test("假渠道：启用插件 → 建渠道连接 → IM 里未绑定的人收�
   await page.getByRole("link", { name: zh.channels.new }).click();
   await expect(page.locator('[data-template="FormPage"]')).toBeVisible();
   const f = zh.channels.form;
-  await page
-    .getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) })
-    .selectOption("fake-im");
+  await selectOption(
+    page.getByRole("combobox", { name: new RegExp(`^${f.pluginLabel}`) }),
+    "fake-im",
+  );
   await page.getByRole("textbox", { name: new RegExp(`^${f.nameLabel}`) }).fill("E2E Bot");
   await page.getByRole("textbox", { name: /^platformUrl/ }).fill(im.url);
   await page.getByRole("textbox", { name: /^appId/ }).fill("cli_e2e");
   await page.getByLabel(/^appSecret/).fill("e2e-app-secret-1234");
-  await page
-    .getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) })
-    .selectOption({ label: "IM agent" });
+  await selectOption(page.getByRole("combobox", { name: new RegExp(`^${f.agentLabel}`) }), {
+    label: "IM agent",
+  });
   await page.getByRole("button", { name: f.submit }).click();
   await expect(page).toHaveURL(/\/channels\/[^/]+$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();

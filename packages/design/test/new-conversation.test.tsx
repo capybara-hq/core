@@ -8,6 +8,7 @@ import {
   AgentPanel,
   AgentRow,
   type AgentRowItem,
+  ComposerBox,
   ConversationPage,
   DesignProvider,
   Greeting,
@@ -168,7 +169,7 @@ describe("Greeting (spec §6.16.25)", () => {
     // the mark is drawn already (the same on the server and the client)
     expect(line.querySelector('[data-part="greeting-mark"] svg')).not.toBeNull();
     expect(container.querySelector('[data-part="greeting-sub"]')?.textContent).toBe(
-      "选一个 agent，或从常用任务开始",
+      "选一个智能体开始",
     );
     // the line keeps one height with or without text: the h1 line height, set on the line box
     const block = css.slice(css.indexOf(".cb-greeting-line {"));
@@ -181,7 +182,7 @@ describe("Greeting (spec §6.16.25)", () => {
   it("speaks English", () => {
     const { container } = wrap(<Greeting />, "en");
     expect(container.querySelector('[data-part="greeting-sub"]')?.textContent).toBe(
-      "Pick an agent, or start from a common task",
+      "Pick an agent to start",
     );
   });
 });
@@ -258,7 +259,7 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
     expect(names()).toEqual([]);
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(document.querySelector('[data-part="agent-empty"]')?.textContent).toBe(
-      "没有匹配的 agent",
+      "没有匹配的智能体",
     );
     // clicking a row selects it and closes the panel
     await user.clear(search);
@@ -368,7 +369,7 @@ describe("AgentRow and AgentPanel (spec §6.16.26)", () => {
       resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
       "utf8",
     );
-    const m = page.indexOf('.cb-cmenu[data-bounded="true"] {');
+    const m = page.indexOf('.cb-cmenu[data-anchored="true"] {');
     expect(page.slice(m, page.indexOf("}", m))).toContain("min(320px, calc(100vw - 16px))");
   });
 
@@ -423,52 +424,60 @@ describe("QuickActions (spec §6.16.27)", () => {
     { id: "q5", title: "写发布说明" },
     { id: "q6", title: "排查告警" },
   ];
+  const picker = (label: string, value: string) => ({
+    label,
+    value,
+    groups: [{ items: [{ id: value, label: value, checked: true }] }],
+    onPick: () => {},
+  });
+  const box = (quickActions?: React.ReactNode) => (
+    <ComposerBox
+      value=""
+      onChange={() => {}}
+      placeholder="p"
+      onAttach={() => {}}
+      pickers={{ model: picker("模型", "fake-1"), effort: picker("思考档位", "高") }}
+      {...(quickActions !== undefined ? { quickActions } : {})}
+      send={{ mode: "send", disabled: true, onClick: () => {} }}
+    />
+  );
 
-  it("quick actions show 4 then 更多 and call onPick", async () => {
-    const user = userEvent.setup();
-    const onPick = vi.fn();
-    const { container } = wrap(<QuickActions items={ITEMS} onPick={onPick} />);
-    const links = [...container.querySelectorAll('[data-part="quick-action"]')];
-    expect(links.map((l) => l.textContent)).toEqual(ITEMS.slice(0, 4).map((i) => i.title));
-    // a long title truncates on screen; its whole text is the tooltip
-    expect(links[1]?.getAttribute("title")).toBe(ITEMS[1]?.title);
-    await user.click(links[1] as HTMLElement);
-    expect(onPick).toHaveBeenLastCalledWith("q2");
-    const more = screen.getByRole("button", { name: "更多" });
-    await user.click(more);
-    const items = screen.getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent)).toEqual(["写发布说明", "排查告警"]);
-    await user.click(items[1] as HTMLElement);
-    expect(onPick).toHaveBeenLastCalledWith("q6");
-    // quiet: muted small links with no border, ink on hover and focus, one line with an ellipsis
-    const rule = (sel: string) => {
-      const at = css.indexOf(`${sel} {`);
-      expect(at).toBeGreaterThan(-1);
-      return css.slice(at, css.indexOf("}", at));
-    };
-    const base = rule(".cb-quick-action");
-    expect(base).toContain("var(--cb-muted)");
-    expect(base).toContain("var(--cb-type-small-size)");
-    expect(base).toMatch(/border: 0/);
-    expect(base).toContain("text-overflow: ellipsis");
-    expect(rule(".cb-quick-action:hover,\n.cb-quick-action:focus-visible")).toContain(
-      "var(--cb-ink)",
-    );
+  it("a zap button right after the effort picker in the composer's control row", () => {
+    const { container } = wrap(box(<QuickActions items={ITEMS} onPick={() => {}} />));
+    const bar = container.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    const button = within(bar).getByRole("button", { name: "常用任务" });
+    expect(button.getAttribute("data-part")).toBe("quick-actions");
+    // the line icon of the set, not a character
+    expect(button.querySelector("svg.cb-icon")).not.toBeNull();
+    expect(button.textContent).toBe("");
+    const parts = [...bar.children].map((e) => e.getAttribute("data-part") ?? e.className);
+    const at = parts.indexOf("quick-actions");
+    expect(parts.slice(at - 2, at + 2)).toEqual(["picker", "picker", "quick-actions", "cb-grow"]);
+    // no quick actions: no button, nothing left in its place
+    cleanup();
+    const none = wrap(box(<QuickActions items={[]} onPick={() => {}} />));
+    expect(none.container.querySelector('[data-part="quick-actions"]')).toBeNull();
+    expect(none.container.textContent).not.toContain("常用任务");
   });
 
-  it("four or fewer: no 更多; none: nothing", () => {
-    const { container } = wrap(<QuickActions items={ITEMS.slice(0, 4)} onPick={() => {}} />);
-    expect(container.querySelectorAll('[data-part="quick-action"]')).toHaveLength(4);
-    expect(container.querySelector('[data-part="quick-more"]')).toBeNull();
-    cleanup();
-    const none = wrap(<QuickActions items={[]} onPick={() => {}} />);
-    expect(none.container.innerHTML).toBe("");
+  it("opens a menu listing every quick action; choosing one calls onPick", async () => {
+    const user = userEvent.setup();
+    const onPick = vi.fn();
+    wrap(box(<QuickActions items={ITEMS} onPick={onPick} />));
+    // closed: no line of links over the composer
+    expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "常用任务" }));
+    expect(screen.getByRole("menu", { name: "常用任务" })).toBeTruthy();
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(ITEMS.map((i) => i.title));
+    await user.click(items[5] as HTMLElement);
+    expect(onPick).toHaveBeenLastCalledWith("q6");
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("speaks English", () => {
     wrap(<QuickActions items={ITEMS} onPick={() => {}} />, "en");
-    expect(screen.getByRole("group", { name: "Common tasks" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "More" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Common tasks" })).toBeTruthy();
   });
 });
 
@@ -487,14 +496,13 @@ describe("ConversationPage new-conversation slots", () => {
     onCloseRight: () => {},
   };
 
-  it("draws the greeting, the agents row and the quick actions above the composer", () => {
+  it("draws the greeting and the agents row above the composer (the quick actions are in it)", () => {
     const { container } = wrap(
       <ConversationPage
         {...base}
         newConversation={{
           greeting: <div data-testid="greeting">g</div>,
           agents: <div data-testid="agents">a</div>,
-          quickActions: <div data-testid="quick">q</div>,
         }}
       />,
     );
@@ -502,13 +510,13 @@ describe("ConversationPage new-conversation slots", () => {
     const order = [...body.querySelectorAll("[data-testid]")].map((e) =>
       e.getAttribute("data-testid"),
     );
-    expect(order).toEqual(["greeting", "agents", "quick", "composer"]);
+    expect(order).toEqual(["greeting", "agents", "composer"]);
     // the greeting replaces the agent's name and description
     expect(body.querySelector(".cb-conv-new-name")).toBeNull();
     expect(within(body).queryByRole("heading")).toBeNull();
   });
 
-  it("lays out the start column whenever a greeting, the agents row or quick actions are given", () => {
+  it("lays out the start column whenever a greeting or the agents row is given", () => {
     const { container } = wrap(
       <ConversationPage
         {...base}

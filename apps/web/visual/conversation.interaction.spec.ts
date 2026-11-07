@@ -166,6 +166,28 @@ test("390: the composer stays inside the 16 px gutters", async ({ page }) => {
   expect(box.x + box.width).toBeLessThanOrEqual(390 - 16 + 1);
 });
 
+// AC3 fix round 1: the fullest control row of a phone (model, effort, quick actions, the agents
+// chip) fits the composer: the chip is the dot and the count, the send button stays inside.
+test("390: with the agents chip the send button stays inside the composer", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/dev/ui/reference/agents-chip");
+  await page.waitForLoadState("networkidle");
+  const b = page.locator('[data-ref-block="agents-chip-narrow"]');
+  const composer = await b.locator('[data-part="composer"]').boundingBox();
+  const send = await b.locator('[data-part="send"]').boundingBox();
+  expect(composer).not.toBeNull();
+  expect(send).not.toBeNull();
+  if (!composer || !send) return;
+  expect(send.x + send.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
+  expect(composer.x + composer.width).toBeLessThanOrEqual(390 - 16 + 1);
+  const chip = b.locator('[data-part="agents-chip"]');
+  await expect(chip.locator('[data-part="agents-chip-label"]')).toBeHidden();
+  await expect(chip.locator('[data-part="agents-chip-count"]')).toHaveText("3");
+  await expect(chip.locator('[data-part="agent-dot"]')).toBeVisible();
+  await expect(chip).toHaveAttribute("aria-label", "3 个智能体，1 个运行中，1 个等待中");
+  await expect(b.locator('[data-part="quick-actions"]')).toBeVisible();
+});
+
 // The server render and hydration cannot know the window: `useMediaQuery` reads false there, so
 // the right area is drawn inline until the first client render makes it a sheet below 1280. The
 // layout before that render must not overflow either (it used to, by the panel's width, and the

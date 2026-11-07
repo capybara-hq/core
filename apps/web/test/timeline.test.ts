@@ -532,6 +532,27 @@ describe("run rows (spec §6.16.23)", () => {
   });
 });
 
+describe("the run row's duration", () => {
+  it("is the run's working time: a wait for a person is left out, as the status bar counts it", () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 10, 7) + s * 1000).toISOString(),
+    });
+    const events = [
+      at(ev(1, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }), 0),
+      at(ev(2, "question_asked", { callId: "c", questionId: "q1" }), 4),
+      at(ev(3, "question_answered", { questionId: "q1" }), 304),
+      at(ev(4, "approval_requested", { callId: "x", approvalId: "a1" }), 306),
+      at(ev(5, "approval_decided", { approvalId: "a1" }), 406),
+      at(ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 0 }), 409),
+    ];
+    const row = buildEventTimeline(events, new Map(), "en").entries.find((e) => e.kind === "run");
+    // 4 s + 2 s + 3 s of work; the 400 s of waiting are not counted
+    expect(row?.kind === "run" ? row.durationMs : undefined).toBe(9000);
+    expect(runStats(events).workedMs).toBe(9000);
+  });
+});
+
 describe("runStats", () => {
   it("counts runs and keeps the last run's span", () => {
     const events = [
@@ -543,6 +564,45 @@ describe("runStats", () => {
     expect(s.turns).toBe(2);
     expect(s.endedAt).toBeNull();
     expect(s.startedAt).toBe(Date.parse((events[2] as ConversationEvent).createdAt));
+  });
+
+  it("a wait for a person is not working time: the count stops at the wait and resumes after it", () => {
+    const at = (e: ConversationEvent, s: number) => ({
+      ...e,
+      createdAt: new Date(Date.UTC(2026, 10, 7) + s * 1000).toISOString(),
+    });
+    const start = at(ev(1, "run_started", { agentVersion: 1, model: null }), 0);
+    const ask = at(ev(2, "question_asked", { callId: "c", questionId: "q1" }), 5);
+    // two approvals at once: the run works again only when both are decided
+    const a1 = at(ev(3, "approval_requested", { callId: "x", approvalId: "a1" }), 5);
+    const answered = at(ev(4, "question_answered", { questionId: "q1" }), 60);
+    const d1 = at(ev(5, "approval_decided", { approvalId: "a1" }), 100);
+    const end = at(ev(6, "run_finished", { reason: "end_turn", consumedUpToSeq: 0 }), 103);
+    const t0 = Date.UTC(2026, 10, 7);
+
+    expect(runStats([start])).toMatchObject({ workedMs: 0, resumedAt: t0 });
+    // waiting: nothing ticks, the worked time is the log's
+    expect(runStats([start, ask])).toMatchObject({ workedMs: 5000, resumedAt: null });
+    expect(runStats([start, ask, a1, answered])).toMatchObject({
+      workedMs: 5000,
+      resumedAt: null,
+    });
+    expect(runStats([start, ask, a1, answered, d1])).toMatchObject({
+      workedMs: 5000,
+      resumedAt: t0 + 100_000,
+    });
+    expect(runStats([start, ask, a1, answered, d1, end])).toMatchObject({
+      workedMs: 8000,
+      resumedAt: null,
+      last: "finished",
+    });
+    // a new run starts its own count
+    const next = at(ev(7, "run_started", { agentVersion: 1, model: null }, "r2"), 200);
+    expect(runStats([start, ask, a1, answered, d1, end, next])).toMatchObject({
+      turns: 2,
+      workedMs: 0,
+      resumedAt: t0 + 200_000,
+    });
   });
 });
 
@@ -670,7 +730,6 @@ describe("workingLineVisible (conversation send spec §2.2)", () => {
       pending: s.pending ?? 0,
       // sent here just now (the 60 s backstop has its own tests)
       sentHere: new Map((s.sent ?? []).map((id) => [id, 0])),
-      paused: false,
       now: 1000,
     });
 
@@ -793,30 +852,25 @@ describe("awaitingRun gives up (review round 2, item 3)", () => {
   const sent = new Map([["m1", sentAt]]);
 
   it("waits for the run of a message this tab sent, within 60 s of its send here", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 59_000 })).toBe(true);
+    expect(awaitingRun([mine(1)], sent, sentAt + 59_000)).toBe(true);
   });
 
   it("a server createdAt 10 minutes in the past does not end the wait of a fresh local send", () => {
     const fresh = new Map([["m1", Date.now()]]);
     const events = [{ ...mine(1), createdAt: new Date(Date.now() - 600_000).toISOString() }];
-    expect(awaitingRun(events, fresh, { paused: false, now: Date.now() })).toBe(true);
+    expect(awaitingRun(events, fresh, Date.now())).toBe(true);
   });
 
   it("a run that never starts stops waiting 60 s after the send here (the backstop)", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: false, now: sentAt + 60_001 })).toBe(false);
+    expect(awaitingRun([mine(1)], sent, sentAt + 60_001)).toBe(false);
     expect(
       workingLineVisible([mine(1)], [], {
         waiting: false,
         pending: 0,
         sentHere: sent,
-        paused: false,
         now: sentAt + 60_001,
       }),
     ).toBe(false);
-  });
-
-  it("a paused queue means no run is coming", () => {
-    expect(awaitingRun([mine(1)], sent, { paused: true, now: sentAt })).toBe(false);
   });
 });
 

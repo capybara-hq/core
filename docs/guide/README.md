@@ -6,7 +6,7 @@ from source see [docs/development.md](../development.md).
 
 | Page | What it covers |
 |---|---|
-| [Setup](setup.md) | Creating the first enterprise admin and org, admin accounts from the CLI |
+| [Setup](setup.md) | Creating the first super admin and org, admin accounts from the CLI |
 | [Extensions](extensions.md) | Installing, approving, enabling and upgrading extensions; deployment config; the trust model |
 | [Models](models.md) | The model provider extensions (OpenAI-compatible, Anthropic, OpenAI, model-fake) and their config |
 | [Tools and connectors](tools-and-connectors.md) | MCP and OpenAPI connectors, auth and OAuth, approvals and the inbox, tool drift, `ToolSearch` |
@@ -16,4 +16,4 @@ from source see [docs/development.md](../development.md).
 | [Sandbox](sandbox.md) | Per-conversation sandboxes on Docker or E2B, egress, limits |
 | [Skills](skills.md) | The skill library, skills at run time, agents writing their own skills |
 | [Evals and trajectories](evals.md) | The trajectory viewer, eval sets, step and full-run replay |
-| [Catalog and marketplaces](catalog.md) | Plugins, catalog policy, marketplaces, import review, org install |
+| [Catalog and marketplaces](catalog.md) | Plugins, scopes and platform components, marketplaces, import review, org install |

@@ -1,10 +1,12 @@
 // Server-rendered times hydrate with the server's clock and zone, then follow the browser's (CI
-// failure of e2e/ssr.spec.ts, 2026-11-04: the overview's 「接着上次的会话」 meta was 现在 on the
-// server and 1分钟前 in the browser, and Next's error overlay then covered the page).
+// failure of e2e/ssr.spec.ts, 2026-11-04: the old home overview's 「接着上次的会话」 meta was 现在 on
+// the server and 1分钟前 in the browser, and Next's error overlay then covered the page). The home
+// page is gone (the new conversation is the home); a real route stands in: the service tokens list,
+// whose `DateTime` cells write `YYYY-MM-DD HH:mm` in the zone (`useTimeZone`) and the relative age
+// as their tooltip (`useNow`).
 import { formatDateTime } from "@capybara-hq/design";
-import { cleanup, render, within } from "@testing-library/react";
+import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import zh from "../messages/zh.json";
 import { DesignRoot } from "../src/components/design-root";
 import { navigateBrowser } from "../src/lib/browser";
 import { parseTimeZone, shortTime } from "../src/lib/time";
@@ -30,47 +32,32 @@ const T = Date.parse("2026-11-04T10:00:30.000Z");
 const FAR_ZONE = "Pacific/Chatham";
 const browserZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-/** The overview's reads: one conversation updated at the server's render time, untitled. */
-function overviewRoutes(): Routes {
+/** The tokens page's read: one token created at the server's render time, never used. */
+function tokenRoutes(): Routes {
   const at = new Date(T).toISOString();
   return {
-    "GET /api/v1/orgs/o1/agents": () =>
+    "GET /api/v1/orgs/o1/service-tokens": () =>
       json(200, {
-        agents: [
-          { id: "ag1", definition: { name: "研究助手", model: { provider: "f", model: "m" } } },
-        ],
-      }),
-    "GET /api/v1/orgs/o1/models": () =>
-      json(200, { providers: [{ provider: "f", models: [{ id: "m" }] }] }),
-    "GET /api/v1/orgs/o1/inbox": () => json(200, { truncated: false, items: [] }),
-    "GET /api/v1/orgs/o1/conversations/groups": () =>
-      json(200, {
-        next: null,
-        groups: [
+        tokens: [
           {
-            agent: { id: "ag1", name: "研究助手" },
-            latestAt: at,
-            more: false,
-            conversations: [
-              { id: "c1", agentId: "ag1", title: null, createdAt: at, updatedAt: at },
-            ],
+            id: "t1",
+            name: "ci",
+            role: "member",
+            createdAt: at,
+            lastUsedAt: null,
+            expiresAt: null,
           },
         ],
       }),
-    "GET /api/v1/orgs/o1/skills": () => json(200, { skills: [] }),
-    "GET /api/v1/orgs/o1/connectors": () => json(200, { connectors: [] }),
-    "GET /api/v1/orgs/o1/members": () => json(200, { members: [{}] }),
   };
 }
 
-/** The overview's 「接着上次的会话」 row of c1. */
-function recentRow(container: HTMLElement): HTMLElement {
-  const list = within(container).getByRole("list", { name: zh.home.recent.title });
-  return within(list).getAllByRole("listitem")[0] as HTMLElement;
-}
+/** The token's created cell. */
+const createdCell = (container: HTMLElement) =>
+  container.querySelector(`time[datetime="${new Date(T).toISOString()}"]`) as HTMLElement;
 
 beforeEach(() => {
-  resetNavigation("/");
+  resetNavigation("/settings/tokens");
   vi.mocked(navigateBrowser).mockReset();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(T);
@@ -81,48 +68,48 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the overview's server-rendered times", () => {
+describe("a route's server-rendered times", () => {
   it("a browser clock 61 s ahead hydrates the server's age (现在), then shows its own (1分钟前)", async () => {
     expectNoFirstPaintFetch();
     const { container, errors, html, unmount } = await hydrateRouteWithCache(
-      "/",
-      overviewRoutes(),
+      "/settings/tokens",
+      tokenRoutes(),
       {
         locale: "zh",
         clock: { now: T, timeZone: browserZone },
         beforeHydrate: () => vi.setSystemTime(T + 61_000),
       },
     );
-    expect(html).toContain("研究助手 · 现在");
+    expect(html).toContain('title="现在"');
     expect(errors).toEqual([]);
     // right after hydration the browser's clock
-    expect(recentRow(container).textContent).toContain("研究助手 · 1分钟前");
+    expect(createdCell(container).getAttribute("title")).toBe("1分钟前");
     unmount();
   });
 
   it("control: without the server's clock the same load mismatches (the CI failure)", async () => {
     expectNoFirstPaintFetch();
-    const { errors, unmount } = await hydrateRouteWithCache("/", overviewRoutes(), {
+    const { errors, unmount } = await hydrateRouteWithCache("/settings/tokens", tokenRoutes(), {
       locale: "zh",
       beforeHydrate: () => vi.setSystemTime(T + 61_000),
     });
-    expect(errors.join("\n")).toMatch(/Hydration failed/);
+    expect(errors.join("\n")).toMatch(/hydrat|didn't match/i);
     unmount();
   });
 
-  it("a browser in another zone hydrates the server's MM-DD HH:mm, then writes its own", async () => {
+  it("a browser in another zone hydrates the server's YYYY-MM-DD HH:mm, then writes its own", async () => {
     expectNoFirstPaintFetch();
     const { container, errors, html, unmount } = await hydrateRouteWithCache(
-      "/",
-      overviewRoutes(),
+      "/settings/tokens",
+      tokenRoutes(),
       { locale: "zh", clock: { now: T, timeZone: FAR_ZONE } },
     );
-    const server = formatDateTime(new Date(T), "compact", FAR_ZONE);
-    const local = formatDateTime(new Date(T), "compact");
+    const server = formatDateTime(new Date(T), "full", FAR_ZONE);
+    const local = formatDateTime(new Date(T), "full");
     expect(server).not.toBe(local);
-    expect(html).toContain(`未命名会话 · ${server}`);
+    expect(html).toContain(server);
     expect(errors).toEqual([]);
-    expect(recentRow(container).textContent).toContain(`未命名会话 · ${local}`);
+    expect(createdCell(container).textContent).toBe(local);
     unmount();
   });
 });

@@ -31,7 +31,7 @@
     guest: ["all"],
     member: ["all", "member"],
     admin: ["all", "member", "admin"],
-    enterprise: ["all", "member", "admin", "enterprise"],
+    superAdmin: ["all", "member", "admin", "superAdmin"],
   };
 
   // ── Sidebar (v3: work and admin contexts) ─────────────────────────────────
@@ -105,10 +105,22 @@
         : o.groups === "many"
           ? F.MANY_GROUPS_FIXTURE
           : F.GROUPS_FIXTURE;
-    if (o.filter && o.filter !== "all") {
+    if (o.filter && (o.filter !== "all" || o.query)) {
+      const q = (o.query ?? "").toLowerCase();
       groups = groups
-        .map((g) => ({ ...g, more: false, conversations: g.conversations.filter((c) => c.activity === o.filter) }))
+        .map((g) => ({
+          ...g,
+          more: false,
+          conversations: g.conversations.filter(
+            (c) =>
+              (o.filter === "all" || c.activity === o.filter) &&
+              (c.title ?? "").toLowerCase().includes(q),
+          ),
+        }))
         .filter((g) => g.conversations.length > 0);
+      // the in-list form of the compact empty state, centered as the DataTable's empty area
+      if (groups.length === 0)
+        return `<div class="r-sb-empty" data-state="no-match"><p class="r-sb-empty-text">${esc(F.SIDEBAR_COPY.noMatch)}</p><button class="r-btn" data-variant="default" data-step="dense">${esc(F.SIDEBAR_COPY.clearFilter)}</button></div>`;
     }
     const moreGroups =
       o.groups === "many" && F.MANY_GROUPS_MORE
@@ -120,20 +132,22 @@
   function conversations(o) {
     const C = F.SIDEBAR_COPY;
     const n = F.ARCHIVED_COUNT_FIXTURE;
-    const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span><button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
+    // the archived list's icon button sits in the head before the filter (spec §6.13), shown
+    // while the plain list is up
+    const archive =
+      !o.archived && !o.state
+        ? `<button class="r-icon-btn" data-step="dense" aria-label="${esc(C.archived)} · ${n}" title="${esc(C.archived)} · ${n}">${icon("archive", 14)}</button>`
+        : "";
+    const head = `<div class="r-sb-convs-head"><span class="r-sb-section">${esc(C.conversations)}</span>${archive}<button class="r-icon-btn" data-step="dense" aria-label="${esc(C.filter)}"${o.filter ? ' data-active="true"' : ""}>${icon("filter", 14)}</button></div>`;
     const filter = o.filter
-      ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
+      ? `<div class="r-sb-filter"><input class="r-input r-sb-filter-input" placeholder="${esc(C.filterQuery)}" aria-label="${esc(C.filterQuery)}"${o.query ? ` value="${esc(o.query)}"` : ""}><div class="r-seg r-seg-fill r-sb-filter-seg" role="radiogroup" aria-label="会话状态">${C.states
           .map((label, i) => `<button role="radio" aria-checked="${["all", "running", "waiting"][i] === o.filter}">${esc(label)}</button>`)
           .join("")}</div></div>`
       : "";
     const back = o.archived
       ? `<button class="r-sb-archived" data-back="true">${icon("arrow-left", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
       : "";
-    const entry =
-      !o.archived && !o.state
-        ? `<button class="r-sb-archived">${icon("archive", 14)}<span class="r-ellipsis">${esc(C.archived)} · ${n}</span></button>`
-        : "";
-    return `<div class="r-sb-convs" aria-label="${esc(C.conversations)}">${head}${filter}${back}${conversationList(o)}${entry}</div>`;
+    return `<div class="r-sb-convs" aria-label="${esc(C.conversations)}">${head}${filter}${back}${conversationList(o)}</div>`;
   }
 
   function orgBlock(o) {
@@ -192,7 +206,7 @@
   }
 
   function sidebar(o) {
-    const level = o.level || "enterprise";
+    const level = o.level || "superAdmin";
     const rail = o.mode === "rail";
     const setup = o.context === "setup";
     const admin = o.context === "admin";
@@ -244,7 +258,7 @@
     const context = admin ? adminBlock(o) : orgBlock(o);
     const middle = admin || setup || rail ? '<div class="r-sb-fill"></div>' : conversations(o);
     const adminEntry =
-      !admin && level === "enterprise" && (!setup || (o.setup || "admin") === "admin")
+      !admin && level === "superAdmin" && (!setup || (o.setup || "admin") === "admin")
         ? rail
           ? `<a class="r-nav-item r-rail-item r-sb-admin" href="#" aria-label="${esc(F.ADMIN_LABEL)}">${icon("admin")}</a>`
           : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`
@@ -275,8 +289,14 @@
         nActions > 0
           ? `<div class="r-ph-actions">${Array.from({ length: nActions }, (_, i) => loadBox(i)).join("")}</div>`
           : "";
-      const loadTabs =
-        nTabs > 0
+      // `tabItems`: the page's static tabs, drawn for real while the data loads (a detail page's
+      // in-page tabs are the head's tab row, spec §4.2, §5.2).
+      const tabItems = typeof o.loading === "object" ? o.loading.tabItems : undefined;
+      const loadTabs = tabItems
+        ? `<div class="r-ph-tabs"><div class="r-ph-tablist" role="tablist">${tabItems
+            .map((t, i) => `<span role="tab" aria-selected="${i === 0}">${esc(t)}</span>`)
+            .join("")}</div></div>`
+        : nTabs > 0
           ? `<div class="r-ph-tabs r-ph-tabs-loading"><div class="r-ph-tab-slots" data-part="page-header-tab-slots">${Array.from({ length: nTabs }, () => '<div class="r-skel-text" data-size="body" style="width:56px"><span class="r-skel-bar"></span></div>').join("")}</div></div>`
           : "";
       return `<header class="r-ph"${o.narrow ? " data-narrow" : ""} aria-busy="true">${loadCrumb}<div class="r-ph-row"><div class="r-ph-text"><div class="r-skel-text" data-part="skeleton-text" data-size="title" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div>${loadActions}</div>${loadTabs}</header>`;
@@ -485,7 +505,7 @@
   function listLoadingObjects() {
     const row = `<li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
     const head = pageHeader({ title: F.PAGE_HEADER_FIXTURE.title, actions: true, tabs: true, pending: true });
-    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main" data-flat><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
+    return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main"><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
   }
 
   /** The trace page while loading: stat slots, 11 waterfall rows (the loaded fixture's spans), a card. */
@@ -523,6 +543,41 @@
       .join("")}</div>`;
   }
 
+  // ── Select (§6.2): a field-like button opening the anchored listbox (§6.16.3) ──
+
+  function selectField(o) {
+    const S = F.SELECT_FIXTURE;
+    const L = F.LONG_MODELS_FIXTURE;
+    const long = o.state === "long";
+    const open = long || o.state === "open";
+    const options = long
+      ? L.groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: m.label })))
+      : S.options;
+    const value = long ? L.selected : o.state === "placeholder" ? "" : S.value;
+    const chosen = options.find((x) => x.value === value);
+    const shown = chosen
+      ? `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
+      : `<span class="r-ellipsis r-faint" data-part="select-label" data-placeholder="true">${esc(S.placeholder)}</span>`;
+    const st = o.state === "error" ? ' data-state="error"' : open ? ' data-state="focus"' : "";
+    const field = `<button class="r-input r-select-field" data-part="select" role="combobox" aria-haspopup="listbox" aria-expanded="${open}"${st}${o.state === "disabled" ? " disabled" : ""}><span class="r-select-value" data-part="input-control">${shown}</span>${icon("chevron-down", 14)}</button>`;
+    const error = o.state === "error" ? `<span class="r-field-error">${icon("circle-alert", 12)}${esc(S.error)}</span>` : "";
+    let list = "";
+    if (open) {
+      // the long list is scrolled to the selected option: the rows in view end on it
+      const at = options.findIndex((x) => x.value === value);
+      const view = long ? options.slice(Math.max(0, at - 8), at + 1) : options;
+      const rows = view
+        .map((x) => {
+          const sel = x.value === value;
+          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}"><span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
+        })
+        .join("");
+      const filter = long ? '<input class="r-menu-filter" data-part="menu-filter" placeholder="筛选" aria-label="筛选">' : "";
+      list = `<div class="r-menu r-select-list${long ? " r-menu-capped" : ""}" data-part="menu" role="listbox">${filter}<div class="r-menu-list">${rows}</div></div>`;
+    }
+    return `<div class="r-field"><label class="r-label">${esc(long ? S.longLabel : S.label)}</label><div class="r-select-stage">${field}${list}</div>${error}</div>`;
+  }
+
   const RENDER = {
     sidebar,
     rail,
@@ -541,6 +596,7 @@
     "trace-loading": traceLoading,
     "form-page": formPage,
     "icon-grid": iconGrid,
+    select: selectField,
   };
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.

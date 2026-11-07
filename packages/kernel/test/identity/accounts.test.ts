@@ -74,7 +74,7 @@ describe("AccountsService 本地账号", () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const a = await svc.createLocal({ login: "alice", password: PW, displayName: "A" });
     expect(await svc.authenticateLocal("alice", "wrong password!!")).toBeNull();
@@ -119,7 +119,7 @@ describe("AccountsService 本地账号", () => {
       login: "alice",
       password: PW,
       displayName: "A",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     await svc.setPassword(a.id, "another long password");
     expect(await svc.authenticateLocal("alice", PW)).toBeNull();
@@ -142,22 +142,22 @@ describe("AccountsService 本地账号", () => {
   });
 });
 
-describe("最后一个企业管理员", () => {
+describe("最后一个超级管理员", () => {
   it("仅一个时撤销或停用均被拒绝", async () => {
     const a = await svc.createLocal({
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
-    expect(await svc.countEnterpriseAdmins()).toBe(1);
-    expect(await codeOf(svc.update(a.id, { isEnterpriseAdmin: false }, a.id))).toBe(
-      "account.last_enterprise_admin",
+    expect(await svc.countSuperAdmins()).toBe(1);
+    expect(await codeOf(svc.update(a.id, { isSuperAdmin: false }, a.id))).toBe(
+      "account.last_super_admin",
     );
     expect(await codeOf(svc.update(a.id, { status: "disabled" }, a.id))).toBe(
-      "account.last_enterprise_admin",
+      "account.last_super_admin",
     );
-    expect((await svc.get(a.id))?.isEnterpriseAdmin).toBe(true);
+    expect((await svc.get(a.id))?.isSuperAdmin).toBe(true);
   });
 
   it("两个管理员并发互相撤销：恰好一个成功", async () => {
@@ -165,26 +165,26 @@ describe("最后一个企业管理员", () => {
       login: "root1",
       password: PW,
       displayName: "1",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const b = await svc.createLocal({
       login: "root2",
       password: PW,
       displayName: "2",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     const rs = await Promise.allSettled([
-      svc.update(b.id, { isEnterpriseAdmin: false }, a.id),
-      svc.update(a.id, { isEnterpriseAdmin: false }, b.id),
+      svc.update(b.id, { isSuperAdmin: false }, a.id),
+      svc.update(a.id, { isSuperAdmin: false }, b.id),
     ]);
     expect(rs.filter((r) => r.status === "fulfilled").length).toBe(1);
     const rej = rs.find((r) => r.status === "rejected") as PromiseRejectedResult;
-    // 后执行的一方在锁内复核时已不是企业管理员
+    // 后执行的一方在锁内复核时已不是超级管理员
     expect((rej.reason as ApiError).code).toBe("forbidden");
-    expect(await svc.countEnterpriseAdmins()).toBe(1);
+    expect(await svc.countSuperAdmins()).toBe(1);
   });
 
-  it("停用 vs 降级并发（独立连接池）：活跃企业管理员仍至少一个", async () => {
+  it("停用 vs 降级并发（独立连接池）：活跃超级管理员仍至少一个", async () => {
     const raw2 = createDb(box.url, 10);
     const svc2 = accountsFor(kernelDb(raw2));
     try {
@@ -194,23 +194,23 @@ describe("最后一个企业管理员", () => {
           login: `root-a${i}`,
           password: PW,
           displayName: "A",
-          enterpriseAdmin: true,
+          superAdmin: true,
         });
         const b = await svc.createLocal({
           login: `root-b${i}`,
           password: PW,
           displayName: "B",
-          enterpriseAdmin: true,
+          superAdmin: true,
         });
         const rs = await Promise.allSettled([
           svc.update(b.id, { status: "disabled" }, a.id),
-          svc2.update(a.id, { isEnterpriseAdmin: false }, b.id),
+          svc2.update(a.id, { isSuperAdmin: false }, b.id),
         ]);
         expect(rs.filter((r) => r.status === "fulfilled").length).toBe(1);
         for (const r of rs) {
           if (r.status === "rejected") expect((r.reason as ApiError).code).toBe("forbidden");
         }
-        expect(await svc.countEnterpriseAdmins()).toBeGreaterThanOrEqual(1);
+        expect(await svc.countSuperAdmins()).toBeGreaterThanOrEqual(1);
       }
     } finally {
       await raw2.destroy();
@@ -222,7 +222,7 @@ describe("最后一个企业管理员", () => {
       login: "root",
       password: PW,
       displayName: "R",
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
     await svc.update(a.id, { displayName: "Root" }, a.id);
     const ev = await db.selectFrom("audit_events").selectAll().execute();
@@ -230,34 +230,32 @@ describe("最后一个企业管理员", () => {
   });
 });
 
-describe("企业管理员写操作执行期复核（R5）", () => {
+describe("超级管理员写操作执行期复核（R5）", () => {
   const admin = (name: string) =>
     svc.createLocal({
       login: `admin-${name}`,
       password: PW,
       displayName: name,
-      enterpriseAdmin: true,
+      superAdmin: true,
     });
 
   it("A 撤销 B 后，B 已通过鉴权的调用（建管理员 / 改账号 / 改设置）一律 forbidden", async () => {
     const a = await admin("a");
     const b = await admin("b");
     const c = await admin("c");
-    await svc.update(b.id, { isEnterpriseAdmin: false }, a.id);
+    await svc.update(b.id, { isSuperAdmin: false }, a.id);
     expect(
       await codeOf(
         svc.createByAdmin(
-          { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+          { login: "minted", password: PW, displayName: "M", superAdmin: true },
           b.id,
         ),
       ),
     ).toBe("forbidden");
-    expect(await codeOf(svc.update(c.id, { isEnterpriseAdmin: false }, b.id))).toBe("forbidden");
-    expect(await codeOf(svc.update(b.id, { isEnterpriseAdmin: true }, b.id))).toBe("forbidden");
+    expect(await codeOf(svc.update(c.id, { isSuperAdmin: false }, b.id))).toBe("forbidden");
+    expect(await codeOf(svc.update(b.id, { isSuperAdmin: true }, b.id))).toBe("forbidden");
     const settings = settingsFor(db);
-    expect(await codeOf(settings.update({ orgCreation: "enterprise_admin" }, b.id))).toBe(
-      "forbidden",
-    );
+    expect(await codeOf(settings.update({ orgCreation: "super_admin" }, b.id))).toBe("forbidden");
     expect((await settings.get()).orgCreation).toBe("anyone");
     expect((await svc.list({ limit: 10 })).map((x) => x.displayName).sort()).toEqual([
       "a",
@@ -266,18 +264,16 @@ describe("企业管理员写操作执行期复核（R5）", () => {
     ]);
     // 停用的管理员同样被拒
     await svc.update(c.id, { status: "disabled" }, a.id);
-    expect(await codeOf(settings.update({ orgCreation: "enterprise_admin" }, c.id))).toBe(
-      "forbidden",
-    );
+    expect(await codeOf(settings.update({ orgCreation: "super_admin" }, c.id))).toBe("forbidden");
   });
 
-  it("createByAdmin：活跃企业管理员可建账号（含企业管理员）并写审计", async () => {
+  it("createByAdmin：活跃超级管理员可建账号（含超级管理员）并写审计", async () => {
     const a = await admin("a");
     const m = await svc.createByAdmin(
-      { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+      { login: "minted", password: PW, displayName: "M", superAdmin: true },
       a.id,
     );
-    expect(m.isEnterpriseAdmin).toBe(true);
+    expect(m.isSuperAdmin).toBe(true);
     const ev = await db
       .selectFrom("audit_events")
       .selectAll()
@@ -285,7 +281,7 @@ describe("企业管理员写操作执行期复核（R5）", () => {
       .where("target", "=", m.id)
       .execute();
     expect(ev.map((e) => [e.actor_account_id, e.target, e.detail])).toEqual([
-      [a.id, m.id, { enterpriseAdmin: true }],
+      [a.id, m.id, { superAdmin: true }],
     ]);
   });
 
@@ -298,16 +294,14 @@ describe("企业管理员写操作执行期复核（R5）", () => {
       let mint: Promise<unknown> | undefined;
       let settled = false;
       await raw.transaction().execute(async (trx) => {
-        // 模拟 AccountsService.update 撤销 B 的事务：已取企业管理员锁、已改行、尚未提交
-        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(
-          trx,
-        );
-        await sql`UPDATE capybara.accounts SET is_enterprise_admin = false WHERE id = ${b.id}`.execute(
+        // 模拟 AccountsService.update 撤销 B 的事务：已取超级管理员锁、已改行、尚未提交
+        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.super_admins'))`.execute(trx);
+        await sql`UPDATE capybara.accounts SET is_super_admin = false WHERE id = ${b.id}`.execute(
           trx,
         );
         mint = svc2
           .createByAdmin(
-            { login: "minted", password: PW, displayName: "M", enterpriseAdmin: true },
+            { login: "minted", password: PW, displayName: "M", superAdmin: true },
             b.id,
           )
           .finally(() => {
@@ -332,9 +326,9 @@ describe("企业管理员写操作执行期复核（R5）", () => {
       for (let i = 0; i < 15; i++) {
         const b = await admin(`b${i}`);
         const [demote, mint] = await Promise.allSettled([
-          svc.update(b.id, { isEnterpriseAdmin: false }, a.id),
+          svc.update(b.id, { isSuperAdmin: false }, a.id),
           svc2.createByAdmin(
-            { login: `mint-${i}`, password: PW, displayName: `m${i}`, enterpriseAdmin: true },
+            { login: `mint-${i}`, password: PW, displayName: `m${i}`, superAdmin: true },
             b.id,
           ),
         ]);
@@ -359,9 +353,9 @@ describe("企业管理员写操作执行期复核（R5）", () => {
   });
 });
 
-describe("setEnterpriseAdminByLogin（CLI 的 capybara admin grant / revoke）", () => {
-  const make = (login: string, enterpriseAdmin: boolean) =>
-    svc.createLocal({ login, password: PW, displayName: login, enterpriseAdmin });
+describe("setSuperAdminByLogin（CLI 的 capybara admin grant / revoke）", () => {
+  const make = (login: string, superAdmin: boolean) =>
+    svc.createLocal({ login, password: PW, displayName: login, superAdmin });
   const cliAudits = () =>
     db
       .selectFrom("audit_events")
@@ -374,47 +368,43 @@ describe("setEnterpriseAdminByLogin（CLI 的 capybara admin grant / revoke）",
     await truncateTables(raw, "capybara.audit_events");
   });
 
-  it("grant：按登录名（大小写不敏感）设为企业管理员，写审计（无发起账号，via cli）", async () => {
+  it("grant：按登录名（大小写不敏感）设为超级管理员，写审计（无发起账号，via cli）", async () => {
     await make("root", true);
     const u = await make("alice", false);
-    const r = await svc.setEnterpriseAdminByLogin("Alice", true);
+    const r = await svc.setSuperAdminByLogin("Alice", true);
     expect(r.changed).toBe(true);
     expect(r.account.id).toBe(u.id);
-    expect((await svc.get(u.id))?.isEnterpriseAdmin).toBe(true);
+    expect((await svc.get(u.id))?.isSuperAdmin).toBe(true);
     expect(await cliAudits()).toEqual([
       {
         action: "account.updated",
         target: u.id,
         actor_account_id: null,
-        detail: { isEnterpriseAdmin: true, via: "cli" },
+        detail: { isSuperAdmin: true, via: "cli" },
       },
     ]);
-    // 已是企业管理员：不改、不写审计
-    const again = await svc.setEnterpriseAdminByLogin("alice", true);
+    // 已是超级管理员：不改、不写审计
+    const again = await svc.setSuperAdminByLogin("alice", true);
     expect(again.changed).toBe(false);
     expect(await cliAudits()).toHaveLength(1);
   });
 
-  it("revoke：还有别的活跃企业管理员时撤销成功；最后一个 → account.last_enterprise_admin，库不变", async () => {
+  it("revoke：还有别的活跃超级管理员时撤销成功；最后一个 → account.last_super_admin，库不变", async () => {
     const a = await make("root", true);
     const b = await make("bob", true);
-    expect((await svc.setEnterpriseAdminByLogin("bob", false)).changed).toBe(true);
-    expect((await svc.get(b.id))?.isEnterpriseAdmin).toBe(false);
-    expect(await codeOf(svc.setEnterpriseAdminByLogin("root", false))).toBe(
-      "account.last_enterprise_admin",
-    );
-    expect((await svc.get(a.id))?.isEnterpriseAdmin).toBe(true);
-    expect((await cliAudits()).map((e) => e.detail)).toEqual([
-      { isEnterpriseAdmin: false, via: "cli" },
-    ]);
+    expect((await svc.setSuperAdminByLogin("bob", false)).changed).toBe(true);
+    expect((await svc.get(b.id))?.isSuperAdmin).toBe(false);
+    expect(await codeOf(svc.setSuperAdminByLogin("root", false))).toBe("account.last_super_admin");
+    expect((await svc.get(a.id))?.isSuperAdmin).toBe(true);
+    expect((await cliAudits()).map((e) => e.detail)).toEqual([{ isSuperAdmin: false, via: "cli" }]);
   });
 
   it("账号不存在 → account.not_found", async () => {
-    expect(await codeOf(svc.setEnterpriseAdminByLogin("ghost", true))).toBe("account.not_found");
-    expect(await codeOf(svc.setEnterpriseAdminByLogin("ghost", false))).toBe("account.not_found");
+    expect(await codeOf(svc.setSuperAdminByLogin("ghost", true))).toBe("account.not_found");
+    expect(await codeOf(svc.setSuperAdminByLogin("ghost", false))).toBe("account.not_found");
   });
 
-  it("在企业管理员锁内复核：网页撤销持锁未提交时 CLI 撤销等待，提交后判定为最后一个 → 拒绝", async () => {
+  it("在超级管理员锁内复核：网页撤销持锁未提交时 CLI 撤销等待，提交后判定为最后一个 → 拒绝", async () => {
     const raw2 = createDb(box.url, 10);
     const svc2 = accountsFor(kernelDb(raw2));
     try {
@@ -423,22 +413,20 @@ describe("setEnterpriseAdminByLogin（CLI 的 capybara admin grant / revoke）",
       let revoke: Promise<unknown> | undefined;
       let settled = false;
       await raw.transaction().execute(async (trx) => {
-        // 模拟网页撤销 A：已取企业管理员锁、已改行、尚未提交
-        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.enterprise_admins'))`.execute(
+        // 模拟网页撤销 A：已取超级管理员锁、已改行、尚未提交
+        await sql`SELECT pg_advisory_xact_lock(hashtext('capybara.super_admins'))`.execute(trx);
+        await sql`UPDATE capybara.accounts SET is_super_admin = false WHERE id = ${a.id}`.execute(
           trx,
         );
-        await sql`UPDATE capybara.accounts SET is_enterprise_admin = false WHERE id = ${a.id}`.execute(
-          trx,
-        );
-        revoke = svc2.setEnterpriseAdminByLogin("root-b", false).finally(() => {
+        revoke = svc2.setSuperAdminByLogin("root-b", false).finally(() => {
           settled = true;
         });
         revoke.catch(() => {});
         await new Promise((r) => setTimeout(r, 300));
         expect(settled).toBe(false);
       });
-      expect(await codeOf(revoke as Promise<unknown>)).toBe("account.last_enterprise_admin");
-      expect(await svc.countEnterpriseAdmins()).toBe(1);
+      expect(await codeOf(revoke as Promise<unknown>)).toBe("account.last_super_admin");
+      expect(await svc.countSuperAdmins()).toBe(1);
     } finally {
       await raw2.destroy();
     }

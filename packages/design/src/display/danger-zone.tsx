@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Button } from "../controls/index";
+import { BoxScope } from "../layout/box";
 
 export type DangerZoneItemProps = {
   title: string;
@@ -18,7 +19,9 @@ export function DangerZone({ title, children }: { title: string; children: React
       <h2 className="cb-danger-zone-title" data-part="danger-zone-title">
         {title}
       </h2>
-      <div className="cb-danger-zone-items">{children}</div>
+      <div className="cb-danger-zone-items">
+        <BoxScope kind="danger-zone">{children}</BoxScope>
+      </div>
     </section>
   );
 }

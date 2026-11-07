@@ -79,7 +79,8 @@ test("sub-agents: the call block, the finish notice, the record on the right, st
     "echo:child says hello",
   );
   await expect(record.locator('[data-part="prose"]').last()).toContainText("child says hello");
-  await expect(record).toContainText(zh.subagents.view.readOnly);
+  // no read-only copy (AC1): the missing composer says it
+  await expect(record.getByText(/只读|不能和它对话/)).toHaveCount(0);
   await expect(record.getByRole("textbox")).toHaveCount(0);
   // a reload keeps it open; close drops the hash
   await page.reload();

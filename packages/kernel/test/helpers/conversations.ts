@@ -19,6 +19,7 @@ import {
 import { type EventBus, EventLog } from "../../src/conversations/event-log.js";
 import type { LogContentBlock } from "../../src/conversations/events.js";
 import { ConversationQueue } from "../../src/conversations/queue.service.js";
+import { ApiError, errorBody } from "../../src/errors.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
@@ -134,4 +135,40 @@ export function queueFor(
   d: { eventLog: EventLog; conversations: ConversationsService; runs?: RunControl },
 ): ConversationQueue {
   return new ConversationQueue(h.db, d.eventLog, d.conversations, d.runs ?? noRuns, h.txHost);
+}
+
+/** An HTTP-like answer of {@link seedQueued}, so tests read it as they read an `inject` response. */
+export interface SeededQueued {
+  statusCode: number;
+  body: string;
+  json(): any;
+}
+
+/**
+ * Puts a leftover item into the conversation queue through the service. `POST …/queue` no longer
+ * queues (it is an interjection), so tests of the leftover routes and of the dispatcher seed rows
+ * this way. Answers as the old route did: 201 / 200, or the error's status and envelope.
+ */
+export async function seedQueued(
+  app: { get<T>(token: abstract new (...args: never[]) => T): T },
+  orgId: string,
+  conversationId: string,
+  accountId: string,
+  input: Parameters<ConversationQueue["add"]>[3],
+): Promise<SeededQueued> {
+  const answer = (statusCode: number, value: unknown): SeededQueued => ({
+    statusCode,
+    body: JSON.stringify(value),
+    json: () => JSON.parse(JSON.stringify(value)),
+  });
+  try {
+    const out = await app.get(ConversationQueue).add(orgId, conversationId, accountId, input);
+    return answer(out.created ? 201 : 200, {
+      item: out.item,
+      ...(out.event !== undefined && { event: out.event }),
+    });
+  } catch (e) {
+    if (e instanceof ApiError) return answer(e.status, errorBody(e.code, e.message, e.details));
+    throw e;
+  }
 }

@@ -24,27 +24,27 @@ async function callGreet(page: Page, convId: string) {
   };
 }
 
-test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> install, approve, enable -> edit deployment config -> call the tool in a conversation -> tool unavailable after disabling (no restart)", async ({
+test("admin extensions: import the plugin tgz -> review (acknowledge sensitive items) -> confirm installs and enables the extension -> edit deployment config -> call the tool in a conversation -> tool unavailable after disabling (no restart)", async ({
   page,
 }) => {
   const tgz = process.env.CAPYBARA_E2E_GREETER_TGZ;
   expect(tgz, "global-setup 应写入 CAPYBARA_E2E_GREETER_TGZ").toBeTruthy();
   await signIn(page);
 
-  // 1. 管理 → 插件 → 安装插件
+  // 1. Admin -> Plugins -> import a plugin package (uploads go through the plugin import page)
   await page.goto("/admin/extensions");
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
-  await page.getByRole("link", { name: P.install }).click();
-  await expect(page).toHaveURL(/\/admin\/extensions\/install$/);
+  await page.goto("/admin/plugins/import");
   await expect(page.locator('[data-template="WizardPage"]')).toBeVisible();
 
-  // 2. 选文件上传（经同源代理流式透传）→ 审阅：工具是敏感项，高亮并写明原因
+  // 2. Choose the file (streamed through the same-origin proxy) -> review: the tool is a sensitive
+  // item, highlighted with its reason
   await page.locator('input[type="file"]').setInputFiles({
     name: "greeter-1.0.0.tgz",
     mimeType: "application/gzip",
     buffer: readFileSync(tgz as string),
   });
-  await page.getByRole("button", { name: P.wizard.upload }).click();
+  await page.getByRole("button", { name: zh.catalog.admin.review.fetch }).click();
   const review = page.getByRole("region", {
     name: zh.extensions.permissionsLabel.replace("{plugin}", "greeter"),
   });
@@ -53,14 +53,17 @@ test("admin extensions: upload tgz -> review (acknowledge sensitive items) -> in
   await expect(review.getByText("· greet")).toBeVisible();
   await page.getByRole("button", { name: P.wizard.next }).click();
 
-  // 3. 确认：勾选「我已了解敏感项」前不能安装；安装后立即启用（默认勾选）
-  const install = page.getByRole("button", { name: P.wizard.install });
-  await expect(install).toBeDisabled();
-  await page.getByRole("checkbox", { name: P.wizard.ack }).check();
-  await install.click();
-  await expect(page).toHaveURL(/\/admin\/extensions\/greeter$/);
+  // 3. Confirm: not possible before the sensitive ack; confirming installs and enables the
+  // extension on the deployment
+  const confirm = page.getByRole("button", { name: zh.catalog.admin.review.confirm });
+  await expect(confirm).toBeDisabled();
+  await page.getByRole("checkbox", { name: zh.catalog.admin.review.ack }).check();
+  await confirm.click();
+  // A successful confirm opens the plugin's page; wait for it before leaving
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/);
+  await page.goto("/admin/extensions/greeter");
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
-  // 各副本收敛后状态为已启用（页面在收敛中自动重读）
+  // Replicas converge to enabled (the page re-reads while converging)
   await expect(page.getByText(P.status.enabled).first()).toBeVisible({ timeout: 60_000 });
 
   // 4. 配置标签：greeting 是即时生效的字段，改成 bonjour；密钥 token 未设置、不回显

@@ -9,12 +9,25 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const AGENT_TEMPLATE_INSTRUCTION_FILE_NAME_RE: RegExp;
+
+// @public
 export const AGENT_TEMPLATE_LIMITS: {
     readonly bodyChars: 100000;
     readonly descriptionChars: 4096;
     readonly perPlugin: 64;
     readonly skills: 3;
     readonly tools: 200;
+    readonly selectedSkills: 32;
+    readonly connectors: 16;
+    readonly subagentTypes: 16;
+    readonly inlineInstructionsChars: 100000;
+    readonly connectorTools: 200;
+    readonly quickActions: 9;
+    readonly quickActionTitleChars: 40;
+    readonly quickActionBodyChars: 20000;
+    readonly instructionFiles: 20;
+    readonly instructionFilesChars: 100000;
 };
 
 // @public
@@ -22,16 +35,66 @@ export const AGENT_TEMPLATE_NAME_RE: RegExp;
 
 // @public
 export interface AgentTemplate {
+    connectors?: AgentTemplateConnector[];
     description: string;
     disallowedTools?: string[];
     effort?: "low" | "medium" | "high" | "xhigh" | "max";
+    instructionFiles?: AgentTemplateInstructionFile[];
     instructions: string;
     maxSteps?: number;
     model?: AgentTemplateTier;
+    modelRef?: string;
     name: string;
+    quickActions?: AgentTemplateQuickAction[];
+    selectedSkills?: string[];
     skills?: string[];
+    subagents?: AgentTemplateSubagents;
     toolPolicies?: Record<string, "ask" | "deny">;
     tools?: string[];
+}
+
+// @public
+export type AgentTemplateConnector = {
+    template: string;
+    tools?: string[];
+    policies?: Record<string, "ask" | "deny">;
+} | {
+    needs: {
+        protocol: "mcp" | "openapi";
+        endpoint: string;
+        tools: string[];
+        label: string;
+    };
+    policies?: Record<string, "ask" | "deny">;
+};
+
+// @public
+export interface AgentTemplateInlineSubagent {
+    description: string;
+    instructions: string;
+    model: AgentTemplateTier;
+    name: string;
+    skills: string[];
+    tools?: string[];
+}
+
+// @public
+export interface AgentTemplateInstructionFile {
+    content: string;
+    name: string;
+}
+
+// @public
+export interface AgentTemplateQuickAction {
+    body: string;
+    title: string;
+}
+
+// @public
+export interface AgentTemplateSubagents {
+    general?: boolean;
+    inline?: AgentTemplateInlineSubagent[];
+    types?: string[];
 }
 
 // @public
@@ -1207,6 +1270,8 @@ export interface Logger {
 export const MARKETPLACE_LIMITS: {
     readonly nameChars: 100;
     readonly summaryChars: 280;
+    readonly displayNameChars: 100;
+    readonly deprecationReasonChars: 280;
     readonly plugins: 5000;
     readonly permissionKeys: 500;
     readonly urlChars: 2000;
@@ -1217,6 +1282,13 @@ export const MARKETPLACE_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
 export interface MarketplaceEntry {
+    deprecated?: boolean | {
+        reason?: string;
+    };
+    displayName?: {
+        zh: string;
+        en: string;
+    };
     homepage?: string;
     minKernel?: string;
     name: string;
@@ -1231,6 +1303,11 @@ export interface MarketplaceEntry {
     };
     version?: string;
 }
+
+// @public
+export function marketplaceEntryDeprecation(e: MarketplaceEntry): {
+    reason: string | null;
+} | null;
 
 // @public
 export function marketplaceEntryVersion(e: MarketplaceEntry): string | null;
@@ -1652,6 +1729,18 @@ export interface PluginDependency {
 }
 
 // @public
+export type PluginDescription = string | {
+    en: string;
+    zh?: string;
+};
+
+// @public
+export function pluginDescription(d: PluginDescription): {
+    en: string;
+    zh?: string;
+};
+
+// @public
 export interface PluginExtensionSection {
     configSchemas?: {
         deployment?: JsonSchema;
@@ -1669,7 +1758,7 @@ export interface PluginManifest {
     agents?: PluginAgentRef[];
     connectorTemplates?: PluginConnectorTemplateRef[];
     dependencies?: PluginDependency[];
-    description: string;
+    description: PluginDescription;
     displayName?: LocalizedName;
     extension?: PluginExtensionSection;
     homepage?: string;

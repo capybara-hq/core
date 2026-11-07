@@ -145,12 +145,7 @@ export async function main(
     case "plugins-list":
       return runPluginsList(log, env, io);
     case "plugins-import":
-      return runPluginsImport(
-        { target: cmd.target, yes: cmd.yes, deployExtension: cmd.deployExtension },
-        log,
-        env,
-        io,
-      );
+      return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(

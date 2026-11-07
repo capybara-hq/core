@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { Icon } from "../icons/icon";
+import { useInBox } from "../layout/box";
 import { Menu, type MenuItem } from "../overlays/menus";
 import { useOptionalToast } from "../overlays/toast";
 import { useDesignT } from "../provider";
@@ -53,10 +54,13 @@ export type RepeaterProps = {
   /** Drawn instead of the list when there are no items. */
   empty?: string;
   /**
-   * `cards` (default): hairline cards with a head (title, subtitle, actions). `rows`: compact rows
-   * (a `FieldRow` each) with the actions at the row's end and no head; titles only name them.
+   * `cards` (default): hairline cards with a head (title, subtitle, actions), on the page ground
+   * only; inside a box (a form card, a Card, a Dialog or Sheet) `cards` draws as `divided`.
+   * `divided`: items split by `line-soft` hairlines, each a head line (title, subtitle, actions)
+   * over its fields, no border (spec §6.26, §1 "One box is enough"). `rows`: compact rows (a
+   * `FieldRow` each) with the actions at the row's end and no head; titles only name them.
    */
-  variant?: "cards" | "rows";
+  variant?: "cards" | "divided" | "rows";
 };
 
 /** Plain text of a title for accessible names and the toast; else "第 n 项" / "Item n". */
@@ -80,7 +84,9 @@ function firstField(body: HTMLElement | null | undefined): HTMLElement | null {
       (f.getAttribute("aria-required") === "true" || f.hasAttribute("required")) &&
       (f instanceof HTMLInputElement ||
         f instanceof HTMLTextAreaElement ||
-        f instanceof HTMLSelectElement) &&
+        f instanceof HTMLSelectElement ||
+        // a Select's combobox button carries its value
+        f instanceof HTMLButtonElement) &&
       f.value === "",
   );
   return empty ?? fields[0] ?? null;
@@ -114,6 +120,9 @@ export function Repeater({
 }: RepeaterProps) {
   const t = useDesignT();
   const toast = useOptionalToast();
+  // One box is enough: a card's item cards become divided rows inside it.
+  const box = useInBox();
+  const drawn = variant === "cards" && box !== null ? "divided" : variant;
   const base = useId();
   const refs = useRef(new Map<string, HTMLElement>());
   const addRef = useRef<HTMLButtonElement>(null);
@@ -344,7 +353,7 @@ export function Repeater({
       aria-label={label}
       tabIndex={-1}
       data-part="repeater"
-      data-variant={variant}
+      data-variant={drawn}
       data-disabled={disabled ? "true" : undefined}
     >
       {items.length === 0 ? (
@@ -374,7 +383,7 @@ export function Repeater({
                   className="cb-repeater-item"
                   role="group"
                   tabIndex={-1}
-                  {...(richTitle && variant === "cards"
+                  {...(richTitle && drawn !== "rows"
                     ? { "aria-labelledby": titleId }
                     : { "aria-label": name })}
                   data-part="repeater-item"
@@ -385,7 +394,7 @@ export function Repeater({
                   onKeyDown={(e) => onKeyDown(e, item.key, index)}
                   {...drag(item.key, index)}
                 >
-                  {variant === "rows" ? (
+                  {drawn === "rows" ? (
                     <>
                       {handle(item.key)}
                       <div className="cb-repeater-body" data-part="repeater-body">
