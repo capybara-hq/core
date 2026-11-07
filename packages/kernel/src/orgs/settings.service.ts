@@ -203,14 +203,8 @@ export class OrgSettingsService {
     return parseOrgSettings(row.settings);
   }
 
-  async update(
-    orgId: string,
-    patch: OrgSettingsPatch,
-    actorAccountId: string,
-    actorTokenId?: string,
-    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
-    auditDetail?: Record<string, unknown>,
-  ): Promise<OrgSettings> {
+  /** The refusals of {@link update} that need no read of the org (the Platform tool's precheck). */
+  check(patch: OrgSettingsPatch): void {
     if (
       patch.sandboxEgress?.mode === "allowlist" &&
       this.deployment().sandboxEgress.mode === "none"
@@ -220,6 +214,17 @@ export class OrgSettingsService {
         "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
       );
     }
+  }
+
+  async update(
+    orgId: string,
+    patch: OrgSettingsPatch,
+    actorAccountId: string,
+    actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
+  ): Promise<OrgSettings> {
+    this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail);
   }
 

@@ -16,7 +16,7 @@ const PAGE = 50;
 /**
  * A connection as the tool shows it: the settings an admin sees on the channels page. The
  * non-secret config and whether each secret is set, never a secret value (the service view holds
- * none), and no webhook URL: it is only useful where the bot is registered.
+ * none), plus the webhook callback URL (an address, not a secret).
  */
 const detail = (c: ChannelConnectionView) => ({
   id: c.id,
@@ -27,6 +27,7 @@ const detail = (c: ChannelConnectionView) => ({
   unboundPolicy: c.unboundPolicy,
   inboundMode: c.inboundMode,
   webhookSupported: c.webhookSupported,
+  webhookUrl: c.webhookUrl,
   lastError: c.lastError,
   config: c.config,
   secrets: c.secrets,
@@ -134,7 +135,10 @@ export class ChannelsOperations implements OnModuleInit {
             next: "The plugin or the deployment cannot receive webhooks; keep inboundMode long_connection, or ask the super admin to set channels.webhookBaseUrl.",
           },
         ],
-        precheck: (i, ctx) => precheckBy(() => this.channels.get(ctx.orgId, i.connectionId)),
+        precheck: (i, ctx) => {
+          const { connectionId, ...patch } = i;
+          return precheckBy(() => this.channels.checkUpdate(ctx.orgId, connectionId, patch));
+        },
         summary: async (i, ctx) => {
           const name = await this.nameOf(ctx.orgId, i.connectionId);
           const parts = [
@@ -159,7 +163,16 @@ export class ChannelsOperations implements OnModuleInit {
             undefined,
             viaAgent("channels.update", ctx),
           );
-          return { channel: detail(r.channel) };
+          const webhook = input.inboundMode === "webhook";
+          return {
+            channel: detail(r.channel),
+            ...(webhook && {
+              note:
+                r.channel.webhookUrl !== null
+                  ? `Register the callback URL ${r.channel.webhookUrl} in the IM platform's app settings (channels.get shows it again).`
+                  : "The callback URL is not available yet: the super admin has to set channels.webhookBaseUrl; the channels page on the web then shows it.",
+            }),
+          };
         },
       }),
       defineOperation({

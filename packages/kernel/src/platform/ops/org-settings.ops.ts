@@ -3,7 +3,7 @@ import { z } from "zod";
 import { OrgSettingsPatchSchema, OrgSettingsService } from "../../orgs/settings.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { viaAgent } from "./errors.js";
+import { precheckBy, viaAgent } from "./errors.js";
 
 const PLATFORM_TOOL_NOTE: Record<string, string> = {
   off: "The Platform tool is now off for this org: from the next call on, no Platform operation is available, including this one. An org admin can switch it back on in the organization settings on the web.",
@@ -65,16 +65,7 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "Fix the setting as the message says (org-settings.get shows the current values).",
           },
         ],
-        precheck: async (i) =>
-          i.sandboxEgress?.mode === "allowlist" &&
-          this.settings.deployment().sandboxEgress.mode === "none"
-            ? {
-                ok: false,
-                code: "org.sandbox_egress_not_allowed",
-                message:
-                  "This deployment disables sandbox network access (sandbox.limits.egress is none); an organization can only set sandboxEgress to none",
-              }
-            : { ok: true },
+        precheck: (i) => precheckBy(async () => this.settings.check(i)),
         summary: (i) => {
           const parts = Object.entries(i)
             .filter(([, v]) => v !== undefined)

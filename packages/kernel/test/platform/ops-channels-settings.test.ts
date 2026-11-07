@@ -177,6 +177,24 @@ describe("channels", () => {
     expect(pre).toMatchObject({ ok: false, code: "channel.not_found" });
   });
 
+  it("denies the known failures before the card", async () => {
+    const pre = (input: Record<string, unknown>) =>
+      op("channels.update").precheck?.(
+        op("channels.update").input.parse({ connectionId: id, ...input }),
+        ctxOf(ownerId),
+      );
+    expect(await pre({ agentId: "no-such-agent" })).toMatchObject({
+      ok: false,
+      code: "agent.not_found",
+    });
+    // chan-mini has no webhook support
+    expect(await pre({ inboundMode: "webhook" })).toMatchObject({
+      ok: false,
+      code: "channel.webhook_unavailable",
+    });
+    expect(await pre({ agentId: otherAgentId, status: "disabled" })).toEqual({ ok: true });
+  });
+
   it("changes the binding with the agent audit detail; credentials are not an input", async () => {
     const o = op("channels.update");
     expect(o.confirm).toBe("org");
@@ -187,8 +205,9 @@ describe("channels", () => {
     expect(summary?.en).toContain("Lark bot");
     const r = await run("channels.update", input);
     expect(r).toMatchObject({
-      channel: { agentId: otherAgentId, unboundPolicy: "anonymous" },
+      channel: { agentId: otherAgentId, unboundPolicy: "anonymous", webhookUrl: null },
     });
+    expect(r).not.toHaveProperty("note");
     const [a] = await audits("channel.updated");
     expect(a?.detail).toMatchObject({
       changed: ["agentId", "unboundPolicy"],
@@ -227,6 +246,12 @@ describe("org settings", () => {
     const [a] = await audits("org.settings_updated");
     expect(a?.detail).toMatchObject({ via: "agent", operation: "org-settings.update" });
     expect(() => op("org-settings.update").input.parse({})).toThrow();
+    const pre = await op("org-settings.update").precheck?.(
+      { sandboxEgress: { mode: "allowlist", allowHosts: [] } },
+      ctxOf(ownerId),
+    );
+    // the deployment default egress here is not none, so the shared check passes
+    expect(pre).toBeDefined();
   });
 
   it("turning platformTool off applies from the next call and tells the person", async () => {

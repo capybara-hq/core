@@ -533,6 +533,16 @@ export class ChannelConnections implements OnApplicationShutdown {
     return inserted;
   }
 
+  /** The read-only refusals of {@link update} that need no write (the Platform tool's precheck). */
+  async checkUpdate(orgId: string, id: string, patch: UpdateChannelInput): Promise<void> {
+    const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
+    if (!current) throw notFound();
+    if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
+    if (patch.inboundMode === "webhook" && patch.inboundMode !== current.inbound_mode) {
+      this.assertWebhookAvailable(current.plugin);
+    }
+  }
+
   /**
    * 修改名称、agent、未绑定策略、启停，或轮换凭据（新配置同样先 `verify`，失败什么都不改）。
    * 插件在该组织停用时仍可轮换凭据，此时不 verify，返回 `verifySkipped: true`。
