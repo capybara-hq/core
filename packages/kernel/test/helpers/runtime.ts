@@ -15,6 +15,7 @@ import type { HookRegistry } from "../../src/extensions/hooks.js";
 import { CacheService } from "../../src/infra/cache/cache.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
+import type { ModelEnablement } from "../../src/models/enablement.js";
 import { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import { type ProviderHost, ProviderRegistry } from "../../src/runtime/providers.js";
 import { StepLog } from "../../src/runtime/step-log.js";
@@ -52,6 +53,8 @@ export function providerRegistryFor(
     effective?: Pick<EffectiveConfigs, "get">;
     /** The kernel config's `models.listTimeoutMs` (10 s by default; `listTimeoutMs` wins). */
     configListTimeoutMs?: number;
+    /** The disabled lists (default: nothing disabled). */
+    enablement?: Pick<ModelEnablement, "disabled">;
   } = {},
 ): ProviderRegistry {
   return new ProviderRegistry(
@@ -63,6 +66,7 @@ export function providerRegistryFor(
       get: () =>
         ({ models: { listTimeoutMs: opts.configListTimeoutMs ?? 10_000 } }) as KernelConfig,
     },
+    opts.enablement ?? { disabled: async () => new Set<string>() },
     log,
     opts.listTimeoutMs,
   );

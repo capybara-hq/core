@@ -1028,7 +1028,10 @@ function mergeLocal(
  * 每次尝试解析出模型后、写 `model_call` 之前写本步的尾部提醒（均按本步幂等，只写一次）：所用模型不支持工具而本步有工具
  * → {@link TOOLS_UNSUPPORTED_REMINDER}；然后是轮次提醒或收尾提醒（收尾提醒因此位于请求末尾）。
  * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
- * 不可重试的失败或梯子用尽 → `RunError`。
+ * 不可重试的失败或梯子用尽 → `RunError`; except that the agent's own model failing to resolve as
+ * `agent.model_unavailable` (gone from the list, disabled since the agent was saved, its provider
+ * not configured in the org: spec B §5.3) goes straight to `agent.fallback` when there is one,
+ * without the same-model retry.
  */
 async function ladder(
   deps: ModelStepDeps,
@@ -1051,12 +1054,15 @@ async function ladder(
   if (agent.fallback) rungs.push({ ref: agent.fallback, fallback: true });
 
   let last: Failure | undefined;
+  /** The agent's model did not resolve (`agent.model_unavailable`): only the fallback is left. */
+  let mainUnavailable = false;
   let attempt = 0;
   // hooks fire only for chat runs that have a registry (eval replays omit it, P-18)
   const scope = hookScope(deps.hooks, input);
   /** 本次尝试发出的请求里带了字节的附件（供应商拒收时写 media_excluded）。 */
   let sentMedia: string[] = [];
   for (const rung of rungs) {
+    if (mainUnavailable && !rung.fallback) continue;
     if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
       deps.log.warn("model retry skipped: suggested wait exceeds cap", {
         conversationId,
@@ -1075,8 +1081,11 @@ async function ladder(
     sentMedia = [];
     /** When the request went out (model.response fires only for sent requests). */
     let sentAt: number | undefined;
+    /** Whether this attempt resolved its model (a failure before it is a resolve failure). */
+    let resolved = false;
     try {
       const { provider, info } = await deps.registry.resolve(input.orgId, rung.ref);
+      resolved = true;
       if (tools.list.length > 0 && !info.capabilities.tools) {
         evs = await appendLocal(deps.eventLog, conversationId, evs, {
           type: "reminder",
@@ -1253,6 +1262,18 @@ async function ladder(
         retryable: f.retryable,
         error: f.message,
       });
+      if (
+        !resolved &&
+        !rung.fallback &&
+        agent.fallback &&
+        err instanceof ApiError &&
+        !(err instanceof ProviderListError) &&
+        err.code === "agent.model_unavailable"
+      ) {
+        mainUnavailable = true;
+        last = f;
+        continue;
+      }
       if (!f.retryable) {
         if (REJECTS_MEDIA.has(f.code) && sentMedia.length > 0) {
           // 记录失败不能掩盖原来的失败码：只记 warn，本次运行照常以原错误失败

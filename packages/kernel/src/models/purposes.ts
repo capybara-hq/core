@@ -22,13 +22,16 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
+import { ModelEnablement } from "./enablement.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
  * - 用途 = 内核用途 {@link KERNEL_PURPOSES}（目前只有评委 `eval`），或已加载插件 `permissions.models` 声明的；
  * - 映射 = 部署默认（`org_id` 为 null，超级管理员设）+ 组织覆盖（组织管理员设，`org.models.manage`）；
  *   生效的映射先取组织覆盖、再取部署默认，都没有 → `model.unconfigured`；
- * - 目标模型按部署范围解析（与运行时一致），参数按目标模型自己的声明严格校验；不做模型白名单；
+ * - a target's kind must equal the purpose's kind; an org's override must be enabled in the org on
+ *   save (a deployment default: not disabled on the platform), and an effective target disabled in
+ *   the org (by either layer) counts as unconfigured there (spec B §5.3)；参数按目标模型自己的声明严格校验；
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
  */
 
@@ -156,6 +159,7 @@ export class ModelPurposesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    @Inject(ModelEnablement) private readonly enablement: Pick<ModelEnablement, "isEnabled">,
   ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
@@ -223,22 +227,34 @@ export class ModelPurposesService {
   }
 
   /**
-   * 校验目标：模型可解析（an org's override for the org, a deployment default in the platform
-   * view）、参数按它的声明严格通过。
+   * 校验目标：模型可解析且启用（an org's override for the org, a deployment default in the
+   * platform view）、its kind is the purpose's `kind`、参数按它的声明严格通过。
    */
-  private async check(orgId: string | null, target: PurposeTarget): Promise<void> {
+  private async check(
+    orgId: string | null,
+    target: PurposeTarget,
+    kind: "chat" | "embedding",
+  ): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
       info =
         orgId === null
-          ? await this.providers.platformInfo(target.model)
-          : (await this.providers.resolve(orgId, target.model)).info;
+          ? await this.providers.platformInfo(target.model, { kind: "callable" })
+          : (await this.providers.resolve(orgId, target.model, { kind: "callable" })).info;
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
         throw invalid([{ path: "target.model", message: "model is not available" }]);
       }
       throw e;
+    }
+    if (info.kind !== kind) {
+      throw invalid([
+        {
+          path: "target.model",
+          message: `this purpose needs ${kind === "embedding" ? "an" : "a"} ${kind} model, not ${info.kind}`,
+        },
+      ]);
     }
     const issues = paramIssues("target.params", info.parameters, target.params);
     if (issues.length > 0) throw invalid(issues);
@@ -252,7 +268,7 @@ export class ModelPurposesService {
     actorTokenId: string | undefined,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
-    if (target) await this.check(orgId, target);
+    if (target) await this.check(orgId, target, decl.kind);
     await this.write(orgId, purpose, target, actor, actorTokenId);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
@@ -323,13 +339,24 @@ export class ModelPurposesService {
     return this.set(orgId, purpose, target, actor, actorTokenId);
   }
 
-  /** 生效的映射：组织覆盖，否则部署默认；都没有 → `model.unconfigured`；用途未声明 → `model.purpose_unknown`。 */
+  /**
+   * 生效的映射：组织覆盖，否则部署默认；都没有 → `model.unconfigured`；用途未声明 → `model.purpose_unknown`。
+   * An effective target disabled in the org (by the platform or the org) also counts as
+   * unconfigured there (spec B §5.3).
+   */
   async resolve(orgId: string, purpose: string): Promise<PurposeTarget> {
     const [view] = await this.views([this.find(purpose)], orgId);
     if (!view?.effective) {
       throw new ApiError(
         "model.unconfigured",
         `No model is configured for the "${purpose}" purpose`,
+      );
+    }
+    const { provider, model } = view.effective.model;
+    if (!(await this.enablement.isEnabled(orgId, provider, model))) {
+      throw new ApiError(
+        "model.unconfigured",
+        `The model configured for the "${purpose}" purpose is disabled in this organization`,
       );
     }
     return view.effective;

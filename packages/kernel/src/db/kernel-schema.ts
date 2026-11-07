@@ -1043,6 +1043,28 @@ export interface UsageReportSweepTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** A model disabled on the platform (`org_id` null) or in one org (0087, spec B §5.3). */
+export interface ModelDisabledTable {
+  org_id: string | null;
+  provider: string;
+  model: string;
+  disabled_by: string | null;
+  disabled_at: Ts;
+}
+
+/** One model call outside a conversation, e.g. an extension's embed call (0087, spec B §5.4). */
+export interface ModelUsageTable {
+  id: Generated<string>;
+  org_id: string;
+  extension: string;
+  purpose: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  occurred_at: Ts;
+  reported_at: TsNullable;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
   identities: IdentitiesTable;
@@ -1099,6 +1121,8 @@ export interface KernelDatabase {
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
   model_purpose_mappings: ModelPurposeMappingsTable;
+  model_disabled: ModelDisabledTable;
+  model_usage: ModelUsageTable;
   extension_packages: ExtensionPackagesTable;
   extension_blobs: ExtensionBlobsTable;
   extension_installs: ExtensionInstallsTable;

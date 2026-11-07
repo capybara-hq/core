@@ -994,6 +994,16 @@ describe("校验与权限", () => {
     expect(badParams.statusCode).toBe(400);
     expect(errCode(badParams)).toBe("eval.candidate_invalid");
     expect(JSON.stringify(badParams.json())).toContain("model-eval.level");
+    // a candidate on a model disabled in the org (spec B §5.3)
+    const off = await admin({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/models/model-eval/disabled`,
+      payload: { models: ["eval-1"] },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const disabled = await post({ mode: "step", candidate: { model: EVAL_1 } });
+    expect(disabled.statusCode).toBe(400);
+    expect(errCode(disabled)).toBe("eval.candidate_invalid");
 
     const judge = await post({ mode: "step", candidate: {}, judge: true });
     expect(judge.statusCode).toBe(409);

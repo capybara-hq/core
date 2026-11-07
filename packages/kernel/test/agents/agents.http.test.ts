@@ -247,6 +247,35 @@ describe("Agent HTTP", () => {
     expect(errCode(invalid)).toBe("validation_failed");
   });
 
+  it("a model disabled in the org after the agent was saved: a PATCH keeping it is refused, switching away saves", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const fake2 = { provider: "model-fake", model: "fake-2" };
+    const agent = await createAgent(req, orgId, { definition: { ...definition, model: fake2 } });
+    const off = await req({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+      payload: { models: ["fake-2"] },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    const url = `/api/v1/orgs/${orgId}/agents/${agent.id}`;
+    const keep = await req({
+      method: "PATCH",
+      url,
+      payload: { definition: { ...definition, model: fake2, instructions: "Be terse." } },
+    });
+    expect(keep.statusCode).toBe(400);
+    expect(errCode(keep)).toBe("agent.model_unavailable");
+    const moved = await req({ method: "PATCH", url, payload: { definition } });
+    expect(moved.statusCode, moved.body).toBe(200);
+    // the picker lists only enabled models
+    const models = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/models` });
+    const fake = (
+      models.json() as { providers: { provider: string; models: { id: string }[] }[] }
+    ).providers.find((p) => p.provider === "model-fake");
+    expect(fake?.models.map((m) => m.id)).toEqual(["fake-1"]);
+  });
+
   it("未知模型参数 → 400 validation_failed，details 点名 modelParams.<key>", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);

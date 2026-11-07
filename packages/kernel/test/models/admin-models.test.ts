@@ -58,10 +58,14 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(
     raw,
-    "capybara.model_prices, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.model_disabled, capybara.model_prices, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.deployment_settings, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   // 模型列表缓存在 Redis：每条用例从头列
-  const keys = await redis.keys("cache:capk:models:*");
+  const keys = [
+    ...(await redis.keys("cache:capk:models:*")),
+    ...(await redis.keys("cache:capk:model-disabled:*")),
+    ...(await redis.keys("capk:models-failed:*")),
+  ];
   if (keys.length > 0) await redis.del(...keys);
   resetEvalModel();
   const accounts = accountsFor(db);
@@ -150,6 +154,53 @@ describe("GET /admin/models", () => {
     // 只给内核自己的说明，不透出上游错误原文
     expect(e.error).not.toContain("upstream down");
     expect(body.currency).toBe("USD");
+  });
+
+  it("PUT models/:provider/disabled: the platform list flags models in the view; audited", async () => {
+    const res = await ent({
+      method: "PUT",
+      url: "/api/v1/admin/models/model-eval/disabled",
+      payload: { models: ["eval-2", "eval-v"] },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ affected: { agents: [], purposes: [] } });
+    const body = (await get(ent)).json() as {
+      providers: (Omit<ProviderView, "models"> & { models: { id: string; disabled: boolean }[] })[];
+    };
+    expect(
+      body.providers
+        .find((p) => p.provider === "model-eval")
+        ?.models.map((m) => [m.id, m.disabled]),
+    ).toEqual([
+      ["eval-1", false],
+      ["eval-2", true],
+      ["eval-v", true],
+      ["eval-j", false],
+    ]);
+    const audit = await db
+      .selectFrom("audit_events")
+      .select(["org_id", "target", "detail"])
+      .where("action", "=", "model.disabled_set")
+      .execute();
+    expect(audit).toEqual([
+      {
+        org_id: null,
+        target: "model-eval",
+        detail: { scope: "platform", disabled: ["eval-2", "eval-v"], enabled: [] },
+      },
+    ]);
+    const unknown = await ent({
+      method: "PUT",
+      url: "/api/v1/admin/models/nope/disabled",
+      payload: { models: [] },
+    });
+    expect(unknown.statusCode).toBe(404);
+    const denied = await owner({
+      method: "PUT",
+      url: "/api/v1/admin/models/model-eval/disabled",
+      payload: { models: [] },
+    });
+    expect(denied.statusCode).toBe(403);
   });
 
   it("非超级管理员 403，未登录 401", async () => {

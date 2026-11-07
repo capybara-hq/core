@@ -268,6 +268,7 @@ export const ERROR_CODES = {
   "eval.candidate_invalid": 400,
   "model.unconfigured": 409,
   "model.purpose_unknown": 404,
+  "model.provider_not_found": 404,
   "eval.result_not_found": 404,
 } as const satisfies Record<string, number>;
 

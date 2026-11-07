@@ -62,6 +62,7 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
+import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
@@ -115,6 +116,7 @@ const CONTROLLERS: Type[] = [
   AgentSaveAsTemplateController,
   PendingConnectorsController,
   ModelsController,
+  ModelEnablementController,
   ReadinessController,
   ConversationsController,
   BackgroundController,

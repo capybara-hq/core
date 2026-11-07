@@ -34,6 +34,7 @@ import { CacheService } from "../infra/cache/cache.service.js";
 import { Cacheable } from "../infra/cache/cacheable.decorator.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import { ModelEnablement, ModelEnablementModule, modelKey } from "../models/enablement.js";
 
 /** 供应商模型列表在 Redis 中的缓存时长（秒）。 */
 const MODELS_TTL_SECONDS = 600;
@@ -123,8 +124,21 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<ModelKind>([
 /** A listed model with its kind normalised: absent means `chat`, an unknown kind is `other`. */
 export type KernelModelInfo = Omit<ModelInfo, "kind"> & { kind: ModelKind | "other" };
 
+/**
+ * A model of a view that shows disabled models too: the platform view of `listWithStatus` (`disabled`
+ * = on the platform's list) and an org's `catalog` (`disabled` = on the org's list). Absent in the
+ * enabled-only views.
+ */
+export type ListedModelInfo = KernelModelInfo & { disabled?: boolean };
+
 /** A model `resolve` returns: only `chat` and `embedding` models are callable. */
 export type ResolvedModelInfo = Omit<ModelInfo, "kind"> & { kind: "chat" | "embedding" };
+
+/**
+ * The kind a `resolve` caller needs (default `chat`: every streaming caller); `callable` accepts
+ * either callable kind (a purpose target checked against the purpose's own kind).
+ */
+export type ExpectedKind = "chat" | "embedding" | "callable";
 
 /**
  * A provider bound to one org's call options (`orgId` and the effective config, spec B §5.5): the
@@ -158,7 +172,7 @@ export interface ProviderStatus {
   plugin: string;
   status: "ok" | "error" | "org_configured";
   error?: string;
-  models: KernelModelInfo[];
+  models: ListedModelInfo[];
 }
 
 /**
@@ -253,6 +267,7 @@ export class ProviderRegistry {
     @Inject(CacheService) readonly cacheService: CacheService,
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(ModelEnablement) private readonly enablement: Pick<ModelEnablement, "disabled">,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -345,6 +360,9 @@ export class ProviderRegistry {
     }
     const eff = await this.effective.get(orgId, p.plugin);
     if (!eff.ok) return { ok: false, reason: "needs_config" };
+    // an `@1` provider ignores the per-call options (it reads `ctx.config`): the org's own copy
+    // could not be honoured, its calls would go out with the platform's config
+    if (eff.source === "copy" && p.major === 1) return { ok: false, reason: "needs_config" };
     return {
       ok: true,
       call: { orgId, config: eff.config },
@@ -419,23 +437,78 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个供应商及其模型（按插件加载顺序），for `orgId`：列模型失败或在该组织需要配置的供应商跳过。
+   * 每个供应商及其模型（按插件加载顺序），for `orgId`：列模型失败或在该组织需要配置的供应商跳过。Only
+   * enabled models (neither the platform nor the org disabled them, spec B §5.3), optionally of
+   * one `kind`.
    */
-  async list(orgId: string): Promise<{ provider: string; models: KernelModelInfo[] }[]> {
+  async list(
+    orgId: string,
+    opts: { kind?: ModelKind | "other" } = {},
+  ): Promise<{ provider: string; models: KernelModelInfo[] }[]> {
     return (await this.listWithStatus(orgId)).flatMap((p) =>
-      p.status === "ok" ? [{ provider: p.provider, models: p.models }] : [],
+      p.status === "ok"
+        ? [
+            {
+              provider: p.provider,
+              models:
+                opts.kind === undefined ? p.models : p.models.filter((m) => m.kind === opts.kind),
+            },
+          ]
+        : [],
     );
   }
 
   /**
-   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId`, or the platform view when undefined
-   * (`/admin/models`): 列模型失败（含超过 `models.listTimeoutMs`）的标 `error`、`models` 为空，不影响其他
-   * 供应商；列模型失败的在 {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。An org where the provider
-   * needs configuration gets `error`; the platform view of a provider whose platform config leaves
-   * a required overridable field empty gets `org_configured`. `error` 只是内核自己的英文说明（不透出
-   * 上游错误原文，原文记 warn 日志）。
+   * An org's catalog (the org settings page, spec B §5.3): every provider as in
+   * {@link listWithStatus} for the org, with every model the platform left on, each carrying
+   * `disabled` for the org's own list. Reads the same cached lists (no extra provider call).
+   */
+  async catalog(orgId: string): Promise<ProviderStatus[]> {
+    const [statuses, platform, org] = await Promise.all([
+      this.statuses(orgId),
+      this.enablement.disabled(null),
+      this.enablement.disabled(orgId),
+    ]);
+    return statuses.map((p) => ({
+      ...p,
+      models: p.models
+        .filter((m) => !platform.has(modelKey(p.provider, m.id)))
+        .map((m) => ({ ...m, disabled: org.has(modelKey(p.provider, m.id)) })),
+    }));
+  }
+
+  /**
+   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId` (enabled models only), or the platform
+   * view when undefined (`/admin/models`: every model, `disabled` from the platform's list only).
+   * See {@link statuses} for the statuses.
    */
   async listWithStatus(orgId?: string): Promise<ProviderStatus[]> {
+    const [statuses, platform, org] = await Promise.all([
+      this.statuses(orgId),
+      this.enablement.disabled(null),
+      orgId === undefined ? Promise.resolve(new Set<string>()) : this.enablement.disabled(orgId),
+    ]);
+    return statuses.map((p) => ({
+      ...p,
+      models:
+        orgId === undefined
+          ? p.models.map((m) => ({ ...m, disabled: platform.has(modelKey(p.provider, m.id)) }))
+          : p.models.filter((m) => {
+              const key = modelKey(p.provider, m.id);
+              return !platform.has(key) && !org.has(key);
+            }),
+    }));
+  }
+
+  /**
+   * 每个已安装供应商的完整列表与状态，for `orgId` or the platform: 列模型失败（含超过
+   * `models.listTimeoutMs`）的标 `error`、`models` 为空，不影响其他供应商；列模型失败的在
+   * {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。An org where the provider needs configuration gets
+   * `error`; the platform view of a provider whose platform config leaves a required overridable
+   * field empty gets `org_configured`. `error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn
+   * 日志）。No disabled list applied.
+   */
+  private async statuses(orgId: string | undefined): Promise<ProviderStatus[]> {
     const providers = this.providers();
     const settled = await Promise.allSettled(
       providers.map(async (p): Promise<KernelModelInfo[] | "org_configured" | "needs_config"> => {
@@ -479,29 +552,36 @@ export class ProviderRegistry {
 
   /**
    * 解析模型引用 for `orgId`，返回绑定到该组织调用选项的供应商与模型信息。
-   * 供应商未安装、在该组织需要配置、模型不存在（或被丢弃）或不可调用（not `chat` / `embedding`）→
-   * `agent.model_unavailable`；供应商 `listModels()` 失败 → `ProviderListError`（同一错误码，运行时视为可重试）。
+   * 供应商未安装、在该组织需要配置、模型不存在（或被丢弃）、不是 `opts.kind`（default `chat`: a
+   * streaming caller never gets an embedding model）或被平台 / 该组织停用 → `agent.model_unavailable`；
+   * 供应商 `listModels()` 失败 → `ProviderListError`（同一错误码，运行时视为可重试）。
    */
   async resolve(
     orgId: string,
     ref: ModelRef,
+    opts: { kind?: ExpectedKind } = {},
   ): Promise<{ provider: BoundProvider; info: ResolvedModelInfo }> {
-    const { p, t, info } = await this.lookup(orgId, ref);
+    const { p, t, info } = await this.lookup(orgId, ref, opts.kind ?? "chat");
     return { provider: bindProvider(p.impl, t.call), info };
   }
 
   /**
    * The model's info in the platform view (deployment-level settings such as a purpose's
    * deployment default; no call is ever made there), by {@link resolve}'s rules. A provider each
-   * org configures itself has no platform list: `agent.model_unavailable`.
+   * org configures itself has no platform list: `agent.model_unavailable`. Only the platform's
+   * disabled list applies.
    */
-  async platformInfo(ref: ModelRef): Promise<ResolvedModelInfo> {
-    return (await this.lookup(undefined, ref)).info;
+  async platformInfo(
+    ref: ModelRef,
+    opts: { kind?: ExpectedKind } = {},
+  ): Promise<ResolvedModelInfo> {
+    return (await this.lookup(undefined, ref, opts.kind ?? "chat")).info;
   }
 
   private async lookup(
     orgId: string | undefined,
     ref: ModelRef,
+    kind: ExpectedKind,
   ): Promise<{ p: ProviderEntry; t: Target & { ok: true }; info: ResolvedModelInfo }> {
     const unavailable = () =>
       new ApiError(
@@ -521,13 +601,30 @@ export class ProviderRegistry {
     }
     const info = (await this.models(p, t)).find((m) => m.id === ref.model);
     if (!info || (info.kind !== "chat" && info.kind !== "embedding")) throw unavailable();
+    if (kind !== "callable" && info.kind !== kind) {
+      throw new ApiError(
+        "agent.model_unavailable",
+        `Model ${ref.provider}/${ref.model} is not ${kind === "embedding" ? "an" : "a"} ${kind} model`,
+      );
+    }
+    const key = modelKey(ref.provider, ref.model);
+    const [platform, org] = await Promise.all([
+      this.enablement.disabled(null),
+      orgId === undefined ? Promise.resolve(new Set<string>()) : this.enablement.disabled(orgId),
+    ]);
+    if (platform.has(key) || org.has(key)) {
+      throw new ApiError(
+        "agent.model_unavailable",
+        `Model ${ref.provider}/${ref.model} is disabled`,
+      );
+    }
     return { p, t, info: info as ResolvedModelInfo };
   }
 }
 
 /** The model provider registry (one instance; the models and agents domains read it). */
 @Module({
-  imports: [ExtensionsModule],
+  imports: [ExtensionsModule, ModelEnablementModule],
   providers: [ProviderRegistry],
   exports: [ProviderRegistry],
 })

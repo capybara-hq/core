@@ -370,7 +370,11 @@ describe("model-provider@1 / @2", () => {
       },
     };
     const r = reg([{ plugin: "e2", capability: "model-provider@2", impl }]);
-    const { provider, info } = await r.resolve(ORG, { provider: "e2", model: "emb" });
+    const { provider, info } = await r.resolve(
+      ORG,
+      { provider: "e2", model: "emb" },
+      { kind: "embedding" },
+    );
     expect(info.kind).toBe("embedding");
     expect(info.embedding).toEqual(embedding);
     const out = await provider.embed?.({ model: "emb", input: ["a"] }, signal());

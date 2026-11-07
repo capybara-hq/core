@@ -377,7 +377,9 @@ export class AgentsService {
   }
 
   /**
-   * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
+   * 校验主模型与兜底都可解析：enabled `chat` models in the org (`resolve`'s default kind; a model the
+   * platform or the org disabled, or an embedding model → 400 `agent.model_unavailable`, spec B
+   * §5.3），并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
   private async checkModels(orgId: string, def: AgentDefinitionInput): Promise<AgentWarning[]> {
