@@ -172,7 +172,10 @@ export interface SandboxProvider {
   /**
    * Deletes the file system made under `name` by `createFileSystem`; succeeds when there is none.
    * The kernel uses it when it has no handle (`createFileSystem` finished on the provider's side
-   * but the kernel stopped before recording the handle).
+   * but the kernel stopped before recording the handle), and in its one-off cleanup of
+   * per-conversation sandboxes with `cap-<conversationId>` names that a `sandbox@1` provider's
+   * `create` made together with their files (Docker: the `cap-<conversationId>-workspace` and
+   * `-skills` volumes); a provider removes those under the same call.
    */
   destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
   /**
@@ -195,7 +198,9 @@ export interface SandboxProvider {
   /**
    * Drops the instance made under `name` by `create` (instance only, files kept); succeeds when
    * there is none. The kernel uses it when it has no handle (`create` finished on the provider's
-   * side but the kernel stopped before recording the handle).
+   * side but the kernel stopped before recording the handle), and in its one-off cleanup of
+   * per-conversation sandboxes with `cap-<conversationId>` names made by a `sandbox@1` provider's
+   * `create`.
    */
   destroyByName(name: string, signal: AbortSignal): Promise<void>;
   /**
