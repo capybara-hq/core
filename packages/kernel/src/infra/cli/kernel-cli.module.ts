@@ -16,6 +16,7 @@ import type { KernelConfig } from "../../config/schema.js";
 import { type BusSubscriber, createBus } from "../../ctx/bus.js";
 import { KERNEL_APP_OPTIONS } from "../../lifecycle/tokens.js";
 import type { KernelLogger } from "../../log.js";
+import { CacheModule } from "../cache/cache.module.js";
 import { ConfigModule } from "../config/config.module.js";
 import { KernelConfigService } from "../config/kernel-config.service.js";
 import { DatabaseModule } from "../database/database.module.js";
@@ -130,7 +131,10 @@ export class KernelCliModule {
         // QueueModule's root gives the queues a command's modules register (the catalog's scope
         // sync and maintenance queues) the configured Redis; without it BullMQ would connect to
         // its default 127.0.0.1:6379
-        ...(opts.redis === false ? [] : [CliRedisModule, LockModule, QueueModule.forRoot()]),
+        // CacheModule: `@Cacheable` providers of the domain modules (EffectiveConfigs) need it
+        ...(opts.redis === false
+          ? []
+          : [CliRedisModule, LockModule, CacheModule, QueueModule.forRoot()]),
         KernelEventsModule,
         ...opts.modules,
       ],

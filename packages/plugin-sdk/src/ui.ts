@@ -400,6 +400,14 @@ export interface UiRenderArgs {
    * recorded this very card (same extension, view and key); scope lookups by `conversationId` too.
    */
   card?: { callId: string; key?: string };
+  /**
+   * The extension's effective deployment config for this org: the platform's deployment config
+   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+   * for work done for this org. Optional in the type so older extensions compile; the kernel
+   * always passes it.
+   */
+  config?: unknown;
 }
 
 /** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */

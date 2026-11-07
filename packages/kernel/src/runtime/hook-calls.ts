@@ -182,6 +182,8 @@ export function hookDeniedAudit(
         : {}),
       // M-1: the named plugin is enabled but not loaded on the replica that handled the call
       ...(denial.notLoaded ? { notLoaded: true } : {}),
+      // layering spec A §6: the named plugin's effective config is not valid in the organization
+      ...(denial.needsConfig ? { needsConfig: true } : {}),
     },
   };
 }

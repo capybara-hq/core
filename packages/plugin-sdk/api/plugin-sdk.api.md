@@ -625,9 +625,10 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
 export interface Directory {
-    configured?(orgConfig: unknown): boolean;
+    configured?(orgConfig: unknown, config?: unknown): boolean;
     listMembers(args: {
         orgConfig: unknown;
+        config?: unknown;
         cursor?: string;
         signal: AbortSignal;
     }): Promise<{
@@ -990,6 +991,7 @@ export const FILE_PREVIEW_MAX_BYTES: number;
 // @public
 export interface FilePreviewArgs {
     accountId: string;
+    config?: unknown;
     conversationId: string;
     file: {
         id: string;
@@ -1040,6 +1042,11 @@ export function hasShellInjection(body: string): boolean;
 export const HOOK_MOUNT_POINTS: readonly ["session.start", "session.end", "agent.preStep", "model.request", "model.response", "tool.preExecute", "tool.postExecute", "usage.report"];
 
 // @public
+export interface HookCall {
+    config: unknown;
+}
+
+// @public
 export type HookContentBlock = Exclude<ContentBlock, {
     type: "image";
 } | {
@@ -1047,7 +1054,7 @@ export type HookContentBlock = Exclude<ContentBlock, {
 }> | HookMediaPlaceholder;
 
 // @public
-export type HookHandler<K extends AvailableHook> = (payload: HookPayloads[K], signal: AbortSignal) => Promise<HookVerdict> | HookVerdict;
+export type HookHandler<K extends AvailableHook> = (payload: HookPayloads[K], signal: AbortSignal, call?: HookCall) => Promise<HookVerdict> | HookVerdict;
 
 // @public
 export interface HookMediaPlaceholder {
@@ -2064,6 +2071,7 @@ export interface ToolCallContext {
     accountId: string;
     agentId: string;
     callId: string;
+    config?: unknown;
     conversationId: string;
     orgId: string;
     resume?: {
@@ -2285,6 +2293,7 @@ export interface UiRenderArgs {
         callId: string;
         key?: string;
     };
+    config?: unknown;
     conversationId?: string;
     item?: string;
     locale: Locale;
@@ -2404,10 +2413,11 @@ export interface WebFetchPage {
 
 // @public
 export interface WebFetchProvider {
-    configured?(orgConfig: unknown): boolean;
+    configured?(orgConfig: unknown, config?: unknown): boolean;
     fetch(args: {
         url: string;
         orgConfig: unknown;
+        config?: unknown;
         signal: AbortSignal;
     }): Promise<WebFetchPage>;
 }
@@ -2425,13 +2435,14 @@ export type WebProviderErrorKind = "not_found" | "blocked" | "auth" | "rate_limi
 
 // @public
 export interface WebSearchProvider {
-    configured?(orgConfig: unknown): boolean;
+    configured?(orgConfig: unknown, config?: unknown): boolean;
     search(args: {
         query: string;
         allowedDomains?: string[];
         blockedDomains?: string[];
         maxResults: number;
         orgConfig: unknown;
+        config?: unknown;
         signal: AbortSignal;
     }): Promise<{
         results: WebSearchResult[];

@@ -5,6 +5,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import type { EffectiveConfig } from "../../src/extensions/effective-config.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
 import { PreviewerRegistry } from "../../src/files/previewers.js";
 
@@ -43,7 +44,15 @@ const ignoringStore = {
   }),
 };
 
-function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
+function setup(
+  render: NonNullable<FilePreviewer["render"]>,
+  timeoutMs = 50,
+  effective: (orgId: string, plugin: string) => Promise<EffectiveConfig> = async () => ({
+    ok: true,
+    config: {},
+    source: "platform",
+  }),
+) {
   const inflight = new InflightTracker("late");
   const provider: FilePreviewProvider = {
     previewers: [
@@ -67,13 +76,14 @@ function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
     },
     { file: async () => FILE } as never,
     ignoringStore as never,
+    { get: effective },
     { warn: () => {} },
     undefined as never,
     timeoutMs,
   );
-  const call = () =>
+  const call = (orgId = "o") =>
     reg.render({
-      orgId: "o",
+      orgId,
       accountId: "a",
       conversationId: "c",
       fileId: "f1",
@@ -81,7 +91,8 @@ function setup(render: NonNullable<FilePreviewer["render"]>, timeoutMs = 50) {
       id: "late",
       locale: "en",
     });
-  return { call, inflight };
+  const list = (orgId = "o") => reg.forFile(orgId, "c", "a", "f1");
+  return { call, list, inflight };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -122,5 +133,44 @@ describe("file preview read grant", () => {
       return { blocks: [{ type: "text", markdown: String(b.byteLength) }] };
     }, 5_000);
     await expect(call()).resolves.toEqual({ blocks: [{ type: "text", markdown: "5" }] });
+  });
+});
+
+describe("file preview and the effective config (layering spec A §6)", () => {
+  /** org-a needs configuration; org-b has a copy whose `baseUrl` is "org-b". */
+  const effective = async (orgId: string): Promise<EffectiveConfig> =>
+    orgId === "org-a"
+      ? { ok: false, issues: [{ path: "baseUrl", segments: ["baseUrl"], message: "x" }] }
+      : { ok: true, config: { baseUrl: orgId === "org-b" ? "org-b" : "platform" }, source: "copy" };
+
+  it("render gets the extension's effective config for the org", async () => {
+    const seen: unknown[] = [];
+    const { call } = setup(
+      async (args) => {
+        seen.push(args.config);
+        return { blocks: [] };
+      },
+      5_000,
+      effective,
+    );
+    await call("org-b");
+    await call("org-c");
+    expect(seen).toEqual([{ baseUrl: "org-b" }, { baseUrl: "platform" }]);
+  });
+
+  it("an extension needing configuration in the org previews nothing there", async () => {
+    let calls = 0;
+    const { call, list } = setup(
+      async () => {
+        calls++;
+        return { blocks: [] };
+      },
+      5_000,
+      effective,
+    );
+    expect(await list("org-a")).toEqual([]);
+    await expect(call("org-a")).rejects.toMatchObject({ code: "ui.not_found" });
+    expect(calls).toBe(0);
+    expect((await list("org-b")).map((p) => p.id)).toEqual(["late"]);
   });
 });

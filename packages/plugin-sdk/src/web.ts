@@ -15,10 +15,16 @@ export interface WebSearchResult {
   publishedAt?: string;
 }
 
-/** A web search provider (`web-search@1`). The kernel passes the org's decrypted `orgConfig`. */
+/**
+ * A web search provider (`web-search@1`). The kernel passes the org's decrypted `orgConfig` and the
+ * extension's effective deployment config for the org (`config`).
+ */
 export interface WebSearchProvider {
-  /** False when this org's config lacks what the provider needs. */
-  configured?(orgConfig: unknown): boolean;
+  /**
+   * False when this org's config lacks what the provider needs. `config` is the effective
+   * deployment config for the org (see `search`'s `config`).
+   */
+  configured?(orgConfig: unknown, config?: unknown): boolean;
   search(args: {
     query: string;
     /** Hints only: the kernel filters the results again. */
@@ -26,6 +32,14 @@ export interface WebSearchProvider {
     blockedDomains?: string[];
     maxResults: number;
     orgConfig: unknown;
+    /**
+     * The extension's effective deployment config for this org: the platform's deployment config
+     * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+     * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+     * for work done for this org. Optional in the type so older extensions compile; the kernel
+     * always passes it.
+     */
+    config?: unknown;
     signal: AbortSignal;
   }): Promise<{ results: WebSearchResult[] }>;
 }
@@ -51,12 +65,23 @@ export interface WebFetchPage {
  * to (an IPv6 address in brackets, as in a URL).
  */
 export interface WebFetchProvider {
-  /** False when this org's config lacks what the provider needs. */
-  configured?(orgConfig: unknown): boolean;
+  /**
+   * False when this org's config lacks what the provider needs. `config` is the effective
+   * deployment config for the org (see `fetch`'s `config`).
+   */
+  configured?(orgConfig: unknown, config?: unknown): boolean;
   fetch(args: {
     /** Already validated and upgraded by the kernel. */
     url: string;
     orgConfig: unknown;
+    /**
+     * The extension's effective deployment config for this org: the platform's deployment config
+     * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+     * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
+     * for work done for this org. Optional in the type so older extensions compile; the kernel
+     * always passes it.
+     */
+    config?: unknown;
     signal: AbortSignal;
   }): Promise<WebFetchPage>;
 }

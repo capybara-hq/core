@@ -5,6 +5,7 @@ import type { Kysely } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
+import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
@@ -105,6 +106,8 @@ export interface PipelineTestDeps {
   decidePolicy?: DecidePolicy;
   hooks?: ToolPipelineHooks;
   pluginHooks?: HookRunner;
+  /** The effective configs (default: every org follows the platform with an empty config). */
+  effective?: Pick<EffectiveConfigs, "get">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
@@ -135,6 +138,9 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
           },
         }
       : undefined,
+    d.effective ?? {
+      get: async () => ({ ok: true, config: {}, source: "platform" }),
+    },
     h.txHost,
     {
       ...d.hooks,

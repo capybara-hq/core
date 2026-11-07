@@ -197,6 +197,8 @@ let decidePolicy: DecidePolicy | undefined;
 let afterExecute: ((runId: string, callId: string) => Promise<void>) | undefined;
 /** Plugin hooks given to the pipeline (a fake registry). */
 let pluginHooks: HookRunner | undefined;
+/** The effective configs the pipeline reads (layering spec A §6); undefined = the helper's default. */
+let effective: PipelineTestDeps["effective"];
 
 function pipeline(): ToolPipeline {
   const deps: PipelineTestDeps = {
@@ -231,6 +233,7 @@ function pipeline(): ToolPipeline {
     ...(decidePolicy !== undefined && { decidePolicy }),
     hooks: { ...(afterExecute !== undefined && { afterExecute }) },
     ...(pluginHooks !== undefined && { pluginHooks }),
+    ...(effective !== undefined && { effective }),
   };
   return pipelineFor(deps);
 }
@@ -268,6 +271,7 @@ beforeEach(async () => {
   decidePolicy = undefined;
   afterExecute = undefined;
   pluginHooks = undefined;
+  effective = undefined;
   unavailable = [];
   hidden = [];
   handlerCalls = {};
@@ -754,6 +758,38 @@ describe("ToolPipeline.runStep", () => {
       conversationId: seed.conversationId,
       callId: "c1",
     });
+  });
+
+  it("a plugin tool's handler gets its extension's effective config for the org (spec A §6)", async () => {
+    const reads: [string, string][] = [];
+    effective = {
+      get: async (orgId, plugin) => {
+        reads.push([orgId, plugin]);
+        return { ok: true, config: { baseUrl: "org-b" }, source: "copy" };
+      },
+    };
+    await runCalls([{ id: "c1", name: "plugin__probe__ctx", input: {} }]);
+    expect(handlerCalls.ctx?.[0]).toMatchObject({ config: { baseUrl: "org-b" } });
+    expect(reads).toEqual([[seed.orgId, "probe"]]);
+  });
+
+  it("a plugin tool whose extension needs configuration in the org is not dispatched", async () => {
+    effective = {
+      get: async () => ({
+        ok: false,
+        issues: [{ path: "baseUrl", segments: ["baseUrl"], message: "x" }],
+      }),
+    };
+    const evs = await runCalls([{ id: "c1", name: "plugin__probe__ctx", input: {} }]);
+    expect(handlerCalls.ctx).toBeUndefined();
+    expect(resultsOf(evs)).toMatchObject([
+      {
+        callId: "c1",
+        isError: true,
+        content:
+          'Tool "plugin__probe__ctx" is unavailable: needs configuration in this organization.',
+      },
+    ]);
   });
 
   it("参数校验失败：不执行、不写 tool_call_started，结果含路径与 schema", async () => {
@@ -1596,6 +1632,7 @@ describe("plugin hooks (tool.preExecute)", () => {
       current: () => undefined,
       expectedPolicy: (mount) => (mount === "tool.preExecute" ? ["guard"] : []),
       enabledPlugins: async () => new Set(["guard"]),
+      effectiveConfig: async () => ({ ok: true, config: {}, source: "platform" }),
       locks: new LockService(redis, createLogger("error")),
       config: () => ({ hooks: { timeoutMs: 1000 } }),
       log: silent,

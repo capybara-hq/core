@@ -13,7 +13,12 @@ import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
-import { deepFreeze, errMsg, type HookRegistry } from "../extensions/hooks.js";
+import {
+  deepFreeze,
+  errMsg,
+  HookNeedsConfigError,
+  type HookRegistry,
+} from "../extensions/hooks.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -564,6 +569,12 @@ export class UsageReporter {
         if (r.reason.why === "no_handler")
           dropped.set(plugin, "registered no usage.report handler");
         else notHere.push(plugin);
+        return;
+      }
+      // layering spec A §6: the extension's effective config is not valid in this organization, so
+      // it is not called there (an observe hook skipped); dropped, not retried
+      if (r.reason instanceof HookNeedsConfigError) {
+        dropped.set(plugin, "needs configuration in this organization");
         return;
       }
       failed.push(plugin);

@@ -11,7 +11,7 @@ import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
 import { ExtensionBlobs } from "../../src/extensions/blobs.js";
-import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
+import type { EffectiveConfig, EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import type { ExtensionInstalls } from "../../src/extensions/installs.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
@@ -41,6 +41,11 @@ export interface TestHostOptions {
     fileValue: unknown,
     schema: core.$ZodType | undefined,
   ) => Promise<unknown>;
+  /**
+   * The effective configs the host's hook dispatcher reads (default: every org follows the
+   * platform, so a running instance's config, else not running).
+   */
+  effectiveConfig?: (orgId: string, plugin: string) => Promise<EffectiveConfig>;
 }
 
 /** `deps.log` as the kernel logger the host injects (`addSecrets` from `onSecrets`, else a no-op). */
@@ -103,8 +108,19 @@ export function testHost(
       heartbeat: async () => {},
       removeAll: async () => {},
     } as unknown as ReplicaStatusStore);
+  const registry = opts.registry ?? new ExtensionRegistry();
+  const following = async (_orgId: string, plugin: string): Promise<EffectiveConfig> => {
+    const inst = registry.current(plugin);
+    return inst
+      ? { ok: true, config: inst.config, source: "platform" }
+      : {
+          ok: false,
+          issues: [{ path: "", segments: [], message: "the extension is not running" }],
+        };
+  };
+  const effectiveConfig = opts.effectiveConfig ?? following;
   return new ExtensionHost(
-    opts.registry ?? new ExtensionRegistry(),
+    registry,
     installs,
     approvalsFor(deps.db),
     status,
@@ -117,6 +133,7 @@ export function testHost(
     deps.locks as never,
     loggerOf(deps.log, opts.onSecrets),
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
+    { get: effectiveConfig },
   );
 }
 

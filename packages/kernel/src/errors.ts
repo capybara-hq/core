@@ -45,6 +45,7 @@ export const ERROR_CODES = {
   "extension.config_readonly": 409,
   "extension.field_not_overridable": 400,
   "extension.no_org_override": 404,
+  "extension.needs_config": 409,
   "extension.dependency_missing": 409,
   "extension.has_dependents": 409,
   "extension.not_enabled": 409,

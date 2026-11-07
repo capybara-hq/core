@@ -11,6 +11,7 @@ import { SetupService } from "../../src/admin/setup.service.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { EvalBudget } from "../../src/evals/budget.js";
+import { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
 import { ExtensionRegistry } from "../../src/extensions/registry.js";
 import { AccountsService } from "../../src/identity/accounts.js";
@@ -256,8 +257,8 @@ export function directorySyncFor(
   o: {
     redis?: ConstructorParameters<typeof DirectorySync>[2];
     orgExtensionConfigs?: ConstructorParameters<typeof DirectorySync>[4];
-    offboarding?: ConstructorParameters<typeof DirectorySync>[6];
-    queue?: ConstructorParameters<typeof DirectorySync>[8];
+    offboarding?: ConstructorParameters<typeof DirectorySync>[7];
+    queue?: ConstructorParameters<typeof DirectorySync>[9];
   } = {},
 ): DirectorySync {
   const get = <T>(c: unknown) => k.app.get(c) as T;
@@ -267,6 +268,7 @@ export function directorySyncFor(
     o.redis ?? get(REDIS),
     get(ExtensionRegistry),
     o.orgExtensionConfigs ?? get(OrgExtensionConfigs),
+    get(EffectiveConfigs),
     get(ExternalIdentities),
     o.offboarding ?? get(Offboarding),
     get(OrgLock),

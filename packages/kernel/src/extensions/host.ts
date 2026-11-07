@@ -63,6 +63,7 @@ import {
 import { ExtensionBlobIntegrityError } from "./blobs.js";
 import { toIssues } from "./config-issues.js";
 import { configFormSchema, describeConfigUiProblems } from "./config-json-schema.js";
+import { EffectiveConfigs } from "./effective-config.js";
 import { HookRegistry } from "./hooks.js";
 import type { InflightTracker } from "./inflight.js";
 import { type DesiredExtension, ExtensionInstalls } from "./installs.js";
@@ -663,6 +664,8 @@ export class ExtensionHost {
     @Inject(LockService) locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
+    /** Each hook call's effective config for its organization (layering spec A §6). */
+    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
   ) {
     const c = config.get();
     this.deps = {
@@ -683,6 +686,7 @@ export class ExtensionHost {
       current: (plugin) => this.registry.current(plugin),
       expectedPolicy: (mount) => this.expectedPolicy(mount),
       enabledPlugins: (orgId) => this.enabledPlugins(orgId),
+      effectiveConfig: (orgId, plugin) => effective.get(orgId, plugin),
       locks,
       config: () => ({ hooks: { timeoutMs: this.config.get().hooks.timeoutMs } }),
       log,

@@ -6,6 +6,7 @@ import { createSecrets, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { CacheService } from "../infra/cache/cache.service.js";
 import { Cacheable } from "../infra/cache/cacheable.decorator.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { currentStore, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -14,10 +15,17 @@ import type { KernelLogger } from "../log.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { deleteDeep, isObj, setDeep } from "./deployment-config-store.js";
 import { enabledExtensionsByOrg } from "./enabled.js";
-import { ExtensionHost } from "./host.js";
+import { ExtensionInstalls } from "./installs.js";
 import { type FieldLevel, fieldLevels, missingOverridable } from "./org-levels.js";
+import { ExtensionRegistry } from "./registry.js";
 
 type Obj = Record<string, unknown>;
+
+/**
+ * Why an org-bound call is not made (spec A §6): the extension's effective config for the org is
+ * not valid. Model-visible as a tool's unavailable reason (English).
+ */
+export const NEEDS_CONFIG_REASON = "needs configuration in this organization";
 
 /** The kernel's own secrets namespace (`kernel` is a reserved plugin name). */
 export const OVERRIDE_SECRETS_NAMESPACE = "kernel";
@@ -148,6 +156,10 @@ const TAG_LEN = 16;
  * plugin) generation token that every copy write replaces after its commit: a read that started
  * before the write can only cache under the old token, which nobody reads any more. No
  * in-process state.
+ *
+ * It reads the running instances from the {@link ExtensionRegistry} and the raw platform config
+ * from the install records (not through the host), so the host can inject it for its hook
+ * dispatcher.
  */
 @Injectable()
 export class EffectiveConfigs {
@@ -156,7 +168,10 @@ export class EffectiveConfigs {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(CacheService) readonly cacheService: CacheService,
     @Inject(KEYRING) private readonly keyring: Keyring,
-    @Inject(ExtensionHost) private readonly host: ExtensionHost,
+    @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
+    @Inject(ExtensionInstalls)
+    private readonly installs: Pick<ExtensionInstalls, "effectiveDeploymentConfig">,
+    @Inject(KernelConfigService) private readonly kernelConfig: Pick<KernelConfigService, "get">,
     /** Secret values of a copy read here are masked in the logs. */
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
@@ -173,7 +188,7 @@ export class EffectiveConfigs {
    * extension not running on this replica -> `ok: false` with a root issue.
    */
   async get(orgId: string, plugin: string): Promise<EffectiveConfig> {
-    const inst = this.host.current(plugin);
+    const inst = this.registry.current(plugin);
     if (!inst) {
       return {
         ok: false,
@@ -202,7 +217,12 @@ export class EffectiveConfigs {
     }
     const values = Object.values(copy.secrets);
     if (values.length > 0) this.log.addOrgSecrets(values);
-    const raw = await this.host.rawDeploymentConfig(plugin);
+    // the host's raw read (ExtensionHost.rawDeploymentConfig): startup config plus the PG values
+    const raw = await this.installs.effectiveDeploymentConfig(
+      plugin,
+      this.kernelConfig.get().extensionConfig[plugin],
+      schema,
+    );
     const r = schema.safeParse(mergeCopy(schema, raw, copy));
     return r.success
       ? { ok: true, config: r.data, source: "copy" }
@@ -279,7 +299,7 @@ export class EffectiveConfigs {
    * 0 when the extension is not running on this replica.
    */
   async countNeedingConfig(plugin: string): Promise<number> {
-    if (!this.host.current(plugin)) return 0;
+    if (!this.registry.current(plugin)) return 0;
     const rows = await this.db
       .selectFrom(enabledExtensionsByOrg(this.db).as("en"))
       .innerJoin("orgs", "orgs.id", "en.org_id")
