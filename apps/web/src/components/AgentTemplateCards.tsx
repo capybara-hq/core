@@ -30,7 +30,7 @@ import type { PluginStateLabel } from "./PluginSwitch";
 
 const isDanger = (m: MenuItem): boolean => typeof m === "object" && m.danger === true;
 
-/** The template page (phase 4 Task 9: the read view, the editor for owner-org admins). */
+/** The template page (ruling P4-14: the read view, the editor for owner-org admins). */
 export const templateHref = (id: string) => `/agents/templates/${encodeURIComponent(id)}`;
 
 /** A template card's row: the org's own template, or a platform one offered to the org. */

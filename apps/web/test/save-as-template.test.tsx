@@ -171,6 +171,15 @@ describe("另存为模板 (ruling P4-9)", () => {
               field: "effort",
               reason: "unsupported_field",
             },
+            { kind: "model_param", name: "model-fake.style", reason: "model_param" },
+            { kind: "fallback_model", name: "model-fake/fake-1", reason: "fallback" },
+            {
+              kind: "subagent_inline",
+              name: "blank",
+              field: "description",
+              reason: "empty_text",
+            },
+            { kind: "quick_action", name: "Weekly", reason: "empty_text" },
           ],
         }),
     });
@@ -190,6 +199,14 @@ describe("另存为模板 (ruling P4-9)", () => {
         "Inline sub-agent checker: templates have no place for its reasoning effort setting",
       ),
     ).toBeTruthy();
+    for (const line of [
+      "Model parameter model-fake.style: templates record only the reasoning effort, no other model parameter",
+      "Fallback model model-fake/fake-1: templates record no fallback model or its parameters",
+      "Inline sub-agent blank: its description is blank, which a template cannot hold",
+      "Quick action Weekly: it is blank, which a template cannot hold",
+    ]) {
+      expect(within(saved).getByText(line)).toBeTruthy();
+    }
     expect(within(saved).getByRole("link", { name: S.open }).getAttribute("href")).toBe(
       "/agents/templates/t9",
     );

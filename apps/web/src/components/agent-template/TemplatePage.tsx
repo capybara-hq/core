@@ -106,7 +106,7 @@ export function TemplatePage({
   section: string | undefined;
   admin: boolean;
   offered: readonly OrgComponent[] | undefined;
-  /** Opens the 用它创建 dialog (phase 4 Task 8's). */
+  /** Opens the 用它创建 dialog (CreateFromTemplateDialog, ruling P4-18). */
   onCreate(): void;
 }) {
   const scope = usePagePath("org");

@@ -31,9 +31,14 @@ const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
 const actionRow = (page: Page) => page.getByRole("region", { name: designZh("shell.pending") });
-const card = (page: Page, text: string) => page.getByRole("listitem").filter({ hasText: text });
+/** A card of the agents page's CardGrid (design `ObjectCard`), by the text it shows. */
+const cards = (page: Page) => page.locator('[data-part="object-card"]');
+const card = (page: Page, text: string) => cards(page).filter({ hasText: text });
 
-/** Installs an MCP connector without auth through the install wizard (as tools.spec does). */
+/**
+ * Installs an MCP connector without auth through the install wizard (as tools.spec does). The slug
+ * follows the kernel's rule (`^[a-z][a-z0-9_]{0,23}$`: no hyphens).
+ */
 async function installMcp(page: Page, name: string, slug: string, url: string): Promise<void> {
   const w = zh.connectors.wizard;
   await page.goto("/connectors/install");
@@ -45,6 +50,10 @@ async function installMcp(page: Page, name: string, slug: string, url: string): 
     .fill(slug);
   await page.getByRole("textbox", { name: zh.connectors.form.urlLabel }).fill(url);
   await actionRow(page).getByRole("button", { name: w.next }).click();
+  // the auth step is up (no auth) before the next 下一步
+  await expect(
+    page.getByRole("combobox", { name: zh.connectors.form.authTypeLabel, exact: true }),
+  ).toHaveAttribute("value", "none");
   await actionRow(page).getByRole("button", { name: w.next }).click();
   await expect(page.getByRole("table", { name: w.toolsTitle })).toBeVisible();
   await actionRow(page).getByRole("button", { name: w.install }).click();
@@ -79,6 +88,9 @@ async function saveAsTemplate(page: Page, agentId: string, name: string): Promis
   expect(res.status(), await res.text()).toBeLessThan(300);
 }
 
+/** The connector picker's option text for a connector (PendingConnectorDialog: `name · slug`). */
+const connectorOption = (name: string, slug: string) => ({ label: `${name} · ${slug}` });
+
 /** Opens the template's 用它创建 dialog from the 模板 tab. */
 async function openCreateDialog(page: Page, templateName: string) {
   await page.goto("/agents?tab=templates");
@@ -103,9 +115,7 @@ test("agents page: tabs and cards, and /agent-templates redirects to the 模板 
     "true",
   );
   // the agent from signIn is a card with its primary action 开始会话
-  await expect(
-    page.getByRole("listitem").getByRole("link", { name: A.chat, exact: true }).first(),
-  ).toBeVisible();
+  await expect(cards(page).getByRole("link", { name: A.chat, exact: true }).first()).toBeVisible();
 
   await tabs.filter({ hasText: A.pageTabs.templates }).click();
   await expect(page).toHaveURL(/\/agents\?tab=templates$/);
@@ -128,11 +138,12 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   const run = Date.now().toString(36);
   const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
   const connector = `Tpl docs ${run}`;
+  const slug = `tpl_${run}`;
   const source = `Tpl source ${run}`;
   const tpl = `tpl-${run}`;
   const copy = `Tpl copy ${run}`;
   await signIn(page);
-  await installMcp(page, connector, `tpl-docs-${run}`, mcpUrl);
+  await installMcp(page, connector, slug, mcpUrl);
   await agentWithConnector(page, source, connector);
 
   // 1. 另存为模板 from the agent card's ⋯ menu
@@ -143,8 +154,10 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   await save.getByRole("textbox", { name: A.saveAs.name }).fill(tpl);
   await save.getByRole("textbox", { name: A.saveAs.description }).fill("Docs helper");
   await save.getByRole("button", { name: A.saveAs.submit }).click();
-  await expect(save.getByText(fill(A.saveAs.savedTitle, { name: tpl }))).toBeVisible();
-  await save.getByRole("button", { name: A.saveAs.close }).click();
+  // nothing was left out (a new agent has no other model params, fallback or org agents), so the
+  // dialog goes straight to the new template's page instead of listing omissions
+  await expect(page).toHaveURL(/\/agents\/templates\/[^/?#]+$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 
   // 2. the template is a card in the 模板 tab, owned by the org
   await page.goto("/agents?tab=templates");
@@ -177,9 +190,10 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
     .click();
   const bind = page.getByRole("dialog", { name: fill(A.pending.entryTitle, { name: connector }) });
   await bind.getByRole("radio", { name: new RegExp(A.pending.modeExisting) }).check();
-  await selectOption(bind.getByRole("combobox", { name: A.pending.connectorLabel }), {
-    label: connector,
-  });
+  await selectOption(
+    bind.getByRole("combobox", { name: A.pending.connectorLabel }),
+    connectorOption(connector, slug),
+  );
   await bind.getByRole("button", { name: A.pending.bind, exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(notice).toBeHidden();
@@ -206,10 +220,11 @@ test("member: 用它创建 is private and sends a setup request -> the admin con
   const run = Date.now().toString(36);
   const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
   const connector = `Req docs ${run}`;
+  const slug = `req_${run}`;
   const tpl = `req-${run}`;
   const mine = `Member copy ${run}`;
   await signIn(page);
-  await installMcp(page, connector, `req-docs-${run}`, mcpUrl);
+  await installMcp(page, connector, slug, mcpUrl);
   const sourceId = await agentWithConnector(page, `Req source ${run}`, connector);
   await saveAsTemplate(page, sourceId, tpl);
 
@@ -260,9 +275,10 @@ test("member: 用它创建 is private and sends a setup request -> the admin con
     .click();
   const entry = page.getByRole("dialog", { name: fill(A.pending.entryTitle, { name: connector }) });
   await entry.getByRole("radio", { name: new RegExp(A.pending.modeExisting) }).check();
-  await selectOption(entry.getByRole("combobox", { name: A.pending.connectorLabel }), {
-    label: connector,
-  });
+  await selectOption(
+    entry.getByRole("combobox", { name: A.pending.connectorLabel }),
+    connectorOption(connector, slug),
+  );
   await entry.getByRole("button", { name: A.pending.bind, exact: true }).click();
 
   // 4. the last entry is bound: the request closes and leaves the inbox

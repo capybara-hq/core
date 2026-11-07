@@ -40,8 +40,9 @@ export function useOmissionText(): (o: SaveAsOmission) => string {
     const kind = t.has(`kind.${o.kind}`) ? t(`kind.${o.kind}`, { name: o.name }) : o.name;
     const field =
       o.field !== undefined && t.has(`field.${o.field}`) ? t(`field.${o.field}`) : (o.field ?? "");
+    // `none`: the reason's wording without a field (a blank quick action)
     const reason = t.has(`reason.${o.reason}`)
-      ? t(`reason.${o.reason}`, { field })
+      ? t(`reason.${o.reason}`, { field: field === "" ? "none" : field })
       : t("reason.other");
     return t("line", { what: kind, why: reason });
   };
