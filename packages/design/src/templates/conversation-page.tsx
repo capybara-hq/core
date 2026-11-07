@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
@@ -123,9 +124,15 @@ export type ConversationPageProps = {
    * `title`: a bar in the title's place (the path and every icon stay real). `rightArea` (`true`,
    * or `{ title }`, the open panel's title): the open right area draws its own loading state (the
    * right panel's `loading`, or one loading Context section) instead of `panel` / `properties`; a closed area stays closed. One announcement
-   * for all of it.
+   * for all of it. `agents` (a new conversation only): `AgentRowLoading` in the row's place.
    */
-  loading?: { thread?: boolean; title?: boolean; rightArea?: boolean | { title?: string } };
+  loading?: {
+    thread?: boolean;
+    title?: boolean;
+    rightArea?: boolean | { title?: string };
+    /** A new conversation's agents are on the way: the row draws its placeholder chips. */
+    agents?: boolean;
+  };
   /** The reference set only: the sheet drawn in its positioned box, not over the window. */
   reference?: boolean;
 };
@@ -268,7 +275,11 @@ export function ConversationPage({
         <div
           className="cb-conv-new"
           data-part="new-conversation-body"
-          data-start={newConversation.greeting || newConversation.agents ? "true" : undefined}
+          data-start={
+            newConversation.greeting || newConversation.agents || loading?.agents
+              ? "true"
+              : undefined
+          }
         >
           {newConversation.greeting ?? (
             <>
@@ -280,7 +291,7 @@ export function ConversationPage({
               ) : null}
             </>
           )}
-          {newConversation.agents ?? null}
+          {loading?.agents ? <AgentRowLoading /> : (newConversation.agents ?? null)}
           {composerNode}
         </div>
       </div>
@@ -323,7 +334,11 @@ export function ConversationPage({
     panel
   );
   const rightNode = right === "properties" ? propertiesNode : right === "panel" ? panelNode : null;
-  const anyLoading = loading?.thread === true || loading?.title === true || loadingRight;
+  const anyLoading =
+    loading?.thread === true ||
+    loading?.title === true ||
+    loadingRight ||
+    (newConversation !== undefined && loading?.agents === true);
   const open = rightNode != null && right !== "none";
   useInlineFocus(root, sheet ? "sheet" : open ? right : "none");
 

@@ -94,8 +94,8 @@ export function useNewConversationPage(
   const session = useSession();
   const signature = useStatusSignature("/chat");
   const agentsQ = agentsQuery(orgId);
-  const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
-    ?.agents;
+  const agentsRead = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
+  const agents = agentsRead.data?.agents;
   const groupsQ = conversationGroupsQuery(orgId);
   const groups = useQuery({ ...groupsQ, retryOnMount: retryOnMountOf(groupsQ.queryKey) });
   // A failed groups read leaves no recent agent: the first one is picked.
@@ -203,6 +203,8 @@ export function useNewConversationPage(
             ),
           },
         }),
+    // the agents are on the way: the row's placeholder chips keep its box, so nothing moves
+    ...(!sent && agentsRead.isPending ? { loading: { agents: true } } : {}),
     composer: (
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}

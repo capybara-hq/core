@@ -17,6 +17,7 @@ export {
   type AgentPanelProps,
   AgentRow,
   type AgentRowItem,
+  AgentRowLoading,
   type AgentRowProps,
   gridStep,
 } from "./agent-row";

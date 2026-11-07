@@ -2121,6 +2121,10 @@ page's order (most recent use, then name).
 - **Count**: at most `max` chips, then a "更多 +N" / "More +N" chip (no avatar, padding `space.3`);
   a selected agent past the first `max` takes the last place, so the selection always shows. With
   one agent (or none) the row draws nothing.
+- **Loading**: while the agents are read, `ConversationPage`'s `loading.agents` draws `AgentRowLoading`
+  in the row's place: three chips with the loaded chip's box (height, border, radius, padding, gap),
+  each an avatar-sized block (24) and a name bar, with nothing interactive, so the composer does not
+  move when the agents arrive; the page's one busy region announces it.
 - **Panel**: "更多 +N" opens the agent panel in a popover (§6.7 look: `panel` ground, 1px
   `line-strong` border, radius `md`, `shadow-1`) anchored under the row, as wide as the row (at most
   `layout.chat`), padding `space.2`. Top to bottom: a search field (`Input`, placeholder

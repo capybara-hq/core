@@ -23,7 +23,7 @@ import {
   userMsg,
 } from "./support/conversation";
 import { Link, resetNavigation, router } from "./support/navigation";
-import { renderRouteWithCache, testQueryClient } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache, testQueryClient } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -206,6 +206,20 @@ describe("the new conversation page (agent profile design §4)", () => {
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ agentId: "ag1" });
+  });
+
+  it("while the agents load, the row draws placeholder chips and nothing is interactive", async () => {
+    const { container } = await renderRouteEmptyCache("/chat", {
+      ...routes(),
+      [`GET ${ORG}/agents`]: () => new Promise<Response>(() => {}),
+    });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-part="agent-row"][data-loading="true"]')).toBeTruthy(),
+    );
+    const loading = container.querySelector('[data-part="agent-row"][data-loading="true"]');
+    expect(loading?.querySelectorAll('[data-part="agent-chip"]').length).toBe(3);
+    expect(within(loading as HTMLElement).queryAllByRole("button")).toEqual([]);
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
   });
 
   it("one usable agent: no row", async () => {
