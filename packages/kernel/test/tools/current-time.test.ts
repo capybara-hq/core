@@ -48,8 +48,8 @@ describe("CurrentTime", () => {
     );
     expect((r as { display?: unknown }).display).toEqual({
       summary: {
-        zh: "已获取当前时间（Asia/Shanghai）",
-        en: "Got the current time (Asia/Shanghai)",
+        zh: "已获取当前时间 · 21:05（Asia/Shanghai）",
+        en: "Got the current time · 21:05 (Asia/Shanghai)",
       },
     });
   });
@@ -63,6 +63,10 @@ describe("CurrentTime", () => {
         "Time zone: America/New_York (UTC-05:00)\n" +
         "UTC: 2026-11-08T13:05:33Z",
     );
+    // the row's key argument already names the zone: the summary gives the time alone
+    expect((r as { display?: unknown }).display).toEqual({
+      summary: { zh: "已获取当前时间 · 08:05", en: "Got the current time · 08:05" },
+    });
   });
 
   it("an unknown zone is an actionable tool error", async () => {

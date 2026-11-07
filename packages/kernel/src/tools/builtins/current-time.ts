@@ -115,12 +115,17 @@ export function currentTimeTool(deps: CurrentTimeDeps): BuiltinTool {
         `Current time: ${t.local} (${t.weekday})\n` +
         `Time zone: ${zone} (UTC${t.offset})\n` +
         `UTC: ${t.utc}`;
+      // the row's key argument already shows a zone the model passed; the summary then gives the
+      // time alone, and names the zone only when it came from the run context
+      const hm = t.local.slice(11, 16);
+      const where =
+        asked === undefined ? { zh: `（${zone}）`, en: ` (${zone})` } : { zh: "", en: "" };
       return {
         content: [{ type: "text", text }],
         display: {
           summary: {
-            zh: `已获取当前时间（${zone}）`,
-            en: `Got the current time (${zone})`,
+            zh: `已获取当前时间 · ${hm}${where.zh}`,
+            en: `Got the current time · ${hm}${where.en}`,
           },
         },
       };
