@@ -38,11 +38,32 @@ export async function ensureAgent(page: Page, orgId: string): Promise<void> {
 }
 
 /**
+ * Switches on the core fake connector extensions in the org (`PUT …/extensions/:name`) when the org
+ * lacks their kinds; returns whether it changed anything. The e2e kernel loads them from its config,
+ * so no org has them on by itself, and the connector install wizard offers, and the kernel accepts,
+ * only the kinds whose extension the org has on.
+ */
+async function enableFakeConnectors(page: Page, orgId: string): Promise<boolean> {
+  const kinds = await page.request.get(`/api/v1/orgs/${orgId}/connectors/kinds`);
+  expect(kinds.ok(), await kinds.text()).toBe(true);
+  const have = ((await kinds.json()) as { kinds: { plugin: string }[] }).kinds.map((k) => k.plugin);
+  const missing = ["fake-connector", "fake-openapi"].filter((name) => !have.includes(name));
+  for (const name of missing) {
+    const r = await page.request.put(`/api/v1/orgs/${orgId}/extensions/${name}`, {
+      headers: CSRF,
+      data: { enabled: true },
+    });
+    expect(r.status(), await r.text()).toBe(200);
+  }
+  return missing.length > 0;
+}
+
+/**
  * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
  * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
  * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
- * current org and, with `agent` (the default), makes sure an agent exists ({@link ensureAgent})
- * and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
+ * current org, switches on the fake connector extensions ({@link enableFakeConnectors}) and, with
+ * `agent` (the default), makes sure an agent exists ({@link ensureAgent}) and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
  * ({@link hydrated}). Normally the `setup` project
  * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
  */
@@ -92,9 +113,14 @@ export async function signIn(
       return orgId;
     })
     .not.toBeNull();
-  if (!agent) return hydrated(page);
+  // the page already read the org's connector kinds: a change reloads it below
+  const changed = await enableFakeConnectors(page, orgId as unknown as string);
+  if (!agent) {
+    if (changed) await page.reload();
+    return hydrated(page);
+  }
   await ensureAgent(page, orgId as unknown as string);
-  if (await setup.isVisible()) {
+  if (changed || (await setup.isVisible())) {
     // a fresh page load reads readiness again: the org can run now
     await page.goto("/chat");
     await expect(home).toBeVisible();

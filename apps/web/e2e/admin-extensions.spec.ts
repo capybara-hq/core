@@ -59,8 +59,8 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   await expect(confirm).toBeDisabled();
   await page.getByRole("checkbox", { name: zh.catalog.admin.review.ack }).check();
   await confirm.click();
-  // Wait for the confirm result before leaving the page
-  await expect(page.getByRole("link", { name: zh.catalog.admin.review.openItem })).toBeVisible();
+  // A successful confirm opens the plugin's page; wait for it before leaving
+  await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/);
   await page.goto("/admin/extensions/greeter");
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
   // Replicas converge to enabled (the page re-reads while converging)

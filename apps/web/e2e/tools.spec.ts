@@ -125,15 +125,16 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   const mcpUrl = process.env.CAPYBARA_E2E_MCP_URL as string;
   await signIn(page);
 
-  // 安装连接器（slug docs）并新建引用它的 agent
-  await installMcp(page, "Docs", "docs", mcpUrl);
+  // Install the connector and an agent using it; slug kb, as catalog-flow's crm plugin already
+  // made a connector with the slug docs in this org
+  await installMcp(page, "Docs", "kb", mcpUrl);
   const input = await chatWithAgent(page, "Docs agent", "Docs");
 
-  // 1. `/` → 面板 → /docs:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
+  // 1. `/` → 面板 → /kb:summarize → 填参数 → 渲染结果进入输入框（不自动发送）
   await input.press("/");
   // the label, then the description (phase D palette items; the skills group comes first)
-  await page.getByRole("option", { name: /^\/docs:summarize/ }).click();
-  const dialog = page.getByRole("dialog", { name: "/docs:summarize" });
+  await page.getByRole("option", { name: /^\/kb:summarize/ }).click();
+  const dialog = page.getByRole("dialog", { name: "/kb:summarize" });
   await dialog.getByLabel(/topic/).fill("cats");
   await dialog.getByRole("button", { name: zh.chat.insertPrompt }).click();
   await expect(input).toHaveValue("Summarize cats");
@@ -144,7 +145,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await input.press("@");
   // 同一个假服务也被上一个用例装成了 Fixture：按连接器分组取 Docs 的那条
   await page
-    .getByRole("group", { name: "Docs" })
+    .getByRole("group", { name: "Docs", exact: true })
     .getByRole("option", { name: "Handbook · docs://handbook" })
     .click();
   await expect(page.getByRole("group", { name: zh.chat.files })).toContainText("@Handbook");
@@ -153,7 +154,7 @@ test("MCP：/ 斜杠命令插入渲染后的提示；@ 资源随消息附带；e
   await expect(replies(page).last()).toContainText("Handbook");
 
   // 3. elicitation：工具调用途中请用户填表 → 回答后工具重新发起并拿到答案
-  await input.fill("tool:mcp__docs__signup:{}");
+  await input.fill("tool:mcp__kb__signup:{}");
   await input.press("Enter");
   const question = page.locator('[data-role="question"]');
   await expect(question).toHaveCount(1);
