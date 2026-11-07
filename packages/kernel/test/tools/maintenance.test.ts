@@ -173,7 +173,10 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
       { processTimeout: async (job, token) => void calls.push(["wait", job.data, token]) },
-      { destroyEnvironment: async (id) => void calls.push(["sandbox", id]) },
+      {
+        destroyEnvironment: async (id) => void calls.push(["sandbox", id]),
+        resetFileSystem: async (id) => void calls.push(["reset", id]),
+      },
       {
         check: async (...a) => {
           calls.push(["drift", ...a]);
@@ -201,6 +204,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
     await processor.process(job("sandbox-destroy-for", { environmentIds: ["c1"] }));
+    await processor.process(job("sandbox-reset-files", { environmentId: "e1" }));
     await processor.process(
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
@@ -212,6 +216,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     expect(calls).toEqual([
       ["wait", { waitId: "w" }, "tok"],
       ["sandbox", "c1"],
+      ["reset", "e1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
       ["wake", "c2"],

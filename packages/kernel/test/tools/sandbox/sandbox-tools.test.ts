@@ -922,7 +922,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     };
     const form = new FormData();
     for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, String(v));
-    form.append("file", new Blob([bytes], { type: "text/csv" }));
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: "text/csv" }));
     const up =
       c.upload.method === "PUT"
         ? await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes })
