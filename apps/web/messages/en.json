@@ -3397,7 +3397,8 @@
       "file": "Upload",
       "npm": "npm",
       "marketplace": "Marketplace",
-      "git": "Git"
+      "git": "Git",
+      "bootstrap": "Preinstalled"
     },
     "newer": "New version",
     "iconAlt": "{name} icon",

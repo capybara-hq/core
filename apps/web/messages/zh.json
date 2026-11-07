@@ -3385,7 +3385,8 @@
       "file": "上传",
       "npm": "npm",
       "marketplace": "市场",
-      "git": "Git"
+      "git": "Git",
+      "bootstrap": "预装"
     },
     "newer": "有新版本",
     "iconAlt": "{name} 的图标",
