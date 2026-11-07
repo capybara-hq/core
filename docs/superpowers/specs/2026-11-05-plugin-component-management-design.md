@@ -907,7 +907,9 @@ Org templates
   `{ template: <id> }`; any other connector → `{ needs: { protocol, endpoint, tools, label } }` where
   `endpoint` is the connector's URL with userinfo, query and fragment removed, `tools` the enabled
   tool names, `label` the connector's name; no credentials, headers or OAuth data ever enter a
-  template.
+  template. Binding an entry whose `tools` name every enabled tool of the chosen connector writes
+  `tools: "all"` (ruling P4-T6-12, found by the e2e run): an agent's 全部工具 survives the round trip
+  through a template, and the agent's Tools section, which shows only whole connectors, shows it.
 - **P4-12** Editing an org template uses the agent editor's sections (basics, prompt, model, tools,
   skills, connectors, sub-agents) on the template page; each save writes a new template version.
   The model section offers the tier and, optionally, a concrete model (`modelRef`). Only org admins of

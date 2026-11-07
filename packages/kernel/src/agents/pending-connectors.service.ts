@@ -123,14 +123,13 @@ export class PendingConnectorsService {
     // an authorization-code connector before its first snapshot has no tools to pick from: never
     // bind "all" blind and drop the entry's policies; the entry stays pending (fix round 1)
     if (c.tools_synced_at === null) throw mismatch("not_synced");
-    const offered = (
-      await t
-        .selectFrom("connector_tools")
-        .select("name")
-        .where("connector_id", "=", c.id)
-        .orderBy("name")
-        .execute()
-    ).map((r) => r.name);
+    const rows = await t
+      .selectFrom("connector_tools")
+      .select(["name", "status"])
+      .where("connector_id", "=", c.id)
+      .orderBy("name")
+      .execute();
+    const offered = rows.map((r) => r.name);
     const dropped: string[] = [];
     // an entry naming no tools takes them all (P4-T6-2)
     let names: "all" | string[] = "all";
@@ -138,7 +137,11 @@ export class PendingConnectorsService {
       const present = entry.tools.filter((n) => offered.includes(n));
       if (present.length === 0) throw mismatch("tools");
       for (const n of entry.tools) if (!present.includes(n)) dropped.push(`tools.${n}`);
-      names = present;
+      // naming every enabled tool of this connector is "all": 另存为模板 writes an agent's
+      // 全部工具 as the enabled names (P4-11), and binding gives it back as 全部工具 (P4-T6-12)
+      const enabled = rows.filter((r) => r.status === "enabled").map((r) => r.name);
+      const coversAll = enabled.length > 0 && enabled.every((n) => present.includes(n));
+      names = coversAll ? "all" : present;
     }
     const kept = names === "all" ? offered : names;
     const toolPolicies = { ...def.toolPolicies };

@@ -361,6 +361,42 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     expect(r.json().dropped).toEqual([]);
   });
 
+  it("binds all tools when the entry names every enabled tool of the connector (a saved 全部工具)", async () => {
+    const templateId = await platformTemplate(
+      tpl({
+        connectors: [
+          {
+            needs: {
+              protocol: "mcp",
+              endpoint: "https://docs.example.com/mcp",
+              tools: ["q", "r"],
+              label: "Docs",
+            },
+          },
+        ],
+      }),
+    );
+    const agent = await createFrom(env.boss, templateId);
+    const docs = await connector("docs", ["q", "r"], { kind: "mcp" });
+    const r = await bind(env.boss, agent.id, "connector-1", docs);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(
+      (r.json() as { agent: AgentView }).agent.definition.tools.filter(
+        (t) => t.kind === "connector",
+      ),
+    ).toEqual([{ kind: "connector", connectorId: docs, tools: "all" }]);
+    // a connector with one more enabled tool keeps the entry's list
+    const agent2 = await createFrom(env.boss, templateId);
+    const wider = await connector("wider", ["q", "r", "s"], { kind: "mcp" });
+    const r2 = await bind(env.boss, agent2.id, "connector-1", wider);
+    expect(r2.statusCode, r2.body).toBe(200);
+    expect(
+      (r2.json() as { agent: AgentView }).agent.definition.tools.filter(
+        (t) => t.kind === "connector",
+      ),
+    ).toEqual([{ kind: "connector", connectorId: wider, tools: ["q", "r"] }]);
+  });
+
   it("refuses a connector that does not fit, each case", async () => {
     const { templateId, platformGh } = await twoPending();
     const agent = await createFrom(env.mem, templateId);
