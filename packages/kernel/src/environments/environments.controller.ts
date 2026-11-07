@@ -30,7 +30,8 @@ import {
  *   current sandbox provider; ruling R4);
  * - `POST / { name }` → 201 `{ environment }`; `GET /:id`, `PATCH /:id { name }` → `{ environment }`;
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
- * - `POST /:id/files/reset` → 202 (the files are gone and the next use starts empty).
+ * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
+ *   starts empty).
  */
 @Controller("api/v1/orgs/:orgId/environments")
 export class EnvironmentsController {

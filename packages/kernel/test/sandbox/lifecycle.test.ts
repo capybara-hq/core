@@ -1,13 +1,19 @@
 import type { Job } from "bullmq";
 import { describe, expect, it } from "vitest";
 import {
+  resetFilesJobId,
   runSandboxDestroyFor,
+  runSandboxResetFiles,
   SANDBOX_DESTROY_FOR_JOB,
+  SANDBOX_RESET_FILES_JOB,
   SandboxJobs,
 } from "../../src/sandbox/jobs.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 
-/** The one-off destruction of environments (deleted environments, offboarding): enqueue and worker side. */
+/**
+ * The one-off sandbox maintenance jobs: the destruction of environments (deleted environments,
+ * offboarding) and the reset of an environment's files; enqueue and worker side.
+ */
 
 /** A stand-in for the maintenance queue's producer side (`SandboxJobs`). */
 function stubQueue() {
@@ -51,5 +57,40 @@ describe("sandbox-destroy-for", () => {
     await expect(run(job({ environmentIds: ["c", "bad", "d"] }))).rejects.toThrow(/1 of 3/);
     expect(called).toEqual(["a", "b", "c", "bad", "d"]);
     expect(warns).toEqual(["cannot destroy environment; will retry"]);
+  });
+});
+
+describe("sandbox-reset-files", () => {
+  it("enqueue: one deterministic job id per environment, retried, removed when it ends", async () => {
+    const { jobs, added } = stubQueue();
+    await jobs.resetFiles("env-1");
+    expect(added).toEqual([
+      {
+        name: SANDBOX_RESET_FILES_JOB,
+        data: { environmentId: "env-1" },
+        opts: expect.objectContaining({
+          jobId: "sandbox-reset-files-env-1",
+          attempts: expect.any(Number),
+          removeOnComplete: true,
+          removeOnFail: true,
+        }),
+      },
+    ]);
+    expect(resetFilesJobId("env-1")).not.toContain(":");
+  });
+
+  it("worker: resets the environment's file system; a failure fails the job", async () => {
+    const called: string[] = [];
+    const sandbox = {
+      resetFileSystem: async (id: string) => {
+        called.push(id);
+        if (id === "bad") throw new Error("lease not obtained");
+      },
+    } as unknown as SandboxService;
+    await runSandboxResetFiles(sandbox, job({ environmentId: "env-1" }));
+    expect(called).toEqual(["env-1"]);
+    await expect(runSandboxResetFiles(sandbox, job({ environmentId: "bad" }))).rejects.toThrow(
+      /lease/,
+    );
   });
 });

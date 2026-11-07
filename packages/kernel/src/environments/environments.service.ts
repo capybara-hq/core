@@ -70,9 +70,8 @@ export class EnvironmentsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "current">,
-    @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "orgLimits" | "resetFileSystem">,
-    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy" | "resetFiles">,
     @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
@@ -271,9 +270,11 @@ export class EnvironmentsService {
 
   /**
    * Starts one of the person's environments over with empty files (after
-   * `environment.files_lost`): waits for running commands, destroys any instance and the file
-   * system; the next use creates new ones. Its provider must be the current one
-   * (`environment.unavailable`).
+   * `environment.files_lost`): records the request (audit), then, after the commit, enqueues the
+   * `sandbox-reset-files` job (deterministic id per environment), whose worker waits for running
+   * commands and destroys any instance and the file system; the next use creates new ones. Its
+   * provider must be the current one (`environment.unavailable`). An enqueue failure is thrown
+   * (the request can be repeated: the reset is idempotent).
    */
   async resetFiles(
     orgId: string,
@@ -281,8 +282,19 @@ export class EnvironmentsService {
     id: string,
     actorTokenId?: string,
   ): Promise<void> {
+    await this.recordReset(orgId, accountId, id, actorTokenId);
+    await this.sandboxJobs.resetFiles(id);
+  }
+
+  /** The check and audit row of {@link resetFiles}, committed before the job is enqueued. */
+  @Transactional()
+  private async recordReset(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
     await this.access.usable(orgId, accountId, id);
-    await this.sandbox.resetFileSystem(id);
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),

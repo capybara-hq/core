@@ -428,8 +428,15 @@ describe("environments API", () => {
 
     const reset = await me.req({ method: "POST", url: `${base()}/${env.id}/files/reset` });
     expect(reset.statusCode, reset.body).toBe(202);
-    const fresh = await me.req({ method: "GET", url: `${base()}/${env.id}` });
-    expect((fresh.json() as { environment: EnvironmentView }).environment.filesLost).toBe(false);
+    // the reset is a maintenance job: the worker drops the lost file system after the response
+    await waitFor(
+      async () => {
+        const fresh = await me.req({ method: "GET", url: `${base()}/${env.id}` });
+        return !(fresh.json() as { environment: EnvironmentView }).environment.filesLost;
+      },
+      20_000,
+      "the reset job",
+    );
     await write("three");
     const read = await sandbox.withSandbox(
       at,

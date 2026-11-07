@@ -21,9 +21,22 @@ export const SANDBOX_DESTROY_JOB = "sandbox-destroy-inactive";
 export const SANDBOX_DESTROY_FOR_JOB = "sandbox-destroy-for";
 
 /**
- * The producer of {@link SANDBOX_DESTROY_FOR_JOB} on the maintenance queue (BullMQ's own job ids, as
- * before: every enqueue is a new job, also after a batch failed all its attempts); `MaintenanceProcessor`
- * consumes it.
+ * One-off job: start an environment over with empty files (`resetFileSystem`; data
+ * `{ environmentId }`, job id {@link resetFilesJobId}).
+ */
+export const SANDBOX_RESET_FILES_JOB = "sandbox-reset-files";
+
+/**
+ * The deterministic id of an environment's reset job: a second request while one is waiting or
+ * running joins it (that reset still empties the files); once it ended, a new request is a new job.
+ */
+export const resetFilesJobId = (environmentId: string): string =>
+  `${SANDBOX_RESET_FILES_JOB}-${environmentId}`;
+
+/**
+ * The producer of the sandbox maintenance jobs: {@link SANDBOX_DESTROY_FOR_JOB} (BullMQ's own job
+ * ids, as before: every enqueue is a new job, also after a batch failed all its attempts) and
+ * {@link SANDBOX_RESET_FILES_JOB}; `MaintenanceProcessor` consumes them.
  */
 @Injectable()
 export class SandboxJobs {
@@ -47,6 +60,38 @@ export class SandboxJobs {
       },
     );
   }
+
+  /**
+   * Enqueues the reset of an environment's files (see {@link resetFilesJobId}): retried on failure
+   * (the exclusive lease not obtained in time, the provider failing); a job that failed all its
+   * attempts is removed, so the id never blocks a later request.
+   */
+  async resetFiles(environmentId: string): Promise<void> {
+    await this.queue.add(
+      SANDBOX_RESET_FILES_JOB,
+      { environmentId },
+      {
+        jobId: resetFilesJobId(environmentId),
+        attempts: 5,
+        backoff: { type: "exponential", delay: 30_000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+  }
+}
+
+/**
+ * The worker side of {@link SANDBOX_RESET_FILES_JOB}: `resetFileSystem` under the exclusive lease;
+ * a failure fails the job (retried).
+ */
+export async function runSandboxResetFiles(
+  sandbox: Pick<SandboxService, "resetFileSystem">,
+  job: Pick<Job, "data">,
+): Promise<void> {
+  const id = (job.data as { environmentId?: unknown }).environmentId;
+  if (typeof id !== "string") return;
+  await sandbox.resetFileSystem(id);
 }
 
 /**
