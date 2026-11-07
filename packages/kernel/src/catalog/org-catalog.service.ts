@@ -511,8 +511,9 @@ export class OrgCatalogService {
   /**
    * `DELETE plugin-installs/:installId` of a catalog plugin follows the switch-off semantics: builtin
    * items are refused (`plugin.scope_locked`) unless the install is not live (failed, or
-   * `installing`: the installer cleans up a stale one and refuses a fresh one), and the switch row
-   * is written false in the uninstall's transaction (an `all` item then stays off in the org).
+   * `installing`: the installer cleans up a stale one and refuses a fresh one). Removing a live
+   * install writes the switch row false in the uninstall's transaction (an `all` item then stays
+   * off in the org); removing a failed or stale one writes none.
    */
   async uninstall(
     orgId: string,
@@ -542,7 +543,9 @@ export class OrgCatalogService {
       actor,
       installId,
       actorTokenId !== undefined ? { actorTokenId } : {},
-      row !== undefined ? {} : undefined,
+      // only a live install was on: removing a failed or stale one writes no switch row, so an
+      // item its scope wants stays wanted and the sync installs it again
+      row !== undefined && live ? {} : undefined,
     );
   }
 

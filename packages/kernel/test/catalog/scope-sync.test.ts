@@ -411,7 +411,7 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     await idle();
   });
 
-  it("a failed install of an all plugin can be cleaned up; a live one is removed like a switch-off", async () => {
+  it("removing a failed install of an all plugin leaves no off switch; a live one is removed like a switch-off", async () => {
     const itemId = await skillsOnly("all-failed");
     await setScope(env, itemId, "all");
     const failedId = randomUUID();
@@ -433,16 +433,11 @@ describe("plugin scope sync", { timeout: 90_000 }, () => {
     expect(
       await env.db.selectFrom("plugin_installs").select("id").where("id", "=", failedId).execute(),
     ).toEqual([]);
-    // the cleanup is a switch-off (the org's switch row says off), so the sync leaves it off
-    // (layering spec §4) until an org admin switches it on
-    expect(await switchOf(itemId)).toBe(false);
-    expect(await sync().syncPair(itemId, env.orgId)).toBe("unchanged");
-    const on = await env.boss({
-      method: "PUT",
-      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
-      payload: { enabled: true },
-    });
-    expect(on.statusCode, on.body).toBe(200);
+    // a failed install was never on: removing it writes no switch row, so the org keeps
+    // following the scope and the sync installs it again
+    expect(await switchOf(itemId)).toBeNull();
+    expect(await sync().syncPair(itemId, env.orgId)).toBe("installed");
+    expect(await liveOrgs(itemId)).toContain(env.orgId);
     const live = await env.db
       .selectFrom("plugin_installs")
       .select("id")
