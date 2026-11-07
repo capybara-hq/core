@@ -1030,8 +1030,9 @@ export class ConversationsService {
    * agent's means "back to the agent's model" (null); a model change without `effort` resets the
    * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
    * (`validation_failed`). Resolving is the agent editor's check, for the org (its effective
-   * provider config, spec B §5.5). If per-org model enablement is added, this check and the run
-   * worker's `fallBackIfUnavailable` must follow it.
+   * provider config, spec B §5.5) and its disabled lists: a model the platform or the org disabled,
+   * or a non-chat model, is refused (spec B §5.3), as the run worker's `fallBackIfUnavailable` falls
+   * back from it.
    */
   private async planSwitch(
     orgId: string,

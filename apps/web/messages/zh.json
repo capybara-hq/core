@@ -333,6 +333,7 @@
     "model": {
       "unconfigured": "这个用途还没有映射模型。",
       "purpose_unknown": "没有这个模型用途。",
+      "provider_not_found": "没有这个模型供应商",
       "rate_limited": "模型供应商限流。",
       "overloaded": "模型供应商繁忙。",
       "server": "模型供应商出错。",

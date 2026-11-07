@@ -248,11 +248,11 @@ describe("the org's disabled list", () => {
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "org_id", "target", "detail"])
-      .where("action", "=", "model.disabled_set")
+      .where("action", "in", ["model.disabled_set", "org.model_disabled_set"])
       .execute();
     expect(audit).toEqual([
       {
-        action: "model.disabled_set",
+        action: "org.model_disabled_set",
         org_id: org1,
         target: "model-fake",
         detail: { scope: "org", disabled: ["fake-2"], enabled: [] },

@@ -584,8 +584,9 @@ export async function replayRun(
   };
   const registry: Pick<ProviderRegistry, "resolve"> = {
     // the case's org (its effective provider config), whatever the replayed step passes
-    resolve: async (_orgId, ref) => {
-      const r = await d.registry.resolve(s.orgId, ref);
+    // (and its disabled lists: a candidate disabled there is refused, spec B §5.3)
+    resolve: async (_orgId, ref, opts) => {
+      const r = await d.registry.resolve(s.orgId, ref, opts);
       return { ...r, provider: meter(r.provider) };
     },
   };

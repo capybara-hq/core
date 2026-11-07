@@ -22,7 +22,6 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
-import { ModelEnablement } from "./enablement.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -159,7 +158,6 @@ export class ModelPurposesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
-    @Inject(ModelEnablement) private readonly enablement: Pick<ModelEnablement, "isEnabled">,
   ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
@@ -341,23 +339,31 @@ export class ModelPurposesService {
 
   /**
    * 生效的映射：组织覆盖，否则部署默认；都没有 → `model.unconfigured`；用途未声明 → `model.purpose_unknown`。
-   * An effective target disabled in the org (by the platform or the org) also counts as
-   * unconfigured there (spec B §5.3).
+   * An effective target the org cannot use counts as unconfigured there (spec B §5.3): checked in
+   * the registry's org view, so a model the platform or the org disabled, a provider off or needing
+   * configuration in the org, a model gone from the org's list or of another kind than the purpose
+   * all give `model.unconfigured`. A provider whose list fails (`ProviderListError`) is thrown as is.
    */
   async resolve(orgId: string, purpose: string): Promise<PurposeTarget> {
-    const [view] = await this.views([this.find(purpose)], orgId);
+    const decl = this.find(purpose);
+    const [view] = await this.views([decl], orgId);
     if (!view?.effective) {
       throw new ApiError(
         "model.unconfigured",
         `No model is configured for the "${purpose}" purpose`,
       );
     }
-    const { provider, model } = view.effective.model;
-    if (!(await this.enablement.isEnabled(orgId, provider, model))) {
-      throw new ApiError(
-        "model.unconfigured",
-        `The model configured for the "${purpose}" purpose is disabled in this organization`,
-      );
+    try {
+      await this.providers.resolve(orgId, view.effective.model, { kind: decl.kind });
+    } catch (e) {
+      if (e instanceof ProviderListError) throw e;
+      if (e instanceof ApiError && e.code === "agent.model_unavailable") {
+        throw new ApiError(
+          "model.unconfigured",
+          `The model configured for the "${purpose}" purpose is not available in this organization`,
+        );
+      }
+      throw e;
     }
     return view.effective;
   }

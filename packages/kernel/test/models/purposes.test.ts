@@ -373,6 +373,30 @@ describe("kinds and disabled models (spec B §5.3)", () => {
   });
 });
 
+describe("a target the org cannot use", () => {
+  it("a default missing from the org's own provider list is unconfigured there only", async () => {
+    const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
+    await put(ent, adminUrl("title"), FAKE_1);
+    const other = await createOrg(owner, "Other");
+    const purposes = k.app.get(ModelPurposesService);
+    // the org keeps its own copy of model-fake's config, whose list has no fake-1
+    for (const [url, payload] of [
+      [`/api/v1/orgs/${orgId}/extensions/model-fake`, { enabled: true }],
+      [
+        `/api/v1/orgs/${orgId}/extensions/model-fake/overrides`,
+        { values: { models: [{ id: "mine" }] } },
+      ],
+    ] as const) {
+      const res = await owner({ method: "PUT", url, payload });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    await expect(purposes.resolve(orgId, "title")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    expect(await purposes.resolve(other, "title")).toEqual(FAKE_1);
+  });
+});
+
 describe("chat", () => {
   it("按映射的模型发请求，参数按它的声明补默认值", async () => {
     await put(ent, adminUrl("eval"), J);

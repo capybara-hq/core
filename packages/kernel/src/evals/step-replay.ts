@@ -245,7 +245,8 @@ function baselineOf(
  * 否则带候选的定义、版本与参数——参数按候选模型的声明宽松处理，与运行时一致），用 `consumeModelStream` 收完。
  * 请求发出之前的错误原样抛出（`agent.model_unavailable`、取附件暂时失败为 `MediaUnavailableError`）；请求发出之后的
  * 错误包成 {@link ReplayAttemptError}（带估算用量，调用方计入预算后按 `cause` 分类重试）。
- * 模型按部署范围解析（与运行时一致；组织级模型准入若在第二段落地，须同样覆盖评测候选）。
+ * The candidate model resolves in the snapshot's org like the runtime (its effective provider
+ * config and disabled lists: a model disabled there is `agent.model_unavailable`, spec B §5.3).
  * 不另设单次请求的墙钟时限：与运行时一样只有流空闲看门狗（`streamIdleTimeoutMs` / `runtime.streamIdleMs`）。
  */
 export async function replayStep(

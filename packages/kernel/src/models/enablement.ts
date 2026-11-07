@@ -169,7 +169,7 @@ export class ModelEnablement {
         actorAccountId: actor.accountId,
         ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
         ...(orgId !== null && { orgId }),
-        action: "model.disabled_set",
+        action: orgId === null ? "model.disabled_set" : "org.model_disabled_set",
         target: provider,
         detail: {
           scope: orgId === null ? "platform" : "org",
