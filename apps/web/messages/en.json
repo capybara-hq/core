@@ -293,7 +293,9 @@
       "not_found": "The environment does not exist or has been deleted.",
       "name_taken": "You already have an environment with this name. Choose another name.",
       "limit_reached": "You have reached the limit of environments. Delete one to create another.",
-      "unavailable": "The sandbox provider of this environment is not available. Ask the super admin."
+      "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
+      "files_lost": "The files of this environment were lost. Rebuild its files on the environments page to use it again.",
+      "forbidden": "You can no longer use this environment."
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
