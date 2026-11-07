@@ -268,8 +268,10 @@ describe("ConfigForm with the openai-compatible hints", () => {
         { path: "", segments: [], message: "invalid value", messageKey: "duplicateEndpoint" },
       ],
     });
-    expect(screen.getByText("PDF documents: invalid value")).toBeTruthy();
-    expect(screen.getByText("too small")).toBeTruthy();
+    // the kernel's generated English never shows: the page's words instead
+    expect(screen.getByText("PDF documents: Invalid value")).toBeTruthy();
+    expect(screen.getByText("Invalid value")).toBeTruthy();
+    expect(screen.queryByText(/too small|invalid value/)).toBeNull();
     expect(screen.getByText("Endpoint names must be unique")).toBeTruthy();
   });
 

@@ -981,9 +981,9 @@ function locate(
   value: unknown,
   segs: readonly Segment[],
   at: Segment[],
-): string | null {
+): { id: string; node: ConfigNode } | null {
   const [s, ...rest] = segs;
-  if (s === undefined) return at.length === 0 ? null : nodeId(at);
+  if (s === undefined) return at.length === 0 ? null : { id: nodeId(at), node };
   switch (node.kind) {
     case "object": {
       const child =
@@ -998,11 +998,86 @@ function locate(
       const i = typeof s === "number" ? s : /^\d+$/.test(s) ? Number(s) : -1;
       if (node.item.kind === "object" && Array.isArray(value) && i >= 0 && i < value.length)
         return locate(node.item, value[i], rest, [...at, i]);
-      return nodeId(at);
+      return { id: nodeId(at), node };
     }
     default:
-      return nodeId(at);
+      return { id: nodeId(at), node };
   }
+}
+
+/** The value at `segs` (objects and arrays), `undefined` when the path leaves the value. */
+function valueAtSegs(value: unknown, segs: readonly Segment[]): unknown {
+  let at = value;
+  for (const s of segs) {
+    if (Array.isArray(at)) at = at[typeof s === "number" ? s : Number(s)];
+    else if (isObj(at)) at = at[String(s)];
+    else return undefined;
+  }
+  return at;
+}
+
+/** Nothing there yet: no value, an empty string, an empty list or record. */
+const isEmptyValue = (v: unknown): boolean =>
+  v === undefined ||
+  v === null ||
+  v === "" ||
+  (Array.isArray(v) && v.length === 0) ||
+  (isObj(v) && Object.keys(v).length === 0);
+
+/**
+ * What a server issue means to the person, as a `configForm.errors` key (the kernel's issue texts
+ * are generated English, `expected array`, `too small (minimum 1)`, never shown as they are): a
+ * missing list asks for one item (`addOne`), any other missing value is `required`, a limit names
+ * the limit for the node's kind, anything else is `invalid`.
+ */
+export type IssueKey = ProblemKind | "addOne" | "invalid";
+export interface IssueText {
+  key: IssueKey;
+  limit?: number;
+}
+
+export function issueText(
+  message: string,
+  node: Pick<ConfigNode, "kind"> | null,
+  missing: boolean,
+): IssueText {
+  const kind = node?.kind;
+  const listy = kind === "array" || kind === "record";
+  const scalarType = node !== null && node.kind === "scalar" ? (node as ScalarNode).type : null;
+  const expected = /^expected (\w+)/.exec(message);
+  if (expected !== null || /^required$/i.test(message.trim())) {
+    if (expected !== null && !missing) return { key: "invalid" };
+    return { key: expected?.[1] === "array" || kind === "array" ? "addOne" : "required" };
+  }
+  const limit = (re: RegExp): number | undefined => {
+    const m = re.exec(message);
+    const n = m?.[1] === undefined ? Number.NaN : Number(m[1]);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const min = limit(/^too small \(minimum (-?[\d.]+)\)/);
+  if (min !== undefined) {
+    if (listy) return min <= 1 ? { key: "addOne" } : { key: "minItems", limit: min };
+    if (scalarType === "string")
+      return missing ? { key: "required" } : { key: "minLength", limit: min };
+    if (scalarType === "number" || scalarType === "integer") return { key: "min", limit: min };
+    return { key: "invalid" };
+  }
+  const max = limit(/^too big \(maximum (-?[\d.]+)\)/);
+  if (max !== undefined) {
+    if (listy) return { key: "maxItems", limit: max };
+    if (scalarType === "string") return { key: "maxLength", limit: max };
+    if (scalarType === "number" || scalarType === "integer") return { key: "max", limit: max };
+    return { key: "invalid" };
+  }
+  return { key: "invalid" };
+}
+
+/** A server issue that only says a value is missing (the pending-config notice names these). */
+export function isMissingIssue(issue: ConfigIssue, value: unknown): boolean {
+  if (issue.messageKey !== undefined) return false;
+  if (!isEmptyValue(valueAtSegs(value, segmentsOf(issue)))) return false;
+  const { key } = issueText(issue.message, null, true);
+  return key === "addOne" || key === "required" || /^too small/.test(issue.message);
 }
 
 const segmentsOf = (issue: ConfigIssue): Segment[] =>
@@ -1018,23 +1093,31 @@ export function mapIssues(
   root: ObjectNode,
   value: unknown,
   issues: readonly ConfigIssue[],
+  /** Words for an issue the schema has no message for (default: the kernel's text). */
+  render?: (text: IssueText) => string,
 ): { byNode: Map<string, string>; form: string[] } {
   const byNode = new Map<string, string>();
   const form: string[] = [];
   const recordPaths = allItemSecretPaths(root);
   for (const issue of issues) {
-    const message =
-      (issue.messageKey !== undefined ? root.messages[issue.messageKey] : undefined) ??
-      issue.message;
     const segs = segmentsOf(issue);
-    let id: string | null = null;
+    let at: { id: string | null; node: Pick<ConfigNode, "kind"> | null } | null = null;
     for (const p of recordPaths) {
       const ps = p.split(".");
       const key = segs[ps.length];
       if (segs.length === ps.length + 1 && ps.every((x, i) => segs[i] === x) && key !== undefined)
-        id = findItemSecret(root, value, p, String(key), []);
+        at = { id: findItemSecret(root, value, p, String(key), []), node: { kind: "itemSecret" } };
     }
-    id ??= locate(root, value, segs, []);
+    if (at === null || at.id === null) at = locate(root, value, segs, []);
+    const own = issue.messageKey !== undefined ? root.messages[issue.messageKey] : undefined;
+    const message =
+      own ??
+      (render === undefined
+        ? issue.message
+        : render(
+            issueText(issue.message, at?.node ?? null, isEmptyValue(valueAtSegs(value, segs))),
+          ));
+    const id = at?.id ?? null;
     if (id === null) form.push(issue.path === "" ? message : `${issue.path}: ${message}`);
     else if (!byNode.has(id)) byNode.set(id, message);
   }

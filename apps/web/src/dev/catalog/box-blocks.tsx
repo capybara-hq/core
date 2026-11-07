@@ -11,6 +11,7 @@ import {
   Input,
   ItemList,
   ItemListItem,
+  KeyValue,
   Select,
   Subsection,
   Text,
@@ -167,6 +168,30 @@ function subsectionBlocks(): ReactNode {
             />
           </Subsection>
         </FormSection>
+      </RefBlock>
+      {/* The regions of a Sheet's body (an extension's Sheet): divided subsections, an h3 over
+          its content with no guide, each after the first under a line-soft hairline. */}
+      <RefBlock id="subsection-divided" width={720} pad>
+        <Card title="OpenAI 兼容模型">
+          <Subsection title="部署配置" variant="divided">
+            <Field label="端点">
+              <Input defaultValue="" placeholder="https://" />
+            </Field>
+          </Subsection>
+          <Subsection title="状态" variant="divided">
+            <KeyValue
+              rows={[
+                { k: "状态", v: "待配置" },
+                { k: "来源", v: "预装" },
+              ]}
+            />
+          </Subsection>
+          <Subsection title="权限" variant="divided">
+            <Text variant="small" tone="muted">
+              提供 model-provider@1
+            </Text>
+          </Subsection>
+        </Card>
       </RefBlock>
     </>
   );

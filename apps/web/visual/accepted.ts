@@ -122,6 +122,9 @@ export const ACCEPTED: string[] = [
   // reference PNGs and the side-by-side review wait for the reference-update and visual-update
   // workflows
   "item-list",
+  // the new state `divided` (the regions of an extension's Sheet, light polish 2026-11-07): the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
   "subsection",
   // the Callout adapts to the box it sits in (acceptance item AB, wave 2 fix round 1): states
   // `warn`, `info`, `in-box`; the reference PNGs and the side-by-side review wait for the

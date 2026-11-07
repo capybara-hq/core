@@ -4958,6 +4958,10 @@ textarea {
 .r-subsection[data-variant="flush"] + .r-subsection[data-variant="flush"] {
   border-top: 1px solid var(--cb-line-soft);
 }
+.r-subsection[data-variant="divided"] ~ .r-subsection[data-variant="divided"] {
+  padding-top: var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
 .r-subsection .r-table {
   background: transparent;
 }

@@ -265,6 +265,31 @@ describe("Subsection (a group inside one box, spec §6.32)", () => {
     expect(css).toMatch(
       /\.cb-subsection\[data-variant="flush"\] \+ \.cb-subsection\[data-variant="flush"\] \{\s*border-top: 1px solid var\(--cb-line-soft\);/,
     );
+    // divided: every divided region after the first gets the hairline and space.4
+    expect(css).toMatch(
+      /\.cb-subsection\[data-variant="divided"\] ~ \.cb-subsection\[data-variant="divided"\] \{\s*padding-top: var\(--cb-space-4\);\s*border-top: 1px solid var\(--cb-line-soft\);/,
+    );
+    expect(css).not.toMatch(/\.cb-subsection\[data-variant="divided"\] > \.cb-subsection-body \{/);
+  });
+
+  it("divided: the regions of a Sheet's body, each named by its h3, no guide", () => {
+    zh(
+      <>
+        <Subsection title="状态" variant="divided">
+          <span>事实</span>
+        </Subsection>
+        <Subsection title="权限" variant="divided">
+          <span>权限行</span>
+        </Subsection>
+      </>,
+    );
+    const regions = screen.getAllByRole("region");
+    expect(regions.map((r) => r.getAttribute("aria-labelledby") !== null)).toEqual([true, true]);
+    expect(regions.map((r) => r.getAttribute("data-variant"))).toEqual(["divided", "divided"]);
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
+      "状态",
+      "权限",
+    ]);
   });
 });
 

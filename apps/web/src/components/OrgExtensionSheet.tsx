@@ -1,6 +1,15 @@
 "use client";
 
-import { Button, KeyValue, Sheet, Stack, Text, versionLabel } from "@capybara-hq/design";
+import {
+  Button,
+  Callout,
+  KeyValue,
+  Sheet,
+  Stack,
+  Subsection,
+  Text,
+  versionLabel,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { Link } from "../i18n/navigation";
@@ -27,11 +36,12 @@ export interface SaveError {
 
 /**
  * One extension of the org's 扩展 page in a right-side Sheet (spec §6.7: view or edit one object
- * without leaving the list). For org admins: the org config form on top with 保存配置 (and
- * 保存并启用 while the extension is off) in the footer; the state line with its hints and why a
- * switch was refused (a missing dependency, dependents that remain with 仍然停用, the kernel's
- * reason with a link to 插件); 立即同步 for an enabled directory-sync extension; the permissions
- * folded into one line that opens the full blocks. Members read the capabilities and the state only.
+ * without leaving the list). One status line on top (the missing required fields of a pending
+ * config), then divided regions: 组织配置 (org admins: the form; 保存配置, and 保存并启用 while
+ * the extension is off, in the footer); 状态 (the state and capabilities, one-line hints, why a
+ * switch was refused: a missing dependency, dependents that remain with 仍然停用, the kernel's
+ * reason with a link to 插件; 立即同步 for an enabled directory-sync extension); 权限 (org admins:
+ * folded into one line that opens the full blocks). Members get the 状态 region only.
  * The list page keeps the switch logic; this Sheet only reports the person's actions.
  */
 export function OrgExtensionSheet({
@@ -82,7 +92,9 @@ export function OrgExtensionSheet({
     config: Record<string, unknown>;
     ok: boolean;
     dirty: boolean;
-  }>({ config: orgConfig(plugin.config), ok: true, dirty: false });
+    /** The fields the saved config is missing (read from the pristine form). */
+    missing: string[];
+  }>({ config: orgConfig(plugin.config), ok: true, dirty: false, missing: [] });
   const directory = provides(plugin, "directory");
   const saveEnable = configForm && !plugin.enabled && !locked;
   return (
@@ -126,12 +138,17 @@ export function OrgExtensionSheet({
           }
         : {})}
     >
+      {/* One status line, then the regions (spec §6.7): 组织配置, 状态, 权限 */}
       <Stack gap={16}>
+        {canEdit && needsConfig && (
+          <Callout tone="warn">
+            {form.missing.length > 0
+              ? t("missingRequired", { fields: form.missing.join(t("listSep")) })
+              : t("configFirstHint")}
+          </Callout>
+        )}
         {configForm && (
-          <Stack gap={12}>
-            <Text variant="small" tone="muted">
-              {t("configTitle")}
-            </Text>
+          <Subsection title={t("configTitle")} variant="divided">
             <ConfigForm
               key={round}
               schema={plugin.orgConfigSchema}
@@ -140,91 +157,99 @@ export function OrgExtensionSheet({
               issues={saveError?.issues ?? []}
               disabled={busy !== undefined}
               onChange={(value, _entries, s) =>
-                setForm({
+                setForm((prev) => ({
                   config: orgConfig(value),
                   ok: s.problems.length === 0,
                   dirty: s.dirty,
-                })
+                  missing: s.dirty
+                    ? prev.missing
+                    : [
+                        ...new Set(
+                          s.problems
+                            .filter((p) => p.kind === "required" || p.kind === "minItems")
+                            .map((p) => p.label),
+                        ),
+                      ],
+                }))
               }
             />
             {saveError !== undefined && (
               <FormError message={saveError.message} extra={saveError.extra} />
             )}
-          </Stack>
+          </Subsection>
         )}
-        <KeyValue
-          rows={[
-            { k: t("stateTitle"), v: <Text tone={state.tone}>{state.label}</Text> },
-            {
-              k: t("capabilitiesTitle"),
-              v: capabilities.length > 0 ? capabilities.join(" · ") : "—",
-            },
-          ]}
-        />
-        {platform && (
-          <Text variant="prose" tone="muted">
-            {t("platformHint")}
-          </Text>
-        )}
-        {unavailable && (
-          <Text variant="prose" tone="muted">
-            {t("unavailableHint")}
-          </Text>
-        )}
-        {canEdit && needsConfig && (
-          <Text variant="prose" tone="muted">
-            {t("configFirstHint")}
-          </Text>
-        )}
-        {problem?.kind === "dependency_missing" && (
-          <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />
-        )}
-        {problem?.kind === "has_dependents" && (
-          <Stack gap={8}>
-            <FormError message={t("hasDependents")} extra={problem.extensions} />
-            <Stack direction="row">
-              <Button
-                density="dense"
-                variant="danger"
-                disabled={busy !== undefined}
-                onClick={onForceDisable}
-              >
-                {t("forceDisable")}
-              </Button>
-            </Stack>
-          </Stack>
-        )}
-        {problem?.kind === "other" && (
-          <Stack gap={4}>
-            <FormError message={problem.message} extra={problem.extra} />
-            {problem.catalog === true && (
-              <Text>
-                <Link href="/plugins">{t("openPlugins")}</Link>
-              </Text>
-            )}
-          </Stack>
-        )}
-        {canEdit && !unavailable && directory && plugin.enabled && (
-          <Stack gap={8}>
+        <Subsection title={t("stateTitle")} variant="divided">
+          <KeyValue
+            rows={[
+              { k: t("stateTitle"), v: <Text tone={state.tone}>{state.label}</Text> },
+              {
+                k: t("capabilitiesTitle"),
+                v: capabilities.length > 0 ? capabilities.join(" · ") : "—",
+              },
+            ]}
+          />
+          {platform && (
             <Text variant="small" tone="muted">
-              {t("syncHint")}
+              {t("platformHint")}
             </Text>
-            <Stack direction="row">
-              <Button
-                loading={busy === "sync"}
-                disabled={busy !== undefined}
-                aria-label={t("syncLabel", { plugin: label })}
-                onClick={onSync}
-              >
-                {t("sync")}
-              </Button>
+          )}
+          {unavailable && (
+            <Text variant="small" tone="muted">
+              {t("unavailableHint")}
+            </Text>
+          )}
+          {problem?.kind === "dependency_missing" && (
+            <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />
+          )}
+          {problem?.kind === "has_dependents" && (
+            <Stack gap={8}>
+              <FormError message={t("hasDependents")} extra={problem.extensions} />
+              <Stack direction="row">
+                <Button
+                  density="dense"
+                  variant="danger"
+                  disabled={busy !== undefined}
+                  onClick={onForceDisable}
+                >
+                  {t("forceDisable")}
+                </Button>
+              </Stack>
             </Stack>
-          </Stack>
-        )}
+          )}
+          {problem?.kind === "other" && (
+            <Stack gap={4}>
+              <FormError message={problem.message} extra={problem.extra} />
+              {problem.catalog === true && (
+                <Text>
+                  <Link href="/plugins">{t("openPlugins")}</Link>
+                </Text>
+              )}
+            </Stack>
+          )}
+          {canEdit && !unavailable && directory && plugin.enabled && (
+            <Stack gap={8}>
+              <Text variant="small" tone="muted">
+                {t("syncHint")}
+              </Text>
+              <Stack direction="row">
+                <Button
+                  loading={busy === "sync"}
+                  disabled={busy !== undefined}
+                  aria-label={t("syncLabel", { plugin: label })}
+                  onClick={onSync}
+                >
+                  {t("sync")}
+                </Button>
+              </Stack>
+            </Stack>
+          )}
+        </Subsection>
         {canEdit && plugin.permissions.length > 0 && (
-          <PermissionSummary groups={plugin.permissions}>
-            <PermissionReview plugin={plugin.plugin} groups={plugin.permissions} />
-          </PermissionSummary>
+          <Subsection title={t("permissions")} variant="divided">
+            <PermissionSummary groups={plugin.permissions}>
+              <PermissionReview plugin={plugin.plugin} groups={plugin.permissions} />
+            </PermissionSummary>
+          </Subsection>
         )}
       </Stack>
     </Sheet>

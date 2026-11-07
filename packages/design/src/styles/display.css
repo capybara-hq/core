@@ -1348,3 +1348,8 @@ a.cb-attachment:hover {
 .cb-subsection[data-variant="flush"] + .cb-subsection[data-variant="flush"] {
   border-top: 1px solid var(--cb-line-soft);
 }
+/* Divided: the regions of a Sheet's body, split by a hairline (no guide). */
+.cb-subsection[data-variant="divided"] ~ .cb-subsection[data-variant="divided"] {
+  padding-top: var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}

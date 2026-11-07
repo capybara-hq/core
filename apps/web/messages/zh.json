@@ -2016,7 +2016,9 @@
       "minLength": "至少 {limit} 个字符",
       "maxLength": "最多 {limit} 个字符",
       "minItems": "至少 {limit} 项",
-      "maxItems": "最多 {limit} 项"
+      "maxItems": "最多 {limit} 项",
+      "addOne": "至少添加一项",
+      "invalid": "格式不正确"
     }
   },
   "channels": {
@@ -2133,7 +2135,7 @@
     "enabled": "已启用",
     "disabled": "未启用",
     "unavailable": "不可用",
-    "unavailableHint": "此扩展在部署上当前不可用；组织的启用设置会保留。",
+    "unavailableHint": "部署上当前不可用 · 组织的启用设置会保留",
     "enabledToast": "已启用「{plugin}」。",
     "disabledToast": "已停用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
@@ -2158,12 +2160,12 @@
       "network": "网络访问",
       "ui": "界面（视图 / 嵌入页面）"
     },
-    "configTitle": "组织级配置",
+    "configTitle": "组织配置",
     "save": "保存配置",
     "saveLabel": "保存 {plugin} 的配置",
     "saveAndEnable": "保存并启用",
     "saveAndEnableLabel": "保存 {plugin} 的配置并启用",
-    "configFirstHint": "先填写组织级配置再启用。",
+    "configFirstHint": "先填写组织配置再启用",
     "configSaved": "「{plugin}」的配置已保存。",
     "sync": "立即同步",
     "syncLabel": "立即同步 {plugin} 的通讯录",
@@ -2209,7 +2211,7 @@
       }
     },
     "description": "本组织能用的扩展。组织级配置（例如本组织自己的 API Key）在这里填。",
-    "platformHint": "平台为所有组织统一启用了这个扩展，组织不能停用；组织级配置仍可在这里填写。",
+    "platformHint": "平台为所有组织启用 · 组织不能停用",
     "openPlugins": "去插件页查看或申请",
     "needsConfig": "待配置",
     "enableFailed": "启用失败",
@@ -2253,7 +2255,9 @@
       "ui": "界面",
       "publicRoutes": "公开路由",
       "provides": "扩展点"
-    }
+    },
+    "missingRequired": "缺少必填项：{fields}",
+    "listSep": "、"
   },
   "identities": {
     "title": "IM 身份",
@@ -3123,7 +3127,7 @@
           "source": "来源",
           "version": "版本",
           "desired": "期望状态",
-          "sha": "包 sha256"
+          "sha": "包"
         },
         "desired": {
           "enabled": "启用",
@@ -3137,12 +3141,6 @@
           "state": "状态",
           "reason": "原因",
           "heartbeat": "心跳"
-        },
-        "replicaState": {
-          "loaded": "已加载",
-          "failed": "失败",
-          "unloaded": "已卸下",
-          "pending": "待处理"
         },
         "failedReplica": "副本 {replica} 加载失败：{reason}。",
         "stillServing": "该副本仍在用 {version}。",
@@ -3158,18 +3156,18 @@
           "setup_failed": "扩展初始化（setup）失败",
           "migration_failed": "扩展迁移失败"
         },
-        "converging": "各副本正在收敛到期望状态，页面会自动刷新。",
+        "converging": "各副本正在收敛到期望状态，页面会自动刷新",
         "refresh": "刷新",
         "noReplicas": "还没有副本上报状态。",
-        "requiredNote": "本部署的必需插件，由预装步骤从 npm 安装（版本与校验和已固定）。在每个组织中都启用，不能停用或卸载；可以升级，也可以填写部署配置。",
-        "configNote": "这个扩展由启动配置的 extensions 列表声明：不能在网页上停用、升级或卸载；要改，请修改启动配置。",
+        "requiredNote": "必需插件 · 不能停用或卸载",
+        "configNote": "由启动配置声明 · 不能在这里停用、升级或卸载",
         "actions": {
           "enable": "启用",
           "disable": "停用",
           "upgrade": "升级",
           "uninstall": "卸载"
         },
-        "uninstallNeedsDisable": "卸载前须先停用。",
+        "uninstallNeedsDisable": "卸载前须先停用",
         "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
         "disableConfirm": {
           "title": "停用「{name}」？",
@@ -3186,7 +3184,14 @@
           "disable": "已提交停用，各副本正在收敛。",
           "uninstall": "已卸载「{name}」。"
         },
-        "packageError": "扩展包读不到：{error}。"
+        "packageError": "扩展包读不到：{error}",
+        "replicaPending": "待处理",
+        "sections": {
+          "config": "部署配置",
+          "status": "状态",
+          "replicas": "副本",
+          "permissions": "权限"
+        }
       },
       "approve": {
         "title": "批准权限",
@@ -3206,19 +3211,18 @@
         }
       },
       "config": {
-        "none": "这个扩展没有部署级配置。",
-        "hint": "启动配置（配置文件、Nacos、环境变量）给出的字段只读；即时生效的字段保存后马上生效，其余字段保存后扩展会重新加载（不重启）。",
-        "invalid": "配置不完整或不合法，扩展待配置。原因标在对应字段旁。",
-        "notValidated": "这个扩展当前没有加载：保存时不校验，加载时再校验。",
+        "none": "这个扩展没有部署级配置",
+        "hint": "灰色字段来自启动配置，只读",
+        "invalid": "配置不合法，原因标在对应字段旁",
+        "notValidated": "扩展当前未加载：保存时不校验，加载时再校验",
         "save": "保存配置",
-        "saving": "正在保存；扩展重新加载最多需要约 {seconds} 秒。",
+        "saving": "正在保存，扩展重新加载最多约需 {seconds} 秒",
         "saved": "配置已保存。",
-        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改。",
-        "pendingMissing": "扩展待配置，还缺这些必填项：{fields}。",
+        "saveInvalid": "配置没有通过校验，请按字段旁的提示修改",
+        "pendingMissing": "缺少必填项：{fields}",
         "listSep": "、",
-        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒。",
-        "appliesNow": "这些改动保存后立即生效。",
-        "noChanges": "还没有改动。"
+        "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒",
+        "appliesNow": "这些改动保存后立即生效"
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",

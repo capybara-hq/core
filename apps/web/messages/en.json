@@ -2028,7 +2028,9 @@
       "minLength": "At least {limit} characters",
       "maxLength": "At most {limit} characters",
       "minItems": "At least {limit} items",
-      "maxItems": "At most {limit} items"
+      "maxItems": "At most {limit} items",
+      "addOne": "Add at least one",
+      "invalid": "Invalid value"
     }
   },
   "channels": {
@@ -2145,7 +2147,7 @@
     "enabled": "Enabled",
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
-    "unavailableHint": "This extension is currently unavailable on this deployment. The organization setting is kept.",
+    "unavailableHint": "Unavailable on this deployment · the organization setting is kept",
     "enabledToast": "\"{plugin}\" enabled.",
     "disabledToast": "\"{plugin}\" disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
@@ -2175,7 +2177,7 @@
     "saveLabel": "Save config of {plugin}",
     "saveAndEnable": "Save and enable",
     "saveAndEnableLabel": "Save config of {plugin} and enable",
-    "configFirstHint": "Fill in the organization config before enabling.",
+    "configFirstHint": "Fill in the organization config before enabling",
     "configSaved": "Config of \"{plugin}\" saved.",
     "sync": "Sync now",
     "syncLabel": "Sync directory of {plugin} now",
@@ -2221,7 +2223,7 @@
       }
     },
     "description": "The extensions this organization can use. Fill in organization-level config (such as this organization's own API key) here.",
-    "platformHint": "The platform turned this extension on for every organization; it cannot be turned off here. Its organization config can still be set.",
+    "platformHint": "Enabled for every organization by the platform · cannot be turned off here",
     "openPlugins": "Open Plugins to view or request it",
     "needsConfig": "Needs config",
     "enableFailed": "Enable failed",
@@ -2265,7 +2267,9 @@
       "ui": "UI",
       "publicRoutes": "Public routes",
       "provides": "Extension points"
-    }
+    },
+    "missingRequired": "Missing required: {fields}",
+    "listSep": ", "
   },
   "identities": {
     "title": "IM identities",
@@ -3135,7 +3139,7 @@
           "source": "Source",
           "version": "Version",
           "desired": "Desired state",
-          "sha": "Package sha256"
+          "sha": "Package"
         },
         "desired": {
           "enabled": "Enabled",
@@ -3149,12 +3153,6 @@
           "state": "State",
           "reason": "Reason",
           "heartbeat": "Heartbeat"
-        },
-        "replicaState": {
-          "loaded": "Loaded",
-          "failed": "Failed",
-          "unloaded": "Unloaded",
-          "pending": "Pending"
         },
         "failedReplica": "Replica {replica} failed to load: {reason}.",
         "stillServing": "This replica still serves {version}.",
@@ -3170,18 +3168,18 @@
           "setup_failed": "Extension setup failed",
           "migration_failed": "Extension migration failed"
         },
-        "converging": "Replicas are converging to the desired state; this page refreshes automatically.",
+        "converging": "Replicas are converging to the desired state; this page refreshes automatically",
         "refresh": "Refresh",
         "noReplicas": "No replica has reported yet.",
-        "requiredNote": "A required plugin of this deployment, installed by the bootstrap step from npm (version and checksum pinned). It is enabled in every organization and cannot be disabled or uninstalled; it can be upgraded and its deployment config filled in.",
-        "configNote": "This extension is declared in the startup config's extensions list: it cannot be disabled, upgraded or uninstalled here. Change the startup config instead.",
+        "requiredNote": "Required plugin · cannot be disabled or uninstalled",
+        "configNote": "Declared in the startup config · cannot be disabled, upgraded or uninstalled here",
         "actions": {
           "enable": "Enable",
           "disable": "Disable",
           "upgrade": "Upgrade",
           "uninstall": "Uninstall"
         },
-        "uninstallNeedsDisable": "Disable the extension before uninstalling it.",
+        "uninstallNeedsDisable": "Disable the extension before uninstalling it",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
@@ -3198,7 +3196,14 @@
           "disable": "Disable submitted; replicas are converging.",
           "uninstall": "Uninstalled \"{name}\"."
         },
-        "packageError": "The extension package cannot be read: {error}."
+        "packageError": "The extension package cannot be read: {error}",
+        "replicaPending": "Pending",
+        "sections": {
+          "config": "Deployment config",
+          "status": "Status",
+          "replicas": "Replicas",
+          "permissions": "Permissions"
+        }
       },
       "approve": {
         "title": "Approve permissions",
@@ -3218,19 +3223,18 @@
         }
       },
       "config": {
-        "none": "This extension has no deployment config.",
-        "hint": "Fields given by the startup config (config file, Nacos, environment variables) are read-only. Fields that apply immediately take effect on save; for the others the extension reloads after saving (no restart).",
-        "invalid": "The config is incomplete or invalid; the extension is waiting for config. The reasons are shown next to the fields.",
-        "notValidated": "This extension is not loaded right now: saving does not validate; it is validated when the extension loads.",
+        "none": "This extension has no deployment config",
+        "hint": "Greyed fields come from the startup config and are read only",
+        "invalid": "The config is invalid; the reasons are next to the fields",
+        "notValidated": "The extension is not loaded: saving does not validate, loading does",
         "save": "Save config",
-        "saving": "Saving; reloading the extension can take up to about {seconds} seconds.",
+        "saving": "Saving; reloading the extension can take up to about {seconds} seconds",
         "saved": "Config saved.",
-        "saveInvalid": "The config did not pass validation; fix the fields marked below.",
-        "pendingMissing": "The extension is waiting for config. Required fields missing: {fields}.",
+        "saveInvalid": "The config did not pass validation; fix the marked fields",
+        "pendingMissing": "Missing required: {fields}",
         "listSep": ", ",
-        "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds.",
-        "appliesNow": "These changes apply as soon as they are saved.",
-        "noChanges": "No changes yet."
+        "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds",
+        "appliesNow": "These changes apply as soon as they are saved"
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",

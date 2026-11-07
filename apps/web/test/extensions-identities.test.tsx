@@ -286,7 +286,13 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       expect(within(sheet).getByText(m.configTitle)).toBeTruthy();
       expect(within(sheet).getByRole("textbox", { name: /^url/ })).toBeTruthy();
       expect(within(sheet).getByRole("button", { name: fill(m.saveLabel) })).toBeTruthy();
-      expect(within(sheet).getByText(m.stateTitle)).toBeTruthy();
+      // The regions in order (spec §6.7): 组织配置, 状态, 权限; no status line on a saved config
+      expect(
+        within(sheet)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([m.configTitle, m.stateTitle, m.permissions]);
+      expect(sheet.querySelector('[data-part="callout"]')).toBeNull();
       // Folded: one line with the categories' counts and the 「敏感」 mark
       const summary = within(sheet).getByRole("button", { expanded: false });
       expect(summary.textContent).toContain(`${m.category.secrets} 1`);
@@ -382,7 +388,12 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       expect(rowNames()).toEqual(["jina"]);
       await user.click(tab("all"));
       const sheet = await openSheet(user, "fake-im");
-      expect(within(sheet).getByText(m.stateTitle)).toBeTruthy();
+      // A member's Sheet: the 状态 region only (no config, no permissions)
+      expect(
+        within(sheet)
+          .getAllByRole("heading", { level: 3 })
+          .map((h) => h.textContent),
+      ).toEqual([m.stateTitle]);
       expect(within(sheet).getByText(m.capabilitiesTitle)).toBeTruthy();
       expect(within(sheet).getByText(new RegExp(m.capability.directory))).toBeTruthy();
       expect(within(sheet).queryByText(m.configTitle)).toBeNull();
@@ -560,7 +571,10 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       await user.click(toggle);
       expect(calls.some((c) => c.method === "PUT")).toBe(false);
       const sheet = await openSheet(user, "fake-im");
-      expect(within(sheet).getByText(m.configFirstHint)).toBeTruthy();
+      // One warn line names what is missing; no red error on the pristine form
+      const notice = within(sheet).getByText(m.missingRequired.replace("{fields}", "url"));
+      expect(notice.closest('[data-part="callout"]')?.getAttribute("data-tone")).toBe("warn");
+      expect(within(sheet).queryByText(msgs[locale].configForm.errors.required)).toBeNull();
       const saveEnable = within(sheet).getByRole("button", {
         name: fill(m.saveAndEnableLabel),
       });
@@ -575,7 +589,7 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
         }),
       );
       expect(await screen.findByText(fill(m.enabledToast))).toBeTruthy();
-      expect(screen.queryByText(m.configFirstHint)).toBeNull();
+      expect(screen.queryByText(m.missingRequired.replace("{fields}", "url"))).toBeNull();
       expect(isDisabled(screen.getByRole("switch", { name: fill(m.enableLabel) }))).toBe(false);
     },
   );
@@ -620,7 +634,9 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
       // The switch's refusal opens the Sheet by itself
       const sheet = await screen.findByRole("dialog", { name: "fake-im" });
-      expect(await within(sheet).findByText("url is not reachable")).toBeTruthy();
+      // the kernel's text stays out: the field says it in the page's words
+      expect(await within(sheet).findByText(en.configForm.errors.invalid)).toBeTruthy();
+      expect(within(sheet).queryByText("url is not reachable")).toBeNull();
       expect(screen.queryByText(en.errors.plugin.install_failed)).toBeNull();
       expect(
         within(sheet).getByRole("textbox", { name: /^url/ }).getAttribute("aria-invalid"),

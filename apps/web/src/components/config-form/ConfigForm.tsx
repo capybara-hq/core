@@ -32,6 +32,7 @@ import {
   type Draft,
   type FieldMeta,
   fromDraft,
+  type IssueText,
   type ItemDraft,
   type ItemSecretNode,
   itemText,
@@ -117,23 +118,32 @@ export function ConfigForm({
     });
   }, [result, entries, draft, baseline]);
 
-  const mapped = useMemo(() => mapIssues(tree, result.value, issues), [tree, result, issues]);
+  // Server issues in the page's words: the kernel's generated English never reaches the form.
+  const issueWords = (x: IssueText): string =>
+    x.limit !== undefined ? t(`errors.${x.key}`, { limit: x.limit }) : t(`errors.${x.key}`);
+  const issueWordsRef = useRef(issueWords);
+  issueWordsRef.current = issueWords;
+  const mapped = useMemo(
+    () => mapIssues(tree, result.value, issues, (x) => issueWordsRef.current(x)),
+    [tree, result, issues],
+  );
   const ctx: Ctx = {
     meta,
     disabled,
     value: result.value,
     messages: new Map(mapped.byNode),
   };
-  // Client problems: type and limit problems at once, missing values once the person edited.
+  // Client problems: type and limit problems at once, missing values (an empty field, a list
+  // without its items) once the person edited.
+  const pristine = draft === baseline && !showRequired;
   for (const p of result.problems) {
-    if (ctx.messages.has(p.id) || (p.kind === "required" && draft === baseline && !showRequired))
+    if (ctx.messages.has(p.id) || (pristine && (p.kind === "required" || p.kind === "minItems")))
       continue;
     ctx.messages.set(p.id, problemText(p));
   }
   function problemText(p: NodeProblem): string {
-    return p.limit !== undefined
-      ? t(`errors.${p.kind}`, { limit: p.limit })
-      : t(`errors.${p.kind}`);
+    if (p.kind === "minItems" && p.limit === 1) return t("errors.addOne");
+    return issueWords(p.limit !== undefined ? { key: p.kind, limit: p.limit } : { key: p.kind });
   }
 
   if (tree.children.length === 0) return null;

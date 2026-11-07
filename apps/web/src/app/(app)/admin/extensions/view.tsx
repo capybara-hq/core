@@ -5,10 +5,10 @@ import {
   CellTitle,
   type Column,
   DataTable,
-  KeyValue,
   ListPage,
   Sheet,
   Stack,
+  Subsection,
 } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -21,7 +21,7 @@ import {
 } from "../../../../components/AdminExtensionPanels";
 import { ExtensionStatusMark } from "../../../../components/AdminExtensionParts";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
-import { ExtensionDeploymentConfig } from "../../../../components/ExtensionDeploymentConfig";
+import { useDeploymentConfig } from "../../../../components/ExtensionDeploymentConfig";
 import {
   useCapabilityLabel,
   useExtensionTab,
@@ -67,10 +67,11 @@ const rankOf = (p: AdminExtension): 0 | 1 | 2 =>
  * source (预装 / 配置 / 安装, required), who the plugin is offered to and how many orgs run it, the
  * replicas; its menu holds 升级 for an installed extension.
  *
- * A row opens a Sheet (its page, `/admin/extensions/[name]`, opens from the Sheet's head): the
- * deployment config on top, the state line (status, capabilities, scope), the lifecycle actions and
- * the replicas (`AdminExtensionOverview`), and the permissions folded into one line that opens the
- * full review with the approval (open by itself while an approval waits). From the query cache
+ * A row opens a Sheet (its page, `/admin/extensions/[name]`, opens from the Sheet's head): one
+ * status line on top (what config is missing), then divided regions: 部署配置 (the form; its save
+ * in the Sheet's footer), 状态 (one facts block: state, capabilities, scope, source, version,
+ * package; the lifecycle actions), 副本 (`AdminExtensionOverview`), and 权限, folded into one line
+ * that opens the full review with the approval (open by itself while an approval waits). From the query cache
  * (the layout prefetched the list on a first load).
  */
 export default function AdminExtensionsView({ tab }: { tab: ExtensionTab }) {
@@ -327,8 +328,8 @@ function AdminExtensions({
 }
 
 /**
- * One deployment extension in a Sheet: its deployment config on top, the state line, the
- * lifecycle actions with the replicas, the folded permissions with the approval.
+ * One deployment extension in a Sheet: the status line, then the regions 部署配置, 状态, 副本 and
+ * 权限 (a region with nothing to show is left out); the config's save in the footer.
  */
 function AdminExtensionSheet({
   plugin,
@@ -351,6 +352,17 @@ function AdminExtensionSheet({
   const capabilities = capabilitiesIn(plugin.permissions, "all").map(capabilityLabel);
   // 待批准: the status says so, or the permissions grew past the approved snapshot.
   const approval = plugin.status === "pending_approval" || plugin.added.length > 0;
+  // The extension's state (pending config) and the org's readiness may change with a save.
+  const config = useDeploymentConfig({
+    name: plugin.name,
+    drainSeconds,
+    pending: plugin.status === "pending_config",
+    enabled: plugin.configurable,
+    onChanged: () => {
+      for (const queryKey of [adminExtensionsQuery().queryKey, ...extensionChangeKeys(orgId)])
+        void qc.invalidateQueries({ queryKey });
+    },
+  });
   return (
     <Sheet
       open
@@ -363,25 +375,24 @@ function AdminExtensionSheet({
         .join(" · ")}
       width={720}
       openHref={`/admin/extensions/${encodeURIComponent(plugin.name)}`}
+      dirty={config.dirty}
+      {...(config.save !== null ? { footer: config.save } : {})}
     >
-      <Stack gap={24}>
-        {plugin.configurable && (
-          <ExtensionDeploymentConfig
-            name={plugin.name}
-            drainSeconds={drainSeconds}
-            pending={plugin.status === "pending_config"}
-            // The extension's state (pending config) and the org's readiness may change with it.
-            onChanged={() => {
-              for (const queryKey of [
-                adminExtensionsQuery().queryKey,
-                ...extensionChangeKeys(orgId),
-              ])
-                void qc.invalidateQueries({ queryKey });
-            }}
-          />
+      {/* One status line, then the regions (spec §6.7): 部署配置, 状态, 副本, 权限 */}
+      <Stack gap={16}>
+        {config.notice}
+        {config.form !== null && (
+          <Subsection title={t("detail.sections.config")} variant="divided">
+            {config.form}
+          </Subsection>
         )}
-        <KeyValue
-          rows={[
+        <AdminExtensionOverview
+          plugin={plugin}
+          drainSeconds={drainSeconds}
+          moving={moving}
+          onUninstalled={onClose}
+          place="sheet"
+          leadFacts={[
             { k: te("stateTitle"), v: <ExtensionStatusMark status={plugin.status} /> },
             {
               k: te("capabilitiesTitle"),
@@ -403,21 +414,19 @@ function AdminExtensionSheet({
                 ]
               : []),
           ]}
-        />
-        <AdminExtensionOverview
-          plugin={plugin}
-          drainSeconds={drainSeconds}
-          moving={moving}
-          onUninstalled={onClose}
           {...changed}
         />
-        <PermissionSummary
-          groups={plugin.permissions}
-          sensitive={plugin.sensitive}
-          defaultOpen={approval}
-        >
-          <AdminExtensionPermissions plugin={plugin} {...changed} />
-        </PermissionSummary>
+        {plugin.permissions.length > 0 && (
+          <Subsection title={t("detail.sections.permissions")} variant="divided">
+            <PermissionSummary
+              groups={plugin.permissions}
+              sensitive={plugin.sensitive}
+              defaultOpen={approval}
+            >
+              <AdminExtensionPermissions plugin={plugin} {...changed} />
+            </PermissionSummary>
+          </Subsection>
+        )}
       </Stack>
     </Sheet>
   );

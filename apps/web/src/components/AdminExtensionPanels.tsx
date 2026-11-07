@@ -21,7 +21,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import {
   type AdminExtension,
@@ -60,6 +60,22 @@ import { PermissionReview } from "./PermissionReview";
  */
 
 export type ExtensionList = { extensions: AdminExtension[]; drainSeconds: number };
+
+/** A replica's state → the list's status word (spec §5.1: one set of state words). */
+const REPLICA_STATUS: Partial<Record<string, "enabled" | "disabled" | "failed">> = {
+  loaded: "enabled",
+  unloaded: "disabled",
+  failed: "failed",
+};
+/** Why a replica waits → the list's status word. */
+const PENDING_STATUS: Partial<
+  Record<string, "pending_config" | "pending_approval" | "pending_migration" | "dependency">
+> = {
+  config: "pending_config",
+  approval: "pending_approval",
+  migration: "pending_migration",
+  dependency: "dependency",
+};
 
 /** 收敛中自动重读的间隔与次数上限（只是浏览器里的轮询）。 */
 const POLL_MS = 3000;
@@ -143,12 +159,22 @@ export function AdminExtensionOverview({
   onChanged,
   onRefresh,
   onUninstalled,
+  place = "page",
+  leadFacts = [],
 }: {
   plugin: AdminExtension;
   drainSeconds: number;
   moving: boolean;
   /** After an uninstall (default: back to the list page). */
   onUninstalled?(): void;
+  /**
+   * `page`: the extension's page (its facts in two columns, the id among them). `sheet`: the
+   * list's Sheet, two divided regions 状态 (one facts block in one key column after `leadFacts`,
+   * no id: it is the Sheet's meta) and 副本.
+   */
+  place?: "page" | "sheet";
+  /** The facts the Sheet puts first (state, capabilities, scope). */
+  leadFacts?: { k: string; v: ReactNode }[];
 } & AdminExtensionChanged) {
   const t = useTranslations("admin.extensions");
   const lang = labelLocale(useLocale());
@@ -195,6 +221,21 @@ export function AdminExtensionOverview({
     }
   };
 
+  /** A replica's state in the list's words (待配置 rather than a bare "pending"). */
+  const replicaWord = (r: ExtensionReplica): string => {
+    if (r.state === "pending") {
+      const status = r.reason === null ? undefined : PENDING_STATUS[r.reason];
+      return status !== undefined ? t(`status.${status}`) : t("detail.replicaPending");
+    }
+    const status = REPLICA_STATUS[r.state];
+    return status !== undefined ? t(`status.${status}`) : r.state;
+  };
+  // 期望状态 only when it differs from the state (being disabled, or off while it should run).
+  const desiredDiffers =
+    desiredState === undefined
+      ? plugin.status === "disabled"
+      : (desiredState === "disabled") !== (plugin.status === "disabled");
+
   const columns: Column<ExtensionReplica>[] = [
     { key: "replica", header: t("detail.replicaColumns.replica"), cell: (r) => r.replicaId },
     {
@@ -217,9 +258,7 @@ export function AdminExtensionOverview({
       key: "state",
       header: t("detail.replicaColumns.state"),
       cell: (r) => {
-        const label = t.has(`detail.replicaState.${r.state}`)
-          ? t(`detail.replicaState.${r.state}`)
-          : r.state;
+        const label = replicaWord(r);
         return r.state === "failed" ? <Text tone="fail">{label}</Text> : label;
       },
     },
@@ -227,6 +266,8 @@ export function AdminExtensionOverview({
       key: "reason",
       header: t("detail.replicaColumns.reason"),
       tone: "muted",
+      // the whole reason, on more lines when it is long
+      wrap: true,
       cell: (r) =>
         [reasonText(r.reason), r.detail].filter((s) => s !== null && s !== "").join(" · ") || "—",
     },
@@ -238,36 +279,48 @@ export function AdminExtensionOverview({
     },
   ];
 
-  return (
-    <Stack gap={16}>
-      {plugin.error !== undefined && (
-        <FormError message={t("detail.packageError", { error: plugin.error })} />
-      )}
+  const sha = plugin.sha256 !== null ? plugin.sha256.slice(0, 16) : null;
+  const desiredRow = {
+    k: t("detail.fields.desired"),
+    v:
+      desiredState === undefined ? t("detail.desired.always") : t(`detail.desired.${desiredState}`),
+  };
+  const facts =
+    place === "sheet" ? (
+      <KeyValue
+        rows={[
+          ...leadFacts,
+          { k: t("detail.fields.source"), v: t(`source.${displaySource(plugin)}`) },
+          { k: t("detail.fields.version"), v: versionLabel(plugin.version) },
+          ...(sha !== null ? [{ k: t("detail.fields.sha"), v: sha }] : []),
+          ...(desiredDiffers ? [desiredRow] : []),
+        ]}
+      />
+    ) : (
       <KeyValue
         columns={2}
         rows={[
           ...(plugin.displayName ? [{ k: t("detail.fields.id"), v: plugin.name }] : []),
           { k: t("detail.fields.source"), v: t(`source.${displaySource(plugin)}`) },
           { k: t("detail.fields.version"), v: versionLabel(plugin.version) },
-          {
-            k: t("detail.fields.desired"),
-            v:
-              desiredState === undefined
-                ? t("detail.desired.always")
-                : t(`detail.desired.${desiredState}`),
-          },
-          ...(plugin.sha256 !== null
-            ? [{ k: t("detail.fields.sha"), v: plugin.sha256.slice(0, 16) }]
-            : []),
+          ...(desiredDiffers ? [desiredRow] : []),
+          ...(sha !== null ? [{ k: t("detail.fields.sha"), v: sha }] : []),
         ]}
       />
+    );
+  const status = (
+    <>
+      {plugin.error !== undefined && (
+        <FormError message={t("detail.packageError", { error: plugin.error })} />
+      )}
+      {facts}
       {plugin.required && (
-        <Text variant="prose" tone="muted">
+        <Text variant="small" tone="muted">
           {t("detail.requiredNote")}
         </Text>
       )}
       {plugin.source === "config" && (
-        <Text variant="prose" tone="muted">
+        <Text variant="small" tone="muted">
           {t("detail.configNote")}
         </Text>
       )}
@@ -285,8 +338,8 @@ export function AdminExtensionOverview({
                 </Button>
               )
             )}
+            {/* A neutral button: the accent is the primary save's */}
             <LinkButton
-              variant="secondary"
               // An upgrade is importing the newer plugin version.
               href="/admin/plugins/import"
             >
@@ -342,18 +395,19 @@ export function AdminExtensionOverview({
           </Stack>
         </Callout>
       )}
-      <Stack gap={8}>
-        <Text variant="small" tone="muted">
-          {t("detail.replicasTitle")}
-        </Text>
-        <DataTable
-          label={t("detail.replicasTitle")}
-          columns={columns}
-          rows={plugin.replicas}
-          rowKey={(r) => r.replicaId}
-          empty={{ title: t("detail.noReplicas") }}
-        />
-      </Stack>
+    </>
+  );
+  const table = (
+    <DataTable
+      label={t("detail.replicasTitle")}
+      columns={columns}
+      rows={plugin.replicas}
+      rowKey={(r) => r.replicaId}
+      empty={{ title: t("detail.noReplicas") }}
+    />
+  );
+  const dialogs = (
+    <>
       <Dialog
         open={confirm === "disable"}
         onOpenChange={(open) => {
@@ -394,6 +448,31 @@ export function AdminExtensionOverview({
           else router.push("/admin/extensions");
         }}
       />
+    </>
+  );
+
+  if (place === "sheet")
+    return (
+      <>
+        <Subsection title={t("detail.sections.status")} variant="divided">
+          {status}
+        </Subsection>
+        <Subsection title={t("detail.sections.replicas")} variant="divided">
+          {table}
+        </Subsection>
+        {dialogs}
+      </>
+    );
+  return (
+    <Stack gap={16}>
+      {status}
+      <Stack gap={8}>
+        <Text variant="small" tone="muted">
+          {t("detail.replicasTitle")}
+        </Text>
+        {table}
+      </Stack>
+      {dialogs}
     </Stack>
   );
 }
