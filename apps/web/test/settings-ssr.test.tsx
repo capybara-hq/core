@@ -204,7 +204,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     // the tool policy and egress radios, the resources' key-value
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
     // the kernel's five purposes as cards, each with its model select
-    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 5, switches: 0 }],
+    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 6, switches: 0 }],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {
@@ -506,7 +506,8 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   ["/settings/sandbox", "member", false],
   ["/settings/members", "member", true],
   ["/settings/models", "admin", true],
-  ["/extensions", "member", false],
+  // a setup step since the 2026-11-07 acceptance: connecting a channel needs its extension on
+  ["/extensions", "member", true],
   ["/settings/tokens", "admin", false],
 ];
 
@@ -530,7 +531,7 @@ describe("the gates", () => {
         await settle();
         expect(router.replace).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
       }
     },
   );

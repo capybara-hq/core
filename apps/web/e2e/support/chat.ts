@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { NEW_CHAT_URL } from "./nav";
 import { selectOption } from "./select";
 
 /** 界面文案取自 zh 文案文件，避免与实现重复硬编码。 */
@@ -38,7 +39,7 @@ export const toolGroup = (page: Page, key: string): Locator =>
 
 /**
  * Opens a new conversation with the agent from the Agents list (its card's primary 开始会话, a
- * link): the page is `/chat?agent=<id>` and nothing is created before the first send.
+ * link): the page is `/?agent=<id>` and nothing is created before the first send.
  */
 export async function startChat(page: Page, agentName: string): Promise<void> {
   if (!/\/agents$/.test(page.url())) await page.goto("/agents");
@@ -47,7 +48,7 @@ export async function startChat(page: Page, agentName: string): Promise<void> {
     .filter({ hasText: agentName })
     .getByRole("link", { name: zh.agents.chat, exact: true })
     .click();
-  await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
+  await expect(page).toHaveURL(NEW_CHAT_URL);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // the agent is picked: the composer's placeholder names it
   await expect(composer(page)).toHaveAttribute(
@@ -87,6 +88,24 @@ export async function openAgentSection(
     .getByRole("link", { name: zh.agents.page.sections[section], exact: true })
     .click();
   await expect(page).toHaveURL(new RegExp(`[?&]s=${section}$`));
+}
+
+/**
+ * In the agent page's 工具 section, takes every tool of the connector or extension `name`: its
+ * row's 配置 opens the Sheet, 全选 ticks the tools, 完成 closes it (the section's save persists).
+ * `on: false` checks that none is taken instead.
+ */
+export async function takeAllGroupTools(page: Page, name: string, on = true): Promise<void> {
+  const f = zh.agents.form;
+  await page
+    .getByRole("button", { name: f.configureGroup.replace("{name}", name), exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name });
+  const all = sheet.getByRole("checkbox", { name: designZh("toolPolicy.selectAll"), exact: true });
+  if (on) await all.check();
+  else await expect(all).not.toBeChecked();
+  await sheet.getByRole("button", { name: f.sheetDone, exact: true }).click();
+  await expect(sheet).toBeHidden();
 }
 
 /**

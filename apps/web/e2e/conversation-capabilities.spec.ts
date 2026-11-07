@@ -24,7 +24,7 @@ import { signIn } from "./support/sign-in";
 const LONG = "Capybaras are the largest living rodents and very calm swimmers. ".repeat(4).trim();
 
 async function newChat(page: Page, agentId: string) {
-  await page.goto(`/chat?agent=${agentId}`);
+  await page.goto(`/?agent=${agentId}`);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   // The agent is picked once the agents list loaded (the composer's placeholder names it).
   await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);

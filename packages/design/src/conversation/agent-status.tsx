@@ -5,10 +5,14 @@ import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
 
 // The agent status pieces shared by the agent map (§6.16.28) and the Agent call block in the
-// stream (§6.16.15): the five statuses, the status dot and the token count. A module of its own
+// stream (§6.16.15): the six statuses, the status dot and the token count. A module of its own
 // so the map and the sub-agent group can both use them without importing each other.
 
-export type AgentMapStatus = "running" | "waiting" | "completed" | "failed" | "aborted";
+/**
+ * `limit`: the run ended on a limit (its step or time limit, or its tree's token budget) after
+ * handing back what it had: not a failure, drawn `warn` ("已达上限").
+ */
+export type AgentMapStatus = "running" | "waiting" | "completed" | "limit" | "failed" | "aborted";
 
 /** "392.7k tokens", "950 tokens", "1.3M tokens". */
 export function agentMapTokens(n: number, locale: Locale): string {

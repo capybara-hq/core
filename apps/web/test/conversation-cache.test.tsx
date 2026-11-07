@@ -13,6 +13,7 @@ import type { ConversationEvent } from "../src/lib/conversations";
 import {
   appendEvents,
   CONVERSATION_SIDE_KEYS,
+  type EventWindow,
   eventsQuery,
   renameWithRow,
   seedNewConversation,
@@ -45,28 +46,32 @@ afterEach(() => {
   FakeEventSource.instances = [];
 });
 
-const seqs = (list: readonly ConversationEvent[] | undefined) => (list ?? []).map((e) => e.seq);
+const seqs = (w: EventWindow | undefined) => (w?.events ?? []).map((e) => e.seq);
+const win = (events: ConversationEvent[], turnsBefore = 0): EventWindow => ({
+  events,
+  turnsBefore,
+});
 const msg = (seq: number) => ev(seq, "user_message", { content: [] }, null);
 
 describe("appendEvents", () => {
   it("appendEvents ignores seqs it already holds and keeps order", () => {
     const qc = testQueryClient();
     const key = eventsQuery("o1", "c1").queryKey;
-    qc.setQueryData(key, [msg(1), msg(2), msg(3)]);
+    qc.setQueryData(key, win([msg(1), msg(2), msg(3)]));
     const r = appendEvents(qc, "o1", "c1", [msg(3), msg(2), msg(4), msg(6), msg(5)]);
-    expect(seqs(qc.getQueryData<ConversationEvent[]>(key))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(seqs(qc.getQueryData<EventWindow>(key))).toEqual([1, 2, 3, 4, 5, 6]);
     expect(r.added).toBe(3);
   });
 
   it("appends newer events in order, once each, and keeps the list when nothing is new", () => {
     const qc = testQueryClient();
     const key = eventsQuery("o1", "c1").queryKey;
-    qc.setQueryData(key, [msg(1)]);
+    qc.setQueryData(key, win([msg(1)]));
     expect(appendEvents(qc, "o1", "c1", [msg(3), msg(2), msg(3)]).added).toBe(2);
-    const list = qc.getQueryData<ConversationEvent[]>(key);
+    const list = qc.getQueryData<EventWindow>(key);
     expect(seqs(list)).toEqual([1, 2, 3]);
     expect(appendEvents(qc, "o1", "c1", [msg(2)]).added).toBe(0);
-    expect(qc.getQueryData<ConversationEvent[]>(key)).toBe(list);
+    expect(qc.getQueryData<EventWindow>(key)).toBe(list);
   });
 
   it("does nothing while the log is not cached", () => {
@@ -87,7 +92,7 @@ describe("a later hydration of a log the stream appended to", () => {
         queryHash: hashKey(key),
         dehydratedAt: Date.now() + 60_000,
         state: {
-          data: seqs.map(msg),
+          data: win(seqs.map(msg)),
           dataUpdateCount: 1,
           dataUpdatedAt: Date.now() + 60_000,
           error: null,
@@ -117,16 +122,16 @@ describe("a later hydration of a log the stream appended to", () => {
 
   it("an older server list never drops what the stream appended", async () => {
     const qc = testQueryClient();
-    qc.setQueryData(key, [1, 2, 3, 4, 5].map(msg));
+    qc.setQueryData(key, win([1, 2, 3, 4, 5].map(msg)));
     await hydrateInto(qc, later([1, 2, 3]));
-    expect(seqs(qc.getQueryData<ConversationEvent[]>(key))).toEqual([1, 2, 3, 4, 5]);
+    expect(seqs(qc.getQueryData<EventWindow>(key))).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("a longer server list adds its new events", async () => {
     const qc = testQueryClient();
-    qc.setQueryData(key, [1, 2, 3, 4, 5].map(msg));
+    qc.setQueryData(key, win([1, 2, 3, 4, 5].map(msg)));
     await hydrateInto(qc, later([1, 2, 3, 4, 5, 6]));
-    expect(seqs(qc.getQueryData<ConversationEvent[]>(key))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(seqs(qc.getQueryData<EventWindow>(key))).toEqual([1, 2, 3, 4, 5, 6]);
   });
 });
 
@@ -163,7 +168,7 @@ describe("useConversation and the cache", () => {
   /** A client holding c1's row (`title`) and its log `[1, 2]`, as a first load leaves it. */
   function cached(title: string | null = "Kept") {
     const qc = testQueryClient();
-    qc.setQueryData(eventsQuery("o1", "c1").queryKey, [userMsg(1, "hi"), userMsg(2, "there")]);
+    qc.setQueryData(eventsQuery("o1", "c1").queryKey, win([userMsg(1, "hi"), userMsg(2, "there")]));
     qc.setQueryData(keys.org("o1").conversation("c1").row(), CONV("c1", { title }).conversation);
     return qc;
   }
@@ -186,9 +191,7 @@ describe("useConversation and the cache", () => {
     const view = mount(qc);
     expect(FakeEventSource.instances.map((e) => e.url)).toEqual([`${BASE}/stream?after=2`]);
     act(() => FakeEventSource.instances[0]?.emit("event", userMsg(3, "more")));
-    expect(seqs(qc.getQueryData<ConversationEvent[]>(eventsQuery("o1", "c1").queryKey))).toEqual([
-      1, 2, 3,
-    ]);
+    expect(seqs(qc.getQueryData<EventWindow>(eventsQuery("o1", "c1").queryKey))).toEqual([1, 2, 3]);
     expect(view.getByTestId("seqs").textContent).toBe("1,2,3");
   });
 

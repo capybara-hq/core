@@ -15,12 +15,14 @@ import {
   type BackgroundTaskOutput,
   type Conversation,
   type ConversationEvent,
+  fromStart,
   getAgentTree,
   getConversation,
   getConversationUsage,
   getToolInfo,
   listAllEvents,
   listBackgroundTasks,
+  listEventsBefore,
   listQueue,
   listSubagents,
   readBackgroundTaskOutput,
@@ -54,14 +56,29 @@ export const conversationQuery = (orgId: string, id: string) =>
   });
 
 /**
- * Every event of the log, in seq order; the stream appends to it ({@link appendEvents}). Never
- * refetched wholesale while cached (`events` freshness), and a later hydration merges into it
- * ({@link mergeHydratedEvents}) instead of replacing what the stream appended.
+ * The cached part of a conversation's log (history paging spec §3): `events` is a contiguous
+ * suffix of the log in seq order, `turnsBefore` how many runs started before its first event.
+ */
+export interface EventWindow {
+  events: ConversationEvent[];
+  turnsBefore: number;
+}
+
+/**
+ * The log's last page (`before=end`, turn-aligned by the kernel), in seq order: the stream appends
+ * to it ({@link appendEvents}) and scrolling up prepends the pages before it
+ * ({@link loadEarlierEvents}). Never refetched wholesale while cached (`events` freshness), and a
+ * later hydration merges into it ({@link mergeHydratedEvents}) instead of replacing what the
+ * stream appended or the reader loaded.
  */
 export const eventsQuery = (orgId: string, id: string) =>
-  defineQuery({
+  defineQuery<EventWindow>({
     key: keys.org(orgId).conversation(id).events(),
-    fn: () => listAllEvents(orgId, id),
+    fn: () =>
+      listEventsBefore(orgId, id, "end").then((r) => ({
+        events: r.events,
+        turnsBefore: r.turnsBefore ?? 0,
+      })),
     freshness: "events",
   });
 
@@ -128,8 +145,11 @@ export const usageQuery = (orgId: string, id: string) =>
  * Whether the log names background tasks the background section reads (background Bash spec §5):
  * a `Bash` call with `run_in_background: true`, a `background_task_finished`, or a dispatched
  * sub-agent (whose own tasks the section nests under it; they are in the child's log, not here).
+ * A window that does not start at the log's beginning may (history paging spec §5): read then.
  */
 export function hasBackgroundTasks(events: readonly ConversationEvent[]): boolean {
+  // a window that does not start at the beginning may hold the launch above it
+  if (!fromStart(events)) return true;
   return events.some(
     (e) =>
       e.type === "background_task_finished" ||
@@ -349,9 +369,11 @@ export const connectorResourcesQuery = (orgId: string) =>
 /**
  * What the conversation page reads once it has the log and the row (the route's `then`, as
  * today's snapshot did): the tool info the events name, the sub-agents, usage and (a root
- * conversation's) agent tree once one was dispatched, the background tasks once the log names one
+ * conversation's) agent tree once one was dispatched (or the window does not start at the log's
+ * beginning), the background tasks once the log names one
  * ({@link hasBackgroundTasks}), the members once a run another account stopped shows, and the
- * agent's invocable skills (with the conversation's trial drafts when it is the caller's).
+ * agent's invocable skills (with the conversation's trial drafts when it is the caller's), and
+ * the approvals and questions the window names without their outcome ({@link openWaitReads}).
  */
 export function conversationFollowUps(
   orgId: string,
@@ -365,7 +387,8 @@ export function conversationFollowUps(
     out.push(o as unknown as UseQueryOptions<unknown, ApiClientError>);
   const tools = toolKeysOf(events);
   if (tools.length > 0) add(toolInfoQuery(orgId, id, tools));
-  if (events.some((e) => e.type === "subagent_dispatched")) {
+  // a window that does not start at the beginning may have a dispatch above it
+  if (!fromStart(events) || events.some((e) => e.type === "subagent_dispatched")) {
     add(subagentsQuery(orgId, id));
     add(usageQuery(orgId, id));
     // the composer's agents chip counts the whole tree from the first paint (AC3); a sub-agent
@@ -382,7 +405,34 @@ export function conversationFollowUps(
   if (stoppedByOther) add(membersQuery(orgId));
   const mine = row.accountId === undefined || row.accountId === accountId;
   add(invocableSkillsQuery(orgId, row.agentId, mine ? id : undefined));
+  const waits = openWaitReads(events);
+  for (const a of waits.approvals) add(approvalQuery(orgId, a));
+  for (const q of waits.questions) add(questionQuery(orgId, q));
   return out;
+}
+
+/**
+ * The approvals and questions whose state the log does not carry, so their cards read it: a
+ * sub-agent's (`subagent_waiting` names only the id; its decision is logged in the child) and an
+ * approval of this log whose `approval_decided` the window has not reached. Read before the first
+ * paint, a decided card never paints as pending first.
+ */
+export function openWaitReads(events: readonly ConversationEvent[]): {
+  approvals: string[];
+  questions: string[];
+} {
+  const approvals = new Set<string>();
+  const questions = new Set<string>();
+  for (const e of events) {
+    if (e.type === "subagent_waiting") {
+      if (e.payload.kind === "approval" && e.payload.approvalId !== undefined)
+        approvals.add(e.payload.approvalId);
+      else if (e.payload.kind === "input" && e.payload.questionId !== undefined)
+        questions.add(e.payload.questionId);
+    } else if (e.type === "approval_requested") approvals.add(e.payload.approvalId);
+    else if (e.type === "approval_decided") approvals.delete(e.payload.approvalId);
+  }
+  return { approvals: [...approvals], questions: [...questions] };
 }
 
 /** `a` and `b` merged by seq: none twice, ascending. */
@@ -396,23 +446,44 @@ function mergeBySeq(
   return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
 }
 
+/**
+ * Two windows of one log united by seq when they overlap or touch (the earlier start's
+ * `turnsBefore`); disjoint ones would leave a gap, so `incoming` (the newer read) wins whole.
+ */
+export function mergeWindows(cached: EventWindow, incoming: EventWindow): EventWindow {
+  const a = cached.events;
+  const b = incoming.events;
+  if (a.length === 0) return incoming;
+  if (b.length === 0) return cached;
+  const aFirst = (a[0] as ConversationEvent).seq;
+  const bFirst = (b[0] as ConversationEvent).seq;
+  const aLast = (a.at(-1) as ConversationEvent).seq;
+  const bLast = (b.at(-1) as ConversationEvent).seq;
+  if (bFirst > aLast + 1 || aFirst > bLast + 1) return incoming;
+  return {
+    events: mergeBySeq(a, b),
+    turnsBefore: aFirst <= bFirst ? cached.turnsBefore : incoming.turnsBefore,
+  };
+}
+
 const isEventsKey = (k: readonly unknown[]) =>
   k.length === 5 && k[0] === "org" && k[2] === "conversation" && k[4] === "events";
 
 /**
  * A dehydrated state (a later server render: `router.refresh()`) with every conversation log the
  * cache already holds merged into it, so hydrating it never drops events the stream appended
- * after the server read: the cached list and the server's are united by seq.
+ * after the server read, nor the earlier pages the reader loaded: the cached window and the
+ * server's are united by seq ({@link mergeWindows}).
  */
 export function mergeHydratedEvents(qc: QueryClient, state: DehydratedState): DehydratedState {
   return {
     ...state,
     queries: state.queries.map((q) => {
       if (!isEventsKey(q.queryKey)) return q;
-      const cached = qc.getQueryData<ConversationEvent[]>(q.queryKey);
-      const incoming = q.state.data as ConversationEvent[] | undefined;
+      const cached = qc.getQueryData<EventWindow>(q.queryKey);
+      const incoming = q.state.data as EventWindow | undefined;
       if (cached === undefined || incoming === undefined) return q;
-      return { ...q, state: { ...q.state, data: mergeBySeq(cached, incoming) } };
+      return { ...q, state: { ...q.state, data: mergeWindows(cached, incoming) } };
     }),
   };
 }
@@ -429,26 +500,29 @@ export function appendEvents(
   events: readonly ConversationEvent[],
 ): { added: number } {
   let added = 0;
-  qc.setQueryData<ConversationEvent[]>(keys.org(orgId).conversation(id).events(), (cur) => {
-    if (cur === undefined || events.length === 0) return cur;
+  qc.setQueryData<EventWindow>(keys.org(orgId).conversation(id).events(), (win) => {
+    if (win === undefined || events.length === 0) return win;
+    const cur = win.events;
     const last = cur.at(-1)?.seq ?? 0;
     const incoming = [...events].sort((a, b) => a.seq - b.seq);
     // The stream's usual case: everything is newer than the log's end.
     if ((incoming[0] as ConversationEvent).seq > last) {
       const fresh = incoming.filter((e, i) => i === 0 || e.seq !== incoming[i - 1]?.seq);
       added = fresh.length;
-      return [...cur, ...fresh];
+      return { ...win, events: [...cur, ...fresh] };
     }
+    // An event older than the window's start is above it: the window stays contiguous.
+    const first = cur[0]?.seq ?? 0;
     const seen = new Set(cur.map((e) => e.seq));
     const fresh: ConversationEvent[] = [];
     for (const e of incoming) {
-      if (seen.has(e.seq)) continue;
+      if (seen.has(e.seq) || e.seq < first) continue;
       seen.add(e.seq);
       fresh.push(e);
     }
     added = fresh.length;
-    if (added === 0) return cur;
-    return [...cur, ...fresh].sort((a, b) => a.seq - b.seq);
+    if (added === 0) return win;
+    return { ...win, events: [...cur, ...fresh].sort((a, b) => a.seq - b.seq) };
   });
   return { added };
 }
@@ -463,17 +537,49 @@ export async function catchUpEvents(
   orgId: string,
   id: string,
 ): Promise<{ added: number }> {
-  const cached = qc.getQueryData<ConversationEvent[]>(keys.org(orgId).conversation(id).events());
+  const cached = qc.getQueryData<EventWindow>(keys.org(orgId).conversation(id).events());
   if (cached === undefined) return { added: 0 };
-  const events = await listAllEvents(orgId, id, cached.at(-1)?.seq ?? 0);
+  const events = await listAllEvents(orgId, id, cached.events.at(-1)?.seq ?? 0);
   return appendEvents(qc, orgId, id, events);
+}
+
+/**
+ * Reads the page before the cached window's first event and prepends it (history paging spec §3):
+ * the kernel extends it back to a turn's start, and its `turnsBefore` replaces the window's.
+ * Returns how many events were new. Nothing is read while the log is not cached or already starts
+ * at the beginning. Like {@link catchUpEvents} it merges into the one cached window (the stream
+ * keeps appending to it meanwhile) instead of being a query of its own.
+ */
+export async function loadEarlierEvents(
+  qc: QueryClient,
+  orgId: string,
+  id: string,
+): Promise<{ added: number }> {
+  const key = keys.org(orgId).conversation(id).events();
+  const cached = qc.getQueryData<EventWindow>(key);
+  const first = cached?.events[0]?.seq;
+  if (cached === undefined || first === undefined || first === 1) return { added: 0 };
+  const page = await listEventsBefore(orgId, id, first);
+  let added = 0;
+  qc.setQueryData<EventWindow>(key, (win) => {
+    if (win === undefined) return win;
+    const start = win.events[0]?.seq ?? Number.POSITIVE_INFINITY;
+    const older = page.events.filter((e) => e.seq < start);
+    added = older.length;
+    if (added === 0) return win;
+    return {
+      events: [...older.sort((a, b) => a.seq - b.seq), ...win.events],
+      turnsBefore: page.turnsBefore ?? 0,
+    };
+  });
+  return { added };
 }
 
 /**
  * The messages this tab sent to a conversation, by `clientMessageId`, with this tab's clock at the
  * send (`Date.now()`; per query client, in the browser): the working line and the composer's
  * running mode wait for their runs, at most 60 s from that time (conversation send spec §2.2;
- * never against the server's `createdAt`, which another clock wrote). It survives the `/chat` →
+ * never against the server's `createdAt`, which another clock wrote). It survives the `/` →
  * `/chat/<id>` handoff (the seed adds the first message); a send the kernel refused is removed
  * again. Never sent to the server.
  */
@@ -518,7 +624,7 @@ export function seedNewConversation(
   const log = [...(answer.events ?? [event])].sort((a, b) => a.seq - b.seq);
   const whole = log.every((e, i) => e.seq === i + 1);
   if (whole) {
-    qc.setQueryData<ConversationEvent[]>(c.events(), (cur) => cur ?? []);
+    qc.setQueryData<EventWindow>(c.events(), (cur) => cur ?? { events: [], turnsBefore: 0 });
     appendEvents(qc, orgId, conversation.id, log);
   }
   const empty = <T>(key: readonly unknown[], value: T) => {

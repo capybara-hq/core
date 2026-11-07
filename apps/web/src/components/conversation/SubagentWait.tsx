@@ -4,6 +4,7 @@ import { Button, Stack, Text } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import type { ToolInfo } from "../../lib/conversations";
+import { retryOnMountOf } from "../../lib/query/client";
 import { questionQuery } from "../../lib/query/conversation";
 import type { Question } from "../../lib/questions";
 import type { TimelineEntry } from "../../lib/timeline";
@@ -16,7 +17,8 @@ type Wait = Extract<TimelineEntry, { kind: "subagent-wait" }>;
 function ChildQuestion({ orgId, wait }: { orgId: string; wait: Wait }) {
   const t = useTranslations("subagents");
   const id = wait.questionId ?? "";
-  const q = useQuery({ ...questionQuery(orgId, id), retry: false });
+  const qq = questionQuery(orgId, id);
+  const q = useQuery({ ...qq, retry: false, retryOnMount: retryOnMountOf(qq.queryKey) });
   // Not this person's (the starter answers, spec §9): say who the sub-agent waits for.
   const question: Question | null | undefined =
     q.data !== undefined ? q.data : q.error !== null ? null : undefined;
@@ -106,6 +108,7 @@ export function SubagentWait({
             decidedAt: null,
           }}
           info={info.get(wait.toolKey)}
+          fromRead
         />
       ) : wait.questionId !== undefined ? (
         <ChildQuestion orgId={orgId} wait={wait} />

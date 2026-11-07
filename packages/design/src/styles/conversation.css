@@ -12,6 +12,10 @@
 .cb-fail-word {
   color: var(--cb-fail);
 }
+/* A sub-agent that ended on a limit: not a failure (agent map spec §9.5). */
+.cb-warn-word {
+  color: var(--cb-warn);
+}
 
 /* ── Spinner and cursor ── */
 
@@ -334,11 +338,17 @@ button.cb-tool-line:focus-visible {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+/*
+ * The summary keeps a space.2 inset so its hover ground does not touch the words; the negative
+ * margin keeps the words on the bubble's right edge (acceptance 2026-11-07).
+ */
 .cb-bubble-details .cb-row-toggle {
   align-items: center;
   min-height: var(--cb-row-dense);
   margin-left: 0;
-  padding: 0;
+  margin-right: calc(-1 * var(--cb-space-2));
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
   color: inherit;
   white-space: nowrap;
 }
@@ -446,6 +456,10 @@ button.cb-tool-line:focus-visible {
 /* The link follows the "·" by space.1 (the reference's inline-flex gap), not a 6px space. */
 .cb-run-divider-text > .cb-link-btn {
   margin-left: var(--cb-space-1);
+}
+/* A link alone on the line (the thread's "load earlier" edge, §5.4) has no "·" before it. */
+.cb-run-divider-text > .cb-link-btn:first-child {
+  margin-left: 0;
 }
 .cb-divider-rule {
   flex: 1 0 var(--cb-space-4);

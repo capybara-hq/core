@@ -19,9 +19,11 @@ export type SubsectionProps = {
    * a Disclosure's body (a nested config object). `flush`: inside a flush box (a `flush`
    * FormSection), the heading row padded `space.3` (in line with a table's first column) and the
    * content running to the box's edges (an unframed DataTable); a flush subsection after another
-   * is split by a `line-soft` hairline.
+   * is split by a `line-soft` hairline. `divided`: one region of a Sheet's (or Dialog's) body,
+   * the content under its heading with no guide; every divided subsection after the first among
+   * its siblings is split from what is above by a `line-soft` hairline and `space.4`.
    */
-  variant?: "guide" | "flush";
+  variant?: "guide" | "flush" | "divided";
   children?: ReactNode;
 };
 

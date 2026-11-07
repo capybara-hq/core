@@ -6,6 +6,7 @@ import {
   OBJECT_ROW_MENU,
   openAgentSection,
   saveSection,
+  takeAllGroupTools,
   zh,
 } from "./support/chat";
 import { selectOption } from "./support/select";
@@ -68,12 +69,7 @@ async function agentWithConnector(
 ): Promise<string> {
   const id = await newAgent(page, agentName);
   await openAgentSection(page, "tools");
-  await page
-    .getByRole("checkbox", {
-      name: fill(A.form.connectorTools, { name: connectorName }),
-      exact: true,
-    })
-    .check();
+  await takeAllGroupTools(page, connectorName);
   await saveSection(page);
   return id;
 }
@@ -176,11 +172,7 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   // 4. the agent has no connector tools yet; the 待配置 notice names the connector
   const notice = page.getByRole("list", { name: A.pending.listLabel });
   await expect(notice.getByText(connector)).toBeVisible();
-  const toolsBox = page.getByRole("checkbox", {
-    name: fill(A.form.connectorTools, { name: connector }),
-    exact: true,
-  });
-  await expect(toolsBox).not.toBeChecked();
+  await takeAllGroupTools(page, connector, false);
 
   // 5. the admin picks the existing connector and binds it: the notice goes, the tools appear
   await notice
@@ -197,7 +189,11 @@ test("admin: 另存为模板 -> it is in the 模板 tab -> 用它创建 shows �
   await bind.getByRole("button", { name: A.pending.bind, exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(notice).toBeHidden();
-  await expect(toolsBox).toBeChecked();
+  // the connector's row in the Tools section now says its tools are taken
+  const row = page.getByRole("listitem").filter({
+    has: page.getByRole("button", { name: fill(A.form.configureGroup, { name: connector }) }),
+  });
+  await expect(row).not.toContainText(A.form.groupUnused);
 
   // the agent's page keeps its provenance, and the kernel agrees: no pending entry is left
   const orgId = await currentOrg(page);

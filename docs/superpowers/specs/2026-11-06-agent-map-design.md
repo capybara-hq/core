@@ -138,7 +138,9 @@ child should hand back with `SubagentHandback` when done, may send notes to its 
 Each delivery to a parent is one model-visible event in the parent's log, rendered like an
 interjection: who sent it (agent id and description), the kind (report, note, finished with status)
 and the text. On finish: if the child handed back at least once, only a short status line (no
-repeated report); if it never did, its final reply is the report **(designer's call)**. Today's
+repeated report); if it never did, its final reply is the report **(designer's call)**. Amended
+(acceptance 2026-11-07): a run that handed back and then **completed** writes no finished delivery
+at all (see "Decisions made during implementation"). Today's
 `subagent_finished` is not model-visible (the reply was the `Agent` call's `tool_result`); the
 delivery is a **new** model-visible event, and `subagent_finished` stays a display-only event, so old
 logs keep replaying unchanged (the reconstruct fixtures prove it).
@@ -209,6 +211,10 @@ Required with the removal, not optional:
   the window — e.g. reset when a person sends a message — and records it)**.
 - Tokens of every descendant count toward the root conversation's usage (phase C §8.3 extended
   through the chain).
+- At the token budget a running child hands back what it found in one final tool-less call before
+  it ends with `budget` (phase C §8.3); the dispatch and token caps take 0 for no limit (deployment
+  and org override), and the admin org limits dialog shows each deployment default as the empty
+  field's placeholder.
 - Stopping **(decided, 2026-11-06, as Claude Code)**: the conversation's stop button stops only the
   root's current run; background children keep working. Stopping an agent in the map (level 2 or 3)
   stops it and all its descendants. Deleting the root conversation stops the whole tree.
@@ -265,8 +271,11 @@ labels: position and lines show the hierarchy **(decided)**.
 - Every node has the **same height**; line 1: status dot + description (bold, ellipsis); line 2:
   **model · time · tokens**, nothing else, one line, ellipsis only when it truly does not fit (full
   text on hover) **(decided)**. Nodes are wide enough that the usual line 2 never truncates.
-- Status is only the dot colour (running: pulsing accent; waiting: warn; completed: ok; failed:
-  fail; stopped: faint), with a legend at the bottom **(decided: no status words)**.
+- Status is only the dot colour (running: pulsing accent; waiting: warn; completed: ok; limit
+  reached: warn; failed: fail; stopped: faint), with a legend at the bottom **(decided: no status
+  words)**. **Limit reached** ("已达上限" / "Limit reached", the run footer's word) is a run that
+  ended on its step or time limit or its tree's token budget (§6) after handing back what it had:
+  not a failure (acceptance 2026-11-07).
 - Bottom left, under the root column: the root's own background tasks (status, `Bash`, description,
   duration), as Claude Code places them **(decided)**. A child's background tasks show in its level 2
   only.
@@ -277,7 +286,8 @@ Replaces the dialog content; ← returns to the tree. Live, at the granularity o
 
 - head: status dot, description, close; then status · agent type · model · background; "spawned by
   <parent>" (a link to that node); time · tokens;
-- the agent's latest text;
+- the agent's latest text, rendered as Markdown like the stream's prose (the task keeps its line
+  breaks);
 - collapsible sections: the task (the dispatch prompt), its background tasks, tool calls (N) with the
   newest first, the running one with a pulsing dot and a clock; each row is the tool name and its
   display summary (`Bash` description, `Read` path and range, …);
@@ -301,7 +311,8 @@ body is `IN` with the prompt (two lines, ellipsis, expandable). Under it, while 
 live status line: a pulsing dot, "后台运行中：<the child's current tool summary>" / "Working in the
 background: <summary>", and an action that opens that agent in the map (level 2), the way Claude Code
 says "type /tasks to see its transcript". When the child ends, the line becomes its final state
-(status dot, "完成 · <time> · <tokens>" / failed / stopped) and the action stays. The line is fed by
+(status dot, "完成 · <time> · <tokens>" / limit reached (`warn`) / failed / stopped) and the action
+stays. The line is fed by
 `subagent_progress` (latest tool summary) and the tree. It replaces today's per-call row inside
 `SubagentGroup`; whether the group header stays is the builder's call.
 
@@ -346,7 +357,15 @@ The builder's choices for §11 and the rulings of the build that change behaviou
 - Wakes (§5.3): children wake on their parent's messages and on their own background Bash finishes,
   under the one switch `runtime.wakeOnBackgroundTask`, with the queue and access checks on the root.
 - Every terminal run of a child (dispatched, restarted by `SendMessage`, or a wake run) delivers a
-  `finished` delivery with that run's final reply, keyed on the child run.
+  `finished` delivery with that run's final reply, keyed on the child run, except a run that
+  handed back a report and then `completed` (acceptance 2026-11-07): it writes only the display-only
+  `subagent_finished` (with the log's notify), so it is not model-visible and wakes nobody. The
+  content-free "completed; its report was already delivered" line had woken idle parents for empty
+  runs and pushed the report away from the end of the request. A run that ends otherwise after a
+  handback (a limit, failed, stopped) still delivers that line. Old logs keep their delivery and
+  rebuild byte for byte; the switch is the delivery's absence in the log, so no `DriftReason`. The
+  web shows the "<name> 已完成" entry of a handed-back run from `subagent_finished` (once per child
+  run, also when an older log's delivery follows).
 - A tree stop never wakes the stopped ancestors: the `aborted` delivery is still written (marked)
   and absorbed at that conversation's next run. A stopped sub-agent (last run `aborted`) is never
   woken at all: a message, task finish or delivery that reached it before or during the stop is
@@ -377,16 +396,21 @@ The builder's choices for §11 and the rulings of the build that change behaviou
   conversation has sub-agents, the composer's agents chip "N 个智能体" (acceptance item AC3,
   2026-11-07, design spec §6.16.29; it replaced the title-bar icon); the state lives in the URL
   hash (`#agents`,
-  `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now.
-- The map's tree scrolls horizontally inside the 1100 px dialog at four columns (depth 3), keeping
-  the node width.
+  `#agents=<id>`, `#agents=<id>/transcript`); the sub-agent right panel stays for now. The map is
+  a dialog over the page, not a right-area target: whatever the right area showed (properties, a
+  panel, a file) stays drawn under it and is the same after it closes (acceptance, 2026-11-07).
+- The map's tree scrolls horizontally inside the dialog once the tree is wider than 1100 px (four
+  columns, depth 3), keeping the node width.
 - The admin sub-agent limits dialog gains a `maxDepth` field, and its "per run" labels are corrected.
 - The design `UserBubble` takes an optional sender label (a parent's message in a transcript), and
   the sub-agent row's "后台" label is omitted for a fork invocation's (foreground) child.
 - N4 is withdrawn (see §2): level 3 uses the collapsed Thread.
 - Acceptance (AC2, AC6): levels 2 and 3 are as wide as the conversation's column plus the dialog's
   body padding (754 px), so the transcript has no empty side gutters; every level pads its head,
-  body and footer in the compact dialog rhythm (design spec §6.7); the tree stays 1100 px.
+  body and footer in the compact dialog rhythm (design spec §6.7). Later acceptance (2026-11-07):
+  the tree level is as wide as its tree (plus the body padding, the border and the scrollbar
+  gutter), at least 754 px and at most min(1100 px, the window less 32), instead of always 1100 px,
+  which left most of a two-column tree's dialog empty.
 - Acceptance (AC1): the transcript's status line drops "子智能体只读 · 不能和它对话，请让 <parent>
   转达"; it keeps the context use and Stop, and is absent when it has neither.
 - Acceptance (AC5): Stop stays, in the Button's loading state, from the click until the agent's

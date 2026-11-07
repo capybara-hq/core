@@ -409,12 +409,14 @@ describe("技能详情（DetailPage）", () => {
     await renderSkill();
     await screen.findByText("# PDF tools", { exact: false });
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
-    // The head carries no description: the full text (line breaks kept) is the column's first block
+    // The head carries no description: the full text (line breaks kept) leads the facts block,
+    // drawn once above the tab (not per tab)
     expect(document.querySelector('[data-part="page-header-description"]')).toBeNull();
-    const first = document.querySelector('[data-part="content"] > .cb-stack')?.firstElementChild;
+    const block = document.querySelector('[data-part="detail-facts"]');
+    const first = block?.querySelector(".cb-stack")?.firstElementChild;
     expect(first?.textContent).toBe(LONG);
     expect(first?.getAttribute("data-pre")).toBe("true");
-    const facts = document.querySelector('[data-part="content"] [data-part="key-value"]');
+    const facts = block?.querySelector('[data-part="key-value"]');
     expect(facts?.textContent).toContain(en.skills.detail.owner);
     expect(facts?.textContent).toContain(en.skills.detail.version);
     // no danger card in the page: 删除 is the head menu's destructive item
@@ -574,7 +576,7 @@ describe("the skills pages render on the server (web-SSR spec §6)", () => {
       cleanup();
       expectNoFirstPaintFetch();
       await renderRouteWithCache(path, routes, { readiness: NOT_READY });
-      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat"));
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/"));
     },
   );
 });
@@ -804,7 +806,15 @@ describe("plugin scope phase 3: 新建技能, 可共享 and the delete preview",
           fill(m.plugins.delete.transferred, { orgs: `Beta${sep}Gamma` }),
         ),
       ).toBeTruthy();
-      expect(within(dialog).getByText("· Writer")).toBeTruthy();
+      // what it does first, then the notice; the agents a list under their heading
+      const hint = within(dialog).getByText(m.skills.detail.deleteHint);
+      const notice = within(dialog)
+        .getByText(fill(m.plugins.delete.transferred, { orgs: `Beta${sep}Gamma` }))
+        .closest('[data-part="callout"]') as HTMLElement;
+      expect(hint.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const agents = within(dialog).getByRole("list", { name: m.plugins.delete.agents });
+      expect(within(agents).getByText("Writer")).toBeTruthy();
+      expect(dialog.textContent).not.toContain("· Writer");
       await user.type(within(dialog).getByRole("textbox"), "pdf-tools");
       await user.click(within(dialog).getByRole("button", { name: m.skills.detail.delete }));
       await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/skills"));

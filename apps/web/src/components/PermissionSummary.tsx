@@ -9,7 +9,8 @@ import type { PermissionGroup } from "../lib/extensions";
  * An extension's permissions folded into one line (the 扩展 pages' Sheet): each category with its
  * count (「数据库表 2 · 智能体工具 1」; `provides` is left out, the capabilities show it) and the
  * 「敏感」 mark when any group is sensitive. The line opens the full permission blocks (`children`:
- * `PermissionReview`, plus the approval on the admin console).
+ * `PermissionReview`, plus the approval on the admin console). It sits under the Sheet's 权限
+ * heading, so the line does not say 权限 again.
  */
 export function PermissionSummary({
   groups,
@@ -39,7 +40,6 @@ export function PermissionSummary({
       defaultOpen={defaultOpen}
       summary={
         <Stack direction="row" gap={8} align="center">
-          <Text>{t("permissions")}</Text>
           <Text tone="muted">{parts.length > 0 ? parts.join(" · ") : t("permissionsNone")}</Text>
           {marked && <Badge tone="warn">{t("sensitive")}</Badge>}
         </Stack>

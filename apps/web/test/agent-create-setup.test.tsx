@@ -66,7 +66,7 @@ describe("/agents/new in the setup layout", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/chat?agent=ag1"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/?agent=ag1"));
     expect(router.push).not.toHaveBeenCalledWith("/agents/ag1?s=prompt");
   });
 });

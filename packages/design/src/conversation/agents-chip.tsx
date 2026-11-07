@@ -16,12 +16,28 @@ export type AgentsChipProps = {
   onOpen(): void;
 };
 
+/** `text` with `{n}` drawn as the emphasized number (the copy keeps its own word order). */
+function withNumber(text: string, n: number, part: string): JSX.Element {
+  const [before = "", after = ""] = text.split("{n}");
+  return (
+    <>
+      {before}
+      <span className="cb-agents-chip-number" data-part={part}>
+        {n}
+      </span>
+      {after}
+    </>
+  );
+}
+
 /**
  * The agent map's entry in the composer's control row (§6.16.29, acceptance item AC3), as Claude
- * Code's "0 agents": a ghost chip like the pickers, "N 个智能体" / "N agents", led by the agent
- * map's status dot while a sub-agent runs (`accent`, pulsing) or waits for a person (`warn`).
- * Its accessible name and tooltip add the running count ("3 个智能体，1 个运行中"). Below 640 it
- * shrinks to the dot (or the `agent` icon when nothing is active) and the count.
+ * Code's "0 agents": a ghost chip like the pickers, "N 个智能体" / "N agents", the number in `ink`
+ * at weight 500 and the words `muted`. It always leads with a mark: the agent map's status dot
+ * while a sub-agent runs (`accent`, pulsing) or waits for a person (`warn`), else the `agent`
+ * icon. While some are active a short activity part follows ("· 1 个运行中", else "· 2 个等待中";
+ * the dot carries the color, the text stays `muted` / `ink`). Its accessible name and tooltip add
+ * the running count ("3 个智能体，1 个运行中"). Below 640 it shrinks to the mark and the count.
  */
 export function AgentsChip({
   count,
@@ -31,7 +47,8 @@ export function AgentsChip({
 }: AgentsChipProps): JSX.Element | null {
   const t = useDesignT();
   if (count <= 0) return null;
-  const label = fillCopy(t(count === 1 ? "agentsChip.one" : "agentsChip.many"), { n: count });
+  const labelCopy = t(count === 1 ? "agentsChip.one" : "agentsChip.many");
+  const label = fillCopy(labelCopy, { n: count });
   const name = [
     label,
     fillCopy(t("agentsChip.running"), { n: running }),
@@ -52,14 +69,26 @@ export function AgentsChip({
       {status !== undefined ? (
         <StatusDot status={status} />
       ) : (
-        // below 640 the count alone needs a mark when no dot leads it
         <span className="cb-agents-chip-icon" data-part="agents-chip-icon" aria-hidden="true">
           <Icon name="agent" size={14} />
         </span>
       )}
       <span className="cb-agents-chip-label" data-part="agents-chip-label">
-        {label}
+        {withNumber(labelCopy, count, "agents-chip-number")}
       </span>
+      {status !== undefined ? (
+        // the name already says it; the dot before the label carries the color
+        <span
+          className="cb-agents-chip-activity"
+          data-part="agents-chip-activity"
+          aria-hidden="true"
+        >
+          {"· "}
+          {status === "running"
+            ? withNumber(t("agentsChip.running"), running, "agents-chip-activity-number")
+            : withNumber(t("agentsChip.waiting"), waiting, "agents-chip-activity-number")}
+        </span>
+      ) : null}
       {/* below 640: the count alone (the full label stays the name and the tooltip) */}
       <span className="cb-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">
         {count}

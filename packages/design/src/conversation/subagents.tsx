@@ -16,8 +16,18 @@ import { fillCopy } from "./tool-copy";
 // `event: subagent_progress`. The components take plain rows; the mappers below turn the API
 // shapes into rows.
 
-/** `SubagentView.status`: the latest child run's status. */
-export type SubagentStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "aborted";
+/**
+ * `SubagentView.status`: the latest child run's status; `limit` (from `subagent_finished` only):
+ * it ended on its step or time limit or its tree's token budget, after handing back what it had.
+ */
+export type SubagentStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "limit"
+  | "failed"
+  | "aborted";
 
 /** `subagent_finished.status`. */
 export type SubagentFinishStatus =
@@ -89,9 +99,13 @@ export type SubagentProgress = Record<
   { step: number; toolCalls: number; lastToolKey?: string }
 >;
 
-/** A `subagent_finished.status` as the view's status: budget and step / time caps are failures. */
+/**
+ * A `subagent_finished.status` as the view's status: the token budget and the step / time limits
+ * are `limit` (not a failure: the child handed back what it had); a wait timeout is a failure.
+ */
 export function subagentStatusOfFinish(s: SubagentFinishStatus): SubagentStatus {
   if (s === "completed" || s === "aborted") return s;
+  if (s === "budget" || s === "max_steps" || s === "max_duration") return "limit";
   return "failed";
 }
 
@@ -241,6 +255,10 @@ export function AgentCallBlock({
       status === "failed" ? (
         <span className="cb-fail-word" data-part="fail-word">
           {t("tool.failed")}
+        </span>
+      ) : status === "limit" ? (
+        <span className="cb-warn-word" data-part="limit-word">
+          {t("agentMap.status.limit")}
         </span>
       ) : status === "aborted" ? (
         t("subagent.stopped")
@@ -440,6 +458,7 @@ export function SubagentGroup({
     );
   }
   const failed = rows.filter((r) => r.status === "failed").length;
+  const limited = rows.filter((r) => r.status === "limit").length;
   const totalCalls = rows.reduce((n, r) => n + r.toolCalls, 0);
   const starts = rows.flatMap((r) => (r.startedAt === undefined ? [] : [r.startedAt]));
   const ends = rows.flatMap((r) =>
@@ -463,6 +482,11 @@ export function SubagentGroup({
       {failed > 0 ? (
         <span className="cb-fail-word" data-part="fail-word">
           {fillCopy(t("tool.failedCount"), { n: failed })}
+        </span>
+      ) : null}
+      {limited > 0 ? (
+        <span className="cb-warn-word" data-part="limit-word">
+          {fillCopy(t("subagent.limitCount"), { n: limited })}
         </span>
       ) : null}
       <span className="cb-faint">
@@ -693,6 +717,11 @@ export function BackgroundTaskRow({
       {item.kind === "subagent" && item.status === "failed" ? (
         <span className="cb-fail-word" data-part="fail-word">
           {t("background.failed")}
+        </span>
+      ) : null}
+      {item.kind === "subagent" && item.status === "limit" ? (
+        <span className="cb-warn-word" data-part="limit-word">
+          {t("agentMap.status.limit")}
         </span>
       ) : null}
       {item.kind === "subagent" && item.status === "aborted" ? (

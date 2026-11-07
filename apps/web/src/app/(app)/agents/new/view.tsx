@@ -14,6 +14,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useSetup } from "../../../../components/shell/setup";
 import { useRouter } from "../../../../i18n/navigation";
 import { useWorkspace } from "../../../../lib/query/workspace";
+import { newConversationPath } from "../../../../lib/routes";
 
 /**
  * `/agents/new`: create an agent (FormPage: avatar, name, model, visibility), then land on its page
@@ -39,7 +40,7 @@ function NewAgent({ orgId }: { orgId: string }) {
   const done = (created?: AgentCreated) => {
     if (created === undefined) router.push("/agents");
     // In the setup layout the new agent may make the org ready: go to a new conversation with it.
-    else if (setup.active) router.push(`/chat?agent=${encodeURIComponent(created.agent.id)}`);
+    else if (setup.active) router.push(newConversationPath(created.agent.id));
     else {
       const id = encodeURIComponent(created.agent.id);
       router.push(

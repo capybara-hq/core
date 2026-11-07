@@ -17,25 +17,29 @@ export type EmptyStateProps = {
   action?: Exclude<HeaderAction, { menu: unknown }> | ReactElement;
   /**
    * `page` (default): the line-art capybara, centered in the content frame with generous space
-   * above and below. `compact`: panels, tables and the sidebar; the sentence alone, no art.
+   * above and below. `panel`: narrow areas (the sidebar's conversation list); the same centered
+   * look with a smaller capybara, `space.8` above and below and a dense action. `compact`: panels,
+   * cards and tables; the sentence alone, no art.
    */
-  size?: "page" | "compact";
+  size?: "page" | "panel" | "compact";
 };
 
 /**
- * The empty state (spec §6.18), in two styles only: `page`, the pixel capybara drawn in faint
- * lines over one sentence in ink, an optional muted second line and the primary action; and
- * `compact` (tables, panels, the sidebar), the same words without the art. Used by every list
- * page, the inbox, the DataTable's empty area and the sidebar's conversation list.
+ * The empty state (spec §6.18), in three styles: `page`, the pixel capybara drawn in faint lines
+ * over one sentence in ink, an optional muted second line and the primary action; `panel`, the
+ * same centered look sized for a narrow area (the capybara at scale 4, a dense action), used by
+ * the sidebar's conversation list; and `compact` (tables, panels, cards), the same words without
+ * the art. Used by every list page, the inbox, the DataTable's empty area and the sidebar.
  */
 export function EmptyState({ text, hint, action, size = "page" }: EmptyStateProps) {
   const Link = useDesignLink();
   const compact = size === "compact";
+  const dense = size !== "page";
   return (
     <div className="cb-empty-state" data-part="empty-state" data-size={size}>
       {compact ? null : (
         <span className="cb-empty-state-art" data-part="empty-illustration" aria-hidden="true">
-          <LogoLine scale={6} />
+          <LogoLine scale={size === "panel" ? 4 : 6} />
         </span>
       )}
       <span className="cb-empty-state-words">
@@ -52,7 +56,7 @@ export function EmptyState({ text, hint, action, size = "page" }: EmptyStateProp
         <span className="cb-empty-state-action">{action}</span>
       ) : (
         <span className="cb-empty-state-action">
-          {renderAction(action as Exclude<HeaderAction, { menu: unknown }>, Link, compact)}
+          {renderAction(action as Exclude<HeaderAction, { menu: unknown }>, Link, dense)}
         </span>
       )}
     </div>
@@ -62,9 +66,9 @@ export function EmptyState({ text, hint, action, size = "page" }: EmptyStateProp
 function renderAction(
   action: Exclude<HeaderAction, { menu: unknown }>,
   Link: ReturnType<typeof useDesignLink>,
-  compact: boolean,
+  dense: boolean,
 ) {
-  const density = compact ? "dense" : "default";
+  const density = dense ? "dense" : "default";
   if (action.href !== undefined) {
     return (
       <Link

@@ -16,3 +16,4 @@ export {
   SwitchList,
   type SwitchListRow,
 } from "./toggles";
+export { ToolPolicyList, type ToolPolicyListProps, type ToolPolicyRow } from "./tool-policy-list";

@@ -137,6 +137,13 @@ describe("另存为模板 (ruling P4-9)", () => {
     expect(
       within(dialog).getByRole("textbox", { name: new RegExp(`^${S.description}`) }),
     ).toHaveProperty("value", "Helps with sales.");
+    // 将带入 and the agents left out are titled regions, each said once
+    expect(
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([S.carriedTitle, S.rosterLabel]);
+    expect(within(dialog).getByText(S.carried)).toBeTruthy();
     expect(within(dialog).getByText(S.rosterLeftOut)).toBeTruthy();
     const roster = within(dialog).getByRole("list", { name: S.rosterLabel });
     expect(await within(roster).findByText("Research Desk")).toBeTruthy();

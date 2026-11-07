@@ -16,6 +16,7 @@ import {
   Skeleton,
   Stack,
   StatusMark,
+  Subsection,
   Text,
   useTimeZone,
   useToast,
@@ -410,27 +411,15 @@ function EvalRunView({
       </DetailPage>
       {/* An open result is a right-side Sheet over the one column (spec §5.2: no inspector); a
         click on another row shows that one in place. */}
-      <Sheet
-        open={current !== undefined}
-        onOpenChange={(open) => {
-          if (!open) setSelected(null);
-        }}
-        title={t("run.inspector.title")}
-        {...(current !== undefined && { meta: title(current) })}
-        width={720}
-      >
-        {current !== undefined ? (
-          <ResultPanel
-            key={current.id}
-            orgId={orgId}
-            runId={run.id}
-            mode={run.mode}
-            row={current}
-            title={title(current)}
-            onLabeled={labeled}
-          />
-        ) : null}
-      </Sheet>
+      <ResultSheet
+        orgId={orgId}
+        runId={run.id}
+        mode={run.mode}
+        row={current}
+        title={current !== undefined ? title(current) : ""}
+        onClose={() => setSelected(null)}
+        onLabeled={labeled}
+      />
     </>
   );
 }
@@ -513,7 +502,11 @@ function SummaryTab({ run }: { run: EvalRun }) {
               : []),
           ]}
         />
-        {c.instructions !== undefined ? <CodeBlock text={c.instructions} /> : null}
+        {c.instructions !== undefined ? (
+          <Subsection title={t("run.candidate.instructionsTitle")}>
+            <CodeBlock text={c.instructions} />
+          </Subsection>
+        ) : null}
       </Card>
     </Stack>
   );
@@ -546,91 +539,66 @@ function toolLine(e: ToolCallDiffEntry, kind: string): string {
 }
 
 /**
- * 选中结果的查看器：按需读这一条的完整行（结果表只有轻量行）；轮询带回这一行的 `updatedAt` 变化时重读
- * （重读期间保留上一次的内容）。
+ * The open result's Sheet (spec §6.7): the full row is read when a result opens (the results table
+ * has light rows only); a newer `updatedAt` from the polling is read again, the last content kept
+ * meanwhile. The body is titled regions (概要, 文本差异, 工具调用差异, 评委, 人工标注) and the labeling
+ * buttons sit in the Sheet's footer.
  */
-function ResultPanel({
+function ResultSheet({
   orgId,
   runId,
   mode,
   row,
   title,
+  onClose,
   onLabeled,
 }: {
   orgId: string;
   runId: string;
   mode: EvalRun["mode"];
-  row: EvalResultRow;
+  row: EvalResultRow | undefined;
   title: string;
-  onLabeled(r: EvalResult): void;
-}) {
-  const errorMessage = useErrorMessage();
-  const qc = useQueryClient();
-  // The full row loads when the person opens a result (none is open at first paint); a newer
-  // `updatedAt` (from the polling) is another read, and the last content stays meanwhile.
-  const q = evalResultQuery(orgId, runId, row.id, row.updatedAt);
-  const read = useQuery({ ...q, placeholderData: keepPreviousData });
-  if (read.data === undefined) {
-    if (read.error) {
-      return <FormError message={errorMessage(read.error)} />;
-    }
-    return <Skeleton rows={4} />;
-  }
-  return (
-    <ResultInspector
-      orgId={orgId}
-      mode={mode}
-      result={read.data}
-      title={title}
-      onLabeled={(r) => {
-        qc.setQueryData(q.queryKey, r);
-        onLabeled(r);
-      }}
-    />
-  );
-}
-
-function ResultInspector({
-  orgId,
-  mode,
-  result: r,
-  title,
-  onLabeled,
-}: {
-  orgId: string;
-  mode: EvalRun["mode"];
-  result: EvalResult;
-  title: string;
+  onClose(): void;
   onLabeled(r: EvalResult): void;
 }) {
   const t = useTranslations("evals.run");
-  const td = useTranslations("evals.drift");
-  const te = useTranslations("errors");
   const errorMessage = useErrorMessage();
-  const [note, setNote] = useState(r.labelNote ?? "");
+  const qc = useQueryClient();
+  const q = evalResultQuery(orgId, runId, row?.id ?? "", row?.updatedAt ?? "");
+  const read = useQuery({ ...q, enabled: row !== undefined, placeholderData: keepPreviousData });
+  // The kept content belongs to this row only (another row shows its own loading state)
+  const r = read.data !== undefined && read.data.id === row?.id ? read.data : undefined;
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [note, setNote] = useState("");
   const [pending, setPending] = useState<EvalLabel | "clear" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const reason = (code: string) => (te.has(code) ? te(code) : code);
-  // The answer is the labeled result: the caller writes it into the cache (no read).
+  // A newly opened result starts from its own note
+  if (r !== undefined && noteFor !== r.id) {
+    setNoteFor(r.id);
+    setNote(r.labelNote ?? "");
+    setError(null);
+  }
+  // The answer is the labeled result: it is written into the cache (no read).
   const labelResult = useAppMutation({
-    fn: (body: { label: EvalLabel | null; note?: string }) => labelEvalResult(orgId, r.id, body),
+    fn: (body: { id: string; label: EvalLabel | null; note?: string }) =>
+      labelEvalResult(orgId, body.id, {
+        label: body.label,
+        ...(body.note !== undefined && { note: body.note }),
+      }),
     invalidates: () => [],
   });
-
-  const base = sideOf(mode, r.baseline);
-  const cand = sideOf(mode, r.candidate);
-  const textDiff = lineDiff(base.text, cand.text);
-  const tools = r.diff?.toolCalls ?? [];
-
   const label = async (value: EvalLabel | null) => {
+    if (r === undefined) return;
     setPending(value ?? "clear");
     setError(null);
     try {
       const res = await labelResult.mutateAsync({
+        id: r.id,
         label: value,
         ...(value !== null && note.trim() !== "" && { note }),
       });
       if (value === null) setNote("");
+      qc.setQueryData(q.queryKey, res.result);
       onLabeled(res.result);
     } catch (e) {
       setError(errorMessage(e));
@@ -638,11 +606,94 @@ function ResultInspector({
       setPending(null);
     }
   };
+  return (
+    <Sheet
+      open={row !== undefined}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={t("inspector.title")}
+      {...(row !== undefined && { meta: title })}
+      width={720}
+      {...(r !== undefined && {
+        footer: (
+          <>
+            {r.label !== null ? (
+              <Button
+                variant="ghost"
+                loading={pending === "clear"}
+                disabled={pending !== null}
+                onClick={() => void label(null)}
+              >
+                {t("inspector.clear")}
+              </Button>
+            ) : null}
+            <Button
+              variant={r.label === "fail" ? "danger" : "default"}
+              loading={pending === "fail"}
+              disabled={pending !== null}
+              onClick={() => void label("fail")}
+            >
+              {t("inspector.fail")}
+            </Button>
+            <Button
+              variant={r.label === "pass" ? "primary" : "default"}
+              loading={pending === "pass"}
+              disabled={pending !== null}
+              onClick={() => void label("pass")}
+            >
+              {t("inspector.pass")}
+            </Button>
+          </>
+        ),
+      })}
+    >
+      {row === undefined ? null : r !== undefined ? (
+        <ResultInspector
+          mode={mode}
+          result={r}
+          title={title}
+          note={note}
+          onNote={setNote}
+          error={error}
+        />
+      ) : read.error ? (
+        <FormError message={errorMessage(read.error)} />
+      ) : (
+        <Skeleton rows={4} />
+      )}
+    </Sheet>
+  );
+}
+
+function ResultInspector({
+  mode,
+  result: r,
+  title,
+  note,
+  onNote,
+  error,
+}: {
+  mode: EvalRun["mode"];
+  result: EvalResult;
+  title: string;
+  note: string;
+  onNote(next: string): void;
+  error: string | null;
+}) {
+  const t = useTranslations("evals.run");
+  const td = useTranslations("evals.drift");
+  const te = useTranslations("errors");
+  const reason = (code: string) => (te.has(code) ? te(code) : code);
+  const base = sideOf(mode, r.baseline);
+  const cand = sideOf(mode, r.candidate);
+  const textDiff = lineDiff(base.text, cand.text);
+  const tools = r.diff?.toolCalls ?? [];
 
   const j = r.judge;
   const judgeBody: ReactNode =
     j !== null && "verdict" in j ? (
-      <Stack gap={8}>
+      <>
         <KeyValue
           keyWidth="8ch"
           rows={[
@@ -655,130 +706,120 @@ function ResultInspector({
             { k: t("inspector.score"), v: String(j.score) },
           ]}
         />
-        <Text variant="small" tone="muted">
-          {t("inspector.reason")}
-        </Text>
         <Text variant="prose" pre>
           {j.reason}
         </Text>
-      </Stack>
+      </>
     ) : j !== null ? (
-      <Text tone="fail">
+      <Text variant="prose" tone="fail">
         {t("inspector.judgeError", {
           reason: j.error === "unparseable" ? t("inspector.unparseable") : reason(j.error),
         })}
       </Text>
     ) : (
-      <Text tone="muted">{t(`judgeStatus.${r.judgeStatus}`)}</Text>
+      <Text variant="prose" tone="muted">
+        {t(`judgeStatus.${r.judgeStatus}`)}
+      </Text>
     );
 
   return (
     <Stack gap={16}>
-      <KeyValue
-        keyWidth="8ch"
-        rows={[
-          { k: t("inspector.case"), v: title },
-          {
-            k: t("columns.step"),
-            v: r.step === null ? t("wholeRun") : t("stepValue", { n: r.step }),
-          },
-          {
-            k: t("inspector.status"),
-            v: (
-              <StatusMark status={evalResultMark(r.status)} label={t(`resultStatus.${r.status}`)} />
-            ),
-          },
-          ...(r.drift.length > 0
-            ? [
-                {
-                  k: t("inspector.drift"),
-                  // 漂移原因走 i18n，不认识的原因显示原始码
-                  v: r.drift
-                    .map((d) => (td.has(d) ? td(d) : d))
-                    .join(t("inspector.driftSeparator")),
-                },
-              ]
-            : []),
-          ...(r.error !== null
-            ? [{ k: t("inspector.error"), v: <Text tone="fail">{reason(r.error.code)}</Text> }]
-            : []),
-        ]}
-      />
-      {r.evalConversationId !== null ? (
-        <Link href={`/trajectories/${encodeURIComponent(r.evalConversationId)}`}>
-          {t("inspector.evalTrajectory")}
-        </Link>
-      ) : null}
+      <Subsection title={t("inspector.summary")} variant="divided">
+        <KeyValue
+          keyWidth="8ch"
+          rows={[
+            { k: t("inspector.case"), v: title },
+            {
+              k: t("columns.step"),
+              v: r.step === null ? t("wholeRun") : t("stepValue", { n: r.step }),
+            },
+            {
+              k: t("inspector.status"),
+              v: (
+                <StatusMark
+                  status={evalResultMark(r.status)}
+                  label={t(`resultStatus.${r.status}`)}
+                />
+              ),
+            },
+            ...(r.drift.length > 0
+              ? [
+                  {
+                    k: t("inspector.drift"),
+                    // Drift reasons go through i18n; an unknown one shows its code
+                    v: r.drift
+                      .map((d) => (td.has(d) ? td(d) : d))
+                      .join(t("inspector.driftSeparator")),
+                  },
+                ]
+              : []),
+            ...(r.error !== null
+              ? [{ k: t("inspector.error"), v: <Text tone="fail">{reason(r.error.code)}</Text> }]
+              : []),
+            ...(r.evalConversationId !== null
+              ? [
+                  {
+                    k: t("inspector.trajectory"),
+                    v: (
+                      <Link href={`/trajectories/${encodeURIComponent(r.evalConversationId)}`}>
+                        {t("inspector.evalTrajectory")}
+                      </Link>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      </Subsection>
       {r.status === "done" ? (
         <>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("inspector.textDiff")}
-            </Text>
+          <Subsection
+            title={t("inspector.textDiff")}
+            description={t("inspector.textDiffHint")}
+            variant="divided"
+          >
             {textDiff === "" ? (
-              <Text tone="muted">{t("inspector.noTextDiff")}</Text>
+              <Text variant="prose" tone="muted">
+                {t("inspector.noTextDiff")}
+              </Text>
             ) : (
               <CodeBlock language={t("inspector.diffCaption")} text={textDiff} />
             )}
-          </Stack>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("inspector.toolDiff")}
-            </Text>
+          </Subsection>
+          <Subsection
+            title={t("inspector.toolDiff")}
+            variant="divided"
+            {...(tools.length > 0 ? { count: tools.length } : {})}
+          >
             {tools.length === 0 ? (
-              <Text tone="muted">{t("inspector.noToolCalls")}</Text>
+              <Text variant="prose" tone="muted">
+                {t("inspector.noToolCalls")}
+              </Text>
             ) : (
               <CodeBlock
                 text={tools.map((e) => toolLine(e, t(`inspector.toolKinds.${e.kind}`))).join("\n")}
               />
             )}
-          </Stack>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("inspector.judge")}
-            </Text>
+          </Subsection>
+          <Subsection title={t("inspector.judge")} variant="divided">
             {judgeBody}
-          </Stack>
+          </Subsection>
         </>
       ) : null}
-      <Stack gap={8}>
-        <Text variant="small" tone="muted">
-          {t("inspector.label")}
-          {r.label !== null ? ` · ${t(`verdict.${r.label}`)}` : ""}
-        </Text>
+      <Subsection
+        title={t("inspector.label")}
+        variant="divided"
+        description={
+          r.label !== null
+            ? t("inspector.labelCurrent", { label: t(`verdict.${r.label}`) })
+            : t("inspector.labelNone")
+        }
+      >
         <Field label={t("inspector.note")} optional>
-          <Input value={note} maxLength={2000} onChange={(e) => setNote(e.target.value)} />
+          <Input value={note} maxLength={2000} onChange={(e) => onNote(e.target.value)} />
         </Field>
-        <Stack direction="row" gap={8} wrap>
-          <Button
-            variant={r.label === "pass" ? "primary" : "default"}
-            loading={pending === "pass"}
-            disabled={pending !== null}
-            onClick={() => void label("pass")}
-          >
-            {t("inspector.pass")}
-          </Button>
-          <Button
-            variant={r.label === "fail" ? "danger" : "default"}
-            loading={pending === "fail"}
-            disabled={pending !== null}
-            onClick={() => void label("fail")}
-          >
-            {t("inspector.fail")}
-          </Button>
-          {r.label !== null ? (
-            <Button
-              variant="ghost"
-              loading={pending === "clear"}
-              disabled={pending !== null}
-              onClick={() => void label(null)}
-            >
-              {t("inspector.clear")}
-            </Button>
-          ) : null}
-        </Stack>
         {error !== null ? <FormError message={error} /> : null}
-      </Stack>
+      </Subsection>
     </Stack>
   );
 }

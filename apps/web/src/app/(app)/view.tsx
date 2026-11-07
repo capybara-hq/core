@@ -2,17 +2,17 @@
 
 import { ConversationPage } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useNewConversationPage } from "../../../components/conversation/NewConversation";
-import { NoAccess } from "../../../components/NoAccess";
-import { setupReady } from "../../../lib/agents";
-import { readinessQuery } from "../../../lib/query/shell";
-import { useWorkspace } from "../../../lib/query/workspace";
+import { useNewConversationPage } from "../../components/conversation/NewConversation";
+import { NoAccess } from "../../components/NoAccess";
+import { setupReady } from "../../lib/agents";
+import { readinessQuery } from "../../lib/query/shell";
+import { useWorkspace } from "../../lib/query/workspace";
 
 /**
- * `/chat` (`?agent=<id>`): a new conversation. Only the composer: the agent can be picked here, and
- * the conversation is created on the first send (spec §5.2), never before. Until a model and an
- * agent exist the app frame draws the setup home here instead (web-order spec §3.8), so the view
- * renders nothing then.
+ * `/` (`?agent=<id>`): a new conversation, the workspace home. Only the composer: the agent can be
+ * picked here, and the conversation is created on the first send (spec §5.2), never before. Until
+ * a model and an agent exist the app frame draws the setup home here instead (web-order spec
+ * §3.8), so the view renders nothing then.
  */
 export default function NewChatView({ preferredAgent }: { preferredAgent: string | null }) {
   const ws = useWorkspace({ setup: "home" });

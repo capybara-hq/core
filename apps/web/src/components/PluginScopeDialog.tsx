@@ -2,9 +2,11 @@
 
 import {
   Button,
+  Callout,
   Checkbox,
   Dialog,
   Field,
+  ImpactPreview,
   RadioGroup,
   Stack,
   SwitchField,
@@ -165,7 +167,7 @@ function OrgChecks({
 }
 
 /** What a scope preview lists (a plugin's `ScopePreview`, a component's `ComponentScopePreview`). */
-export interface ImpactPreview {
+export interface ScopeImpactPreview {
   affected: ScopePreview["affected"];
   needsConfig?: string[];
   replaced?: { kind: string; id: string; name: string }[];
@@ -173,7 +175,8 @@ export interface ImpactPreview {
 }
 
 /** The change is refused while an org would be offered a skill whose name it already uses. */
-export const hasConflicts = (p: ImpactPreview | null): boolean => (p?.conflicts?.length ?? 0) > 0;
+export const hasConflicts = (p: ScopeImpactPreview | null): boolean =>
+  (p?.conflicts?.length ?? 0) > 0;
 
 /**
  * What a scope change or a disable takes away (spec §5 rules 2, 8 and 10): each affected org with
@@ -181,7 +184,7 @@ export const hasConflicts = (p: ImpactPreview | null): boolean => (p?.conflicts?
  * org config first, the components whose own scope a plugin's change replaces, and the name
  * clashes that refuse the change.
  */
-export function ScopeImpact({ preview }: { preview: ImpactPreview }) {
+export function ScopeImpact({ preview }: { preview: ScopeImpactPreview }) {
   const t = useTranslations("catalog.admin.impact");
   const locale = useLocale();
   const orgs = useOrgs();
@@ -191,52 +194,53 @@ export function ScopeImpact({ preview }: { preview: ImpactPreview }) {
   const replaced = preview.replaced ?? [];
   const conflicts = preview.conflicts ?? [];
   return (
-    <Stack gap={12}>
-      {preview.affected.length === 0 && needsConfig.length === 0 && (
-        <Text variant="prose">{t("none")}</Text>
-      )}
-      {preview.affected.length > 0 && (
-        <Stack gap={8}>
-          <Text variant="prose">{t("affected")}</Text>
-          {preview.affected.map((a) => (
-            <Stack key={a.orgId} gap={4}>
-              <Text>{a.orgName}</Text>
-              <Text variant="small" tone="muted">
-                {a.agents.length === 0
-                  ? t("noAgents")
-                  : t("agents", { names: a.agents.map((g) => g.name).join(sep) })}
-              </Text>
-              {a.connectorsKept > 0 && (
-                <Text variant="small" tone="muted">
-                  {t("connectorsKept", { count: a.connectorsKept })}
-                </Text>
-              )}
-            </Stack>
-          ))}
-        </Stack>
-      )}
-      {needsConfig.length > 0 && (
-        <Text variant="prose" tone="warn">
-          {t("needsConfig", { orgs: needsConfig.map(nameOf).join(sep) })}
-        </Text>
-      )}
-      {replaced.length > 0 && (
-        <Text variant="prose" tone="warn">
-          {t("replaced", { names: replaced.map((r) => r.name).join(sep) })}
-        </Text>
-      )}
-      {conflicts.length > 0 && (
-        <Stack gap={4}>
-          <Text variant="prose" tone="fail">
-            {t("conflicts")}
-          </Text>
-          {conflicts.map((c) => (
-            <Text key={`${c.orgId}:${c.name}`} variant="small">
-              {t("conflictLine", { org: c.orgName, name: c.name })}
-            </Text>
-          ))}
-        </Stack>
-      )}
+    <Stack gap={16}>
+      {conflicts.length > 0 && <Callout tone="fail">{t("conflicts")}</Callout>}
+      <ImpactPreview
+        empty={t("none")}
+        groups={[
+          {
+            id: "affected",
+            title: t("groups.affected"),
+            items: preview.affected.map((a) => ({
+              id: a.orgId,
+              title: a.orgName,
+              notes: [
+                {
+                  text:
+                    a.agents.length === 0
+                      ? t("noAgents")
+                      : t("agents", { names: a.agents.map((g) => g.name).join(sep) }),
+                },
+                ...(a.connectorsKept > 0
+                  ? [{ text: t("connectorsKept", { count: a.connectorsKept }) }]
+                  : []),
+              ],
+            })),
+            empty: t("none"),
+          },
+          {
+            id: "needsConfig",
+            title: t("groups.needsConfig"),
+            items: needsConfig.map((id) => ({ id, title: nameOf(id) })),
+          },
+          {
+            id: "replaced",
+            title: t("groups.replaced"),
+            description: t("replaced"),
+            items: replaced.map((r) => ({ id: `${r.kind}:${r.id}`, title: r.name })),
+          },
+          {
+            id: "conflicts",
+            title: t("groups.conflicts"),
+            items: conflicts.map((c) => ({
+              id: `${c.orgId}:${c.name}`,
+              title: c.orgName,
+              notes: [{ text: t("conflictNote", { name: c.name }), tone: "fail" as const }],
+            })),
+          },
+        ]}
+      />
     </Stack>
   );
 }
@@ -407,11 +411,7 @@ export function PluginScopeDialog({
           </>
         ) : (
           <>
-            {notice !== undefined && (
-              <Text variant="prose" tone="warn">
-                {notice}
-              </Text>
-            )}
+            {notice !== undefined && <Callout tone="warn">{notice}</Callout>}
             <ScopeImpact preview={preview} />
           </>
         )}
@@ -476,14 +476,14 @@ export function ImpactDisableDialog({
   hint: string;
   confirmLabel: string;
   doneToast: string;
-  preview: { mutateAsync(v: undefined): Promise<ImpactPreview & { scopeHash: string }> };
+  preview: { mutateAsync(v: undefined): Promise<ScopeImpactPreview & { scopeHash: string }> };
   disable: { mutateAsync(hash: string): Promise<unknown>; isPending: boolean };
   onClose(): void;
 }) {
   const t = useTranslations("catalog.admin");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const [preview, setPreview] = useState<(ImpactPreview & { scopeHash: string }) | null>(null);
+  const [preview, setPreview] = useState<(ScopeImpactPreview & { scopeHash: string }) | null>(null);
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const asked = useRef(false);
@@ -545,11 +545,7 @@ export function ImpactDisableDialog({
     >
       <Stack gap={12}>
         <Text variant="prose">{hint}</Text>
-        {notice !== undefined && (
-          <Text variant="prose" tone="warn">
-            {notice}
-          </Text>
-        )}
+        {notice !== undefined && <Callout tone="warn">{notice}</Callout>}
         {preview !== null && <ScopeImpact preview={preview} />}
         {error !== undefined && <FormError message={error} />}
       </Stack>

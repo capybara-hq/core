@@ -159,3 +159,31 @@ export async function finishedDeliveries(
     `${n} finished sub-agent deliveries`,
   );
 }
+
+/**
+ * Waits until the parent conversation holds `n` `subagent_finished` events (every background
+ * child run's end, also one that handed back and completed, which writes no finished delivery);
+ * returns their payloads in log order.
+ */
+export async function subagentFinishes(
+  db: KernelSchemaDb,
+  parentConv: string,
+  n = 1,
+  timeoutMs = 30_000,
+): Promise<EventPayload<"subagent_finished">[]> {
+  return waitFor(
+    async () => {
+      const rows = await db
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", parentConv)
+        .where("type", "=", "subagent_finished")
+        .orderBy("seq")
+        .execute();
+      const out = rows.map((r) => r.payload as EventPayload<"subagent_finished">);
+      return out.length >= n ? out : null;
+    },
+    timeoutMs,
+    `${n} sub-agent finishes`,
+  );
+}

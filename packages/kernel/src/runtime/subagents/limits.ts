@@ -10,7 +10,8 @@ export interface SubagentsConfig {
 /**
  * The sub-agent limits of an organization (sub-agents spec §8.2, agent map spec §6): the depth
  * below the root, the active children of one conversation, and the dispatches and tokens of one
- * tree, counted on its budget run ({@link budgetRunOf}).
+ * tree, counted on its budget run ({@link budgetRunOf}). `maxDispatchesPerRun` and
+ * `maxTokensPerRun` of 0 mean no limit.
  */
 export interface SubagentLimits {
   maxDepth: number;
@@ -82,7 +83,7 @@ export async function budgetWindowOf(
 
 /**
  * Whether the sub-agents of a tree have used their token budget (§8.3): the budget run's
- * `subagent_tokens_used`, read fresh, at or over `maxTokensPerRun`. A sub-agent's step checks it
+ * `subagent_tokens_used`, read fresh, at or over `maxTokensPerRun` (never when it is 0: no limit). A sub-agent's step checks it
  * before every model request and ends its run with `budget` when it is.
  */
 export async function subagentBudgetUsedUp(
@@ -91,12 +92,14 @@ export async function subagentBudgetUsedUp(
   orgId: string,
   budgetRunId: string,
 ): Promise<boolean> {
+  const { maxTokensPerRun } = await subagentLimits(db, config, orgId);
+  // 0: no limit
+  if (maxTokensPerRun === 0) return false;
   const row = await db
     .selectFrom("runs")
     .select("subagent_tokens_used")
     .where("id", "=", budgetRunId)
     .executeTakeFirst();
   if (!row) return false;
-  const { maxTokensPerRun } = await subagentLimits(db, config, orgId);
   return Number(row.subagent_tokens_used) >= maxTokensPerRun;
 }

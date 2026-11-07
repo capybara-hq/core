@@ -1316,7 +1316,7 @@ export class Waits implements OnApplicationShutdown {
    * running background tasks the terminal run started are then stopped (not those of a later run);
    * a stopped background child's are all stopped, whichever of its runs started them; a background
    * child that ended on its own keeps them, and their finish wakes it (agent map spec §5.3). True
-   * when a background child's finished delivery was written by this call.
+   * when a background child's finish was written by this call.
    */
   async childFinished(childRunId: string): Promise<boolean> {
     const row = await deliveryRowOfChildRun(this.db, childRunId);

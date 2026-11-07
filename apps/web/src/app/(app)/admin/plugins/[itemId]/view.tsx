@@ -2,6 +2,7 @@
 
 import {
   Badge,
+  Callout,
   type Column,
   DangerConfirm,
   DataTable,
@@ -126,14 +127,11 @@ function PluginDetailRead({ itemId, orgId }: { itemId: string; orgId: string | n
           value: "components",
           onChange: () => {},
         }}
-        // The components table and the dependencies; the inspector's six facts.
-        // One column: the facts (a KeyValue of nine), the components table and the dependencies
+        // The facts (the description over a KeyValue of nine), then the components table and the
+        // dependencies
         loading={{
-          content: [
-            { kind: "key-value", rows: 9, keyWidth: "10ch" },
-            { kind: "list" },
-            { kind: "list" },
-          ],
+          facts: { rows: 9, keyWidth: "10ch", lead: true },
+          content: [{ kind: "list" }, { kind: "list" }],
         }}
       />
     );
@@ -284,6 +282,18 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
       : []),
   ];
   const description = descriptionOf(item, locale);
+  // What needs attention, said once above the tabs as one notice (not repeated per tab)
+  const notes = [
+    ...(shareGated(item) ? [t("detail.notShareableNote")] : []),
+    ...(awaiting
+      ? [t("detail.awaitingNote")]
+      : item.pendingVersion !== null && item.pendingVersion !== undefined
+        ? [t("detail.pendingVersionNote", { version: versionLabel(item.pendingVersion) })]
+        : []),
+    ...(item.disabled ? [t("detail.disabledNote")] : []),
+    ...(item.contentChanged ? [t("detail.contentChanged")] : []),
+    ...(deleted ? [td("admin.detail.deleted")] : []),
+  ];
   return (
     <>
       <DetailPage
@@ -300,7 +310,65 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
             </Stack>
           ),
           actions: lockWhileRunning(headActions),
+          ...(notes.length > 0
+            ? {
+                notice: (
+                  <Callout tone="warn">
+                    {notes.length === 1 ? (
+                      notes[0]
+                    ) : (
+                      <Stack gap={4}>
+                        {notes.map((n) => (
+                          <span key={n}>{n}</span>
+                        ))}
+                      </Stack>
+                    )}
+                  </Callout>
+                ),
+              }
+            : {}),
         }}
+        facts={
+          <Stack gap={12}>
+            {/* The full description (the head's line would cut it), then the facts */}
+            {description !== "" && (
+              <Text variant="prose" tone="muted" pre>
+                {description}
+              </Text>
+            )}
+            {detail.hasIcon && <CatalogIcon src={adminIconUrl(item.id)} name={item.name} />}
+            <KeyValue
+              keyWidth="10ch"
+              rows={[
+                { k: t("detail.fields.package"), v: item.packageName ?? "—" },
+                { k: t("detail.fields.source"), v: sourceLabel(item) },
+                ...(latest?.sourceDetail
+                  ? [{ k: t("detail.fields.origin"), v: origin(latest.sourceDetail) }]
+                  : []),
+                { k: t("detail.fields.publisher"), v: item.publisher || "—" },
+                {
+                  k: t("detail.fields.owner"),
+                  v:
+                    owner === null
+                      ? tc("owner.platform")
+                      : t("detail.ownerValue", { org: owner.name }),
+                },
+                { k: t("detail.fields.scope"), v: scopeLabel(item) },
+                { k: t("detail.fields.orgs"), v: String(item.enabledOrgs) },
+                {
+                  k: t("detail.fields.permissions"),
+                  v:
+                    ext === undefined
+                      ? t("detail.permissions.none")
+                      : item.pending
+                        ? t("detail.permissions.pending", { n: permissionCount })
+                        : t("detail.permissions.confirmed", { n: permissionCount }),
+                },
+                { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
+              ]}
+            />
+          </Stack>
+        }
         tabs={{
           label: t("detail.tabsLabel"),
           items: TABS.map((x) => ({
@@ -315,60 +383,6 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
         }}
       >
         <Stack gap={16}>
-          {/* The full description, first in the column (the head's line would cut it) */}
-          {description !== "" && (
-            <Text variant="prose" tone="muted" pre>
-              {description}
-            </Text>
-          )}
-          {owner !== null && (
-            <Text variant="prose" tone="muted">
-              {t("detail.ownerNote", { org: owner.name })}
-            </Text>
-          )}
-          {shareGated(item) && <Text tone="warn">{t("detail.notShareableNote")}</Text>}
-          {awaiting ? (
-            <Text tone="warn">{t("detail.awaitingNote")}</Text>
-          ) : (
-            item.pendingVersion !== null &&
-            item.pendingVersion !== undefined && (
-              <Text tone="warn">
-                {t("detail.pendingVersionNote", { version: versionLabel(item.pendingVersion) })}
-              </Text>
-            )
-          )}
-          {item.disabled && <Text tone="warn">{t("detail.disabledNote")}</Text>}
-          {item.contentChanged && <Text tone="warn">{t("detail.contentChanged")}</Text>}
-          {deleted && <Text tone="warn">{td("admin.detail.deleted")}</Text>}
-          {/* The facts, in the single column (no right inspector) */}
-          {detail.hasIcon && <CatalogIcon src={adminIconUrl(item.id)} name={item.name} />}
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("detail.fields.package"), v: item.packageName ?? "—" },
-              { k: t("detail.fields.source"), v: sourceLabel(item) },
-              ...(latest?.sourceDetail
-                ? [{ k: t("detail.fields.origin"), v: origin(latest.sourceDetail) }]
-                : []),
-              { k: t("detail.fields.publisher"), v: item.publisher || "—" },
-              {
-                k: t("detail.fields.owner"),
-                v: owner === null ? tc("owner.platform") : owner.name,
-              },
-              { k: t("detail.fields.scope"), v: scopeLabel(item) },
-              { k: t("detail.fields.orgs"), v: String(item.enabledOrgs) },
-              {
-                k: t("detail.fields.permissions"),
-                v:
-                  ext === undefined
-                    ? t("detail.permissions.none")
-                    : item.pending
-                      ? t("detail.permissions.pending", { n: permissionCount })
-                      : t("detail.permissions.confirmed", { n: permissionCount }),
-              },
-              { k: t("detail.fields.updated"), v: <DateTime value={item.updatedAt} /> },
-            ]}
-          />
           {tab === "components" ? (
             <ComponentsTab detail={detail} catalog={catalog} />
           ) : tab === "orgs" ? (

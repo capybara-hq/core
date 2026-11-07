@@ -122,6 +122,13 @@ export const ACCEPTED: string[] = [
   // reference PNGs and the side-by-side review wait for the reference-update and visual-update
   // workflows
   "item-list",
+  // the new state `divided` (the regions of an extension's Sheet, light polish 2026-11-07): the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  // what a change would do (text-pile pass 2026-11-07): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "impact-preview",
   "subsection",
   // the Callout adapts to the box it sits in (acceptance item AB, wave 2 fix round 1): states
   // `warn`, `info`, `in-box`; the reference PNGs and the side-by-side review wait for the
@@ -132,6 +139,10 @@ export const ACCEPTED: string[] = [
   // are in place; the reference PNGs and the side-by-side review wait for the reference-update
   // and visual-update workflows
   "card-grid",
+  // tools with their policy next to them (the agent page's 工具 section, 2026-11-08): blocks and
+  // size table in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "tool-policy-list",
 ];
 
 /**

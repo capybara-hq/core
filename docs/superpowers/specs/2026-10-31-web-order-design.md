@@ -57,8 +57,12 @@ above its divider and 8 px below):
    `~/<slug> · <role>` in mono; the chevrons open the org menu (the user's orgs as radio items, then
    "创建组织…" when allowed). This is the only place the current org is shown and switched.
 3. **Primary items**: 新会话, 首页, Agents, 更多 (search and the inbox moved to the brand row).
-   *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home; `/` redirects to
-   `/chat`. The items are 新会话, 智能体, 技能, 连接器, 更多 (技能 and 连接器 left 更多; no 首页).*
+   *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home. The items are
+   新会话, 智能体, 技能, 连接器, 更多 (技能 and 连接器 left 更多; no 首页).*
+   *Amended again (maintainer decision 2026-11-07, acceptance): the new conversation lives at `/`
+   itself (the setup home while the org is not ready, so the address bar never reads `/chat` on a
+   setup page); `/chat` redirects permanently to `/`, keeping its query (`/chat?agent=<id>` →
+   `/?agent=<id>`); `/chat/<id>` is unchanged.*
 4. **更多** opens a **flyout menu to the right of the sidebar**, anchored to its row: 技能, 连接器, 插件,
    渠道, 评测与运行, 组织设置, then the org's extension pages after a separator. 渠道 and 评测与运行
    are shown to org admins only; members see 技能, 连接器, 插件 and 组织设置 (read-only for them,
@@ -76,9 +80,9 @@ above its divider and 8 px below):
      for the archived conversations (a header "← 已归档 · N" returns; rows offer 取消归档 and 删除; the
      filter applies to it too). No separate page.
 6. **管理后台** (enterprise admins only), with an outward arrow: enters the admin context.
-7. **Account row**: avatar + name (opens the account menu: 切换组织 ▸, 语言 ▸, 个人设置, 退出登录) and the
-   theme toggle (light / dark radio) after it. The org menu (the switcher's and 切换组织 ▸) ends
-   with "退出组织…" (§9).
+7. **Account row**: avatar + name (opens the account menu: 语言 ▸, 个人设置, 退出登录) and the
+   theme toggle (light / dark radio) after it. The org menu (the switcher's, the only place the org
+   is switched) ends with "退出组织…" (§9).
 
 In the rail (below 1280) the brand row is the logo alone; search and the inbox are rail icons at
 the top of the rail; 更多 opens the same flyout.
@@ -187,7 +191,7 @@ For a set of settings pages under one title: **组织设置** (`/settings/*`) an
 - Home (`/`): the overview from rc.2 acceptance (#9) in the shell above: waiting for you (tabs with counts),
   pick up where you left off (state labels), your agents, the org at a glance.
 - **One setup checklist** (org / model / agent, each with the action this viewer may take), drawn by the
-  setup layout (§3.8) on `/` and `/chat` while the org is not ready; the shell's home and new-conversation
+  setup layout (§3.8) on `/` (the old `/chat` redirects there) while the org is not ready; the shell's home and new-conversation
   pages no longer draw it.
 - One empty state (§3.7), one loading state (skeleton in the frame's shape, never shaped like one of
   two possible outcomes), one error state with retry.
@@ -229,16 +233,20 @@ pages through `SetupContext`; pages never read it themselves.
 - **Scope**: every workspace route while not ready. `/admin/*` keeps the admin console context (that
   is where an enterprise admin configures the model provider); the auth screens and the org chooser
   keep the auth layout.
-  - `/` and `/chat`: the **setup home**: path `<slug> / 开始之前`, h1 开始之前, "还差几步才能开始对话", the
+  - `/` (the new conversation's address; `/chat` redirects there): the **setup home**: path `<slug> / 开始之前`, h1 开始之前, "还差几步才能开始对话", the
     checklist card ("开始之前 · 已完成 n / 3"), then "可以稍后再做" with only what the viewer can act
     on. The org summary card of the old overview is dropped.
   - Step pages render their normal content in the setup frame (content width) under a back link
     "← 开始之前": `/settings/models`, `/settings/members`, `/agents/new`, `/agents/<id>`,
-    `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`.
-  - Any other workspace route is replaced by `/`.
+    `/channels/new`, `/catalog`, `/catalog/<id>`, `/catalog/<id>/install`, and `/account/*`; since
+    the 2026-11-07 acceptance also `/extensions` and every `/channels` page (connecting a channel
+    needs its extension switched on, and creating one opens its page).
+  - Any other workspace route is replaced by `/`: the layout redirects a document request, and a
+    client navigation is replaced on the client (`router.replace("/")`), never by refreshing into
+    the layout's redirect (a server redirect inside a refresh loops in Next's router).
   - Readiness is read again on every workspace navigation while in setup (admin console
     navigations never read); once ready the next navigation draws the shell. Creating an agent in
-    the setup layout navigates to `/chat?agent=<id>`; that navigation's re-read flips the layout to
+    the setup layout navigates to `/?agent=<id>`; that navigation's re-read flips the layout to
     the shell.
 - **Deciding the layout**: until the session and the readiness are known a workspace route shows only
   the neutral PendingState (design spec §6.20): never the shell first and then the setup layout. A
@@ -265,8 +273,8 @@ pages through `SetupContext`; pages never read it themselves.
 | Today | Context · place | Frame | Route |
 |---|---|---|---|
 | 概览 `/` | work · 首页 | overview | `/` |
-| *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home; `/` redirects to `/chat`; no 首页* | | | |
-| 新会话 `/chat`, `/chat/:id` | work · 新会话 / conversations | conversation | unchanged |
+| *Amended (maintainer decision AA, 2026-11-07): the new conversation is the home; no 首页. Amended again (maintainer decision 2026-11-07, acceptance): the new conversation is `/`; `/chat` redirects permanently to `/` with its query* | | | |
+| 新会话 `/chat`, `/chat/:id` | work · 新会话 / conversations | conversation | `/` (new), `/chat/:id` unchanged |
 | 收件箱 `/inbox` | work · 收件箱 | inbox | unchanged |
 | Agents | work · Agents | object list / detail | unchanged |
 | 技能 | work · 更多 · 技能 | object list / detail | unchanged |

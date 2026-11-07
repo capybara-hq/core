@@ -5,6 +5,7 @@ import {
   getAgentTemplate,
   listAgents,
   listAgentTemplates,
+  listAgentVersions,
   previewAgentTemplateDelete,
 } from "../agents";
 import type { ApiClientError } from "../api";
@@ -30,6 +31,14 @@ export const agentQuery = (orgId: string, agentId: string) =>
   defineQuery({
     key: keys.org(orgId).agent(agentId),
     fn: () => getAgent(orgId, agentId).then((r) => r.agent),
+    freshness: "orgConfig",
+  });
+
+/** An agent's saved versions (`{ versions }`, newest first: number and saved time). */
+export const agentVersionsQuery = (orgId: string, agentId: string) =>
+  defineQuery({
+    key: keys.org(orgId).agentVersions(agentId),
+    fn: () => listAgentVersions(orgId, agentId),
     freshness: "orgConfig",
   });
 
@@ -118,11 +127,15 @@ export const agentFormQueries = (
       ]),
 ];
 
-/** The ids of the connectors whose tools `agent` takes as a whole (the form lists their tools). */
-export const selectedConnectors = (agent: Agent | undefined): string[] =>
-  (agent?.definition.tools ?? []).flatMap((r) =>
-    r.kind === "connector" && r.tools === "all" ? [r.connectorId] : [],
-  );
+/**
+ * The ids of the connectors `agent` uses, whole or by tool name (the Tools section lists their
+ * tools).
+ */
+export const selectedConnectors = (agent: Agent | undefined): string[] => [
+  ...new Set(
+    (agent?.definition.tools ?? []).flatMap((r) => (r.kind === "connector" ? [r.connectorId] : [])),
+  ),
+];
 
 /** The details (tools) of the connectors the edited agent uses. */
 export const agentConnectorQueries = (orgId: string, agent: Agent) =>

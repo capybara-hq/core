@@ -46,9 +46,10 @@
       "reply": {
         "toolCalls": [
           {
-            "name": "SubagentHandback",
+            "name": "Bash",
             "input": {
-              "message": "Status: DONE. Committed greeting.txt (feat: greeting file)."
+              "description": "Test step",
+              "command": "git status --short"
             }
           }
         ]
@@ -79,7 +80,7 @@
         "assistantTurns": 4
       },
       "reply": {
-        "text": "Handed back."
+        "text": "Status: DONE. Committed greeting.txt (feat: greeting file)."
       }
     },
     {

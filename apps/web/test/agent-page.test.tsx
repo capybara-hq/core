@@ -156,7 +156,7 @@ describe("the agent page by section (agent profile design §3)", () => {
       "Helps with notes.",
     );
     expect(screen.getByRole("link", { name: P_.startChat }).getAttribute("href")).toBe(
-      "/chat?agent=ag1",
+      "/?agent=ag1",
     );
     // 开始对话 stays the primary; 运行记录, Change owner and Save as template sit in the ⋯ menu
     expect(await headMenu()).toEqual([en.agents.runHistory, P_.reassign, en.agents.saveAs.action]);
@@ -165,7 +165,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(current()).toBe(P_.sections["quick-actions"]);
     expect(screen.getByRole("region", { name: P_.sections["quick-actions"] })).toBeTruthy();
     await view.navigate("/agents/ag1?s=tools");
-    expect(screen.getByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
+    expect(screen.getByRole("list", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await view.navigate("/agents/ag1?s=nonsense");
     expect(current()).toBe(P_.sections.basics);
   });
@@ -796,7 +796,7 @@ describe("the agent page by section (agent profile design §3)", () => {
   it("/agents/<id>?s=tools: a first render from the hydrated cache makes no browser read", async () => {
     const browser = stubApi({});
     await renderEditAgent({ routes: routes(), section: "tools" });
-    expect(screen.getByRole("group", { name: en.agents.form.builtinLabel })).toBeTruthy();
+    expect(screen.getByRole("list", { name: en.agents.form.builtinLabel })).toBeTruthy();
     await settle();
     expect(browser.filter((c) => c.method === "GET")).toEqual([]);
   });
@@ -831,7 +831,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     const actions = page.querySelector('[data-part="page-header-actions"]') as HTMLElement;
     expect(
       within(actions).getByRole("link", { name: en.agents.page.startChat }).getAttribute("href"),
-    ).toBe("/chat?agent=ag1");
+    ).toBe("/?agent=ag1");
     // 运行记录 and Change owner: the ⋯ menu, as on the loaded page
     expect(within(actions).getByRole("button", { name: en.common.moreActions })).toBeTruthy();
     await act(async () => release());

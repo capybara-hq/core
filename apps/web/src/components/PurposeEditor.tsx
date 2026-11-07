@@ -13,7 +13,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { findModel, keepDeclared, type ParamValue, type ProviderModels } from "../lib/agents";
-import { labelLocale, modelLabel } from "../lib/extension-label";
+import { extensionLabel, labelLocale, modelLabel } from "../lib/extension-label";
 import {
   decodeModel,
   EVAL_PURPOSE,
@@ -44,6 +44,21 @@ interface PurposeError {
 }
 
 type Scope = "deployment" | "org";
+
+/**
+ * Each kernel purpose's one muted line: what it is for and what happens while it is unset (the
+ * kernel's real fallback: titles and web extraction use the conversation's model, a sub-agent tier
+ * the dispatching agent's model; the eval judge has none, so evals cannot use a judge).
+ */
+const KERNEL_HINTS: Record<string, "hint.eval" | "hint.titles" | "hint.webFetch" | "subagentHint"> =
+  {
+    eval: "hint.eval",
+    title: "hint.titles",
+    web_fetch: "hint.webFetch",
+    subagent_fast: "subagentHint",
+    subagent_standard: "subagentHint",
+    subagent_capable: "subagentHint",
+  };
 
 /** Parameter equality (key order does not matter). */
 const sameParams = (a: Params, b: Params) =>
@@ -182,8 +197,10 @@ export function usePurposeDrafts({
 /**
  * One model purpose's row (an ItemListItem; shared by the deployment defaults and the org overrides):
  * - `scope: "deployment"`: edits the deployment default (`view.default`); 「未设置」 clears it;
- * - `scope: "org"`: shows the deployment default and edits the org's override (`view.override`);
- *   「使用部署默认」 restores the default.
+ * - `scope: "org"`: edits the org's override (`view.override`); the default option
+ *   「使用部署默认（<model or 未设置>）」 names the deployment default and restores it.
+ * A kernel purpose has no source line, only its hint (what it does, what happens while unset); an
+ * extension's purpose says 「来自 <extension display name>」. Purpose ids are never shown.
  * A chosen model renders its parameter declarations (ModelParams; switching models keeps the
  * parameters that are still valid, keepDeclared). A plugin purpose notes that plugins cannot call
  * models yet. The row has no save of its own: the page's ActionRow saves (usePurposeDrafts).
@@ -214,9 +231,16 @@ function PurposeEditor({
   const decl = ref === null ? [] : (findModel(providers, ref)?.parameters ?? []);
   const label = (view.label as Record<string, string | undefined>)[locale] || view.label.en;
   const plugin = view.declaredBy !== "kernel";
+  const hint = plugin ? null : KERNEL_HINTS[view.purpose];
+
+  const defaultText =
+    view.default === null ? t("unset") : targetName(providers, view.default.model, lang);
 
   const options = [
-    { value: "", label: scope === "deployment" ? t("unset") : t("useDefault") },
+    {
+      value: "",
+      label: scope === "deployment" ? t("unset") : t("useDefault", { target: defaultText }),
+    },
     ...providers.flatMap((p) =>
       p.models.map((m) => ({
         value: encodeModel({ provider: p.provider, model: m.id }),
@@ -232,9 +256,6 @@ function PurposeEditor({
     });
   }
 
-  const defaultText =
-    view.default === null ? t("unset") : targetName(providers, view.default.model, lang);
-
   // The eval purpose without a model (the deployment default, or what the org ends up with):
   // evals cannot use a judge. A warn line on the eval row, where a notice above the rows stood.
   const evalUnmapped =
@@ -243,9 +264,8 @@ function PurposeEditor({
 
   return (
     <ItemListItem
+      // The purpose id is an internal identifier: never shown
       title={label}
-      // The purpose id is plain metadata: mono muted text, not a badge
-      code={view.purpose}
       // A state, not a call to act: muted text, never the accent
       marks={
         scope === "org" && view.override !== null ? (
@@ -256,20 +276,24 @@ function PurposeEditor({
       }
       meta={
         <>
-          <Text variant="small" tone="muted">
-            {plugin ? t("declaredByPlugin", { plugin: view.declaredBy }) : t("declaredByKernel")}
-          </Text>
+          {plugin ? (
+            <Text variant="small" tone="muted">
+              {t("declaredByPlugin", {
+                plugin: extensionLabel(
+                  { name: view.declaredBy, displayName: view.declaredByName },
+                  lang,
+                ),
+              })}
+            </Text>
+          ) : null}
           {plugin ? (
             <Text variant="small" tone="warn">
               {t("pluginNote")}
             </Text>
           ) : null}
-          {scope === "org" ? (
-            <Text variant="small">{t("deploymentDefault", { target: defaultText })}</Text>
-          ) : null}
-          {view.purpose.startsWith("subagent_") ? (
+          {hint !== undefined && hint !== null ? (
             <Text variant="small" tone="muted">
-              {t("subagentHint")}
+              {t(hint)}
             </Text>
           ) : null}
           {evalUnmapped ? (

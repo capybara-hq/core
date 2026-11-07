@@ -16,6 +16,7 @@ import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignLocale, useDesignT } from "../provider";
 import { type AgentMapStatus, agentMapTokens, StatusDot } from "./agent-status";
 import { useClock } from "./clock";
+import { Prose } from "./prose";
 import { type BackgroundTaskItem, type BackgroundTaskStatus, subagentDuration } from "./subagents";
 import { fillCopy } from "./tool-copy";
 
@@ -39,12 +40,20 @@ export type AgentMapNode = {
 export type AgentMapBackground = BackgroundTaskItem;
 
 /**
- * The dialog width of each level: the tree 1100; one agent's summary and its transcript the
- * conversation's column (`layout.chat`) plus the dialog's own padding (`chat`, agent-map.css).
+ * The dialog width of each level (agent-map.css): the tree as wide as its tree (`tree`, between
+ * the `chat` width and 1100); one agent's summary and its transcript the conversation's column
+ * (`layout.chat`) plus the dialog's own padding (`chat`).
  */
-const LEVEL_SIZE = { tree: "1100", detail: "chat", transcript: "chat" } as const;
+const LEVEL_SIZE = { tree: "tree", detail: "chat", transcript: "chat" } as const;
 
-const STATUSES: AgentMapStatus[] = ["running", "waiting", "completed", "failed", "aborted"];
+const STATUSES: AgentMapStatus[] = [
+  "running",
+  "waiting",
+  "completed",
+  "limit",
+  "failed",
+  "aborted",
+];
 
 /** A background task's status as a dot. */
 function taskDot(s: BackgroundTaskStatus): AgentMapStatus {
@@ -66,8 +75,8 @@ export type AgentMapDialogProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   /**
-   * The level shown: the width follows it (the tree 1100; levels 2 and 3 the conversation's column
-   * plus the dialog's padding). The tree's head (title, close) is
+   * The level shown: the width follows it (the tree as wide as its tree, at least levels 2 and 3's
+   * width and at most 1100; levels 2 and 3 the conversation's column plus the dialog's padding). The tree's head (title, close) is
    * the frame's; levels 2 and 3 draw their own ({@link AgentDetail}, {@link TranscriptFrame}).
    */
   level: "tree" | "detail" | "transcript";
@@ -639,9 +648,10 @@ export function AgentDetail({
       />
       <div className="cb-amap-detail" data-part="agent-detail">
         {latestText !== "" ? (
-          <p className="cb-amap-latest" data-part="agent-latest">
-            {latestText}
-          </p>
+          // the agent's own text is Markdown, rendered like the stream's prose (acceptance 2026-11-07)
+          <div className="cb-amap-latest" data-part="agent-latest">
+            <Prose markdown={latestText} />
+          </div>
         ) : null}
         <DetailSection title={t("agentMap.section.task")} defaultOpen={false}>
           <p className="cb-amap-prompt" data-part="agent-prompt">

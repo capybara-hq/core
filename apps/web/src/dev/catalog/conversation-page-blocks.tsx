@@ -166,6 +166,13 @@ function subagentGroupBlocks(): ReactNode {
           defaultOpen
         />
       </Block>
+      <Block id="subagent-group-limit">
+        <SubagentGroup
+          rows={finished().map((r, i) => (i === 1 ? { ...r, status: "limit" } : r))}
+          onOpen={noop}
+          defaultOpen
+        />
+      </Block>
       <Block id="subagent-group-expanded">
         <SubagentGroup
           rows={finished()}
@@ -279,7 +286,7 @@ function agentMapThread(): ReactNode {
 function agentMapBlocks(): ReactNode {
   return (
     <>
-      <RefBlock id="agent-map-tree" width={1132} height={580} pad>
+      <RefBlock id="agent-map-tree" width={1089} height={580} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <AgentMapTree
             root={AM.root}
@@ -296,12 +303,12 @@ function agentMapBlocks(): ReactNode {
         </AgentMapDialog>
       </RefBlock>
       {/* the page's own loading bars and error line, in the tree level's padded body */}
-      <RefBlock id="agent-map-loading" width={1132} height={200} pad>
+      <RefBlock id="agent-map-loading" width={786} height={200} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <SkeletonBars />
         </AgentMapDialog>
       </RefBlock>
-      <RefBlock id="agent-map-failed" width={1132} height={140} pad>
+      <RefBlock id="agent-map-failed" width={786} height={140} pad>
         <AgentMapDialog open inline onOpenChange={noop} level="tree">
           <FormError message="智能体图加载失败。" />
         </AgentMapDialog>
@@ -1286,7 +1293,7 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         }}
         status={
           isNew
-            ? { context: "grant@示例组织:/chat", version: X.version }
+            ? { context: "grant@示例组织:~", version: X.version }
             : {
                 context: C.path,
                 stats: `第 ${X.turns} 轮 · 已用 ${X.elapsed}`,

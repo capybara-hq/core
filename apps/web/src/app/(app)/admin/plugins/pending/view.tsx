@@ -2,12 +2,14 @@
 
 import {
   Button,
+  Callout,
   Dialog,
   Field,
   KeyValue,
   ListPage,
   ObjectRow,
   Stack,
+  Subsection,
   Text,
   Textarea,
   useToast,
@@ -351,15 +353,20 @@ function ConfirmPermissionsDialog({
         </>
       }
     >
-      <Stack gap={12}>
+      <Stack gap={16}>
+        {hash === null && <Callout tone="warn">{t("noHash")}</Callout>}
         <Text variant="prose">
           {owner === null ? t("confirmHint") : t("upload.confirmHint", { org: owner.name })}
         </Text>
         {ext !== undefined && (
-          <Stack gap={8}>
-            <Text>
-              {tc("extensionVersion", { name: ext.name, version: versionLabel(ext.version) })}
-            </Text>
+          <Subsection
+            title={t("grantsTitle")}
+            description={tc("extensionVersion", {
+              name: ext.name,
+              version: versionLabel(ext.version),
+            })}
+            variant="divided"
+          >
             <KeyValue
               keyWidth="16ch"
               rows={declaredPermissions(ext).map((g) => ({
@@ -367,12 +374,7 @@ function ConfirmPermissionsDialog({
                 v: g.items.join(", "),
               }))}
             />
-          </Stack>
-        )}
-        {hash === null && (
-          <Text variant="prose" tone="warn">
-            {t("noHash")}
-          </Text>
+          </Subsection>
         )}
         {error !== undefined && <FormError message={error} />}
       </Stack>

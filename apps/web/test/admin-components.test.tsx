@@ -483,11 +483,17 @@ describe("admin component detail", () => {
       within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
     );
     expect(await within(dialog).findByText(en.catalog.admin.impact.conflicts)).toBeTruthy();
+    // the clash is a row under 名称冲突: the org, the skill as its fail note
+    const clashes = within(dialog).getByRole("list", {
+      name: en.catalog.admin.impact.groups.conflicts,
+    });
+    expect(within(clashes).getByText("Beta")).toBeTruthy();
     expect(
-      within(dialog).getByText(
-        fill(en.catalog.admin.impact.conflictLine, { org: "Beta", name: "notes" }),
-      ),
+      within(clashes).getByText(fill(en.catalog.admin.impact.conflictNote, { name: "notes" })),
     ).toBeTruthy();
+    // nothing loses access: that group says so once, and no character list markers
+    expect(within(dialog).getAllByText(en.catalog.admin.impact.none)).toHaveLength(1);
+    expect(dialog.textContent).not.toMatch(/[·−] /);
     const confirm = within(dialog).getByRole("button", {
       name: en.catalog.admin.scopeDialog.confirm,
     }) as HTMLButtonElement;
@@ -801,24 +807,31 @@ describe("admin plugin detail: components and the platform update", () => {
     expect(within(row("summarize")).getByText(U.marks.ownScope)).toBeTruthy();
     expect(within(row("old-helper")).getByText(U.marks.kept)).toBeTruthy();
     expect(within(row("old-helper")).getByText(U.change.removed)).toBeTruthy();
+    // the preview's groups, each a titled region in this order, each a real list of rows
     expect(
-      within(dialog).getByText(fill(U.pinned, { name: "web-research", orgs: "Acme" })),
+      within(dialog)
+        .getAllByRole("heading", { level: 3 })
+        .map((h) => h.textContent),
+    ).toEqual([U.components, U.groups.pinned, U.groups.kept, U.groups.extension, U.groups.orgs]);
+    const group = (title: string) => within(dialog).getByRole("list", { name: title });
+    expect(within(group(U.groups.pinned)).getByText("web-research")).toBeTruthy();
+    expect(
+      within(group(U.groups.pinned)).getByText(fill(U.pinnedNote, { orgs: "Acme" })),
+    ).toBeTruthy();
+    expect(within(group(U.groups.kept)).getByText("old-helper")).toBeTruthy();
+    expect(
+      within(group(U.groups.kept)).getByText(fill(U.keptNote, { agents: "Helper" })),
     ).toBeTruthy();
     expect(
-      within(dialog).getByText(fill(U.keptLine, { name: "old-helper", agents: "Helper" })),
+      within(group(U.groups.extension)).getByText(fill(U.extensionOrgs, { orgs: "Acme, Beta" })),
     ).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        fill(U.extension, { from: "v1.2.0", to: "v1.3.0", orgs: "Acme, Beta" }),
-      ),
-    ).toBeTruthy();
-    expect(within(dialog).getByText(U.needsApproval)).toBeTruthy();
-    expect(
-      within(dialog).getByText(fill(U.credentialsReset, { org: "Beta", names: "GitHub" })),
-    ).toBeTruthy();
-    expect(
-      within(dialog).getByText(fill(U.needsConfig, { org: "Beta", ids: "linear" })),
-    ).toBeTruthy();
+    // one notice for the approval the new version waits for, above the groups
+    expect(within(dialog).getAllByText(U.needsApproval)).toHaveLength(1);
+    // the org's warnings are rows under that org
+    const beta = within(group(U.groups.orgs)).getByText("Beta").closest("li") as HTMLElement;
+    expect(within(beta).getByText(fill(U.credentialsResetNote, { names: "GitHub" }))).toBeTruthy();
+    expect(within(beta).getByText(fill(U.needsConfigNote, { ids: "linear" }))).toBeTruthy();
+    expect(dialog.textContent).not.toMatch(/[·−] /);
     await user.click(within(dialog).getByRole("button", { name: U.confirm }));
     expect(await within(dialog).findByText(U.stale)).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: U.confirm }));
@@ -967,14 +980,18 @@ describe("admin plugin detail: components and the platform update", () => {
     await user.click(
       within(dialog).getByRole("button", { name: en.catalog.admin.scopeDialog.next }),
     );
+    // the replaced components: a group with its help line, each one a row
+    const replaced = await within(dialog).findByRole("region", {
+      name: new RegExp(en.catalog.admin.impact.groups.replaced),
+    });
+    expect(within(replaced).getByText(en.catalog.admin.impact.replaced)).toBeTruthy();
+    expect(within(replaced).getByRole("listitem").textContent).toContain("summarize");
+    const clashes = within(dialog).getByRole("list", {
+      name: en.catalog.admin.impact.groups.conflicts,
+    });
     expect(
-      await within(dialog).findByText(
-        fill(en.catalog.admin.impact.replaced, { names: "summarize" }),
-      ),
-    ).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        fill(en.catalog.admin.impact.conflictLine, { org: "Beta", name: "web-research" }),
+      within(clashes).getByText(
+        fill(en.catalog.admin.impact.conflictNote, { name: "web-research" }),
       ),
     ).toBeTruthy();
     expect(

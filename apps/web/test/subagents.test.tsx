@@ -5,7 +5,7 @@ import en from "../messages/en.json";
 import type { ConversationEvent } from "../src/lib/conversations";
 import { initialChatState, reduceChat } from "../src/lib/stream";
 import { buildTimeline, type TimelineEntry } from "../src/lib/timeline";
-import { bodyOf, type Call, json, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import {
   AGENTS,
   CONV,
@@ -15,9 +15,11 @@ import {
   MODELS,
   renderChatRoute,
   runStarted,
+  snapshotDefaults,
   userMsg,
 } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
+import { hydrateRouteWithCache, renderRouteEmptyCache } from "./support/query";
 
 /**
  * UI refresh B Task 21: sub-agents on the conversation page, wired to phase C's events and routes.
@@ -102,6 +104,30 @@ const waiting = (seq: number, extra: Record<string, unknown>) =>
     expiresAt: "2026-10-26T08:00:00.000Z",
     ...extra,
   });
+
+/** The child's approval `ap1` as its approver reads it. */
+const childApproval = (status: "pending" | "approved") => ({
+  id: "ap1",
+  conversationId: "ch2",
+  runId: "run-ch2",
+  callId: "x1",
+  toolKey: "Bash",
+  toolName: "Bash",
+  connector: null,
+  agent: { id: "ag1", name: "Lead" },
+  input: { command: "rm -rf build" },
+  requestedFor: "a1",
+  approverRole: null,
+  status,
+  scope: status === "approved" ? "conversation" : null,
+  decidedBy: status === "approved" ? "a1" : null,
+  decidedAt: status === "approved" ? "2026-10-26T06:01:00.000Z" : null,
+  expiresAt: "2026-10-26T08:00:00.000Z",
+  createdAt: "2026-10-26T06:00:00.000Z",
+  conversationPath: "/chat/c1?subagent=ch2",
+  parentConversationId: "c1",
+  initiatorAccountId: "a1",
+});
 
 /** The child's log: started, its task, a command, its reply. */
 function childEvents(running = false): ConversationEvent[] {
@@ -206,7 +232,7 @@ const treeOf = (id: string, children: { id: string; status: string }[]) => ({
 });
 
 function api(
-  extra: Record<string, (c: Call) => Response> = {},
+  extra: Record<string, (c: Call) => Response | Promise<Response>> = {},
   opts: { parent?: ConversationEvent[]; child?: ConversationEvent[] } = {},
 ) {
   return stubApi({
@@ -327,11 +353,12 @@ describe("the timeline's sub-agent groups", () => {
     });
   });
 
-  it("a finish status maps to the row (step and budget caps fail, aborted stops)", () => {
+  it("a finish status maps to the row (step and budget caps reach a limit, aborted stops)", () => {
     const status = (s: string) =>
       groups(build([...parentEvents(), finished(8, "k2", "ch2", s, 1)]))[0]?.rows[1]?.row.status;
-    expect(status("max_steps")).toBe("failed");
-    expect(status("budget")).toBe("failed");
+    expect(status("max_steps")).toBe("limit");
+    expect(status("budget")).toBe("limit");
+    expect(status("failed")).toBe("failed");
     expect(status("aborted")).toBe("aborted");
     expect(status("completed")).toBe("completed");
   });
@@ -627,8 +654,75 @@ describe("sub-agents on the conversation page", () => {
     );
   });
 
-  it("someone else's child approval is a waiting line (the starter decides)", async () => {
+  it("a reload paints a decided child approval decided: the server reads it, no pending card flashes", async () => {
+    const browser = api(
+      { [`GET ${ORG}/approvals/ap1`]: () => json(200, { approval: childApproval("approved") }) },
+      { parent: [...parentEvents(), waiting(8, { kind: "approval", approvalId: "ap1" })] },
+    );
+    // the server's HTML, as the browser paints it before hydration
+    let html = "";
+    const { container, errors, unmount } = await hydrateRouteWithCache(
+      "/chat/c1",
+      { ...snapshotDefaults("c1"), ...lastStubRoutes() },
+      {
+        locale: "en",
+        beforeHydrate: () => {
+          html =
+            document.querySelector('[data-entry="subagent-wait"] [data-role="approval"]')
+              ?.outerHTML ?? "";
+        },
+      },
+    );
+    try {
+      expect(html).toContain('data-approval-id="ap1"');
+      expect(html).not.toContain(">Approve<");
+      const card = container.querySelector(
+        '[data-entry="subagent-wait"] [data-role="approval"]',
+      ) as HTMLElement;
+      expect(within(card).queryByRole("button", { name: /approve/i })).toBeNull();
+      expect(errors).toEqual([]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(browser.filter((c) => c.url.includes("/approvals/"))).toEqual([]);
+      expect(within(card).queryByRole("button", { name: /approve/i })).toBeNull();
+    } finally {
+      unmount();
+    }
+  });
+
+  it("a child approval not read yet draws no pending card: only the line, then its state", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
     api(
+      {
+        [`GET ${ORG}/approvals/ap1`]: async () => {
+          await held;
+          return json(200, { approval: childApproval("approved") });
+        },
+      },
+      { parent: [...parentEvents(), waiting(8, { kind: "approval", approvalId: "ap1" })] },
+    );
+    // a client navigation: nothing cached, the views read in the browser
+    await renderRouteEmptyCache(
+      "/chat/c1",
+      { ...snapshotDefaults("c1"), ...lastStubRoutes() },
+      { locale: "en" },
+    );
+    const wait = await vi.waitFor(() => {
+      const c = document.querySelector('[data-entry="subagent-wait"]');
+      if (c === null) throw new Error("no wait yet");
+      return c as HTMLElement;
+    });
+    expect(wait.textContent).toContain(en.subagents.askedBy.replace("{name}", "Check tests"));
+    expect(wait.querySelector('[data-role="approval"]')).toBeNull();
+    await act(async () => release());
+    await vi.waitFor(() => expect(wait.querySelector('[data-role="approval"]')).not.toBeNull());
+    expect(within(wait).queryByRole("button", { name: /approve/i })).toBeNull();
+  });
+
+  it("someone else's child approval is a waiting line (the starter decides)", async () => {
+    const browser = api(
       {
         [`GET ${ORG}/approvals/ap1`]: () =>
           json(404, { error: { code: "approval.not_found", message: "x" } }),
@@ -636,14 +730,16 @@ describe("sub-agents on the conversation page", () => {
       { parent: [...parentEvents(), waiting(8, { kind: "approval", approvalId: "ap1" })] },
     );
     await renderChat();
-    // the waiting line, once the read said no (pending, the block shows until then)
+    // the waiting line from the first paint: the server read the 404, the browser keeps it
     const line = en.approval.otherApproverFor.replace("{tool}", "Bash").replace("{key}", "Bash");
-    const card = await vi.waitFor(() => {
-      const c = document.querySelector('[data-entry="subagent-wait"] [data-role="approval"]');
-      if (c?.textContent !== line) throw new Error("no line yet");
-      return c as HTMLElement;
-    });
+    const card = document.querySelector(
+      '[data-entry="subagent-wait"] [data-role="approval"]',
+    ) as HTMLElement;
+    expect(card?.textContent).toBe(line);
     expect(within(card).queryByRole("button", { name: /approve/i })).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(browser.filter((c) => c.url.includes("/approvals/"))).toEqual([]);
+    expect(card.textContent).toBe(line);
   });
 
   it("a child's question renders with its name; one for someone else is a line", async () => {

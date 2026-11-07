@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
@@ -353,6 +354,39 @@ async function startTree() {
   return { conv, t1, t2, t3, sibling };
 }
 
+/**
+ * Waits until these conversations are settled: none has a queued, running or waiting run, and none
+ * has a delivery that may still wake it (a `subagent_delivery` past its `consumed_seq` that is not
+ * the finish of a stopped child, the `wakeDecisionIn` rule). A snapshot of "no active run" alone is
+ * not the end state: a delivery wakes its conversation from an after-commit domain event, so the
+ * wake run can be inserted after the snapshot.
+ */
+async function settled(convs: string[], label: string) {
+  await waitFor(
+    async () => {
+      const active = await db
+        .selectFrom("runs")
+        .select("id")
+        .where("conversation_id", "in", convs)
+        .where("status", "in", ["queued", "running", "waiting"])
+        .executeTakeFirst();
+      if (active) return null;
+      const wake = await db
+        .selectFrom("conversation_events as e")
+        .innerJoin("conversations as c", "c.id", "e.conversation_id")
+        .select("e.seq")
+        .where("e.conversation_id", "in", convs)
+        .where("e.type", "=", "subagent_delivery")
+        .whereRef("e.seq", ">", "c.consumed_seq")
+        .where(sql<boolean>`e.payload ->> 'status' IS DISTINCT FROM 'aborted'`)
+        .executeTakeFirst();
+      return wake ? null : true;
+    },
+    20_000,
+    label,
+  );
+}
+
 /** The `run_aborted` accounts of a conversation's log. */
 async function abortedBy(conv: string) {
   return ofType(await eventsOf(db, conv), "run_aborted").map((e) => e.payload.byAccountId);
@@ -439,6 +473,9 @@ describe("stopping a sub-agent stops its descendants", () => {
     );
     const d3 = await onlyChild(d2.conversationId, "D3");
     await childrenIn([d1, d2, d3], { [d1.runId]: "completed", [d2.runId]: "completed" });
+    // D2's finish woke D1 (agent map spec §5.3) unless D1's run absorbed it: wait until D1 has
+    // handled it, so the stop finds D1 idle with only D3 working, and no wake starts after it
+    await settled([d1.conversationId, d2.conversationId], "D1 and D2 idle");
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${d1.conversationId}/abort`,
@@ -446,21 +483,9 @@ describe("stopping a sub-agent stops its descendants", () => {
     expect(res.statusCode, res.body).toBe(202);
     await allStopped([d3.runId]);
     expect(await abortedBy(d3.conversationId)).toEqual([ownerId]);
-    // a subtree with nothing working answers run.not_active (once the wakes the finished
-    // deliveries started, agent map spec §5.3, have ended too)
-    await waitFor(
-      async () =>
-        (await db
-          .selectFrom("runs")
-          .select("id")
-          .where(
-            "conversation_id",
-            "in",
-            [d1, d2, d3].map((d) => d.conversationId),
-          )
-          .where("status", "in", ["queued", "running", "waiting"])
-          .executeTakeFirst()) === undefined,
-      20_000,
+    // a subtree with nothing working answers run.not_active (D3's aborted finish wakes no one)
+    await settled(
+      [d1, d2, d3].map((d) => d.conversationId),
       "the subtree idle",
     );
     const again = await owner({

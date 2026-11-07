@@ -444,6 +444,23 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     const reminders = events.flatMap((e) => (e.type === "reminder" ? [e.payload.text] : []));
     expect(reminders.some((t) => t.startsWith("The following tools are unavailable"))).toBe(true);
     expect(reminders.some((t) => t.startsWith("You are close to the step limit"))).toBe(true);
+    // the probe switched off and on: each run's first request tells the model (tool naming spec
+    // §9.1), rendered as a system message and rebuilt from the log below
+    const changes = events.flatMap((e) => (e.type === "tools_changed" ? [e.payload] : []));
+    expect(changes).toHaveLength(2);
+    expect(changes[0]?.added).toEqual([]);
+    expect(changes[0]?.removed).toContain(echoKey);
+    expect(changes[1]?.added).toEqual(changes[0]?.removed);
+    expect(changes[1]?.removed).toEqual([]);
+    const notices = sent.flatMap((r) =>
+      r.messages.filter(
+        (m) =>
+          m.role === "system" &&
+          typeof m.content === "string" &&
+          m.content.startsWith("Your tools changed."),
+      ),
+    );
+    expect(notices.length).toBeGreaterThan(0);
     const calls = modelCalls(events);
     expect(calls.some((c) => c.payload.request.catalog !== undefined)).toBe(true);
     expect(calls.some((c) => c.payload.request.tools?.some((t) => t.key === echoKey))).toBe(true);
@@ -599,6 +616,92 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
       content:
         'Sub-agent sa_other ("Check the build") failed (model.unavailable): The model provider is unavailable.',
     });
+    await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("a handed-back finish: an old log's delivery keeps its line, a new log has only subagent_finished; zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-looper", model: "loop-1" },
+      { tools: PROBE_TOOLS },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "loop:400");
+    await waitForEvent(db, conv, (e) => e.type === "model_call");
+    const report = (subagentId: string, childRunId: string) => ({
+      type: "subagent_delivery" as const,
+      idemKey: `test_report:${childRunId}`,
+      payload: {
+        subagentId,
+        childRunId,
+        description: "Survey the module",
+        kind: "report" as const,
+        text: `Report of ${subagentId}.`,
+        triggerAccountId: ownerId,
+      },
+    });
+    const finished = (subagentId: string, childRunId: string) => ({
+      type: "subagent_finished" as const,
+      idemKey: `subagent_finished:${childRunId}`,
+      payload: {
+        subagentId,
+        childRunId,
+        callId: `call-${subagentId}`,
+        status: "completed" as const,
+        toolCalls: 1,
+        durationMs: 10,
+        usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      },
+    });
+    const oldRun = randomUUID();
+    const newRun = randomUUID();
+    const appended = await k.app.get(EventLog).append(conv, [
+      // written before 2026-11-07: report, subagent_finished and a handed-back finished delivery
+      report("sa_old", oldRun),
+      finished("sa_old", oldRun),
+      {
+        type: "subagent_delivery",
+        idemKey: `test_finished:${oldRun}`,
+        payload: {
+          subagentId: "sa_old",
+          childRunId: oldRun,
+          description: "Survey the module",
+          kind: "finished",
+          status: "completed",
+          text: "",
+          handedBack: true,
+          triggerAccountId: ownerId,
+        },
+      },
+      // written now: no finished delivery after a handback that completed
+      report("sa_new", newRun),
+      finished("sa_new", newRun),
+    ]);
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    // the newest absorbable event (subagent_finished is not one)
+    const last = appended.at(-2)?.seq ?? Infinity;
+    const calls = modelCalls(await eventsOf(db, conv));
+    const absorbing = calls.findIndex((c) => (c.payload.request.absorbedUpToSeq ?? 0) >= last);
+    expect(absorbing).toBeGreaterThan(0);
+    const system = (sent[absorbing]?.messages ?? []).filter(
+      (m) => m.role === "system" && String(m.content).startsWith("Sub-agent "),
+    );
+    expect(system).toEqual([
+      {
+        role: "system",
+        content: 'Sub-agent sa_old ("Survey the module") handed back a report:\nReport of sa_old.',
+      },
+      {
+        role: "system",
+        content:
+          'Sub-agent sa_old ("Survey the module") completed; its report was already delivered.',
+      },
+      {
+        role: "system",
+        content: 'Sub-agent sa_new ("Survey the module") handed back a report:\nReport of sa_new.',
+      },
+    ]);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 

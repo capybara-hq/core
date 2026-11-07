@@ -1,6 +1,15 @@
 "use client";
 
-import { Button, Dialog, Skeleton, Stack, Switch, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Dialog,
+  Skeleton,
+  Stack,
+  Subsection,
+  Switch,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -121,24 +130,26 @@ export function OrgToolSwitches({
   if (read.data === undefined) {
     if (read.error)
       return (
-        <Stack gap={8}>
+        <Subsection title={t("title")} variant="divided">
           <FormError message={t("loadFailed")} />
           <Stack direction="row">
             <Button density="dense" onClick={() => void read.refetch()}>
               {t("retry")}
             </Button>
           </Stack>
-        </Stack>
+        </Subsection>
       );
-    return <Skeleton rows={2} />;
+    return (
+      <Subsection title={t("title")} variant="divided">
+        <Skeleton rows={2} />
+      </Subsection>
+    );
   }
   const tools = read.data.tools;
   if (tools.length === 0) return null;
+  // A region of the extension's Sheet (spec §6.7), titled 工具
   return (
-    <Stack gap={8}>
-      <Text variant="small" tone="muted">
-        {t("title")}
-      </Text>
+    <Subsection title={t("title")} variant="divided">
       {canEdit && (
         <Text variant="prose" tone="muted">
           {t("hint")}
@@ -218,6 +229,6 @@ export function OrgToolSwitches({
           </Stack>
         </Dialog>
       )}
-    </Stack>
+    </Subsection>
   );
 }

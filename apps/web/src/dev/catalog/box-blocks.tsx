@@ -8,14 +8,18 @@ import {
   DataTable,
   Field,
   FormSection,
+  ImpactPreview,
   Input,
   ItemList,
   ItemListItem,
+  KeyValue,
   Select,
   Subsection,
   Text,
+  ToolPolicyList,
+  type ToolPolicyRow,
 } from "@capybara-hq/design";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { RefBlock } from "./ref-block";
 
 // "One box is enough" (spec §1 principle 7, acceptance item AB): the groupings inside a box. The
@@ -168,6 +172,30 @@ function subsectionBlocks(): ReactNode {
           </Subsection>
         </FormSection>
       </RefBlock>
+      {/* The regions of a Sheet's body (an extension's Sheet): divided subsections, an h3 over
+          its content with no guide, each after the first under a line-soft hairline. */}
+      <RefBlock id="subsection-divided" width={720} pad>
+        <Card title="OpenAI 兼容模型">
+          <Subsection title="部署配置" variant="divided">
+            <Field label="端点">
+              <Input defaultValue="" placeholder="https://" />
+            </Field>
+          </Subsection>
+          <Subsection title="状态" variant="divided">
+            <KeyValue
+              rows={[
+                { k: "状态", v: "待配置" },
+                { k: "来源", v: "预装" },
+              ]}
+            />
+          </Subsection>
+          <Subsection title="权限" variant="divided">
+            <Text variant="small" tone="muted">
+              提供 model-provider@1
+            </Text>
+          </Subsection>
+        </Card>
+      </RefBlock>
     </>
   );
 }
@@ -199,8 +227,135 @@ function calloutBlocks(): ReactNode {
   );
 }
 
+/** What a change would do (spec §6.35): divided groups of rows, a warn note under its row. */
+function impactPreviewBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="impact-preview-default" width={640} pad>
+        <Card title="关闭 crm">
+          <ImpactPreview
+            empty="没有影响"
+            groups={[
+              {
+                id: "agents",
+                title: "受影响的智能体",
+                items: [
+                  { id: "a1", title: "研究助手", notes: [{ text: "技能 crm-notes、连接器 crm" }] },
+                ],
+              },
+              {
+                id: "removed",
+                title: "将移除",
+                items: [
+                  { id: "s", title: "crm-notes", code: "技能" },
+                  {
+                    id: "c",
+                    title: "crm",
+                    code: "连接器",
+                    notes: [{ text: "凭据会清空", tone: "warn" }],
+                  },
+                ],
+              },
+              { id: "kept", title: "保留", items: [], empty: "没有保留的组件" },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="impact-preview-empty" width={640} pad>
+        <Card title="设置范围">
+          <ImpactPreview empty="没有组织受影响" groups={[{ id: "orgs", title: "受影响的组织" }]} />
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
+const POLICIES = [
+  { value: "", label: "默认" },
+  { value: "ask", label: "需审批" },
+  { value: "deny", label: "禁止" },
+];
+
+/** A ToolPolicyList that keeps its own state (the catalog is clickable). */
+function LiveToolPolicyList({
+  label,
+  rows: initial,
+  search,
+  selectAll,
+}: {
+  label: string;
+  rows: ToolPolicyRow[];
+  search?: boolean;
+  selectAll?: boolean;
+}) {
+  const [rows, setRows] = useState(initial);
+  const check = (ids: string[], next: boolean) =>
+    setRows((cur) =>
+      cur.map((r) =>
+        ids.includes(r.id) ? { ...r, checked: next, policy: next ? r.policy : "" } : r,
+      ),
+    );
+  return (
+    <ToolPolicyList
+      label={label}
+      rows={rows}
+      policyOptions={POLICIES}
+      onCheck={(id, next) => check([id], next)}
+      onPolicy={(id, v) =>
+        setRows((cur) => cur.map((r) => (r.id === id ? { ...r, policy: v } : r)))
+      }
+      {...(selectAll ? { onCheckAll: check } : {})}
+      {...(search ? { search } : {})}
+    />
+  );
+}
+
+/** Tools with their policy next to them (spec §6.36), as the agent page's 工具 section draws them. */
+function toolPolicyListBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="tool-policy-list-default" width={640} pad>
+        <Card title="内置工具">
+          <LiveToolPolicyList
+            label="内置工具"
+            rows={[
+              { id: "ask", label: "向用户提问", checked: true, policy: "" },
+              { id: "read", label: "读取存档的工具结果", checked: true, policy: "ask" },
+              { id: "skill", label: "编写技能", checked: false, policy: "" },
+              {
+                id: "web",
+                label: "搜索网页",
+                checked: true,
+                policy: "deny",
+                note: { text: "不可用：本组织没有可用的网页提供方", tone: "warn" },
+              },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+      <RefBlock id="tool-policy-list-select-all" width={480} pad>
+        <Card title="Docs">
+          <LiveToolPolicyList
+            label="Docs 的工具"
+            search
+            selectAll
+            rows={[
+              { id: "search", label: "Search documents", checked: true, policy: "" },
+              { id: "create", label: "Create document", checked: true, policy: "ask" },
+              { id: "delete", label: "Delete document", checked: false, policy: "" },
+              { id: "list", label: "List folders", checked: false, policy: "" },
+            ]}
+          />
+        </Card>
+      </RefBlock>
+    </>
+  );
+}
+
 export const BOX_BLOCKS = {
   callout: calloutBlocks,
+  "impact-preview": impactPreviewBlocks,
   "item-list": itemListBlocks,
   subsection: subsectionBlocks,
+  "tool-policy-list": toolPolicyListBlocks,
 } as const;

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { designZh } from "./support/chat";
-import { hydrated } from "./support/nav";
+import { HOME_URL, hydrated, NEW_CHAT_URL } from "./support/nav";
 import { selectOption } from "./support/select";
 import { LOGIN, ORG_NAME, PASSWORD } from "./support/sign-in";
 
@@ -31,7 +31,7 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
 
   // setting up lands home, the new conversation; a new org has no agent: the setup layout there
   // (the setup sidebar, not the workspace's; web-order §3.8, web-SSR §4)
-  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page).toHaveURL(HOME_URL);
   const setup = page.locator('[data-template="SetupPage"]');
   await expect(setup).toBeVisible();
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);
@@ -58,7 +58,7 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   );
   await page.getByRole("button", { name: zh.agents.form.submit }).click();
   // the new agent makes the org ready: a new conversation with it, in the shell
-  await expect(page).toHaveURL(/\/chat\?agent=[^&]+$/);
+  await expect(page).toHaveURL(NEW_CHAT_URL);
   await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { hydrated } from "./support/nav";
+import { HOME_URL, hydrated } from "./support/nav";
 import { selectOption } from "./support/select";
 import { ORG_NAME, signIn } from "./support/sign-in";
 
@@ -63,7 +63,7 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
     await guestPage.getByLabel(zh.invite.passwordLabel).fill("invitee-password-123");
     await guestPage.getByLabel(zh.invite.displayNameLabel).fill(invitee);
     await guestPage.getByRole("button", { name: zh.invite.signup }).click();
-    await expect(guestPage).toHaveURL(/\/chat$/);
+    await expect(guestPage).toHaveURL(HOME_URL);
     await expect
       .poll(async () => {
         const me = await guestPage.request.get("/api/v1/me");
