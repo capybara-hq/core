@@ -12,7 +12,12 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { ActorOpts } from "./catalog.service.js";
-import { ComponentKindSchema as Kind, OrgComponentListQuery } from "./component-scope.schemas.js";
+import {
+  ComponentParams,
+  ComponentListQuery as ListQuery,
+  OrgComponentListQuery,
+  ComponentSwitchBody as SwitchBody,
+} from "./component-scope.schemas.js";
 import {
   type ComponentScopePreview,
   ComponentScopeService,
@@ -26,9 +31,6 @@ import { PlatformComponents, type UploadedComponentVersion } from "./platform-co
 const Scope = z.enum(["all", "optional", "named"]);
 const Orgs = z.array(z.string().min(1).max(128)).max(1000);
 const Hash = z.string().min(1).max(128);
-
-const ComponentParams = z.object({ kind: Kind, id: z.string().min(1).max(128) });
-const ListQuery = z.object({ kind: Kind }).strict();
 
 /** `{ scope, orgs? }`, `{ disabled: true }` or `{ follow: true }`: exactly one. */
 const PreviewBody = z
@@ -68,15 +70,6 @@ const ScopeBody = z
 
 const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
 const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
-const SwitchBody = z
-  .object({
-    enabled: z.boolean(),
-    confirm: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .optional(),
-  })
-  .strict();
 
 const IdParams = z.object({ id: z.string().min(1).max(128) });
 const TemplateVersionBody = z.object({ content: z.string().min(1).max(400_000) }).strict();

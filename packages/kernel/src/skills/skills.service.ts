@@ -1262,6 +1262,7 @@ export class SkillsService {
     skillId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const r = await this.db
       .updateTable("skills")
@@ -1279,7 +1280,7 @@ export class SkillsService {
       orgId,
       action: "skill.deleted",
       target: skillId,
-      detail: { name: r.name },
+      detail: { name: r.name, ...auditDetail },
     });
   }
 }

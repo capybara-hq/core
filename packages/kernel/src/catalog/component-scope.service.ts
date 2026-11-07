@@ -723,6 +723,7 @@ export class ComponentScopeService {
     id: string,
     body: { enabled: boolean; confirm?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<ComponentSwitchResult> {
     await this.orgLock.lockAndAuthorize(orgId, actor, ACTION[kind]);
     // The rows an unshare narrows (ruling P3-25) are locked before the scope is read, in its order
@@ -811,7 +812,14 @@ export class ComponentScopeService {
         orgId,
         action: "component.org_switched",
         target: c.id,
-        detail: { kind, name: c.name, plugin: c.plugin, from: sw, to: body.enabled },
+        detail: {
+          kind,
+          name: c.name,
+          plugin: c.plugin,
+          from: sw,
+          to: body.enabled,
+          ...auditDetail,
+        },
       });
     }
     return {
@@ -825,6 +833,58 @@ export class ComponentScopeService {
         on: componentOn(c, p, listed, body.enabled),
         locked: componentLocked(c, p),
       },
+    };
+  }
+
+  /**
+   * What {@link setSwitch} would do to the org's switch, read-only (the Platform tool's preview):
+   * the component as the org sees it, whether it is `stopped` on the deployment, and for one that
+   * is on and can be switched off the preview of the agents that lose it with the `confirm` hash
+   * the switch-off needs (both null otherwise). Unknown or not offered -> 404 `component.not_found`.
+   */
+  async switchPreview(
+    orgId: string,
+    kind: ComponentKind,
+    id: string,
+  ): Promise<{
+    component: OrgComponentView;
+    stopped: boolean;
+    preview: {
+      agents: { id: string; name: string; refs: string[] }[];
+      connectorsKept: number;
+    } | null;
+    confirm: string | null;
+  }> {
+    const [c] = await loadComponents(this.db, kind, { ids: [id] });
+    if (!c) throw notFound();
+    const st = await loadScopeState(this.db, kind, [c]);
+    const p = pluginFactsOf(st, c.itemId, orgId);
+    const listed = listedIn(st, c.id, orgId);
+    const sw = switchOf(st, c.id, orgId);
+    const on = componentOn(c, p, listed, sw);
+    const stopped = c.disabled || (p?.live === true && p.disabled);
+    const offered = componentOffered(
+      { ...c, disabled: false },
+      p && { ...p, disabled: false },
+      listed,
+    );
+    if (!on && !offered) throw notFound();
+    const locked = componentLocked(c, p);
+    let preview = null;
+    let confirm = null;
+    if (on && !locked) {
+      preview = {
+        agents: await agentsUsing(this.db, orgId, kind, [c.id]),
+        connectorsKept:
+          kind === "connector_template" ? await connectorsMadeFrom(this.db, orgId, c.id) : 0,
+      };
+      confirm = switchHash(orgId, c, preview);
+    }
+    return {
+      component: { kind, id: c.id, name: c.name, plugin: c.plugin, switch: sw, on, locked },
+      stopped,
+      preview,
+      confirm,
     };
   }
 

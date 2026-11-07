@@ -7,6 +7,7 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
@@ -30,6 +31,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   RequestsOperations,
   ConnectorsOperations,
   ExtensionsOperations,
+  ComponentsOperations,
 ] as const;
 
 /**

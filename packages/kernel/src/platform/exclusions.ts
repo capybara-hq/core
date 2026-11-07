@@ -357,57 +357,38 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // components
   {
     route: "POST /api/v1/admin/components/skill/:id/versions",
-    category: "later",
-    reason: "Publishing a platform skill version, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "transport",
+    reason: "Uploads a platform skill package as raw bytes",
   },
   {
     route: "POST /api/v1/admin/components/agent_template/:id/versions",
-    category: "later",
-    reason: "Publishing a platform agent template version, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/components",
-    category: "later",
-    reason: "Platform component list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/components/:kind/:id/versions",
-    category: "later",
-    reason: "Component version history an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason:
+      "Publishing platform agent template content is a super admin's decision made in the admin console",
   },
   {
     route: "POST /api/v1/admin/components/:kind/:id/scope/preview",
-    category: "later",
-    reason: "Component scope preview, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason:
+      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
   },
   {
     route: "PUT /api/v1/admin/components/:kind/:id/scope",
-    category: "later",
-    reason: "Component scope change, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason:
+      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
   },
   {
     route: "PUT /api/v1/admin/components/:kind/:id/disabled",
-    category: "later",
-    reason: "Disabling a component, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason:
+      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
   },
   {
     route: "PUT /api/v1/admin/components/:kind/:id/shown",
-    category: "later",
-    reason: "Showing or hiding a component, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/components/:kind/:id/switch",
-    category: "later",
-    reason: "Org switch for a platform component, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "human-only",
+    reason:
+      "Component scope, disable and visibility are platform governance the super admin does in the admin console; plugin-level changes are the plugins operations",
   },
   // marketplaces
   {
@@ -1244,24 +1225,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/skills/uploads",
     category: "transport",
     reason: "Uploads a skill archive as multipart bytes",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/skills/:id/shareable",
-    category: "later",
-    reason: "Sharing an org skill with other orgs, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/skills/:id/delete-preview",
-    category: "later",
-    reason: "Skill delete preview an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/skills/:id",
-    category: "later",
-    reason: "Skill deletion, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // approvals
   {
