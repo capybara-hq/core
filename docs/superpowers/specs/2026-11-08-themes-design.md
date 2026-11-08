@@ -224,8 +224,10 @@ Three levels, most specific first:
 - **Before sign-in** (auth pages, `/invite`, errors outside the workspace): the platform default.
   Only platform-owned `all` themes can be the platform default, so nothing org-specific leaks to
   an anonymous page.
-- The platform default can only be a theme whose scope is `all` (designer's call): a default that
-  is off in some org would make that org's fallback differ from the auth pages for no reason.
+- The platform default can only be a platform-owned theme whose scope is `all` **(decided,
+  2026-11-08)**: a default that is off in some org would make that org's fallback differ from the
+  auth pages. Narrowing the scope of the theme that is the platform default is refused until
+  another default is chosen (`theme.platform_default`, 409, naming the setting).
 
 ## 8. Delivering a theme to the web
 
@@ -268,7 +270,7 @@ Three levels, most specific first:
   writes, confirmed and never rememberable (Platform tool rules). The delivery routes are excluded
   as `transport`. `check:platform-ops` enforces this.
 - Error codes: `theme.invalid`, `theme.unreadable` (import), `theme.not_available` (a `PUT` naming
-  a theme that is not on where it is set; 400).
+  a theme that is not on where it is set; 400), `theme.platform_default` (§7; 409).
 
 ## 10. Pages
 
@@ -321,10 +323,8 @@ component (`ThemeSwatch`), whose colors come from the theme's data, not from lit
    `Platform` mirrors.
 3. Web: SSR link, `Logo` input, the three 外观 sections, the component tab.
 
-## 15. Open questions for review
+## 15. Review decisions
 
-1. Should the platform default be allowed to be an `optional` / `named` theme (falling back per
-   org), or stay `all`-only as proposed (§7)?
-
-Answered on 2026-11-08: the personal pick is per person, not per org (§7); a theme may replace
-the wordmark as well as the mark (§4.3); every theme's CSS and assets are public (§8).
+Answered on 2026-11-08, no open questions left: the platform default is `all`-only (§7); the
+personal pick is per person, not per org (§7); a theme may replace the wordmark as well as the
+mark (§4.3); every theme's CSS and assets are public (§8).
