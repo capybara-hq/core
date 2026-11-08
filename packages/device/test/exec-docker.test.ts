@@ -217,6 +217,29 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(BigInt(rb.stdout.trim())).toBeLessThan(BigInt(rc.stdout.trim()));
   });
 
+  it("aborting the waiter being served does not drop the next waiter", async () => {
+    const open = new DockerExecutor({
+      dir,
+      environmentId: envId,
+      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+    });
+    await open.exec(execArgs("true"), live); // container exists, network closed
+    const ac = new AbortController();
+    // The head waiter needs a network switch (docker call); abort it while it is being served.
+    const head = open.exec(execArgs("true", { limits: { ...LIMITS, egress: "open" } }), ac.signal);
+    const next = open.exec(execArgs("echo next"), live);
+    await sleep(20);
+    ac.abort();
+    await expect(head).rejects.toThrow();
+    expect((await next).stdout).toBe("next\n");
+    // The aborted head's slot was given back: another switch still goes through.
+    const again = await open.exec(
+      execArgs("echo again", { limits: { ...LIMITS, egress: "open" } }),
+      live,
+    );
+    expect(again.stdout).toBe("again\n");
+  });
+
   it("applies the policy's cpu and memory ceilings", async () => {
     const limited = new DockerExecutor({
       dir,

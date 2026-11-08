@@ -367,8 +367,7 @@ export class DockerExecutor implements Executor {
       };
       const onAbort = (): void => {
         w.dead = true;
-        const i = this.queue.indexOf(w);
-        if (i >= 0) this.queue.splice(i, 1);
+        this.dequeue(w);
         rejectWait(signal.reason);
       };
       signal.addEventListener("abort", onAbort, { once: true });
@@ -394,13 +393,18 @@ export class DockerExecutor implements Executor {
     });
   }
 
+  private dequeue(w: Waiter): void {
+    const i = this.queue.indexOf(w);
+    if (i >= 0) this.queue.splice(i, 1);
+  }
+
   private async drain(): Promise<void> {
     do {
       this.dirty = false;
       while (this.queue.length > 0) {
         const w = this.queue[0] as Waiter;
         if (w.dead) {
-          this.queue.shift();
+          this.dequeue(w);
           continue;
         }
         let served: boolean;
@@ -418,12 +422,13 @@ export class DockerExecutor implements Executor {
             return true;
           });
         } catch (e) {
-          this.queue.shift();
+          // An abort while being served already removed it; never remove another waiter.
+          this.dequeue(w);
           if (!w.dead) w.reject(e);
           continue;
         }
         if (!served) break;
-        this.queue.shift();
+        this.dequeue(w);
         if (w.dead) {
           // Aborted while being served: give back the slot if it was counted.
           if (w.counted) this.inflight--;
