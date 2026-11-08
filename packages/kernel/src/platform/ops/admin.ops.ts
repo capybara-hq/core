@@ -130,7 +130,7 @@ export class AdminOperations implements OnModuleInit {
           },
           {
             code: "theme.not_available",
-            next: "Choose a platform theme whose scope is all and that is not disabled (plugins.components with kind theme lists them), or { id: null } for the built-in theme.",
+            next: "The platform default must be a platform theme whose scope is all, not disabled, and on in every organization. When the details list orgs, the theme is off in those organizations: tell the person their names, then choose another theme (plugins.components with kind theme lists them) or have it switched on in those organizations first; { id: null } sets the built-in theme.",
           },
         ],
         precheck: async (i) => {
