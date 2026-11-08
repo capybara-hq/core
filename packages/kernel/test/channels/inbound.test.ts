@@ -555,10 +555,16 @@ async function pushAndSettleAnon(e: Parameters<FakeChannelServer["push"]>[1]): P
 }
 
 describe("/env: the IM default environment", () => {
+  /**
+   * Sends a direct message and returns the bot's reply to it, matched by the reply's idempotency
+   * key: model replies of earlier conversations are delivered to the same chat asynchronously and
+   * may land first, which would hand back the wrong text before the command took effect.
+   */
   const sendDm = async (id: string, text: string): Promise<string> => {
     const n = im.sent.length;
+    const key = idempotencyKey(`${connId}-${id}-reply`);
     im.push(connId, dm(id, "u-owner", text));
-    const s = await sentAfter(n, "dm-u-owner");
+    const s = await sentAfter(n, "dm-u-owner", (x) => x.idempotencyKey === key);
     return s.message.text ?? "";
   };
   const newEnvironment = async (name: string): Promise<string> => {
