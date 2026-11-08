@@ -236,7 +236,8 @@ export function describeReview(r: PluginReview): string[] {
  * folder, stages it; git goes through the same network rules as the API, `marketplaces.*`), prints
  * the review (source, digest, provenance, extension permissions, skills, connector templates,
  * dependencies) and, after `--yes` or an interactive yes, confirms it, which also installs and
- * enables the plugin's extension on the deployment. Acts as the
+ * enables the plugin's extension on the deployment (left disabled, and said why, while another
+ * enabled extension provides one of its single-provider extension points). Acts as the
  * CLI operator (no account, like `capybara extensions install`). Exit code: 0 / 1 (failure, not
  * confirmed, or the extension deploy failed).
  */
@@ -286,6 +287,14 @@ export async function runPluginsImport(
       if (deploy.result === "enabled") {
         await cli.publishChanged(deploy.name);
         io.stdout.write(`Extension ${deploy.name} ${deploy.version} installed and enabled.\n`);
+        return 0;
+      }
+      if (deploy.result === "installed" && deploy.singleProvider !== undefined) {
+        // Another enabled extension provides the same single-provider extension point
+        await cli.publishChanged(deploy.name);
+        io.stdout.write(
+          `Extension ${deploy.name} ${deploy.version} installed but left disabled: ${deploy.message} (capybara extensions disable ${deploy.singleProvider.enabled.name}, then capybara extensions enable ${deploy.name}).\n`,
+        );
         return 0;
       }
       io.stderr.write(
