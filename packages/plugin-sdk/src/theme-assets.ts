@@ -83,10 +83,30 @@ const SVG_ELEMENTS: ReadonlySet<string> = new Set([
 const XML_ATTRS: ReadonlySet<string> = new Set(["space", "lang"]);
 /** Root attributes dropped: the design system sizes the logo to its slot. */
 const ROOT_DROPPED: ReadonlySet<string> = new Set(["width", "height", "class"]);
-const NUMBER = String.raw`[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?`;
-const VIEWBOX_RE = new RegExp(`^\\s*${NUMBER}(?:(?:\\s+|\\s*,\\s*)${NUMBER}){3}\\s*$`);
-/** CSS functions that load a resource; only `#id` targets are allowed. */
-const RESOURCE_FN_RE = /(?:url|src)\(\s*['"]?\s*(.?)/gi;
+/** Characters of a viewBox value; longer values are refused before they are split. */
+const VIEWBOX_MAX_CHARS = 128;
+/** Characters a viewBox number may use (checked per character class, no backtracking). */
+const VIEWBOX_NUMBER_RE = /^[-+.0-9eE]+$/;
+/**
+ * The only functions an attribute value may call: colors and transforms. `url` is allowed only as
+ * `url(#id)` (checked separately); everything else (`image-set`, `cross-fade`, `element`,
+ * `src`, `var`, ...) is refused, since some of them load resources from quoted strings.
+ */
+const ALLOWED_FUNCTIONS: ReadonlySet<string> = new Set([
+  "url",
+  "rgb",
+  "rgba",
+  "hsl",
+  "hsla",
+  "translate",
+  "rotate",
+  "scale",
+  "matrix",
+  "skewx",
+  "skewy",
+]);
+const isIdentChar = (c: string) => /[A-Za-z0-9_-]/.test(c);
+const isSpace = (c: string) => c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: whitespace and control characters are stripped before matching schemes
 const IGNORED_IN_SCHEME_RE = /[\u0000- \u007f]/g;
 
@@ -111,13 +131,44 @@ function checkValue(el: string, attr: string, value: string): void {
   if (squeezed.includes("javascript:") || squeezed.includes("vbscript:")) {
     reject(`attribute ${attr} on <${el}> must not contain javascript: or vbscript: URLs`);
   }
-  // CSS escapes could spell `url(` in a presentation attribute.
+  // CSS escapes could spell a function name; quoted strings are how CSS functions take URLs.
   if (value.includes("\\")) reject(`attribute ${attr} on <${el}> must not contain "\\"`);
-  for (const m of value.matchAll(RESOURCE_FN_RE)) {
-    if (m[1] !== "#") {
-      reject(`attribute ${attr} on <${el}> may only reference url(#id) inside the document`);
+  if (value.includes("'") || value.includes('"')) {
+    reject(`attribute ${attr} on <${el}> must not contain quotes`);
+  }
+  // Linear scan: at every "(", walk back over spaces and the function name.
+  for (let i = value.indexOf("("); i !== -1; i = value.indexOf("(", i + 1)) {
+    let end = i;
+    while (end > 0 && isSpace(value.charAt(end - 1))) end -= 1;
+    let start = end;
+    while (start > 0 && isIdentChar(value.charAt(start - 1))) start -= 1;
+    const fn = value.slice(start, end).toLowerCase();
+    if (!ALLOWED_FUNCTIONS.has(fn)) {
+      reject(
+        `attribute ${attr} on <${el}> must not call ${fn === "" ? "a bare (" : `${fn}()`}; only url(#id), colors and transforms are allowed`,
+      );
+    }
+    if (fn === "url") {
+      let j = i + 1;
+      while (j < value.length && isSpace(value.charAt(j))) j += 1;
+      if (value.charAt(j) !== "#") {
+        reject(`attribute ${attr} on <${el}> may only reference url(#id) inside the document`);
+      }
     }
   }
+}
+
+/** `min-x min-y width height`, width and height > 0; undefined when malformed. */
+function parseViewBox(v: string): [number, number, number, number] | undefined {
+  if (v.length > VIEWBOX_MAX_CHARS) return undefined;
+  const parts = v
+    .trim()
+    .split(/[\s,]+/)
+    .filter((p) => p !== "");
+  if (parts.length !== 4 || !parts.every((p) => VIEWBOX_NUMBER_RE.test(p))) return undefined;
+  const n = parts.map(Number) as [number, number, number, number];
+  if (!n.every(Number.isFinite) || n[2] <= 0 || n[3] <= 0) return undefined;
+  return n;
 }
 
 /** The serialized attributes of an allowed SVG element; rejects the forbidden ones. */
@@ -166,11 +217,21 @@ function attributesOf(tag: SaxesTagNS, isRoot: boolean, usesXlink: { value: bool
  * any entity declaration), processing instructions, a non-UTF-8 encoding, elements outside the
  * SVG allowlist (`script`, `foreignObject`, `style`, …) or in the XHTML namespace, `style` and
  * `on*` attributes, `href` / `xlink:href` not starting with `#`, `javascript:` / `vbscript:` in
- * any value, `url(…)` / `src(…)` not pointing at `#id`, and animation of `href`, `style` or event
+ * any value, quotes or a backslash in attribute values, any function other than `url(#id)`, colors
+ * (`rgb`, `rgba`, `hsl`, `hsla`) and transforms (`translate`, `rotate`, `scale`, `matrix`,
+ * `skewX`, `skewY`), a viewBox longer than 128 characters, and animation of `href`, `style` or event
  * handlers. Comments, the XML declaration and elements / attributes in other namespaces (editor
  * metadata) are dropped; CDATA becomes escaped text. Never throws.
  */
 export function sanitizeThemeSvg(bytes: Uint8Array): { svg: string } | { error: string } {
+  const r = sanitize(bytes);
+  return "error" in r ? r : { svg: r.svg };
+}
+
+/** {@link sanitizeThemeSvg} plus the root viewBox (for the favicon's squareness). */
+function sanitize(
+  bytes: Uint8Array,
+): { svg: string; viewBox: [number, number, number, number] } | { error: string } {
   if (bytes.length > THEME_LIMITS.svgBytes) {
     return { error: `SVG is larger than ${THEME_LIMITS.svgBytes} bytes` };
   }
@@ -190,6 +251,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): { svg: string } | { error: 
   /** The last emitted start tag still lacks its `>`. */
   let openPending = false;
   let sawRoot = false;
+  let rootBox: [number, number, number, number] = [0, 0, 0, 0];
   const closePending = () => {
     if (openPending) parts.push(">");
     openPending = false;
@@ -217,8 +279,11 @@ export function sanitizeThemeSvg(bytes: Uint8Array): { svg: string } | { error: 
         (a) => a.uri === "" && a.local === "viewBox",
       );
       if (viewBox === undefined) reject("the root <svg> must have a viewBox");
-      else if (!VIEWBOX_RE.test(viewBox.value)) {
-        reject("the root <svg> viewBox must be four numbers");
+      else {
+        const box = parseViewBox(viewBox.value);
+        if (box === undefined) {
+          reject("the root <svg> viewBox must be four numbers with a positive width and height");
+        } else rootBox = box;
       }
     }
     if (tag.uri !== SVG_NS) {
@@ -265,7 +330,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): { svg: string } | { error: 
   }
   if (!sawRoot) return { error: "the root element must be <svg>" };
   if (usesXlink.value) parts[xlinkAt] = ` xmlns:xlink="${XLINK_NS}"`;
-  return { svg: parts.join("") };
+  return { svg: parts.join(""), viewBox: rootBox };
 }
 
 const startsWith = (bytes: Uint8Array, sig: readonly number[]) =>
@@ -289,27 +354,33 @@ export function checkWoff2(bytes: Uint8Array): string | undefined {
  * {@link THEME_LIMITS}`.pngMinHeight` pixels, and at most {@link THEME_LIMITS}`.pngBytes`.
  */
 export function checkPng(bytes: Uint8Array): string | undefined {
+  const r = readPng(bytes);
+  return typeof r === "string" ? r : undefined;
+}
+
+/** {@link checkPng}, returning the IHDR size when the PNG passes. */
+function readPng(bytes: Uint8Array): { width: number; height: number } | string {
   if (bytes.length > THEME_LIMITS.pngBytes) {
     return `PNG is larger than ${THEME_LIMITS.pngBytes} bytes`;
   }
   if (!startsWith(bytes, PNG_SIG)) return "image is not a PNG file (no PNG signature)";
-  if (bytes.length < 24 || !IHDR.every((b, i) => bytes[12 + i] === b)) {
-    return "PNG has no IHDR header";
-  }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length < 24 || view.getUint32(8) !== 13 || !IHDR.every((b, i) => bytes[12 + i] === b)) {
+    return "PNG has no valid IHDR header";
+  }
   const width = view.getUint32(16);
   const height = view.getUint32(20);
   if (width === 0) return "PNG has a width of 0";
   if (height < THEME_LIMITS.pngMinHeight) {
     return `PNG must be at least ${THEME_LIMITS.pngMinHeight} px high, not ${height}`;
   }
-  return undefined;
+  return { width, height };
 }
 
 /**
  * Resolves and checks the asset files of a parsed theme: each `fonts[].file` ({@link checkWoff2})
  * and `logo.mark` / `logo.favicon` (`.svg` through {@link sanitizeThemeSvg}, `.png` through
- * {@link checkPng}). `files` holds the plugin's files keyed by their path without a leading
+ * {@link checkPng}); the favicon must be square (SVG viewBox or PNG width = height). `files` holds the plugin's files keyed by their path without a leading
  * `./`; the returned `assets` (the sanitized SVG bytes, the other files unchanged) use the same
  * keys. Errors are `<field>: <reason>`, English; the total input size of the theme's distinct
  * assets must stay within {@link THEME_LIMITS}`.assetsBytes`. That limit is per plugin, so a
@@ -344,11 +415,18 @@ export function validateThemeAssets(
   };
 
   const font = (b: Uint8Array) => checkWoff2(b) ?? b;
-  const image = (ref: string) => (b: Uint8Array) => {
-    if (/\.png$/i.test(ref)) return checkPng(b) ?? b;
+  const image = (ref: string, square: boolean) => (b: Uint8Array) => {
+    const notSquare = (w: number, h: number) => `favicon must be square, not ${w} x ${h}`;
+    if (/\.png$/i.test(ref)) {
+      const r = readPng(b);
+      if (typeof r === "string") return r;
+      return square && r.width !== r.height ? notSquare(r.width, r.height) : b;
+    }
     if (!/\.svg$/i.test(ref)) return "must be a .svg or .png file";
-    const r = sanitizeThemeSvg(b);
-    return "error" in r ? r.error : new TextEncoder().encode(r.svg);
+    const r = sanitize(b);
+    if ("error" in r) return r.error;
+    const [, , w, h] = r.viewBox;
+    return square && w !== h ? notSquare(w, h) : new TextEncoder().encode(r.svg);
   };
 
   theme.fonts?.forEach((f, i) => {
@@ -356,7 +434,7 @@ export function validateThemeAssets(
   });
   for (const key of ["mark", "favicon"] as const) {
     const ref = theme.logo?.[key];
-    if (ref !== undefined) resolve(`logo.${key}`, ref, image(ref));
+    if (ref !== undefined) resolve(`logo.${key}`, ref, image(ref, key === "favicon"));
   }
 
   let total = 0;

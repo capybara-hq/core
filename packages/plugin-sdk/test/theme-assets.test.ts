@@ -77,8 +77,22 @@ describe("sanitizeThemeSvg", () => {
     expect(out).not.toContain("CDATA");
   });
 
-  it("escapes quotes in attribute values", () => {
-    expect(svgOf(svgDoc(`<g id='a"b&amp;'/>`))).toContain('<g id="a&quot;b&amp;"/>');
+  it("escapes attribute values", () => {
+    expect(svgOf(svgDoc('<g id="a&amp;b&lt;"/>'))).toContain('<g id="a&amp;b&lt;"/>');
+  });
+
+  it("keeps path data, transforms and colors", () => {
+    const inner =
+      '<g transform="translate(1,2) rotate (45 5 5) scale(2) matrix(1 0 0 1 0 0) skewX(3) skewY(-3)"><path d="M0 0L1e-3,.5C1 2 3 4 5 6zm-1.5-2" fill="rgb(1,2,3)" stroke="hsla(10 20% 30% / .5)" color="rgba(0,0,0,.5)" mask="URL(#m)" opacity=".5"/></g>';
+    expect(svgOf(svgDoc(inner))).toContain(inner);
+  });
+
+  it("refuses a pathological viewBox quickly", () => {
+    const hostile = `0 0 0 ${"1".repeat(THEME_LIMITS.svgBytes - 200)}x`;
+    const t0 = performance.now();
+    expect(errorOf(svgDoc("", `viewBox="${hostile}"`))).toMatch(/viewBox/);
+    expect(errorOf(svgDoc("", `viewBox="0 0 0 ${"1".repeat(120)}x"`))).toMatch(/viewBox/);
+    expect(performance.now() - t0).toBeLessThan(100);
   });
 
   it("accepts a prefixed SVG namespace and serializes it unprefixed", () => {
@@ -115,7 +129,20 @@ describe("sanitizeThemeSvg", () => {
     ["javascript: href", svgDoc('<a href="javascript:alert(1)"><rect/></a>'), /href/],
     ["javascript: anywhere", svgDoc('<rect fill="java&#x09;script:x"/>'), /javascript/],
     ["external url()", svgDoc('<rect fill="url(https://x/a.svg#b)"/>'), /url\(/],
-    ["quoted external url()", svgDoc("<rect filter=\"url('//x/f#a')\"/>"), /url\(/],
+    ["quoted external url()", svgDoc("<rect filter=\"url('//x/f#a')\"/>"), /quotes/],
+    ["quoted value", svgDoc("<text font-family=\"'A B'\">x</text>"), /quotes/],
+    ["image-set()", svgDoc('<rect mask="image-set(url(#a) 1x)"/>'), /image-set\(\)/],
+    [
+      "-webkit-image-set()",
+      svgDoc('<rect cursor="-webkit-image-set(x 1x)"/>'),
+      /-webkit-image-set/,
+    ],
+    ["cross-fade()", svgDoc('<rect fill="cross-fade(url(#a), url(#b))"/>'), /cross-fade/],
+    ["element()", svgDoc('<rect fill="element(#a)"/>'), /element\(\)/],
+    ["src()", svgDoc('<rect fill="src(#a)"/>'), /src\(\)/],
+    ["var()", svgDoc('<rect fill="var(--x)"/>'), /var\(\)/],
+    ["a bare parenthesis", svgDoc('<rect fill="(#a)"/>'), /bare/],
+    ["url() with spaces to an external target", svgDoc('<rect fill="url( //x/a#b)"/>'), /url\(/],
     ["DOCTYPE", `<!DOCTYPE svg>${svgDoc("")}`, /DOCTYPE/],
     [
       "entity declaration",
@@ -156,6 +183,10 @@ describe("sanitizeThemeSvg", () => {
     ["root without the SVG namespace", '<svg viewBox="0 0 1 1"/>', /namespace/],
     ["root without a viewBox", `<svg ${SVG_NS}/>`, /viewBox/],
     ["malformed viewBox", svgDoc("", 'viewBox="0 0 x 1"'), /viewBox/],
+    ["viewBox with three numbers", svgDoc("", 'viewBox="0 0 1"'), /viewBox/],
+    ["viewBox with zero width", svgDoc("", 'viewBox="0 0 0 1"'), /viewBox/],
+    ["hexadecimal viewBox", svgDoc("", 'viewBox="0 0 0x10 1"'), /viewBox/],
+    ["viewBox over 128 characters", svgDoc("", `viewBox="0 0 1 ${"0".repeat(130)}1"`), /viewBox/],
     ["not XML", "<svg", /not valid XML/],
     ["non-UTF-8 encoding", `<?xml version="1.0" encoding="ISO-8859-1"?>${svgDoc("")}`, /UTF-8/],
   ])("rejects %s", (_name, input, message) => {
@@ -194,6 +225,9 @@ describe("checkPng", () => {
     expect(checkPng(png(32, 32))).toMatch(/64/);
     expect(checkPng(enc("GIF89a------------------------------------"))).toMatch(/PNG/);
     expect(checkPng(png(64, 64).slice(0, 20))).toMatch(/PNG/);
+    const badLength = png(64, 64);
+    new DataView(badLength.buffer).setUint32(8, 12);
+    expect(checkPng(badLength)).toMatch(/IHDR/);
     expect(checkPng(png(64, 64, THEME_LIMITS.pngBytes + 1))).toMatch(/larger than/);
   });
 });
@@ -262,6 +296,20 @@ describe("validateThemeAssets", () => {
     expect(ok.errors).toEqual([]);
     const over = validateThemeAssets(theme({ fonts, logo: { mark: "./logo.png" } }), files);
     expect(over.errors).toEqual([expect.stringMatching(/16777216 bytes/)]);
+  });
+
+  it("requires a square favicon", () => {
+    const wide = enc(svgDoc("", 'viewBox="0 0 2 1"'));
+    const r = validateThemeAssets(
+      theme({ logo: { mark: "./wide.svg", favicon: "./wide.svg" } }),
+      new Map([["wide.svg", wide]]),
+    );
+    expect(r.errors).toEqual([expect.stringMatching(/^logo\.favicon: .*square, not 2 x 1/)]);
+    const p = validateThemeAssets(
+      theme({ logo: { mark: "./w.png", favicon: "./w.png" } }),
+      new Map([["w.png", png(128, 64)]]),
+    );
+    expect(p.errors).toEqual([expect.stringMatching(/^logo\.favicon: .*square, not 128 x 64/)]);
   });
 
   it("counts a file referenced twice once", () => {
