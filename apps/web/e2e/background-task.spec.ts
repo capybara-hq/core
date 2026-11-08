@@ -39,9 +39,8 @@ test("background Bash: the running task, its output, the finished notice and the
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const agentId = await createAgent(page, orgId, "Background worker", [
-    { kind: "builtin", name: "Bash" },
-  ]);
+  // the builtin Bash is on by default (tools default-on)
+  const agentId = await createAgent(page, orgId, "Background worker");
   const convId = await openConversation(page, orgId, agentId);
 
   await hydrated(page);

@@ -131,10 +131,9 @@ test("approvals: once / this conversation / always; deny with a reason; stop whi
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const connectorId = await createMcpConnector(page, orgId, "Cap Fixture", "capfix");
-  const agentId = await createAgent(page, orgId, "Cap approvals", [
-    { kind: "connector", connectorId, tools: "all" },
-  ]);
+  await createMcpConnector(page, orgId, "Cap Fixture", "capfix");
+  // the connector's tools are on by default (tools default-on)
+  const agentId = await createAgent(page, orgId, "Cap approvals");
   const approval = page.locator('[data-role="approval"]');
   const ask = async (id: string) => {
     await send(page, `tool:mcp__capfix__delete_item:{"id":"${id}"}`);
@@ -223,7 +222,7 @@ test("questions with options and Other; URL elicitation; a connect card", async 
   });
   await signIn(page);
   const orgId = await currentOrg(page);
-  const open = await createMcpConnector(page, orgId, "Cap Verify", "capver");
+  await createMcpConnector(page, orgId, "Cap Verify", "capver");
   // A personal-credential connector: created with the creator's token, which is then removed, so
   // the person has not connected it.
   const personal = await createMcpConnector(
@@ -239,10 +238,8 @@ test("questions with options and Other; URL elicitation; a connect card", async 
     { headers: CSRF },
   );
   expect(forget.ok(), await forget.text()).toBe(true);
-  const agentId = await createAgent(page, orgId, "Cap questions", [
-    { kind: "connector", connectorId: open, tools: "all" },
-    { kind: "connector", connectorId: personal, tools: "all" },
-  ]);
+  // both connectors' tools are on by default (tools default-on)
+  const agentId = await createAgent(page, orgId, "Cap questions");
   await newChat(page, agentId);
   const question = page.locator('[data-role="question"]');
   const askUser = {
@@ -370,9 +367,8 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
   expect((await enable(true)).status()).toBe(200);
   try {
     expect((await probe({ denyTools: ["plugin__hooks-probe__probe_echo"] })).ok()).toBe(true);
-    const agentId = await createAgent(page, orgId, "Cap hooks", [
-      { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
-    ]);
+    // the enabled extension's tool is on by default (tools default-on)
+    const agentId = await createAgent(page, orgId, "Cap hooks");
     await newChat(page, agentId);
     await send(page, 'tool:plugin__hooks-probe__probe_echo:{"text":"x"}');
     const row = toolGroup(page, "plugin__hooks-probe__probe_echo");
@@ -394,7 +390,7 @@ test("a policy hook: a denied tool row names the extension; a denied run shows t
 test("View all of an archived output; a model switch is logged and used", async ({ page }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const agentId = await createAgent(page, orgId, "Cap output", [{ kind: "builtin", name: "Bash" }]);
+  const agentId = await createAgent(page, orgId, "Cap output");
   await newChat(page, agentId);
   await send(
     page,

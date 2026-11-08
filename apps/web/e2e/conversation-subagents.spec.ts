@@ -48,7 +48,8 @@ test("sub-agents: the call block, the finish notice, the record on the right, st
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  await createAgent(page, orgId, "Lead with helpers", [{ kind: "builtin", name: "Agent" }]);
+  // the builtin Agent is on by default (tools default-on)
+  await createAgent(page, orgId, "Lead with helpers");
   await startChat(page, "Lead with helpers");
 
   // 1. a sub-agent that answers at once: its group folds once it is done
@@ -117,11 +118,9 @@ test("a sub-agent's approval waits in the parent and is decided there; a ?subage
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  const connectorId = await createMcpConnector(page, orgId, "Cap Child", "capchild");
-  await createAgent(page, orgId, "Lead with a tool", [
-    { kind: "builtin", name: "Agent" },
-    { kind: "connector", connectorId, tools: "all" },
-  ]);
+  await createMcpConnector(page, orgId, "Cap Child", "capchild");
+  // the builtin Agent and the connector's tools are on by default (tools default-on)
+  await createAgent(page, orgId, "Lead with a tool");
   await startChat(page, "Lead with a tool");
   await send(page, dispatch("Delete via child", 'tool:mcp__capchild__delete_item:{"id":"c9"}'));
   // the child's approval shows in the parent, named by the sub-agent, and decides the child's call

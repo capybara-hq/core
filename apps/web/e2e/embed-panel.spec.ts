@@ -81,7 +81,6 @@ test("嵌入应用（假扩展 fake-embed）：「扩展」打开组织页面（
         name: "Embedder",
         instructions: "Help with the panel.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [],
       },
       visibility: "private",
     },

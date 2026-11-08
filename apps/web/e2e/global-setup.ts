@@ -637,6 +637,12 @@ export default async function globalSetup(): Promise<Cleanup> {
         // not importable)
         allowedHosts: ["127.0.0.1"],
       },
+      // Tools default-on: every agent has every connector and extension tool of the one e2e org,
+      // and the specs leave connectors behind, so agents soon pass the ToolSearch thresholds
+      // (30 tools / 8000 tokens). Then a model-fake script that calls a connector tool by name
+      // gets "not loaded" instead of the approval or result the spec checks. ToolSearch has its own
+      // kernel tests; here it never kicks in.
+      tools: { searchThresholdTools: 10_000, searchThresholdTokens: 10_000_000 },
       // e2e approves extension permissions automatically (off by default in production)
       extensionPermissions: { autoApprove: true },
       // Extension packages installed from the admin console unpack into a temp dir (the default

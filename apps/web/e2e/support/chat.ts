@@ -164,12 +164,16 @@ export async function currentOrg(page: Page): Promise<string> {
   return orgId as unknown as string;
 }
 
-/** Creates a private fake-1 agent through the same-origin proxy; returns its id. */
+/**
+ * Creates a private fake-1 agent through the same-origin proxy; returns its id. It has every tool
+ * the org offers (tools default-on) except `disabledTools` (kernel refs: `{kind:"builtin",name}`,
+ * `{kind:"plugin",plugin,tools}`, `{kind:"connector",connectorId,tools}`).
+ */
 export async function createAgent(
   page: Page,
   orgId: string,
   name: string,
-  tools: unknown[] = [],
+  disabledTools: unknown[] = [],
 ): Promise<string> {
   const res = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
     headers: CSRF,
@@ -178,11 +182,7 @@ export async function createAgent(
         name,
         instructions: "Help.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "builtin", name: "ReadToolOutput" },
-          ...tools,
-        ],
+        disabledTools,
       },
       visibility: "private",
     },

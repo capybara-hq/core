@@ -60,7 +60,12 @@ async function installMcp(page: Page, name: string, slug: string, url: string): 
   await expect(page.getByText(w.doneTitle.replace("{name}", name))).toBeVisible();
 }
 
-/** A new agent that uses every tool of the connector `connectorName`; returns its id. */
+/**
+ * A new agent that uses every tool of the connector `connectorName` and none of the org's other
+ * connectors; returns its id. Tools default-on: a new agent has every connector of the org, and
+ * other specs (and the other cases here) leave connectors behind, which the saved template would
+ * carry as more 待配置 entries. So every other connector is turned off through the API.
+ */
 async function agentWithConnector(
   page: Page,
   agentName: string,
@@ -69,6 +74,31 @@ async function agentWithConnector(
   const id = await newAgent(page, agentName);
   await openAgentSection(page, "tools");
   await expectGroupAllOn(page, connectorName);
+  const base = `/api/v1/orgs/${await currentOrg(page)}`;
+  const listed = await page.request.get(`${base}/connectors`);
+  expect(listed.ok(), await listed.text()).toBe(true);
+  const others = (
+    (await listed.json()) as { connectors: { id: string; name: string }[] }
+  ).connectors
+    .filter((c) => c.name !== connectorName)
+    .map((c) => ({ kind: "connector", connectorId: c.id, tools: "all" }));
+  if (others.length > 0) {
+    const got = await page.request.get(`${base}/agents/${id}`);
+    expect(got.ok(), await got.text()).toBe(true);
+    const { definition } = (
+      (await got.json()) as { agent: { definition: { disabledTools?: unknown[] } } }
+    ).agent;
+    const saved = await page.request.patch(`${base}/agents/${id}`, {
+      headers: CSRF,
+      data: {
+        definition: {
+          ...definition,
+          disabledTools: [...(definition.disabledTools ?? []), ...others],
+        },
+      },
+    });
+    expect(saved.ok(), await saved.text()).toBe(true);
+  }
   return id;
 }
 

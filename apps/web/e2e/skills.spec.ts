@@ -31,6 +31,15 @@ const designZh = (key: string): string => {
 
 /** 内核要求非安全方法带的 CSRF 头。 */
 const CSRF = { "X-Capybara-Csrf": "1" };
+/**
+ * A titled subsection of the agent page's skills card (org skills / pinned / written by the agent):
+ * the region holding its level-3 heading, not the card around it (which has the level-2 heading).
+ */
+const skillsRegion = (page: Page, title: string) =>
+  page
+    .getByRole("region")
+    .filter({ has: page.getByRole("heading", { level: 3, name: title, exact: true }) })
+    .filter({ hasNot: page.getByRole("heading", { level: 2 }) });
 const fill = (s: string, vars: Record<string, string | number>) =>
   s.replace(/\{(\w+)\}/g, (_, k: string) => String(vars[k]));
 
@@ -139,9 +148,9 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   // 3. 新建 agent，在 agent 页面的「技能」分组里勾选它，并置顶（skills.pinned）
   await newAgent(page, "Skill agent");
   await openAgentSection(page, "skills");
-  const group = page.getByRole("group", { name: zh.agents.form.orgSkillsLabel });
+  const group = skillsRegion(page, zh.agents.form.orgSkillsLabel);
   await group.getByRole("checkbox", { name: new RegExp(SKILL) }).check();
-  const pinnedGroup = page.getByRole("group", { name: zh.agents.form.pinnedLabel });
+  const pinnedGroup = skillsRegion(page, zh.agents.form.pinnedLabel);
   await pinnedGroup
     .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) })
     .check();
@@ -161,9 +170,9 @@ test("管理员上传技能包，agent 选用它；对话里 Skill 的时间线�
   await page.goto(`/agents/${agent?.id}?s=skills`);
   await page.reload();
   await expect(
-    page
-      .getByRole("group", { name: zh.agents.form.pinnedLabel })
-      .getByRole("checkbox", { name: fill(zh.agents.form.pinSkill, { name: SKILL }) }),
+    skillsRegion(page, zh.agents.form.pinnedLabel).getByRole("checkbox", {
+      name: fill(zh.agents.form.pinSkill, { name: SKILL }),
+    }),
   ).toBeChecked();
   const conv = await page.request.post(`/api/v1/orgs/${orgId}/conversations`, {
     headers: CSRF,
@@ -245,8 +254,9 @@ test("共享 agent 用 SkillWrite 改技能：发起人确认工具调用，负�
 
   // 3. 批准后成为 agent 自己的技能：编辑页的技能分组只读列出
   await page.goto(`/agents/${agentId}?s=skills`);
-  const own = page.getByRole("group", { name: zh.agents.form.ownSkillsLabel });
-  await expect(own.getByText("team-glossary · v1")).toBeVisible();
+  const own = skillsRegion(page, zh.agents.form.ownSkillsLabel);
+  const written = own.getByRole("listitem").filter({ hasText: "team-glossary" });
+  await expect(written).toContainText("v1");
 });
 
 /** Uploads a one-skill zip through the skill library page; returns the skill's id. */
@@ -298,7 +308,6 @@ test("phase D: invoke skills from the / menu and typed, send one while running, 
         name: "Skill invoker",
         instructions: "Help.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [],
         skills: { orgSkills: [fix, manual, review] },
       },
       visibility: "private",
