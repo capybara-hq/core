@@ -116,7 +116,10 @@ export type ComponentTarget =
 export interface ComponentView {
   kind: ComponentKind;
   id: string;
+  /** Skill or template name; a connector template's id (the file's base name). */
   name: string;
+  /** A connector template's localized display name (null: show `name`). */
+  displayName: { zh: string; en: string } | null;
   description: string | null;
   /** The plugin it came from (null: none). */
   plugin: string | null;
@@ -186,6 +189,8 @@ export interface OrgComponentView {
  * show with their switches. Never a component the org cannot see.
  */
 export interface OrgOfferedComponentView extends OrgComponentView {
+  /** A connector template's localized display name (null: show `name`). */
+  displayName: { zh: string; en: string } | null;
   description: string | null;
   itemId: string | null;
   version: string;
@@ -472,6 +477,7 @@ export class ComponentScopeService {
         kind,
         id: c.id,
         name: c.name,
+        displayName: c.displayName,
         description: c.description,
         plugin: c.plugin,
         itemId: c.itemId,
@@ -539,6 +545,7 @@ export class ComponentScopeService {
           kind,
           id: c.id,
           name: c.name,
+          displayName: c.displayName,
           description: c.description,
           plugin: c.plugin,
           itemId: c.itemId,
@@ -654,6 +661,7 @@ export class ComponentScopeService {
       kind,
       id: r.id,
       name: r.name,
+      displayName: null,
       description: r.description,
       plugin: r.plugin,
       itemId: r.catalog_item_id,
@@ -1471,6 +1479,7 @@ const virtualOf = (o: OrgRow): ComponentRow => ({
   plugin: o.plugin,
   version: String(o.version),
   description: null,
+  displayName: null,
   itemId: null,
   scopeMode: "own",
   scope: "named",

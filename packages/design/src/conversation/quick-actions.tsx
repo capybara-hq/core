@@ -1,4 +1,4 @@
-import { type JSX, useRef, useState } from "react";
+import { type JSX, useId, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
@@ -67,5 +67,55 @@ export function QuickActions({
         },
       }))}
     />
+  );
+}
+
+export type QuickActionListProps = {
+  items: QuickActionItem[];
+  /** The same handler the `zap` menu calls: the page fills the composer. */
+  onPick(id: string): void;
+  /** The list's heading; default 「常用任务」. */
+  label?: string;
+};
+
+/**
+ * The selected agent's quick actions listed on a phone's new conversation (§5.4, §6.16.27): a
+ * heading over plain rows (no box), one tappable row per title in the agent's order, filling the
+ * space between the agents row and the composer pinned at the bottom. A tap calls `onPick`, as
+ * choosing it from the `zap` menu does. No items: nothing. `ConversationPage` shows it below 640
+ * only, and hides the composer's `zap` button there.
+ */
+export function QuickActionList({
+  items,
+  onPick,
+  label,
+}: QuickActionListProps): JSX.Element | null {
+  const t = useDesignT();
+  const id = useId();
+  if (items.length === 0) return null;
+  return (
+    <section className="cb-quick-list" data-part="quick-action-list" aria-labelledby={id}>
+      <h3 className="cb-quick-list-title" id={id}>
+        {label ?? t("quick.label")}
+      </h3>
+      <ul className="cb-quick-list-items">
+        {items.map((it) => (
+          <li key={it.id} className="cb-quick-list-row">
+            <button
+              type="button"
+              className="cb-quick-list-item"
+              data-part="quick-action-item"
+              title={it.title}
+              onClick={() => onPick(it.id)}
+            >
+              <span className="cb-quick-list-mark">
+                <Icon name="zap" size={14} />
+              </span>
+              <span className="cb-quick-list-text">{it.title}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

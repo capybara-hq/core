@@ -21,3 +21,15 @@ export const CONNECTOR_ROUTES: readonly RouteSchemas[] = [
     params: ConnectorPathParams,
   },
 ];
+
+/**
+ * `PUT …/connectors/:connectorId/tool-policies/me`: the caller's own policy per tool name (null
+ * clears it; decision 2026-11-09).
+ */
+export const MemberToolPoliciesBody = z
+  .object({
+    tools: z
+      .record(z.string().min(1).max(200), z.enum(["allow", "ask", "deny"]).nullable())
+      .refine((v) => Object.keys(v).length <= 1000, { message: "Too many tools" }),
+  })
+  .strict();

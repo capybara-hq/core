@@ -154,7 +154,7 @@ export class PendingConnectorsService {
       }
       const k = connectorToolKey(c.slug, n);
       const prev = toolPolicies[k];
-      if (prev === undefined || RANK[p] > RANK[prev]) toolPolicies[k] = p;
+      if (prev === undefined || prev === "allow" || RANK[p] > RANK[prev]) toolPolicies[k] = p;
     }
     // tools are on by default (tools default-on spec §3): binding an entry that names some tools
     // turns the connector's other tools off for this agent; one taking them all leaves it all on

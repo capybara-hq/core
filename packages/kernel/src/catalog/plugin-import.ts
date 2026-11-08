@@ -2410,7 +2410,10 @@ export function pluginReviewHash(
 ): string {
   const e = r.extension;
   const lic = r.licenseText;
-  const canonical = JSON.stringify([
+  // canonicalJson, not JSON.stringify: the review is stored as jsonb, which reorders object keys,
+  // so a template's auth / endpoint object would hash differently at confirm (plugin.review_stale
+  // on every import of a plugin whose connector template has a non-trivial auth block).
+  const canonical = canonicalJson([
     r.name,
     r.version,
     r.contentDigest,

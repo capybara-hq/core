@@ -1,6 +1,7 @@
 import { ConnectorAuthSchema } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -11,7 +12,11 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
-import { CredentialValue } from "./connectors.schemas.js";
+import {
+  ConnectorAccountPolicies,
+  type MemberToolPolicyView,
+} from "./connector-account-policies.js";
+import { CredentialValue, MemberToolPoliciesBody } from "./connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorPreview,
@@ -89,6 +94,10 @@ class ConnectorPreviewBody extends createZodDto(PreviewBody, "ConnectorPreviewBo
 class ConnectorUpdateBody extends createZodDto(UpdateBody, "ConnectorUpdateBody") {}
 class ConnectorToolReviewBody extends createZodDto(ReviewBody, "ConnectorToolReviewBody") {}
 class ConnectorCredentialBody extends createZodDto(CredentialValue, "ConnectorCredentialBody") {}
+class MemberToolPoliciesDto extends createZodDto(
+  MemberToolPoliciesBody,
+  "MemberToolPoliciesBody",
+) {}
 
 /**
  * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
@@ -96,12 +105,36 @@ class ConnectorCredentialBody extends createZodDto(CredentialValue, "ConnectorCr
  */
 @Controller("api/v1/orgs/:orgId/connectors")
 export class ConnectorsController {
-  constructor(@Inject(ConnectorsService) private readonly connectors: ConnectorsService) {}
+  constructor(
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(ConnectorAccountPolicies) private readonly memberPolicies: ConnectorAccountPolicies,
+  ) {}
+
+  /**
+   * Each connector with `icon`: the icon of the plugin its template came from, on the org's catalog
+   * route (null for a custom connector, a plugin without an icon, or one the reader's catalog does
+   * not show: the share gate holds; maintainer decision 2026-11-09).
+   */
+  private async withIcons<T extends ConnectorSummary>(
+    org: OrgContext,
+    rows: T[],
+  ): Promise<(T & { icon: string | null })[]> {
+    const ids = rows.flatMap((r) => (r.catalogItemId === null ? [] : [r.catalogItemId]));
+    const urls = await this.icons.ofItems(ids, orgIconScope(org));
+    return rows.map((r) => ({
+      ...r,
+      icon: r.catalogItemId === null ? null : (urls.get(r.catalogItemId) ?? null),
+    }));
+  }
 
   @Get()
   @OrgAction("connectors.use")
-  async list(@CurrentOrg() org: OrgContext): Promise<{ connectors: ConnectorSummary[] }> {
-    return { connectors: (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a)) };
+  async list(
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ connectors: (ConnectorSummary & { icon: string | null })[] }> {
+    const rows = (await this.connectors.list(org.orgId)).map((a) => forViewer(org, a));
+    return { connectors: await this.withIcons(org, rows) };
   }
 
   /**
@@ -149,11 +182,11 @@ export class ConnectorsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-  ): Promise<{ connector: ConnectorDetail }> {
+  ): Promise<{ connector: ConnectorDetail & { icon: string | null } }> {
     const p = requireUser(principal);
-    return {
-      connector: forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id)),
-    };
+    const c = forViewer(org, await this.connectors.get(org.orgId, connectorId, p.account.id));
+    const [connector] = await this.withIcons(org, [c]);
+    return { connector: connector as ConnectorDetail & { icon: string | null } };
   }
 
   @Patch(":connectorId")
@@ -266,6 +299,41 @@ export class ConnectorsController {
       body,
       patTokenId(p),
     );
+  }
+
+  /**
+   * The caller's own tool policies for their own connection of a personal-credential connector
+   * (the card's 权限, decision 2026-11-09): each tool with the org default, the annotation default,
+   * the caller's setting and whether the org locked it. Only ever the caller's rows. A connector
+   * with one org credential -> 409 `connector.not_personal`.
+   */
+  @Get(":connectorId/tool-policies/me")
+  @OrgAction("connectors.use")
+  async myToolPolicies(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+  ): Promise<{ tools: MemberToolPolicyView[] }> {
+    const p = requireUser(principal);
+    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
+  }
+
+  /**
+   * Sets (`allow` / `ask` / `deny`) or clears (null) the caller's own policies for some tools:
+   * `{ tools: { <name>: policy | null } }` -> the sheet again. Unknown tool -> 404
+   * `connector.tool_not_found`.
+   */
+  @Put(":connectorId/tool-policies/me")
+  @OrgAction("connectors.use")
+  async setMyToolPolicies(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+    @ZBody(MemberToolPoliciesDto) body: z.infer<typeof MemberToolPoliciesBody>,
+  ): Promise<{ tools: MemberToolPolicyView[] }> {
+    const p = requireUser(principal);
+    await this.memberPolicies.set(org.orgId, connectorId, p.account.id, body.tools, patTokenId(p));
+    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
   }
 
   @Delete(":connectorId/credentials/me")

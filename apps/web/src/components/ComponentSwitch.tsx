@@ -9,11 +9,12 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
   type ComponentSwitchPreview,
+  componentLabel,
   type OrgComponent,
   setOrgComponentSwitch,
 } from "../lib/components";
@@ -77,13 +78,28 @@ const keyOf = (c: OrgComponent) => `${c.kind}:${c.id}`;
  * it is `all` (previewed with the agents that use it, confirmed with the preview's hash), 查看插件
  * on one whose plugin is off here. Members get no action (the pages are read-only for them).
  */
-export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boolean }): {
+export function useComponentSwitch({
+  orgId,
+  admin,
+  onEnabled,
+}: {
+  orgId: string;
+  admin: boolean;
+  /**
+   * After a switch-on (once its lists were invalidated): `/connectors` takes a connector template
+   * that is on now straight to entering its input (补充配置).
+   */
+  onEnabled?(c: OrgComponent): void;
+}): {
   actionsOf(c: OrgComponent): ComponentAction[];
   dialog: ReactNode;
   error: { message: string; extra: string[] } | undefined;
   busy: boolean;
 } {
   const t = useTranslations("orgComponents");
+  const locale = useLocale();
+  /** What a component is called here: a connector template's display name, else its name. */
+  const nameOf = (c: OrgComponent) => componentLabel(c, locale);
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const catalogLines = useCatalogErrorLines();
@@ -105,10 +121,10 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
   /** A refusal in the component's words (a name taken, `all`), else the code's own copy. */
   const messageOf = (c: OrgComponent, e: unknown): string => {
     if (e instanceof ApiClientError && e.code === "plugin.skill_conflict") {
-      return t(`error.conflict.${c.kind}`, { name: c.name });
+      return t(`error.conflict.${c.kind}`, { name: nameOf(c) });
     }
     if (e instanceof ApiClientError && e.code === "plugin.scope_locked") {
-      return t("error.locked", { name: c.name });
+      return t("error.locked", { name: nameOf(c) });
     }
     return errorMessage(e);
   };
@@ -120,7 +136,8 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
     setError(undefined);
     try {
       await sw.mutateAsync({ c, enabled: true });
-      toast.success(t("toast.enabled", { name: c.name }));
+      toast.success(t("toast.enabled", { name: nameOf(c) }));
+      onEnabled?.(c);
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -141,7 +158,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         setOff({ c, preview: r });
         return;
       }
-      toast.success(t("toast.disabled", { name: c.name }));
+      toast.success(t("toast.disabled", { name: nameOf(c) }));
     } catch (e) {
       setError({ message: messageOf(c, e), extra: [...issueLines(e), ...catalogLines(e)] });
     } finally {
@@ -160,7 +177,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
         return;
       }
       setOff(null);
-      toast.success(t("toast.disabled", { name: c.name }));
+      toast.success(t("toast.disabled", { name: nameOf(c) }));
     } catch (e) {
       // What it takes away changed since the preview: show the new one before confirming again
       if (e instanceof ApiClientError && e.code === "plugin.switch_stale") {
@@ -214,7 +231,7 @@ export function useComponentSwitch({ orgId, admin }: { orgId: string; admin: boo
   const dialog =
     off === null ? null : (
       <ComponentSwitchOffDialog
-        name={off.c.name}
+        name={nameOf(off.c)}
         kind={off.c.kind}
         preview={off.preview.preview}
         busy={busy}
@@ -312,6 +329,7 @@ export function ComponentSwitchList({
   components: readonly OrgComponent[];
 }) {
   const t = useTranslations("orgComponents");
+  const locale = useLocale();
   const stateOf = useComponentState();
   const { actionsOf, dialog, error, busy } = useComponentSwitch({ orgId, admin });
   return (
@@ -319,12 +337,13 @@ export function ComponentSwitchList({
       {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       {components.map((c) => {
         const state = stateOf(c);
+        const name = componentLabel(c, locale);
         return (
           <Stack key={`${c.kind}:${c.id}`} direction="row" gap={12} align="center" wrap>
             <Text variant="small" tone="muted">
               {t(`kind.${c.kind}`)}
             </Text>
-            <Text>{c.name}</Text>
+            <Text>{name}</Text>
             <Text variant="small" tone={state.tone}>
               {state.label}
             </Text>
@@ -338,7 +357,7 @@ export function ComponentSwitchList({
                   key={a.id}
                   density="dense"
                   {...(a.danger === true ? { variant: "danger" as const } : {})}
-                  aria-label={`${a.label} ${c.name}`}
+                  aria-label={`${a.label} ${name}`}
                   loading={a.loading === true}
                   disabled={busy}
                   onClick={a.onSelect}
