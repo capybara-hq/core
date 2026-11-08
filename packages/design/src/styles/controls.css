@@ -341,11 +341,6 @@
   background: transparent;
   cursor: not-allowed;
 }
-/* A ghost button has no border: disabled, it stays borderless, so it never looks stronger than an
-   enabled one beside it. */
-.cb-btn[data-variant="ghost"]:disabled {
-  border-color: transparent;
-}
 /* An icon button's icon is already muted: disabled, it drops to faint so it reads as off (spec §6.1). */
 .cb-icon-btn:disabled {
   color: var(--cb-faint);
