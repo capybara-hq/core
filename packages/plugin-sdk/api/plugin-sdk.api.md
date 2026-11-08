@@ -822,6 +822,13 @@ export const DOCUMENT_MEDIA_TYPES: readonly ["application/pdf", "text/plain", "t
 export type DocumentMediaType = (typeof DOCUMENT_MEDIA_TYPES)[number];
 
 // @public
+export interface DroppedUiContribution {
+    id: string;
+    reason: UiDropReason;
+    ref: string;
+}
+
+// @public
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // @public
@@ -1874,9 +1881,6 @@ export interface ModelUsage {
 }
 
 // @public
-export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation">;
-
-// @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
 
 // @public
@@ -2281,6 +2285,25 @@ export interface RenderSkillInvocationInput {
 }
 
 // @public
+export interface ResolvedUiContribution {
+    after?: string;
+    contribution: UiContribution;
+    slot: UiSlotSpec;
+    version: number;
+}
+
+// @public
+export function resolveUiSlots(ui: readonly UiContribution[] | undefined): {
+    resolved: ResolvedUiContribution[];
+    dropped: DroppedUiContribution[];
+    unknownAnchors: {
+        id: string;
+        after: string;
+    }[];
+    deprecatedPlace: string[];
+};
+
+// @public
 export function rootsOf(h: SandboxHandle): SandboxRoots;
 
 // @public
@@ -2512,6 +2535,9 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
+
+// @public
+export function slotRefOf(c: UiContribution): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
@@ -3023,7 +3049,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_SLOT_IDS: readonly [UiSlotId, ...UiSlotId[]];
+export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properties.section", "conversation.tool-result.card", "org.page", "file.preview", "agent.detail.section", "org.settings.section", "platform.page"];
 
 // @public
 export const UI_SLOTS: readonly UiSlotSpec[];
@@ -3108,12 +3134,15 @@ export type UiBlock = {
 
 // @public
 export interface UiContribution {
+    after?: string;
     aliasOf?: string;
     icon?: UiIcon;
     id: string;
     kind: UiKind;
     path?: string;
-    place: UiPlace;
+    // @deprecated
+    place?: UiPlace;
+    slot?: string;
     title: {
         zh: string;
         en: string;
@@ -3122,6 +3151,9 @@ export interface UiContribution {
 
 // @public
 export function uiContributionKey(plugin: string, id: string): string;
+
+// @public
+export type UiDropReason = "unknown-slot" | "unsupported-version";
 
 // @public
 export type UiIcon = (typeof UI_ICONS)[number];
@@ -3160,10 +3192,8 @@ export type UiRole = "owner" | "admin" | "member" | "guest";
 // @public
 export function uiSlot(id: string): UiSlotSpec | undefined;
 
-// Warning: (ae-forgotten-export) The symbol "SLOT_DATA" needs to be exported by the entry point index.d.ts
-//
 // @public
-export type UiSlotId = (typeof SLOT_DATA)[number]["id"];
+export type UiSlotId = (typeof UI_SLOT_IDS)[number];
 
 // @public
 export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
@@ -3171,10 +3201,26 @@ export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
 // @public
 export type UiSlotScope = "conversation" | "agent" | "org" | "platform" | "file";
 
-// Warning: (ae-forgotten-export) The symbol "SlotShape" needs to be exported by the entry point index.d.ts
-//
 // @public
-export interface UiSlotSpec extends SlotShape<UiSlotId> {
+export interface UiSlotSpec {
+    accepts: readonly UiKind[];
+    anchors?: readonly string[];
+    args: readonly string[];
+    cardinality: "list";
+    density: "dense" | "regular";
+    description: {
+        en: string;
+        zh: string;
+    };
+    icon: "required" | "optional" | "none";
+    id: UiSlotId;
+    limits?: {
+        maxShown?: number;
+    };
+    minRole: UiSlotRole;
+    owner: string;
+    scope: UiSlotScope;
+    version: number;
 }
 
 // @public

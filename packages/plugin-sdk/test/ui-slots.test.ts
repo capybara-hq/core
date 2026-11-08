@@ -3,6 +3,7 @@ import {
   PLACE_SLOTS,
   parseSlotRef,
   UI_ARRANGEABLE_SLOTS,
+  UI_CONTRIBUTION_KEY_RE,
   UI_SLOT_IDS,
   UI_SLOTS,
   uiContributionKey,
@@ -70,6 +71,49 @@ describe("ui slot catalog", () => {
   it("file.preview is not arrangeable", () => {
     expect(UI_ARRANGEABLE_SLOTS).not.toContain("file.preview");
     expect(UI_ARRANGEABLE_SLOTS).toHaveLength(UI_SLOTS.length - 1);
+  });
+
+  it("PLACE_SLOTS maps each deprecated place to its slot", () => {
+    expect(PLACE_SLOTS).toEqual({
+      panel: "conversation.panel",
+      conversation: "conversation.panel",
+      section: "conversation.properties.section",
+      inline: "conversation.tool-result.card",
+      page: "org.page",
+      "file-preview": "file.preview",
+    });
+  });
+
+  it("UI_ARRANGEABLE_SLOTS lists every slot but file.preview, in catalog order", () => {
+    expect([...UI_ARRANGEABLE_SLOTS]).toEqual([
+      "conversation.panel",
+      "conversation.properties.section",
+      "conversation.tool-result.card",
+      "org.page",
+      "agent.detail.section",
+      "org.settings.section",
+      "platform.page",
+    ]);
+  });
+
+  it("UI_CONTRIBUTION_KEY_RE accepts <extension>/<contribution> keys only", () => {
+    for (const ok of ["todo/board", "ab/c", "my-plugin/tasks-panel", `a${"b".repeat(40)}/x`]) {
+      expect(UI_CONTRIBUTION_KEY_RE.test(ok)).toBe(true);
+    }
+    for (const bad of [
+      "todo",
+      "a/board",
+      "Todo/board",
+      "todo/Board",
+      "todo/1board",
+      "todo/",
+      "todo/board/x",
+      `a${"b".repeat(41)}/x`,
+      `todo/a${"b".repeat(40)}`,
+    ]) {
+      expect(UI_CONTRIBUTION_KEY_RE.test(bad)).toBe(false);
+    }
+    expect(UI_CONTRIBUTION_KEY_RE.test(uiContributionKey("todo", "board"))).toBe(true);
   });
 
   it("builds contribution keys", () => {

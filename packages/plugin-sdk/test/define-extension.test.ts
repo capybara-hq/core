@@ -8,6 +8,8 @@ import {
   isSecret,
   parseExtensionPoint,
   secret,
+  staticManifestOf,
+  type UiContribution,
 } from "../src/index.js";
 
 const valid = (over: Partial<ExtensionManifest> = {}): ExtensionManifest => ({
@@ -129,5 +131,37 @@ describe("types", () => {
     expectTypeOf<ExtensionContext["kv"]["incr"]>()
       .parameter(1)
       .toEqualTypeOf<{ ttlSeconds: number }>();
+  });
+});
+
+describe("defineExtension and ui slots", () => {
+  const title = { zh: "任务", en: "Tasks" };
+  const ui = (): UiContribution[] => [
+    { id: "tasks-panel", title, slot: "conversation.panel", kind: "view", icon: "list-checks" },
+    { id: "tasks", title, place: "conversation", kind: "view", aliasOf: "tasks-panel" },
+    { id: "tasks-section", title, slot: "conversation.properties.section@1", kind: "view" },
+  ];
+  const perms = { ui: { views: ["tasks-panel", "tasks", "tasks-section"] } };
+
+  it("defineExtension keeps ui exactly as written", () => {
+    const m = defineExtension(valid({ ui: ui(), permissions: perms }));
+    expect(m.ui).toEqual(ui());
+    expect(staticManifestOf(m).ui).toEqual(ui());
+  });
+
+  it("defineExtension loads with a contribution in an unknown slot", () => {
+    const m = valid({
+      ui: [{ id: "a", title, slot: "nowhere.at-all", kind: "view" }],
+      permissions: { ui: { views: ["a"] } },
+    });
+    expect(() => defineExtension(m)).not.toThrow();
+  });
+
+  it("defineExtension still fails on a structural ui problem", () => {
+    const m = valid({
+      ui: [{ id: "a", title, slot: "file.preview", kind: "view" }],
+      permissions: { ui: { views: ["a"] } },
+    });
+    expect(() => defineExtension(m)).toThrow(/slot file\.preview does not accept kind view/);
   });
 });

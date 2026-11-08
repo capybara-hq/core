@@ -46,6 +46,7 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
+import { placeOf } from "../ui/registry.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
@@ -485,7 +486,7 @@ export class ToolPipeline {
       inlineViews: (plugin) =>
         new Set(
           (host?.current(plugin)?.manifest.ui ?? [])
-            .filter((c) => c.place === "inline" && c.aliasOf === undefined)
+            .filter((c) => placeOf(c) === "inline" && c.aliasOf === undefined)
             .map((c) => c.id),
         ),
       onToolsChanged: (orgId, connectorId) => {

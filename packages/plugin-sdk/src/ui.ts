@@ -3,21 +3,12 @@ import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
 /**
- * Where a ui contribution goes (UI refresh spec §5.3):
- * - `panel`: a right panel of the conversation page, opened from the extension's icon in the title
- *   bar (one at a time);
- * - `section`: a section of the conversation's properties panel;
- * - `inline`: an inline card in the conversation, hanging off a tool result (`ToolResult.card`);
- * - `page`: an org page under "Extensions";
- * - `file-preview`: an embed previewer of `file-preview@1` (embed only, see `FilePreviewer.embed`);
- * - `conversation`: the old right-side tab; it means `panel` (see {@link normalizePlace}).
+ * The places of the first UI design, kept as a deprecated input (UI slots spec §4, step A): each maps
+ * to a slot through `PLACE_SLOTS` (`panel` and `conversation` → `conversation.panel`, `section` →
+ * `conversation.properties.section`, `inline` → `conversation.tool-result.card`, `page` →
+ * `org.page`, `file-preview` → `file.preview`).
  */
 export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
-
-/** A place with the old `conversation` mapped to `panel`. */
-export function normalizePlace(place: UiPlace): Exclude<UiPlace, "conversation"> {
-  return place === "conversation" ? "panel" : place;
-}
 
 /**
  * Icons a contribution may use (design system icon names; `puzzle` is the default and is drawn as
@@ -39,8 +30,9 @@ export const UI_ICONS = [
 export type UiIcon = (typeof UI_ICONS)[number];
 
 /**
- * An "open" target: a `panel` contribution of the same extension, scrolled to the block or item
- * whose `id` equals `item` (the panel's render receives it as {@link UiRenderArgs.item}).
+ * An "open" target: a `conversation.panel` contribution of the same extension, scrolled to the
+ * block or item whose `id` equals `item` (the panel's render receives it as
+ * {@link UiRenderArgs.item}).
  */
 export interface UiOpen {
   contribution: string;
@@ -57,7 +49,19 @@ export type UiKind = "view" | "embed";
 export interface UiContribution {
   id: string;
   title: { zh: string; en: string };
-  place: UiPlace;
+  /**
+   * The slot it goes in: `"<id>"` (version 1) or `"<id>@<n>"`, an id of `UI_SLOTS`. Exactly one of
+   * `slot` and `place`. An unknown slot or version does not fail the extension: the contribution is
+   * dropped (see `resolveUiSlots`).
+   */
+  slot?: string;
+  /** @deprecated use slot (UI slots spec §4, step A) */
+  place?: UiPlace;
+  /**
+   * One of the slot's `anchors` to be placed after; omitted (or not an anchor of the slot) = the
+   * slot's first anchor.
+   */
+  after?: string;
   kind: UiKind;
   /** 仅 embed：插件路由下 `/ui/` 开头的路径，须在 `permissions.http` 中声明为 GET。 */
   path?: string;
@@ -377,8 +381,10 @@ export function validateUiView(v: unknown): string[] {
 }
 
 /**
- * 调用者在组织内的角色（由高到低 owner / admin / member / guest）。`place: "page"` 的贡献只给 member 以上
- * （内核对 guest 返回 404，插件收不到 guest 的组织页面请求）；对话位置的贡献给能访问该对话的任何角色。
+ * The caller's role in the org (owner / admin / member / guest, highest first). A slot's `minRole`
+ * decides who may use its contributions: an `org.page` contribution only member and up (the kernel
+ * answers a guest 404, so the extension never sees a guest's org page request); conversation slots
+ * any role that can access the conversation.
  */
 export type UiRole = "owner" | "admin" | "member" | "guest";
 

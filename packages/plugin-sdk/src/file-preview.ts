@@ -10,7 +10,7 @@ export const FILE_PREVIEW_MAX_BYTES = 20 * 1024 * 1024;
 /**
  * One previewer of a `file-preview@1` provider: which files it previews and how. It renders either a
  * view (`render`, drawn by the web app like any `UiView`) or an embed page (`embed`, the id of a ui
- * contribution `{ kind: "embed", place: "file-preview" }` of the same extension, which receives the
+ * contribution `{ kind: "embed", slot: "file.preview" }` of the same extension, which receives the
  * file over the message bridge). Exactly one of the two.
  */
 export interface FilePreviewer {

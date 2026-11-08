@@ -44,6 +44,7 @@ import {
   canUsePlace,
   orgUiTopic,
   PluginUiRegistration,
+  placeOf,
   type UiActionHandler,
   type UiBusMessage,
   type UiRender,
@@ -404,7 +405,7 @@ export function createExtensionContext(
 
   const uiReg = new PluginUiRegistration(manifest, deny);
   const embedTokens = deps.embedTokens;
-  const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, c.place]));
+  const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, placeOf(c)]));
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -772,7 +773,7 @@ function checkFilePreviewProvider(manifest: ExtensionManifest, impl: unknown): v
   if (problems.length === 0) {
     const embeds = new Set(
       (manifest.ui ?? [])
-        .filter((c) => c.kind === "embed" && c.place === "file-preview")
+        .filter((c) => c.kind === "embed" && placeOf(c) === "file-preview")
         .map((c) => c.id),
     );
     (impl as FilePreviewProvider).previewers.forEach((p, i) => {

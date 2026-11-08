@@ -1,12 +1,12 @@
 import {
   type FormAnswer,
   type Logger,
-  normalizePlace,
   type UiActionResult,
   type UiBlock,
   type UiContribution,
   type UiIcon,
   type UiOpen,
+  type UiPlace,
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
@@ -22,7 +22,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { callExtension } from "./call-extension.js";
-import { canUsePlace, isConversationPlace, UUID_RE } from "./registry.js";
+import { canUsePlace, isConversationPlace, placeOf, UUID_RE } from "./registry.js";
 
 export { callExtension } from "./call-extension.js";
 
@@ -35,7 +35,7 @@ export interface UiContributionItem {
   id: string;
   title: UiContribution["title"];
   /** Normalized: the old `conversation` is listed as `panel`. */
-  place: Exclude<UiContribution["place"], "conversation" | "file-preview">;
+  place: Exclude<UiPlace, "conversation" | "file-preview">;
   /** `"conversation"` when the manifest still says the old place. */
   legacyPlace?: "conversation";
   kind: UiContribution["kind"];
@@ -232,15 +232,15 @@ export class UiViews {
         (c) =>
           enabled.has(c.plugin) &&
           c.contribution.aliasOf === undefined &&
-          c.contribution.place !== "file-preview" &&
+          placeOf(c.contribution) !== "file-preview" &&
           (c.contribution.kind === "embed" || c.render) &&
-          canUsePlace(c.contribution.place, role),
+          canUsePlace(placeOf(c.contribution), role),
       )
       .map(({ plugin, contribution: c }) => ({
         plugin,
         id: c.id,
         title: c.title,
-        place: normalizePlace(c.place) as UiContributionItem["place"],
+        place: placeOf(c) as UiContributionItem["place"],
         ...(c.place === "conversation" && { legacyPlace: "conversation" as const }),
         kind: c.kind,
         ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
@@ -257,7 +257,7 @@ export class UiViews {
     const { entry, args } = await this.resolve({ ...target, locale: "en" }, "embed");
     const path = entry.contribution.path;
     if (path === undefined) throw notFound();
-    const preview = entry.contribution.place === "file-preview";
+    const preview = placeOf(entry.contribution) === "file-preview";
     if (preview !== (fileId !== undefined)) {
       throw new ApiError(
         "validation_failed",
@@ -324,7 +324,7 @@ export class UiViews {
     return new Set(
       this.d.host
         .uiContributions()
-        .filter((c) => c.plugin === plugin && normalizePlace(c.contribution.place) === "panel")
+        .filter((c) => c.plugin === plugin && placeOf(c.contribution) === "panel")
         .map((c) => c.contribution.id),
     );
   }
@@ -360,7 +360,7 @@ export class UiViews {
           ? c.contribution.kind === "embed"
           : c.contribution.kind === "view" && c[need] !== undefined),
     );
-    if (!entry || !canUsePlace(entry.contribution.place, t.role)) throw notFound();
+    if (!entry || !canUsePlace(placeOf(entry.contribution), t.role)) throw notFound();
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     // spec A §6: the extension is not called for an org whose effective config is not valid
     const effective = await this.d.effective.get(t.orgId, t.plugin);
@@ -374,7 +374,7 @@ export class UiViews {
       locale: t.locale,
       config: effective.config,
     };
-    if (!isConversationPlace(entry.contribution.place)) {
+    if (!isConversationPlace(placeOf(entry.contribution))) {
       if (t.item !== undefined || t.card !== undefined) {
         throw new ApiError("validation_failed", "item and callId are for conversation views");
       }
@@ -405,7 +405,7 @@ export class UiViews {
       // args.card is attested: an inline view, and a tool_result of this conversation recorded this
       // very card (plugin, the requested id or its alias target, key); else it is not found
       const recorded =
-        normalizePlace(entry.contribution.place) === "inline" && this.d.recordedCard !== undefined
+        placeOf(entry.contribution) === "inline" && this.d.recordedCard !== undefined
           ? await this.d.recordedCard(conversationId, t.card.callId)
           : null;
       if (

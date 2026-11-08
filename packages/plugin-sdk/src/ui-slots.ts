@@ -3,8 +3,24 @@ import type { UiKind, UiPlace } from "./ui.js";
 export type UiSlotScope = "conversation" | "agent" | "org" | "platform" | "file";
 export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
 
-interface SlotShape<Id extends string> {
-  id: Id;
+/** Every slot id of the catalog, in catalog order (UI slots spec §3). */
+export const UI_SLOT_IDS = [
+  "conversation.panel",
+  "conversation.properties.section",
+  "conversation.tool-result.card",
+  "org.page",
+  "file.preview",
+  "agent.detail.section",
+  "org.settings.section",
+  "platform.page",
+] as const;
+
+export type UiSlotId = (typeof UI_SLOT_IDS)[number];
+
+/** One slot of the catalog: where extension UI may go and what it receives (UI slots spec §3.1). */
+export interface UiSlotSpec {
+  id: UiSlotId;
+  /** Bumped only on an incompatible change of the slot's contract. */
   version: number;
   /** Path relative to `apps/web/src` of the component that renders the slot. */
   owner: string;
@@ -12,15 +28,15 @@ interface SlotShape<Id extends string> {
   accepts: readonly UiKind[];
   cardinality: "list";
   minRole: UiSlotRole;
+  /** Context ids passed to render (`conversationId`, `agentId`, …). */
   args: readonly string[];
   density: "dense" | "regular";
   icon: "required" | "optional" | "none";
+  /** Built-in parts a contribution may be placed after; the first is the default. */
   anchors?: readonly string[];
   limits?: { maxShown?: number };
   description: { en: string; zh: string };
 }
-
-export interface UiSlotSpec extends SlotShape<UiSlotId> {}
 
 const SLOT_DATA = [
   {
@@ -152,16 +168,9 @@ const SLOT_DATA = [
       zh: "平台管理中的完整页面。",
     },
   },
-] as const satisfies readonly SlotShape<string>[];
-
-export type UiSlotId = (typeof SLOT_DATA)[number]["id"];
+] as const satisfies readonly UiSlotSpec[];
 
 export const UI_SLOTS: readonly UiSlotSpec[] = SLOT_DATA;
-
-export const UI_SLOT_IDS = SLOT_DATA.map((s) => s.id) as unknown as readonly [
-  UiSlotId,
-  ...UiSlotId[],
-];
 
 export function uiSlot(id: string): UiSlotSpec | undefined {
   return UI_SLOTS.find((s) => s.id === id);

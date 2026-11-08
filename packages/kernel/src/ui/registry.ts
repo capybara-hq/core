@@ -1,10 +1,14 @@
-import type {
-  ExtensionManifest,
-  UiActionArgs,
-  UiActionResult,
-  UiContribution,
-  UiRenderArgs,
-  UiView,
+import {
+  type ExtensionManifest,
+  PLACE_SLOTS,
+  parseSlotRef,
+  slotRefOf,
+  type UiActionArgs,
+  type UiActionResult,
+  type UiContribution,
+  type UiPlace,
+  type UiRenderArgs,
+  type UiView,
 } from "@capybara-hq/plugin-sdk";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 
@@ -15,11 +19,26 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 export const PAGE_MIN_ROLE: OrgRole = "member";
 
 /** Places on the conversation page (everything but an org page): they need a `conversationId`. */
-export const isConversationPlace = (place: UiContribution["place"]): boolean => place !== "page";
+export const isConversationPlace = (place: UiPlace): boolean => place !== "page";
 
-/** 该角色能否使用这个位置的贡献。 */
-export const canUsePlace = (place: UiContribution["place"], role: OrgRole): boolean =>
+/** Whether the role may use a contribution in this place. */
+export const canUsePlace = (place: UiPlace, role: OrgRole): boolean =>
   place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);
+
+/** The slot of each place, inverted (`conversation.panel` → `panel`, never the old `conversation`). */
+const SLOT_PLACES: ReadonlyMap<string, Exclude<UiPlace, "conversation">> = new Map(
+  (Object.entries(PLACE_SLOTS) as [UiPlace, string][])
+    .filter((e): e is [Exclude<UiPlace, "conversation">, string] => e[0] !== "conversation")
+    .map(([place, slot]) => [slot, place]),
+);
+
+/**
+ * Compile shim of the UI slots migration (removed when the host resolves slots): the place a
+ * contribution's slot (or deprecated `place`) stands for; `page` for any slot without a place.
+ */
+export function placeOf(c: UiContribution): Exclude<UiPlace, "conversation"> {
+  return SLOT_PLACES.get(parseSlotRef(slotRefOf(c))?.id ?? "") ?? "page";
+}
 
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */
 export type UiRender = (args: UiRenderArgs) => Promise<UiView>;

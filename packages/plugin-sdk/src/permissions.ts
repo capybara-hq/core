@@ -1,5 +1,6 @@
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
-import { UI_ICONS, type UiContribution } from "./ui.js";
+import { UI_ICONS, type UiContribution, type UiPlace } from "./ui.js";
+import { PLACE_SLOTS, parseSlotRef, uiSlot } from "./ui-slots.js";
 
 /** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
 export interface ExtensionPermissions {
@@ -213,21 +214,19 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
 
 const UI_ID_RE = /^[a-z][a-z0-9-]{0,39}$/;
 const UI_TITLE_MAX = 100;
-const UI_PLACES: readonly unknown[] = [
-  "conversation",
-  "panel",
-  "section",
-  "inline",
-  "page",
-  "file-preview",
-];
+const UI_PLACES: readonly unknown[] = Object.keys(PLACE_SLOTS);
 const UI_EMBED_PREFIX = "/ui/";
 
 /**
- * 校验清单 `ui` 并与权限清单交叉核对，返回错误列表（空表示合法）：
- * 每个贡献的 id 恰好出现在 `permissions.ui.views`（kind view）或 `permissions.ui.embeds`（kind embed）里，
- * `permissions.ui` 里也不能有清单 `ui` 没有的 id；embed 的 path 以 `/ui/` 开头并在 `permissions.http` 中声明为 GET。
- * 假定 `permissions` 已经过 {@link validatePermissions}。
+ * Checks the structure of the manifest's `ui` and cross-checks it with the permission manifest;
+ * returns the problems (empty = valid). Only structural problems (UI slots spec §3.2): each
+ * contribution's id is listed in exactly `permissions.ui.views` (kind view) or
+ * `permissions.ui.embeds` (kind embed), and `permissions.ui` lists no id the `ui` lacks; an embed's
+ * path starts with `/ui/` and is declared in `permissions.http` as GET; exactly one of `slot` (a
+ * well-formed slot reference) and `place` (a known place); for a slot the catalog knows, a kind it
+ * accepts and, unless an alias, the icon it requires. An unknown slot id or version is not a
+ * problem here: `resolveUiSlots` drops that contribution and the rest of the extension loads.
+ * Assumes `permissions` passed {@link validatePermissions}.
  */
 export function validateUiContributions(ui: unknown, permissions: unknown): string[] {
   const perms = isObj(permissions) ? permissions : {};
@@ -268,20 +267,38 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       [title.zh, title.en].some((t) => typeof t !== "string" || t === "" || t.length > UI_TITLE_MAX)
     )
       errs.push(`ui "${id}" title needs non-empty zh and en of at most ${UI_TITLE_MAX} characters`);
-    if (!UI_PLACES.includes(c.place))
+    // the slot it names, when the slot / place is well formed (known to the catalog or not)
+    let slotRef: { id: string; version: number } | null = null;
+    if ((c.slot === undefined) === (c.place === undefined)) {
+      errs.push(`ui "${id}" needs exactly one of slot and place`);
+    } else if (c.slot !== undefined) {
+      slotRef = typeof c.slot === "string" ? parseSlotRef(c.slot) : null;
+      if (slotRef === null)
+        errs.push(`ui "${id}" slot must be a slot reference like "org.page" or "org.page@1"`);
+    } else if (!UI_PLACES.includes(c.place)) {
       errs.push(`ui "${id}" place must be one of ${UI_PLACES.join(", ")}`);
+    } else {
+      slotRef = { id: PLACE_SLOTS[c.place as UiPlace], version: 1 };
+    }
+    if (c.after !== undefined && typeof c.after !== "string")
+      errs.push(`ui "${id}" after must be a string`);
     if (c.kind !== "view" && c.kind !== "embed") {
       errs.push(`ui "${id}" kind must be view or embed`);
       return;
     }
     if (c.icon !== undefined && !(UI_ICONS as readonly unknown[]).includes(c.icon))
       errs.push(`ui "${id}" icon must be one of ${UI_ICONS.join(", ")}`);
+    const spec = slotRef === null ? undefined : uiSlot(slotRef.id);
+    if (spec !== undefined) {
+      if (!spec.accepts.includes(c.kind))
+        errs.push(`ui "${id}" slot ${spec.id} does not accept kind ${c.kind}`);
+      if (spec.icon === "required" && c.icon === undefined && c.aliasOf === undefined)
+        errs.push(`ui "${id}" slot ${spec.id} needs an icon`);
+    }
     if (c.aliasOf !== undefined) aliases.push({ id, kind: c.kind, target: c.aliasOf });
     if (seen.has(id)) errs.push(`ui has duplicate id "${id}"`);
     seen.set(id, c.kind);
     if (c.kind === "view") {
-      if (c.place === "file-preview")
-        errs.push(`ui "${id}" place file-preview is only allowed for kind embed`);
       if (c.path !== undefined) errs.push(`ui "${id}" path is only allowed for kind embed`);
       if (!views.includes(id))
         errs.push(`ui "${id}" (view) must be listed in permissions.ui.views`);
