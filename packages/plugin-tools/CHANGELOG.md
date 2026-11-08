@@ -1,5 +1,29 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.9
+
+### Minor Changes
+
+- 6d9a256: `capybara-plugin pack` ships a plugin's themes (`themes/*.json` or `manifest.themes`) with the fonts
+  and logos they reference, and a plugin may hold only themes. `capybara-plugin check` adds the
+  "Themes" check: `theme-invalid`, `theme-readability` and `theme-asset` (the 16 MB asset limit is
+  summed over the plugin's themes).
+
+### Patch Changes
+
+- Updated dependencies [bbd508e]
+- Updated dependencies [00e742e]
+- Updated dependencies [b2b3faa]
+- Updated dependencies [f120273]
+- Updated dependencies [2191e44]
+- Updated dependencies [c489ee6]
+- Updated dependencies [c1c7b0f]
+- Updated dependencies [ff5e3bf]
+- Updated dependencies [00e742e]
+- Updated dependencies [0158d0c]
+  - @capybara-hq/kernel@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.8
+
 ## 0.1.0-rc.8
 
 ### Minor Changes
