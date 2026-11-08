@@ -211,7 +211,7 @@ describe("/settings/appearance (组织设置 › 外观)", () => {
 describe("/account/preferences › 外观", () => {
   const PREFS = "/api/v1/me/preferences";
 
-  it("the cards: 默认 and the org's themes; a pick is saved with PUT { theme } and the org's themes read again", async () => {
+  it("the cards: 默认 and the org's themes; a pick is saved with PUT { theme } and every cached org's themes read again", async () => {
     let theme: string | null = null;
     const routes: Routes = {
       ...orgRoutes(),
@@ -222,7 +222,11 @@ describe("/account/preferences › 外观", () => {
       },
     };
     const calls = stubApi(routes);
-    await renderRouteWithCache("/account/preferences", routes, { locale: "zh" });
+    const { client } = await renderRouteWithCache("/account/preferences", routes, {
+      locale: "zh",
+    });
+    // another org this tab viewed: the pick holds there too
+    client.setQueryData(orgThemesQuery("o2").queryKey, themesOf({ id: null, personal: "allowed" }));
     const picker = await screen.findByRole("radiogroup", { name: A.personal.label });
     const radios = within(picker).getAllByRole("radio");
     expect(radios.map((r) => r.textContent)).toEqual([A.personal.default, "夜之城", "纸"]);
@@ -239,6 +243,8 @@ describe("/account/preferences › 外观", () => {
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "GET" && c.url.endsWith(`${O}/themes`))).toBe(true),
     );
+    // the other org's themes read is stale, so it refetches when that org is viewed
+    expect(client.getQueryState(orgThemesQuery("o2").queryKey)?.isInvalidated).toBe(true);
   });
 
   it("an org that locks it: one line instead of the cards", async () => {

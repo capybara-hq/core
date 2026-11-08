@@ -23,11 +23,14 @@ import {
 } from "../../../../lib/account-preferences";
 import { preferencesQuery } from "../../../../lib/query/account";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { meQuery } from "../../../../lib/query/shell";
-import { orgThemesQuery, platformThemeQuery } from "../../../../lib/query/themes";
+import {
+  cachedOrgThemesKeys,
+  orgThemesQuery,
+  platformThemeQuery,
+} from "../../../../lib/query/themes";
 import { type OrgThemes, themeName } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
@@ -74,9 +77,9 @@ function PreferencesForm({ accountId, orgId }: { accountId: string; orgId: strin
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const update = useAppMutation({
     fn: (prefs: Partial<Preferences>) => putPreferences(prefs),
-    // a theme pick changes the current org's resolved theme (the page repaints with it)
-    invalidates: (prefs) =>
-      prefs.theme !== undefined && orgId !== null ? [keys.org(orgId).themes()] : [],
+    // a theme pick changes the resolved theme of every org (the page repaints with it; another
+    // org cached in this tab refetches when it is viewed)
+    invalidates: (prefs) => (prefs.theme === undefined ? [] : cachedOrgThemesKeys(qc)),
     onSuccess: (res) => qc.setQueryData(preferencesQuery(accountId).queryKey, res),
   });
   const header = {
