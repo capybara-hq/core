@@ -72,6 +72,7 @@ export {
   type ImpactPreviewNote,
   type ImpactPreviewProps,
 } from "./impact-preview";
+export { InstructionList, type InstructionListProps } from "./instruction-list";
 export {
   ItemList,
   type ItemListInset,

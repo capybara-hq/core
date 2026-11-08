@@ -9,6 +9,7 @@ import {
   FileDrop,
   Grid,
   ImageBlock,
+  InstructionList,
   IoBlock,
   Stack,
   Tabs,
@@ -176,6 +177,18 @@ export function ChatSection() {
             }
           />
         </Grid>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          步骤 InstructionList · 编号、反引号为行内代码
+        </Text>
+        <InstructionList
+          label="接入步骤"
+          items={[
+            "打开 `https://api.slack.com/apps`，选择 Create New App → From a manifest。",
+            "粘贴下面的 manifest，安装到工作区。",
+          ]}
+        />
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
