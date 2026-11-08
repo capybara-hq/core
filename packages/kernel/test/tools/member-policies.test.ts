@@ -292,6 +292,30 @@ describe("createDecidePolicy: a member's own policies on their connection", () =
     expect(outcome(await policy(tool(orgWide, "team"), agentDef, ctx))).toBe("ask:connector");
   });
 
+  it("an org-credential connector: the agent's 允许 does not lift the org's 询问 (it only tightens there)", async () => {
+    const policy = createDecidePolicy(db);
+    const teamKey = "mcp__team__send_message";
+    const withPolicy = async (p: P, version: number) => {
+      const def = { ...agentDef, toolPolicies: { [teamKey]: p } };
+      await sql`INSERT INTO capybara.agent_versions (agent_id, version, definition, created_by)
+        VALUES (${seed.agentId}, ${version}, ${JSON.stringify(def)}::jsonb, ${seed.accountId})`.execute(
+        raw,
+      );
+      await sql`UPDATE capybara.agents SET current_version = ${version} WHERE id = ${seed.agentId}`.execute(
+        raw,
+      );
+      return def as AgentDefinition;
+    };
+    const allow = await withPolicy("allow", 2);
+    expect(outcome(await policy(tool(orgWide, "team"), allow, ctx))).toBe("ask:connector");
+    const deny = await withPolicy("deny", 3);
+    expect(outcome(await policy(tool(orgWide, "team"), deny, ctx))).toBe("deny");
+    // an org default allow with an agent ask still asks (tightening keeps working)
+    await setTool(orgWide, "allow");
+    const ask = await withPolicy("ask", 4);
+    expect(outcome(await policy(tool(orgWide, "team"), ask, ctx))).toBe("ask:agent");
+  });
+
   it("an agent 允许 on a tool that is not a connector's changes nothing (it only tightens there)", async () => {
     const policy = createDecidePolicy(db);
     const plugin: ResolvedTool = {

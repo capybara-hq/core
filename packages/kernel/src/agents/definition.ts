@@ -257,10 +257,11 @@ export const AgentDefinitionSchema = z.object({
   subagentTools: SubagentToolsSchema.optional(),
   /**
    * Policies by tool key; keys are tools the agent could have (on or turned off). `ask` / `deny`
-   * tighten any tool. `allow` counts only for a connector tool (decision 2026-11-09): it overrides
-   * the org default and the member's own 询问, never the org's or the member's 禁止
-   * (`tools/policy.ts` `connectorPolicy`); on any other tool it changes nothing. Older definitions
-   * without it read as empty.
+   * tighten any tool. `allow` is accepted only on a connector tool key and counts only for a
+   * personal-credential connector's tool (decision 2026-11-09): it overrides the org default and
+   * the member's own 询问, never the org's or the member's 禁止 (`tools/policy.ts`
+   * `connectorPolicy`); on any other tool it changes nothing. Older definitions without it read as
+   * empty.
    */
   toolPolicies: z.record(z.string(), z.enum(["allow", "ask", "deny"])).default({}),
   /**

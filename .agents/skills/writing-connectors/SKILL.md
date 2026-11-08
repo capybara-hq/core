@@ -136,11 +136,14 @@ personal-credential connector each member sets their own 允许 / 询问 / 禁�
 connection (`connector_tool_account_policies`, `tools/connector-account-policies.ts`, routes
 `GET` / `PUT …/connectors/:connectorId/tool-policies/me`, always the session's account; an
 org-credential connector -> 409 `connector.not_personal`; both routes are Platform exclusions, the
-write `human-only`). A connector tool call resolves highest first (`connectorPolicy` in
-`tools/policy.ts`): the org switched the tool off (unavailable) or its default is `deny`; the
-member's 禁止 (a floor no agent lifts); the agent's `toolPolicies` setting (`allow` allowed for
-connector tools only); the member's 允许 / 询问; the org default (`connector_tools.default_policy`,
-the annotation default unless an admin changed it). "The member" is `ctx.accountId`, the account
+write `human-only`). A personal-credential connector's tool call resolves highest first
+(`connectorPolicy` in `tools/policy.ts`): the org switched the tool off (unavailable) or its default
+is `deny`; the member's 禁止 (a floor no agent lifts); the agent's `toolPolicies` setting (`allow`
+allowed for connector tools only); the member's 允许 / 询问; the org default
+(`connector_tools.default_policy`, the annotation default unless an admin changed it). An
+org-credential connector's tool keeps the org default with the agent's tightening only: a stored
+`allow` changes nothing there (its calls act as the whole org and no member floor exists). An
+`agents.update` / `agents.create` that adds an `allow` is confirmed every time, never remembered. "The member" is `ctx.accountId`, the account
 whose personal credential the pipeline injects (a sub-agent: its tree's account; a channel run: the
 sender's). Fixed asks, role escalation and grants apply after this. Tests:
 `test/tools/member-policies.test.ts` (levels, locks, defaults, isolation, acting accounts) and the

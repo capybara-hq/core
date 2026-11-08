@@ -742,6 +742,7 @@ describe("the agent page renders on the server (web-SSR spec §6)", () => {
     id: "cn1",
     name: "Tracker",
     status: "active",
+    auth: { type: "none" },
     tools: [{ name: "find", key: "mcp__tracker__find", status: "enabled" }],
   };
   const formRoutes = {

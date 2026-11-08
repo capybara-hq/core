@@ -52,7 +52,7 @@ of the connector's tools agents may call with their connection without asking.
 
 ## 4. Resolution for one connector tool call (decided)
 
-Highest first (`tools/policy.ts` `connectorPolicy`):
+For a tool of a personal-credential connector, highest first (`tools/policy.ts` `connectorPolicy`):
 
 1. the org switched the tool off -> the tool is unavailable (as before);
    the org's default is `deny` -> denied **(designer's call: an org admin's deny was absolute
@@ -73,7 +73,8 @@ escalates, and a remembered grant may let an ask through (never a deny).
 - The agent's setting is the stricter of the set ones among the run's version, the agent's current
   version and (an org agent sub-agent) the parent agent's current version. An `allow` the owner
   removed from the current version stops applying at once (removing it tightens).
-- `toolPolicies` accepts `allow` only on a connector tool key; on any other key it is refused at save
+- `toolPolicies` accepts `allow` only on a connector tool key (it counts only on a personal-credential
+  connector's, see below); on any other key it is refused at save
   (400 `validation_failed` at `toolPolicies.<key>`), and other tools stay tighten-only. Agent
   templates stay tighten-only: saving an agent as a template drops its `allow` entries, and a
   sub-agent's effective definition keeps only `ask` / `deny` (the parent's `allow` reaches the child
@@ -81,3 +82,12 @@ escalates, and a remembered grant may let an ask through (never a deny).
 - The agent's tools page offers 允许 for connector tools and says that a member's own 禁止 still
   blocks the tool for that member.
 - `approval_requested.policy` gains `member` (the member's own 询问 asked).
+- **An org-credential connector's tools (review 2026-11-09, designer's call):** no member level, and
+  the agent's setting only tightens the org default as before: a stored `allow` changes nothing
+  there, and the tools page offers 允许 only on a personal-credential connector's tools. Its calls act
+  as the whole org with no member floor, so an agent owner's `allow` would remove the per-call human
+  check for every member of a shared agent (and every channel sender) and override an org admin's
+  询问.
+- **Platform tool (review 2026-11-09):** `agents.update` / `agents.create` whose input adds an
+  `allow` is confirmed every time, never remembered (class `org`), so an agent can never loosen its
+  own policies on a grant the person remembered for ordinary edits of their private agent.

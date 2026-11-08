@@ -96,7 +96,9 @@ const tighteningOf = (s: ToolPolicy | undefined): "ask" | "deny" | undefined =>
 export type ConnectorPolicySource = "org" | "member" | "agent";
 
 /**
- * A connector tool's policy for one call (maintainer decisions 2026-11-09), highest first:
+ * A personal-credential connector tool's policy for one call (maintainer decisions 2026-11-09;
+ * an org-credential connector's tool keeps the org default with the agent's tightening only),
+ * highest first:
  * 1. the org's default `deny` (a tool the org switched off never gets here: it is unavailable);
  * 2. the member's own `deny` for calls with their connection (`member`): a floor no agent lifts;
  * 3. the agent's setting (`agent`, from its tools page): `allow` / `ask` / `deny`;
@@ -147,6 +149,8 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     let hashCurrent = true;
     /** The member's own setting for a call with their connection (a personal-credential connector). */
     let memberSetting: ToolPolicy | undefined;
+    /** A personal-credential connector: calls use the acting account's own connection. */
+    let personal = false;
     if (tool.source.kind === "connector") {
       connectorId = tool.source.connectorId;
       const app = await db
@@ -174,7 +178,8 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       hashCurrent = row.spec_hash === tool.specHash;
       // The call is made with the acting account's own connection (the credential the pipeline
       // injects for `ctx.accountId`): that account's settings apply, never another's
-      if (personalAuth(app.auth)) {
+      personal = personalAuth(app.auth);
+      if (personal) {
         const mine = await db
           .selectFrom("connector_tool_account_policies")
           .select("policy")
@@ -230,10 +235,12 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       agentSetting = combine(agentSetting, await parentAgentSetting(db, tool.key, policyKey, ctx));
     }
     let agentOverride = tighteningOf(agentSetting);
-    // A connector tool: the levels of `connectorPolicy` decide its base policy (an agent's
-    // `allow` counts here, below the org's and the member's deny)
+    // A personal-credential connector's tool: the levels of `connectorPolicy` decide its base
+    // policy (an agent's `allow` counts here, below the org's and the member's deny). A connector
+    // with one org credential has no member level and its calls act as the whole org: there the
+    // agent's setting only tightens the org default, as for every other tool (review 2026-11-09)
     let decidedBy: ConnectorPolicySource | null = null;
-    if (tool.source.kind === "connector") {
+    if (tool.source.kind === "connector" && personal) {
       const r = connectorPolicy({
         orgDefault: connectorDefault,
         member: memberSetting,

@@ -103,6 +103,11 @@ type Group = {
   /** The rows; null while a connector's tools are being read (or could not be read). */
   tools: GroupTool[] | null;
   readError: boolean;
+  /**
+   * A connector whose members each connect with their own credential: only its tools may be set
+   * to 允许 for the agent (an org-credential connector's tools only tighten).
+   */
+  personal: boolean;
   onCheck(names: string[], on: boolean): void;
 };
 
@@ -226,6 +231,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       off,
       prefix: extensionToolKey(ext.plugin, ""),
       readError: false,
+      personal: false,
       tools: ext.tools.map((tool) => {
         const checked = !isOff(off, tool.name);
         return {
@@ -263,6 +269,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
           }))
         : null,
       readError: detailFailed.has(a.id),
+      personal: a.auth.type !== "none" && a.auth.ownership === "personal",
       onCheck: (names, on) => setGroup("connectors", a.id, listed, names, on),
     };
   });
@@ -282,8 +289,8 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
     { value: "deny", label: t("form.policy.deny") },
   ];
   const policyOptions = [defaultOption, ...tighten];
-  // A connector's tools may also be allowed for this agent (decision 2026-11-09): over the org
-  // default and a member's own 询问, never over a member's own 禁止
+  // A personal-credential connector's tools may also be allowed for this agent (decision
+  // 2026-11-09): over the org default and a member's own 询问, never over a member's own 禁止
   const connectorPolicyOptions = [
     defaultOption,
     { value: "allow", label: t("form.policy.allow") },
@@ -451,7 +458,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               <Text variant="prose" tone="muted">
                 {t("form.sheetHint")}
               </Text>
-              {openGroup.kind === "connector" && (
+              {openGroup.personal && (
                 <Text variant="prose" tone="muted">
                   {t("form.connectorPolicyHint")}
                 </Text>
@@ -471,9 +478,7 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
               ) : (
                 <ToolPolicyList
                   label={t("form.sheetTools", { name: openGroup.name })}
-                  policyOptions={
-                    openGroup.kind === "connector" ? connectorPolicyOptions : policyOptions
-                  }
+                  policyOptions={openGroup.personal ? connectorPolicyOptions : policyOptions}
                   disabled={save.pending}
                   rows={rowsOf(openGroup.tools)}
                   onCheck={(key, on) => openGroup.onCheck(namesOf(openGroup, [key]), on)}
