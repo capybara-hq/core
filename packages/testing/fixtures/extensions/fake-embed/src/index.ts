@@ -96,14 +96,14 @@ export default defineExtension({
     {
       id: "panel",
       title: { zh: "面板", en: "Panel" },
-      place: "page",
+      slot: "org.page",
       kind: "embed",
       path: "/ui/panel",
     },
     {
       id: "panel-conv",
       title: { zh: "面板", en: "Panel" },
-      place: "conversation",
+      slot: "conversation.panel",
       kind: "embed",
       path: "/ui/panel-conv",
     },

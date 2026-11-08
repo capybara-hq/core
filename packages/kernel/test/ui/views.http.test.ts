@@ -696,7 +696,7 @@ describe("插件视图接口", () => {
     ).extensions.find((p) => p.plugin === "fake-tools-ui");
     expect(toolsUi?.permissions.find((g) => g.category === "ui")).toMatchObject({
       sensitive: false,
-      items: ["view:tasks"],
+      items: ["view:agent-notes", "view:org-admin", "view:platform-home", "view:tasks"],
     });
   });
 });

@@ -31,22 +31,28 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   ui: [
-    { id: "panel", title: t("面板", "Panel"), place: "conversation", kind: "view" },
-    { id: "boom", title: t("出错", "Boom"), place: "conversation", kind: "view" },
-    { id: "slow", title: t("很慢", "Slow"), place: "conversation", kind: "view" },
-    { id: "bad", title: t("非法", "Bad"), place: "conversation", kind: "view" },
-    { id: "orgpage", title: t("组织页", "Org page"), place: "page", kind: "view" },
+    { id: "panel", title: t("面板", "Panel"), slot: "conversation.panel", kind: "view" },
+    { id: "boom", title: t("出错", "Boom"), slot: "conversation.panel", kind: "view" },
+    { id: "slow", title: t("很慢", "Slow"), slot: "conversation.panel", kind: "view" },
+    { id: "bad", title: t("非法", "Bad"), slot: "conversation.panel", kind: "view" },
+    { id: "orgpage", title: t("组织页", "Org page"), slot: "org.page", kind: "view" },
     // UI refresh B Task 12: a properties section, an inline card and a retired alias of `panel`
-    { id: "side", title: t("侧栏", "Side"), place: "section", kind: "view", icon: "chart" },
-    { id: "card", title: t("卡片", "Card"), place: "inline", kind: "view" },
+    {
+      id: "side",
+      title: t("侧栏", "Side"),
+      slot: "conversation.properties.section",
+      kind: "view",
+      icon: "chart",
+    },
+    { id: "card", title: t("卡片", "Card"), slot: "conversation.tool-result.card", kind: "view" },
     {
       id: "old-panel",
       title: t("旧面板", "Old panel"),
-      place: "conversation",
+      slot: "conversation.panel",
       kind: "view",
       aliasOf: "panel",
     },
-    { id: "board", title: t("看板", "Board"), place: "page", kind: "embed", path: "/ui/board" },
+    { id: "board", title: t("看板", "Board"), slot: "org.page", kind: "embed", path: "/ui/board" },
   ],
   permissions: {
     http: [

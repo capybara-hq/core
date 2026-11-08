@@ -104,8 +104,31 @@ export default defineExtension({
   sdk: "^0.1.0-rc.0",
   provides: [],
   migrations: "../migrations",
-  ui: [{ id: "tasks", title: { zh: "条目", en: "Items" }, place: "conversation", kind: "view" }],
-  permissions: { tools: ["write"], ui: { views: ["tasks"] } },
+  ui: [
+    { id: "tasks", title: { zh: "条目", en: "Items" }, slot: "conversation.panel", kind: "view" },
+    {
+      id: "agent-notes",
+      title: { zh: "智能体备注", en: "Agent notes" },
+      slot: "agent.detail.section",
+      kind: "view",
+    },
+    {
+      id: "org-admin",
+      title: { zh: "组织设置扩展", en: "Org admin" },
+      slot: "org.settings.section",
+      kind: "view",
+    },
+    {
+      id: "platform-home",
+      title: { zh: "平台首页", en: "Platform home" },
+      slot: "platform.page",
+      kind: "view",
+    },
+  ],
+  permissions: {
+    tools: ["write"],
+    ui: { views: ["tasks", "agent-notes", "org-admin", "platform-home"] },
+  },
   setup(ctx) {
     ctx.tools.register(WRITE, async (input, tctx) => {
       const parsed = WriteInput.safeParse(input);
@@ -136,5 +159,24 @@ export default defineExtension({
     ctx.ui.view("tasks", async ({ conversationId }) =>
       tasksView(conversationId === undefined ? [] : await readItems(ctx.db, conversationId)),
     );
+    const ping: UiView["blocks"] = [
+      { type: "actions", buttons: [{ actionId: "ping", label: "Ping" }] },
+    ];
+    const done = async () => ({ toast: { zh: "已完成", en: "Done" } });
+    ctx.ui.view("agent-notes", async (args) => ({
+      blocks: [
+        { type: "heading", text: `Agent ${(args as { agentId?: string }).agentId ?? ""}`.trim() },
+        ...ping,
+      ],
+    }));
+    ctx.ui.action("agent-notes", done);
+    ctx.ui.view("org-admin", async () => ({
+      blocks: [{ type: "heading", text: "Org settings" }, ...ping],
+    }));
+    ctx.ui.action("org-admin", done);
+    ctx.ui.view("platform-home", async () => ({
+      blocks: [{ type: "heading", text: "Platform home" }, ...ping],
+    }));
+    ctx.ui.action("platform-home", done);
   },
 });

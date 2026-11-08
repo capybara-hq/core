@@ -46,7 +46,7 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: ["web-search@1", "web-fetch@1", "directory@1"],
-  ui: [{ id: "page", title: t("组织页", "Org page"), place: "page", kind: "view" }],
+  ui: [{ id: "page", title: t("组织页", "Org page"), slot: "org.page", kind: "view" }],
   permissions: {
     tools: ["probe"],
     ui: { views: ["page"] },
