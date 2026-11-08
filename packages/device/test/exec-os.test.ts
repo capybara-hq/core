@@ -453,7 +453,7 @@ describe.skipIf(!availability.ok)(
     );
 
     it.runIf(process.platform === "darwin")(
-      "killTagged reaches a child that left the process group (by the environment marker)",
+      "killTagged reaches a child that left the process group (by the device marker)",
       async () => {
         const node = process.execPath;
         const script = `const c=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},1e6)'],{detached:true,stdio:'ignore'});c.unref();console.log(c.pid)`;

@@ -1,7 +1,7 @@
 {
   "name": "@capybara-hq/device",
   "version": "0.1.0-rc.1",
-  "description": "capybara-device: connects a laptop or server to a Capybara deployment as an environment",
+  "description": "capybara-device: connects a laptop or server to a Capybara deployment as an device",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

@@ -45,7 +45,7 @@ export function deniedSecretPaths(home: string = homedir()): string[] {
 
 /**
  * Paths sandbox-runtime makes writable without being asked (its own temp directory and two home
- * convenience directories). They lie outside the environment directory, so they are denied.
+ * convenience directories). They lie outside the device directory, so they are denied.
  */
 export function implicitWritePaths(home: string = homedir()): string[] {
   return [
@@ -64,7 +64,7 @@ function covers(pattern: string, host: string): boolean {
 }
 
 /**
- * The domains one command may reach: what the environment's egress allows, cut to the local
+ * The domains one command may reach: what the device's egress allows, cut to the local
  * policy. The cloud can only narrow it: an empty policy allows nothing, whatever the egress.
  */
 export function effectiveEgress(
@@ -86,7 +86,7 @@ export function effectiveEgress(
   return [...out];
 }
 
-/** The sandbox-runtime configuration of one environment. */
+/** The sandbox-runtime configuration of one device. */
 export interface SrtConfig {
   filesystem: {
     denyRead: string[];

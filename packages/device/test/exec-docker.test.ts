@@ -22,7 +22,7 @@ import {
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
 } from "../src/exec/docker.js";
-import { prepareEnvironmentDir } from "../src/exec/shared.js";
+import { prepareDeviceDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
 import { DEFAULT_POLICY } from "../src/state.js";
 
@@ -74,7 +74,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     dir = join(base, "env");
     mkdirSync(dir);
     envId = `t${randomBytes(6).toString("hex")}`;
-    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
     await ex.ensureRoot();
   });
 
@@ -86,7 +86,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
 
   afterAll(() => {});
 
-  it("docker exec runs in /workspace and files land in the environment dir", async () => {
+  it("docker exec runs in /workspace and files land in the device dir", async () => {
     const r = await ex.exec(execArgs("pwd; id -u; echo hi > made.txt; echo t > /tmp/x"), live);
     expect(r.exitCode).toBe(0);
     // the host user on Linux, the image's sandbox user (1000) elsewhere
@@ -109,7 +109,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const id1 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
       encoding: "utf8",
     });
-    const again = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    const again = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
     await again.exec(execArgs("true"), live);
     const id2 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
       encoding: "utf8",
@@ -117,7 +117,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(id2).toBe(id1);
     const other = join(base, "env2");
     mkdirSync(other);
-    const moved = new DockerExecutor({ dir: other, environmentId: envId, policy: DEFAULT_POLICY });
+    const moved = new DockerExecutor({ dir: other, deviceId: envId, policy: DEFAULT_POLICY });
     await moved.exec(execArgs("touch here"), live);
     expect(existsSync(join(other, "workspace", "here"))).toBe(true);
     await moved.dispose();
@@ -150,7 +150,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       SANDBOX_IMAGE,
       "infinity",
     ]);
-    const fresh = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    const fresh = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
     await fresh.exec(execArgs("true"), live);
     expect(inspect("{{.Config.Labels}}")).not.toContain("spec:old");
     expect(inspect("{{.HostConfig.ReadonlyRootfs}}")).toBe("true");
@@ -160,7 +160,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   it("sets swap equal to memory when the policy has a ceiling", async () => {
     const limited = new DockerExecutor({
       dir,
-      environmentId: envId,
+      deviceId: envId,
       policy: { ...DEFAULT_POLICY, memoryMb: 256 },
     });
     await limited.exec(execArgs("true"), live);
@@ -205,7 +205,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   it("serves a network switch in arrival order and drops aborted waiters", async () => {
     const open = new DockerExecutor({
       dir,
-      environmentId: envId,
+      deviceId: envId,
       policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
     });
     const stamp = "date +%s%N";
@@ -225,7 +225,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   it("aborting the waiter being served does not drop the next waiter", async () => {
     const open = new DockerExecutor({
       dir,
-      environmentId: envId,
+      deviceId: envId,
       policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
     });
     await open.exec(execArgs("true"), live); // container exists, network closed
@@ -248,7 +248,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   it("applies the policy's cpu and memory ceilings", async () => {
     const limited = new DockerExecutor({
       dir,
-      environmentId: envId,
+      deviceId: envId,
       policy: { ...DEFAULT_POLICY, cpu: 1.5, memoryMb: 256 },
     });
     await limited.exec(execArgs("true"), live);
@@ -338,7 +338,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect((await ex.exec(execArgs(probe), live)).stdout).toBe("nonet\n");
     const open = new DockerExecutor({
       dir,
-      environmentId: envId,
+      deviceId: envId,
       policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
     });
     const state = async () =>
@@ -424,16 +424,16 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const first = id();
     await ex.dispose();
     // A new program over the same directory reuses the container while its mounts still match.
-    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
     expect(await ex.ensureRoot()).toBe("ok");
     expect((await ex.exec(execArgs("cat /workspace/old"), live)).stdout).toBe("old");
     expect(id()).toBe(first);
     await ex.dispose();
     // The directory is lost and recreated by login: the container must see the new one.
     rmSync(dir, { recursive: true });
-    prepareEnvironmentDir(dir);
+    prepareDeviceDir(dir);
     writeFileSync(join(dir, "workspace", "new"), "new");
-    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    ex = new DockerExecutor({ dir, deviceId: envId, policy: DEFAULT_POLICY });
     expect(await ex.ensureRoot()).toBe("ok");
     const r = await ex.exec(execArgs("cat /workspace/new; ls /workspace"), live);
     expect(r.stdout).toBe("newnew\n");
