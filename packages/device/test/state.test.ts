@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,6 +39,33 @@ describe("state", () => {
     writeCredential(dir, cred);
     expect(statSync(credentialPath(dir)).mode & 0o777).toBe(0o600);
     expect(readCredential(dir)).toEqual(cred);
+  });
+
+  it("writes 0600 under umask 0 and replaces a stale tmp file", () => {
+    const old = process.umask(0);
+    try {
+      writeFileSync(`${credentialPath(dir)}.${process.pid}.tmp`, "stale", { mode: 0o666 });
+      writeCredential(dir, cred);
+      expect(statSync(credentialPath(dir)).mode & 0o777).toBe(0o600);
+      expect(readdirSync(dir)).toEqual(["credential.json"]);
+    } finally {
+      process.umask(old);
+    }
+  });
+
+  it("defaults reconnectGraceSeconds to 120 and validates it", () => {
+    const { reconnectGraceSeconds: _g, ...rest } = cred;
+    writeFileSync(credentialPath(dir), JSON.stringify(rest), { mode: 0o600 });
+    expect(readCredential(dir)?.reconnectGraceSeconds).toBe(120);
+    writeFileSync(credentialPath(dir), JSON.stringify({ ...cred, reconnectGraceSeconds: 0 }), {
+      mode: 0o600,
+    });
+    expect(() => readCredential(dir)).toThrow(/positive integer/);
+  });
+
+  it("names the file when the JSON is invalid", () => {
+    writeFileSync(credentialPath(dir), "{nope", { mode: 0o600 });
+    expect(() => readCredential(dir)).toThrow(/credential\.json is not valid JSON/);
   });
 
   it("refuses a credential file readable by others", () => {

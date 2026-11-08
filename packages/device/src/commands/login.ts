@@ -77,8 +77,7 @@ export async function login(
       return 1;
     }
   } catch (e) {
-    err((e as Error).message);
-    return 1;
+    err(`Replacing the unusable credential file: ${(e as Error).message}`);
   }
 
   try {
@@ -91,7 +90,8 @@ export async function login(
     out(`Open ${auth.verificationUriComplete} and confirm the code ${auth.userCode}`);
     if (cmd.browser) (deps.openBrowser ?? defaultOpen(platform))(auth.verificationUriComplete);
 
-    let interval = auth.interval;
+    let interval = Number.isFinite(auth.interval) && auth.interval >= 1 ? auth.interval : 5;
+    const expiresIn = Number.isFinite(auth.expiresIn) && auth.expiresIn > 0 ? auth.expiresIn : 600;
     let waited = 0;
     for (;;) {
       await sleep(interval * 1000);
@@ -121,26 +121,20 @@ export async function login(
         return 0;
       } catch (e) {
         if (!(e instanceof ApiError)) throw e;
-        if (e.code === "device.authorization_pending") {
-          if (waited >= auth.expiresIn) {
-            err("The code expired before it was approved. Run `capybara-device login` again.");
-            return 1;
-          }
-          continue;
-        }
-        if (e.code === "device.slow_down") {
-          interval += SLOW_DOWN_STEP_SECONDS;
-          continue;
-        }
-        if (e.code === "device.expired") {
+        if (e.code === "device.slow_down") interval += SLOW_DOWN_STEP_SECONDS;
+        else if (e.code === "device.authorization_pending" || e.status === 0 || e.status >= 500) {
+          // Keep polling at the normal interval: pending, a network blip or a server error.
+        } else if (e.code === "device.expired") {
+          err("The code expired before it was approved. Run `capybara-device login` again.");
+          return 1;
+        } else if (e.code === "device.denied") {
+          err("The login was denied in the browser.");
+          return 1;
+        } else throw e;
+        if (waited >= expiresIn) {
           err("The code expired before it was approved. Run `capybara-device login` again.");
           return 1;
         }
-        if (e.code === "device.denied") {
-          err("The login was denied in the browser.");
-          return 1;
-        }
-        throw e;
       }
     }
   } catch (e) {

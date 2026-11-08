@@ -33,6 +33,8 @@ export interface Policy {
   memoryMb: number | null;
 }
 
+const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
+
 export const DEFAULT_POLICY: Policy = {
   allowedDomains: [],
   allowCredentials: [],
@@ -65,9 +67,14 @@ export function defaultWorkDir(environmentId: string, home: string = homedir()):
 function writePrivate(file: string, text: string): void {
   mkdirSync(join(file, ".."), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, text, { mode: 0o600 });
-  chmodSync(tmp, 0o600);
-  renameSync(tmp, file);
+  rmSync(tmp, { force: true });
+  try {
+    writeFileSync(tmp, text, { mode: 0o600, flag: "wx" });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, file);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export function writeCredential(dir: string, cred: Credential): void {
@@ -83,13 +90,22 @@ export function readCredential(dir: string): Credential | undefined {
       `${file} is readable by other users; refusing to use it. Run chmod 600 ${file}, or log in again`,
     );
   }
-  const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<Credential>;
+  let raw: Partial<Credential>;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8")) as Partial<Credential>;
+  } catch (e) {
+    throw new Error(`${file} is not valid JSON (${(e as Error).message})`);
+  }
   for (const key of ["url", "connectUrl", "credential", "orgId", "environmentId", "dir", "mode"]) {
     if (typeof raw[key as keyof Credential] !== "string") {
       throw new Error(`${file} is invalid: missing ${key}; log in again`);
     }
   }
-  return raw as Credential;
+  const grace = raw.reconnectGraceSeconds ?? DEFAULT_RECONNECT_GRACE_SECONDS;
+  if (!Number.isInteger(grace) || grace <= 0) {
+    throw new Error(`${file} is invalid: reconnectGraceSeconds must be a positive integer`);
+  }
+  return { ...(raw as Credential), reconnectGraceSeconds: grace };
 }
 
 export function removeCredential(dir: string): boolean {

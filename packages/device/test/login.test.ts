@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -152,6 +161,42 @@ describe("login", () => {
     tokenAnswers = [{ status: 400, body: { error: { code: "device.expired", message: "old" } } }];
     expect(await run(["login", "--url", base])).toBe(1);
     expect(err.join("\n")).toContain("expired");
+  });
+
+  it("replaces an unusable credential file with a warning", async () => {
+    mkdirSync(join(home, "cfg", "capybara-device"), { recursive: true });
+    writeFileSync(credFile(), "{not json", { mode: 0o600 });
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(err.join("\n")).toContain("credential.json");
+    expect(JSON.parse(readFileSync(credFile(), "utf8")).environmentId).toBe("env-1");
+
+    await run(["logout"]);
+    tokenAnswers = [granted];
+    await run(["login", "--url", base]);
+    await run(["logout"]);
+    mkdirSync(join(home, "cfg", "capybara-device"), { recursive: true });
+    writeFileSync(credFile(), "{}", { mode: 0o600 });
+    chmodSync(credFile(), 0o644);
+    err.length = 0;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(err.join("\n")).toContain("readable by other users");
+    expect(statSync(credFile()).mode & 0o777).toBe(0o600);
+  });
+
+  it("retries network and 5xx errors at the normal interval", async () => {
+    tokenAnswers = [{ status: 503, body: {} }, pending, granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(sleeps).toEqual([5000, 5000, 5000]);
+  });
+
+  it("gives up once expiresIn has passed, even on slow_down", async () => {
+    const slow = { status: 400, body: { error: { code: "device.slow_down", message: "slow" } } };
+    tokenAnswers = Array.from({ length: 100 }, () => slow);
+    expect(await run(["login", "--url", base])).toBe(1);
+    expect(err.join("\n")).toContain("expired");
+    expect(sleeps.length).toBeLessThan(100);
   });
 
   it("refuses a second login", async () => {
