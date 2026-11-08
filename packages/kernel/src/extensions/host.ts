@@ -2200,27 +2200,81 @@ export class ExtensionHost {
     const drainMs = this.drainMs();
     const gone = await this.doUnload(plugin, drainMs, null);
     if (!gone) return;
-    const detail = issues.map((i) => `${i.path || "<root>"}: ${i.message}`).join("; ");
-    const declared = this.declaredActivations.get(plugin);
-    if (gone.source !== "install") {
-      this.configValidity.set(plugin, false);
-      if (declared) this.pendingActivations.set(plugin, { ...declared, fatal: false });
-    }
-    this.configWarned.set(plugin, detail);
-    this.log.warn(
+    await this.markPendingConfig(
+      { plugin, version: gone.version, sha256: gone.sha256, source: gone.source },
+      issues,
       "extension unloaded: its deployment config was cleared and what remains is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
-      { plugin, source: gone.source, detail },
     );
-    await this.writeStatus({
-      plugin,
-      version: gone.version,
-      sha256: gone.sha256,
-      source: gone.source,
-      state: "pending",
-      reason: "config",
-      detail,
-    });
     await this.cascade(gone.manifest.provides, drainMs);
+  }
+
+  /**
+   * Records an extension that is not loaded as pending configuration: a config-declared one goes
+   * back to {@link pendingActivations} (a later save loads it); an install record is decided again
+   * on every converge.
+   */
+  private async markPendingConfig(
+    p: { plugin: string; version: string; sha256: string | null; source: ExtensionSource },
+    issues: ConfigIssue[],
+    message: string,
+  ): Promise<void> {
+    const detail = issues.map((i) => `${i.path || "<root>"}: ${i.message}`).join("; ");
+    const declared = this.declaredActivations.get(p.plugin);
+    if (p.source !== "install") {
+      this.configValidity.set(p.plugin, false);
+      if (declared) this.pendingActivations.set(p.plugin, { ...declared, fatal: false });
+    }
+    this.configWarned.set(p.plugin, detail);
+    this.log.warn(message, { plugin: p.plugin, source: p.source, detail });
+    await this.writeStatus({ ...p, state: "pending", reason: "config", detail });
+  }
+
+  /**
+   * Before an extension unloaded for a dependency comes back ({@link cascade}): re-reads its
+   * deployment config, which may have been saved or cleared while it was down (applyDeploymentConfig
+   * only records validity then), and refreshes its load parameters, so it never returns on a stale
+   * config or revoked secrets. Returns false when the config is now missing or invalid and PG holds
+   * none: the extension is left pending configuration instead. A read error, or an invalid config
+   * that is still stored, keeps the previous config (as for a loaded extension).
+   */
+  private async refreshConfigForRestore(name: string, spec: InstanceSpec): Promise<boolean> {
+    const schema = spec.manifest.config?.deployment;
+    if (!schema) return true;
+    let raw: unknown;
+    try {
+      raw = await this.rawConfigOf(name, schema);
+    } catch (err) {
+      this.log.error(
+        "cannot read the stored deployment config of plugin; restoring it on its previous config",
+        { plugin: name, err },
+      );
+      return true;
+    }
+    const r = parseLoadGate(schema, raw);
+    if (!r.success) {
+      if (!(await this.clearedInPg(name))) return true;
+      await this.markPendingConfig(
+        {
+          plugin: name,
+          version: spec.manifest.version,
+          sha256: spec.sha256,
+          source: spec.source,
+        },
+        toIssues(r.error),
+        "extension not restored after its dependency came back: its deployment config was cleared and what remains is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
+      );
+      return false;
+    }
+    if (spec.source !== "install") this.configValidity.set(name, true);
+    if (changedPaths(schema, spec.config, r.data).length > 0) {
+      this.reportSecrets(schema, r.data);
+      this.specs.set(name, {
+        ...spec,
+        config: r.data,
+        configHash: deploymentConfigHash(schema, r.data),
+      });
+    }
+    return true;
   }
 
   /** 本次未加载、等待批准权限的插件（含因 `requires` 只能由它们满足而未加载的插件），按依赖拓扑序。 */
@@ -2518,6 +2572,10 @@ export class ExtensionHost {
         }
         const available = providedNow();
         if (!(spec.manifest.requires ?? []).every((c) => available.has(c))) continue;
+        if (!(await this.refreshConfigForRestore(name, spec))) {
+          this.unloadedForDependency.delete(name);
+          continue;
+        }
         try {
           await this.doReload(name, drainMs);
           progress = true;

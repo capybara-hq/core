@@ -754,3 +754,108 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(res.json().error.code).toBe("extension.config_readonly");
   });
 });
+
+describe("an extension unloaded for a dependency comes back on the config stored now", {
+  timeout: 120_000,
+}, () => {
+  const DEP_A = fileURLToPath(new URL("../fixtures/plugins/dep-a/index.ts", import.meta.url));
+  const CFG_DEPENDENT = fileURLToPath(
+    new URL("../fixtures/plugins/cfg-dependent/index.ts", import.meta.url),
+  );
+  let pgc: TestContainer;
+  let rd: TestContainer;
+  let db: KernelSchemaDb;
+  let destroyDb: () => Promise<void>;
+  let k: TestKernel;
+  let admin: Req;
+  let extDir: string;
+  const url = "/api/v1/admin/extensions/cfg-dependent/config";
+  const put = (values: Record<string, unknown>) =>
+    admin({ method: "PUT", url, payload: { values } });
+  const host = () => k.app.get(ExtensionHost);
+  const status = async () =>
+    (await admin({ method: "GET", url: "/api/v1/admin/extensions/cfg-dependent" })).json() as {
+      status: string;
+    };
+
+  beforeAll(async () => {
+    [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+    await migrate(pgc.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
+    const raw = createDb(pgc.url, 3);
+    db = kernelDb(raw);
+    destroyDb = () => raw.destroy();
+    extDir = await mkdtemp(join(tmpdir(), "kernel-cfgdep-ext-"));
+    await accountsFor(db).createLocal({
+      login: "root",
+      password: PW,
+      displayName: "R",
+      superAdmin: true,
+    });
+    k = await startKernel(
+      resolveConfig(
+        {
+          db: { url: pgc.url, poolMax: 5 },
+          redis: { url: rd.url },
+          masterKey: Buffer.alloc(32, 7).toString("base64"),
+          marketplaces: { official: { enabled: false } },
+          http: { port: 0 },
+          roles: ["api", "worker"],
+          extensions: [MODEL_FAKE, DEP_A, CFG_DEPENDENT],
+          extensionPermissions: { autoApprove: true },
+          extensionHost: { dir: extDir },
+        },
+        {},
+      ),
+      { logger: createLogger("error", { write: () => {} }) },
+    );
+    admin = await session(k, "root");
+  }, 240_000);
+
+  afterAll(async () => {
+    await k?.close();
+    await destroyDb?.();
+    if (extDir) await rm(extDir, { recursive: true, force: true });
+    await Promise.all([pgc?.stop(), rd?.stop()]);
+  });
+
+  /** Configures cfg-dependent, then unloads dep-a: cfg-dependent goes with it (dependency). */
+  async function loadThenLoseProvider(values: Record<string, unknown>): Promise<void> {
+    const saved = await put(values);
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(async () => host().current("cfg-dependent") !== undefined, 10_000, "loaded");
+    expect(host().current("cfg-dependent")?.config).toEqual(values);
+    expect(await host().unload("dep-a")).toEqual(["dep-a", "cfg-dependent"]);
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+  }
+
+  it("cleared while unloaded for a dependency: the provider's return leaves it pending configuration; a later save loads it", async () => {
+    await loadThenLoseProvider({ endpoint: "https://one.example", token: TOKEN });
+    const cleared = await admin({ method: "DELETE", url });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    await host().reload("dep-a");
+    // not restored on the cleared config (and its revoked secret)
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+    expect(await status()).toMatchObject({ status: "pending_config" });
+    // configured again: it loads without a restart, on the new config
+    const saved = await put({ endpoint: "https://two.example", token: TOKEN2 });
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(async () => host().current("cfg-dependent") !== undefined, 10_000, "loaded");
+    expect(host().current("cfg-dependent")?.config).toEqual({
+      endpoint: "https://two.example",
+      token: TOKEN2,
+    });
+  });
+
+  it("saved while unloaded for a dependency: the provider's return restores it on the new config", async () => {
+    if (!host().current("dep-a")) await host().reload("dep-a");
+    await loadThenLoseProvider({ endpoint: "https://three.example", token: TOKEN });
+    const saved = await put({ endpoint: "https://four.example", token: TOKEN2 });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+    await host().reload("dep-a");
+    expect(host().current("cfg-dependent")?.config).toEqual({
+      endpoint: "https://four.example",
+      token: TOKEN2,
+    });
+  });
+});
