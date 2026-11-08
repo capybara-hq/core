@@ -46,7 +46,8 @@ The maintainer's acceptance (2026-11-07) found this unworkable for real work:
 - **Connector program**: the small command-line program a person installs on a machine to connect
   it (§6). It is not an extension.
 - **Owner kind**: **personal** (个人: one person) or **project** (项目: an owner and the members they
-  choose).
+  choose). Amended 2026-11-08 (§14): the kernel's second kind is **shared** (an environment with a
+  member list); projects are a plugin that uses shared environments.
 - **Session**: one conversation's use of an environment. Several sessions may use one environment
   at the same time.
 
@@ -472,7 +473,7 @@ person's connected machine and its isolation level.
    transport, OS sandbox and Docker modes, the local policy.
 3. **Project environments**: members and roles, registration codes, connected project machines,
    per-actor credential injection, audit, quotas, protected paths, session isolation where
-   supported.
+   supported. Split on 2026-11-08 (§14) into kernel shared environments plus a project plugin.
 
 Each phase is its own implementation plan; phase 1 needs a core PR for the contract before the
 plugins move (AGENTS.md "a contract change needs a PR in core first").
@@ -490,3 +491,119 @@ Answered by the maintainer on 2026-11-07:
 Left for the phase 3 design: where per-actor credentials come from (connector OAuth credentials, a
 per-person secret store, or another source) and which hosts and headers the egress proxy
 substitutes (§8.2). `sandbox@2` already carries the actor (§5.1), so this needs no contract change.
+
+## 13. Phase 2 design (2026-11-08)
+
+Detail for §6, decided when planning phase 2. All items are designer's calls unless marked.
+
+### 13.1 Model-visible paths are the instance's real paths (decided)
+
+The OS sandbox cannot present `/workspace` (macOS needs root to create it, and
+`@anthropic-ai/sandbox-runtime` restricts access but does not remap paths). The maintainer chose to
+tell the model the real paths (2026-11-08):
+
+- `SandboxHandle` gains optional `roots: { workspace, skills, tmp }` (absolute paths in the
+  instance). Absent means `SANDBOX_ROOTS`, so cloud providers do not change.
+- The kernel's sandbox tools, attachment copies, skill files and background tasks build paths from
+  the held instance's roots, never from constants. Tool descriptions say "the workspace directory"
+  instead of naming `/workspace`.
+- When an environment's roots differ from the defaults, the first sandbox tool call of a
+  conversation records an `environment_paths` event (the three roots) in the event log, rendered to
+  the model as a system line. It is in the log, so it needs no `DriftReason`; tool descriptions are
+  replayed from their recorded spec hash (replay-evals skill).
+
+### 13.2 Machines and credentials
+
+- One machine per connected environment in phase 2 (pools are a non-goal, §3). A new `login` for
+  the same environment replaces the machine: the old credential is revoked.
+- Table `environment_machines` (§10) holds the machine: credential hash, name, OS, arch, program
+  version, mode (`os` | `docker`), roots, `session_isolation` (false in phase 2: process isolation
+  on Linux comes with phase 3, §7.2), last seen, revoked.
+- The device credential is `cap_dev_` plus 32 random bytes (base64url); only its sha256 is stored.
+  It is accepted only by the device connection route, never by `/api`.
+- The kernel provider name of connected environments is `@device` (a name no plugin can take),
+  stored in `environments.provider` and `environment_instances.provider`. `environments.source`
+  gains `device`.
+
+### 13.3 Authorization
+
+The shape of RFC 8628 for both cases (browser or not):
+
+- `POST /api/v1/device/authorize` (public) with the machine's name, OS, arch, program version →
+  `deviceCode` (`cap_dvc_…`, secret), `userCode` (8 characters from `BCDFGHJKLMNPQRSTVWXZ`, shown as
+  `XXXX-XXXX`), `verificationUri` (`<web>/device`), `verificationUriComplete`, `interval` 5,
+  `expiresIn` 600. Held in Redis with that TTL.
+- The web page `/device` (signed in) shows the code and the machine, asks the person to pick the org
+  and either an existing connected environment of theirs or a new one (default name: the machine's
+  name), shows the disclosure of §6.2, and confirms. Confirming creates the environment if needed,
+  the machine row and the credential, and parks the credential for the poll (once, `GETDEL`).
+- `POST /api/v1/device/token` (public) with `deviceCode` answers `device.authorization_pending`,
+  `device.slow_down` (polling faster than the interval; the interval grows by 5 s),
+  `device.expired`, `device.denied`, or the credential with the org id, environment id and the
+  connection URL.
+- `register --code` belongs to phase 3 (project machines).
+
+### 13.4 Transport
+
+- Route `GET /device/connect` (WebSocket, served by the `gateway` role on the kernel HTTP port,
+  outside `/api`), `Authorization: Bearer cap_dev_…`, header `X-Capybara-Device-Protocol: 1`. A
+  revoked or unknown credential gets 401; an unsupported protocol gets 426 with
+  `environment.program_outdated` before the upgrade.
+- One lease per environment (`capk:device-lease:<environmentId>`, LockService `hold`, the channel
+  supervisor's TTL and renewal). **The newest connection wins**: a second connection publishes a
+  takeover on the bus; the holder closes its socket and releases; the new one claims within 5 s.
+- Frames are JSON. Device → kernel: `hello` (protocol, program version, OS, arch, mode, roots,
+  session isolation), `res` (`id`, `ok`, `result` or `error: { kind: "gone" | "fs_gone" | "policy" |
+  "error", message }`). Kernel → device: `req` (`id`, `op`, `args`, `deadlineMs`), `cancel` (`id`).
+  Bytes travel base64. WebSocket ping every 20 s.
+- **Relay**: the caller pushes the request onto `capk:device-req:<environmentId>` (a Redis list
+  with a TTL) and publishes `device.req.<environmentId>`; the holder drains the list on the nudge
+  and on every connect. The holder stores the result under `capk:device-res:<requestId>` (TTL
+  `environments.device.reconnectGraceSeconds` + the command timeout) and publishes
+  `device.res.<requestId>`; the caller subscribes before it sends and reads the key once after
+  subscribing (the run-abort pattern). The caller waits within its own tool call.
+- No holder at send time → `environment.offline` at once. A holder lost mid-command → the caller
+  waits until the command's deadline plus the grace; the program keeps results of commands that
+  finished while disconnected for the grace and sends them after reconnecting. Grace exceeded or
+  the caller aborted → the caller queues a `cancel` for that request, delivered on the next
+  connect.
+
+### 13.5 Instance lifecycle on a machine
+
+- `createFileSystem` returns the environment id and touches nothing; the program creates the
+  environment directory on first use. A directory that existed and is gone answers `fs_gone`
+  (`environment.files_lost`).
+- `create` and `resume` need the machine online; `suspend` and `destroy` do nothing (the machine is
+  not the platform's to stop); idle suspension and inactivity destruction skip `@device`.
+- Deleting a connected environment revokes the machine and tells the program to stop; the files on
+  the machine stay where they are (they are the machine owner's). The delete dialog says so.
+
+### 13.6 The program
+
+- Package `packages/device` (`@capybara-hq/device`, binary `capybara-device`), Node ≥ 22.12 (the
+  floor of `@anthropic-ai/sandbox-runtime`), depends only on `@capybara-hq/plugin-sdk` (the
+  protocol types live there, `device-protocol.ts`), `ws` and `@anthropic-ai/sandbox-runtime`
+  pinned to an exact version. A dependency check keeps it off the kernel.
+- State in `~/.config/capybara-device/` (`XDG_CONFIG_HOME` honoured): `credential.json` (0600),
+  `policy.json`, a local command log.
+- OS mode: each command runs through sandbox-runtime with writes allowed only under the
+  environment directory, reads denied for `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.azure`,
+  `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.gnupg` and the browser profile directories,
+  and network allowed for the intersection of the policy's domains and the environment's egress.
+  Docker mode: the published image, the environment directory mounted at `/workspace`, default
+  roots.
+- Native Windows is refused with a message pointing at WSL or Docker.
+
+## 14. Projects as a plugin (2026-11-08, decided)
+
+- The kernel does not know projects. Its second owner kind is **shared**: an environment with a
+  member list, and the kernel decides access only from that list (the check stays next to the
+  lease, §4.2 item 12; a plugin is never asked at tool-call time).
+- The SDK gains `ctx.environments` for extensions: create a shared environment, change its member
+  list, read its state. An environment created by an extension belongs to that extension.
+- A **project plugin** (in `capybara-hq/plugins`) owns projects: members and roles, invitations,
+  registration codes, quotas, protected-path settings and its pages; it syncs project members into
+  its environments' member lists.
+- Phase 3 is therefore two designs: kernel shared environments with `ctx.environments`, and the
+  project plugin. Phase 1's `owner_kind` CHECK lists only `personal`, so nothing is renamed.
+
