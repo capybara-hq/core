@@ -656,8 +656,9 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   replica over TLS (`wss://`). The `web` server forwards exactly that WebSocket upgrade to
   `CAPYBARA_WEB_GATEWAY_URL` (an http(s) URL; compose sets `http://gateway:8080` and puts `web` and
   `gateway` on the `devices` network): it pipes the raw connection with the original request line
-  and headers (`Authorization`, `X-Capybara-Device-Protocol`), refuses upgrades on any other path,
-  and answers `/device/connect` upgrades with 404 (and a log line) while the variable is unset.
+  and headers (`Authorization`, `X-Capybara-Device-Protocol`) and refuses upgrades on any other path.
+  Unset, it forwards to `CAPYBARA_KERNEL_URL`, which is right whenever that kernel runs the gateway
+  role (a single process with every role); set it only when gateway replicas run apart, as compose does.
   Alternatively, your reverse proxy or load balancer may route `/device/connect` on the public
   origin (`CAPYBARA_PUBLIC_URL`) to the gateway replicas directly; then the upgrade never reaches
   `web`. The gateway serves only a real WebSocket upgrade; a plain request gets 404.

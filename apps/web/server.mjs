@@ -12,8 +12,9 @@
 // (/<bucket>/**) so browsers upload and download attachments on the web origin; that path never
 // reaches Next. Details: src/lib/object-store-proxy.ts.
 //
-// With CAPYBARA_WEB_GATEWAY_URL set, WebSocket upgrades on exactly /device/connect (connected
-// machines, `capybara-device`) are piped to a gateway replica; any other upgrade path is refused
+// WebSocket upgrades on exactly /device/connect (connected machines, `capybara-device`) are piped to
+// the gateway (CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL); any other upgrade
+// path is refused
 // (dev: handed to Next's HMR). Details: src/lib/device-connect-proxy.ts.
 //
 // Idle keep-alive connections stay open for CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS (default 65 s), longer
@@ -47,7 +48,7 @@ const hostname = process.env.CAPYBARA_WEB_HOST;
 const trust = parseTrustProxy(process.env[TRUST_PROXY_ENV]);
 // Off (undefined) unless CAPYBARA_WEB_OBJECT_STORE_URL is set; a malformed setting stops here too.
 const objectStore = parseObjectStoreProxy(process.env);
-// Off (undefined) unless CAPYBARA_WEB_GATEWAY_URL is set; a malformed setting stops here too.
+// CAPYBARA_WEB_GATEWAY_URL, else the kernel URL; a malformed setting stops here.
 const gateway = parseGatewayProxy(process.env);
 const graceMs = shutdownGraceMs(process.env.CAPYBARA_WEB_SHUTDOWN_GRACE_MS);
 // A malformed value stops the server here too.

@@ -14,7 +14,7 @@
  * - `Host` is the gateway's; forwarding headers, cookies and this server's peer marker are not sent
  *   (the gateway trusts no forwarding header).
  * - An error on either side destroys both sockets; a gateway that can't be reached gets 502.
- * - Unset: a `/device/connect` upgrade gets 404 and a log line naming the setting.
+ * - The gateway is CAPYBARA_WEB_GATEWAY_URL, else the kernel at CAPYBARA_KERNEL_URL.
  *
  * An external proxy may route `/device/connect` to the gateway replicas directly instead; then
  * these upgrades never reach this server.
@@ -48,15 +48,17 @@ const DROP_REQUEST = new Set([
   "x-capybara-peer-token",
 ]);
 
+/** Where web reaches the kernel (`CAPYBARA_KERNEL_URL`, the same default as kernel-proxy.ts). */
+const DEFAULT_KERNEL_URL = "http://localhost:8080";
+
 /**
- * Reads CAPYBARA_WEB_GATEWAY_URL; undefined (off) when unset or empty. A malformed value throws,
- * so server.mjs stops at startup instead of forwarding nowhere.
+ * The gateway web forwards /device/connect to: CAPYBARA_WEB_GATEWAY_URL, else the kernel web already
+ * talks to (CAPYBARA_KERNEL_URL, default http://localhost:8080), which runs every role unless the
+ * deployment splits them (then CAPYBARA_WEB_GATEWAY_URL names a gateway replica, as compose does).
+ * A malformed value throws, so server.mjs stops at startup instead of forwarding nowhere.
  */
-export function parseGatewayProxy(
-  env: Record<string, string | undefined>,
-): GatewayProxy | undefined {
-  const raw = env[GATEWAY_URL_ENV]?.trim();
-  if (!raw) return undefined;
+export function parseGatewayProxy(env: Record<string, string | undefined>): GatewayProxy {
+  const raw = env[GATEWAY_URL_ENV]?.trim() || env.CAPYBARA_KERNEL_URL?.trim() || DEFAULT_KERNEL_URL;
   let upstream: URL;
   try {
     upstream = new URL(raw);
@@ -82,24 +84,13 @@ export function refuseUpgrade(socket: Duplex, status: 404 | 502, reason = "Not F
   setTimeout(() => socket.destroy(), 1000).unref();
 }
 
-/**
- * Forwards one upgrade request whose target passed {@link isDeviceConnectPath}; with the proxy off
- * (`cfg` undefined) it answers 404 and logs why.
- */
+/** Forwards one upgrade request whose target passed {@link isDeviceConnectPath}. */
 export function proxyDeviceConnect(
-  cfg: GatewayProxy | undefined,
+  cfg: GatewayProxy,
   req: IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  log: (line: string) => void = console.warn,
 ): void {
-  if (!cfg) {
-    log(
-      `device connect: refused an upgrade on ${DEVICE_CONNECT_PATH} (404): ${GATEWAY_URL_ENV} is not set, so connected machines can't reach the gateway through this server`,
-    );
-    refuseUpgrade(socket, 404);
-    return;
-  }
   const { upstream: u } = cfg;
   const tls = u.protocol === "https:";
   const port = Number(u.port || (tls ? 443 : 80));
@@ -143,13 +134,9 @@ export type UpgradeListener = (req: IncomingMessage, socket: Duplex, head: Buffe
  * The server's one `upgrade` listener: `/device/connect` goes to the gateway; any other path goes
  * to `other` when given (dev: Next's HMR socket) and is refused with 404 otherwise.
  */
-export function handleUpgrade(
-  cfg: GatewayProxy | undefined,
-  other?: UpgradeListener,
-  log?: (line: string) => void,
-): UpgradeListener {
+export function handleUpgrade(cfg: GatewayProxy, other?: UpgradeListener): UpgradeListener {
   return (req, socket, head) => {
-    if (isDeviceConnectPath(req.url)) proxyDeviceConnect(cfg, req, socket, head, log);
+    if (isDeviceConnectPath(req.url)) proxyDeviceConnect(cfg, req, socket, head);
     else if (other) other(req, socket, head);
     else refuseUpgrade(socket, 404);
   };

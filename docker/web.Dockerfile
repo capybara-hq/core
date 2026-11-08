@@ -19,7 +19,7 @@
 # CAPYBARA_WEB_HOST (default 0.0.0.0), CAPYBARA_WEB_TRUST_PROXY (set it behind a TLS proxy / load
 # balancer), CAPYBARA_WEB_SHUTDOWN_GRACE_MS, CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS,
 # CAPYBARA_WEB_MAX_BODY_BYTES, CAPYBARA_WEB_MAX_PACKAGE_BYTES, CAPYBARA_WEB_GATEWAY_URL (connected
-# machines: /device/connect upgrades go there; docs/deploy/README.md). See docs/config.md.
+# machines: /device/connect upgrades go there, default CAPYBARA_KERNEL_URL; docs/deploy/README.md). See docs/config.md.
 # Run it with an init process (compose `init: true`) so signals reach node.
 
 # Pinned to an exact Node version plus the multi-arch index digest, so builds are reproducible

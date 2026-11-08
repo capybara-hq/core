@@ -44,16 +44,13 @@ async function startGateway(seen: Seen[]): Promise<number> {
 }
 
 /** The web tier under test: only the upgrade listener matters here. */
-async function startWeb(gatewayUrl: string | undefined, logs: string[] = []): Promise<number> {
+async function startWeb(gatewayUrl: string): Promise<number> {
   const server = createServer((_req, res) => {
     res.writeHead(200);
     res.end("next");
   });
   const cfg = parseGatewayProxy({ CAPYBARA_WEB_GATEWAY_URL: gatewayUrl });
-  server.on(
-    "upgrade",
-    handleUpgrade(cfg, undefined, (l) => logs.push(l)),
-  );
+  server.on("upgrade", handleUpgrade(cfg));
   return listen(server);
 }
 
@@ -96,9 +93,18 @@ function nextData(socket: Socket): Promise<string> {
 }
 
 describe("parseGatewayProxy", () => {
-  it("is off when CAPYBARA_WEB_GATEWAY_URL is unset or empty", () => {
-    expect(parseGatewayProxy({})).toBeUndefined();
-    expect(parseGatewayProxy({ CAPYBARA_WEB_GATEWAY_URL: "  " })).toBeUndefined();
+  it("falls back to the kernel URL, then to http://localhost:8080, when unset or empty", () => {
+    expect(parseGatewayProxy({}).upstream.href).toBe("http://localhost:8080/");
+    expect(
+      parseGatewayProxy({ CAPYBARA_WEB_GATEWAY_URL: "  ", CAPYBARA_KERNEL_URL: "http://api:8080" })
+        .upstream.host,
+    ).toBe("api:8080");
+    expect(
+      parseGatewayProxy({
+        CAPYBARA_WEB_GATEWAY_URL: "http://gateway:8080",
+        CAPYBARA_KERNEL_URL: "http://api:8080",
+      }).upstream.host,
+    ).toBe("gateway:8080");
   });
 
   it("takes an http(s) URL and refuses anything else", () => {
@@ -168,7 +174,7 @@ describe("handleUpgrade", () => {
     const server = createServer();
     server.on(
       "upgrade",
-      handleUpgrade(undefined, (req, socket) => {
+      handleUpgrade(parseGatewayProxy({}), (req, socket) => {
         handed.push(req.url ?? "");
         socket.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
       }),
@@ -176,16 +182,6 @@ describe("handleUpgrade", () => {
     const web = await listen(server);
     expect(await upgrade(web, "/_next/hmr", {})).toEqual({ kind: "response", status: 400 });
     expect(handed).toEqual(["/_next/hmr"]);
-  });
-
-  it("answers 404 and logs when CAPYBARA_WEB_GATEWAY_URL is unset", async () => {
-    const logs: string[] = [];
-    const web = await startWeb(undefined, logs);
-    expect(await upgrade(web, "/device/connect", { authorization: "Bearer x" })).toEqual({
-      kind: "response",
-      status: 404,
-    });
-    expect(logs.join("\n")).toMatch(/CAPYBARA_WEB_GATEWAY_URL is not set/);
   });
 
   it("answers 502 when the gateway can't be reached", async () => {
