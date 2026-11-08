@@ -1372,3 +1372,39 @@ a.cb-attachment:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* A mark's picture (spec §6.17, maintainer decision 2026-11-08): a plugin's declared icon, contained
+   in its tile (ObjectRow 36 / 24, ObjectCard 40 / 24, CellTitle and ObjectMark), never cropped. */
+.cb-mark-image {
+  display: block;
+  flex: none;
+  object-fit: contain;
+}
+/* A standalone mark tile (ObjectMark): an item row's, a Sheet head's or a page head's. */
+.cb-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-mark[data-size="24"] {
+  width: 24px;
+  height: 24px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-mark[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-mark[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  font-size: var(--cb-type-h2-size);
+}

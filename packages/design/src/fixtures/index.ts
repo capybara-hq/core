@@ -656,3 +656,10 @@ export const SELECT_FIXTURE = {
 };
 
 export * from "./conversation";
+
+/**
+ * A plugin icon for the catalog and the reference set (spec §6.17, maintainer decision 2026-11-08):
+ * a monochrome svg as a data URI, standing in for a kernel icon route.
+ */
+export const PLUGIN_ICON_FIXTURE =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5'/%3E%3Cpath d='M7 12h10M12 7v10' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E";

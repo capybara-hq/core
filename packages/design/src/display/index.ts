@@ -90,6 +90,7 @@ export {
   type MarkdownProps,
 } from "./markdown";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
+export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";
 export { PENDING_DELAY_MS, PendingState } from "./pending-state";
 export { SecretReveal, type SecretRevealProps } from "./secret-reveal";

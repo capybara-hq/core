@@ -1,6 +1,7 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type ReactNode, useState } from "react";
 import { Button, IconButton } from "../controls/index";
+import { ObjectMark } from "../display/object-mark";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useDesignLink, useDesignT } from "../provider";
@@ -11,6 +12,11 @@ export type SheetProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   title: string;
+  /**
+   * A 28 px mark before the title, for a thing a plugin brings (an extension): the plugin's
+   * declared icon (`image`), else the initial of `text` (spec §6.17).
+   */
+  mark?: { text: string; image?: string | null };
   meta?: ReactNode;
   width?: 480 | 720;
   openHref?: string;
@@ -24,6 +30,7 @@ export function Sheet({
   open,
   onOpenChange,
   title,
+  mark,
   meta,
   width = 480,
   openHref,
@@ -60,6 +67,7 @@ export function Sheet({
             onInteractOutside={(e) => e.preventDefault()}
           >
             <div className="cb-sheet-head">
+              {mark ? <ObjectMark text={mark.text} image={mark.image ?? null} size={28} /> : null}
               <RD.Title className="cb-sheet-title">{title}</RD.Title>
               {meta ? <span className="cb-sheet-meta">{meta}</span> : null}
               <span className="cb-sheet-actions">

@@ -1,11 +1,15 @@
+import { MarkImage } from "../display/object-mark";
+
 /**
- * The two-line name cell of a roomy row (spec §6.6): an optional initial tile, the name, and a
- * one-line prose description in `muted`; both lines truncate with the full text in `title`.
+ * The two-line name cell of a roomy row (spec §6.6): an optional mark tile (an initial, or a
+ * plugin's icon with the initial as its fallback), the name, and a one-line prose description in
+ * `muted`; both lines truncate with the full text in `title`.
  */
 export function CellTitle({
   title,
   description,
   initial,
+  image,
   mono = false,
   trailing,
 }: {
@@ -20,10 +24,20 @@ export function CellTitle({
   mono?: boolean;
   /** One character drawn on a `selected` tile before the text (e.g. the name's first letter). */
   initial?: string;
+  /**
+   * For a thing a plugin brings (an extension, a model provider): the plugin's declared icon,
+   * contained on the same tile; without it, or when it fails to load, `initial` (else the title's
+   * initial) is drawn (spec §6.17, maintainer decision 2026-11-08).
+   */
+  image?: string | null;
 }) {
   return (
     <span className="cb-cell-title">
-      {initial ? (
+      {image ? (
+        <span className="cb-cell-initial" data-kind="image" aria-hidden="true">
+          <MarkImage src={image} text={initial ?? title} size={20} />
+        </span>
+      ) : initial ? (
         <span className="cb-cell-initial" aria-hidden="true">
           {initial}
         </span>

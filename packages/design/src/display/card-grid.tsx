@@ -21,6 +21,7 @@ import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
+import { MarkImage } from "./object-mark";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 /** A card's one primary action (spec §6.34): a `dense` `default` button, or a link. */
@@ -35,10 +36,13 @@ export type ObjectCardAction = {
 /** One loaded card (spec §6.34). */
 export type ObjectCardLoaded = {
   /**
-   * An agent's `Avatar` at 40 (`null`, or left out: the initial square of `title`), or `{ icon }`
-   * for an object without a picture (a 40 px tile on `selected` with the 16 px icon).
+   * An agent's `Avatar` at 40 (`null`, or left out: the initial square of `title`), `{ icon }`
+   * for an object without a picture (a 40 px tile on `selected` with the 16 px icon), or
+   * `{ image }` for a thing a plugin brings (a channel connection): the plugin's declared icon at
+   * 24 on that tile, the initial of `title` without one or when it fails to load (maintainer
+   * decision 2026-11-08).
    */
-  avatar?: AvatarValue | { icon: IconName };
+  avatar?: AvatarValue | { icon: IconName } | { image: string | null };
   title: string;
   /** The detail page: the whole card opens it (the name is the card's one link). */
   href: string;
@@ -49,6 +53,11 @@ export type ObjectCardLoaded = {
    * is drawn in `warn` (as ObjectRow's meta).
    */
   meta?: string | (string | { label: string; tone: "warn" })[];
+  /**
+   * The object's state at the head's right (运行中, 出错, 已停用): a mono `small` label, `ok` /
+   * `warn` / `fail` in their color, `muted` in `faint` (as ObjectRow's state, §6.17).
+   */
+  state?: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   /** The card's one primary action (开始会话, 用它创建, 查看), beside the link, never inside it. */
   primary?: ObjectCardAction;
   /** The ⋯ menu (spec §6.7: no menu of one; a lone safe item is drawn as a second button). */
@@ -284,6 +293,18 @@ function SkeletonCard({ announce }: { announce?: string | undefined }) {
 }
 
 function CardAvatar({ avatar, title }: { avatar: ObjectCardLoaded["avatar"]; title: string }) {
+  if (avatar !== undefined && avatar !== null && "image" in avatar) {
+    return (
+      <span
+        className="cb-object-card-avatar"
+        data-part="object-card-avatar"
+        data-kind="image"
+        aria-hidden="true"
+      >
+        <MarkImage {...(avatar.image ? { src: avatar.image } : {})} text={title} size={24} />
+      </span>
+    );
+  }
   if (avatar !== undefined && avatar !== null && "icon" in avatar) {
     return (
       <span
@@ -336,7 +357,16 @@ function useClamped(ref: RefObject<HTMLElement | null>, axis: "x" | "y", text: s
   return clamped;
 }
 
-function LoadedCard({ avatar, title, href, description, meta, primary, menu }: ObjectCardLoaded) {
+function LoadedCard({
+  avatar,
+  title,
+  href,
+  description,
+  meta,
+  state,
+  primary,
+  menu,
+}: ObjectCardLoaded) {
   const Link = useDesignLink();
   const t = useDesignT();
   const slot = useContext(SlotContext);
@@ -430,6 +460,15 @@ function LoadedCard({ avatar, title, href, description, meta, primary, menu }: O
           </span>
           <LinkPendingMark />
         </Link>
+        {state ? (
+          <span
+            className="cb-object-card-state"
+            data-part="object-card-state"
+            data-tone={state.tone}
+          >
+            {state.label}
+          </span>
+        ) : null}
       </span>
       {description ? (
         // biome-ignore lint/a11y/useKeyWithClickEvents: a pointer convenience; the card's link is the keyboard way in
