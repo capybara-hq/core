@@ -22,8 +22,8 @@ import {
  * - platform-op-later: an exclusion of category `later`: phase 2 closed the backlog, so a route
  *   is either an operation or excluded for good (human-only / secret / transport / internal);
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
- *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
- *   the route's;
+ *   on the method or the class; a route without either, for any signed-in person, takes any);
+ *   with `authzNote: "service-enforced"` its role must be at least the route's;
  * - platform-op-double: a route both mirrored by an operation and listed in the exclusions (an
  *   operation added without removing the route's exclusion);
  * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
@@ -440,6 +440,9 @@ export function checkPlatformOps(root: string): Finding[] {
       if (!op.authz) continue;
       const same = describeAuthz(op.authz) === describeAuthz(route.authz);
       if (same) continue;
+      // a route for any signed-in person (`/me/…`, no decorator): the operation may ask more, since
+      // every run's actor is a member of the conversation's org
+      if (route.authz === undefined) continue;
       let ok = false;
       if (op.serviceEnforced) {
         const a = rank(op.authz);

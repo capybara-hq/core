@@ -28,3 +28,10 @@ export class AdminController {
   @SuperAdmin()
   stats() {}
 }
+
+@Controller("api/v1/me")
+export class MeController {
+  // any signed-in person: an operation may ask an org action, every run's actor is a member
+  @Put("preferences")
+  setPreferences() {}
+}

@@ -142,6 +142,8 @@ describe("registration", () => {
       "agents.versions",
       "platform.me",
       "platform.overview",
+      "platform.preferences",
+      "platform.set-preferences",
       "skills.available",
       "skills.create",
       "skills.delete",
@@ -620,6 +622,39 @@ describe("agent description", () => {
 });
 
 describe("platform", () => {
+  it("platform.set-preferences sets your own time zone, personal and rememberable", async () => {
+    const id = await agentOf(env.memId, "private");
+    const c = ctxOf(env.memId, id);
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null });
+    const o = op("platform.set-preferences");
+    expect(o.confirm).toBe("personal");
+    expect(o.rememberable).toBeUndefined();
+    expect(await classOf("platform.set-preferences", { timeZone: "Europe/Berlin" }, c)).toBe(
+      "personal",
+    );
+    expect(await summarize("platform.set-preferences", { timeZone: "Europe/Berlin" }, c)).toEqual({
+      zh: "把你的时区从「跟随浏览器」改为「Europe/Berlin」",
+      en: 'Change your time zone from "follow the browser" to "Europe/Berlin"',
+    });
+    expect(await run("platform.set-preferences", { timeZone: "Europe/Berlin" }, c)).toEqual({
+      timeZone: "Europe/Berlin",
+    });
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: "Europe/Berlin" });
+    // only the caller's own account: another member still follows the browser
+    const other = ctxOf(env.bossId, randomUUID());
+    expect(await run("platform.preferences", {}, other)).toEqual({ timeZone: null });
+    // null goes back to the browser's zone
+    await run("platform.set-preferences", { timeZone: null }, c);
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null });
+  });
+
+  it("platform.set-preferences refuses a name that is not an IANA time zone before the card", () => {
+    const o = op("platform.set-preferences");
+    expect(o.input.safeParse({ timeZone: "Mars/Olympus" }).success).toBe(false);
+    expect(o.input.safeParse({ timeZone: "Asia/Shanghai", extra: 1 }).success).toBe(false);
+    expect(o.input.safeParse({}).success).toBe(false);
+  });
+
   it("platform.me lists the agent's tool keys, its sandbox and no secret", async () => {
     const id = await agentOf(env.memId, "private");
     const out = await run("platform.me", {}, ctxOf(env.memId, id));
