@@ -136,6 +136,9 @@ export function Repeater({
 
   const canAdd = !disabled && items.length < max;
   const canRemove = !disabled && items.length > min;
+  // At its minimum the remove button says why it is off (its tooltip and accessible description).
+  const atMin = !disabled && items.length <= min;
+  const keepMin = t("repeater.keepMin").replace("{min}", String(min));
   const reorder = onMove !== undefined;
 
   // Keep focus through the re-render that follows an add, a move or a remove.
@@ -327,8 +330,14 @@ export function Repeater({
         label={t("repeater.remove").replace("{name}", name)}
         icon={<Icon name="trash-2" size={14} />}
         disabled={!canRemove}
+        {...(atMin ? { title: keepMin, "aria-describedby": `${base}-${index}-keep` } : {})}
         onClick={() => remove(item, index)}
       />
+      {atMin ? (
+        <span id={`${base}-${index}-keep`} className="cb-sr-only">
+          {keepMin}
+        </span>
+      ) : null}
     </div>
   );
 

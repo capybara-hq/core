@@ -341,6 +341,10 @@
   background: transparent;
   cursor: not-allowed;
 }
+/* An icon button's icon is already muted: disabled, it drops to faint so it reads as off (spec §6.1). */
+.cb-icon-btn:disabled {
+  color: var(--cb-faint);
+}
 .cb-btn[data-variant="primary"]:disabled,
 .cb-btn[data-variant="danger-solid"]:disabled {
   border-color: var(--cb-line);
