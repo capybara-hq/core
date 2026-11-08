@@ -5,6 +5,7 @@ import type { ChannelConnection } from "../channels";
 import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
+import { codeParam, defaultDeviceOrg } from "../devices";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
@@ -61,6 +62,7 @@ import {
   modelsQuery,
   queueQuery,
 } from "./conversation";
+import { pendingDeviceQuery } from "./devices";
 import { environmentQuery, environmentsQuery } from "./environments";
 import {
   type EvalRunState,
@@ -439,6 +441,22 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/change-password",
     // The session: signed out goes to sign-in, an account with nothing to change goes home.
     queries: () => [q(maybeMeQuery())],
+  },
+  {
+    pattern: "/device",
+    // The session (the device layout sends a signed-out visitor to sign-in first) and the machine
+    // behind `?code=`; then the org's environments (its connected ones can take the machine).
+    queries: ({ search }) => {
+      const code = codeParam(search.get("code"));
+      return code === "" ? [q(maybeMeQuery())] : [q(maybeMeQuery()), q(pendingDeviceQuery(code))];
+    },
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ search }, qc) => {
+      const me = qc.getQueryData<Me | null>(maybeMeQuery().queryKey);
+      const orgId = me ? defaultDeviceOrg(me) : undefined;
+      if (orgId === undefined || codeParam(search.get("code")) === "") return;
+      await qc.prefetchQuery({ ...environmentsQuery(orgId), retry: false });
+    },
   },
   {
     pattern: "/channels",

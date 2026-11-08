@@ -325,7 +325,8 @@
       "expired": "The connection code has expired. Start connecting again on the computer.",
       "denied": "The connection request was denied.",
       "code_invalid": "The connection code is invalid or already used. Check the code shown on the computer.",
-      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer."
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
+      "unavailable": "The machine could not be connected. Run capybara-device login on it again."
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
@@ -1465,19 +1466,28 @@
     "personal": "Personal",
     "new": "New environment",
     "none": "None",
-    "source": { "cloud": "Cloud sandbox" },
+    "source": {
+      "cloud": "Cloud sandbox",
+      "device": "Connected device"
+    },
     "state": {
       "running": "Running",
       "suspended": "Suspended",
       "notStarted": "Not started",
       "filesLost": "Files lost",
-      "unavailable": "Unavailable"
+      "unavailable": "Unavailable",
+      "online": "Online",
+      "offline": "Offline"
     },
     "isolation": {
       "isolated": "Processes isolated between sessions",
       "shared": "Processes not isolated between sessions"
     },
-    "egress": { "none": "no network", "allowlist": "allowlisted hosts", "open": "open network" },
+    "egress": {
+      "none": "no network",
+      "allowlist": "allowlisted hosts",
+      "open": "open network"
+    },
     "empty": "You have no environments yet.",
     "noCloud": {
       "text": "The platform has no cloud sandbox.",
@@ -1490,11 +1500,25 @@
       "nameHelp": "Up to 64 characters. Your environment names are unique.",
       "cancel": "Cancel",
       "submit": "Create",
-      "created": "Environment {name} created."
+      "created": "Environment {name} created.",
+      "kindLabel": "Where it runs",
+      "cloud": "Cloud sandbox",
+      "cloudHint": "Runs in the platform's sandbox, ready as soon as it is created.",
+      "device": "Connected device",
+      "deviceHint": "Runs commands on your own computer or server.",
+      "installStep": "1. Install the connector program on the machine",
+      "loginStep": "2. Sign in and confirm on the page it opens",
+      "copy": "Copy",
+      "copied": "Copied.",
+      "waiting": "Waiting for the machine to connect… Once confirmed it shows up in your environments.",
+      "connected": "{name} connected.",
+      "close": "Close"
     },
     "detail": {
       "tabsLabel": "Environment sections",
-      "tabs": { "summary": "Summary" },
+      "tabs": {
+        "summary": "Summary"
+      },
       "source": "Source",
       "provider": "Provider",
       "state": "State",
@@ -1519,7 +1543,29 @@
       "resetTitle": "Rebuild the files of {name}?",
       "resetHint": "The workspace is wiped and the next use starts with empty files.",
       "resetSubmit": "Rebuild files",
-      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done."
+      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
+      "deviceFilesNote": "Files stay on the machine and are not uploaded to the platform.",
+      "deleteDeviceHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm."
+    },
+    "mode": {
+      "os": "System sandbox",
+      "docker": "Docker"
+    },
+    "machine": {
+      "title": "Machine",
+      "description": "The machine that runs this environment's commands.",
+      "name": "Name",
+      "os": "System",
+      "mode": "Runs in",
+      "programVersion": "Program version",
+      "lastSeen": "Last seen",
+      "never": "Never",
+      "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
+      "revoke": "Disconnect this machine",
+      "revokeTitle": "Disconnect {name}?",
+      "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
+      "revokeSubmit": "Disconnect",
+      "revoked": "{name} disconnected."
     }
   },
   "nav": {
@@ -2531,6 +2577,34 @@
     "doneHint": "Go back to IM and continue the chat.",
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
+    "goHome": "Go to Capybara"
+  },
+  "device": {
+    "title": "Connect this machine",
+    "subtitle": "Check that this code matches the one in your terminal.",
+    "code": "Code",
+    "codeHelp": "The code capybara-device login shows in the terminal.",
+    "enterTitle": "Connect a machine",
+    "enterSubtitle": "Enter the code shown in your terminal.",
+    "continue": "Continue",
+    "machine": "Machine",
+    "system": "System",
+    "programVersion": "Program version",
+    "org": "Organization",
+    "environment": "Environment",
+    "newEnvironment": "New environment",
+    "name": "New environment name",
+    "noOrg": "You are not in an organization yet, so you cannot connect a machine.",
+    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the environment's page, or run capybara-device stop on this machine.",
+    "confirm": "Connect",
+    "deny": "Deny",
+    "doneTitle": "Connected",
+    "doneHint": "Go back to the terminal; the machine is ready to use.",
+    "openEnvironment": "Open environment",
+    "deniedTitle": "Denied",
+    "deniedHint": "This machine will not be connected.",
+    "invalidTitle": "Code expired",
+    "invalidHint": "Run capybara-device login on the machine again to get a new code.",
     "goHome": "Go to Capybara"
   },
   "trajectories": {

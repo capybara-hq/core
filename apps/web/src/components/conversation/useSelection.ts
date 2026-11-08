@@ -5,7 +5,12 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
-import type { EnvironmentList } from "../../lib/environments";
+import {
+  type Environment,
+  type EnvironmentList,
+  environmentPickable,
+  environmentState,
+} from "../../lib/environments";
 import { extensionLabel } from "../../lib/extension-label";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -187,32 +192,42 @@ export function useSelection(
 export type EnvironmentChoice = {
   /** The environment the first message binds the conversation to (none: no provider, or none usable). */
   environmentId: string | undefined;
-  /** Undefined without a sandbox provider: the composer then has no environment picker. */
+  /**
+   * Undefined without a sandbox provider and without a connected environment: the composer then
+   * has no environment picker.
+   */
   picker: PickerProps | undefined;
 };
 
 /**
- * The new conversation's environment picker (environments design §4.1 item 2): the person's
- * environments, the ones whose provider is gone (hint 不可用) or whose files are lost (hint 文件已丢失;
- * 重建文件 on its page first) shown but not selectable. It starts on the last used environment,
- * else the default, else the first usable one.
+ * The new conversation's environment picker (environments design §4.1 item 2, §9): the person's
+ * environments; the ones whose provider is gone (hint 不可用), whose files are lost (hint 文件已丢失;
+ * 重建文件 on its page first) or whose machine is offline (hint 离线) shown but not selectable; a
+ * connected one that is online says 在线. It starts on the last used environment, else the
+ * default, else the first usable one. It shows when the platform has a cloud sandbox or the person
+ * has a connected environment.
  */
 export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
   const t = useTranslations("chat");
   const te = useTranslations("environments");
   const [picked, setPicked] = useState<string | null>(null);
-  if (list === undefined || !list.cloudAvailable)
+  if (list === undefined || !(list.cloudAvailable || list.items.some((e) => e.source === "device")))
     return { environmentId: undefined, picker: undefined };
-  const pickable = (e: { available: boolean; filesLost: boolean }) => e.available && !e.filesLost;
   const usable = (id: string | null | undefined) =>
-    list.items.find((e) => e.id === id && pickable(e))?.id;
+    list.items.find((e) => e.id === id && environmentPickable(e))?.id;
   const id =
     usable(picked) ??
     usable(list.lastUsedId) ??
     usable(list.defaultId) ??
-    list.items.find(pickable)?.id;
+    list.items.find(environmentPickable)?.id;
   const nameOf = (e: { name: string | null }) => e.name ?? te("personal");
   const current = list.items.find((e) => e.id === id);
+  const tagOf = (e: Environment) => {
+    const state = environmentState(e);
+    if (state === "unavailable" || state === "filesLost" || state === "offline")
+      return { disabled: true, tag: te(`state.${state}`) };
+    return state === "online" ? { tag: te("state.online") } : {};
+  };
   return {
     environmentId: id,
     picker: {
@@ -224,11 +239,7 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
             id: e.id,
             label: nameOf(e),
             checked: e.id === id,
-            ...(!e.available
-              ? { disabled: true, tag: te("state.unavailable") }
-              : e.filesLost
-                ? { disabled: true, tag: te("state.filesLost") }
-                : {}),
+            ...tagOf(e),
           })),
         },
       ],

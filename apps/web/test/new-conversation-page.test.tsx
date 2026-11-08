@@ -17,6 +17,7 @@ import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
   ENVIRONMENTS,
+  envView,
   FakeEventSource,
   LIMITS,
   MODELS,
@@ -444,6 +445,48 @@ describe("the environment picker (environments design §4.1)", () => {
     const item = await screen.findByRole("menuitemradio", { name: /Build box/ });
     expect(item.hasAttribute("data-disabled")).toBe(true);
     expect(item.textContent).toContain(en.environments.state.filesLost);
+  });
+
+  it("picker disables an offline device environment", async () => {
+    resetNavigation("/");
+    const devices = {
+      ...ENVIRONMENTS,
+      items: [
+        ...ENVIRONMENTS.items,
+        envView("d1", "Laptop", { source: "device", provider: "@device", online: true }),
+        envView("d2", "Server", { source: "device", provider: "@device", online: false }),
+      ],
+      lastUsedId: "d2",
+    };
+    await renderRouteWithCache("/", withEnvironments(devices));
+    // the last used one is offline: it is not preselected
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    const user = userEvent.setup();
+    await user.click(picker() as HTMLElement);
+    const offline = await screen.findByRole("menuitemradio", { name: /Server/ });
+    expect(offline.hasAttribute("data-disabled")).toBe(true);
+    expect(offline.textContent).toContain(en.environments.state.offline);
+    const online = screen.getByRole("menuitemradio", { name: /Laptop/ });
+    expect(online.hasAttribute("data-disabled")).toBe(false);
+    expect(online.textContent).toContain(en.environments.state.online);
+  });
+
+  it("without a cloud sandbox the picker still lists the connected environments", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withEnvironments({
+        items: [envView("d1", "Laptop", { source: "device", provider: "@device", online: true })],
+        defaultId: null,
+        lastUsedId: null,
+        cloudAvailable: false,
+      }),
+    );
+    expect(picker()?.textContent).toContain("Laptop");
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "d1" });
   });
 
   it("without a sandbox provider there is no picker and the send carries no environment", async () => {

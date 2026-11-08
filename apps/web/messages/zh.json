@@ -325,7 +325,8 @@
       "expired": "连接码已过期，请在电脑上重新发起连接。",
       "denied": "连接请求已被拒绝。",
       "code_invalid": "连接码无效或已使用，请核对电脑上显示的连接码。",
-      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。"
+      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
+      "unavailable": "未能连接这台机器，请在机器上重新运行 capybara-device login。"
     },
     "skill": {
       "not_found": "技能不存在或已删除。",
@@ -1453,19 +1454,28 @@
     "personal": "个人环境",
     "new": "新建环境",
     "none": "无",
-    "source": { "cloud": "云端沙箱" },
+    "source": {
+      "cloud": "云端沙箱",
+      "device": "接入设备"
+    },
     "state": {
       "running": "运行中",
       "suspended": "已暂停",
       "notStarted": "未启动",
       "filesLost": "文件已丢失",
-      "unavailable": "不可用"
+      "unavailable": "不可用",
+      "online": "在线",
+      "offline": "离线"
     },
     "isolation": {
       "isolated": "会话之间隔离进程",
       "shared": "会话之间不隔离进程"
     },
-    "egress": { "none": "无网络", "allowlist": "仅允许名单内的主机", "open": "开放网络" },
+    "egress": {
+      "none": "无网络",
+      "allowlist": "仅允许名单内的主机",
+      "open": "开放网络"
+    },
     "empty": "你还没有环境。",
     "noCloud": {
       "text": "平台没有云端沙箱。",
@@ -1478,11 +1488,25 @@
       "nameHelp": "最多 64 个字符，你的环境名称不能重复。",
       "cancel": "取消",
       "submit": "创建",
-      "created": "已创建环境 {name}。"
+      "created": "已创建环境 {name}。",
+      "kindLabel": "环境来源",
+      "cloud": "云端沙箱",
+      "cloudHint": "在平台的沙箱里运行，创建后即可使用。",
+      "device": "接入设备",
+      "deviceHint": "在你自己的电脑或服务器上运行命令。",
+      "installStep": "1. 在这台机器上安装连接程序",
+      "loginStep": "2. 登录并在打开的网页上确认",
+      "copy": "复制",
+      "copied": "已复制。",
+      "waiting": "正在等待机器连接…确认后它会出现在环境列表里。",
+      "connected": "已连接 {name}。",
+      "close": "关闭"
     },
     "detail": {
       "tabsLabel": "环境分区",
-      "tabs": { "summary": "概要" },
+      "tabs": {
+        "summary": "概要"
+      },
       "source": "来源",
       "provider": "提供方",
       "state": "状态",
@@ -1507,7 +1531,29 @@
       "resetTitle": "重建 {name} 的文件？",
       "resetHint": "工作区会被清空，下次使用时从空文件开始。",
       "resetSubmit": "重建文件",
-      "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。"
+      "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
+      "deviceFilesNote": "文件保存在这台机器上，不会上传到平台。",
+      "deleteDeviceHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入环境名称以确认。"
+    },
+    "mode": {
+      "os": "系统沙箱",
+      "docker": "Docker"
+    },
+    "machine": {
+      "title": "机器",
+      "description": "运行这个环境命令的机器。",
+      "name": "名称",
+      "os": "系统",
+      "mode": "运行方式",
+      "programVersion": "程序版本",
+      "lastSeen": "最近在线",
+      "never": "从未",
+      "none": "没有连接的机器。在机器上运行 capybara-device login 连接。",
+      "revoke": "断开这台机器",
+      "revokeTitle": "断开 {name}？",
+      "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
+      "revokeSubmit": "断开",
+      "revoked": "已断开 {name}。"
     }
   },
   "nav": {
@@ -2520,6 +2566,34 @@
     "invalidTitle": "链接已失效",
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
+  },
+  "device": {
+    "title": "连接这台机器",
+    "subtitle": "确认这个连接码与终端里显示的一致。",
+    "code": "连接码",
+    "codeHelp": "输入 capybara-device login 在终端里显示的连接码。",
+    "enterTitle": "连接机器",
+    "enterSubtitle": "输入终端里显示的连接码。",
+    "continue": "继续",
+    "machine": "机器",
+    "system": "系统",
+    "programVersion": "程序版本",
+    "org": "组织",
+    "environment": "环境",
+    "newEnvironment": "新建环境",
+    "name": "新环境名称",
+    "noOrg": "你还没有加入任何组织，无法连接机器。",
+    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在环境页断开，或在这台机器上运行 capybara-device stop。",
+    "confirm": "确认连接",
+    "deny": "拒绝",
+    "doneTitle": "已连接",
+    "doneHint": "回到终端，这台机器已经可以使用了。",
+    "openEnvironment": "查看环境",
+    "deniedTitle": "已拒绝",
+    "deniedHint": "这台机器不会连接。",
+    "invalidTitle": "连接码已失效",
+    "invalidHint": "在机器上重新运行 capybara-device login，获取新的连接码。",
+    "goHome": "前往 Capybara"
   },
   "trajectories": {
     "title": "评测与运行",

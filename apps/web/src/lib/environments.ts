@@ -13,16 +13,33 @@ export interface EnvironmentLimits {
   allowHosts: string[];
 }
 
+/** The machine connected to a device environment (its unrevoked one). */
+export interface EnvironmentMachine {
+  id: string;
+  name: string;
+  /** As the program reports it: `darwin`, `linux`. */
+  os: string;
+  /** `os`: the system sandbox; `docker`: a container. */
+  mode: "os" | "docker" | null;
+  programVersion: string | null;
+  lastSeenAt: string | null;
+}
+
 export interface Environment {
   id: string;
   /** null for the person's default environment (shown as 个人环境 / "Personal"). */
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
-  source: "cloud";
+  /** `device`: a connected machine (provider `@device`). */
+  source: "cloud" | "device";
   provider: string | null;
-  /** Its provider is the deployment's current sandbox provider. */
+  /** Its provider is there: the deployment's current sandbox provider, or `@device`. */
   available: boolean;
+  /** A device environment: its machine is connected now; null for a cloud one. */
+  online: boolean | null;
+  /** A device environment's connected machine; null for a cloud one, or when none is connected. */
+  machine: EnvironmentMachine | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; resetting the files makes it usable again. */
   filesLost: boolean;
@@ -39,14 +56,34 @@ export interface EnvironmentList {
   cloudAvailable: boolean;
 }
 
-/** What an environment is doing, in the order the page decides: a missing provider wins. */
-export type EnvironmentState = "unavailable" | "filesLost" | "running" | "suspended" | "notStarted";
+/**
+ * What an environment is doing, in the order the page decides: a missing provider wins; a device
+ * environment is online or offline (its machine's connection).
+ */
+export type EnvironmentState =
+  | "unavailable"
+  | "filesLost"
+  | "running"
+  | "suspended"
+  | "notStarted"
+  | "online"
+  | "offline";
 
 export function environmentState(e: Environment): EnvironmentState {
   if (!e.available) return "unavailable";
+  if (e.source === "device") return e.online === true ? "online" : "offline";
   if (e.filesLost) return "filesLost";
   return e.instance?.status ?? "notStarted";
 }
+
+/**
+ * Whether a new conversation can be bound to it now: its provider is there, its files are not
+ * lost and, for a device environment, its machine is online.
+ */
+export const environmentPickable = (e: Environment): boolean => {
+  const state = environmentState(e);
+  return state !== "unavailable" && state !== "filesLost" && state !== "offline";
+};
 
 /** An environment name as the kernel limits it (trimmed, 1-64 characters). */
 export const isEnvironmentName = (s: string): boolean => {
@@ -76,6 +113,10 @@ export const renameEnvironment = (orgId: string, id: string, name: string) =>
 
 export const deleteEnvironment = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}`, { method: "DELETE" });
+
+/** Disconnects a device environment's machine (its credential is revoked). */
+export const revokeEnvironmentMachine = (orgId: string, id: string) =>
+  apiFetch<void>(`${org(orgId)}/${enc(id)}/machine`, { method: "DELETE" });
 
 export const resetEnvironmentFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
