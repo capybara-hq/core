@@ -95,15 +95,15 @@ export interface SandboxSession {
 
 /** This conversation's first use of its device (in the instance's workspace). */
 export const sandboxStartedNotice = (roots: SandboxRoots): string =>
-  `Environment started (first use in this conversation); the working directory is ${roots.workspace}, shared with the environment's other conversations.`;
+  `Device started (first use in this conversation); the working directory is ${roots.workspace}, shared with the device's other conversations.`;
 /** {@link sandboxStartedNotice} of an instance with the default roots. */
 export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS);
 /** A new instance came up on the device's kept files. */
 export const SANDBOX_RESTARTED_NOTICE =
-  "The environment's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
+  "The device's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
 
 const BUSY_TEXT =
-  "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
+  "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
 /** 没有沙箱提供方时「工具不可用」的原因（进提醒，内核在后面补句号）：与调用时的错误同一句话。 */
@@ -115,29 +115,29 @@ export function noSandboxError(): ToolError {
 }
 
 const PATH_BUSY_TEXT =
-  "Another sub-agent or another conversation in this environment is writing this file; wait a moment and retry.";
+  "Another sub-agent or another conversation on this device is writing this file; wait a moment and retry.";
 const ANONYMOUS_TEXT =
   "The sandbox is not available to anonymous IM senders; do the task without the sandbox, or ask the person to link their account and start a new conversation.";
 const ENV_NOT_FOUND_TEXT =
-  "This conversation's environment was deleted or its owner can no longer use it; ask the user to start a new conversation in another environment.";
+  "This conversation's device was deleted or its owner can no longer use it; ask the user to start a new conversation on another device.";
 const ENV_FORBIDDEN_TEXT =
-  "This conversation's owner may no longer use its environment; ask the user to start a new conversation in an environment they can use.";
+  "This conversation's owner may no longer use its device; ask the user to start a new conversation on a device they can use.";
 const ENV_UNAVAILABLE_TEXT =
-  "This conversation's environment is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation in another environment, or an administrator to re-enable that provider.";
+  "This conversation's device is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation on another device, or an administrator to re-enable that provider.";
 const ENV_FILES_LOST_TEXT =
-  "This environment's files are gone. Ask the user to reset its files on the environments page, then retry.";
+  "This device's files are gone. Ask the user to reset its files on the devices page, then retry.";
 const DEVICE_FILES_LOST_TEXT =
-  "This environment's directory is gone from its connected machine. Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine, then retry.";
+  "This device's directory is gone from the device's machine. Ask the person to run capybara-device logout, then capybara-device login into this device, on that machine, then retry.";
 const FILES_GONE_TEXT =
-  "This environment's files are gone. Ask the user to reset its files on the environments page (for a connected machine: to run capybara-device logout, then capybara-device login, on it), then retry.";
+  "This device's files are gone. Ask the user to reset its files on the devices page (for a local device: to run capybara-device logout, then capybara-device login, on it), then retry.";
 const DEVICE_OFFLINE_TEXT =
-  "The connected machine is offline. Ask the person to start capybara-device on it.";
+  "The device's machine is offline. Ask the person to start capybara-device on it, or to start a new conversation on another device.";
 const DEVICE_OUTDATED_TEXT =
-  "The connected machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
+  "The device's machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
 const DEVICE_REVOKED_TEXT =
-  "The connected machine of this environment was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation in another environment.";
+  "The device's machine was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation on another device.";
 const deviceProtocolText = (detail: string): string =>
-  `The connected machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
+  `The device's machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 

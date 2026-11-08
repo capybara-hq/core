@@ -413,7 +413,7 @@ describe("the device access re-check", () => {
     for (const run of [output, stop]) {
       const e = await run(c, { task_id: t.id, block: false }).catch((x: unknown) => x);
       expect(e).toBeInstanceOf(ToolError);
-      expect((e as Error).message).toContain("may no longer use its environment");
+      expect((e as Error).message).toContain("may no longer use its device");
     }
     expect(forTool).toHaveBeenCalledWith(c.orgId, c.conversationId);
     // nothing was read or stopped

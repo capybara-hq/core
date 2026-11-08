@@ -12,7 +12,7 @@ import type { ConversationEvent } from "../../conversations/events.js";
 
 /** The system line of an `device_paths` event (model-visible, English). */
 export function devicePathsText(r: SandboxRoots): string {
-  return `This environment's directories: workspace ${r.workspace}, skills ${r.skills} (read only), temporary files ${r.tmp}. Use these paths in commands and tool calls.`;
+  return `This device's directories: workspace ${r.workspace}, skills ${r.skills} (read only), temporary files ${r.tmp}. Use these paths in commands and tool calls.`;
 }
 
 /** Whether two sets of roots are the same paths. */

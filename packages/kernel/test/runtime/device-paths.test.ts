@@ -14,7 +14,7 @@ import type { BuiltinTool } from "../../src/tools/registry.js";
 import { AGENT, Log, MODEL } from "./context/fixtures.js";
 
 /**
- * Environments phase 2 (spec §13.1, ruling R22): the first sandbox call of every conversation
+ * Devices, local phase (environments spec §13.1, ruling R22): the first sandbox call of every conversation
  * records the instance's roots in an `device_paths` event (rendered as a system line), and a
  * later call records them again whenever they changed.
  */
@@ -26,7 +26,7 @@ const ROOTS: SandboxRoots = {
 };
 
 const LINE =
-  "This environment's directories: workspace /Users/u/capybara-device/e1/workspace, skills /Users/u/capybara-device/e1/skills (read only), temporary files /Users/u/capybara-device/e1/tmp. Use these paths in commands and tool calls.";
+  "This device's directories: workspace /Users/u/capybara-device/e1/workspace, skills /Users/u/capybara-device/e1/skills (read only), temporary files /Users/u/capybara-device/e1/tmp. Use these paths in commands and tool calls.";
 
 const cfg = KernelConfigSchema.parse({
   db: { url: "postgres://x/y" },
@@ -166,7 +166,7 @@ describe("device_paths: recorded by the sandbox tools", () => {
       expect(paths.map((e) => e.payload)).toEqual([{ roots: DEFAULT_SANDBOX_ROOTS }]);
     }
     expect(devicePathsText(DEFAULT_SANDBOX_ROOTS)).toBe(
-      "This environment's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.",
+      "This device's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.",
     );
   });
 
@@ -220,7 +220,7 @@ describe("device_paths: recorded by the sandbox tools", () => {
     log.assistant("ok");
     const plan = compactionPlan(log.events, 1);
     expect(plan?.transcript).toContain("User: hi");
-    expect(JSON.stringify(plan)).not.toContain("This environment's directories");
+    expect(JSON.stringify(plan)).not.toContain("This device's directories");
   });
 });
 
@@ -336,5 +336,30 @@ describe("device_paths: full-run replay", () => {
       "tool_call_started",
       "tool_result",
     ]);
+  });
+});
+
+describe("device_paths: a migrated row", () => {
+  it("a migrated device_paths row renders the same system line in build and replay", () => {
+    const log = new Log();
+    log.user("write a file");
+    log.modelCall(1, 1);
+    log.assistant(
+      [{ type: "tool_call", id: "call-1", name: "Write", input: { file_path: "x" } }],
+      "tool_use",
+      1,
+    );
+    // the row as migration 0095 leaves it: only the type name differs from the old log
+    log.add({ type: "device_paths", payload: { roots: ROOTS } });
+    log.add({
+      type: "tool_result",
+      payload: { step: 1, callId: "call-1", toolKey: "Write", content: "ok", isError: false },
+    });
+    const input = { events: log.events, agent: AGENT, agentVersion: 1, model: MODEL, step: 2 };
+    const first = buildModelRequest(input).request.messages;
+    const again = buildModelRequest(input).request.messages;
+    expect(first.at(-1)).toEqual({ role: "system", content: LINE });
+    expect(again).toEqual(first);
+    expect(LINE).not.toMatch(/environment/i);
   });
 });

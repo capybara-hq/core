@@ -85,7 +85,7 @@ const SPEC: ToolSpec = {
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
-    "files, they are copied read-only to <name>@<version-id>/ in the skills directory of this environment; run scripts " +
+    "files, they are copied read-only to <name>@<version-id>/ in the skills directory of this device; run scripts " +
     "there with an interpreter (sh, python3, node). Call it again when the skills list changes. Pass args when the task gives the skill arguments (they replace " +
     "$ARGUMENTS and $1, $2… in the instructions). Do not use it for skills that are not in the list.",
   inputSchema: {

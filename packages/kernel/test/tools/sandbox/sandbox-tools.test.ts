@@ -175,14 +175,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const conv = await sandboxConversation();
     const r = await call(conv, "Bash", { description: "Test step", command: "pwd && echo hi" }, 1);
     expect(r.isError).toBe(false);
-    expect(r.content).toMatch(/^Environment started/);
+    expect(r.content).toMatch(/^Device started/);
     expect(r.content).toContain("/workspace\nhi");
     expect(r.content).toContain("[exit code: 0]");
     expect(r.display?.summary.en).toBeTruthy();
     expect(r.display?.summary.zh).toBeTruthy();
     // 第二次不再提示
     const r2 = await call(conv, "Bash", { description: "Test step", command: "echo again" }, 2);
-    expect(r2.content).not.toMatch(/Environment started/);
+    expect(r2.content).not.toMatch(/Device started/);
     expect(r2.content).toContain("again");
   });
 

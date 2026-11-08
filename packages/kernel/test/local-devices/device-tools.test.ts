@@ -322,7 +322,7 @@ describe("local devices through the sandbox tools", () => {
       args: { reason: "deleted" },
     });
     expect((await machine.closed).code).toBe(4003);
-    expect(await waiting).toMatch(/environment was deleted/);
+    expect(await waiting).toMatch(/device was deleted/);
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
@@ -338,7 +338,7 @@ describe("local devices through the sandbox tools", () => {
 
     dir.gone = true;
     const lost =
-      /directory is gone from its connected machine.*capybara-device logout, then capybara-device login/;
+      /directory is gone from the device's machine.*capybara-device logout, then capybara-device login/;
     expect(
       await toolError(m.tool("Read").run({ file_path: `${ROOTS_A.workspace}/a.txt` }, m.ctx())),
     ).toMatch(lost);

@@ -354,7 +354,7 @@ describe("conversations bound to devices", () => {
     expect(del.statusCode, del.body).toBe(202);
     const r = await call(m.req, conv.id, "Bash", { description: "Try", command: "true" }, 1);
     expect(r.isError).toBe(true);
-    expect(text(r)).toContain("environment was deleted");
+    expect(text(r)).toContain("device was deleted");
     // still bound to it: no silent switch to another device
     expect(await boundTo(conv.id)).toBe(env);
   });
