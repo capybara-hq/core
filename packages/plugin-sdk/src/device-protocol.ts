@@ -2,7 +2,13 @@
  * Device protocol v1: the WebSocket frames between the kernel and a `capybara-device` program
  * (a connected machine that serves as an environment). Pure types and hand-written guards.
  */
-import type { ExecResult, SandboxActor, SandboxLimits, SandboxRoots } from "./sandbox.js";
+import {
+  type ExecResult,
+  type SandboxActor,
+  type SandboxLimits,
+  type SandboxRoots,
+  validateSandboxPathShape,
+} from "./sandbox.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
 export const DEVICE_PROTOCOL_VERSION = 1;
@@ -186,6 +192,13 @@ function parseRoots(v: unknown): SandboxRoots {
     const p = str(v, k);
     if (!p.startsWith("/")) {
       throw new DeviceProtocolError(`root "${k}" must be an absolute path`);
+    }
+    // the kernel builds paths as `${root}/…` and checks membership by prefix: a root must be a
+    // clean absolute directory path
+    const shape = validateSandboxPathShape(p);
+    if (shape.length > 0) throw new DeviceProtocolError(`root "${k}": ${shape.join("; ")}`);
+    if (p.endsWith("/")) {
+      throw new DeviceProtocolError(`root "${k}" must not end with a slash`);
     }
     roots[k] = p;
   }

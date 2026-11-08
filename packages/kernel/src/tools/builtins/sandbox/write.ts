@@ -2,6 +2,7 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
+  checkPathShape,
   checkWritable,
   clip,
   display,
@@ -28,9 +29,8 @@ const SPEC: ToolSpec = {
   description:
     "Write a text file in this conversation's sandbox, creating parent directories as needed. " +
     "Each call replaces the whole file (it is created if missing). Use it to create scripts, " +
-    "source files and data files. The path is absolute, under the workspace directory (/workspace " +
-    "unless this conversation names other directories) or the temporary files directory (the skills " +
-    "directory is read-only). Read an existing file first; overwriting a file you have not read, or one changed " +
+    "source files and data files. The path is absolute, under the workspace directory or the " +
+    "temporary files directory (the skills directory is read-only). Read an existing file first; overwriting a file you have not read, or one changed " +
     "since you read it, fails. To change part of an existing file, use Edit instead; to give a file to " +
     "the user, use Deliver.",
   inputSchema: {
@@ -74,6 +74,7 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const data = new TextEncoder().encode((input as WriteInput).content);
+      checkPathShape((input as WriteInput).file_path, "file_path");
       let path = "";
       const { value, notices } = await inSandbox(
         deps,

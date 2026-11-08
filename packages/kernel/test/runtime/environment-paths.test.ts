@@ -14,8 +14,9 @@ import type { BuiltinTool } from "../../src/tools/registry.js";
 import { AGENT, Log, MODEL } from "./context/fixtures.js";
 
 /**
- * Environments phase 2 (spec §13.1): a connected machine's instance has its own roots; the model is
- * told them once per conversation by an `environment_paths` event, rendered as a system line.
+ * Environments phase 2 (spec §13.1, ruling R22): the first sandbox call of every conversation
+ * records the instance's roots in an `environment_paths` event (rendered as a system line), and a
+ * later call records them again whenever they changed.
  */
 
 const ROOTS: SandboxRoots = {
@@ -33,30 +34,39 @@ const cfg = KernelConfigSchema.parse({
   masterKey: Buffer.alloc(32, 7).toString("base64"),
 });
 
-/** A conversation's log as the tools append to it (idempotency keys honoured). */
+type Logged = AppendEvent & { conversationId: string; seq: number };
+
+/** A conversation's log as the tools append to it (seqs assigned, idempotency keys honoured). */
 function memLog() {
-  const appended: (AppendEvent & { conversationId: string })[] = [];
-  const byKey = new Map<string, AppendEvent>();
+  const appended: Logged[] = [];
+  const byKey = new Map<string, Logged>();
   return {
     appended,
     eventLog: {
       append: async (conversationId: string, events: AppendEvent[]) => {
         for (const e of events) {
           if (e.idemKey !== undefined && byKey.has(`${conversationId}:${e.idemKey}`)) continue;
-          if (e.idemKey !== undefined) byKey.set(`${conversationId}:${e.idemKey}`, e);
-          appended.push({ ...e, conversationId });
+          const row = { ...e, conversationId, seq: appended.length + 1 };
+          if (e.idemKey !== undefined) byKey.set(`${conversationId}:${e.idemKey}`, row);
+          appended.push(row);
         }
         return [];
       },
       findByIdem: async (conversationId: string, key: string) =>
         byKey.get(`${conversationId}:${key}`) as never,
+      latestOfType: async (conversationId: string, type: string) =>
+        appended.findLast((e) => e.conversationId === conversationId && e.type === type) as never,
       latestFileState: async () => null,
     },
   };
 }
 
-/** An in-memory instance with `roots` (absent: a cloud instance without roots). */
-function memTools(roots: SandboxRoots | undefined) {
+/**
+ * An in-memory instance with `roots` (absent: a cloud instance without roots); `setRoots` changes
+ * the instance's roots for later calls (a replaced machine, a mode switch).
+ */
+function memTools(initial: SandboxRoots | undefined) {
+  let roots = initial;
   const files = new Map<string, Uint8Array>();
   const log = memLog();
   const p = {
@@ -72,7 +82,6 @@ function memTools(roots: SandboxRoots | undefined) {
       return d === undefined ? null : { size: d.byteLength, isDir: false };
     },
   };
-  const h = { id: "env-1", ...(roots !== undefined && { roots }) };
   const deps: SandboxToolDeps = {
     environments: { forTool: async () => "env-1" },
     sandbox: {
@@ -80,7 +89,7 @@ function memTools(roots: SandboxRoots | undefined) {
       availableFor: async () => true,
       withSandbox: async (_c, fn, sig) =>
         fn(
-          h,
+          { id: "env-1", ...(roots !== undefined && { roots }) },
           p as never,
           { fresh: false, restarted: false, roots: roots ?? DEFAULT_SANDBOX_ROOTS },
           sig,
@@ -107,11 +116,14 @@ function memTools(roots: SandboxRoots | undefined) {
     signal: new AbortController().signal,
     // biome-ignore lint/suspicious/noExplicitAny: only these fields are read
   } as any;
-  return { files, log, tool, ctx };
+  const setRoots = (r: SandboxRoots | undefined) => {
+    roots = r;
+  };
+  return { files, log, tool, ctx, setRoots };
 }
 
 describe("environment_paths: recorded by the sandbox tools", () => {
-  it("environment_paths is recorded once and rendered as a system line", async () => {
+  it("environment_paths is recorded on the first call, not again for the same roots, and rendered as a system line", async () => {
     const t = memTools(ROOTS);
     await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a.txt`, content: "a" }, t.ctx);
     await t.tool("Write").run({ file_path: `${ROOTS.tmp}/b.txt`, content: "b" }, t.ctx);
@@ -145,12 +157,39 @@ describe("environment_paths: recorded by the sandbox tools", () => {
     expect(environmentPathsText(ROOTS)).toBe(LINE);
   });
 
-  it("default roots record no environment_paths event", async () => {
+  it("a cloud conversation's first call records the default roots (ruling R22)", async () => {
     for (const roots of [undefined, { ...DEFAULT_SANDBOX_ROOTS }]) {
       const t = memTools(roots);
       await t.tool("Write").run({ file_path: "/workspace/a.txt", content: "a" }, t.ctx);
-      expect(t.log.appended.filter((e) => e.type === "environment_paths")).toEqual([]);
+      await t.tool("Write").run({ file_path: "/workspace/b.txt", content: "b" }, t.ctx);
+      const paths = t.log.appended.filter((e) => e.type === "environment_paths");
+      expect(paths.map((e) => e.payload)).toEqual([{ roots: DEFAULT_SANDBOX_ROOTS }]);
     }
+    expect(environmentPathsText(DEFAULT_SANDBOX_ROOTS)).toBe(
+      "This environment's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.",
+    );
+  });
+
+  it("roots that change are recorded again, back to the defaults too (A, B, A)", async () => {
+    const t = memTools(undefined);
+    const write = (dir: string) =>
+      t.tool("Write").run({ file_path: `${dir}/x-${Math.random()}.txt`, content: "x" }, t.ctx);
+    await write("/workspace");
+    t.setRoots(ROOTS);
+    await write(ROOTS.workspace);
+    await write(ROOTS.workspace);
+    t.setRoots(undefined);
+    await write("/workspace");
+    t.setRoots(ROOTS);
+    await write(ROOTS.workspace);
+    const paths = t.log.appended.filter((e) => e.type === "environment_paths");
+    expect(paths.map((e) => (e.payload as { roots: SandboxRoots }).roots)).toEqual([
+      DEFAULT_SANDBOX_ROOTS,
+      ROOTS,
+      DEFAULT_SANDBOX_ROOTS,
+      ROOTS,
+    ]);
+    expect(new Set(paths.map((e) => e.idemKey)).size).toBe(4);
   });
 
   it("a summary covering the event restores the line right after the summary", () => {
@@ -213,34 +252,89 @@ describe("environment_paths: full-run replay", () => {
     };
   }
 
-  it("a replayed call that matched copies the recorded environment_paths event, never twice", async () => {
-    const recordings = recordedCalls(snap());
-    expect(recordings[0]?.environmentPaths).toEqual(ROOTS);
-    const log = memLog();
-    const assistant = {
-      type: "assistant_message",
-      payload: {
-        step: 1,
-        stopReason: "tool_use",
-        content: [{ type: "tool_call", id: "x0", name: "Write", input: { file_path: "f" } }],
-      },
-    } as unknown as ConversationEvent;
+  /** A pipeline over `log` whose step `n` asked for the `Write` calls `inputs`. */
+  function pipelineFor(
+    recordings: ReturnType<typeof recordedCalls>,
+    log: ReturnType<typeof memLog>,
+    steps: Record<number, string[]>,
+  ) {
+    const assistant = (step: number) =>
+      ({
+        type: "assistant_message",
+        payload: {
+          step,
+          stopReason: "tool_use",
+          content: (steps[step] ?? []).map((f, i) => ({
+            type: "tool_call",
+            id: `x${step}-${i}`,
+            name: "Write",
+            input: { file_path: f },
+          })),
+        },
+      }) as unknown as ConversationEvent;
     const eventLog = {
       ...log.eventLog,
-      findByIdem: async (conversationId: string, key: string) =>
-        key === assistantIdemKey("r2", 1)
-          ? assistant
-          : log.eventLog.findByIdem(conversationId, key),
+      findByIdem: async (conversationId: string, key: string) => {
+        for (const n of Object.keys(steps)) {
+          if (key === assistantIdemKey("r2", Number(n))) return assistant(Number(n));
+        }
+        return log.eventLog.findByIdem(conversationId, key);
+      },
     };
-    const pipeline = new RecordedToolPipeline({
-      // biome-ignore lint/suspicious/noExplicitAny: append / findByIdem only
+    return new RecordedToolPipeline({
+      // biome-ignore lint/suspicious/noExplicitAny: append / findByIdem / latestOfType only
       eventLog: eventLog as any,
       recordings,
       beforeStep: async () => "continue",
     });
-    await pipeline.runStep({ conversationId: "e", runId: "r2", step: 1 } as never);
+  }
+
+  it("a replayed call that matched copies the recorded environment_paths event, never twice", async () => {
+    const recordings = recordedCalls(snap());
+    expect(recordings[0]?.environmentPaths).toEqual(ROOTS);
+    const log = memLog();
+    // the candidate makes the recorded call twice in one step: one line
+    await pipelineFor(recordings, log, { 1: ["f", "f"] }).runStep({
+      conversationId: "e",
+      runId: "r2",
+      step: 1,
+    } as never);
     const types = log.appended.map((e) => e.type);
-    expect(types).toEqual(["environment_paths", "tool_call_started", "tool_result"]);
+    expect(types).toEqual([
+      "environment_paths",
+      "tool_call_started",
+      "tool_result",
+      "tool_call_started",
+      "tool_result",
+    ]);
     expect(log.appended[0]).toMatchObject({ runId: "r2", payload: { roots: ROOTS } });
+  });
+
+  it("calls of later steps are marked too: a candidate whose first sandbox call comes later still gets the line", async () => {
+    const s = snap();
+    let seq = s.events.length + 1;
+    const ev = (type: string, payload: unknown) =>
+      s.events.push({ seq: seq++, type, payload, runId: "r", createdAt: "" } as never);
+    ev("assistant_message", {
+      step: 2,
+      stopReason: "tool_use",
+      content: [{ type: "tool_call", id: "c1", name: "Write", input: { file_path: "g" } }],
+    });
+    ev("tool_call_started", { step: 2, callId: "c1", toolKey: "Write", specHash: "h" });
+    ev("tool_result", { step: 2, callId: "c1", toolKey: "Write", content: "ok", isError: false });
+    const recordings = recordedCalls(s);
+    expect(recordings.map((r) => r.environmentPaths)).toEqual([ROOTS, ROOTS]);
+    const log = memLog();
+    // the candidate skips the first call and makes the second in its own step 1
+    await pipelineFor(recordings, log, { 1: ["g"] }).runStep({
+      conversationId: "e",
+      runId: "r2",
+      step: 1,
+    } as never);
+    expect(log.appended.map((e) => e.type)).toEqual([
+      "environment_paths",
+      "tool_call_started",
+      "tool_result",
+    ]);
   });
 });

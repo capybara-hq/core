@@ -1,9 +1,10 @@
 import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
+import { startedText, taskOutputFile } from "../../../src/background/launch.js";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
 import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
-import { isSyncMarkerEntry } from "../../../src/tools/builtins/sandbox/common.js";
+import { syncMarkerMatcher } from "../../../src/tools/builtins/sandbox/common.js";
 import { parseGrepNull } from "../../../src/tools/builtins/sandbox/grep.js";
 import {
   assignAttachmentNames,
@@ -18,6 +19,8 @@ import {
   searchTimeoutMs,
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
+import { skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
+import { skillWriteTool } from "../../../src/tools/builtins/skill-write.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
 import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
 
@@ -254,8 +257,9 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
   });
 });
 
-describe("isSyncMarkerEntry", () => {
+describe("syncMarkerMatcher", () => {
   it("matches the marker file only, dots literal", () => {
+    const isSyncMarkerEntry = syncMarkerMatcher();
     expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(true);
     expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json:1:x")).toBe(true);
     expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-syncXjson")).toBe(false);
@@ -719,6 +723,8 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
   function device(attachments: { id: string; name: string }[] = []) {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
+    const execs: { command: string; cwd: string }[] = [];
+    const started: string[] = [];
     let entered = 0;
     const p = {
       readFile: async (_h: unknown, path: string) => {
@@ -730,16 +736,42 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         writes.push(path);
       },
       stat: async (_h: unknown, path: string) => {
+        if (path === ROOTS.workspace) return { size: 0, isDir: true };
         const d = files.get(path);
         return d === undefined ? null : { size: d.byteLength, isDir: false };
+      },
+      exec: async (_h: unknown, a: { command: string; cwd: string }) => {
+        execs.push({ command: a.command, cwd: a.cwd });
+        // find (Glob), grep (Grep: no match), the background launch (prints its session id)
+        const stdout = a.command.startsWith("find")
+          ? "./a.txt\0"
+          : a.command.startsWith("grep")
+            ? ""
+            : "4242\n";
+        const exitCode = a.command.startsWith("grep") ? 1 : 0;
+        return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
     };
     const body = (t: string) => new Response(t).body as ReadableStream<Uint8Array>;
     const tools = sandboxTools({
       environments,
+      background: {
+        reserve: async () => true,
+        markStarted: async (_id: string, to: { outputPath?: string }) => {
+          started.push(to.outputPath ?? "");
+          return "started";
+        },
+        failLaunch: async () => {},
+        finishStoppedLaunch: async () => {},
+        releaseStop: async () => {},
+        get: async () => undefined,
+        advanceOffset: async () => {},
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+      } as any,
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
+        currentInstance: async () => ({ createdAt: new Date(0) }),
         withSandbox: async (_c, fn, sig) => {
           entered++;
           return fn(
@@ -764,13 +796,12 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
-        findByIdem: async () => undefined,
         latestFileState: async () => null,
       },
       config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-    return { files, writes, tool, entered: () => entered };
+    return { files, writes, execs, started, tool, entered: () => entered };
   }
 
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
@@ -836,20 +867,76 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     expect(text(r)).toContain(`Attachments copied into the sandbox: ${dir}/data.csv.`);
   });
 
-  it("Glob and Grep default to the instance's workspace and hide its sync markers", () => {
-    expect(isSyncMarkerEntry(`${ROOTS.workspace}/attachments/c/.capybara-sync.json`, ROOTS)).toBe(
-      true,
-    );
-    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json", ROOTS)).toBe(false);
+  it("Glob and Grep default to the instance's workspace and hide its sync markers", async () => {
+    const d = device();
+    const g = await d.tool("Glob").run({ pattern: "*.txt" }, ctx);
+    expect(text(g)).toBe(`${ROOTS.workspace}/a.txt`);
+    const r = await d.tool("Grep").run({ pattern: "x" }, ctx);
+    expect(text(r)).toBe(`No matches for x in ${ROOTS.workspace}.`);
+    expect(d.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace, ROOTS.workspace]);
+    const isSyncMarkerEntry = syncMarkerMatcher(ROOTS);
+    expect(isSyncMarkerEntry(`${ROOTS.workspace}/attachments/c/.capybara-sync.json`)).toBe(true);
+    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(false);
   });
 
-  it("descriptions name no environment's root paths", () => {
+  it("a malformed path is refused before the call enters its environment", async () => {
     const d = device();
-    for (const name of ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"]) {
-      const spec = JSON.stringify(d.tool(name).spec);
-      expect(spec, name).not.toContain("/workspace/");
-      expect(spec, name).not.toContain("/skills/");
+    for (const [name, input] of [
+      ["Read", { file_path: "relative.txt" }],
+      ["Write", { file_path: "/a/../b", content: "x" }],
+      ["Edit", { file_path: "/a//b", old_string: "a", new_string: "b" }],
+      ["Glob", { pattern: "*", path: "rel" }],
+      ["Grep", { pattern: "x", path: "/a/\u0001" }],
+    ] as const) {
+      await expect(d.tool(name).run(input, ctx), name).rejects.toThrow(
+        /Pass an absolute path under the workspace, skills or temporary files directory\.$/,
+      );
     }
+    expect(d.entered()).toBe(0);
+  });
+
+  it("background Bash under custom roots: cwd, the started text and an absolute output path", async () => {
+    const d = device();
+    const r = await d
+      .tool("Bash")
+      .run({ command: "sleep 5", description: "Sleep", run_in_background: true }, ctx);
+    expect(d.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
+    const id = /Started background task (bt_[a-z2-7]{6})/.exec(text(r))?.[1];
+    expect(text(r)).toBe(startedText(id as string, "Sleep", ROOTS.workspace));
+    expect(text(r)).toContain(`Output: ${ROOTS.workspace}/.capybara/tasks/${id}.out`);
+    expect(d.started).toEqual([`${ROOTS.workspace}/.capybara/tasks/${id}.out`]);
+    expect(taskOutputFile(d.started[0] as string)).toBe(d.started[0]);
+    expect(taskOutputFile(".capybara/tasks/bt_aaaaaa.out")).toBe(
+      "/workspace/.capybara/tasks/bt_aaaaaa.out",
+    );
+  });
+
+  it("descriptions name no root path and no operating system (the agreed wording)", () => {
+    const d = device();
+    const specs = [
+      ...["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver", "TaskOutput", "TaskStop"].map(
+        (n) => d.tool(n).spec,
+      ),
+      skillLoadTool({} as never).spec,
+      skillWriteTool({} as never).spec,
+    ];
+    for (const spec of specs) {
+      const json = JSON.stringify(spec);
+      for (const banned of ["/workspace", "/skills", "/tmp", "Linux"]) {
+        expect(json, `${spec.name}: ${banned}`).not.toContain(banned);
+      }
+    }
+    const bash = d.tool("Bash").spec.description;
+    expect(bash).toContain(
+      "Run a shell command (bash) in this conversation's sandbox, an isolated machine.",
+    );
+    expect(bash).toContain("The working directory is the workspace directory; files persist");
+    expect(d.tool("Read").spec.description).toContain(
+      "Paths are absolute, under the workspace directory, the skills directory or the temporary files directory.",
+    );
+    expect(d.tool("Write").spec.description).toContain(
+      "The path is absolute, under the workspace directory or the temporary files directory (the skills directory is read-only).",
+    );
   });
 });
 

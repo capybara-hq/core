@@ -3,6 +3,7 @@ import type { BuiltinTool } from "../../registry.js";
 import { viewPath } from "../../view.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
@@ -28,9 +29,8 @@ const SPEC: ToolSpec = {
   description:
     "Read a text file from this conversation's sandbox, with line numbers. Use it to look at " +
     "source code, data files, logs and files the user attached (under attachments/<conversation>/ in " +
-    "the workspace directory). Paths are absolute, under the workspace directory (/workspace unless " +
-    "this conversation names other directories), the skills directory or the temporary files " +
-    "directory. Lines are numbered from 1; pass " +
+    "the workspace directory). Paths are absolute, under the workspace directory, the skills " +
+    "directory or the temporary files directory. Lines are numbered from 1; pass " +
     "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
     "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +
     "write it: Write and Edit fail on a file you have not read, or one changed since you read it.",
@@ -108,6 +108,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { offset = 1, limit = DEFAULT_LIMIT } = input as ReadInput;
+      checkPathShape((input as ReadInput).file_path, "file_path");
       let path = "";
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
         path = checkPath((input as ReadInput).file_path, roots, "file_path");

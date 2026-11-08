@@ -38,13 +38,15 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
   request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
   (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
-- **`environment_paths`** (environments spec §13.1): a sandbox tool call whose instance has roots other than
-  `DEFAULT_SANDBOX_ROOTS` (a connected machine's real paths) appends `environment_paths { roots }` to the calling
-  conversation once per roots (idem `environment_paths:<hash>`), before its result; rendered at its position as a system
-  line (`environmentPathsText`, so after that step's tool results), the latest one again right after a summary that
-  covers it, left out of the compaction transcript. In the log: no `DriftReason`; cloud logs never have one. Full-run
-  replay copies it: `recordedCalls` marks the calls of the step it was logged in (`environmentPaths`) and
-  `RecordedToolPipeline` appends it before a matched call's result.
+- **`environment_paths`** (environments spec §13.1, ruling R22): the first sandbox tool call of every conversation
+  (cloud included, default roots included) appends `environment_paths { roots }` to the calling conversation, and a later
+  call appends it again whenever the held instance's roots differ from the latest recorded ones (back to the defaults,
+  A → B → A too); one indexed read per call (migration 0094), idem `environment_paths:<hash>:<previous event seq>`.
+  Always before the call's result; rendered at its position as a system line (`environmentPathsText`, so after that
+  step's tool results), the latest one again right after a summary that covers it, left out of the compaction
+  transcript. In the log: no `DriftReason`; old logs have none and rebuild byte for byte. Full-run replay:
+  `recordedCalls` marks every recorded call from the step where one was logged onward (`environmentPaths`), and
+  `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
 - **`run_context`** (run context spec `docs/superpowers/specs/2026-11-08-run-context-design.md`): written at run start by
   `RunContextService.record` (after `skills_catalog`, under the conversation row lock, idem `run_context:<runId>`): the
   agent version's name and description, the org, the date (clock seam `RUN_CONTEXT_CLOCK`), the zone and language of the

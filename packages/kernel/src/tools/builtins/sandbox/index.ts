@@ -22,7 +22,6 @@ export {
   SANDBOX_UNAVAILABLE_REASON,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
-  sandboxRestartedNotice,
   sandboxStartedNotice,
   sandboxUsable,
   searchTimeoutMs,

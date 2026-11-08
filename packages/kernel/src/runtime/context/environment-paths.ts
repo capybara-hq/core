@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { ConversationEvent } from "../../conversations/events.js";
 
 /**
- * The `environment_paths` event (environments spec §13.1): an instance whose roots differ from
- * {@link DEFAULT_SANDBOX_ROOTS} (a connected machine in OS sandbox mode) is described to the model
- * once per conversation, by the sandbox tool call that first entered it. Model-visible: rendered
- * at its position as a system message; in the log, so it needs no `DriftReason`.
+ * The `environment_paths` event (environments spec §13.1, ruling R22): the first sandbox tool call
+ * of every conversation records the instance's roots (the defaults included), and a later call
+ * records them again whenever they differ from the conversation's latest recorded ones (a
+ * connected machine's real paths, a mode switch back to the defaults). Model-visible: rendered at
+ * its position as a system message; in the log, so it needs no `DriftReason`.
  */
 
 /** The system line of an `environment_paths` event (model-visible, English). */
@@ -14,21 +15,43 @@ export function environmentPathsText(r: SandboxRoots): string {
   return `This environment's directories: workspace ${r.workspace}, skills ${r.skills} (read only), temporary files ${r.tmp}. Use these paths in commands and tool calls.`;
 }
 
-/** Whether `r` are the default roots (no event is written for them). */
-export const isDefaultRoots = (r: SandboxRoots): boolean =>
-  r.workspace === DEFAULT_SANDBOX_ROOTS.workspace &&
-  r.skills === DEFAULT_SANDBOX_ROOTS.skills &&
-  r.tmp === DEFAULT_SANDBOX_ROOTS.tmp;
+/** Whether two sets of roots are the same paths. */
+export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
+  a.workspace === b.workspace && a.skills === b.skills && a.tmp === b.tmp;
 
 /**
- * The idempotency key of a conversation's `environment_paths` event for `r`: one event per
- * conversation and roots (other roots later, a replaced machine, get an event of their own).
+ * The idempotency key of an `environment_paths` event for `r` that follows the conversation's
+ * event at `prevSeq` (0: none). Unique per change (A → B → A gets three events), while parallel
+ * calls that saw the same latest event write it once.
  */
-export const environmentPathsIdemKey = (r: SandboxRoots): string =>
+export const environmentPathsIdemKey = (r: SandboxRoots, prevSeq: number): string =>
   `environment_paths:${createHash("sha256")
     .update(JSON.stringify([r.workspace, r.skills, r.tmp]))
     .digest("hex")
-    .slice(0, 16)}`;
+    .slice(0, 16)}:${prevSeq}`;
+
+/**
+ * The `environment_paths` event to append when a sandbox call holds an instance with `roots` and
+ * the conversation's latest such event is `latest`; null when nothing changed.
+ */
+export function environmentPathsChange(
+  latest: { seq: number; payload: { roots: SandboxRoots } } | undefined,
+  roots: SandboxRoots,
+  runId: string | undefined,
+): {
+  type: "environment_paths";
+  runId?: string;
+  idemKey: string;
+  payload: { roots: SandboxRoots };
+} | null {
+  if (latest && sameRoots(latest.payload.roots, roots)) return null;
+  return {
+    type: "environment_paths",
+    ...(runId !== undefined && { runId }),
+    idemKey: environmentPathsIdemKey(roots, latest?.seq ?? 0),
+    payload: { roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp } },
+  };
+}
 
 /** The latest `environment_paths` event at or before `seq`; undefined without one. */
 export function environmentPathsAt(

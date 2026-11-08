@@ -5,6 +5,7 @@ import {
   type SandboxRoots,
   ToolError,
   validateSandboxPath,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import type { BackgroundTaskFinisher } from "../../../background/finish.js";
 import type { BackgroundTaskStopper } from "../../../background/stop.js";
@@ -18,10 +19,7 @@ import {
 } from "../../../environments/conversation-environments.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import {
-  environmentPathsIdemKey,
-  isDefaultRoots,
-} from "../../../runtime/context/environment-paths.js";
+import { environmentPathsChange } from "../../../runtime/context/environment-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
   type HeldProvider,
@@ -29,7 +27,7 @@ import {
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
 import type { StorageService } from "../../../storage/storage.service.js";
-import type { BuiltinCallContext } from "../../registry.js";
+import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -69,11 +67,11 @@ export interface SandboxToolDeps {
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
   /**
-   * `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). `findByIdem` (absent in
-   * test stubs) spares an append when the conversation already has its `environment_paths` event.
+   * `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). `latestOfType` reads the
+   * conversation's latest `environment_paths` (absent in test stubs, which record none).
    */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
-    Partial<Pick<EventLog, "publishChanged" | "findByIdem">>;
+    Partial<Pick<EventLog, "publishChanged" | "latestOfType">>;
   config: Pick<KernelConfigService, "get">;
 }
 
@@ -100,10 +98,8 @@ export const sandboxStartedNotice = (roots: SandboxRoots): string =>
 /** {@link sandboxStartedNotice} of an instance with the default roots. */
 export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS);
 /** A new instance came up on the environment's kept files. */
-export const sandboxRestartedNotice = (roots: SandboxRoots): string =>
-  `The environment's instance was restarted; files are kept, running processes and ${roots.tmp} are gone.`;
-/** {@link sandboxRestartedNotice} of an instance with the default roots. */
-export const SANDBOX_RESTARTED_NOTICE = sandboxRestartedNotice(DEFAULT_SANDBOX_ROOTS);
+export const SANDBOX_RESTARTED_NOTICE =
+  "The environment's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
 
 const BUSY_TEXT =
   "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
@@ -149,15 +145,16 @@ const SYNC_MARKER_NAME = ".capybara-sync.json";
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /**
  * Whether a path, or a Grep output line starting with one, belongs to a sync marker of the
- * instance with `roots` (hidden from Glob / Grep).
+ * instance with `roots` (hidden from Glob / Grep). Build it once per call and test every entry.
  */
-export const isSyncMarkerEntry = (
-  pathOrLine: string,
+export function syncMarkerMatcher(
   roots: SandboxRoots = DEFAULT_SANDBOX_ROOTS,
-): boolean =>
-  new RegExp(
+): (pathOrLine: string) => boolean {
+  const re = new RegExp(
     `^${escapeRe(attachmentsRoot(roots))}/[^/]+/${escapeRe(SYNC_MARKER_NAME)}(?=$|[:-])`,
-  ).test(pathOrLine);
+  );
+  return (pathOrLine) => re.test(pathOrLine);
+}
 const MARKER_MAX_BYTES = 1024 * 1024;
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
@@ -225,6 +222,21 @@ export function clip(s: string, max: number): string {
 /** 结果正文前加上沙箱状态说明。 */
 export function withNotices(notices: readonly string[], text: string): string {
   return [...notices, text].join("\n\n");
+}
+
+/**
+ * The root-independent checks of a path (`validateSandboxPathShape`: non-empty, absolute, no
+ * control characters, no empty or `..` segments), run before the call enters its environment, so
+ * a malformed path never creates or resumes an instance; root membership is checked inside
+ * ({@link checkPath}).
+ */
+export function checkPathShape(path: string, field = "path"): void {
+  const errors = validateSandboxPathShape(path);
+  if (errors.length > 0) {
+    throw new ToolError(
+      `Invalid ${field} "${clip(path, 200)}": ${errors.join("; ")}. Pass an absolute path under the workspace, skills or temporary files directory.`,
+    );
+  }
 }
 
 /**
@@ -449,8 +461,8 @@ export function mapSandboxError(e: unknown): unknown {
  * rebuilt on the kept files as needed, every `exec` carrying the call's actor). Attachments are
  * synced first. Returns the value and the notices to put before the result (first use, a new
  * instance, newly copied attachments). When `withSandbox` rebuilds a gone instance and calls
- * `fn` again, the notices are the last call's. An instance whose roots are not the defaults is
- * described to the model once per conversation ({@link recordEnvironmentPaths}).
+ * `fn` again, the notices are the last call's. The instance's roots are recorded for the model
+ * on the conversation's first call and whenever they change ({@link recordEnvironmentPaths}).
  */
 export async function inSandbox<T>(
   deps: SandboxToolDeps,
@@ -471,7 +483,7 @@ export async function inSandbox<T>(
         const s: SandboxSession = { environmentId, h, roots: info.roots, p, signal };
         await recordEnvironmentPaths(deps, ctx, info.roots);
         const notices: string[] = [];
-        if (info.restarted) notices.push(sandboxRestartedNotice(info.roots));
+        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(sandboxStartedNotice(info.roots));
         const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
@@ -488,27 +500,21 @@ export async function inSandbox<T>(
 }
 
 /**
- * Environments spec §13.1: an instance whose roots are not the defaults (a connected machine's
- * real paths) gets one `environment_paths` event in the calling conversation's log (the log its
- * model reads; a sub-agent's own too), before the call's result. Idempotent per conversation and
- * roots; the default roots write nothing, so cloud conversations are unchanged.
+ * Environments spec §13.1, ruling R22: the calling conversation's log (the log its model reads; a
+ * sub-agent's own too) gets an `environment_paths` event on its first sandbox call, the default
+ * roots included, and again whenever the held instance's roots differ from the latest recorded
+ * ones; always before the call's result. One indexed read per call (migration 0094); parallel
+ * calls that saw the same latest event write one event (its idempotency key).
  */
 async function recordEnvironmentPaths(
   deps: Pick<SandboxToolDeps, "eventLog">,
   ctx: BuiltinCallContext,
   roots: SandboxRoots,
 ): Promise<void> {
-  if (isDefaultRoots(roots)) return;
-  const idemKey = environmentPathsIdemKey(roots);
-  if (await deps.eventLog.findByIdem?.(ctx.conversationId, idemKey)) return;
-  await deps.eventLog.append(ctx.conversationId, [
-    {
-      type: "environment_paths",
-      ...(ctx.runId !== undefined && { runId: ctx.runId }),
-      idemKey,
-      payload: { roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp } },
-    },
-  ]);
+  if (!deps.eventLog.latestOfType) return;
+  const latest = await deps.eventLog.latestOfType(ctx.conversationId, "environment_paths");
+  const change = environmentPathsChange(latest, roots, ctx.runId);
+  if (change) await deps.eventLog.append(ctx.conversationId, [change]);
 }
 
 /** The conversation whose environment a call uses (the root conversation's for a sub-agent). */
@@ -555,12 +561,22 @@ export async function sandboxUsable(
 
 /**
  * The reason the registry reports the sandbox tools unavailable with, or null when they can run
- * ({@link sandboxUsable}; the listing passes the root conversation of the run).
+ * ({@link sandboxUsable}; the listing passes the root conversation of the run). An eval replay
+ * lists them as available (`replay`: its calls are never executed). `memo` (one per listing)
+ * makes every sandbox tool of a listing share one answer.
  */
 export const unavailableWhenNoSandbox =
   (deps: Pick<SandboxToolDeps, "sandbox" | "environments">) =>
-  async (ctx: { orgId: string; conversationId?: string }): Promise<string | null> =>
-    (await sandboxUsable(deps, ctx.orgId, ctx.conversationId)) ? null : SANDBOX_UNAVAILABLE_REASON;
+  async (ctx: ToolListingScope): Promise<string | null> => {
+    if (ctx.replay === true) return null;
+    const key = "sandboxUsable";
+    let usable = ctx.memo?.get(key) as Promise<boolean> | undefined;
+    if (usable === undefined) {
+      usable = sandboxUsable(deps, ctx.orgId, ctx.conversationId);
+      ctx.memo?.set(key, usable);
+    }
+    return (await usable) ? null : SANDBOX_UNAVAILABLE_REASON;
+  };
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */
 export function looksBinary(data: Uint8Array): boolean {

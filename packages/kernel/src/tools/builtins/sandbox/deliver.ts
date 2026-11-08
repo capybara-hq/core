@@ -10,6 +10,7 @@ import { ApiError } from "../../../errors.js";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
@@ -141,6 +142,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
         throw new ToolError(BAD_NAME);
       }
       const max = deps.config.get().sandbox.deliverMaxBytes;
+      checkPathShape((input as DeliverInput).file_path, "file_path");
       let path = "";
       const { value: data, notices } = await inSandbox(
         deps,

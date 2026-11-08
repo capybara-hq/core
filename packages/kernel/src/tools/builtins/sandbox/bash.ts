@@ -44,10 +44,9 @@ const SPEC: ToolSpec = {
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["command"],
   description:
-    "Run a shell command (bash) in this conversation's sandbox, an isolated Linux machine. " +
+    "Run a shell command (bash) in this conversation's sandbox, an isolated machine. " +
     "Use it to run programs and scripts, install packages, process files and inspect the " +
-    "filesystem. The working directory is the workspace directory (/workspace unless this " +
-    "conversation names other directories); files persist between calls in the same " +
+    "filesystem. The working directory is the workspace directory; files persist between calls in the same " +
     "conversation, but background processes may not: when the sandbox is suspended after a period " +
     "without use they can be stopped and the temporary files directory cleared, so keep results in " +
     "files under the workspace directory. Files the user attached to the conversation are copied to " +

@@ -2,14 +2,15 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
-  isSyncMarkerEntry,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
   shellQuote,
+  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -198,6 +199,7 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const { pattern, glob } = g;
       const mode: OutputMode = g.output_mode ?? "files_with_matches";
       const numbered = g["-n"] ?? true;
+      if (g.path !== undefined) checkPathShape(g.path);
       let path = "";
       const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
         path = checkPath(g.path ?? roots.workspace, roots);
@@ -248,7 +250,8 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
             : mode === "count"
               ? parseCounts(r.stdout, base)
               : parseGrepNull(r.stdout, base, numbered);
-        const entries = all.filter((l) => !isSyncMarkerEntry(l, roots));
+        const isMarker = syncMarkerMatcher(roots);
+        const entries = all.filter((l) => !isMarker(l));
         // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回（可能为空：只匹配到隐藏的标记文件）并附上说明
         if (r.exitCode !== 0 && all.length === 0) throw new ToolError(failed(r.stderr));
         const warning = r.exitCode !== 0 ? clip(r.stderr, 300) : null;

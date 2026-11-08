@@ -569,6 +569,80 @@ describe("Skill handler", { timeout: 60_000 }, () => {
     expect(text).toMatch(/no sandbox tools/i);
   });
 
+  it("custom roots: files, markers and CLAUDE_SKILL_DIR under the instance's skills root", async () => {
+    const roots = {
+      workspace: "/Users/u/capybara-device/e1/workspace",
+      skills: "/Users/u/capybara-device/e1/skills",
+      tmp: "/Users/u/capybara-device/e1/tmp",
+    };
+    const s = await seedSkill({
+      name: "dev",
+      files: {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the Claude Code variable
+        "SKILL.md": skillMd("dev", "Run sh ${CLAUDE_SKILL_DIR}/run.sh."),
+        "run.sh": "echo hi",
+      },
+    });
+    const writes: string[] = [];
+    const p = {
+      readFile: async () => null,
+      writeFile: async (_h: unknown, path: string) => {
+        writes.push(path);
+      },
+    };
+    const t = skillLoadTool({
+      db,
+      storage: k.app.get(StorageService),
+      eventLog: {
+        append: async () => [],
+        latestFileState: async () => null,
+        latestOfType: async (_c: string, type: string) =>
+          (type !== "skills_catalog"
+            ? undefined
+            : {
+                conversationId: "c",
+                seq: 3,
+                runId: "r",
+                createdAt: new Date(),
+                type: "skills_catalog",
+                payload: {
+                  skills: [
+                    { id: s.id, name: "dev", description: "d", version: 1, source: s.prefix },
+                  ],
+                },
+              }) as never,
+      },
+      sandbox: {
+        cloudAvailable: true,
+        availableFor: async () => true,
+        withSandbox: async (_c, fn, sig) =>
+          fn({ id: "e1", roots }, p as never, { fresh: false, restarted: false, roots }, sig),
+      },
+      environments: { forTool: async () => randomUUID() },
+      attachments: {
+        listForConversation: async () => [],
+        openForConversation: async () => null,
+      },
+      config: { get: () => k.app.get(KernelConfigService).get() },
+    });
+    const bash = { key: "Bash", source: { kind: "builtin", name: "Bash" } };
+    const r = (await t.run({ skill: "dev" }, { ...ctx(), tools: [bash as never] })) as ToolResult;
+    const text = (r.content[0] as { text: string }).text;
+    const dir = writes[0]?.slice(0, writes[0].lastIndexOf("/"));
+    expect(dir).toMatch(/^\/Users\/u\/capybara-device\/e1\/skills\/dev@[0-9a-f]{12}$/);
+    expect(writes.sort()).toEqual(
+      [
+        `${dir}/SKILL.md`,
+        `${dir}/run.sh`,
+        `${roots.skills}/.capybara/${dir?.slice(roots.skills.length + 1)}.json`,
+      ].sort(),
+    );
+    expect(text).toContain(`Run sh ${dir}/run.sh.`);
+    expect(text).toContain(`copied to ${dir}/ in the sandbox`);
+    expect(text).toContain(`Write outputs under ${roots.workspace}, not ${roots.skills}.`);
+    expect(text).not.toMatch(/(^|[\s(`])\/skills\/dev@/);
+  });
+
   describe("args", () => {
     const run = async (body: string, args: string | undefined, name = "argskill") => {
       const s = await seedSkill({ name, files: { "SKILL.md": skillMd(name, body) } });

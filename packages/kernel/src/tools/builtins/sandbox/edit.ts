@@ -2,6 +2,7 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, viewPath } from "../../view.js";
 import {
+  checkPathShape,
   checkWritable,
   clip,
   display,
@@ -89,6 +90,7 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       const { old_string, new_string, replace_all = false } = input as EditInput;
       if (old_string === new_string) throw new ToolError(SAME_TEXT);
+      checkPathShape((input as EditInput).file_path, "file_path");
       let path = "";
       const { value: edit, notices } = await inSandbox(
         deps,

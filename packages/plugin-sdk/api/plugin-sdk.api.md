@@ -2701,6 +2701,9 @@ export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManif
 export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];
 
 // @public
+export function validateSandboxPathShape(p: string): string[];
+
+// @public
 export function validateSkillPackage(files: {
     path: string;
     size: number;

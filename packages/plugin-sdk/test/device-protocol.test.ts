@@ -51,6 +51,20 @@ describe("device protocol", () => {
     expect(() => parseDeviceFrame(JSON.stringify(bad), "device")).toThrow(DeviceProtocolError);
   });
 
+  it("rejects roots with a trailing slash, empty or .. segments, or control characters", () => {
+    for (const workspace of ["/w/", "/", "/a//w", "/a/../w", "/a/..", "/a/\u0001w"]) {
+      const bad = { ...hello, roots: { ...hello.roots, workspace } };
+      expect(() => parseDeviceFrame(JSON.stringify(bad), "device"), workspace).toThrow(
+        DeviceProtocolError,
+      );
+      expect(() => parseOpResult("create", { roots: bad.roots }), workspace).toThrow(
+        DeviceProtocolError,
+      );
+    }
+    const ok = { workspace: "/Users/u/capybara-device/e1/workspace", skills: "/s", tmp: "/t" };
+    expect(parseOpResult("create", { roots: ok }).roots).toEqual(ok);
+  });
+
   const parse = (o: unknown, from: "device" | "kernel") => () =>
     parseDeviceFrame(JSON.stringify(o), from);
   const limits = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };

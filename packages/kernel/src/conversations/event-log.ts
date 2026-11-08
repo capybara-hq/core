@@ -332,9 +332,10 @@ export class EventLog {
   }
 
   /**
-   * 会话里某类事件的最新一条（按 seq）；没有 → undefined。`skills_catalog` 有部分索引
-   * （0025，按会话直接取到最新一条）；其他类型按 (conversation_id, seq) 主键倒序扫本会话的事件并按 type 过滤，
-   * 没有该类事件时会扫完整个会话。
+   * The conversation's latest event of `type` (by seq); undefined without one. `skills_catalog`
+   * (0025) and `environment_paths` (0094) have partial indexes that answer it directly; other
+   * types scan the conversation's events backwards on the (conversation_id, seq) key, the whole
+   * conversation when it has none.
    */
   async latestOfType<T extends ConversationEventType>(
     conversationId: string,

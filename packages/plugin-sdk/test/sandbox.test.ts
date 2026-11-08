@@ -9,6 +9,7 @@ import {
   SandboxGoneError,
   validateAllowHost,
   validateSandboxPath,
+  validateSandboxPathShape,
 } from "../src/index.js";
 
 describe("sandbox@2", () => {
@@ -146,5 +147,23 @@ describe("validateSandboxPath with an instance's roots", () => {
     expect(validateSandboxPath("/home/u/e1/workspace/../x", roots)).toContain(
       "path must not contain '..' segments",
     );
+  });
+});
+
+describe("validateSandboxPathShape", () => {
+  it("checks everything but root membership", () => {
+    expect(validateSandboxPathShape("/etc/passwd")).toEqual([]);
+    expect(validateSandboxPathShape("rel/a")).toEqual(["path must be absolute"]);
+    expect(validateSandboxPathShape("")).toEqual(["path must be a non-empty string"]);
+    expect(validateSandboxPathShape("/a//b")).toEqual(["path must not contain empty segments"]);
+    expect(validateSandboxPathShape("/a/../b")).toEqual(["path must not contain '..' segments"]);
+    expect(validateSandboxPathShape("/a/\u0001")).toEqual([
+      "path must not contain control characters",
+    ]);
+    // validateSandboxPath keeps its combined errors
+    expect(validateSandboxPath("/etc/../x")).toEqual([
+      "path must not contain '..' segments",
+      "path must be under /workspace, /skills, /tmp",
+    ]);
   });
 });

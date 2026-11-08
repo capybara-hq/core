@@ -2,13 +2,14 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
-  isSyncMarkerEntry,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
+  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -81,6 +82,8 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
           `Invalid glob pattern: ${e.message}; pass a simpler pattern (fewer wildcards and braces) and retry.`,
         );
       }
+      const given = (input as GlobInput).path;
+      if (given !== undefined) checkPathShape(given);
       let dir = "";
       const { value: files, notices } = await inSandbox(
         deps,
@@ -102,13 +105,14 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
           names.pop();
           if (r.truncated) names.pop();
           const base = dir === "/" ? "" : dir;
+          const isMarker = syncMarkerMatcher(roots);
           return (
             names
               .filter((l) => l.startsWith("./"))
               .map((l) => l.slice(2))
               .filter((rel) => matches(rel))
               .map((rel) => `${base}/${rel}`)
-              .filter((abs) => !isSyncMarkerEntry(abs, roots))
+              .filter((abs) => !isMarker(abs))
               .sort()
               // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
               .map((abs) => abs.replace(/\n/g, "\\n"))

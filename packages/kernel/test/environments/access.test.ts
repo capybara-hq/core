@@ -386,4 +386,54 @@ describe("device environments", () => {
       VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
     expect(await conversations.forNew(orgId, me.id, { im: true })).toBe(id);
   });
+
+  it("usableNow: the listing gate follows the conversation's environment (ruling R8)", async () => {
+    const me = await member();
+    const { id } = await k.app.get(EnvironmentsService).createDevice(orgId, me.id, "rig-2");
+    const kdb = k.app.get(KernelDb);
+    const entry = deviceEntry();
+    const make = (providers: ConstructorParameters<typeof ConversationEnvironments>[2]) =>
+      new ConversationEnvironments(
+        kdb,
+        k.app.get(TransactionHost),
+        providers,
+        new EnvironmentAccess(kdb, { cloud: () => undefined, forName: () => entry }),
+        k.app.get(EnvironmentsService),
+      );
+    const registered = make({
+      cloud: () => undefined,
+      forName: (n: string) => (n === DEVICE_PROVIDER ? entry : undefined),
+    });
+    const unregistered = make({ cloud: () => undefined, forName: () => undefined });
+    const cloud = make({ cloud: () => entry, forName: () => undefined });
+    const agentId = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${agentId}, ${orgId}, ${me.id}, 'org', 1)`.execute(raw);
+    const [bound, unbound, imThread] = [randomUUID(), randomUUID(), randomUUID()];
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, environment_id)
+      VALUES (${bound}, ${orgId}, ${agentId}, ${me.id}, ${id}),
+        (${unbound}, ${orgId}, ${agentId}, ${me.id}, NULL),
+        (${imThread}, ${orgId}, ${agentId}, ${me.id}, NULL)`.execute(raw);
+    const connId = randomUUID();
+    await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
+      VALUES (${connId}, ${orgId}, 'fake-im', 'bot', ${agentId}, ${me.id})`.execute(raw);
+    await sql`INSERT INTO capybara.channel_threads
+        (id, connection_id, chat_id, thread_key, account_id, conversation_id)
+      VALUES (${randomUUID()}, ${connId}, 'chat-1', 't1', ${me.id}, ${imThread})`.execute(raw);
+
+    expect(await registered.usableNow(orgId, bound)).toBe(true);
+    expect(await unregistered.usableNow(orgId, bound)).toBe(false);
+    expect(await registered.usableNow(orgId, unbound)).toBe(false);
+    // an unbound IM thread: its owner's IM default, when there is one
+    await sql`DELETE FROM capybara.environment_defaults
+      WHERE org_id = ${orgId} AND account_id = ${me.id}`.execute(raw);
+    expect(await registered.usableNow(orgId, imThread)).toBe(false);
+    await sql`INSERT INTO capybara.environment_defaults (org_id, account_id, environment_id)
+      VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
+    expect(await registered.usableNow(orgId, imThread)).toBe(true);
+    expect(await registered.usableNow(orgId, unbound)).toBe(false);
+    // another org's id reads as nothing; a cloud provider answers at once
+    expect(await registered.usableNow(randomUUID(), bound)).toBe(false);
+    expect(await cloud.usableNow(orgId, unbound)).toBe(true);
+  });
 });
