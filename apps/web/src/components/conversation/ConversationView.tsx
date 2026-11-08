@@ -61,6 +61,7 @@ import { FormError } from "../form-error";
 import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
+import { useEnvironmentName } from "../use-environment-name";
 import {
   ComposerBar,
   type ComposerControl,
@@ -203,18 +204,18 @@ export function useConversationPage(
     ...environmentQ,
     retryOnMount: retryOnMountOf(environmentQ.queryKey),
   });
-  const tEnvironments = useTranslations("environments");
+  const environmentName = useEnvironmentName();
   const environmentPicker = lockedEnvironmentPicker(
     {
       label: t("pickEnvironment"),
       hint: t("environmentLocked"),
       deleted: t("environmentDeleted"),
-      personal: tEnvironments("personal"),
     },
     // a row read before the first tool call bound the conversation says none; the environment
     // query (read again after sandbox tool results) knows better
     conv.conversation?.environmentId ?? environment.data?.id,
     environment.data,
+    environmentName,
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);

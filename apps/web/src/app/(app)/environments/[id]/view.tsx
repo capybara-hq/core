@@ -14,12 +14,13 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
+import { useEnvironmentName } from "../../../../components/use-environment-name";
 import { useRouter } from "../../../../i18n/navigation";
 import {
   deleteEnvironment,
@@ -29,6 +30,7 @@ import {
   renameEnvironment,
   resetEnvironmentFiles,
 } from "../../../../lib/environments";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import { environmentQuery } from "../../../../lib/query/environments";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -116,7 +118,8 @@ function Detail({
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState<Dialogs>(null);
-  const name = e.name ?? t("personal");
+  const name = useEnvironmentName()(e);
+  const lang = labelLocale(useLocale());
   const state = environmentState(e);
   const invalidates = () => [keys.org(orgId).environments(), keys.org(orgId).environment(e.id)];
   const rename = useAppMutation({
@@ -185,6 +188,16 @@ function Detail({
           {e.filesLost && (
             <Text variant="prose" tone="warn">
               {t("detail.filesLostNote")}
+            </Text>
+          )}
+          {e.demotedFrom !== null && (
+            <Text variant="prose" tone="muted">
+              {t("detail.demotedNote", {
+                provider: extensionLabel(
+                  { name: e.demotedFrom.provider, displayName: e.demotedFrom.displayName },
+                  lang,
+                ),
+              })}
             </Text>
           )}
           <Text variant="prose" tone="muted">

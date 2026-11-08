@@ -7,6 +7,7 @@ import { EnvironmentCreateDialog } from "../../../components/EnvironmentCreateDi
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
+import { useEnvironmentName } from "../../../components/use-environment-name";
 import { type Environment, environmentState } from "../../../lib/environments";
 import { environmentsQuery } from "../../../lib/query/environments";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -82,11 +83,12 @@ function Environments({ orgId }: { orgId: string }) {
 
 function EnvironmentCard({ environment: e }: { environment: Environment }) {
   const t = useTranslations("environments");
+  const nameOf = useEnvironmentName();
   const state = environmentState(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
-      title={e.name ?? t("personal")}
+      title={nameOf(e)}
       href={`/environments/${encodeURIComponent(e.id)}`}
       description={t(`source.${e.source}`)}
       meta={[

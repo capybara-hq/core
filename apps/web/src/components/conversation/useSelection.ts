@@ -5,8 +5,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
-import type { EnvironmentList } from "../../lib/environments";
+import type { Environment, EnvironmentList } from "../../lib/environments";
 import { extensionLabel } from "../../lib/extension-label";
+import { useEnvironmentName } from "../use-environment-name";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -200,6 +201,7 @@ export type EnvironmentChoice = {
 export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
   const t = useTranslations("chat");
   const te = useTranslations("environments");
+  const nameOf = useEnvironmentName();
   const [picked, setPicked] = useState<string | null>(null);
   if (list === undefined || !list.cloudAvailable)
     return { environmentId: undefined, picker: undefined };
@@ -211,7 +213,6 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
     usable(list.lastUsedId) ??
     usable(list.defaultId) ??
     list.items.find(pickable)?.id;
-  const nameOf = (e: { name: string | null }) => e.name ?? te("personal");
   const current = list.items.find((e) => e.id === id);
   return {
     environmentId: id,
@@ -243,14 +244,15 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
  * 环境已删除 when the bound environment is gone, nothing for a conversation with none bound.
  */
 export function lockedEnvironmentPicker(
-  text: { label: string; hint: string; deleted: string; personal: string },
+  text: { label: string; hint: string; deleted: string },
   environmentId: string | null | undefined,
-  environment: { name: string | null } | null | undefined,
+  environment: Pick<Environment, "name" | "demotedFrom"> | null | undefined,
+  nameOf: (e: Pick<Environment, "name" | "demotedFrom">) => string,
 ): PickerProps | undefined {
   if (!environmentId || environment === undefined) return undefined;
   return {
     label: text.label,
-    value: environment === null ? text.deleted : (environment.name ?? text.personal),
+    value: environment === null ? text.deleted : nameOf(environment),
     locked: { hint: text.hint },
     groups: [],
     onPick: () => {},
