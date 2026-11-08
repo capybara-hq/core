@@ -156,13 +156,13 @@ export type ComposerBoxProps = {
   attachDisabled?: boolean;
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
-   * agent (agent profile design §4.2); the model and effort pickers stay. `environment` sits
-   * between the agent and the model (environments design: a conversation picks its environment
-   * before the model) and is `locked` after the first message.
+   * agent (agent profile design §4.2); the model and effort pickers stay. `device` sits
+   * between the agent and the model (a conversation picks its device before the model) and is
+   * `locked` after the first message.
    */
   pickers: {
     agent?: PickerProps;
-    environment?: PickerProps;
+    device?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
@@ -322,7 +322,7 @@ export function ComposerBox({
           onClick={onAttach}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
-        {pickers.environment ? <Picker {...pickers.environment} /> : null}
+        {pickers.device ? <Picker {...pickers.device} /> : null}
         <Picker {...pickers.model} />
         {pickers.effort ? <Picker {...pickers.effort} /> : null}
         {quickActions ?? null}

@@ -3,42 +3,42 @@
 import { ListPage, ObjectCard } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
-import { EnvironmentCreateDialog } from "../../../components/EnvironmentCreateDialog";
+import { DeviceCreateDialog } from "../../../components/DeviceCreateDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import { type Environment, environmentState } from "../../../lib/environments";
-import { environmentsQuery } from "../../../lib/query/environments";
+import { type Device, deviceState } from "../../../lib/devices";
+import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
 
 /**
- * `/environments` (环境): the person's environments as cards (the default shows as 个人环境): source
- * (云端沙箱 / 接入设备), state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
- * 离线) and whether sessions are isolated; a card opens the environment's page. 新建环境 opens a
+ * `/devices` (设备): the person's devices as cards (the default shows as 个人设备): source
+ * (云端设备 / 本地设备), state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
+ * 离线) and whether sessions are isolated; a card opens the device's page. 新建设备 opens a
  * dialog (a cloud sandbox or a connected device); without a sandbox provider the page says the
- * platform has no cloud sandbox and the dialog only connects a device; the cloud environments it
+ * platform has no cloud sandbox and the dialog only connects a device; the cloud devices it
  * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the
  * layout prefetched it on a first load).
  */
-export default function EnvironmentsView() {
+export default function DevicesView() {
   const ws = useWorkspace();
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Environments orgId={ws.orgId} />;
+  return <Devices orgId={ws.orgId} />;
 }
 
-function Environments({ orgId }: { orgId: string }) {
+function Devices({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
-  const list = usePageQuery(environmentsQuery(orgId));
+  const list = usePageQuery(devicesQuery(orgId));
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
-  // 新建环境 is always there: without a cloud sandbox it still connects a device
+  // 新建设备 is always there: without a cloud sandbox it still connects a device
   const header = {
-    path: [...scope, { label: "environments" }],
+    path: [...scope, { label: "devices" }],
     title: t("title"),
     actions: [{ label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) }],
   };
@@ -46,7 +46,7 @@ function Environments({ orgId }: { orgId: string }) {
   if (list.kind === "loading")
     return <ListPage header={header} {...common} loading={{ rows: 3 }} />;
   const items = list.data.items;
-  // Without a provider the existing environments are still listed (as 不可用) and deletable; the
+  // Without a provider the existing devices are still listed (as 不可用) and deletable; the
   // empty state is only for a list with nothing in it.
   const empty =
     items.length > 0
@@ -67,11 +67,11 @@ function Environments({ orgId }: { orgId: string }) {
         {...(callout ? { callout } : {})}
       >
         {items.map((e) => (
-          <EnvironmentCard key={e.id} environment={e} />
+          <DeviceCard key={e.id} device={e} />
         ))}
       </ListPage>
       {creating && (
-        <EnvironmentCreateDialog
+        <DeviceCreateDialog
           orgId={orgId}
           cloudAvailable={list.data.cloudAvailable}
           onClose={() => setCreating(false)}
@@ -81,14 +81,14 @@ function Environments({ orgId }: { orgId: string }) {
   );
 }
 
-function EnvironmentCard({ environment: e }: { environment: Environment }) {
-  const t = useTranslations("environments");
-  const state = environmentState(e);
+function DeviceCard({ device: e }: { device: Device }) {
+  const t = useTranslations("devices");
+  const state = deviceState(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
       title={e.name ?? t("personal")}
-      href={`/environments/${encodeURIComponent(e.id)}`}
+      href={`/devices/${encodeURIComponent(e.id)}`}
       description={t(`source.${e.source}`)}
       meta={[
         state === "filesLost" || state === "unavailable"

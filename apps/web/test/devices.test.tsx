@@ -18,9 +18,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 type RenderOpts = Parameters<typeof renderRouteWithCache>[2];
-const BASE = "/api/v1/orgs/o1/environments";
+const BASE = "/api/v1/orgs/o1/devices";
 const T = "2026-11-07T08:00:00.000Z";
-const E = en.environments;
+const E = en.devices;
 
 const LIMITS = { cpu: 2, memoryMb: 2048, diskMb: 10240, egress: "allowlist", allowHosts: [] };
 const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
@@ -47,13 +47,13 @@ const list = (items: unknown[], over: Record<string, unknown> = {}) => ({
 });
 
 const renderList = (opts: RenderOpts = {}) =>
-  renderRouteWithCache("/environments", lastStubRoutes(), opts);
+  renderRouteWithCache("/devices", lastStubRoutes(), opts);
 const renderDetail = (opts: RenderOpts = {}) =>
-  renderRouteWithCache("/environments/e1", lastStubRoutes(), opts);
+  renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
-beforeEach(() => resetNavigation("/environments"));
+beforeEach(() => resetNavigation("/devices"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -68,11 +68,11 @@ const routes = {
         env("e2", "Build box", { sessionIsolation: true, filesLost: true }),
       ]),
     ),
-  [`GET ${BASE}/e1`]: () => json(200, { environment: env("e1", "Build box") }),
+  [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
 };
 
-describe("environments list", () => {
-  it("lists cards: the default is 个人环境, with state and isolation", async () => {
+describe("devices list", () => {
+  it("lists cards: the default is 个人设备, with state and isolation", async () => {
     stubApi(routes);
     const { container } = await renderList();
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
@@ -93,14 +93,14 @@ describe("environments list", () => {
       within(cards[1] as HTMLElement).getByText(E.isolation.isolated, { exact: false }),
     ).toBeTruthy();
     expect(screen.getByRole("link", { name: "Build box" }).getAttribute("href")).toBe(
-      "/environments/e2",
+      "/devices/e2",
     );
   });
 
-  it("environments list first render from hydrated cache makes no browser read", async () => {
+  it("devices list first render from hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     stubApi(routes);
-    await renderRouteWithCache("/environments", routes);
+    await renderRouteWithCache("/devices", routes);
     expect(screen.getByText(E.personal)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
@@ -111,7 +111,7 @@ describe("environments list", () => {
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/environments", {
+    await renderRouteEmptyCache("/devices", {
       [`GET ${BASE}`]: async () => {
         await held;
         return routes[`GET ${BASE}`]();
@@ -125,7 +125,7 @@ describe("environments list", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("no provider shows the empty state (新建环境 still connects a device)", async () => {
+  it("no provider shows the empty state (新建设备 still connects a device)", async () => {
     stubApi({
       [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
     });
@@ -135,7 +135,7 @@ describe("environments list", () => {
     expect(screen.getByRole("button", { name: E.new })).toBeTruthy();
   });
 
-  it("without a provider the existing environments are still listed as 不可用, with a notice", async () => {
+  it("without a provider the existing devices are still listed as 不可用, with a notice", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(
@@ -154,17 +154,17 @@ describe("environments list", () => {
     expect(screen.queryByText(E.noCloud.text)).toBeNull();
   });
 
-  it("an environment whose instance never started is 未启动", async () => {
+  it("a device whose instance never started is 未启动", async () => {
     stubApi({ [`GET ${BASE}`]: () => json(200, list([env("e1", "Fresh box")])) });
     await renderList();
     const card = await screen.findByRole("listitem");
     expect(within(card).getByText(E.state.notStarted, { exact: false })).toBeTruthy();
   });
 
-  it("create invalidates environments and opens the new environment", async () => {
+  it("create invalidates devices and opens the new device", async () => {
     const calls = stubApi({
       ...routes,
-      [`POST ${BASE}`]: () => json(201, { environment: env("e3", "Scratch") }),
+      [`POST ${BASE}`]: () => json(201, { device: env("e3", "Scratch") }),
     });
     await renderList();
     const user = userEvent.setup();
@@ -175,7 +175,7 @@ describe("environments list", () => {
     await user.type(within(dialog).getByRole("textbox"), "  Scratch ");
     expect(submit).toHaveProperty("disabled", false);
     await user.click(submit);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/e3"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/e3"));
     const post = calls.find((c) => c.method === "POST");
     expect(bodyOf(post)).toEqual({ name: "Scratch" });
     // the list is read again after the POST (it was invalidated while on screen)
@@ -201,12 +201,12 @@ describe("environments list", () => {
   });
 });
 
-describe("environment detail", () => {
-  beforeEach(() => resetNavigation("/environments/e1"));
+describe("device detail", () => {
+  beforeEach(() => resetNavigation("/devices/e1"));
 
-  it("environment detail first render from hydrated cache makes no browser read", async () => {
+  it("device detail first render from hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
-    const { container } = await renderRouteWithCache("/environments/e1", routes);
+    const { container } = await renderRouteWithCache("/devices/e1", routes);
     expect(container.querySelector('[data-template="DetailPage"]')).not.toBeNull();
     expect(screen.getAllByText("Build box").length).toBeGreaterThan(0);
     expect(screen.getByText(E.detail.filesNote)).toBeTruthy();
@@ -216,12 +216,12 @@ describe("environment detail", () => {
     expect(browser).toEqual([]);
   });
 
-  it("environment detail: empty cache shows template loading, then the data", async () => {
+  it("device detail: empty cache shows template loading, then the data", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((r) => {
       release = r;
     });
-    await renderRouteEmptyCache("/environments/e1", {
+    await renderRouteEmptyCache("/devices/e1", {
       [`GET ${BASE}/e1`]: async () => {
         await held;
         return routes[`GET ${BASE}/e1`]();
@@ -235,32 +235,31 @@ describe("environment detail", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("an unavailable environment shows 不可用 and offers no 重建文件 even when its files are lost", async () => {
+  it("an unavailable device shows 不可用 and offers no 重建文件 even when its files are lost", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () =>
-        json(200, { environment: env("e1", "Build box", { available: false, filesLost: true }) }),
+        json(200, { device: env("e1", "Build box", { available: false, filesLost: true }) }),
     });
     await renderDetail();
     expect(await screen.findByText(E.state.unavailable)).toBeTruthy();
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
-  it("a usable environment that lost its files offers 重建文件", async () => {
+  it("a usable device that lost its files offers 重建文件", async () => {
     stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { environment: env("e1", "Build box", { filesLost: true }) }),
+      [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box", { filesLost: true }) }),
     });
     await renderDetail();
     expect(await screen.findByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
-  it("a never-started environment's page says 未启动", async () => {
+  it("a never-started device's page says 未启动", async () => {
     stubApi(routes);
     await renderDetail();
     expect(await screen.findByText(E.state.notStarted)).toBeTruthy();
   });
 
-  it("a missing environment is the not-found state", async () => {
+  it("a missing device is the not-found state", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () => json(404, { error: { code: "device.not_found", message: "no" } }),
     });
@@ -268,13 +267,13 @@ describe("environment detail", () => {
     expect(await screen.findByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
-  it("rename invalidates the list and the environment", async () => {
+  it("rename invalidates the list and the device", async () => {
     const calls = stubApi({
       ...routes,
-      [`PATCH ${BASE}/e1`]: () => json(200, { environment: env("e1", "Renamed") }),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: env("e1", "Renamed") }),
     });
     const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "environments"], list([env("e1", "Build box")]));
+    client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.rename }));
     const dialog = await screen.findByRole("dialog");
@@ -283,20 +282,20 @@ describe("environment detail", () => {
     await user.type(input, "Renamed");
     await user.click(within(dialog).getByRole("button", { name: E.detail.renameSubmit }));
     await vi.waitFor(() =>
-      expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true),
+      expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
     );
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ name: "Renamed" });
-    // the open environment is read again
+    // the open device is read again
     await vi.waitFor(() => {
       const names = calls.map((c) => `${c.method} ${c.url}`);
       expect(names.slice(names.indexOf(`PATCH ${BASE}/e1`))).toContain(`GET ${BASE}/e1`);
     });
   });
 
-  it("delete invalidates environments and forgets the detail once the page is left", async () => {
+  it("delete invalidates devices and forgets the detail once the page is left", async () => {
     const calls = stubApi({ ...routes, [`DELETE ${BASE}/e1`]: () => json(202, {}) });
     const { client, unmount } = await renderDetail();
-    client.setQueryData(["org", "o1", "environments"], list([env("e1", "Build box")]));
+    client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
     await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
@@ -306,16 +305,16 @@ describe("environment detail", () => {
     expect(confirm).toHaveProperty("disabled", true);
     await user.type(within(dialog).getByRole("textbox"), "Build box");
     await user.click(confirm);
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments"));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices"));
     expect(calls.some((c) => c.method === "DELETE")).toBe(true);
-    expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true);
-    expect(client.getQueryData(["org", "o1", "environment", "e1"])).toBeDefined();
+    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
+    expect(client.getQueryData(["org", "o1", "device", "e1"])).toBeDefined();
     unmount();
-    expect(client.getQueryState(["org", "o1", "environment", "e1"])).toBeUndefined();
+    expect(client.getQueryState(["org", "o1", "device", "e1"])).toBeUndefined();
   });
 
-  it("deleting the default environment says a new empty one comes next time", async () => {
-    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { environment: env("e1", null) }) });
+  it("deleting the default device says a new empty one comes next time", async () => {
+    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
     await renderDetail();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
@@ -326,7 +325,7 @@ describe("environment detail", () => {
     );
   });
 
-  it("a scheduled file reset polls the environment until its files are back", async () => {
+  it("a scheduled file reset polls the device until its files are back", async () => {
     const lost = env("e1", "Build box", { filesLost: true });
     let reads = 0;
     let posted = false;
@@ -335,7 +334,7 @@ describe("environment detail", () => {
       [`GET ${BASE}/e1`]: () => {
         if (posted) reads += 1;
         // the job is still running on the first read after the request
-        return json(200, { environment: reads > 1 ? env("e1", "Build box") : lost });
+        return json(200, { device: reads > 1 ? env("e1", "Build box") : lost });
       },
       [`POST ${BASE}/e1/files/reset`]: () => {
         posted = true;
@@ -356,14 +355,14 @@ describe("environment detail", () => {
     expect(reads).toBeGreaterThan(1);
   });
 
-  it("reset files is offered only when the files are lost, and invalidates the environment", async () => {
+  it("reset files is offered only when the files are lost, and invalidates the device", async () => {
     const lost = env("e1", "Build box", { filesLost: true });
     let reads = 0;
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, list([lost])),
       [`GET ${BASE}/e1`]: () => {
         reads += 1;
-        return json(200, { environment: reads > 1 ? env("e1", "Build box") : lost });
+        return json(200, { device: reads > 1 ? env("e1", "Build box") : lost });
       },
       [`POST ${BASE}/e1/files/reset`]: () => json(202, {}),
     });
@@ -375,7 +374,7 @@ describe("environment detail", () => {
     await user.click(within(dialog).getByRole("button", { name: E.detail.resetSubmit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     await vi.waitFor(() => expect(reads).toBeGreaterThan(1));
-    expect(client.getQueryData(["org", "o1", "environment", "e1"])).toBeDefined();
+    expect(client.getQueryData(["org", "o1", "device", "e1"])).toBeDefined();
     await vi.waitFor(() =>
       expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull(),
     );
@@ -389,7 +388,7 @@ describe("environment detail", () => {
   });
 });
 
-describe("connected environments (environments spec §6, §9)", () => {
+describe("local devices (environments spec §6, §9)", () => {
   const MACHINE = {
     id: "m1",
     name: "grant-mbp",
@@ -400,21 +399,21 @@ describe("connected environments (environments spec §6, §9)", () => {
   };
   const device = (id: string, name: string, over: Record<string, unknown> = {}) =>
     env(id, name, {
-      source: "device",
-      provider: "@device",
+      source: "local",
+      provider: "@local",
       online: true,
       machine: MACHINE,
       ...over,
     });
 
-  it("a device card says 接入设备 and whether its machine is online", async () => {
+  it("a device card says 本地设备 and whether its machine is online", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(200, list([device("d1", "Laptop"), device("d2", "Server", { online: false })])),
     });
     await renderList();
     const cards = await screen.findAllByRole("listitem");
-    expect(within(cards[0] as HTMLElement).getByText(E.source.device)).toBeTruthy();
+    expect(within(cards[0] as HTMLElement).getByText(E.source.local)).toBeTruthy();
     expect(
       within(cards[0] as HTMLElement).getByText(E.state.online, { exact: false }),
     ).toBeTruthy();
@@ -423,7 +422,7 @@ describe("connected environments (environments spec §6, §9)", () => {
     ).toBeTruthy();
   });
 
-  it("without a cloud sandbox 新建环境 still connects a device", async () => {
+  it("without a cloud sandbox 新建设备 still connects a device", async () => {
     stubApi({
       [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
     });
@@ -431,12 +430,12 @@ describe("connected environments (environments spec §6, §9)", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    // no choice to make: only 接入设备, its steps at once
+    // no choice to make: only 本地设备, its steps at once
     expect(within(dialog).queryByRole("radiogroup")).toBeNull();
     expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
   });
 
-  it("新建环境 → 接入设备 shows the steps and waits until the new machine appears", async () => {
+  it("新建设备 → 本地设备 shows the steps and waits until the new machine appears", async () => {
     let connected = false;
     stubApi({
       [`GET ${BASE}`]: () =>
@@ -449,7 +448,7 @@ describe("connected environments (environments spec §6, §9)", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.device) }));
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
     expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
     expect(
       within(dialog).getByDisplayValue(`capybara-device login --url ${window.location.origin}`),
@@ -457,12 +456,12 @@ describe("connected environments (environments spec §6, §9)", () => {
     expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(2);
     expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     connected = true;
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/d7"), {
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });
   });
 
-  it("新建环境 → 接入设备 also stops waiting when a login again replaces a known machine", async () => {
+  it("新建设备 → 本地设备 also stops waiting when a login again replaces a known machine", async () => {
     let replaced = false;
     stubApi({
       [`GET ${BASE}`]: () =>
@@ -478,23 +477,23 @@ describe("connected environments (environments spec §6, §9)", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.device) }));
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
     expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     await settle();
     expect(router.push).not.toHaveBeenCalled();
     replaced = true;
-    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/d7"), {
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
       timeout: 6000,
     });
   });
 
-  it("environment page shows the machine and revokes it", async () => {
+  it("device page shows the machine and revokes it", async () => {
     let revoked = false;
     const calls = stubApi({
       [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
       [`GET ${BASE}/e1`]: () =>
         json(200, {
-          environment: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
+          device: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
         }),
       [`DELETE ${BASE}/e1/machine`]: () => {
         revoked = true;
@@ -502,9 +501,9 @@ describe("connected environments (environments spec §6, §9)", () => {
       },
     });
     const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "environments"], list([device("e1", "Laptop")]));
+    client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
     expect(await screen.findByText("grant-mbp")).toBeTruthy();
-    expect(screen.getByText(E.source.device)).toBeTruthy();
+    expect(screen.getByText(E.source.local)).toBeTruthy();
     expect(screen.getByText(E.state.online)).toBeTruthy();
     expect(screen.getByText("macOS")).toBeTruthy();
     expect(screen.getByText(E.mode.os)).toBeTruthy();
@@ -518,30 +517,29 @@ describe("connected environments (environments spec §6, §9)", () => {
     await user.click(within(dialog).getByRole("button", { name: E.machine.revokeSubmit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
     expect(await screen.findByText(E.machine.none)).toBeTruthy();
-    expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true);
+    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
   });
 
-  it("a device environment that lost its files says to log out and in again and offers no 重建文件", async () => {
+  it("a local device that lost its files says to log out and in again and offers no 重建文件", async () => {
     stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { environment: device("e1", "Laptop", { filesLost: true }) }),
+      [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop", { filesLost: true }) }),
     });
     await renderDetail();
-    expect(await screen.findByText(E.detail.deviceFilesLostNote)).toBeTruthy();
-    expect(E.detail.deviceFilesLostNote).toContain(
+    expect(await screen.findByText(E.detail.localFilesLostNote)).toBeTruthy();
+    expect(E.detail.localFilesLostNote).toContain(
       "capybara-device logout, then capybara-device login",
     );
     expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
-  it("deleting a device environment says the files on the machine stay", async () => {
-    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { environment: device("e1", "Laptop") }) });
+  it("deleting a local device says the files on the machine stay", async () => {
+    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }) });
     await renderDetail();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
     await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(E.detail.deleteDeviceHint.replace("{name}", "Laptop"));
+    expect(dialog.textContent).toContain(E.detail.deleteLocalHint.replace("{name}", "Laptop"));
   });
 });

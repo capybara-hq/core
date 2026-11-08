@@ -23,17 +23,17 @@ import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
-import { osLabel } from "../../../../lib/devices";
+import { osLabel } from "../../../../lib/device-sign-in";
 import {
-  deleteEnvironment,
-  type Environment,
-  environmentState,
-  isEnvironmentName,
-  renameEnvironment,
-  resetEnvironmentFiles,
-  revokeEnvironmentMachine,
-} from "../../../../lib/environments";
-import { environmentQuery } from "../../../../lib/query/environments";
+  type Device,
+  deleteDevice,
+  deviceState,
+  isDeviceName,
+  renameDevice,
+  resetDeviceFiles,
+  revokeDeviceMachine,
+} from "../../../../lib/devices";
+import { deviceQuery } from "../../../../lib/query/devices";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -42,35 +42,34 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
 /**
- * `/environments/[id]`: one environment (DetailPage, one centred column): source, provider, state,
+ * `/devices/[id]`: one device (DetailPage, one centred column): source, provider, state,
  * whether sessions are isolated, the limits, and the two things a person must know (files stay
- * until the environment is deleted; suspending ends running processes). A connected one has no
+ * until the device is deleted; suspending ends running processes). A local one has no
  * provider, limits or those notes: its machine section (name, system, mode, program version, last
  * seen) with 断开这台机器 instead, and deleting it keeps the files on the machine. 重命名, 重建文件
  * (only when its files are lost, behind a confirmation; a job, so the page then polls until the
  * files are back) and 删除 (typing its name; the files are deleted with it, a destructive item of
- * the ⋯ menu; deleting 个人环境 says a new empty one is created the next time one is needed). A
- * connected environment never offers 重建文件 (the kernel refuses it): its files-lost note tells
+ * the ⋯ menu; deleting 个人设备 says a new empty one is created the next time one is needed). A
+ * local device never offers 重建文件 (the kernel refuses it): its files-lost note tells
  * the person to run `capybara-device logout`, then `capybara-device login` on the machine. From
- * the query cache (the layout prefetched it on a first load); an environment the kernel does not
+ * the query cache (the layout prefetched it on a first load); a device the kernel does not
  * find is the not-found state.
  */
-export default function EnvironmentView({ id }: { id: string }) {
+export default function DeviceView({ id }: { id: string }) {
   const ws = useWorkspace();
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <EnvironmentPage key={id} orgId={ws.orgId} id={id} />;
+  return <DevicePage key={id} orgId={ws.orgId} id={id} />;
 }
 
-function EnvironmentPage({ orgId, id }: { orgId: string; id: string }) {
+function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const scope = usePagePath("org");
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   // 重建文件 is a job: after the request the page polls until the files are back
   const [resetting, setResetting] = useState(false);
   const read = usePageQuery({
-    ...environmentQuery(orgId, id),
-    refetchInterval: (q) =>
-      resetting && q.state.data?.environment.filesLost ? RESET_POLL_MS : false,
+    ...deviceQuery(orgId, id),
+    refetchInterval: (q) => (resetting && q.state.data?.device.filesLost ? RESET_POLL_MS : false),
   });
   const tabs = {
     label: t("detail.tabsLabel"),
@@ -82,7 +81,7 @@ function EnvironmentPage({ orgId, id }: { orgId: string; id: string }) {
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "environments", href: "/environments" }], title: "" }}
+        header={{ path: [...scope, { label: "devices", href: "/devices" }], title: "" }}
         tabs={tabs}
         loading={{
           content: [
@@ -96,62 +95,62 @@ function EnvironmentPage({ orgId, id }: { orgId: string; id: string }) {
   return (
     <Detail
       orgId={orgId}
-      environment={read.data.environment}
+      device={read.data.device}
       tabs={tabs}
       onResetScheduled={() => setResetting(true)}
     />
   );
 }
 
-/** How often the page reads the environment while a file reset it requested is pending. */
+/** How often the page reads the device while a file reset it requested is pending. */
 const RESET_POLL_MS = 1500;
 
 type Dialogs = "rename" | "reset" | "delete" | "revoke" | null;
 
 function Detail({
   orgId,
-  environment: e,
+  device: e,
   tabs,
   onResetScheduled,
 }: {
   orgId: string;
-  environment: Environment;
+  device: Device;
   tabs: Parameters<typeof DetailPage>[0]["tabs"];
   onResetScheduled(): void;
 }) {
   const scope = usePagePath("org");
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   const tcm = useTranslations("common");
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState<Dialogs>(null);
   const name = e.name ?? t("personal");
-  const state = environmentState(e);
-  const invalidates = () => [keys.org(orgId).environments(), keys.org(orgId).environment(e.id)];
+  const state = deviceState(e);
+  const invalidates = () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)];
   const rename = useAppMutation({
-    fn: (next: string) => renameEnvironment(orgId, e.id, next),
+    fn: (next: string) => renameDevice(orgId, e.id, next),
     invalidates,
   });
-  const reset = useAppMutation({ fn: () => resetEnvironmentFiles(orgId, e.id), invalidates });
-  // A delete invalidates the list this page goes back to and forgets the environment once the page
+  const reset = useAppMutation({ fn: () => resetDeviceFiles(orgId, e.id), invalidates });
+  // A delete invalidates the list this page goes back to and forgets the device once the page
   // is left.
   const remove = useAppMutation({
-    fn: () => deleteEnvironment(orgId, e.id),
-    invalidates: () => [keys.org(orgId).environments()],
-    forgetsOnLeave: () => [keys.org(orgId).environment(e.id)],
+    fn: () => deleteDevice(orgId, e.id),
+    invalidates: () => [keys.org(orgId).devices()],
+    forgetsOnLeave: () => [keys.org(orgId).device(e.id)],
   });
-  const revoke = useAppMutation({ fn: () => revokeEnvironmentMachine(orgId, e.id), invalidates });
+  const revoke = useAppMutation({ fn: () => revokeDeviceMachine(orgId, e.id), invalidates });
   const { limits } = e;
-  const device = e.source === "device";
+  const local = e.source === "local";
   return (
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "environments", href: "/environments" }, { label: name }],
+          path: [...scope, { label: "devices", href: "/devices" }, { label: name }],
           title: name,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...(e.filesLost && e.available && !device
+            ...(e.filesLost && e.available && !local
               ? [
                   {
                     label: t("detail.resetFiles"),
@@ -175,13 +174,13 @@ function Detail({
             keyWidth="10ch"
             rows={[
               { k: t("detail.source"), v: t(`source.${e.source}`) },
-              ...(device ? [] : [{ k: t("detail.provider"), v: e.provider ?? t("none") }]),
+              ...(local ? [] : [{ k: t("detail.provider"), v: e.provider ?? t("none") }]),
               { k: t("detail.state"), v: t(`state.${state}`) },
               {
                 k: t("detail.isolation"),
                 v: t(e.sessionIsolation ? "isolation.isolated" : "isolation.shared"),
               },
-              ...(device
+              ...(local
                 ? []
                 : [
                     {
@@ -199,12 +198,12 @@ function Detail({
           />
           {e.filesLost && (
             <Text variant="prose" tone="warn">
-              {t(device ? "detail.deviceFilesLostNote" : "detail.filesLostNote")}
+              {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
             </Text>
           )}
-          {device ? (
+          {local ? (
             <Text variant="prose" tone="muted">
-              {t("detail.deviceFilesNote")}
+              {t("detail.localFilesNote")}
             </Text>
           ) : (
             <>
@@ -216,7 +215,7 @@ function Detail({
               </Text>
             </>
           )}
-          {device && <MachineSection environment={e} onRevoke={() => setOpen("revoke")} />}
+          {local && <MachineSection device={e} onRevoke={() => setOpen("revoke")} />}
         </Stack>
       </DetailPage>
       {open === "rename" && (
@@ -266,8 +265,8 @@ function Detail({
         description={
           <Text variant="prose">
             {t(
-              device
-                ? "detail.deleteDeviceHint"
+              local
+                ? "detail.deleteLocalHint"
                 : e.isDefault
                   ? "detail.deleteDefaultHint"
                   : "detail.deleteHint",
@@ -281,7 +280,7 @@ function Detail({
           await remove.mutateAsync(undefined);
           setOpen(null);
           toast.success(t("detail.deleted", { name }));
-          router.push("/environments");
+          router.push("/devices");
         }}
       />
     </>
@@ -303,11 +302,11 @@ function RenameDialog({
   onClose(): void;
   onSave(name: string): Promise<void>;
 }) {
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   const errorMessage = useErrorMessage();
   const [name, setName] = useState(current);
   const [error, setError] = useState<string>();
-  const valid = isEnvironmentName(name) && name.trim() !== current;
+  const valid = isDeviceName(name) && name.trim() !== current;
   const submit = async () => {
     if (!valid || pending) return;
     setError(undefined);
@@ -369,7 +368,7 @@ function ResetDialog({
   onClose(): void;
   onReset(): Promise<void>;
 }) {
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   const errorMessage = useErrorMessage();
   const [error, setError] = useState<string>();
   const submit = async () => {
@@ -414,17 +413,11 @@ function ResetDialog({
 }
 
 /**
- * A device environment's machine: name, system, how it runs commands (系统沙箱 / Docker), program
+ * A local device's machine: name, system, how it runs commands (系统沙箱 / Docker), program
  * version and when it was last seen, with 断开这台机器; or the line saying none is connected.
  */
-function MachineSection({
-  environment: e,
-  onRevoke,
-}: {
-  environment: Environment;
-  onRevoke(): void;
-}) {
-  const t = useTranslations("environments");
+function MachineSection({ device: e, onRevoke }: { device: Device; onRevoke(): void }) {
+  const t = useTranslations("devices");
   const m = e.machine;
   return (
     <ContentSection
@@ -476,7 +469,7 @@ function RevokeDialog({
   onClose(): void;
   onRevoke(): Promise<void>;
 }) {
-  const t = useTranslations("environments");
+  const t = useTranslations("devices");
   const errorMessage = useErrorMessage();
   const [error, setError] = useState<string>();
   const submit = async () => {

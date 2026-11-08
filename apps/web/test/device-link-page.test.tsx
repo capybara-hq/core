@@ -1,6 +1,7 @@
-// The device confirmation page `/device` (environments spec §6.2, §13.3): `capybara-device login`
-// opens `/device?code=XXXX-XXXX`; the signed-in person compares the code with the terminal, picks
-// the org and a new or existing connected environment, reads the disclosure and confirms or denies.
+// The device confirmation page `/devices/link` (environments spec §6.2, §13.3):
+// `capybara-device login` opens `/devices/link?code=XXXX-XXXX`; the signed-in person compares the
+// code with the terminal, picks the org and a new or existing local device, reads the disclosure
+// and confirms or denies.
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,10 +24,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 const CODE = "BCDF-GHJK";
-const PAGE = `/device?code=${CODE}`;
+const PAGE = `/devices/link?code=${CODE}`;
 const PENDING = `/api/v1/device/pending/${CODE}`;
-const ENVS = "/api/v1/orgs/o1/environments";
-const D = en.device;
+const ENVS = "/api/v1/orgs/o1/devices";
+const D = en.deviceLink;
 const msgs = { zh, en } as const;
 
 const MACHINE = { name: "grant-mbp", os: "darwin", arch: "arm64", programVersion: "0.1.0" };
@@ -51,7 +52,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
 const LIST = {
   items: [
     env("e1", null),
-    env("d1", "Old laptop", { source: "device", provider: "@device", online: false }),
+    env("d1", "Old laptop", { source: "local", provider: "@local", online: false }),
   ],
   defaultId: "e1",
   lastUsedId: null,
@@ -65,20 +66,20 @@ const ROUTES: Routes = {
 const unauthenticated = () => json(401, { error: { code: "auth.required", message: "x" } });
 const settle = () => act(async () => new Promise((r) => setTimeout(r, 20)));
 
-beforeEach(() => resetNavigation("/device"));
+beforeEach(() => resetNavigation("/devices/link"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-describe("/device", () => {
+describe("/devices/link", () => {
   it.each(["zh", "en"] as const)(
-    "device page shows the code and the disclosure and confirms into a new environment (%s)",
+    "device page shows the code and the disclosure and confirms into a new device (%s)",
     async (locale) => {
-      const m = msgs[locale].device;
+      const m = msgs[locale].deviceLink;
       const calls = stubApi({
         ...ROUTES,
-        "POST /api/v1/device/confirm": () => json(200, { environmentId: "d9" }),
+        "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
       });
       const { container } = await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale });
       expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
@@ -87,7 +88,7 @@ describe("/device", () => {
       expect(screen.getByText("macOS · arm64")).toBeTruthy();
       expect(screen.getByText("v0.1.0")).toBeTruthy();
       expect(within(screen.getByRole("note")).getByText(m.disclosure)).toBeTruthy();
-      // the new environment's name defaults to the machine's
+      // the new device's name defaults to the machine's
       expect(screen.getByRole("textbox", { name: m.name })).toHaveProperty("value", "grant-mbp");
       // nothing is sent before the person confirms
       expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
@@ -102,34 +103,34 @@ describe("/device", () => {
     },
   );
 
-  it("confirms into an existing connected environment of the org", async () => {
+  it("confirms into an existing local device of the org", async () => {
     const calls = stubApi({
       ...ROUTES,
-      "POST /api/v1/device/confirm": () => json(200, { environmentId: "d1" }),
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d1" }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const user = userEvent.setup();
-    const target = await screen.findByRole("combobox", { name: D.environment });
+    const target = await screen.findByRole("combobox", { name: D.device });
     await user.click(target);
     await user.click(await screen.findByRole("option", { name: "Old laptop" }));
-    // an existing environment keeps its own name: no name field
+    // an existing device keeps its own name: no name field
     expect(screen.queryByRole("textbox", { name: D.name })).toBeNull();
     await user.click(screen.getByRole("button", { name: D.confirm }));
     expect(await screen.findByText(D.doneTitle)).toBeTruthy();
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       userCode: CODE,
       orgId: "o1",
-      environmentId: "d1",
+      deviceId: "d1",
     });
-    // the environment is in the current org: the done state opens its page
-    await user.click(screen.getByRole("button", { name: D.openEnvironment }));
-    expect(router.replace).toHaveBeenCalledWith("/environments/d1");
+    // the device is in the current org: the done state opens its page
+    await user.click(screen.getByRole("button", { name: D.openDevice }));
+    expect(router.replace).toHaveBeenCalledWith("/devices/d1");
   });
 
-  it("confirming invalidates the org's environments", async () => {
+  it("confirming invalidates the org's devices", async () => {
     const calls = stubApi({
       ...ROUTES,
-      "POST /api/v1/device/confirm": () => json(200, { environmentId: "d9" }),
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: D.confirm }));
@@ -206,17 +207,17 @@ describe("/device", () => {
 
   it("without a code the page asks for the one shown in the terminal", async () => {
     stubApi(ROUTES);
-    await renderAuthRouteWithCache("/device", lastStubRoutes());
+    await renderAuthRouteWithCache("/devices/link", lastStubRoutes());
     const user = userEvent.setup();
     const field = await screen.findByRole("textbox", { name: D.code });
     const next = screen.getByRole("button", { name: D.continue });
     expect(next).toHaveProperty("disabled", true);
     await user.type(field, " bcdf-ghjk ");
     await user.click(next);
-    expect(router.replace).toHaveBeenCalledWith(`/device?code=${CODE}`);
+    expect(router.replace).toHaveBeenCalledWith(`/devices/link?code=${CODE}`);
   });
 
-  it("/device: a first render from the hydrated cache makes no browser read", async () => {
+  it("/devices/link: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderAuthRouteWithCache(PAGE, ROUTES);
     expect(screen.getByText(CODE)).toBeTruthy();
@@ -224,7 +225,7 @@ describe("/device", () => {
     expect(browser).toEqual([]);
   });
 
-  it("/device: an empty cache shows the template's loading state, then the data", async () => {
+  it("/devices/link: an empty cache shows the template's loading state, then the data", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {
       release = r;

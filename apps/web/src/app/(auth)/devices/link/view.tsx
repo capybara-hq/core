@@ -16,10 +16,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-import { FormError } from "../../../components/form-error";
-import { useRouter } from "../../../i18n/navigation";
-import { ApiClientError } from "../../../lib/api";
-import { loginPathFor } from "../../../lib/auth-sources";
+import { FormError } from "../../../../components/form-error";
+import { useRouter } from "../../../../i18n/navigation";
+import { ApiClientError } from "../../../../lib/api";
+import { loginPathFor } from "../../../../lib/auth-sources";
 import {
   codeParam,
   confirmDevice,
@@ -29,18 +29,18 @@ import {
   normalizeUserCode,
   osLabel,
   type PendingMachine,
-} from "../../../lib/devices";
-import { isEnvironmentName } from "../../../lib/environments";
-import { usePreferences } from "../../../lib/preferences";
-import { retryOnMountOf } from "../../../lib/query/client";
-import { pendingDeviceQuery } from "../../../lib/query/devices";
-import { environmentsQuery } from "../../../lib/query/environments";
-import { keys } from "../../../lib/query/keys";
-import { useAppMutation } from "../../../lib/query/mutation";
-import { maybeMeQuery } from "../../../lib/query/shell";
-import { HOME_PATH } from "../../../lib/routes";
-import type { Me } from "../../../lib/session";
-import { useErrorMessage } from "../../../lib/use-error-message";
+} from "../../../../lib/device-sign-in";
+import { isDeviceName } from "../../../../lib/devices";
+import { usePreferences } from "../../../../lib/preferences";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { pendingDeviceQuery } from "../../../../lib/query/device-sign-in";
+import { devicesQuery } from "../../../../lib/query/devices";
+import { keys } from "../../../../lib/query/keys";
+import { useAppMutation } from "../../../../lib/query/mutation";
+import { maybeMeQuery } from "../../../../lib/query/shell";
+import { HOME_PATH } from "../../../../lib/routes";
+import type { Me } from "../../../../lib/session";
+import { useErrorMessage } from "../../../../lib/use-error-message";
 
 /** No session or an expired one (apiFetch tried one refresh): sign in and come back here. */
 const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 401;
@@ -55,10 +55,10 @@ const startOver = (e: unknown) =>
     e.code === "device_sign_in.expired" ||
     e.code === "device_sign_in.unavailable");
 
-/** The `新建环境` choice of the environment select (an environment id is a uuid, never this). */
+/** The `新建设备` choice of the device select (a device id is a uuid, never this). */
 const NEW = "new";
 
-/** The confirm card while it loads: the code, the machine's rows, org, environment and name. */
+/** The confirm card while it loads: the code, the machine's rows, org, device and name. */
 const LOADING_FIELDS: FieldShape[] = [
   { control: "text" },
   { control: "key-value", rows: 3, keyWidth: "10ch" },
@@ -69,7 +69,7 @@ const LOADING_FIELDS: FieldShape[] = [
 
 /** What confirming allows (static: the loading card shows it too). */
 function Disclosure() {
-  const t = useTranslations("device");
+  const t = useTranslations("deviceLink");
   return (
     <Card tone="danger">
       <div role="note">
@@ -80,13 +80,13 @@ function Disclosure() {
 }
 
 /**
- * `/device`: confirm a machine's `capybara-device login` (AuthPage; environments spec §6.2,
+ * `/devices/link`: confirm a machine's `capybara-device login` (AuthPage; environments spec §6.2,
  * §13.3). The code stands out for comparison with the terminal, then the machine (name, system,
- * program version), the org, the environment (新建环境 named after the machine by default, or one
- * of the person's connected environments in that org) and the disclosure; 确认连接 or 拒绝.
+ * program version), the org, the device (新建设备 named after the machine by default, or one
+ * of the person's local devices in that org) and the disclosure; 确认连接 or 拒绝.
  * Without a code the page asks for the one the terminal shows.
  */
-export default function DeviceView({ code: raw }: { code: string }) {
+export default function DeviceLinkView({ code: raw }: { code: string }) {
   const code = codeParam(raw);
   if (code === "") return <EnterCode />;
   return <ConfirmDevice key={code} code={code} />;
@@ -94,13 +94,13 @@ export default function DeviceView({ code: raw }: { code: string }) {
 
 /** No `?code=`: the person types the code the terminal shows. */
 function EnterCode() {
-  const t = useTranslations("device");
+  const t = useTranslations("deviceLink");
   const router = useRouter();
   const preferences = usePreferences();
   const [value, setValue] = useState("");
   const code = normalizeUserCode(value);
   const submit = () => {
-    if (code !== null) router.replace(`/device?code=${code}`);
+    if (code !== null) router.replace(`/devices/link?code=${code}`);
   };
   return (
     <AuthPage title={t("enterTitle")} subtitle={t("enterSubtitle")} preferences={preferences}>
@@ -131,10 +131,10 @@ function EnterCode() {
   );
 }
 
-type Outcome = { kind: "confirmed"; orgId: string; environmentId: string } | { kind: "denied" };
+type Outcome = { kind: "confirmed"; orgId: string; deviceId: string } | { kind: "denied" };
 
 function ConfirmDevice({ code }: { code: string }) {
-  const t = useTranslations("device");
+  const t = useTranslations("deviceLink");
   const tc = useTranslations("common");
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -146,7 +146,7 @@ function ConfirmDevice({ code }: { code: string }) {
   const [outcome, setOutcome] = useState<Outcome>();
   // A confirm or deny that found the code unusable meanwhile.
   const [gone, setGone] = useState<unknown>();
-  const here = `/device?code=${code}`;
+  const here = `/devices/link?code=${code}`;
   const home = () => router.replace(HOME_PATH);
 
   // A refused read or action that needs a new session signs in again, back here.
@@ -209,11 +209,9 @@ function ConfirmDevice({ code }: { code: string }) {
           <Button
             variant="primary"
             density="prominent"
-            onClick={() =>
-              router.replace(`/environments/${encodeURIComponent(outcome.environmentId)}`)
-            }
+            onClick={() => router.replace(`/devices/${encodeURIComponent(outcome.deviceId)}`)}
           >
-            {t("openEnvironment")}
+            {t("openDevice")}
           </Button>
         ) : (
           <Button variant="primary" density="prominent" onClick={home}>
@@ -260,27 +258,27 @@ function ConfirmForm({
   onFailure(e: unknown): string | undefined;
   onDone(o: Outcome): void;
 }) {
-  const t = useTranslations("device");
-  const te = useTranslations("environments");
+  const t = useTranslations("deviceLink");
+  const te = useTranslations("devices");
   const memberships = me.memberships;
   const [orgId, setOrgId] = useState(() => defaultDeviceOrg(me));
   const [target, setTarget] = useState(NEW);
   const [name, setName] = useState(machine.name);
   const [error, setError] = useState<string>();
-  const envQ = environmentsQuery(orgId ?? "");
-  const environments = useQuery({
+  const envQ = devicesQuery(orgId ?? "");
+  const devices = useQuery({
     ...envQ,
     enabled: orgId !== undefined,
     retryOnMount: retryOnMountOf(envQ.queryKey),
   });
-  const devices = (environments.data?.items ?? []).filter((e) => e.source === "device");
+  const locals = (devices.data?.items ?? []).filter((e) => e.source === "local");
   const confirm = useAppMutation({
     fn: (input: DeviceConfirmInput) => confirmDevice(input),
-    invalidates: (input) => [keys.org(input.orgId).environments()],
+    invalidates: (input) => [keys.org(input.orgId).devices()],
   });
   const deny = useAppMutation({ fn: () => denyDevice(code), invalidates: () => [] });
   const busy = confirm.isPending || deny.isPending;
-  const valid = orgId !== undefined && (target !== NEW || isEnvironmentName(name));
+  const valid = orgId !== undefined && (target !== NEW || isDeviceName(name));
 
   const onConfirm = async () => {
     if (orgId === undefined || !valid || busy) return;
@@ -288,10 +286,10 @@ function ConfirmForm({
     const input: DeviceConfirmInput =
       target === NEW
         ? { userCode: code, orgId, name: name.trim() }
-        : { userCode: code, orgId, environmentId: target };
+        : { userCode: code, orgId, deviceId: target };
     try {
       const r = await confirm.mutateAsync(input);
-      onDone({ kind: "confirmed", orgId, environmentId: r.environmentId });
+      onDone({ kind: "confirmed", orgId, deviceId: r.deviceId });
     } catch (e) {
       setError(onFailure(e));
     }
@@ -339,14 +337,14 @@ function ConfirmForm({
               options={memberships.map((m) => ({ value: m.orgId, label: m.name }))}
             />
           </Field>
-          <Field label={t("environment")}>
+          <Field label={t("device")}>
             <Select
               value={target}
               disabled={busy}
               onChange={(e) => setTarget(e.target.value)}
               options={[
-                { value: NEW, label: t("newEnvironment") },
-                ...devices.map((e) => ({ value: e.id, label: e.name ?? te("personal") })),
+                { value: NEW, label: t("newDevice") },
+                ...locals.map((e) => ({ value: e.id, label: e.name ?? te("personal") })),
               ]}
             />
           </Field>

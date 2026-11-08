@@ -15,32 +15,32 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
-import { DEVICE_INSTALL_COMMAND, deviceLoginCommand } from "../lib/devices";
-import { createEnvironment, type Environment, isEnvironmentName } from "../lib/environments";
-import { environmentsQuery } from "../lib/query/environments";
+import { DEVICE_INSTALL_COMMAND, deviceLoginCommand } from "../lib/device-sign-in";
+import { createDevice, type Device, isDeviceName } from "../lib/devices";
+import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
-/** How often the dialog reads the environments while it waits for a machine to connect. */
+/** How often the dialog reads the devices while it waits for a machine to connect. */
 const WAIT_POLL_MS = 3000;
 
-type Kind = "cloud" | "device";
+type Kind = "cloud" | "local";
 
 /**
- * 新建环境 on the 环境 page: two choices, 云端沙箱 and 接入设备 (only 接入设备, without the choice,
+ * 新建设备 on the 设备 page: two choices, 云端设备 and 本地设备 (only 本地设备, without the choice,
  * when the platform has no cloud sandbox).
  *
- * - 云端沙箱: one field, 名称 (1-64 characters); the primary is disabled until it is valid. A created
- *   environment is ready at once (its files and instance are made on first use): the dialog
+ * - 云端设备: one field, 名称 (1-64 characters); the primary is disabled until it is valid. A created
+ *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
  *   no provider) keeps the dialog open with its copy.
- * - 接入设备: the two commands to run on the machine (install, then `capybara-device login` with
- *   this deployment's address), each with a copy button; the dialog then reads the environments
- *   until a connected environment it had not seen appears, and opens its page.
+ * - 本地设备: the two commands to run on the machine (install, then `capybara-device login` with
+ *   this deployment's address), each with a copy button; the dialog then reads the devices
+ *   until a local device it had not seen appears, and opens its page.
  */
-export function EnvironmentCreateDialog({
+export function DeviceCreateDialog({
   orgId,
   cloudAvailable,
   onClose,
@@ -49,39 +49,36 @@ export function EnvironmentCreateDialog({
   cloudAvailable: boolean;
   onClose(): void;
 }) {
-  const t = useTranslations("environments.create");
+  const t = useTranslations("devices.create");
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const [kind, setKind] = useState<Kind>(cloudAvailable ? "cloud" : "device");
+  const [kind, setKind] = useState<Kind>(cloudAvailable ? "cloud" : "local");
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
   const create = useAppMutation({
-    fn: () => createEnvironment(orgId, name),
-    invalidates: (_, r) => [
-      keys.org(orgId).environments(),
-      keys.org(orgId).environment(r.environment.id),
-    ],
+    fn: () => createDevice(orgId, name),
+    invalidates: (_, r) => [keys.org(orgId).devices(), keys.org(orgId).device(r.device.id)],
   });
-  const valid = isEnvironmentName(name);
+  const valid = isDeviceName(name);
 
   const submit = async () => {
     if (!valid || create.isPending) return;
     setError(undefined);
     try {
       const r = await create.mutateAsync(undefined);
-      toast.success(t("created", { name: r.environment.name ?? name.trim() }));
+      toast.success(t("created", { name: r.device.name ?? name.trim() }));
       onClose();
-      router.push(`/environments/${encodeURIComponent(r.environment.id)}`);
+      router.push(`/devices/${encodeURIComponent(r.device.id)}`);
     } catch (e) {
       setError(errorMessage(e));
     }
   };
 
-  const connected = (e: Environment) => {
+  const connected = (e: Device) => {
     toast.success(t("connected", { name: e.name ?? "" }));
     onClose();
-    router.push(`/environments/${encodeURIComponent(e.id)}`);
+    router.push(`/devices/${encodeURIComponent(e.id)}`);
   };
 
   return (
@@ -122,7 +119,7 @@ export function EnvironmentCreateDialog({
             onChange={(v) => setKind(v as Kind)}
             options={[
               { value: "cloud", label: t("cloud"), description: t("cloudHint") },
-              { value: "device", label: t("device"), description: t("deviceHint") },
+              { value: "local", label: t("local"), description: t("localHint") },
             ]}
           />
         )}
@@ -141,7 +138,7 @@ export function EnvironmentCreateDialog({
             {error !== undefined && <FormError message={error} />}
           </Stack>
         ) : (
-          <DeviceSteps orgId={orgId} onConnected={connected} />
+          <LocalSteps orgId={orgId} onConnected={connected} />
         )}
       </Stack>
     </Dialog>
@@ -149,29 +146,29 @@ export function EnvironmentCreateDialog({
 }
 
 /**
- * The commands that connect a machine, then the wait: the environments are read every few
- * seconds, and the first device environment that was not there when the steps opened, or whose
- * machine changed since (a login again into an existing environment replaces its machine), is
+ * The commands that connect a machine, then the wait: the devices are read every few
+ * seconds, and the first local device that was not there when the steps opened, or whose
+ * machine changed since (a login again into an existing device replaces its machine), is
  * the newly connected machine.
  */
-function DeviceSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Environment): void }) {
-  const t = useTranslations("environments.create");
+function LocalSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Device): void }) {
+  const t = useTranslations("devices.create");
   // The deployment's address, read after mount (a server render has no window).
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
-  const list = useQuery({ ...environmentsQuery(orgId), refetchInterval: WAIT_POLL_MS });
-  // device environment id -> its machine id when the steps opened (null: none connected)
+  const list = useQuery({ ...devicesQuery(orgId), refetchInterval: WAIT_POLL_MS });
+  // local device id -> its machine id when the steps opened (null: none connected)
   const known = useRef<Map<string, string | null> | null>(null);
   const done = useRef(false);
   useEffect(() => {
     if (list.data === undefined || done.current) return;
-    const devices = list.data.items.filter((e) => e.source === "device");
+    const locals = list.data.items.filter((e) => e.source === "local");
     if (known.current === null) {
-      known.current = new Map(devices.map((e) => [e.id, e.machine?.id ?? null]));
+      known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
       return;
     }
     const seen = known.current;
-    const fresh = devices.find(
+    const fresh = locals.find(
       (e) => !seen.has(e.id) || (e.machine !== null && e.machine.id !== (seen.get(e.id) ?? null)),
     );
     if (fresh !== undefined) {
@@ -195,7 +192,7 @@ function DeviceSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Env
 
 /** One command to run on the machine: a read-only field and its copy button. */
 function CommandStep({ label, command }: { label: string; command: string }) {
-  const t = useTranslations("environments.create");
+  const t = useTranslations("devices.create");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const copy = async () => {
