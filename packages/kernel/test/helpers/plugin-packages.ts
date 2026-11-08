@@ -197,6 +197,8 @@ export interface LifePkgOptions {
   policy?: boolean;
   /** Skills the plugin carries besides its extension (`skills/<name>/SKILL.md`). */
   skills?: string[];
+  /** An svg icon (`icon.svg`, declared as the plugin's `icon`). */
+  icon?: string;
 }
 
 /**
@@ -310,9 +312,11 @@ export default defineExtension({
       name,
       version: o.version,
       ...(skills.length > 0 && { skills: skills.map((s) => ({ path: `./skills/${s}` })) }),
+      ...(o.icon !== undefined && { icon: "./icon.svg" }),
     },
     ...(o.packageName !== undefined && { packageName: o.packageName }),
     files: {
+      ...(o.icon !== undefined && { "icon.svg": o.icon }),
       ...Object.fromEntries(migrations.map((m) => [`migrations/${m.file}`, m.sql])),
       ...Object.fromEntries(
         skills.map((s) => [

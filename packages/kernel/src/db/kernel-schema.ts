@@ -1090,6 +1090,16 @@ export interface ExtensionPackagesTable {
   >;
 }
 
+/**
+ * 0098: catalog display files (plugin icons, connector template icons, setup guide files) by
+ * sha256, shared by every version listing one (`catalog/catalog-files.ts`).
+ */
+export interface CatalogFilesTable {
+  sha256: string;
+  data: Buffer;
+  touched_at: Ts;
+}
+
 /** 0030, renamed in 0041: package bytes when there is no object storage. */
 export interface ExtensionBlobsTable {
   sha256: string;
@@ -1255,6 +1265,7 @@ export interface KernelDatabase {
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;
   catalog_item_versions: CatalogItemVersionsTable;
+  catalog_files: CatalogFilesTable;
   marketplaces: MarketplacesTable;
   marketplace_entries: MarketplaceEntriesTable;
   plugin_import_staging: PluginImportStagingTable;
@@ -1534,7 +1545,8 @@ export interface ComponentOrgSwitchesTable {
  * 0034, renamed in 0042, reshaped in 0044: the versions of a platform catalog item. `manifest` is
  * the normalized plugin.json (skills and connector templates listed explicitly); `extension_sha256`
  * the plugin's extension package in `extension_packages` (null without an extension); `files` the
- * files stored under `object_prefix` (skills, connector templates, icons).
+ * version's stored files: display files (icons, setup guide files) in `catalog_files` (0098), the
+ * rest (skills, connector and agent templates) under `object_prefix`.
  */
 export interface CatalogItemVersionsTable {
   item_id: string;

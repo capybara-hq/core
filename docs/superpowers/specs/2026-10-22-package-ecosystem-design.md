@@ -1097,6 +1097,20 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 - Where bytes live is unchanged: extensions in the content-addressed package store
   (`plugin_packages`, `plugin_blobs`), other files in object storage under the catalog version prefix
   (today `directory/<item_id>/<version>/`).
+  **Amended 2026-11-08 (bootstrap catalog files):** display files (the plugin icon, connector
+  template icons, setup guide files; each at most 64 KiB by the format) live in PG instead, in the
+  content-addressed `catalog_files` (sha256 -> bytes, migration 0098), written with the staging row
+  and read by the sha256 the version row records (re-checked on read). Reason: bootstrap imports
+  run before any object-store extension (object-store-s3 is a bootstrap plugin; its own icon could
+  never wait for itself), and the releases that added icons made every bootstrap import fail with
+  `storage.unavailable`. Deferring the bytes until storage appears (a queue job) or ordering the
+  object store first were rejected: both still leave the object store's own icon and every
+  storage-less deployment without icons, and add a state where a version lists files it does not
+  have. Skills, connector templates and agent templates stay in object storage (they are large or
+  copied into platform components there); a bootstrap entry shipping them fails while no object
+  store runs (optional entries are retried after the extensions load). The staging cleanup job
+  removes `catalog_files` rows that no version or staging lists, once older than the staging TTL
+  (an import renews `touched_at`, so a concurrent import never loses its bytes).
 
 ### 5.5 Trust in the official marketplace
 

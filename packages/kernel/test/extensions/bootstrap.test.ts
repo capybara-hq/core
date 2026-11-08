@@ -111,7 +111,7 @@ async function reset(): Promise<void> {
   await stopAll();
   await truncateTables(
     db,
-    "capybara.bootstrap_runs, capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_org_configs, capybara.extension_catalog_sources, capybara.catalog_item_versions, capybara.catalog_items, capybara.plugin_import_staging, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.bootstrap_runs, capybara.catalog_files, capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_org_configs, capybara.extension_catalog_sources, capybara.catalog_item_versions, capybara.catalog_items, capybara.plugin_import_staging, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
 }
 
@@ -941,6 +941,103 @@ describe("a declarative entry", { timeout: 30_000 }, () => {
         { name: "delta", action: "imported", version: "1.0.0" },
       ],
     });
+  });
+});
+
+const ICON =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
+
+/**
+ * fake-im (channel@1, with a setup guide) at `version`: with an icon and its guide, or (`bare`)
+ * with neither, like the bootstrap plugins released before they shipped files.
+ */
+const imPkg = (version: string, bare = false) =>
+  packFake("fake-im", async (dir) => {
+    for (const file of ["package.json", join(".capybara-plugin", "plugin.json")]) {
+      const path = join(dir, file);
+      const json = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      json.version = version;
+      if (file !== "package.json") {
+        if (bare) delete json.setupGuides;
+        else json.icon = "./icon.svg";
+      }
+      await writeFile(path, JSON.stringify(json, null, 2));
+    }
+    const src = join(dir, "src", "index.ts");
+    await writeFile(
+      src,
+      (await readFile(src, "utf8")).replace('version: "0.1.0"', `version: "${version}"`),
+    );
+    if (bare) await rm(join(dir, "guides"), { recursive: true });
+    else await writeFile(join(dir, "icon.svg"), ICON);
+  });
+
+describe("bootstrap plugins with an icon and setup guides, no object store", {
+  timeout: 60_000,
+}, () => {
+  afterAll(stopAll);
+
+  /** The item of fake-im, its icon and its guide as the super admin and an org read them. */
+  async function expectFilesServed(k: TestKernel, version: string): Promise<void> {
+    expect(k.app.get(StorageService).available).toBe(false);
+    admin = await session(k, "root");
+    const items = (await admin({ method: "GET", url: "/api/v1/admin/catalog/items" })).json()
+      .items as { id: string; name: string; latestVersion: string }[];
+    const item = items.find((i) => i.name === "fake-im");
+    expect(item).toBeDefined();
+    const id = item?.id as string;
+    const icon = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${id}/icon` });
+    expect(icon.statusCode, icon.body).toBe(200);
+    expect(icon.headers["content-type"]).toContain("image/svg+xml");
+    expect(icon.body).toBe(ICON);
+    const orgId = await createOrg(admin, `Org ${version}`);
+    const orgIcon = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/catalog/${id}/icon` });
+    expect(orgIcon.statusCode, orgIcon.body).toBe(200);
+    const guide = await admin({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/catalog/${id}/guides/fake-im-app?mode=webhook`,
+    });
+    expect(guide.statusCode, guide.body).toBe(200);
+    const g = guide.json().guide as { version: string; files: { content: string }[] };
+    expect(g.version).toBe(version);
+    expect(g.files).toHaveLength(1);
+    expect(g.files[0]?.content.length).toBeGreaterThan(0);
+    // the bytes are in PG, keyed by the sha256 the version row records
+    const v = await db
+      .selectFrom("catalog_item_versions")
+      .select(["files", "object_prefix"])
+      .where("item_id", "=", id)
+      .where("version", "=", version)
+      .executeTakeFirstOrThrow();
+    expect(v.object_prefix).toBeNull();
+    const shas = (v.files as { sha256: string }[]).map((f) => f.sha256);
+    expect(shas.length).toBe(3);
+    const stored = await db
+      .selectFrom("catalog_files")
+      .select("sha256")
+      .where("sha256", "in", shas)
+      .execute();
+    expect(stored).toHaveLength(new Set(shas).size);
+  }
+
+  it("a fresh deployment starts, and the item's icon and guide render", async () => {
+    await reset();
+    const fx = await fixture([{ bytes: await imPkg("0.2.0"), required: true }]);
+    const k = await boot(fx);
+    await loginAdmin(k);
+    await expectFilesServed(k, "0.2.0");
+  });
+
+  it("an upgrade from a version without files stores them on the next manifest", async () => {
+    await reset();
+    const v1 = await fixture([{ bytes: await imPkg("0.1.0", true), required: true }]);
+    await boot(v1);
+    await stopAll();
+    const v2 = await fixture([{ bytes: await imPkg("0.2.0"), required: true }]);
+    const k = await boot(v2);
+    await loginAdmin(k);
+    expect((await installs()).map((r) => [r.name, r.version])).toEqual([["fake-im", "0.2.0"]]);
+    await expectFilesServed(k, "0.2.0");
   });
 });
 

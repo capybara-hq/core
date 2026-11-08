@@ -12,7 +12,7 @@ import {
   setupGuideModes,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { readCatalogFiles } from "../catalog/catalog-content.js";
+import { readCatalogDisplayFiles } from "../catalog/catalog-content.js";
 import { webhookBase, webhookUrlOf } from "../channels/webhook-url.js";
 import type { GuideAckJson } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -114,7 +114,8 @@ const guideOf = (manifest: unknown, place: SetupGuidePlace): PluginSetupGuide | 
  * template files with the place's fixed variables (public URLs, names, versions, the mode; never a
  * secret), and computes the template hashes channel connections record to tell when an upgrade
  * changed their setup. Org reads follow the catalog icon's visibility ({@link orgVisibleItems}).
- * Stateless: everything comes from PG (version rows, connection rows) and deployment storage.
+ * Stateless: everything comes from PG (version rows, connection rows, the guide files in
+ * `catalog_files`).
  */
 @Injectable()
 export class PluginGuides {
@@ -318,7 +319,7 @@ export class PluginGuides {
       if (!meta) throw new ApiError("internal", `Setup guide file ${path} is not stored`);
       return meta;
     });
-    const stored = await readCatalogFiles(this.storage, row.object_prefix, metas);
+    const stored = await readCatalogDisplayFiles(this.db, this.storage, row.object_prefix, metas);
     const files = selected.map((f) => {
       const path = packagePath(f.path);
       const data = stored.find((x) => x.path === path)?.data;

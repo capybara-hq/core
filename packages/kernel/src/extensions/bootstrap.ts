@@ -91,7 +91,10 @@ import type { SingleProviderNote } from "./single-provider.js";
  * A failed entry does not stop the others; the run then throws {@link BootstrapFailedError} naming
  * them. The packages are kept in PG (`blob_store = 'pg'`), so installing an extension never needs
  * the object store (object-store-s3 is itself a bootstrap plugin) and the directory and npm are
- * never needed again; a declarative plugin's catalog files do need the object store.
+ * never needed again. A plugin's icons and setup guide files are kept in PG too (`catalog_files`),
+ * so they never need it either; its skills, connector templates and agent templates do (an entry
+ * shipping them fails while no object store runs; an optional one is retried after the extensions
+ * loaded).
  */
 
 /** The bootstrap manifest that ships with the kernel package. */

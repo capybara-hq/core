@@ -80,8 +80,9 @@ changes it.
   does not define (§3). The kernel never refuses an import for an unknown placeholder, so a plugin
   written for a newer kernel still imports **(designer's call)**.
 - Stored on import with the version, like the icon: the normalized manifest in
-  `catalog_item_versions.manifest`, the files in the version's object prefix, their sha256 in
-  `catalog_item_versions.files`.
+  `catalog_item_versions.manifest`, the files in PG (`catalog_files`, by sha256; amended
+  2026-11-08, see the package ecosystem spec §5.4: a bootstrap plugin's guide must not need object
+  storage), their sha256 in `catalog_item_versions.files`.
 
 ## 3. Rendering
 

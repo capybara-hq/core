@@ -73,6 +73,7 @@ import type {
   SourceDetail,
 } from "./catalog.service.js";
 import { findConnectorIn } from "./catalog-content.js";
+import { displayFilePaths, putDisplayFiles, sweepDisplayFiles } from "./catalog-files.js";
 import {
   assertOrgsExist,
   assertPluginNameOwner,
@@ -158,8 +159,8 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  * not installed gets its old snapshot back.
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
- * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; a stored
- * extension package stays in the content-addressed `extension_packages` (the same as importing the
+ * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix, then the
+ * display files (`catalog_files`) nothing lists any more; a stored extension package stays in the content-addressed `extension_packages` (the same as importing the
  * same tgz again; without an install record referencing it it is never loaded).
  */
 
@@ -829,7 +830,19 @@ export class PluginImport {
       );
       await assertDowngradable(this.db, extension, ext.migrationSql);
     }
-    if (content.files.length > 0) this.files.assertAvailable();
+    // Display files go to PG with the staging row; the rest needs object storage, which a bootstrap
+    // import never has (the object store may be a bootstrap plugin itself)
+    const displayFiles = content.files.filter((f) => content.displayPaths.has(f.path));
+    const objectFiles = content.files.filter((f) => !content.displayPaths.has(f.path));
+    if (objectFiles.length > 0 && retry === undefined) {
+      if (source.kind === "bootstrap" && !this.files.available) {
+        throw new ApiError(
+          "storage.unavailable",
+          `Bootstrap plugin ${m.name} ships skills, connector templates or agent templates, which are kept in object storage, and object storage is not running yet (it may be a bootstrap plugin itself); a required bootstrap plugin may ship only an icon and setup guides, an optional one is retried once the extensions have loaded`,
+        );
+      }
+      this.files.assertAvailable();
+    }
     const src: PluginImportSource = {
       kind: source.kind,
       ref: source.ref,
@@ -915,9 +928,9 @@ export class PluginImport {
       );
     }
     let objectPrefix: string | null = null;
-    if (content.files.length > 0 && retry === undefined) {
+    if (objectFiles.length > 0 && retry === undefined) {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
-      await putCatalogFiles(this.files, objectPrefix, content.files);
+      await putCatalogFiles(this.files, objectPrefix, objectFiles);
     }
     const keys = ext
       ? permissionKeys(permissionSetOfPackage(ext))
@@ -943,7 +956,17 @@ export class PluginImport {
       ...(license.truncated && { licenseTruncated: true as const }),
       ...(retry !== undefined && { retry: true as const }),
     };
-    await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts, owner);
+    await this.writeStaging(
+      actor,
+      stagingId,
+      review,
+      staged,
+      objectPrefix,
+      src,
+      opts,
+      owner,
+      displayFiles,
+    );
     return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
   }
 
@@ -958,10 +981,13 @@ export class PluginImport {
     src: PluginImportSource,
     opts: ActorOpts,
     owner: ImportOwner | undefined,
+    displayFiles: { sha256: string; data: Uint8Array }[],
   ): Promise<void> {
     const { extension } = review;
     const t = this.db;
     await this.authorizeActor(actor, owner);
+    // committed with the staging row that lists them (the sweep keeps what a staging lists)
+    await putDisplayFiles(t, displayFiles);
     await t
       .insertInto("plugin_import_staging")
       .values({
@@ -1780,11 +1806,24 @@ export class PluginImport {
   }
 
   /**
-   * Deletes expired staging rows and their object prefixes (maintenance job `app-staging-cleanup`).
-   * Row by row: objects first, then the row (a failed object delete keeps the row for the next
-   * round); concurrent replicas skip each other's rows (`SKIP LOCKED`). Returns the rows deleted.
+   * Deletes expired staging rows and their object prefixes (maintenance job `app-staging-cleanup`),
+   * then the unused display files ({@link sweepDisplayFiles}). Row by row: objects first, then the
+   * row (a failed object delete keeps the row for the next round); concurrent replicas skip each
+   * other's rows (`SKIP LOCKED`). Returns the rows deleted.
    */
   async cleanupExpired(): Promise<number> {
+    const total = await this.cleanupStagingRows();
+    // display files no version or staging lists (an abandoned import's), older than a staging
+    try {
+      await sweepDisplayFiles(this.db, PLUGIN_STAGING_TTL_MS);
+    } catch (err) {
+      this.log.warn("cannot sweep unused catalog display files", { err });
+    }
+    return total;
+  }
+
+  /** The expired staging rows, batch by batch; returns the rows deleted. */
+  private async cleanupStagingRows(): Promise<number> {
     let total = 0;
     for (;;) {
       const batch = await this.db
@@ -1944,6 +1983,8 @@ export class PluginImport {
     format: PluginSourceFormat = "capybara",
   ): {
     files: SkillPackageFile[];
+    /** The paths of `files` kept in PG (`catalog_files`): icons and setup guide files. */
+    displayPaths: Set<string>;
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
     agentTemplates: PluginReviewAgentTemplate[];
@@ -1962,9 +2003,12 @@ export class PluginImport {
       const data = pkg.files.get(path);
       if (data !== undefined && !stored.has(path)) stored.set(path, fileOf(path, data));
     };
-    if (m.icon !== undefined) keep(packagePath(m.icon));
-    // Setup guide templates, stored with the version like the icon (rendered by PluginGuides)
-    for (const g of m.setupGuides ?? []) for (const f of g.files ?? []) keep(packagePath(f.path));
+    // The plugin icon and the setup guide templates (rendered by PluginGuides): display files
+    const displayPaths = displayFilePaths(
+      m,
+      pkg.connectorTemplates.flatMap((c) => (c.file.icon === undefined ? [] : [c.file.icon])),
+    );
+    for (const path of displayPaths) keep(path);
 
     const skills: PluginReview["skills"] = [];
     for (const s of pkg.skills) {
@@ -2035,7 +2079,6 @@ export class PluginImport {
       }
       keep(c.path);
       templatePaths.set(c.id, c.path);
-      if (c.file.icon !== undefined) keep(packagePath(c.file.icon));
       return {
         id: c.id,
         displayName: c.file.displayName,
@@ -2056,6 +2099,7 @@ export class PluginImport {
     if (problems.length > 0) throw invalid(problems);
     return {
       files: [...stored.values()],
+      displayPaths,
       templates,
       skills,
       agentTemplates,
