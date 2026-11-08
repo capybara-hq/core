@@ -140,9 +140,15 @@
   color: var(--cb-faint);
 }
 /* Phones: the sub-nav is one row of items that scrolls sideways (no group labels), above the
-   content, so the content starts on the first screen. */
+   content, so the content starts on the first screen. It sticks to the top of the scrolling body
+   (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
+   away and the row never slides out half clipped (maintainer decision 2026-11-09). */
 @media (max-width: 639px) {
   .cb-settings-nav {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: var(--cb-bg);
     flex-direction: row;
     gap: var(--cb-space-1);
     padding-bottom: var(--cb-space-1);
@@ -641,17 +647,119 @@ a.cb-object-name:hover {
 .cb-object-trailing {
   color: var(--cb-faint);
 }
+/* The row's buttons: one group on phones (below), laid out by the row itself above 640. */
+.cb-object-actions {
+  display: contents;
+}
+/* A meta line that holds only the state is drawn on phones only (below). */
+.cb-object-meta[data-empty="true"] {
+  display: none;
+}
+/* Phones (below 640, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
+   the right; the description and the meta line sit under the name, and the state closes the meta
+   line in its tone (read from the meta's data-state, so the label is one node); the row action,
+   dense, sits at the right of the meta line, or under it as a whole when both do not fit. The text
+   column dissolves into the row (display: contents), so its lines and the row's buttons wrap as
+   one flex row; DOM (and tab) order stays name, action, menu. The skeleton rows keep the mark and
+   the text column side by side. */
 @media (max-width: 639px) {
   .cb-object-row {
     flex-wrap: wrap;
   }
-  .cb-object-text {
+  .cb-object-row[data-skeleton="true"] .cb-object-text {
     flex-basis: calc(100% - 36px - var(--cb-space-3));
   }
-  /* The row action and the overflow menu are 40 px tap targets on phones. */
+  .cb-object-row:not([data-skeleton="true"]) {
+    align-content: flex-start;
+    row-gap: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-text {
+    display: contents;
+  }
+  /* The mark overhangs line 1 (a dense control high) into the indent of the lines below, as the
+     text column sits beside it above 640. */
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-mark {
+    align-self: flex-start;
+    margin-bottom: calc(var(--cb-control-dense) - 36px);
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-line {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--cb-control-dense);
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-menu {
+    order: 1;
+  }
+  /* The line break after line 1. */
+  .cb-object-row:not([data-skeleton="true"])::after {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-trailing,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
+    order: 2;
+    margin-top: 2px;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-left: calc(36px + var(--cb-space-3));
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta {
+    display: flex;
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: calc(36px + var(--cb-space-3));
+  }
+  .cb-object-meta-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cb-object-meta[data-state]:not([data-empty="true"])::before {
+    content: " · ";
+    order: 1;
+    flex: none;
+    white-space: pre;
+  }
+  .cb-object-meta[data-state]::after {
+    content: attr(data-state);
+    order: 2;
+    flex: none;
+  }
+  .cb-object-meta[data-state-tone="ok"]::after {
+    color: var(--cb-ok);
+  }
+  .cb-object-meta[data-state-tone="warn"]::after {
+    color: var(--cb-warn);
+  }
+  .cb-object-meta[data-state-tone="fail"]::after {
+    color: var(--cb-fail);
+  }
+  .cb-object-row:not([data-skeleton="true"]) > .cb-object-state {
+    display: none;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-actions {
+    display: flex;
+    flex: none;
+    gap: var(--cb-space-2);
+    margin-left: auto;
+  }
+  /* The row action and the ⋯ menu stay dense and reach a 40 px tap target through an invisible
+     ring around them (at least 40 high and 40 wide). */
   .cb-object-row .cb-btn {
-    min-width: 40px;
+    position: relative;
+  }
+  .cb-object-row .cb-btn::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--cb-control-dense) - 40px) / 2) min(0px, calc((100% - 40px) / 2));
     min-height: 40px;
+    min-width: 40px;
   }
 }
 
