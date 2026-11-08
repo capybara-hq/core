@@ -67,8 +67,8 @@ function decode(v: string): ModelRef | null {
   return i <= 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 1) };
 }
 
-/** 设置模型用途的页面（组织设置；评委用途 `eval` 未映射时链接到这里）。 */
-const PURPOSES_HREF = "/settings/models";
+/** The org settings models page's 用途默认 tab (linked while the judge purpose `eval` is unmapped). */
+const PURPOSES_HREF = "/settings/models?tab=purposes";
 
 /**
  * `/evals/[setId]/run`: run an eval (WizardPage, three steps).

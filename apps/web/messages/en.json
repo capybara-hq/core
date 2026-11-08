@@ -2026,7 +2026,7 @@
       "general": "General",
       "sandbox": "Sandbox",
       "identities": "IM identities",
-      "models": "Model purposes",
+      "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
       "preferences": "Preferences"
@@ -3000,6 +3000,16 @@
     "setMeta": "{agent} · {n, plural, one {# case} other {# cases}}"
   },
   "models": {
+    "tabs": {
+      "models": "Models",
+      "purposes": "Purpose defaults"
+    },
+    "providers": {
+      "label": "Providers",
+      "provider": "Provider",
+      "count": "Models",
+      "failed": "Failed"
+    },
     "admin": {
       "title": "Models",
       "providers": {
@@ -3007,7 +3017,8 @@
         "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
       },
       "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
-      "noProviders": "No model providers yet. Install a model provider extension and it will show up here.",
+      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
+      "toPlugins": "Go to plugins",
       "noModels": "This provider has no models.",
       "columns": {
         "model": "Model",
@@ -3016,7 +3027,9 @@
         "input": "Input",
         "output": "Output",
         "cacheRead": "Cache read",
-        "cacheWrite": "Cache write"
+        "cacheWrite": "Cache write",
+        "dimensions": "Dimensions",
+        "maxInput": "Max input"
       },
       "sameAsInput": "Same as input",
       "menu": {
@@ -3042,8 +3055,11 @@
       }
     },
     "org": {
+      "pageTitle": "Models",
       "title": "Model purposes",
-      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default."
+      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
+      "noProviders": "This org has no model providers yet. Turn on a model provider plugin on the Plugins page, or ask a super admin to install one.",
+      "toPlugins": "Go to plugins"
     },
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {

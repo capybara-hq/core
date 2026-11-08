@@ -160,7 +160,11 @@ const purposeBox = async (purpose: string) =>
     }),
   );
 
-beforeEach(() => resetNavigation("/admin/models"));
+beforeEach(() => {
+  resetNavigation("/admin/models");
+  // The tabs and the open provider live in the address: every test starts on a bare one
+  window.history.replaceState(null, "", "/");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -218,13 +222,25 @@ describe("/admin/models（ListPage）", () => {
     adminRoutes();
     await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
     expect(await screen.findByRole("table", { name: "alpha" })).toBeTruthy();
+    // The list marks the failed provider; its error is the detail once it is opened
+    const list = screen.getByRole("table", { name: m.models.providers.label });
+    const row = within(list).getByText("broken").closest("tr") as HTMLElement;
+    expect(within(row).getByText(m.models.providers.failed)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(row);
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(window.location.search).toBe("?provider=broken");
+    expect(screen.queryByRole("table", { name: "alpha" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "broken" })).toBeTruthy();
+    // One sentence in the reader's language, the kernel's text behind 「原始错误」 (ErrorDetail)
     expect(
-      screen.getByText(fill(m.models.admin.providerError, { provider: "broken" }), {
-        exact: false,
-      }),
+      screen.getByText(fill(m.models.admin.providerError, { provider: "broken" })),
     ).toBeTruthy();
-    expect(screen.getByText(BROKEN.error, { exact: false })).toBeTruthy();
+    expect(screen.queryByText(BROKEN.error)).toBeNull();
+    await user.click(screen.getByRole("button", { expanded: false }));
+    expect(screen.getByText(BROKEN.error)).toBeTruthy();
     expect(screen.queryByRole("table", { name: "broken" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: m.models.catalog.search })).toBeNull();
   });
 
   it.each(LOCALES)(
@@ -316,7 +332,7 @@ describe("/admin/models（ListPage）", () => {
           return json(200, { purpose: evalView({ default: t, effective: t }) });
         },
       });
-      await renderRouteWithCache("/admin/models", lastStubRoutes(), { locale });
+      await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale });
       expect(await screen.findByText(m.models.evalUnmapped)).toBeTruthy();
       // The eval row carries the warning (a warn line with its icon), not a line above the rows
       expect((await purposeBox("eval")).getByText(m.models.evalUnmapped)).toBeTruthy();
@@ -373,7 +389,7 @@ describe("/admin/models（ListPage）", () => {
           },
         }),
     });
-    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes());
     const ev = await purposeBox("eval");
     const user = userEvent.setup();
     await pickOption(
@@ -401,11 +417,13 @@ describe("/admin/models（ListPage）", () => {
 describe("one box is enough (acceptance item AB)", () => {
   const noNested = () => expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
 
-  it("/admin/models: the purposes are rows of one flush card; each provider a flush subsection over its unframed table", async () => {
+  it("/admin/models 用途默认: the purposes are rows of one flush card", async () => {
     adminRoutes();
-    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes());
     await purposeBox("eval");
     const purposes = document.getElementById("purposes") as HTMLElement;
+    // the tab's one section: its head above the card, no side label column
+    expect(purposes.getAttribute("data-layout")).toBe("stacked");
     const card = purposes.querySelector('[data-part="form-card"]') as HTMLElement;
     expect(card.getAttribute("data-flush")).toBe("true");
     // rows, not cards: one flush ItemList holding a row per purpose
@@ -416,48 +434,58 @@ describe("one box is enough (acceptance item AB)", () => {
     // the purpose's row is a group named by its title, the model select one of its fields
     const row = screen.getByRole("group", { name: "Eval judge" });
     expect(within(row).getByRole("combobox", { name: en.models.purpose.model })).toBeTruthy();
-    // the providers: a flush card, one flush subsection (an h3) per provider
-    const providers = document.getElementById("providers") as HTMLElement;
-    const pcard = providers.querySelector('[data-part="form-card"]') as HTMLElement;
-    expect(pcard.getAttribute("data-flush")).toBe("true");
-    const alpha = within(pcard).getByRole("region", { name: "alpha" });
-    expect(alpha.getAttribute("data-variant")).toBe("flush");
-    expect(within(alpha).getByRole("heading", { level: 3, name: "alpha" })).toBeTruthy();
-    expect(within(alpha).getByRole("table", { name: "alpha" })).toBeTruthy();
-    // the failed provider says so under its heading, with no table
-    const broken = within(pcard).getByRole("region", { name: "broken" });
-    // the error is a block under the heading: the message in body size, the detail on its own row
-    const alert = within(broken).getByRole("alert");
-    expect(alert.closest('[data-part="subsection-description"]')?.tagName).toBe("DIV");
-    const lines = [...alert.querySelectorAll(".cb-text")];
-    expect(lines.map((l) => l.getAttribute("data-variant"))).toEqual(["body", "small"]);
-    expect(lines[1]?.textContent).toBe(BROKEN.error);
-    expect(within(broken).queryByRole("table")).toBeNull();
+    // the models tab is not drawn
+    expect(screen.queryByRole("table", { name: en.models.providers.label })).toBeNull();
     noNested();
   });
 
-  it("/admin/models while loading: the providers card holds a heading row over the table", async () => {
+  it("/admin/models 模型: the providers beside the open one's kinds, no card around them", async () => {
+    adminRoutes();
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    const list = await screen.findByRole("table", { name: en.models.providers.label });
+    const grid = list.closest('[data-columns="list-detail"]') as HTMLElement;
+    expect(grid.getAttribute("data-divided")).toBe("true");
+    // no form card: the grid sits on the page ground
+    expect(document.querySelector('[data-part="form-card"]')).toBeNull();
+    // one row per provider, the first open
+    const rows = within(list).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.getAttribute("data-row-key"))).toEqual(["alpha", "broken"]);
+    expect(rows[0]?.getAttribute("aria-current")).toBe("true");
+    expect(within(rows[0] as HTMLElement).getByText("2")).toBeTruthy();
+    // the detail: the name as an h3, then a divided subsection per kind over its table
+    const detail = grid.children[1] as HTMLElement;
+    expect(within(detail).getByRole("heading", { level: 3, name: "alpha" })).toBeTruthy();
+    const chat = within(detail).getByRole("region", { name: en.models.kind.chat });
+    expect(chat.getAttribute("data-variant")).toBe("divided");
+    // its count and bulk switches sit in the heading row, not in a table toolbar
+    expect(chat.querySelector('[data-part="table-toolbar"]')).toBeNull();
+    const head = chat.querySelector('[data-part="subsection-head"]') as HTMLElement;
+    expect(within(head).getByText("2")).toBeTruthy();
+    expect(within(head).getByRole("button", { name: en.models.catalog.turnAllOff })).toBeTruthy();
+    expect(within(chat).getByRole("table", { name: "alpha" })).toBeTruthy();
+    noNested();
+  });
+
+  it("/admin/models while loading: the providers grid with loading tables", async () => {
     stubApi({
       "GET /api/v1/admin/models": () => new Promise<Response>(() => {}),
       "GET /api/v1/admin/model-purposes": () => new Promise<Response>(() => {}),
     });
     await renderRouteEmptyCache("/admin/models", lastStubRoutes());
-    const card = await vi.waitFor(() => {
-      const el = document.querySelector('#providers [data-part="form-card"]');
-      if (el === null) throw new Error("no loading card yet");
+    const grid = await vi.waitFor(() => {
+      const el = document.querySelector('[data-columns="list-detail"]');
+      if (el === null) throw new Error("no loading grid yet");
       return el as HTMLElement;
     });
-    expect(card.getAttribute("data-flush")).toBe("true");
-    const sub = card.querySelector('[data-part="subsection"]') as HTMLElement;
-    expect(sub.getAttribute("data-variant")).toBe("flush");
-    expect(
-      sub.querySelector('[data-part="subsection-title"] [data-part="skeleton-text"]'),
-    ).not.toBeNull();
-    expect(sub.querySelector('[data-part="table"]')).not.toBeNull();
+    expect(grid.getAttribute("data-divided")).toBe("true");
+    expect(grid.querySelectorAll('[data-part="table"]')).toHaveLength(2);
+    // the loaded chat table's header is there (drawn, hidden from the accessibility tree)
+    const heads = [...grid.querySelectorAll("th")].map((th) => th.textContent);
+    expect(heads).toContain(en.models.admin.columns.input);
     noNested();
   });
 
-  it("/settings/models: the purposes are rows of one flush card", async () => {
+  it("/settings/models 用途默认: the purposes are rows of one flush card", async () => {
     resetNavigation("/settings/models");
     stubApi({
       "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
@@ -465,12 +493,27 @@ describe("one box is enough (acceptance item AB)", () => {
       "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
       "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
-    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes());
     const ev = await purposeBox("eval");
     expect(ev.getByText(en.models.evalUnmapped)).toBeTruthy();
     const card = document.querySelector('#purposes [data-part="form-card"]') as HTMLElement;
     expect(card.getAttribute("data-flush")).toBe("true");
     expect(card.querySelector('[data-part="card"]')).toBeNull();
+    noNested();
+  });
+
+  it("/settings/models 模型: the org's providers beside the open one's models", async () => {
+    resetNavigation("/settings/models");
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA, BROKEN] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    const list = await screen.findByRole("table", { name: en.models.providers.label });
+    expect(list.closest('[data-columns="list-detail"]')).not.toBeNull();
+    expect(screen.getByRole("table", { name: "alpha" })).toBeTruthy();
     noNested();
   });
 });
@@ -494,7 +537,7 @@ describe("sub-agent model tiers on the purposes page", () => {
       "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
       "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
-    await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes(), { locale });
     const box = (p: string) =>
       vi.waitFor(() => {
         const el = purposeRow(p);
@@ -521,7 +564,7 @@ describe("sub-agent model tiers on the purposes page", () => {
       "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [ALPHA] }),
       "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
-    await renderRouteWithCache("/settings/models", lastStubRoutes(), { locale });
+    await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes(), { locale });
     expect((await purposeBox("title")).getByText(m.models.purpose.hint.titles)).toBeTruthy();
   });
 });
@@ -550,9 +593,11 @@ describe("/settings/models（组织管理员）", () => {
           });
         },
       });
-      const { container } = await renderRouteWithCache("/settings/models", lastStubRoutes(), {
-        locale,
-      });
+      const { container } = await renderRouteWithCache(
+        "/settings/models?tab=purposes",
+        lastStubRoutes(),
+        { locale },
+      );
       expect(template("SettingsPage")).not.toBeNull();
       const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
       expect(current?.textContent).toBe(m.connections.nav.models);
@@ -598,7 +643,7 @@ describe("/settings/models（组织管理员）", () => {
   it("部署默认未设置、组织也未覆盖：显示 eval 未映射提示", async () => {
     resetNavigation("/settings/models");
     orgRoutes([evalView()]);
-    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes());
     expect(await screen.findByText(en.models.evalUnmapped)).toBeTruthy();
     const ev = await purposeBox("eval");
     expect(ev.getByRole("combobox", { name: en.models.purpose.model }).textContent).toContain(

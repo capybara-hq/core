@@ -187,6 +187,23 @@ export const MODEL_KINDS: readonly ModelKind[] = [
 /** A model's kind: an older kernel leaves it out, which means chat. */
 export const kindOf = (m: { kind?: ModelKind }): ModelKind => m.kind ?? "chat";
 
+/**
+ * The tabs of the models pages (`/admin/models`, `/settings/models`): 模型 (the providers and
+ * their models, the bare page) and 用途默认 (`?tab=purposes`, the purpose mapping).
+ */
+export type ModelsTab = "models" | "purposes";
+
+export const parseModelsTab = (raw: string | undefined | null): ModelsTab =>
+  raw === "purposes" ? "purposes" : "models";
+
+/** The provider a models page opens (`?provider=<plugin>`): the named one, else the first. */
+export function selectedProvider<P extends { plugin: string }>(
+  providers: P[],
+  plugin: string,
+): P | undefined {
+  return providers.find((p) => p.plugin === plugin) ?? providers[0];
+}
+
 /** The providers with only the enabled models of one kind (a purpose's, a picker's). */
 export function providersOfKind<P extends { models: ModelInfo[] }>(
   providers: P[],

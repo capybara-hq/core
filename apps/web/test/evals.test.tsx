@@ -774,7 +774,7 @@ describe("运行向导（WizardPage）", () => {
     await waitFor(() => expect((judge as HTMLButtonElement).disabled).toBe(true));
     expect(screen.getByText(E.wizard.judgeUnmapped)).toBeTruthy();
     expect(screen.getByRole("link", { name: E.wizard.judgeConfigure }).getAttribute("href")).toBe(
-      "/settings/models",
+      "/settings/models?tab=purposes",
     );
   });
 

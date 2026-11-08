@@ -8,7 +8,7 @@ import zh from "../messages/zh.json";
 import { useSelection } from "../src/components/conversation/useSelection";
 import { ModelCatalog } from "../src/components/ModelCatalog";
 import { listModels, type ModelInfo, type ModelKind } from "../src/lib/agents";
-import { pickerOptions, targetName } from "../src/lib/models";
+import { type AdminModelInfo, pickerOptions, targetName } from "../src/lib/models";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -37,7 +37,7 @@ const model = (id: string, over: Record<string, unknown> = {}) => ({
 
 /** 300 generated models: 120 chat (two publishers), 100 embedding, 80 rerank. */
 function generated(disabled: string[] = []) {
-  const out: (ModelInfo & { disabled?: boolean })[] = [];
+  const out: AdminModelInfo[] = [];
   const add = (n: number, kind: ModelKind, prefix: string, pubs: string[]) => {
     for (let i = 0; i < n; i++) {
       const id = `${prefix}-${i}`;
@@ -46,7 +46,7 @@ function generated(disabled: string[] = []) {
           kind,
           publisher: pubs[i % pubs.length],
           disabled: disabled.includes(id),
-        }) as ModelInfo,
+        }) as AdminModelInfo,
       );
     }
   };
@@ -58,7 +58,11 @@ function generated(disabled: string[] = []) {
 
 const regionOf = (kind: string) => within(screen.getByRole("region", { name: kind }));
 
-beforeEach(() => resetNavigation("/settings/models"));
+beforeEach(() => {
+  resetNavigation("/settings/models");
+  // The tabs and the open provider live in the address: every test starts on a bare one
+  window.history.replaceState(null, "", "/");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -101,7 +105,7 @@ describe("ModelCatalog", () => {
       <ModelCatalog
         provider="one"
         title="One"
-        models={[model("a", { publisher: "acme" }) as ModelInfo]}
+        models={[model("a", { publisher: "acme" }) as AdminModelInfo]}
         onChange={() => {}}
       />,
     );
@@ -154,8 +158,8 @@ describe("ModelCatalog", () => {
           model("old", {
             displayName: "Old Model",
             retiresAt: "2026-12-01T00:00:00Z",
-          }) as ModelInfo,
-          model("new", { displayName: "New Model" }) as ModelInfo,
+          }) as AdminModelInfo,
+          model("new", { displayName: "New Model" }) as AdminModelInfo,
         ]}
         onChange={onChange}
       />,
@@ -335,8 +339,8 @@ describe("/settings/models: the org's catalog", () => {
 
   it("the purpose editor lists only models of the purpose's kind", async () => {
     orgRoutes("following");
-    await renderRouteWithCache("/settings/models", lastStubRoutes());
-    await screen.findByRole("switch", { name: "Alpha Large" });
+    await renderRouteWithCache("/settings/models?tab=purposes", lastStubRoutes());
+    await screen.findByRole("list", { name: en.models.org.title });
     // rows are found by their title (purpose ids never show)
     const TITLES: Record<string, string> = { eval: "Eval judge", "embed.docs": "Embeddings" };
     const rowOf = (purpose: string) =>
@@ -372,12 +376,253 @@ describe("/admin/models: the platform's switches", () => {
         json(200, { affected: { agents: [], purposes: [] } }),
     });
     await renderRouteWithCache("/admin/models", lastStubRoutes());
-    expect(await screen.findByText(en.models.catalog.orgsConfigure)).toBeTruthy();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("switch", { name: "Alpha Large" }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     const patch = calls.find((c) => c.method === "PATCH");
     expect(patch?.url).toBe("/api/v1/admin/models/alpha/disabled");
     expect(bodyOf(patch)).toEqual({ disable: ["alpha-large"], enable: [] });
+    // the org-configured provider says so in the detail once it is opened
+    expect(screen.queryByText(en.models.catalog.orgsConfigure)).toBeNull();
+    const list = screen.getByRole("table", { name: en.models.providers.label });
+    await user.click(within(list).getByText("own"));
+    expect(screen.getByText(en.models.catalog.orgsConfigure)).toBeTruthy();
+    expect(screen.queryByRole("switch")).toBeNull();
   });
+});
+
+/** Three providers for the tab and selection cases: one per kind mix, the last failed. */
+const MIXED = {
+  provider: "mixed",
+  plugin: "mixed",
+  status: "ok",
+  displayName: { zh: "混合", en: "Mixed" },
+  models: [
+    model("rr-1", { displayName: "Rerank One", kind: "rerank" }),
+    model("emb-1", {
+      displayName: "Embed One",
+      kind: "embedding",
+      embedding: {
+        dimensions: [256, 1024],
+        defaultDimensions: 1024,
+        maxInputTokens: 8192,
+        maxBatch: 10,
+      },
+    }),
+    model("chat-1", { displayName: "Chat One" }),
+    model("img-1", { displayName: "Image One", kind: "image_generation" }),
+  ],
+};
+const FAILED = {
+  provider: "down",
+  plugin: "down",
+  status: "error",
+  error: "Model provider down failed to list its models",
+  models: [],
+};
+
+function adminMixed(extra: Record<string, (c: Call) => Response> = {}) {
+  return stubApi({
+    "GET /api/v1/admin/models": () =>
+      json(200, {
+        providers: [CATALOG_ALPHA, MIXED, FAILED],
+        prices: [
+          {
+            provider: "mixed",
+            model: "emb-1",
+            inputPerMTok: 0.5,
+            outputPerMTok: 0,
+            cacheReadPerMTok: null,
+            cacheWritePerMTok: null,
+          },
+        ],
+        currency: "EUR",
+      }),
+    "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
+    ...extra,
+  });
+}
+
+const tabOf = (name: string) => screen.getByRole("tab", { name });
+const providerList = () => screen.getByRole("table", { name: en.models.providers.label });
+
+describe("the models pages' tabs and provider selection", () => {
+  it.each(["/admin/models", "/settings/models"] as const)(
+    "%s: 模型 is the default tab; 用途默认 is ?tab=purposes and back",
+    async (path) => {
+      resetNavigation(path);
+      if (path === "/admin/models") adminMixed();
+      else orgRoutes("following");
+      await renderRouteWithCache(path, lastStubRoutes());
+      expect(await screen.findByRole("table", { name: en.models.providers.label })).toBeTruthy();
+      expect(tabOf(en.models.tabs.models).getAttribute("aria-selected")).toBe("true");
+      const purposesTitle =
+        path === "/admin/models" ? en.models.admin.purposes.title : en.models.org.title;
+      expect(screen.queryByRole("region", { name: purposesTitle })).toBeNull();
+      const user = userEvent.setup();
+      await user.click(tabOf(en.models.tabs.purposes));
+      expect(window.location.search).toBe("?tab=purposes");
+      expect(screen.getByRole("region", { name: purposesTitle })).toBeTruthy();
+      expect(screen.queryByRole("table", { name: en.models.providers.label })).toBeNull();
+      await user.click(tabOf(en.models.tabs.models));
+      expect(window.location.search).toBe("");
+      expect(screen.getByRole("table", { name: en.models.providers.label })).toBeTruthy();
+    },
+  );
+
+  it("?provider= opens that provider; an unknown one opens the first; a row click selects", async () => {
+    resetNavigation("/admin/models");
+    adminMixed();
+    const { unmount } = await renderRouteWithCache(
+      "/admin/models?provider=mixed",
+      lastStubRoutes(),
+    );
+    expect(await screen.findByRole("heading", { level: 3, name: "Mixed" })).toBeTruthy();
+    const active = () =>
+      within(providerList())
+        .getAllByRole("row")
+        .filter((r) => r.getAttribute("aria-current") === "true")
+        .map((r) => r.getAttribute("data-row-key"));
+    expect(active()).toEqual(["mixed"]);
+    unmount();
+
+    adminMixed();
+    await renderRouteWithCache("/admin/models?provider=nope", lastStubRoutes());
+    expect(await screen.findByRole("heading", { level: 3, name: "alpha" })).toBeTruthy();
+    expect(active()).toEqual(["alpha"]);
+    // each row: the name, the plugin id when it differs, the count or the failure
+    const row = (key: string) =>
+      within(providerList())
+        .getAllByRole("row")
+        .find((r) => r.getAttribute("data-row-key") === key) as HTMLElement;
+    expect(row("mixed").textContent).toContain("Mixed");
+    expect(row("mixed").textContent).toContain("mixed");
+    expect(within(row("mixed")).getByText("4")).toBeTruthy();
+    expect(within(row("down")).getByText(en.models.providers.failed)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(row("mixed"));
+    expect(window.location.search).toBe("?provider=mixed");
+    expect(screen.getByRole("heading", { level: 3, name: "Mixed" })).toBeTruthy();
+  });
+
+  it("the open provider's models are grouped by kind in order, each with its kind's columns", async () => {
+    resetNavigation("/admin/models");
+    adminMixed();
+    await renderRouteWithCache("/admin/models?provider=mixed", lastStubRoutes());
+    await screen.findByRole("heading", { level: 3, name: "Mixed" });
+    const k = en.models.kind;
+    const regions = [...document.querySelectorAll('[data-part="subsection"]')].map(
+      (r) => r.querySelector('[data-part="subsection-title"]')?.textContent,
+    );
+    expect(regions).toEqual([k.chat, k.embedding, k.rerank, k.image_generation]);
+    const heads = (kind: string) =>
+      within(screen.getByRole("table", { name: `Mixed · ${kind}` }))
+        .getAllByRole("columnheader")
+        .map((h) => h.textContent);
+    const c = en.models.admin.columns;
+    const on = en.models.catalog.enabled;
+    expect(heads(k.chat)).toEqual(
+      expect.arrayContaining([
+        c.model,
+        c.capabilities,
+        c.context,
+        c.input,
+        c.output,
+        c.cacheRead,
+        c.cacheWrite,
+        on,
+      ]),
+    );
+    // an embedding model: its dimensions, its input limit and only the input price
+    const emb = heads(k.embedding);
+    expect(emb).toEqual(expect.arrayContaining([c.model, c.dimensions, c.maxInput, c.input, on]));
+    for (const chatOnly of [c.capabilities, c.context, c.output, c.cacheRead, c.cacheWrite]) {
+      expect(emb).not.toContain(chatOnly);
+    }
+    const embRow = within(screen.getByRole("table", { name: `Mixed · ${k.embedding}` }))
+      .getByText("Embed One")
+      .closest("tr") as HTMLElement;
+    expect(embRow.textContent).toContain("256");
+    expect(embRow.textContent).toContain("1,024");
+    expect(embRow.textContent).toContain("8,192");
+    expect(within(embRow).getByText("0.5")).toBeTruthy();
+    // the kinds that are not billed: the model and its switch, no price menu
+    const rerank = screen.getByRole("table", { name: `Mixed · ${k.rerank}` });
+    expect(heads(k.rerank).filter((h) => h !== "")).toEqual([c.model, on]);
+    expect(within(rerank).queryByRole("button", { name: "Row actions" })).toBeNull();
+  });
+
+  it("an embedding model's price editor asks for the input price only", async () => {
+    resetNavigation("/admin/models");
+    const calls = adminMixed({
+      "PUT /api/v1/admin/model-prices": () => json(200, { prices: [], currency: "EUR" }),
+    });
+    await renderRouteWithCache("/admin/models?provider=mixed", lastStubRoutes());
+    const table = await screen.findByRole("table", { name: `Mixed · ${en.models.kind.embedding}` });
+    const row = within(table).getByText("Embed One").closest("tr") as HTMLElement;
+    const user = userEvent.setup();
+    await user.click(within(row).getByRole("button", { name: "Row actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: en.models.admin.menu.editPrice }));
+    const p = en.models.admin.price;
+    const input = await screen.findByRole("textbox", { name: p.input });
+    expect(screen.queryByRole("textbox", { name: p.output })).toBeNull();
+    await user.clear(input);
+    await user.type(input, "0.75");
+    await user.click(
+      screen.getByRole("button", { name: p.saveLabel.replace("{model}", "Embed One") }),
+    );
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+        provider: "mixed",
+        model: "emb-1",
+        inputPerMTok: 0.75,
+        outputPerMTok: 0,
+        cacheReadPerMTok: null,
+        cacheWritePerMTok: null,
+      }),
+    );
+  });
+
+  it("a search with no match is a compact empty state", async () => {
+    resetNavigation("/admin/models");
+    adminMixed();
+    await renderRouteWithCache("/admin/models?provider=mixed", lastStubRoutes());
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: en.models.catalog.search }),
+      "zzz-nothing",
+    );
+    expect(screen.getByText(en.models.catalog.noMatch)).toBeTruthy();
+    expect(document.querySelectorAll('[data-part="subsection"]')).toHaveLength(0);
+  });
+
+  it.each(["/admin/models", "/settings/models"] as const)(
+    "%s with no providers: the page empty state links to the plugins page",
+    async (path) => {
+      resetNavigation(path);
+      if (path === "/admin/models") {
+        stubApi({
+          "GET /api/v1/admin/models": () =>
+            json(200, { providers: [], prices: [], currency: "EUR" }),
+          "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
+        });
+      } else {
+        stubApi({
+          "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [] }),
+          "GET /api/v1/orgs/o1/models": () => json(200, { providers: [] }),
+          "GET /api/v1/orgs/o1/models/catalog": () => json(200, { providers: [] }),
+          "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+        });
+      }
+      await renderRouteWithCache(path, lastStubRoutes());
+      const admin = path === "/admin/models";
+      expect(
+        await screen.findByText(admin ? en.models.admin.noProviders : en.models.org.noProviders),
+      ).toBeTruthy();
+      const link = screen.getByRole("link", {
+        name: admin ? en.models.admin.toPlugins : en.models.org.toPlugins,
+      });
+      expect(link.getAttribute("href")).toBe(admin ? "/admin/plugins" : "/plugins");
+    },
+  );
 });

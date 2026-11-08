@@ -358,6 +358,13 @@ export interface ModelInfo {
   retiresAt?: string;
   /** On the platform's list (admin view) or the org's own (catalog view); absent elsewhere. */
   disabled?: boolean;
+  /** Set when `kind` is `embedding` (plugin-sdk `ModelEmbeddingInfo`). */
+  embedding?: {
+    dimensions: number[];
+    defaultDimensions: number;
+    maxInputTokens: number;
+    maxBatch: number;
+  };
   /** 上下文窗口（token）；旧内核可能没有。 */
   contextWindow?: number;
   capabilities: { reasoning: boolean };

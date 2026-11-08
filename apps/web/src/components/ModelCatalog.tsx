@@ -2,14 +2,17 @@
 
 import {
   Button,
+  CellTitle,
   type Column,
   DataTable,
   DateTime,
   EmptyState,
+  Grid,
   Icon,
   Input,
   type MenuItem,
   Select,
+  SkeletonText,
   Stack,
   Subsection,
   Switch,
@@ -17,40 +20,100 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useMemo, useState } from "react";
-import type { ModelInfo, ModelKind } from "../lib/agents";
+import type { ModelKind } from "../lib/agents";
 import { labelLocale } from "../lib/extension-label";
-import { kindOf, MODEL_KINDS, type ModelDisableChange } from "../lib/models";
+import { type AdminModelInfo, kindOf, MODEL_KINDS, type ModelDisableChange } from "../lib/models";
 
 /** Rows per page of a kind's table: a provider can list hundreds of models. */
 export const CATALOG_PAGE_SIZE = 50;
 
 /** The text of a model's description in the page locale (a plain string is the same in both). */
-function describe(d: ModelInfo["description"], lang: "zh" | "en"): string | undefined {
+function describe(d: AdminModelInfo["description"], lang: "zh" | "en"): string | undefined {
   if (d === undefined) return undefined;
   return typeof d === "string" ? d : d[lang] || d.en;
 }
 
+/** What a page adds to one kind's table: its columns (before the switch), a row menu, an expand. */
+export interface KindExtras<M> {
+  columns?: Column<M>[];
+  rowMenu?: (m: M) => MenuItem[];
+  expand?: (m: M) => ReactNode | null;
+}
+
+const CAPS = ["tools", "vision", "documents", "reasoning", "caching"] as const;
+
 /**
- * One provider's models (spec B §5.3, §5.6): a flush Subsection whose head holds the search and,
- * when the models have several publishers, the publisher filter; below it one table per kind
- * (counts in each table's toolbar, 「全部关闭」 / 「全部开启」 for the kind's models of the chosen
- * publisher) with a switch per model. The switches change the provider's disabled list: `onChange`
- * gets only the ids whose state changes (`disable` / `enable`); ids the page does not show keep
- * their stored state. Used by `/settings/models` (the org's list) and `/admin/models` (the
- * platform's, with price columns).
+ * The columns the model info carries for a kind (between the model and the page's own): a chat
+ * model's capabilities and context window, an embedding model's dimensions and input limit; the
+ * other kinds carry nothing more than the model's name, publisher and description.
  */
-export function ModelCatalog<M extends ModelInfo>({
+function useKindColumns<M extends AdminModelInfo>(): (kind: ModelKind) => Column<M>[] {
+  const t = useTranslations("models");
+  const grouped = new Intl.NumberFormat(useLocale());
+  const num = (n: number) => grouped.format(n);
+  return (kind) => {
+    if (kind === "chat") {
+      return [
+        {
+          key: "capabilities",
+          header: t("admin.columns.capabilities"),
+          tone: "muted",
+          // Plain text, not badges (「工具 · 缓存」), and never cut: it wraps instead of an ellipsis,
+          // two or three to a line (a narrower column stacks them one per line)
+          wrap: true,
+          width: 160,
+          // A list: DataTable joins it with 「 · 」 and breaks lines only between items
+          cell: (m) =>
+            CAPS.filter((c) => m.capabilities[c] === true).map((c) => t(`capability.${c}`)),
+        },
+        {
+          key: "context",
+          header: t("admin.columns.context"),
+          align: "right",
+          cell: (m) => (typeof m.contextWindow === "number" ? num(m.contextWindow) : "—"),
+        },
+      ];
+    }
+    if (kind === "embedding") {
+      return [
+        {
+          key: "dimensions",
+          header: t("admin.columns.dimensions"),
+          wrap: true,
+          cell: (m) => (m.embedding === undefined ? "—" : m.embedding.dimensions.map(num)),
+        },
+        {
+          key: "maxInput",
+          header: t("admin.columns.maxInput"),
+          align: "right",
+          cell: (m) => (m.embedding === undefined ? "—" : num(m.embedding.maxInputTokens)),
+        },
+      ];
+    }
+    return [];
+  };
+}
+
+/**
+ * One provider's models, the detail of the models tab (spec B §5.3, §5.6): the provider's name as
+ * an h3 over its id and state line, the search (and, when the models have several publishers, the
+ * publisher filter), then one divided Subsection per kind the provider has, in {@link MODEL_KINDS}
+ * order, each holding the kind's table with its count and 「全部关闭」 / 「全部开启」 (for the
+ * kind's rows on screen) in the heading row and a switch per model. The switches change the
+ * provider's disabled list: `onChange` gets only the ids whose state changes (`disable` /
+ * `enable`); ids the page does not show keep their stored state. Used by `/settings/models` (the
+ * org's list) and `/admin/models` (the platform's, with price columns through `extras`).
+ */
+export function ModelCatalog<M extends AdminModelInfo>({
   provider,
   title,
   description,
   models,
   canSwitch = true,
-  failed = false,
+  unlisted,
   pending = false,
   onChange,
-  columns = [],
-  rowMenu,
-  expand,
+  extras,
 }: {
   /** The provider's name for the tables' accessible names. */
   provider: string;
@@ -59,20 +122,19 @@ export function ModelCatalog<M extends ModelInfo>({
   description?: ReactNode;
   models: M[];
   canSwitch?: boolean;
-  /** The provider could not list its models: the head only (its error is the description). */
-  failed?: boolean;
+  /** The provider has no list here (its error, a note): shown in place of the models. */
+  unlisted?: ReactNode;
   /** A change is being saved: the switches wait. */
   pending?: boolean;
   onChange(change: ModelDisableChange): void;
-  /** Columns between the model and the switch (capabilities, prices). */
-  columns?: Column<M>[];
-  rowMenu?: (m: M) => MenuItem[];
-  expand?: (m: M) => ReactNode | null;
+  /** A kind's own columns, row menu and expand (the platform's prices). */
+  extras?: (kind: ModelKind) => KindExtras<M>;
 }) {
   const t = useTranslations("models.catalog");
   const tk = useTranslations("models.kind");
   const tm = useTranslations("models");
   const lang = labelLocale(useLocale());
+  const kindColumns = useKindColumns<M>();
   const [search, setSearch] = useState("");
   const [publisher, setPublisher] = useState("");
   const [pages, setPages] = useState<Record<string, number>>({});
@@ -163,16 +225,10 @@ export function ModelCatalog<M extends ModelInfo>({
       />
     ),
   };
-  const tableColumns = [
-    modelColumn,
-    ...(publishers.length > 1 ? [publisherColumn] : []),
-    ...columns,
-    switchColumn,
-  ];
 
-  const actions =
+  const filters =
     models.length > 0 ? (
-      <Stack direction="row" gap={8} align="center">
+      <Stack direction="row" gap={8} align="center" wrap>
         <Input
           aria-label={t("search")}
           placeholder={t("search")}
@@ -198,83 +254,204 @@ export function ModelCatalog<M extends ModelInfo>({
           />
         ) : null}
       </Stack>
-    ) : undefined;
+    ) : null;
+
+  const body =
+    unlisted !== undefined ? (
+      unlisted
+    ) : models.length === 0 ? (
+      <EmptyState size="compact" text={t("none")} />
+    ) : shown.length === 0 ? (
+      <EmptyState size="compact" text={t("noMatch")} />
+    ) : (
+      shown.map((g) => {
+        const kindLabel = tk(g.kind);
+        const extra = extras?.(g.kind) ?? {};
+        const anyOn = g.rows.some((m) => m.disabled !== true);
+        const anyOff = g.rows.some((m) => m.disabled === true);
+        const page = pages[g.kind] ?? 1;
+        const rows =
+          g.rows.length > CATALOG_PAGE_SIZE
+            ? g.rows.slice((page - 1) * CATALOG_PAGE_SIZE, page * CATALOG_PAGE_SIZE)
+            : g.rows;
+        return (
+          <Subsection
+            key={g.kind}
+            variant="divided"
+            title={kindLabel}
+            count={g.rows.length}
+            {...(canSwitch
+              ? {
+                  actions: (
+                    <>
+                      <Button
+                        density="dense"
+                        variant="ghost"
+                        disabled={pending || !anyOn}
+                        onClick={() => bulk(g.kind, true)}
+                      >
+                        {t("turnAllOff")}
+                      </Button>
+                      <Button
+                        density="dense"
+                        variant="ghost"
+                        disabled={pending || !anyOff}
+                        onClick={() => bulk(g.kind, false)}
+                      >
+                        {t("turnAllOn")}
+                      </Button>
+                    </>
+                  ),
+                }
+              : {})}
+          >
+            <DataTable<M>
+              label={shown.length === 1 ? provider : `${provider} · ${kindLabel}`}
+              columns={[
+                modelColumn,
+                ...(publishers.length > 1 ? [publisherColumn] : []),
+                ...kindColumns(g.kind),
+                ...(extra.columns ?? []),
+                switchColumn,
+              ]}
+              rows={rows}
+              rowKey={(m) => m.id}
+              {...(extra.rowMenu !== undefined ? { rowMenu: extra.rowMenu } : {})}
+              {...(extra.expand !== undefined ? { expand: extra.expand } : {})}
+              {...(g.rows.length > CATALOG_PAGE_SIZE
+                ? {
+                    pagination: {
+                      page,
+                      pageSize: CATALOG_PAGE_SIZE,
+                      total: g.rows.length,
+                      onPage: (p: number) => setPages((x) => ({ ...x, [g.kind]: p })),
+                    },
+                  }
+                : {})}
+            />
+          </Subsection>
+        );
+      })
+    );
 
   return (
-    <Subsection
-      variant="flush"
-      title={title}
-      count={models.length}
-      {...(description !== undefined ? { description } : {})}
-      {...(actions !== undefined ? { actions } : {})}
-    >
-      {failed ? null : models.length === 0 ? (
-        <EmptyState size="compact" text={t("none")} />
-      ) : shown.length === 0 ? (
-        <EmptyState size="compact" text={t("noMatch")} />
-      ) : (
-        shown.map((g) => {
-          const kindLabel = tk(g.kind);
-          const scope = g.rows;
-          const anyOn = scope.some((m) => m.disabled !== true);
-          const anyOff = scope.some((m) => m.disabled === true);
-          const page = pages[g.kind] ?? 1;
-          const rows =
-            g.rows.length > CATALOG_PAGE_SIZE
-              ? g.rows.slice((page - 1) * CATALOG_PAGE_SIZE, page * CATALOG_PAGE_SIZE)
-              : g.rows;
-          return (
-            <section key={g.kind} aria-label={kindLabel} data-kind={g.kind}>
-              <DataTable<M>
-                label={shown.length === 1 ? provider : `${provider} · ${kindLabel}`}
-                columns={tableColumns}
-                rows={rows}
-                rowKey={(m) => m.id}
-                {...(rowMenu !== undefined ? { rowMenu } : {})}
-                {...(expand !== undefined ? { expand } : {})}
-                {...(g.rows.length > CATALOG_PAGE_SIZE
-                  ? {
-                      pagination: {
-                        page,
-                        pageSize: CATALOG_PAGE_SIZE,
-                        total: g.rows.length,
-                        onPage: (p: number) => setPages((x) => ({ ...x, [g.kind]: p })),
-                      },
-                    }
-                  : {})}
-                toolbar={
-                  <Stack direction="row" gap={8} align="center">
-                    <Text variant="h3">{kindLabel}</Text>
-                    <Text variant="small" tone="muted">
-                      {g.rows.length}
-                    </Text>
-                    {canSwitch ? (
-                      <>
-                        <Button
-                          density="dense"
-                          variant="ghost"
-                          disabled={pending || !anyOn}
-                          onClick={() => bulk(g.kind, true)}
-                        >
-                          {t("turnAllOff")}
-                        </Button>
-                        <Button
-                          density="dense"
-                          variant="ghost"
-                          disabled={pending || !anyOff}
-                          onClick={() => bulk(g.kind, false)}
-                        >
-                          {t("turnAllOn")}
-                        </Button>
-                      </>
-                    ) : null}
-                  </Stack>
-                }
-              />
-            </section>
-          );
-        })
-      )}
-    </Subsection>
+    <Stack gap={16}>
+      <Stack gap={4}>
+        <Text variant="h3">{title}</Text>
+        {description}
+      </Stack>
+      {unlisted === undefined ? filters : null}
+      {body}
+    </Stack>
+  );
+}
+
+/** One row of the providers list: the provider's name, its id, its model count or its failure. */
+export interface ProviderRow {
+  /** The provider's plugin: the row's key and the `?provider=` value. */
+  plugin: string;
+  name: string;
+  /** Muted under the name when it is not the name. */
+  id?: string;
+  /** The models it lists; absent when it has no list here. */
+  count?: number;
+  /** Listing its models failed. */
+  failed?: boolean;
+}
+
+/**
+ * The models tab of the models pages: the providers beside the open one's models
+ * (`Grid columns="list-detail" divided`, stacked below 640). On the left one row per provider
+ * (its display name over its plugin id, its model count, or 「失败」 when its list failed); the
+ * open one is the URL's `?provider=`, the first by default. On the right `children`: the open
+ * provider's {@link ModelCatalog}.
+ */
+export function ModelProviders({
+  providers,
+  selected,
+  onSelect,
+  children,
+}: {
+  providers: ProviderRow[];
+  selected: string | undefined;
+  onSelect(plugin: string): void;
+  children: ReactNode;
+}) {
+  const t = useTranslations("models.providers");
+  const columns: Column<ProviderRow>[] = [
+    {
+      key: "provider",
+      header: t("provider"),
+      cell: (p) => (
+        <CellTitle
+          title={p.name}
+          mono
+          {...(p.id !== undefined && p.id !== p.name ? { description: p.id } : {})}
+        />
+      ),
+    },
+    {
+      key: "count",
+      header: t("count"),
+      align: "right",
+      cell: (p) =>
+        p.failed ? (
+          <Text variant="small" tone="fail" icon="circle-x">
+            {t("failed")}
+          </Text>
+        ) : (
+          (p.count ?? "—")
+        ),
+    },
+  ];
+  return (
+    <Grid columns="list-detail" divided>
+      <DataTable<ProviderRow>
+        label={t("label")}
+        rowHeight="roomy"
+        columns={columns}
+        rows={providers}
+        rowKey={(p) => p.plugin}
+        rowLabel={(p) => p.name}
+        {...(selected !== undefined ? { activeKey: selected } : {})}
+        onOpen={(p) => onSelect(p.plugin)}
+      />
+      {children}
+    </Grid>
+  );
+}
+
+/**
+ * The models tab while its read is on the way: the same grid, the providers table loading on the
+ * left and, on the right, the name's slot over a loading chat table with the loaded table's
+ * header (`columns`, the page's chat columns).
+ */
+export function ModelProvidersLoading({ columns }: { columns: { key: string; header: string }[] }) {
+  const t = useTranslations("models");
+  return (
+    <Grid columns="list-detail" divided>
+      <DataTable<ProviderRow>
+        label={t("providers.label")}
+        rowHeight="roomy"
+        columns={(["provider", "count"] as const).map((key) => ({
+          key,
+          header: t(`providers.${key}`),
+          cell: () => null,
+        }))}
+        rows={[]}
+        rowKey={(p) => p.plugin}
+        state="loading"
+      />
+      <Stack gap={16}>
+        <SkeletonText width={160} />
+        <DataTable<AdminModelInfo>
+          label={t("kind.chat")}
+          columns={columns.map((c) => ({ ...c, cell: () => null }))}
+          rows={[]}
+          rowKey={(m) => m.id}
+          state="loading"
+        />
+      </Stack>
+    </Grid>
   );
 }
