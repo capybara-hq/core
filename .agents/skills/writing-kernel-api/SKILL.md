@@ -338,18 +338,19 @@ imports no domain module). `defineOperation({...})` fields:
   write's own `conversationId` / `runId` survive the merge). Results hold no secrets, tokens,
   credential fields or secret config.
 
-**Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3 domain
-fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows, startOf(cursor), 50)`
-(`params.cursor`, result `{ items, total, next }`). A route that pages by keyset (the service takes
-`after`, so no total is known) keeps that: input `after` from the route's schema, result
-`{ <items>, next }` where `next` is the last row's id (or the service's own `next`) and the
-description says "pass the returned next as params.after" (`accounts.list`, `conversations.list` /
-`subagents` / `files`, `evals.list-results`); never an offset over a keyset route. Super admin
-operations run only through the super admin's own private agent and return the admin console's data
-in full: platform items and the conversation org's own items are named (orgs included: previews,
-scope lists, the orgs a component is on in). An item another org owns is only counted (`otherOrg…` fields) and get / update on it is refused
-(`assertNotOtherOrgs` / `assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`), also on a race
-past the precheck (a service error naming that org's items is rethrown without them).
+**Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3
+domain fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows,
+startOf(cursor), 50)` (`params.cursor`, result `{ items, total, next }`). A route that pages by
+keyset (the service takes `after`, so no total is known) keeps that: input `after` from the route's
+schema, result `{ <items>, next }` where `next` is the last row's id (or the service's own `next`)
+and the description says "pass the returned next as params.after" (`accounts.list`,
+`conversations.list` / `subagents` / `files`, `evals.list-results`); never an offset over a keyset
+route. Super admin operations run only through the super admin's own private agent and return the
+admin console's data in full: platform items and the conversation org's own items are named (orgs
+included: previews, scope lists, the orgs a component is on in). An item another org owns is only
+counted (`otherOrg…` fields) and get / update on it is refused (`assertNotOtherOrgs` /
+`assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`), also on a race past the precheck (a
+service error naming that org's items is rethrown without them).
 
 **Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category and a reason: `human-only` (deciding
 approvals and requests, confirming extension permissions, roles, the super-admin flag, sign-in and

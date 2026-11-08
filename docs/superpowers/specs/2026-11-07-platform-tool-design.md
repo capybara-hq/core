@@ -621,7 +621,9 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   no gain; the skill documents both.
 - The `Platform` tool description names the current families (fixed text; `browse` lists every
   domain) — tool definitions are read by spec hash from the log, so old requests replay unchanged
-  and the zero-drift fixtures pin no description.
+  and the zero-drift fixtures pin no description. The new description changes the tool's specHash
+  once, so remembered `Platform` grants and approvals pending at deploy are asked again — never
+  wrongly allowed.
 - `platformTool` `off` / `read-only` takes effect on the next call — the setting is re-read per call
   like the actor's facts.
 - `inbox.platform-list` reports the console's `total` (everything waiting, other orgs' items

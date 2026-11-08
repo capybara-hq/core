@@ -36,3 +36,5 @@ Platform tool phase 2: the rest of the UI.
   `{ via: "agent", operation, agentConversationId, agentRunId }`, so the row's own `conversationId` /
   `runId` (an eval case's source run, for example) are no longer overwritten.
 - **Tool description.** The `Platform` tool's description names the current operation families.
+  Its spec hash changes once, so remembered `Platform` grants and approvals pending at deploy are
+  asked again (never wrongly allowed).
