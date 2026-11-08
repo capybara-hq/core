@@ -153,7 +153,7 @@ interface PluginClientSection {
   `client-api-version` (errors) and `client-css-selector`, `ui-part-unknown` (warnings: a
   `data-cap-part` value not in `UI_PARTS`).
 - A **bootstrap plugin may not carry client code** (`check:bootstrap`, designer's call): bootstrap
-  packages may be stored in PG before an object store runs (`plugin_packages.blob_store = 'pg'`),
+  packages may be stored in PG before an object store runs (`extension_packages.blob_store = 'pg'`),
   and client files are delivered from object storage (§9.1).
 
 ### 4.2 The package (decided by Claude under the 2026-11-09 grant, C2)
@@ -678,16 +678,16 @@ type CapybaraEventOf<K extends CapybaraEventType> = Extract<CapybaraEvent, { typ
 ### 9.1 Storage
 
 - **Build id**: the client files of a package are identified by the package's sha256
-  (`plugin_packages.sha256`), the same id `plugin_installs.sha256` names for the running version
+  (`extension_packages.sha256`), the same id `extension_installs.sha256` names for the running version
   (a change to C6's `<version>-<catalogVersion>`, §17).
-- When a package with a `client` section is stored (the `plugin_packages` insert of an import or
+- When a package with a `client` section is stored (the `extension_packages` insert in `ExtensionBlobs.record`, `extensions/blobs.ts`, of an import or
   upload, idempotent by sha256), the kernel reads the client files from the tgz, checks the
   section (limits, types, CSS wrap, every `integrity` value recomputed from the bytes: mismatch is
   `client.integrity_mismatch`, 400), and writes them to object storage under
   `deployment/platform/client/<plugin>/<sha256>/<path inside dist/client/>` (the storage service
   adds the `deployment/` prefix).
 - Migration `0104_extension_client_builds.sql` (the next free number when built), kernel schema:
-  `extension_client_builds (package_sha256 text PRIMARY KEY REFERENCES plugin_packages(sha256) ON
+  `extension_client_builds (package_sha256 text PRIMARY KEY REFERENCES extension_packages(sha256) ON
   DELETE CASCADE, plugin text NOT NULL, entry text, styles text[] NOT NULL, assets text[] NOT NULL,
   integrity jsonb NOT NULL, sizes jsonb NOT NULL, api_version int NOT NULL, object_prefix text NOT
   NULL, created_at timestamptz NOT NULL DEFAULT now())`. The integrity values come from this row,
@@ -1044,7 +1044,7 @@ C1-C9 are recorded where they apply; five were adjusted to the code, each the sm
 - **C5, state hooks**: `data-cap-state` sits on the shell element, not `<html>`: the root layout
   (`app/layout.tsx`) owns `<html>` from cookies and cannot see the workspace's run or theme
   state; the shell is rendered by React and hydrates without a mismatch (§7.3).
-- **C6, build id**: the running extension is `plugin_installs.sha256` (migration 0030), so files
+- **C6, build id**: the running extension is `extension_installs.sha256` (migration 0030, tables renamed in 0041), so files
   are keyed by package sha256 (`deployment/platform/client/<plugin>/<sha256>/`,
   `/api/v1/client/<plugin>/<sha256>/<file>`), not `<version>-<catalogVersion>` (§9.1).
 - **C6, loading**: SSR `<script type="module">` tags would evaluate before Next's async chunks
