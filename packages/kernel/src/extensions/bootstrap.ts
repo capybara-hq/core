@@ -568,7 +568,7 @@ export class BootstrapService {
     }
     // A required install must run on the deployment (an org cannot use it otherwise)
     if (e.required && row?.desired_state === "disabled") {
-      await this.ops.enable(e.name, null);
+      await this.enableOrWarn(e);
     }
     await this.markBuiltin(e.name, e.required);
     return result;
@@ -660,6 +660,12 @@ export class BootstrapService {
       reviewHash: staged.review.reviewHash,
       enable,
     });
+    if (r.deploy?.singleProvider !== undefined) {
+      this.log.warn(`bootstrap: the plugin is installed disabled; ${r.deploy.message ?? ""}`, {
+        plugin: e.name,
+        required: e.required,
+      });
+    }
     if (r.deploy?.result === "failed") {
       throw new ApiError(
         (r.deploy.code ?? "internal") as ErrorCode,
@@ -706,7 +712,23 @@ export class BootstrapService {
       undefined,
       item ? { catalogItemId: item.id } : {},
     );
-    if (enable) await this.ops.enable(e.name, null);
+    if (enable) await this.enableOrWarn(e);
+  }
+
+  /**
+   * Enables a bootstrap extension unless another enabled extension provides one of its
+   * single-provider extension points (a preinstall sandbox while the super admin runs another
+   * one): then it stays disabled and the step goes on (a warning names both). A required one is
+   * left disabled too: the super admin chose the other provider, and disabling it brings this one.
+   */
+  private async enableOrWarn(e: BootstrapEntry): Promise<void> {
+    const r = await this.ops.enableUnlessOccupied(e.name, null);
+    if (!r.enabled) {
+      this.log.warn(`bootstrap: the plugin is installed disabled; ${r.refusal.message}`, {
+        plugin: e.name,
+        required: e.required,
+      });
+    }
   }
 
   /** The permission snapshot of a stored package (source `bootstrap`), under the approve lock. */

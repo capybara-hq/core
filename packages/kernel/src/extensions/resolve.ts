@@ -30,6 +30,24 @@ export function parseProviderConflict(
   return { extensionPoint: m[1] as string, providers: (m[2] as string).split(", ") };
 }
 
+/**
+ * The single-provider extension points (`sandbox`, `object-store`, `secret-store`,
+ * `config-source`; `EXTENSION_POINT_CARDINALITY`) among `provides`, sorted (the lock order).
+ */
+export function singlePointsOf(provides: readonly string[]): string[] {
+  return [
+    ...new Set(
+      provides.filter((ref) => {
+        try {
+          return EXTENSION_POINT_CARDINALITY[parseExtensionPoint(ref).name] === "single";
+        } catch {
+          return false;
+        }
+      }),
+    ),
+  ].sort();
+}
+
 /** 插件依赖解析失败（信息列出插件名与能力名）。 */
 export class ExtensionResolveError extends Error {
   constructor(

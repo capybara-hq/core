@@ -38,6 +38,7 @@ import {
 } from "./permission-view.js";
 import { pluginItemsOf } from "./plugin-items.js";
 import { parseProviderConflict } from "./resolve.js";
+import { type SingleProviderBlock, SingleProviderGuard } from "./single-provider.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -129,6 +130,8 @@ export class ExtensionAdmin {
     private readonly deploymentConfig: ExtensionDeploymentConfigService,
     /** How many orgs still need their own config for such an extension. */
     @Inject(EffectiveConfigs) private readonly effectiveConfigs: EffectiveConfigs,
+    /** Which enabled extension keeps a disabled one from being enabled (`enableBlocked`). */
+    @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -432,6 +435,14 @@ export class ExtensionAdmin {
     ];
     const otherDisplay = otherNames.length > 0 ? await this.displayNames.many(otherNames) : null;
     const needing = await this.orgsNeedingConfig(subjects);
+    // A disabled install whose single-provider point another enabled extension provides: enabling
+    // it would be refused, so the view says which one to disable first.
+    const blocked = new Map<string, SingleProviderBlock>();
+    for (const s of subjects) {
+      if (s.install?.desiredState !== "disabled" || s.broken !== undefined) continue;
+      const block = await this.singleProvider.occupant(s.name, s.set.provides);
+      if (block) blocked.set(s.name, block);
+    }
     const counts = new Map(
       (
         await this.db
@@ -508,6 +519,7 @@ export class ExtensionAdmin {
         replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
       });
       const conflict = status === "conflict" ? conflicts.get(s.name) : undefined;
+      const enableBlocked = blocked.get(s.name);
       return {
         name: s.name,
         displayName,
@@ -523,6 +535,7 @@ export class ExtensionAdmin {
               .map((p) => ({ name: p, displayName: otherDisplay?.get(p) ?? null })),
           },
         }),
+        ...(enableBlocked && { enableBlocked }),
         desired: install && {
           version: install.version,
           sha256: install.sha256,

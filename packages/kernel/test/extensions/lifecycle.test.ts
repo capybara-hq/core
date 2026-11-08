@@ -378,7 +378,7 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     await waitFor(async () => (await view("dep")).status === "enabled", 10_000, "dep enabled");
   });
 
-  it("single-provider conflict: the second provider is pending / conflict (not dependency) and loads once the first is disabled", async () => {
+  it("single-provider conflict: a second provider left enabled (from before enabling it was refused) is pending / conflict (not dependency) and loads once the first is disabled", async () => {
     await install(
       "sbx-a",
       await lifePkg({ name: "sbx-a", version: "1.0.0", provides: ["sandbox@2"] }),
@@ -392,7 +392,16 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
       await lifePkg({ name: "sbx-b", version: "1.0.0", provides: ["sandbox@2"] }),
     );
     await approve("sbx-b");
-    await setState("sbx-b", "enable");
+    // Enabling it is refused now; a deployment can still hold both enabled from before the rule
+    const refused = await post("sbx-b/enable");
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error.code).toBe("extension.single_provider_enabled");
+    await db
+      .updateTable("extension_installs")
+      .set({ desired_state: "enabled", enabled_at: sql<Date>`now()` as unknown as Date })
+      .where("name", "=", "sbx-b")
+      .execute();
+    await k.app.get(ExtensionHost).converge();
     await waitFor(async () => (await view("sbx-b")).status === "conflict", 15_000, "conflict");
     expect(loadedVersion("sbx-b")).toBeUndefined();
     const b = (await view("sbx-b")) as View & {

@@ -740,6 +740,40 @@ describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
     expect(restored[0]?.detail).toMatchObject({ restoredVersion: "1.0.0" });
   });
 
+  it("a second provider of a single-provider point (sandbox) is installed disabled, and the result says why", async () => {
+    const first = await imported(
+      await lifePkg({ name: "sbx-one", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    expect(first.deploy).toMatchObject({ name: "sbx-one", result: "enabled" });
+    const second = await imported(
+      await lifePkg({ name: "sbx-two", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    expect(second.deploy).toEqual({
+      name: "sbx-two",
+      action: "install",
+      version: "1.0.0",
+      sha256: expect.any(String),
+      result: "installed",
+      code: "extension.single_provider_enabled",
+      message:
+        "Only one extension may provide sandbox@2; disable sbx-one first, then enable sbx-two",
+      singleProvider: {
+        extensionPoint: "sandbox@2",
+        enabled: { name: "sbx-one", displayName: null },
+      },
+    });
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select(["name", "desired_state"])
+        .orderBy("name")
+        .execute(),
+    ).toEqual([
+      { name: "sbx-one", desired_state: "enabled" },
+      { name: "sbx-two", desired_state: "disabled" },
+    ]);
+  });
+
   it("an older version than the deployed one: recorded in the catalog only, the deployment keeps v2 (ruling H)", async () => {
     const v2 = await imported(pkgs["zeta@2.0.0"] as Uint8Array);
     expect(v2.deploy).toMatchObject({ name: "zeta", action: "install", result: "enabled" });

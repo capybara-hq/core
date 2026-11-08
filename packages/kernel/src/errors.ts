@@ -68,6 +68,11 @@ export const ERROR_CODES = {
   "extension.name_mismatch": 409,
   "extension.downgrade_unsupported": 409,
   "extension.not_disabled": 409,
+  /**
+   * Another enabled extension provides a single-provider extension point this one provides
+   * (details `[{ extensionPoint, enabled: { name, displayName } }]`): disable it first.
+   */
+  "extension.single_provider_enabled": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,

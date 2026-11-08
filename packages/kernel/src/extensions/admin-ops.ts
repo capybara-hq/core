@@ -1,4 +1,4 @@
-import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
@@ -27,6 +27,7 @@ import {
 } from "./package.js";
 import type { AdminExtensionView } from "./permission-view.js";
 import { ExtensionRegistry } from "./registry.js";
+import { SINGLE_PROVIDER_ENABLED, SingleProviderGuard } from "./single-provider.js";
 
 /**
  * Deployment-level extension install / enable / disable / uninstall (C16 / D15): writes only the PG
@@ -83,6 +84,8 @@ export class ExtensionAdminOps {
      */
     @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
+    /** One enabled provider per single-provider extension point (checked in the enable). */
+    @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -279,7 +282,12 @@ export class ExtensionAdminOps {
     return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
-  /** Enable on the deployment (audit `extension.enabled`); no change when already enabled. Org enablement is unchanged. */
+  /**
+   * Enable on the deployment (audit `extension.enabled`); no change when already enabled. Org
+   * enablement is unchanged. Another enabled extension providing one of its single-provider
+   * extension points -> 409 `extension.single_provider_enabled` (the super admin disables that one
+   * first; checked under the point's lock, see {@link SingleProviderGuard}).
+   */
   enable(
     name: string,
     actor: string | null,
@@ -289,6 +297,35 @@ export class ExtensionAdminOps {
     auditDetail?: Record<string, unknown>,
   ): Promise<AdminExtensionView> {
     return this.setState(name, "enabled", actor, actorTokenId, owner, auditDetail);
+  }
+
+  /**
+   * The enable of an install or import path: like {@link enable}, but an occupied single-provider
+   * extension point leaves the extension disabled instead of failing, and returns the refusal
+   * (`enabled: false`) for the caller to report. Every other error is thrown.
+   */
+  async enableUnlessOccupied(
+    name: string,
+    actor: string | null,
+    actorTokenId?: string,
+    owner?: ExtensionOpsOwner,
+  ): Promise<{ enabled: true } | { enabled: false; refusal: ApiError }> {
+    try {
+      await this.enable(name, actor, actorTokenId, owner);
+      return { enabled: true };
+    } catch (e) {
+      if (e instanceof ApiError && e.code === SINGLE_PROVIDER_ENABLED) {
+        this.log.info(
+          "extension installed disabled: its single-provider extension point is taken",
+          {
+            plugin: name,
+            details: e.details,
+          },
+        );
+        return { enabled: false, refusal: e };
+      }
+      throw e;
+    }
   }
 
   /**
@@ -387,10 +424,16 @@ export class ExtensionAdminOps {
     if (!row) throw notFound(name);
     if (state === "disabled" && row.required) throw required(name);
     if (row.desired_state === state) return { row, changed: false };
+    if (state === "enabled") {
+      await this.singleProvider.assertFree(name, providesOf(row.section));
+    }
     await db
       .updateTable("extension_installs")
       .set({
         desired_state: state,
+        // When it became enabled: the earliest enabled of two providers of a single-provider point
+        // is the one replicas load (only state left from before a second enable was refused)
+        enabled_at: state === "enabled" ? (sql<Date>`now()` as unknown as Date) : null,
         updated_by: actor,
         updated_at: sql<Date>`now()` as unknown as Date,
       })
@@ -467,6 +510,7 @@ export class ExtensionAdminOps {
         "extension_installs.catalog_item_id",
         "extension_installs.required",
         "extension_packages.package_name",
+        "extension_packages.section",
       ])
       .where("extension_installs.name", "=", name)
       .forUpdate("extension_installs")
@@ -587,6 +631,11 @@ const notFound = (name: string) =>
 /** `to` 比 `from` 旧（任一方不是合法 semver 时不算降级）。 */
 const isDowngrade = (to: string, from: string): boolean =>
   semver.valid(to) !== null && semver.valid(from) !== null && semver.lt(to, from);
+
+/** The extension points a stored package's reviewed manifest provides. */
+function providesOf(section: unknown): string[] {
+  return (section as PluginExtensionSection | null)?.manifest?.provides ?? [];
+}
 
 /** The audit detail of an owner's operation. */
 function ownerDetail(owner: ExtensionOpsOwner | undefined): Record<string, unknown> {

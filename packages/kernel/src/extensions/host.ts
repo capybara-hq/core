@@ -80,7 +80,13 @@ import {
   UI_VIEW_KEY_PREFIX,
 } from "./permission-set.js";
 import { type ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
-import { ExtensionResolveError, PROVIDER_CONFLICT, resolveExtensions } from "./resolve.js";
+import {
+  ExtensionResolveError,
+  PROVIDER_CONFLICT,
+  providerConflictMessage,
+  resolveExtensions,
+  singlePointsOf,
+} from "./resolve.js";
 import {
   type ExtensionLoadStatus,
   type ExtensionSource,
@@ -245,6 +251,28 @@ function conflictsOf(
         .map((m) => m.name),
     }))
     .filter((c) => c.providers.length > 0);
+}
+
+/**
+ * The single-provider election over enabled install records (`desired`, the earliest enabled
+ * first): for each single-provider extension point the first record providing it wins; every
+ * later one is a loser, mapped to the point and the winner. A loser claims none of its points.
+ */
+export function electSingleProviders(
+  desired: readonly { name: string; section: { manifest: { provides: readonly string[] } } }[],
+): Map<string, { extensionPoint: string; winner: string }> {
+  const owner = new Map<string, string>();
+  const losers = new Map<string, { extensionPoint: string; winner: string }>();
+  for (const d of desired) {
+    const points = singlePointsOf(d.section.manifest.provides);
+    const lost = points.find((p) => owner.has(p));
+    if (lost !== undefined) {
+      losers.set(d.name, { extensionPoint: lost, winner: owner.get(lost) as string });
+      continue;
+    }
+    for (const p of points) owner.set(p, d.name);
+  }
+  return losers;
 }
 
 /** The replica status reason of a pending extension (`new` / `added` are both `approval`). */
@@ -858,7 +886,7 @@ export class ExtensionHost {
         // the first pass unloads nothing; the second skips what the first loaded.
         const inPg = desired.filter((d) => d.blobStore === "pg");
         if (inPg.length > 0 && inPg.length < desired.length) {
-          await this.applyInstalls(p.installs, inPg, true);
+          await this.applyInstalls(p.installs, inPg, true, desired);
         }
         installProviders = await this.applyInstalls(p.installs, desired, true);
       }
@@ -1004,6 +1032,12 @@ export class ExtensionHost {
     loader: InstalledExtensionLoader,
     desired: DesiredExtension[],
     startup: boolean,
+    /**
+     * Every install record desired enabled, in {@link ExtensionInstalls.desired} order (the
+     * single-provider election runs over all of them even when `desired` is the startup's first
+     * pass over the packages kept in PG).
+     */
+    electAmong: DesiredExtension[] = desired,
   ): Promise<Map<ExtensionPointRef, string[]>> {
     const declared = this.declared();
     const installProviders = new Map<ExtensionPointRef, string[]>();
@@ -1035,14 +1069,43 @@ export class ExtensionHost {
     const drainMs = this.drainMs();
     const changed: ExtensionPointRef[] = [];
 
+    // Single-provider election: of the enabled install records providing one single-provider
+    // extension point, only the earliest enabled is loaded (desired() order: enabled_at, install
+    // time, name). Decided from PG alone, never from what loaded here, so every replica and every
+    // restart picks the same one. Two enabled providers only remain from before a second enable
+    // was refused; the others are pending / conflict until the super admin disables one.
+    const losers = electSingleProviders(electAmong.filter((d) => !declared.has(d.name)));
+    for (const name of losers.keys()) wanted.delete(name);
+
     // 1. 不再期望启用：卸下；未加载但写过状态行的标为 unloaded
     for (const inst of this.registry.all()) {
       if (inst.source !== "install" || wanted.has(inst.name)) continue;
       const gone = await this.doUnload(inst.name, drainMs, null);
       if (gone) changed.push(...gone.manifest.provides);
     }
+    for (const d of desired) {
+      const lost = losers.get(d.name);
+      if (!lost) continue;
+      this.notePending({
+        plugin: d.name,
+        version: d.version,
+        added: [],
+        removed: [],
+        reason: "conflict",
+        conflicts: [{ extensionPoint: lost.extensionPoint, providers: [lost.winner] }],
+      });
+      await this.writeStatus({
+        plugin: d.name,
+        version: d.version,
+        sha256: d.sha256,
+        source: "install",
+        state: "pending",
+        reason: "conflict",
+        detail: providerConflictMessage(lost.extensionPoint, [lost.winner, d.name]),
+      });
+    }
     for (const [name, row] of [...this.installRows]) {
-      if (wanted.has(name) || this.registry.current(name)) continue;
+      if (wanted.has(name) || losers.has(name) || this.registry.current(name)) continue;
       this.dropPending(name);
       this.prepared.delete(name);
       this.importedManifests.delete(name);

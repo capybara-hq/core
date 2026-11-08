@@ -594,8 +594,14 @@ export class PlatformPluginUpdater {
         });
         extensionMoved = true;
         if (ext.previous === null) {
-          await this.ops.enable(checked.name, actor, opts.actorTokenId, opsOwner);
-          enabledHere = true;
+          // An occupied single-provider point leaves it installed disabled
+          const r = await this.ops.enableUnlessOccupied(
+            checked.name,
+            actor,
+            opts.actorTokenId,
+            opsOwner,
+          );
+          enabledHere = r.enabled;
         }
       }
       step = "components";

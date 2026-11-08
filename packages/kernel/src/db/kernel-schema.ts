@@ -1102,6 +1102,12 @@ export interface ExtensionInstallsTable {
    * disabled or uninstalled). Written only by the bootstrap step.
    */
   required: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * 0095: when the desired state last became `enabled` (NULL while disabled). Of two enabled
+   * providers of one single-provider extension point (left from before enabling a second was
+   * refused) the earliest enabled is the one every replica loads.
+   */
+  enabled_at: TsNullable;
 }
 
 /** Which npm package owns an extension name (Ruling P3): written on first install, kept on uninstall. */

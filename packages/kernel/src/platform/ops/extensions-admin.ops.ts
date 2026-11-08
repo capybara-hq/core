@@ -5,6 +5,10 @@ import { type CatalogItemView, CatalogService } from "../../catalog/catalog.serv
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
+import {
+  SINGLE_PROVIDER_ENABLED,
+  singleProviderMessage,
+} from "../../extensions/single-provider.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -224,10 +228,22 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             code: "extension.config_declared",
             next: "This extension is declared in the startup config (extensions list): the deployment's config changes it, then a restart.",
           },
+          {
+            code: "extension.single_provider_enabled",
+            next: "Only one extension may provide this extension point and another one is enabled: disable that one first (extensions.platform-disable, named in the error's details), then enable this one.",
+          },
         ],
         precheck: async (i, ctx) => {
           const r = await this.viewFor(i.name, ctx.orgId);
-          return r.ok ? { ok: true } : r;
+          if (!r.ok) return r;
+          const block = r.view.enableBlocked;
+          return block === undefined
+            ? { ok: true }
+            : {
+                ok: false,
+                code: SINGLE_PROVIDER_ENABLED,
+                message: singleProviderMessage(block, r.view.name, r.view.displayName),
+              };
         },
         summary: async (i) => {
           const v = await this.admin.get(i.name, { allowUnreadable: true });

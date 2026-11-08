@@ -11,11 +11,17 @@ import { ExtensionDeploymentConfigService } from "./deployment-config.js";
 import { ExtensionDisplayNames } from "./display-name.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionLifecycle } from "./lifecycle.js";
-import { PluginApproveLock, PluginDeploymentConfigLock, PluginInstallLock } from "./locks.js";
+import {
+  PluginApproveLock,
+  PluginDeploymentConfigLock,
+  PluginInstallLock,
+  SingleProviderLock,
+} from "./locks.js";
 import { OrgExtensionConfigs } from "./org-config.js";
 import { OrgOverrides } from "./org-overrides.js";
 import { ExtensionPointDefaults } from "./point-defaults.js";
 import { ExtensionRegistryModule } from "./registry.js";
+import { SingleProviderGuard } from "./single-provider.js";
 import { ReplicaStatusStore } from "./sources.js";
 import { ExtensionStateModule } from "./state.module.js";
 import { ExtensionAvailability } from "./unavailable.js";
@@ -42,6 +48,8 @@ import { ExtensionAvailability } from "./unavailable.js";
     PluginInstallLock,
     PluginApproveLock,
     PluginDeploymentConfigLock,
+    SingleProviderLock,
+    SingleProviderGuard,
     ReplicaStatusStore,
     ExtensionHost,
     ExtensionLifecycle,
@@ -72,6 +80,7 @@ import { ExtensionAvailability } from "./unavailable.js";
     ExtensionPointDefaults,
     BootstrapService,
     ExtensionAvailability,
+    SingleProviderGuard,
   ],
 })
 export class ExtensionsModule {}

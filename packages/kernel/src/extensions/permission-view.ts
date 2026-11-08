@@ -328,6 +328,15 @@ export interface AdminExtensionView {
     providers: { name: string; displayName: LocalizedName | null }[];
   };
   /**
+   * Only on a disabled install record: another enabled extension provides a single-provider
+   * extension point this one provides, so enabling it is refused (409
+   * `extension.single_provider_enabled`) until that one is disabled.
+   */
+  enableBlocked?: {
+    extensionPoint: string;
+    enabled: { name: string; displayName: LocalizedName | null };
+  };
+  /**
    * Why the install record's package cannot be read (bytes missing or corrupt, over the current
    * size limit; status failed), or the legacy-format message (status `legacy_format`); permissions
    * are then empty.

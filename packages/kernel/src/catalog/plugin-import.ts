@@ -356,11 +356,22 @@ export interface ExtensionDeployResult {
   sha256: string;
   /**
    * enabled: installed and enabled; installed: installed, desired state left as it was (confirm
-   * with `enable: false`, the bootstrap step's upgrades); failed: see code / message.
+   * with `enable: false`, the bootstrap step's upgrades), or left disabled because a
+   * single-provider extension point is taken (code / message / `singleProvider` say so); failed:
+   * see code / message.
    */
   result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
+  /**
+   * Installed but left disabled (result `installed`, code `extension.single_provider_enabled`):
+   * another enabled extension provides a single-provider extension point this one provides. The
+   * super admin disables that one, then enables this one.
+   */
+  singleProvider?: {
+    extensionPoint: string;
+    enabled: { name: string; displayName: LocalizedName | null };
+  };
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
 }
@@ -1646,7 +1657,9 @@ export class PluginImport {
 
   /**
    * Deploys the plugin's extension after the commit: `install` (a new install is disabled, a version
-   * change keeps the desired state) then `enable`. Nothing is thrown; the result says what happened.
+   * change keeps the desired state) then `enable`, unless another enabled extension provides one of
+   * its single-provider extension points: then it stays disabled (result `installed` with code
+   * `extension.single_provider_enabled`). Nothing is thrown; the result says what happened.
    * When an upgrade was not installed, the snapshot overwritten at confirm is restored (the old
    * version keeps running, F-O; audit `extension.permissions_restored`). Retry through the extension
    * admin (the package is already in the package store) with the sha256 from the result.
@@ -1697,8 +1710,17 @@ export class PluginImport {
     }
     if (!enable) return { ...base, result: "installed" };
     try {
-      await this.ops.enable(p.name, actor, opts.actorTokenId);
-      return { ...base, result: "enabled" };
+      const r = await this.ops.enableUnlessOccupied(p.name, actor, opts.actorTokenId);
+      if (r.enabled) return { ...base, result: "enabled" };
+      // A single-provider point another enabled extension provides: installed disabled, and why
+      const block = r.refusal.details?.[0] as ExtensionDeployResult["singleProvider"];
+      return {
+        ...base,
+        result: "installed",
+        code: r.refusal.code,
+        message: r.refusal.message,
+        ...(block !== undefined && { singleProvider: block }),
+      };
     } catch (e) {
       this.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
       return { ...base, result: "failed", ...failure(e) };
