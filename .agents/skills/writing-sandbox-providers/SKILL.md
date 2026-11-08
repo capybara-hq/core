@@ -200,8 +200,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   conversation of the environment shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
   version). They are small and stay until the files are reset or the environment is deleted.
 - **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
-  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset the next use is a fresh start (`restarted: false`):
-  the seen key records `<created_at>:<file system id>`. A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
+  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset each conversation's next use is told the files were
+  reset instead (`filesReset: true`, `SANDBOX_FILES_RESET_NOTICE`): the seen key records `<created_at>:<fs_resets>`, a count of resets the kernel keeps itself, because a
+  provider may give the new file system the old id (sandbox-docker's volumes are named after the environment; the fake does it with `setFakeFileSystemIdsByName`). A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
 - **Provider switch**: an environment whose files or instance belong to a provider that is not the current one cannot be used (`environment.unavailable`, nothing changes; its
   files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
   is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).

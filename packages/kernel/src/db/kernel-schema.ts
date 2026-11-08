@@ -908,6 +908,8 @@ export interface EnvironmentInstancesTable {
   generation: ColumnType<number, number | undefined, number>;
   /** An instance was created at least once (only ever set to true). */
   had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** How many times the files were reset (0093); a reset may bring back the same file system id. */
+  fs_resets: ColumnType<number, number | undefined, number>;
   /** The old provider's instance left behind by a provider change. */
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;

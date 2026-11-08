@@ -22,11 +22,14 @@ import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
 import {
   SANDBOX_CONNECTION_DROPPED_TEXT,
+  SANDBOX_FILES_RESET_NOTICE,
   SANDBOX_RESTARTED_NOTICE,
+  SANDBOX_STARTED_NOTICE,
   SANDBOX_UNREACHABLE_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 import {
   removeFakeSandbox,
+  setFakeFileSystemIdsByName,
   setFakeSandboxFault,
 } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
@@ -1056,6 +1059,63 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
     expect(SANDBOX_RESTARTED_NOTICE).toContain("files are kept");
     expect(r.content).toContain("kept");
+  });
+
+  it("after a files reset each conversation of the environment is told once that its files are gone", async () => {
+    // the file system comes back under the same id, as sandbox-docker's volumes do
+    await setFakeFileSystemIdsByName(root, true);
+    try {
+      const a = await sandboxConversation();
+      const b = await sandboxConversation();
+      const env = await envOf(a);
+      expect(await envOf(b)).toBe(env);
+      const write = { description: "Test step", command: "echo old > /workspace/r.txt" };
+      expect((await call(a, "Bash", write, 1)).content).toContain(SANDBOX_STARTED_NOTICE);
+      // b joins the running instance: no notice
+      expect((await call(b, "Bash", write, 1)).content).toBe("[exit code: 0]");
+      await k.app.get(SandboxService).resetFileSystem(env);
+      const ls = { description: "Test step", command: "ls -A /workspace; echo done" };
+      for (const conv of [a, b]) {
+        const r = await call(conv, "Bash", ls, 2);
+        expect(r.content.startsWith(SANDBOX_FILES_RESET_NOTICE), r.content).toBe(true);
+        expect(r.content).not.toContain(SANDBOX_RESTARTED_NOTICE);
+        expect(r.content).not.toContain("r.txt");
+      }
+      const again = await call(a, "Bash", ls, 3);
+      expect(again.content).not.toContain(SANDBOX_FILES_RESET_NOTICE);
+      expect(again.content).not.toContain(SANDBOX_RESTARTED_NOTICE);
+    } finally {
+      await setFakeFileSystemIdsByName(root, false);
+    }
+  });
+
+  it("an instance suspended, then destroyed after inactivity: the next command is told files are kept", async () => {
+    await setFakeFileSystemIdsByName(root, true);
+    try {
+      const conv = await sandboxConversation();
+      await call(
+        conv,
+        "Bash",
+        { description: "Test step", command: "echo kept > /workspace/s.txt" },
+        1,
+      );
+      const sandbox = k.app.get(SandboxService);
+      const later = (days: number) => new Date(Date.now() + days * 86_400_000);
+      await sandbox.suspendIdle(later(1));
+      expect((await instanceOf(conv))?.status).toBe("suspended");
+      await sandbox.destroyInactive(later(30));
+      const r = await call(
+        conv,
+        "Bash",
+        { description: "Test step", command: "cat /workspace/s.txt" },
+        2,
+      );
+      expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
+      expect(r.content).not.toContain(SANDBOX_FILES_RESET_NOTICE);
+      expect(r.content).toContain("kept");
+    } finally {
+      await setFakeFileSystemIdsByName(root, false);
+    }
   });
 });
 

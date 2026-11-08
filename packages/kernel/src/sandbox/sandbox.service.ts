@@ -83,6 +83,11 @@ export interface SandboxUseInfo {
    * new instance on the kept files, so earlier processes are gone.
    */
   restarted: boolean;
+  /**
+   * The environment's files were reset since this holder last used it (on request, or after they
+   * were lost): earlier files are gone too. Set only when true; `restarted` is then false.
+   */
+  filesReset?: true;
 }
 
 /** Who uses the sandbox in {@link SandboxService.withSandbox}. */
@@ -147,8 +152,8 @@ interface Entered {
   lease: SandboxLease;
   handle: SandboxHandle;
   createdAt: number;
-  /** The id of the file system the instance runs on (a reset makes a new one). */
-  fsId: string;
+  /** The environment's file reset count (`fs_resets`) when the holder entered. */
+  fsResets: number;
   info: SandboxUseInfo;
 }
 
@@ -549,13 +554,11 @@ export class SandboxService {
         const prev = e;
         await this.leave(env, prev);
         e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone));
-        return await this.runAs(
-          { ...e, info: { fresh: true, restarted: true } },
-          ctx,
-          p,
-          fn,
-          signal,
-        );
+        // a reset seen on the first try still has to be told (it covers the restart)
+        const info: SandboxUseInfo = prev.info.filesReset
+          ? { fresh: true, restarted: false, filesReset: true }
+          : { fresh: true, restarted: true };
+        return await this.runAs({ ...e, info }, ctx, p, fn, signal);
       }
     } finally {
       await this.leave(env, e);
@@ -564,14 +567,17 @@ export class SandboxService {
 
   /**
    * Records that `holder` uses the instance of `e` (`capk:sandbox-seen:<env>:<holder>` =
-   * `<created_at>:<file system id>`, with a TTL of the inactivity destruction plus a day). When the
-   * holder last used another instance on the same file system `e` is marked restarted; on another
-   * file system (the files were reset) it is not. Best effort: a Redis error only logs.
+   * `<created_at>:<fs_resets>`, with a TTL of the inactivity destruction plus a day). When the
+   * holder last used another instance under the same reset count `e` is marked restarted (files
+   * kept); under another count it is marked `filesReset` instead. The count, not the provider's
+   * file system id, tells them apart: a provider may give the new file system the old id
+   * (sandbox-docker's volumes are named after the environment). Best effort: a Redis error only
+   * logs.
    */
   private async seenBy(environmentId: string, holder: string, e: Entered): Promise<Entered> {
     try {
       const ttl = (this.config.get().sandbox.limits.destroyAfterInactiveDays + 1) * 86_400;
-      const seen = `${e.createdAt}:${e.fsId}`;
+      const seen = `${e.createdAt}:${e.fsResets}`;
       const prev = await this.redis.set(
         `capk:sandbox-seen:${environmentId}:${holder}`,
         seen,
@@ -580,12 +586,13 @@ export class SandboxService {
         "GET",
       );
       if (prev !== null && prev !== seen) {
-        // `<createdAt>:<fsId>`: another file system (a reset) means a fresh start, not a restart on
-        // kept files; another instance on the same file system is a restart
-        const sameFiles = prev.slice(prev.indexOf(":") + 1) === e.fsId;
-        if (sameFiles !== e.info.restarted) {
-          return { ...e, info: { fresh: e.info.fresh, restarted: sameFiles } };
+        // `<createdAt>:<fsResets>`: another reset count means the files were reset since; another
+        // instance under the same count is a restart on kept files
+        const sameFiles = prev.slice(prev.indexOf(":") + 1) === String(e.fsResets);
+        if (!sameFiles) {
+          return { ...e, info: { fresh: e.info.fresh, restarted: false, filesReset: true } };
         }
+        if (!e.info.restarted) return { ...e, info: { fresh: e.info.fresh, restarted: true } };
       }
     } catch (err) {
       this.log.warn("cannot record the sandbox instance a holder uses", {
@@ -732,7 +739,7 @@ export class SandboxService {
         lease,
         handle: row.handle,
         createdAt: row.created_at.getTime(),
-        fsId: row.fs_handle?.id ?? "",
+        fsResets: row.fs_resets,
         info: { fresh: false, restarted: false },
       };
     } catch (err) {
@@ -772,7 +779,7 @@ export class SandboxService {
         lease: shared,
         handle: s.handle,
         createdAt: s.createdAt,
-        fsId: s.fsId,
+        fsResets: s.fsResets,
         info: s.info,
       };
     } catch (err) {
@@ -1024,6 +1031,8 @@ export class SandboxService {
         suspended_at: null,
         destroyed_at: sql<Date>`now()`,
         sweep_failed_at: null,
+        // conversations that used the old files are told they were reset (seenBy)
+        fs_resets: sql<number>`fs_resets + 1`,
         ...prev,
       });
       this.log.info("environment files reset", { environmentId });
@@ -1211,7 +1220,7 @@ export class SandboxService {
   ): Promise<{
     handle: SandboxHandle;
     createdAt: number;
-    fsId: string;
+    fsResets: number;
     info: SandboxUseInfo;
     fence: Fence;
     resumed?: boolean;
@@ -1278,13 +1287,13 @@ export class SandboxService {
     }
     const handle = row.handle;
     const createdAt = row.created_at.getTime();
-    const fsId = row.fs_handle?.id ?? "";
+    const fsResets = row.fs_resets;
     if (handle && isInstance(row, gone) && row.status === "running") {
       const created = await this.create(ctx, p, held, row, fence, signal);
-      return { ...created, info: { fresh: true, restarted: true }, fence };
+      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
     }
     if (handle && row.status === "running") {
-      return { handle, createdAt, fsId, info: { fresh: false, restarted: false }, fence };
+      return { handle, createdAt, fsResets, info: { fresh: false, restarted: false }, fence };
     }
     if (handle && row.status === "suspended") {
       const r = await p.impl.resume(handle, signal);
@@ -1298,7 +1307,7 @@ export class SandboxService {
         return {
           handle,
           createdAt,
-          fsId,
+          fsResets,
           info: { fresh: false, restarted: false },
           fence,
           resumed: true,
@@ -1313,6 +1322,7 @@ export class SandboxService {
     // makes this one a restart on the kept files
     return {
       ...created,
+      fsResets,
       info: { fresh: true, restarted: row.had_instance && row.fs_status === "ready" },
       fence,
     };
@@ -1332,7 +1342,7 @@ export class SandboxService {
     row: Row,
     fence: Fence,
     signal: AbortSignal,
-  ): Promise<Instance & { fsId: string }> {
+  ): Promise<Instance> {
     const id = ctx.environmentId;
     const name = environmentResourceName(id);
     await this.fenced(held, id, fence, {
@@ -1408,7 +1418,7 @@ export class SandboxService {
       throw e;
     }
     this.log.info("sandbox created", { environmentId: id, provider: p.plugin });
-    return { handle, createdAt: createdAt.getTime(), fsId: fs.id };
+    return { handle, createdAt: createdAt.getTime() };
   }
 
   /**

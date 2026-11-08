@@ -27,6 +27,7 @@ import {
   readFakeSandboxOps,
   removeFakeFileSystem,
   removeFakeSandbox,
+  setFakeFileSystemIdsByName,
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -725,9 +726,40 @@ describe("lost files", () => {
     const next = await readIn(s, "a.txt");
     expect(next.body).toBeNull();
     // a fresh start on new files, not a restart on kept ones
-    expect(next.info).toEqual({ fresh: true, restarted: false });
+    expect(next.info).toEqual({ fresh: true, restarted: false, filesReset: true });
     expect(await ops("create-fs")).toHaveLength(2);
     expect((await row())?.fs_status).toBe("ready");
+  });
+
+  it("after a reset every holder is told once, also when the provider reuses the file system id", async () => {
+    // sandbox-docker names a file system's volumes after the environment: the id comes back
+    await setFakeFileSystemIdsByName(root, true);
+    const s = service();
+    const other = await newConversation();
+    const useAs = (holder: string) =>
+      s.withSandbox(at(envId, orgId, holder), async (h, _p, info) => ({ h, info }), signal());
+    const a = await useAs(conversationId);
+    expect((await useAs(other)).info).toEqual({ fresh: false, restarted: false });
+    const fsBefore = (await fakeSandboxMeta(root, a.h.id))?.fileSystem;
+    await s.resetFileSystem(envId);
+    const next = await useAs(conversationId);
+    expect((await fakeSandboxMeta(root, next.h.id))?.fileSystem).toBe(fsBefore);
+    // empty files, not an instance restarted on kept ones
+    expect(next.info).toEqual({ fresh: true, restarted: false, filesReset: true });
+    expect((await useAs(other)).info).toEqual({ fresh: false, restarted: false, filesReset: true });
+    expect((await useAs(conversationId)).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs(other)).info).toEqual({ fresh: false, restarted: false });
+    // a holder that never used the environment just starts
+    expect((await useAs(await newConversation())).info).toEqual({ fresh: false, restarted: false });
+  });
+
+  it("an instance destroyed after inactivity on kept files is still a restart, not a reset", async () => {
+    await setFakeFileSystemIdsByName(root, true);
+    const s = service();
+    await use(s);
+    await s.suspendIdle(later(11 * MIN));
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
+    expect((await use(s)).info).toEqual({ fresh: true, restarted: true });
   });
 
   it("resetFileSystem after files_lost makes the environment usable again", async () => {
@@ -738,7 +770,7 @@ describe("lost files", () => {
     await expect(use(s)).rejects.toMatchObject({ code: "environment.files_lost" });
     await s.resetFileSystem(envId);
     const next = await use(s);
-    expect(next.info.fresh).toBe(true);
+    expect(next.info).toEqual({ fresh: true, restarted: false, filesReset: true });
     expect(await row()).toMatchObject({ status: "running", fs_status: "ready" });
   });
 });

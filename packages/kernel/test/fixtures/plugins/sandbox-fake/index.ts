@@ -45,6 +45,9 @@ import { z } from "zod";
  *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
  * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
  *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
+ * - `root/fs-ids-by-name` (optional, {@link setFakeFileSystemIdsByName}): `createFileSystem` gives
+ *   a new file system the id `fs-<name>`, as sandbox-docker names its volumes, so a file system
+ *   destroyed and made again under the same name comes back with the same id;
  * - `root/fault.json` (optional, {@link setFakeSandboxFault}): every provider method throws the
  *   network error it names, as a provider whose endpoint is down does (read at each call);
  * - `root/bin`: node shims for `setsid`, `timeout`, `pgrep -s` and `pkill -s` (background tasks,
@@ -326,6 +329,17 @@ export async function setFakeSandboxDelays(root: string, d: FakeSandboxDelays): 
 }
 
 /**
+ * While `on`, a new file system gets the id `fs-<name>` (as sandbox-docker's volumes), so one made
+ * again after a reset has the id of the destroyed one; off: random ids (the default).
+ */
+export async function setFakeFileSystemIdsByName(root: string, on: boolean): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const flag = join(root, "fs-ids-by-name");
+  if (on) await writeFile(flag, "");
+  else await rm(flag, { force: true });
+}
+
+/**
  * A network failure every provider method throws while set: `code` as node's `net` sets it
  * (`ECONNREFUSED`, `ECONNRESET`, ...); `wrap: "fetch"` wraps it as `fetch` does
  * (`TypeError: fetch failed` with the socket error as `cause`).
@@ -516,7 +530,11 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       await delay("create", signal);
       const existing = await fsIdByName(name);
       if (existing !== null) return { id: existing };
-      const id = `fs-${randomUUID().slice(0, 8)}`;
+      const byName = await stat(join(root, "fs-ids-by-name")).then(
+        () => true,
+        () => false,
+      );
+      const id = byName ? `fs-${name}` : `fs-${randomUUID().slice(0, 8)}`;
       const dir = fileSystemDir(root, id);
       for (const r of ["workspace", "skills"]) await mkdir(join(dir, r), { recursive: true });
       await writeFile(join(dir, "meta.json"), JSON.stringify({ name, limits }));

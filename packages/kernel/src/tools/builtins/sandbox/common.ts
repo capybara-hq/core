@@ -89,6 +89,9 @@ export const SANDBOX_STARTED_NOTICE =
 /** A new instance came up on the environment's kept files. */
 export const SANDBOX_RESTARTED_NOTICE =
   "The environment's instance was restarted; files are kept, running processes and /tmp are gone.";
+/** The environment's files were reset (on request, or after they were lost) since this conversation last used it. */
+export const SANDBOX_FILES_RESET_NOTICE =
+  "The environment's files were reset; earlier files in /workspace, running processes and /tmp are gone, so recreate anything you still need.";
 
 const BUSY_TEXT =
   "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
@@ -459,7 +462,8 @@ export async function inSandbox<T>(
       async (h, p, info, signal) => {
         const s: SandboxSession = { environmentId, h, p, signal };
         const notices: string[] = [];
-        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
+        if (info.filesReset) notices.push(SANDBOX_FILES_RESET_NOTICE);
+        else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
         const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
