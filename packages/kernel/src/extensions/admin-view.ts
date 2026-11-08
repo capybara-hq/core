@@ -533,6 +533,7 @@ export class ExtensionAdmin {
             providers: conflict.providers
               .filter((p) => p !== s.name)
               .map((p) => ({ name: p, displayName: otherDisplay?.get(p) ?? null })),
+            ...(conflict.unprovided && { unprovided: true as const }),
           },
         }),
         ...(enableBlocked && { enableBlocked }),

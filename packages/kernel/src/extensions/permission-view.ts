@@ -326,15 +326,23 @@ export interface AdminExtensionView {
   conflict?: {
     extensionPoint: string;
     providers: { name: string; displayName: LocalizedName | null }[];
+    /**
+     * The provider the single-provider election picked (the first of `providers`) is not loaded
+     * (failed, pending), so the point has no running provider: an admin warning.
+     */
+    unprovided?: true;
   };
   /**
    * Only on a disabled install record: another enabled extension provides a single-provider
    * extension point this one provides, so enabling it is refused (409
-   * `extension.single_provider_enabled`) until that one is disabled.
+   * `extension.single_provider_enabled`) until that one is disabled; `required`: that one is a
+   * required bootstrap plugin, which cannot be disabled, so this one cannot replace it (409
+   * `extension.single_provider_required`).
    */
   enableBlocked?: {
     extensionPoint: string;
     enabled: { name: string; displayName: LocalizedName | null };
+    required?: true;
   };
   /**
    * Why the install record's package cannot be read (bytes missing or corrupt, over the current

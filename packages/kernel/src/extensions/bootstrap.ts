@@ -39,6 +39,7 @@ import { PluginApproveLock } from "./locks.js";
 import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
 import { diffPermissions, type PermissionSet } from "./permission-set.js";
 import { ExtensionRegistry } from "./registry.js";
+import type { SingleProviderNote } from "./single-provider.js";
 
 /**
  * The bootstrap step (package ecosystem spec §7, startup bootstrap spec): installs the plugins
@@ -104,6 +105,11 @@ export interface BootstrapEntryResult {
   action: "installed" | "upgraded" | "kept" | "imported" | "required_cleared";
   /** The version installed / imported now, or the version kept. */
   version: string;
+  /**
+   * An optional entry installed (or upgraded) but left disabled: another enabled extension holds
+   * a single-provider extension point it provides. (A required entry fails instead.)
+   */
+  leftDisabled?: SingleProviderNote;
 }
 
 export interface BootstrapResult {
@@ -537,12 +543,13 @@ export class BootstrapService {
       return { name: e.name, action: "kept", version: e.version };
     }
     let result: BootstrapEntryResult;
+    let leftDisabled: SingleProviderNote | undefined;
     if (!row) {
-      await this.deploy(e, bytes, ref, true, imports);
+      leftDisabled = await this.deploy(e, bytes, ref, true, imports);
       result = { name: e.name, action: "installed", version: e.version };
     } else if (row.source === "bootstrap" && isLower(row.version, e.version)) {
       // The desired state the admin chose is kept; a required plugin is enabled below anyway
-      await this.deploy(e, bytes, ref, row.desired_state === "enabled", imports);
+      leftDisabled = await this.deploy(e, bytes, ref, row.desired_state === "enabled", imports);
       result = { name: e.name, action: "upgraded", version: e.version };
     } else {
       if (
@@ -568,10 +575,10 @@ export class BootstrapService {
     }
     // A required install must run on the deployment (an org cannot use it otherwise)
     if (e.required && row?.desired_state === "disabled") {
-      await this.enableOrWarn(e);
+      leftDisabled = await this.enableOrWarn(e);
     }
     await this.markBuiltin(e.name, e.required);
-    return result;
+    return leftDisabled === undefined ? result : { ...result, leftDisabled };
   }
 
   /**
@@ -641,7 +648,7 @@ export class BootstrapService {
     ref: string,
     enable: boolean,
     imports: BootstrapImports,
-  ): Promise<void> {
+  ): Promise<SingleProviderNote | undefined> {
     let staged: Awaited<ReturnType<BootstrapImports["prepare"]>>;
     try {
       staged = await imports.prepare(null, bytes, {
@@ -651,8 +658,7 @@ export class BootstrapService {
       });
     } catch (err) {
       if (err instanceof ApiError && err.code === "catalog.version_exists") {
-        await this.deployFromStore(e, bytes, ref, enable);
-        return;
+        return this.deployFromStore(e, bytes, ref, enable);
       }
       throw err;
     }
@@ -660,18 +666,20 @@ export class BootstrapService {
       reviewHash: staged.review.reviewHash,
       enable,
     });
-    if (r.deploy?.singleProvider !== undefined) {
-      this.log.warn(`bootstrap: the plugin is installed disabled; ${r.deploy.message ?? ""}`, {
-        plugin: e.name,
-        required: e.required,
-      });
-    }
     if (r.deploy?.result === "failed") {
       throw new ApiError(
         (r.deploy.code ?? "internal") as ErrorCode,
         r.deploy.message ?? `installing extension ${e.name} failed`,
       );
     }
+    if (r.deploy?.singleProvider !== undefined) {
+      return this.leftDisabled(e, {
+        code: r.deploy.code as string,
+        message: r.deploy.message as string,
+        singleProvider: r.deploy.singleProvider,
+      });
+    }
+    return undefined;
   }
 
   /** The extension of a catalog version already imported: ingest, approve, install (, enable). */
@@ -680,7 +688,7 @@ export class BootstrapService {
     bytes: Uint8Array,
     ref: string,
     enable: boolean,
-  ): Promise<void> {
+  ): Promise<SingleProviderNote | undefined> {
     const review = await this.installs.ingest(
       null,
       bytes,
@@ -705,30 +713,50 @@ export class BootstrapService {
       .where("name", "=", e.name)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    await this.ops.install(
+    const installed = await this.ops.install(
       e.name,
       review.sha256,
       null,
       undefined,
       item ? { catalogItemId: item.id } : {},
     );
-    if (enable) await this.enableOrWarn(e);
+    // An upgrade newly providing a held single-provider point is left disabled by the install
+    if (installed.leftDisabled !== undefined) return this.leftDisabled(e, installed.leftDisabled);
+    return enable ? this.enableOrWarn(e) : undefined;
   }
 
   /**
    * Enables a bootstrap extension unless another enabled extension provides one of its
-   * single-provider extension points (a preinstall sandbox while the super admin runs another
-   * one): then it stays disabled and the step goes on (a warning names both). A required one is
-   * left disabled too: the super admin chose the other provider, and disabling it brings this one.
+   * single-provider extension points (see {@link leftDisabled}).
    */
-  private async enableOrWarn(e: BootstrapEntry): Promise<void> {
+  private async enableOrWarn(e: BootstrapEntry): Promise<SingleProviderNote | undefined> {
     const r = await this.ops.enableUnlessOccupied(e.name, null);
-    if (!r.enabled) {
-      this.log.warn(`bootstrap: the plugin is installed disabled; ${r.refusal.message}`, {
-        plugin: e.name,
-        required: e.required,
-      });
+    return r.enabled ? undefined : this.leftDisabled(e, r.note);
+  }
+
+  /**
+   * A bootstrap extension left disabled because another enabled extension holds a single-provider
+   * extension point it provides. An optional preinstall (a sandbox while the super admin runs
+   * another one) stays disabled with a warning, and the entry's result says so. A required entry
+   * fails (thrown, so the run is not recorded done, `capybara bootstrap` exits 1 and
+   * `capybara start` refuses to serve): the deployment cannot run without it, and only the super
+   * admin can free the point, by disabling the other provider and running the bootstrap again.
+   */
+  private leftDisabled(e: BootstrapEntry, note: SingleProviderNote): SingleProviderNote {
+    const block = note.singleProvider;
+    if (e.required) {
+      const other = block.enabled.name;
+      throw new ApiError(
+        note.code as ErrorCode,
+        `Required plugin ${e.name} provides ${block.extensionPoint}, which ${other} already provides; disable ${other} and run the bootstrap again`,
+        [block],
+      );
     }
+    this.log.warn(`bootstrap: the plugin is installed disabled; ${note.message}`, {
+      plugin: e.name,
+      required: e.required,
+    });
+    return note;
   }
 
   /** The permission snapshot of a stored package (source `bootstrap`), under the approve lock. */

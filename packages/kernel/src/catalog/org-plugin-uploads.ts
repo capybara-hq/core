@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
+import type { SingleProviderNote } from "../extensions/single-provider.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import type { ActorOpts, CatalogItemView } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
@@ -29,6 +30,17 @@ export interface OrgUploadReview {
  * version of the org's own item, applied through the platform updater).
  */
 export type OrgUploadOutcome = "installed" | "pending" | "updated";
+
+/** An org upload's confirmation. */
+export interface OrgUploadResult {
+  item: CatalogItemView;
+  outcome: OrgUploadOutcome;
+  /**
+   * The update installed the plugin's extension but left it disabled (a single-provider extension
+   * point another enabled extension holds; `PlatformUpdateResult.extensionLeftDisabled`).
+   */
+  extensionLeftDisabled?: SingleProviderNote;
+}
 
 /** The hash an org confirms a new version with: the review's and the update's (P3-12). */
 export function ownerUpdateHash(reviewHash: string, diffHash: string): string {
@@ -96,7 +108,7 @@ export class OrgPluginUploads {
     stagingId: string,
     input: { reviewHash: string; shareable?: boolean; pinnedSuggestions?: string[] },
     opts: ActorOpts = {},
-  ): Promise<{ item: CatalogItemView; outcome: OrgUploadOutcome }> {
+  ): Promise<OrgUploadResult> {
     const st = await this.pluginImport.stagedTarget(stagingId, { orgId });
     if (!appliesAtOnce(st)) {
       const r = await this.pluginImport.confirm(actor, stagingId, input, {
@@ -130,8 +142,21 @@ export class OrgPluginUploads {
       { ...opts, owner: { orgId } },
     );
     // The version is committed; a failed update leaves it imported (uploading it again retries)
-    await this.updater.updateAsOwner(orgId, actor, r.item.id, st.version, preview.diffHash, opts);
-    return { item: await this.pluginImport.view(r.item.id), outcome: "updated" };
+    const u = await this.updater.updateAsOwner(
+      orgId,
+      actor,
+      r.item.id,
+      st.version,
+      preview.diffHash,
+      opts,
+    );
+    return {
+      item: await this.pluginImport.view(r.item.id),
+      outcome: "updated",
+      ...(u.extensionLeftDisabled !== undefined && {
+        extensionLeftDisabled: u.extensionLeftDisabled,
+      }),
+    };
   }
 
   /** The review with the update preview of a new version and the combined hash (P3-12). */

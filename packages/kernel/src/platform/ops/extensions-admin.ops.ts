@@ -7,6 +7,7 @@ import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
 import {
   SINGLE_PROVIDER_ENABLED,
+  SINGLE_PROVIDER_REQUIRED,
   singleProviderMessage,
 } from "../../extensions/single-provider.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
@@ -232,6 +233,10 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             code: "extension.single_provider_enabled",
             next: "Only one extension may provide this extension point and another one is enabled: disable that one first (extensions.platform-disable, named in the error's details), then enable this one.",
           },
+          {
+            code: "extension.single_provider_required",
+            next: "A required plugin of this deployment provides this extension point; it cannot be disabled, so this extension cannot replace it. Tell the user; there is nothing to retry.",
+          },
         ],
         precheck: async (i, ctx) => {
           const r = await this.viewFor(i.name, ctx.orgId);
@@ -241,7 +246,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             ? { ok: true }
             : {
                 ok: false,
-                code: SINGLE_PROVIDER_ENABLED,
+                code: block.required === true ? SINGLE_PROVIDER_REQUIRED : SINGLE_PROVIDER_ENABLED,
                 message: singleProviderMessage(block, r.view.name, r.view.displayName),
               };
         },

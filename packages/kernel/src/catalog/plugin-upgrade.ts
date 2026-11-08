@@ -15,6 +15,7 @@ import { permissionSetOfPackage, readExtensionPackage } from "../extensions/pack
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { blockingKeys, diffPermissions } from "../extensions/permission-set.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import type { SingleProviderNote } from "../extensions/single-provider.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { addOrgNotice, itemDisplayName, notifySharedUpdate } from "../inbox/org-notices.js";
@@ -149,6 +150,13 @@ export interface PlatformUpdateResult {
   components: PlatformUpdateComponent[];
   extension: PlatformUpdatePreview["extension"];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The update installed the extension but left it disabled: another enabled extension provides a
+   * single-provider extension point it provides (an extension the update added, or a new version
+   * that newly provides the point). Code `extension.single_provider_enabled` (disable that one
+   * first) or `extension.single_provider_required` (a required plugin holds it: no replacing).
+   */
+  extensionLeftDisabled?: SingleProviderNote;
 }
 
 interface VersionRow extends CatalogVersionFiles {
@@ -573,6 +581,7 @@ export class PlatformPluginUpdater {
     let step: "extension" | "components" = "extension";
     let extensionMoved = false;
     let enabledHere = false;
+    let leftDisabled: SingleProviderNote | undefined;
     /** A removal: the extension was enabled before it (put back enabled on failure). */
     let removedEnabled = false;
     try {
@@ -588,11 +597,16 @@ export class PlatformPluginUpdater {
         extensionMoved = true;
         await this.ops.uninstall(checked.name, actor, opts.actorTokenId, opsOwner);
       } else if (ext) {
-        await this.ops.install(checked.name, ext.sha256, actor, opts.actorTokenId, {
-          catalogItemId: itemId,
-          ...(opsOwner && { owner: opsOwner }),
-        });
+        const installed = await this.ops.install(
+          checked.name,
+          ext.sha256,
+          actor,
+          opts.actorTokenId,
+          { catalogItemId: itemId, ...(opsOwner && { owner: opsOwner }) },
+        );
         extensionMoved = true;
+        // A new version newly providing a held single-provider point: left disabled by the install
+        leftDisabled = installed.leftDisabled;
         if (ext.previous === null) {
           // An occupied single-provider point leaves it installed disabled
           const r = await this.ops.enableUnlessOccupied(
@@ -602,6 +616,7 @@ export class PlatformPluginUpdater {
             opsOwner,
           );
           enabledHere = r.enabled;
+          if (!r.enabled) leftDisabled = r.note;
         }
       }
       step = "components";
@@ -621,6 +636,7 @@ export class PlatformPluginUpdater {
         components: diff.components,
         extension: extensionView(diff.extension),
         connectorOrgs: diff.connectorOrgs,
+        ...(leftDisabled !== undefined && { extensionLeftDisabled: leftDisabled }),
       };
     } catch (e) {
       let rolledBack = true;
@@ -639,6 +655,11 @@ export class PlatformPluginUpdater {
             await this.ops.install(checked.name, ext.previous, actor, opts.actorTokenId, {
               ...(back && { owner: back }),
             });
+            // The install left the enabled extension disabled (a held single-provider point): the
+            // previous version, which did not provide it, runs again
+            if (leftDisabled !== undefined) {
+              await this.ops.enable(checked.name, actor, opts.actorTokenId, back);
+            }
           } else {
             // Installed by this update: an uninstall needs it disabled first
             if (enabledHere) await this.ops.disable(checked.name, actor, opts.actorTokenId, back);

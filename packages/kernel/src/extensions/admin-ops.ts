@@ -27,7 +27,12 @@ import {
 } from "./package.js";
 import type { AdminExtensionView } from "./permission-view.js";
 import { ExtensionRegistry } from "./registry.js";
-import { SINGLE_PROVIDER_ENABLED, SingleProviderGuard } from "./single-provider.js";
+import {
+  isSingleProviderCode,
+  SingleProviderGuard,
+  type SingleProviderNote,
+  singleProviderNote,
+} from "./single-provider.js";
 
 /**
  * Deployment-level extension install / enable / disable / uninstall (C16 / D15): writes only the PG
@@ -53,6 +58,12 @@ export interface ExtensionOpsOwner {
    */
   rollback?: true;
 }
+
+/**
+ * The admin view after an install; `leftDisabled`: this version change left the enabled extension
+ * disabled because its new version provides a single-provider point another extension holds.
+ */
+export type InstallView = AdminExtensionView & { leftDisabled?: SingleProviderNote };
 
 @Injectable()
 export class ExtensionAdminOps {
@@ -119,6 +130,12 @@ export class ExtensionAdminOps {
    * `extension.installed` audit carries `catalogItemId`; when it already points at the same package
    * and only the source item changed, only that column changes, audit
    * `extension.install_source_changed`.
+   * A version change of an enabled extension whose new version provides a single-provider
+   * extension point the old one did not, while another extension holds it: the new version is
+   * installed **disabled** (`enabled_at` cleared, audit `extension.disabled` with `singleProvider`)
+   * rather than the upgrade refused, so the package moves and the provider running keeps the point;
+   * the result's `leftDisabled` says why (the shape of `enableUnlessOccupied`'s refusal). Checked
+   * under the point's lock after the install lock (the enable's order).
    */
   async install(
     name: string,
@@ -126,11 +143,11 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId?: string,
     opts: { catalogItemId?: string; owner?: ExtensionOpsOwner } = {},
-  ): Promise<AdminExtensionView> {
+  ): Promise<InstallView> {
     this.assertInstallable(name);
     const pkg = await this.db
       .selectFrom("extension_packages")
-      .select(["sha256", "name", "package_name", "version", "source"])
+      .select(["sha256", "name", "package_name", "version", "source", "section"])
       .where("sha256", "=", sha256)
       .executeTakeFirst();
     if (!pkg) {
@@ -155,7 +172,20 @@ export class ExtensionAdminOps {
       throw e instanceof ExtensionPackageError ? extensionPackageApiError(e) : e;
     });
     const changed = await this.writeInstall(name, sha256, pkg, target, actor, actorTokenId, opts);
-    return this.viewAfterCommit(name, { version: pkg.version, sha256, state: changed.state });
+    const view = await this.viewAfterCommit(name, {
+      version: pkg.version,
+      sha256,
+      state: changed.state,
+    });
+    if (changed.leftDisabled === undefined) return view;
+    this.log.info(
+      "extension upgraded but left disabled: its single-provider extension point is taken",
+      {
+        plugin: name,
+        details: changed.leftDisabled.singleProvider,
+      },
+    );
+    return { ...view, leftDisabled: changed.leftDisabled };
   }
 
   @Transactional()
@@ -166,12 +196,17 @@ export class ExtensionAdminOps {
       package_name: string;
       version: string;
       source: "npm" | "file" | "catalog" | "bootstrap";
+      section: unknown;
     },
     target: { migrationSql: { file: string; sql: string }[] },
     actor: string | null,
     actorTokenId: string | undefined,
     opts: { catalogItemId?: string; owner?: ExtensionOpsOwner },
-  ): Promise<{ changed: boolean; state: "enabled" | "disabled" }> {
+  ): Promise<{
+    changed: boolean;
+    state: "enabled" | "disabled";
+    leftDisabled?: SingleProviderNote;
+  }> {
     const db = this.db;
     await this.authorize(actor, opts.owner);
     const row = await this.lockRow(name);
@@ -251,6 +286,26 @@ export class ExtensionAdminOps {
         );
       }
     }
+    // An enabled extension whose new version newly provides a single-provider point another one
+    // holds: installed disabled (the provider running keeps the point), and the result says why
+    let leftDisabled: SingleProviderNote | undefined;
+    if (row?.desired_state === "enabled") {
+      const before = new Set(providesOf(row.section));
+      const added = providesOf(pkg.section).filter((p) => !before.has(p));
+      const block = await this.singleProvider.lockedOccupant(name, added);
+      if (block) {
+        leftDisabled = await this.singleProvider.note(block, name);
+        await db
+          .updateTable("extension_installs")
+          .set({ desired_state: "disabled", enabled_at: null })
+          .where("name", "=", name)
+          .execute();
+        await this.audit(actor, actorTokenId, "extension.disabled", name, row.version, row.sha256, {
+          singleProvider: block,
+          ...ownerDetail(opts.owner),
+        });
+      }
+    }
     await db
       .insertInto("extension_installs")
       .values({
@@ -279,6 +334,7 @@ export class ExtensionAdminOps {
       ...ownerDetail(opts.owner),
     });
     afterCommit(() => this.notify(name));
+    if (leftDisabled !== undefined) return { changed: true, state: "disabled", leftDisabled };
     return { changed: true, state: row?.desired_state ?? "disabled" };
   }
 
@@ -309,12 +365,12 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId?: string,
     owner?: ExtensionOpsOwner,
-  ): Promise<{ enabled: true } | { enabled: false; refusal: ApiError }> {
+  ): Promise<{ enabled: true } | { enabled: false; refusal: ApiError; note: SingleProviderNote }> {
     try {
       await this.enable(name, actor, actorTokenId, owner);
       return { enabled: true };
     } catch (e) {
-      if (e instanceof ApiError && e.code === SINGLE_PROVIDER_ENABLED) {
+      if (e instanceof ApiError && isSingleProviderCode(e.code)) {
         this.log.info(
           "extension installed disabled: its single-provider extension point is taken",
           {
@@ -322,7 +378,7 @@ export class ExtensionAdminOps {
             details: e.details,
           },
         );
-        return { enabled: false, refusal: e };
+        return { enabled: false, refusal: e, note: singleProviderNote(e) };
       }
       throw e;
     }

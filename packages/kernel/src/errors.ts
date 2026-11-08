@@ -73,6 +73,11 @@ export const ERROR_CODES = {
    * (details `[{ extensionPoint, enabled: { name, displayName } }]`): disable it first.
    */
   "extension.single_provider_enabled": 409,
+  /**
+   * A required bootstrap plugin provides a single-provider extension point this one provides
+   * (details as above, `required: true`): it cannot be disabled, so it cannot be replaced.
+   */
+  "extension.single_provider_required": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,

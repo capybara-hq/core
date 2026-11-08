@@ -4,11 +4,17 @@ import { join } from "node:path";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import {
+  BootstrapFailedError,
+  BootstrapService,
+  bootstrapManifestSha256,
+} from "../../src/extensions/bootstrap.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { ExtensionLifecycle } from "../../src/extensions/lifecycle.js";
 import { ReplicaStatusStore } from "../../src/extensions/sources.js";
@@ -50,8 +56,16 @@ interface View {
   status: string;
   desired: { state: string } | null;
   replicas: { replicaId: string; state: string; reason: string | null }[];
-  conflict?: { extensionPoint: string; providers: { name: string }[] };
-  enableBlocked?: { extensionPoint: string; enabled: { name: string; displayName: unknown } };
+  conflict?: {
+    extensionPoint: string;
+    providers: { name: string }[];
+    unprovided?: true;
+  };
+  enableBlocked?: {
+    extensionPoint: string;
+    enabled: { name: string; displayName: unknown };
+    required?: true;
+  };
 }
 
 const config = (roles: ("api" | "worker")[]) =>
@@ -77,8 +91,7 @@ const view = async (name: string, req: Req = admin) => {
   expect(res.statusCode, res.body).toBe(200);
   return res.json() as View;
 };
-const install = async (name: string) => {
-  const bytes = await lifePkg({ name, version: "1.0.0", provides: ["sandbox@2"] });
+const upload = async (bytes: Uint8Array) => {
   const up = await admin({
     method: "POST",
     url: "/api/v1/admin/extensions/packages/file",
@@ -86,13 +99,36 @@ const install = async (name: string) => {
     payload: Buffer.from(bytes),
   });
   expect(up.statusCode, up.body).toBe(200);
-  const res = await post(`${name}/install`, { sha256: (up.json() as { sha256: string }).sha256 });
-  expect(res.statusCode, res.body).toBe(200);
+  return (up.json() as { sha256: string }).sha256;
+};
+const approve = async (name: string) => {
   // autoApprove is a startup thing; approve through the console as a super admin would
   const v = (await view(name)) as View & { sha256: string; reviewHash: string };
   const ok = await post(`${name}/approve`, { sha256: v.sha256, reviewHash: v.reviewHash });
   expect([200, 409], ok.body).toContain(ok.statusCode);
 };
+const install = async (name: string, provides: string[] = ["sandbox@2"], version = "1.0.0") => {
+  const sha256 = await upload(await lifePkg({ name, version, provides }));
+  const res = await post(`${name}/install`, { sha256 });
+  expect(res.statusCode, res.body).toBe(200);
+  await approve(name);
+  return res.json() as View & { leftDisabled?: unknown };
+};
+const setRow = (name: string, enabledAt: string | null) =>
+  db
+    .updateTable("extension_installs")
+    .set({
+      desired_state: enabledAt === null ? "disabled" : "enabled",
+      enabled_at: enabledAt === null ? null : (sql<Date>`${sql.raw(enabledAt)}` as unknown as Date),
+    })
+    .where("name", "=", name)
+    .execute();
+const desiredOf = (name: string) =>
+  db
+    .selectFrom("extension_installs")
+    .select(["desired_state", "enabled_at"])
+    .where("name", "=", name)
+    .executeTakeFirstOrThrow();
 const enable = (name: string) => post(`${name}/enable`);
 const disable = async (name: string) => {
   const res = await post(`${name}/disable`);
@@ -286,5 +322,150 @@ describe("single-provider extension points: one enabled provider", { timeout: 90
     } finally {
       await boot.cleanup();
     }
+  });
+
+  it("the elected provider does not load: the point has no provider and the views say so", async () => {
+    // sbx-w was enabled before sbx-a (left from before the rule) but its package bytes are gone,
+    // so it cannot load; the election still picks it on every replica
+    const sha256 = await upload(
+      await lifePkg({ name: "sbx-w", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    expect((await post("sbx-w/install", { sha256 })).statusCode).toBe(200);
+    await db.deleteFrom("extension_blobs").where("sha256", "=", sha256).execute();
+    await setRow("sbx-w", "now() - interval '2 days'");
+    await k.app.get(ExtensionLifecycle).reconcile("test");
+    await waitFor(async () => loaded(k, "sbx-a") === undefined, 15_000, "sbx-a unloaded");
+    expect(loaded(k, "sbx-w")).toBeUndefined();
+    await waitFor(
+      async () => (await view("sbx-a")).conflict?.unprovided === true,
+      10_000,
+      "sbx-a says the point has no running provider",
+    );
+    const a = await view("sbx-a");
+    expect(a.conflict).toEqual({
+      extensionPoint: "sandbox@2",
+      providers: [{ name: "sbx-w", displayName: null }],
+      unprovided: true,
+    });
+    const detail = a.replicas.find((r) => r.state === "pending") as unknown as { detail: string };
+    expect(detail.detail).toBe(
+      "extension point sandbox@2 is single-provider but provided by: sbx-w, sbx-a; sbx-w is not loaded, so sandbox@2 has no running provider",
+    );
+    // Put back: sbx-w disabled, sbx-a loads again
+    await setRow("sbx-w", null);
+    await k.app.get(ExtensionLifecycle).reconcile("test");
+    await waitFor(async () => loaded(k, "sbx-a") === "1.0.0", 15_000, "sbx-a loaded again");
+    expect((await view("sbx-a")).conflict).toBeUndefined();
+  });
+
+  it("the occupant named is the elected holder: A holds sandbox, B (sandbox + secret-store) lost, C holds secret-store", async () => {
+    await install("multi-b", ["sandbox@2", "secret-store@1"]);
+    await install("sec-c", ["secret-store@1"]);
+    await install("sec-d", ["secret-store@1"]);
+    // Written straight to PG, as an older kernel let it happen; no reconcile runs
+    const a = await desiredOf("sbx-a");
+    const at = (a.enabled_at as Date).toISOString();
+    await setRow("multi-b", `'${at}'::timestamptz + interval '1 second'`);
+    await setRow("sec-c", `'${at}'::timestamptz + interval '2 seconds'`);
+    try {
+      expect((await view("sec-d")).enableBlocked).toEqual({
+        extensionPoint: "secret-store@1",
+        enabled: { name: "sec-c", displayName: null },
+      });
+      const refused = await enable("sec-d");
+      expect(refused.statusCode, refused.body).toBe(409);
+      expect(refused.json().error.message).toBe(
+        "Only one extension may provide secret-store@1; disable sec-c first, then enable sec-d",
+      );
+    } finally {
+      await setRow("multi-b", null);
+      await setRow("sec-c", null);
+    }
+  });
+
+  it("an upgrade that newly provides an occupied single point installs it disabled and says why; the provider running stays", async () => {
+    await install("x-up", []);
+    expect((await enable("x-up")).statusCode).toBe(200);
+    await waitFor(async () => loaded(k, "x-up") === "1.0.0", 15_000, "x-up loaded");
+    const sha256 = await upload(
+      await lifePkg({ name: "x-up", version: "2.0.0", provides: ["sandbox@2"] }),
+    );
+    const res = await post("x-up/install", { sha256 });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((res.json() as { leftDisabled?: unknown }).leftDisabled).toEqual({
+      code: "extension.single_provider_enabled",
+      message: "Only one extension may provide sandbox@2; disable sbx-a first, then enable x-up",
+      singleProvider: {
+        extensionPoint: "sandbox@2",
+        enabled: { name: "sbx-a", displayName: null },
+      },
+    });
+    expect(await desiredOf("x-up")).toEqual({ desired_state: "disabled", enabled_at: null });
+    await waitFor(async () => loaded(k, "x-up") === undefined, 15_000, "x-up unloaded");
+    expect(loaded(k, "sbx-a")).toBe("1.0.0");
+    expect((await desiredOf("sbx-a")).desired_state).toBe("enabled");
+  });
+
+  it("bootstrap: a required entry whose single point is occupied fails the run, which is not recorded done", async () => {
+    const boot = await bootstrapFixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      {
+        bytes: await lifePkg({ name: "sbx-req", version: "1.0.0", provides: ["sandbox@2"] }),
+        required: true,
+      },
+    ]);
+    const bs = k.app.get(BootstrapService);
+    const run = () =>
+      bs.run({ manifest: boot.manifest, dir: boot.dir, imports: k.app.get(PluginImport) });
+    try {
+      const err = await run().then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(BootstrapFailedError);
+      const failed = err as BootstrapFailedError;
+      expect(failed.requiredFailed).toBe(true);
+      expect(failed.failures).toEqual([
+        {
+          name: "sbx-req",
+          required: true,
+          code: "extension.single_provider_enabled",
+          message:
+            "Required plugin sbx-req provides sandbox@2, which sbx-a already provides; disable sbx-a and run the bootstrap again",
+        },
+      ]);
+      expect(await bs.isDone(bootstrapManifestSha256(boot.manifest))).toBe(false);
+      expect(loaded(k, "sbx-a")).toBe("1.0.0");
+
+      // The super admin disables sbx-a and runs the bootstrap again: the required one is enabled
+      await disable("sbx-a");
+      await run();
+      expect(await bs.isDone(bootstrapManifestSha256(boot.manifest))).toBe(true);
+      expect((await desiredOf("sbx-req")).desired_state).toBe("enabled");
+    } finally {
+      await boot.cleanup();
+    }
+  });
+
+  it("a required provider cannot be replaced: a distinct refusal, not a loop through disable", async () => {
+    // sbx-req (required, previous case) holds sandbox@2
+    expect((await view("sbx-b")).enableBlocked).toEqual({
+      extensionPoint: "sandbox@2",
+      enabled: { name: "sbx-req", displayName: null },
+      required: true,
+    });
+    const refused = await enable("sbx-b");
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error).toEqual({
+      code: "extension.single_provider_required",
+      message: "sandbox@2 is provided by the required plugin sbx-req; it can't be replaced",
+      details: [
+        {
+          extensionPoint: "sandbox@2",
+          enabled: { name: "sbx-req", displayName: null },
+          required: true,
+        },
+      ],
+    });
   });
 });

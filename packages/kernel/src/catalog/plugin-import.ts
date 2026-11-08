@@ -18,7 +18,7 @@ import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdminOps, type InstallView } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { writeSnapshot } from "../extensions/approvals.js";
 import { blobKey, ExtensionBlobs } from "../extensions/blobs.js";
@@ -47,6 +47,7 @@ import {
   permissionKeyItems,
 } from "../extensions/permission-view.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import type { SingleProviderBlock } from "../extensions/single-provider.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -364,14 +365,13 @@ export interface ExtensionDeployResult {
   code?: string;
   message?: string;
   /**
-   * Installed but left disabled (result `installed`, code `extension.single_provider_enabled`):
-   * another enabled extension provides a single-provider extension point this one provides. The
-   * super admin disables that one, then enables this one.
+   * Installed but left disabled (result `installed`, code `extension.single_provider_enabled`, or
+   * `extension.single_provider_required` when the holder is a required plugin): another enabled
+   * extension provides a single-provider extension point this one provides (a new install, or an
+   * upgrade whose new version newly provides it). The super admin disables that one, then enables
+   * this one; a required holder cannot be replaced.
    */
-  singleProvider?: {
-    extensionPoint: string;
-    enabled: { name: string; displayName: LocalizedName | null };
-  };
+  singleProvider?: SingleProviderBlock;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
 }
@@ -1683,8 +1683,9 @@ export class PluginImport {
       e instanceof ApiError
         ? { code: e.code as string, message: e.message }
         : { code: "internal", message: "Internal error" };
+    let installed: InstallView;
     try {
-      await this.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
+      installed = await this.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
         catalogItemId: itemId,
       });
     } catch (e) {
@@ -1708,19 +1709,17 @@ export class PluginImport {
       }
       return result;
     }
+    // An upgrade of an enabled extension that newly provides a held single-provider point: left
+    // disabled by the install, and why
+    if (installed.leftDisabled !== undefined) {
+      return { ...base, result: "installed", ...installed.leftDisabled };
+    }
     if (!enable) return { ...base, result: "installed" };
     try {
       const r = await this.ops.enableUnlessOccupied(p.name, actor, opts.actorTokenId);
       if (r.enabled) return { ...base, result: "enabled" };
       // A single-provider point another enabled extension provides: installed disabled, and why
-      const block = r.refusal.details?.[0] as ExtensionDeployResult["singleProvider"];
-      return {
-        ...base,
-        result: "installed",
-        code: r.refusal.code,
-        message: r.refusal.message,
-        ...(block !== undefined && { singleProvider: block }),
-      };
+      return { ...base, result: "installed", ...r.note };
     } catch (e) {
       this.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
       return { ...base, result: "failed", ...failure(e) };
