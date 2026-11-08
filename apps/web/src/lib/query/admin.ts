@@ -85,6 +85,8 @@ export const settingsChangeKeys = (patch: DeploymentSettingsPatch): (readonly un
   return [
     keys.deployment().adminModels(),
     ...(patch.orgCreation !== undefined ? [keys.account("self").me()] : []),
+    // the platform default theme: the themes list marks it (every org's reads: `invalidatePlatformTheme`)
+    ...(patch.uiTheme !== undefined ? [keys.deployment().components("theme")] : []),
     ...[...orgIds].map((id) => keys.org(id).orgSettings()),
   ];
 };

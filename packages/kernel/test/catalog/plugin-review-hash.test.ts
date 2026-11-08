@@ -85,4 +85,76 @@ describe("pluginReviewHash", () => {
     expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
     expect(hash({ agentTemplates: [{ ...reviewer, tools: ["Read"] }] })).not.toBe(one);
   });
+
+  it("covers themes and leaves the digest of a plugin without any unchanged", () => {
+    const base = hash({});
+    // the digest of BASE before themes existed (over canonical JSON)
+    expect(base).toBe("3f63a443424588630ce9b3c175adda79");
+    expect(hash({ themes: [] })).toBe(base);
+    const night = {
+      id: "night-city",
+      name: { en: "Night City", zh: "夜之城" },
+      schemes: ["dark" as const],
+      fonts: 1,
+      logo: true,
+    };
+    const one = hash({ themes: [night] });
+    expect(one).not.toBe(base);
+    expect(hash({ themes: [{ ...night, fonts: 2 }] })).not.toBe(one);
+    expect(hash({ themes: [{ ...night, schemes: ["dark", "light"] }] })).not.toBe(one);
+    // themes and agent templates never stand in for each other
+    const reviewer = {
+      name: "reviewer",
+      path: "agents/reviewer.md",
+      description: "Reviews.",
+      instructions: "Review.",
+      model: "inherit" as const,
+    };
+    expect(hash({ agentTemplates: [reviewer], themes: [night] })).not.toBe(
+      hash({ agentTemplates: [reviewer] }),
+    );
+  });
+});
+
+describe("pluginReviewHash survives the jsonb round trip of the stored review", () => {
+  it("a connector template's auth and endpoint give the same hash with their keys reordered", () => {
+    // The review is stored as jsonb, which reorders object keys; the confirm step recomputes the
+    // hash from the stored review (plugin.review_stale on every import of slack 0.1.0-rc.4).
+    const tpl = {
+      id: "slack",
+      plugin: "connector-mcp",
+      connector: "slack",
+      endpoint: { url: "https://mcp.slack.com/mcp", transport: "http" },
+      auth: {
+        type: "oauth_code",
+        ownership: "personal",
+        discovery: "mcp",
+        client: "manual",
+        tokenAuthMethod: "client_secret_post",
+        scopes: ["search:read.public", "chat:write"],
+      },
+      editableEndpoint: false,
+    } as unknown as HashInput["connectorTemplates"][number];
+    const reordered = {
+      editableEndpoint: false,
+      auth: {
+        scopes: ["search:read.public", "chat:write"],
+        client: "manual",
+        type: "oauth_code",
+        discovery: "mcp",
+        ownership: "personal",
+        tokenAuthMethod: "client_secret_post",
+      },
+      endpoint: { transport: "http", url: "https://mcp.slack.com/mcp" },
+      connector: "slack",
+      plugin: "connector-mcp",
+      id: "slack",
+    } as unknown as HashInput["connectorTemplates"][number];
+    expect(hash({ connectorTemplates: [reordered] })).toBe(hash({ connectorTemplates: [tpl] }));
+    // a real change still changes it
+    const other = { ...tpl, auth: { ...(tpl.auth as object), scopes: ["chat:write"] } };
+    expect(hash({ connectorTemplates: [other as typeof tpl] })).not.toBe(
+      hash({ connectorTemplates: [tpl] }),
+    );
+  });
 });

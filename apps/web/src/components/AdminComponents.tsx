@@ -9,6 +9,7 @@ import {
   KeyValue,
   type MenuItem,
   ObjectCard,
+  ObjectMark,
   Stack,
   Text,
   useToast,
@@ -21,6 +22,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import {
   COMPONENT_ROUTES,
   type ComponentVersion,
+  componentName,
   isOrgRow,
   moveTo,
   type PlatformComponent,
@@ -30,7 +32,7 @@ import {
   shareBlockOf,
 } from "../lib/components";
 import { lockWhileRunning } from "../lib/header-actions";
-import { adminOrgsQuery } from "../lib/query/admin";
+import { adminOrgsQuery, deploymentSettingsQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
 import { componentChangeKeys } from "../lib/query/components";
 import { useAppMutation } from "../lib/query/mutation";
@@ -41,6 +43,12 @@ import {
   ComponentUploadDialog,
 } from "./ComponentScopeDialog";
 import { useScopeLabel } from "./PluginsHead";
+
+/** The platform default theme's id (a section: null while it loads or failed). */
+export function usePlatformDefaultTheme(): string | null {
+  const sq = deploymentSettingsQuery();
+  return useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) }).data?.uiTheme?.id ?? null;
+}
 
 /** The deployment's orgs by id (a section: empty while it loads or failed). */
 function useOrgNames(): (id: string) => string {
@@ -90,11 +98,21 @@ export function useOwnerText(): (c: PlatformComponent) => string {
   return (c) => (c.owner.kind === "platform" ? t("owner.platform") : c.owner.name);
 }
 
-/** The state chips of a component: 内置, 已停用, 插件已停用. */
-export function StateBadges({ c }: { c: PlatformComponent }) {
+/**
+ * The state chips of a component: 平台默认主题 (the theme `uiTheme` names), 内置, 已停用,
+ * 插件已停用.
+ */
+export function StateBadges({
+  c,
+  platformDefault = false,
+}: {
+  c: PlatformComponent;
+  platformDefault?: boolean;
+}) {
   const t = useTranslations("adminComponents.state");
   return (
     <>
+      {platformDefault && <Badge>{t("platformDefault")}</Badge>}
       {c.builtin && <Badge>{t("builtin")}</Badge>}
       {c.disabled && <Badge tone="warn">{t("disabled")}</Badge>}
       {c.pluginStopped && <Badge tone="warn">{t("pluginStopped")}</Badge>}
@@ -104,29 +122,58 @@ export function StateBadges({ c }: { c: PlatformComponent }) {
 
 /**
  * The admin list of one kind's platform components (spec §9): name (linking to its detail), 来自,
- * 归属, 范围, 版本 and how many orgs use it. `rows` null: loading.
+ * 归属, 范围, 版本 and how many orgs use it. `rows` null: loading. `platformDefault`: the theme
+ * that is the platform default (marked).
  */
 export function ComponentsTable({
   kind,
   rows,
+  platformDefault = null,
 }: {
   kind: PlatformComponentKind;
   rows: PlatformComponent[] | null;
+  platformDefault?: string | null;
 }) {
   const t = useTranslations("adminComponents");
+  const locale = useLocale();
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();
   const blockText = useShareBlockText();
+  // A connector template reads by its display name with its plugin's mark, its id under it
+  const marked = kind === "connector_template";
   const columns: Column<PlatformComponent>[] = [
     {
       key: "name",
       header: t("columns.name"),
-      cell: (c) => (
-        <Stack direction="row" gap={8} align="center">
-          <Link href={`${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`}>{c.name}</Link>
-          <StateBadges c={c} />
-        </Stack>
-      ),
+      cell: (c) => {
+        const href = `${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`;
+        const label = componentName(c, locale);
+        const badges = <StateBadges c={c} platformDefault={c.id === platformDefault} />;
+        if (!marked) {
+          return (
+            <Stack direction="row" gap={8} align="center">
+              <Link href={href}>{label}</Link>
+              {badges}
+            </Stack>
+          );
+        }
+        return (
+          <Stack direction="row" gap={8} align="center">
+            <ObjectMark size={24} text={label} image={c.icon ?? null} />
+            <Stack gap={0}>
+              <Stack direction="row" gap={8} align="center" wrap>
+                <Link href={href}>{label}</Link>
+                {badges}
+              </Stack>
+              {label !== c.name && (
+                <Text variant="small" tone="muted">
+                  {c.name}
+                </Text>
+              )}
+            </Stack>
+          </Stack>
+        );
+      },
     },
     { key: "from", header: t("columns.from"), tone: "muted", cell: (c) => <ComponentFrom c={c} /> },
     {
@@ -166,6 +213,7 @@ export function ComponentsTable({
       columns={columns}
       rows={rows ?? []}
       rowKey={(c) => c.id}
+      {...(marked ? { rowHeight: "roomy" as const } : {})}
       state={rows === null ? "loading" : "ready"}
       empty={{ title: t(`empty.${kind}`) }}
     />
@@ -296,7 +344,7 @@ export function ComponentOrgs({ c }: { c: PlatformComponent }) {
 export function useComponentActions(
   c: PlatformComponent,
   orgId: string | null,
-  opts: { inList?: boolean } = {},
+  opts: { inList?: boolean; platformDefault?: boolean } = {},
 ): { actions: HeaderAction[]; menu: MenuItem[]; dialog: ReactNode } {
   // From a list (`inList`, the admin cards) a promotion moves nowhere: the list is read again
   const t = useTranslations("adminComponents.detail");
@@ -358,13 +406,17 @@ export function useComponentActions(
   const shared = !platform && shareBlockOf(c) === null;
   // A builtin plugin's component keeps its scope and stays on (the kernel refuses both with 409
   // plugin.builtin), though it takes a new version; an org row has no deployment disable
-  const scope = !c.builtin && (platform || shared || !isOrgRow(c));
-  const disable = !c.builtin && !isOrgRow(c);
+  // The platform default theme stays `all` and on (409 theme.platform_default): neither is offered,
+  // the detail says why (roles everywhere: no refused actions)
+  const pinned = c.builtin || opts.platformDefault === true;
+  const scope = !pinned && (platform || shared || !isOrgRow(c));
+  const disable = !pinned && !isOrgRow(c);
   const actions: HeaderAction[] = [
     ...(shared && c.scope === "named" && !c.shownToOthers ? [showAction] : []),
     ...(scope ? [scopeAction] : []),
     ...(disable ? [disableAction] : []),
-    ...(platform && c.kind !== "connector_template" ? [uploadAction] : []),
+    // a new version on its own: skills and agent templates (a theme comes with its plugin)
+    ...(platform && (c.kind === "skill" || c.kind === "agent_template") ? [uploadAction] : []),
   ];
   // The same actions as a card's ⋯ menu (ruling P4-17): 上传新版本 stays on the detail, and 停用
   // is the menu's destructive item, last. A running call disables its item (and the call guards
@@ -436,11 +488,22 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
 }
 
 /** The detail's notes: org-owned (and why it is not shared), disabled, plugin stopped, builtin. */
-export function ComponentNotes({ c }: { c: PlatformComponent }) {
+export function ComponentNotes({
+  c,
+  platformDefault = false,
+}: {
+  c: PlatformComponent;
+  platformDefault?: boolean;
+}) {
   const t = useTranslations("adminComponents.detail");
   const blocked = useShareBlockText()(c);
   return (
     <>
+      {platformDefault && (
+        <Text variant="prose" tone="muted">
+          {t("platformDefaultNote")}
+        </Text>
+      )}
       {c.owner.kind === "org" && (
         <Text variant="prose" tone="muted">
           {t("orgOwnedNote", { org: c.owner.name })}

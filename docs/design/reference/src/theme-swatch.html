@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ThemeSwatch · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ThemeSwatch</h1>
+<p>One choice of a theme picker (spec §6.37): a radio card, the preview drawn from the theme's own bg, panel, ink and accent (here token references standing in for a theme's values) over its name and a sun or moon icon for its scheme; selected takes the selected ground and a line-strong border (selection is neutral). The blocks are 200 wide with space.4 padding.</p>
+<div class="r-blocks">
+<section data-ref-block="theme-swatch-default" style="width:200px" data-pad>
+  <button class="r-theme-swatch" data-part="theme-swatch" data-scheme="dark" data-state="default" role="radio" aria-checked="false"><span class="r-theme-swatch-preview" data-part="theme-swatch-preview" style="--sw-bg:var(--cb-bg);--sw-panel:var(--cb-panel);--sw-ink:var(--cb-ink);--sw-accent:var(--cb-accent)"><span class="r-theme-swatch-panel"></span><span class="r-theme-swatch-ink"></span><span class="r-theme-swatch-accent"></span></span><span class="r-theme-swatch-foot"><span class="r-theme-swatch-name" data-part="theme-swatch-name">Night City</span><i data-icon="moon" data-size="12"></i></span></button>
+</section>
+<section data-ref-block="theme-swatch-selected" style="width:200px" data-pad>
+  <button class="r-theme-swatch" data-part="theme-swatch" data-scheme="light" data-state="selected" role="radio" aria-checked="true"><span class="r-theme-swatch-preview" data-part="theme-swatch-preview" style="--sw-bg:var(--cb-panel-2);--sw-panel:var(--cb-raised);--sw-ink:var(--cb-muted);--sw-accent:var(--cb-info)"><span class="r-theme-swatch-panel"></span><span class="r-theme-swatch-ink"></span><span class="r-theme-swatch-accent"></span></span><span class="r-theme-swatch-foot"><span class="r-theme-swatch-name" data-part="theme-swatch-name">Paper</span><i data-icon="sun" data-size="12"></i></span></button>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

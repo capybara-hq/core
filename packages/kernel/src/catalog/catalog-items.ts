@@ -979,6 +979,7 @@ export function componentCountsOf(m: PluginManifest | undefined): ComponentCount
   return {
     extension: m?.extension === undefined ? 0 : 1,
     skills: m?.skills?.length ?? 0,
+    themes: m?.themes?.length ?? 0,
     connectorTemplates: m?.connectorTemplates?.length ?? 0,
     agentTemplates: m?.agents?.length ?? 0,
   };

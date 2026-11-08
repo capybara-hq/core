@@ -521,6 +521,13 @@ describe("/admin/orgs（ListPage）", () => {
   });
 });
 
+/** 外观 reads the themes and the current org's (none here). */
+const THEME_ROUTES = {
+  "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
+  "GET /api/v1/orgs/o1/themes": () =>
+    json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
+};
+
 describe("/admin/settings（FormPage）", () => {
   it.each(LOCALES)(
     "部署设置：无二级导航；改自建连接器为「禁止」→ ActionRow → PUT 只含改动项（%s）",
@@ -529,6 +536,7 @@ describe("/admin/settings（FormPage）", () => {
       const s = m.admin.settings;
       const calls = stubApi({
         "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+        ...THEME_ROUTES,
         "PUT /api/v1/admin/settings": (c) => json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
       });
       resetNavigation("/admin/settings");
@@ -558,7 +566,7 @@ describe("/admin/settings（FormPage）", () => {
   );
 
   it("warns super admins with the operator details only on an insecure origin", async () => {
-    stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
+    stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS), ...THEME_ROUTES });
     vi.stubGlobal("isSecureContext", false);
     await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const note = await screen.findByText(/CAPYBARA_AUTH__COOKIE_SECURE=false/);
@@ -572,7 +580,10 @@ describe("/admin/settings（FormPage）", () => {
   });
 
   it("币种不合法时不能保存", async () => {
-    const calls = stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
+    const calls = stubApi({
+      "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+      ...THEME_ROUTES,
+    });
     await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const s = en.admin.settings;
     const input = (await screen.findByRole("textbox", {

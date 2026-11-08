@@ -204,7 +204,7 @@ describe("parsePluginManifest", () => {
     [
       "nothing in it",
       skillsOnly({ skills: [], connectorTemplates: [] }),
-      /a plugin must contain an extension, a skill, a connector template or an agent template/,
+      /a plugin must contain an extension, a skill, a connector template, an agent template or a theme/,
     ],
     [
       "extension name ≠ plugin name",
@@ -273,6 +273,28 @@ describe("parsePluginManifest", () => {
       Array.from({ length: n }, (_, i) => ({ path: `./agents/a${i}.md` }));
     expect(parsePluginManifest(skillsOnly({ agents: refs(64) }))).not.toHaveProperty("errors");
     expect(errorsOf(skillsOnly({ agents: refs(65) }))[0]).toMatch(/^agents: /);
+  });
+
+  it("a plugin of themes only carries something; at most 10 themes, unique ids", () => {
+    const refs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `./themes/t${i}.json` }));
+    const themesOnly = skillsOnly({ skills: [], connectorTemplates: [], themes: refs(1) });
+    expect(errorsOf(themesOnly)).toEqual([]);
+    expect(
+      errorsOf(skillsOnly({ skills: [], connectorTemplates: [], themes: [] })).join("\n"),
+    ).toMatch(/or a theme/);
+    expect(PLUGIN_MANIFEST_LIMITS.themes).toBe(10);
+    expect(errorsOf(skillsOnly({ themes: refs(10) }))).toEqual([]);
+    expect(errorsOf(skillsOnly({ themes: refs(11) }))[0]).toMatch(/^themes: /);
+    expect(errorsOf(skillsOnly({ themes: [{ path: "./themes/Bad.json" }] }))[0]).toMatch(
+      /^themes\.0\.path: /,
+    );
+    expect(errorsOf(skillsOnly({ themes: [{ path: "./themes/a.md" }] }))[0]).toMatch(
+      /^themes\.0\.path: /,
+    );
+    expect(
+      errorsOf(skillsOnly({ themes: [{ path: "./themes/a.json" }, { path: "./x/a.json" }] }))[0],
+    ).toMatch(/^themes\.1\.path: duplicate theme id a/);
   });
 
   it("caps errors at 50 and never throws", () => {
@@ -583,6 +605,8 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["agents without a path", skillsOnly({ agents: [{}] })],
     ["agents", skillsOnly({ agents: [{ path: "./agents/a.md" }] })],
     ["agent path not .md", skillsOnly({ agents: [{ path: "./agents/a.json" }] })],
+    ["themes", skillsOnly({ themes: [{ path: "./themes/a.json" }] })],
+    ["theme without a path", skillsOnly({ themes: [{}] })],
     ["homepage http", skillsOnly({ homepage: "http://x.example.com" })],
     ["missing publisher", { ...skillsOnly(), publisher: undefined }],
     ["localized description", skillsOnly({ description: { en: "Skills", zh: "技能" } })],

@@ -542,6 +542,9 @@ export class OrgCatalogService {
       await this.recordSwitch(orgId, actor, itemId, false);
       return { kind: "done", item: await this.itemOf(orgId, actor, itemId) };
     }
+    // The platform default theme is locked on (themes spec §7): refused at the preview already;
+    // the uninstall's transaction checks again before it writes
+    await this.pluginInstaller.assertKeepsPlatformDefault(orgId, live.id);
     const preview = await this.pluginInstaller.previewUninstall(orgId, live.id);
     const confirm = uninstallPreviewHash(preview);
     if (body.confirm === undefined) return { kind: "preview", preview, confirm };

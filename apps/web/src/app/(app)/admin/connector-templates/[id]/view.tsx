@@ -1,8 +1,8 @@
 "use client";
 
-import { DetailPage, Stack, Text, versionLabel } from "@capybara-hq/design";
+import { DetailPage, ObjectMark, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   ComponentFacts,
@@ -15,7 +15,7 @@ import {
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
-import type { PlatformComponent } from "../../../../../lib/components";
+import { componentLabel, type PlatformComponent } from "../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
@@ -56,6 +56,8 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
             { label: id },
           ],
           title: "",
+          // the plugin's mark keeps its place
+          loading: { title: true, avatar: true },
         }}
         tabs={{
           label: t("tabsLabel"),
@@ -76,6 +78,7 @@ function AdminConnectorTemplateRead({ id, orgId }: { id: string; orgId: string |
 function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: string | null }) {
   const scope = usePagePath("admin");
   const t = useTranslations("adminComponents.detail");
+  const label = componentLabel(c, useLocale());
   const [tab, setTab] = useState<Tab>("versions");
   const vq = componentVersionsQuery("connector_template", c.id);
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
@@ -89,7 +92,9 @@ function AdminConnectorTemplate({ c, orgId }: { c: PlatformComponent; orgId: str
             { label: "connector-templates", href: "/admin/connector-templates" },
             { label: c.name },
           ],
-          title: c.name,
+          // the display name with its plugin's mark; the id stays in the path
+          avatar: <ObjectMark size={40} text={label} image={c.icon ?? null} />,
+          title: label,
           count: versionLabel(c.version),
           status: <StateBadges c={c} />,
           actions,

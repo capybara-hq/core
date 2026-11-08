@@ -108,6 +108,31 @@ export const ERROR_CODES = {
   /** What deleting an org's own plugin does changed since its preview (P3-19). */
   "catalog.preview_stale": 409,
   "catalog.name_conflict": 409,
+  /** A theme of an imported plugin fails its file or asset checks (themes spec §4, §5). */
+  "theme.invalid": 400,
+  /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
+  "theme.unreadable": 400,
+  /**
+   * A settings write names a theme that is not available where it is set (§7, §9): an org default
+   * off in the org, a platform default that is not a platform theme with scope `all`, or a
+   * person's pick on in none of their orgs; details `[{ theme }]`.
+   */
+  "theme.not_available": 400,
+  /**
+   * The change would take the platform default theme (`uiTheme`) away from an org: narrowing,
+   * disabling, removing it or its plugin (§7); details `[{ theme, setting: "uiTheme" }]`.
+   */
+  "theme.platform_default": 409,
+  /**
+   * Another theme with the same id is already on in an org the change would turn this one on in
+   * (§6, rule 10); details `[{ theme, orgId, themes, plugins }]`.
+   */
+  "theme.id_taken": 409,
+  /**
+   * A theme delivery URL names no stored theme version, or a file that version does not name (§8);
+   * a removed theme's versions are still served.
+   */
+  "theme.not_found": 404,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,
@@ -228,6 +253,8 @@ export const ERROR_CODES = {
   "connector.tool_not_found": 404,
   "connector.tool_not_pending": 409,
   "connector.resources_disabled": 409,
+  /** Per-member tool policies on a connector with one org credential (decision 2026-11-09). */
+  "connector.not_personal": 409,
   "approval.not_found": 404,
   "approval.already_decided": 409,
   "approval.scope_not_allowed": 409,

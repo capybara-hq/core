@@ -21,6 +21,7 @@ import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
+import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
 
@@ -74,4 +75,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ENVIRONMENT_ROUTES,
   // personal preferences (run context spec §3.4)
   ...ME_ROUTES,
+  // themes (themes spec §9)
+  ...THEME_ROUTES,
 ];

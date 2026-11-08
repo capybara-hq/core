@@ -453,7 +453,18 @@ describe("QuickActions (spec §6.16.27)", () => {
     expect(button.textContent).toBe("");
     const parts = [...bar.children].map((e) => e.getAttribute("data-part") ?? e.className);
     const at = parts.indexOf("quick-actions");
-    expect(parts.slice(at - 2, at + 2)).toEqual(["picker", "picker", "quick-actions", "cb-grow"]);
+    // the pickers (640 and up) and the options button (a phone; CSS shows one of the two)
+    expect(parts.slice(at - 2, at + 2)).toEqual([
+      "composer-pickers",
+      "composer-options",
+      "quick-actions",
+      "cb-grow",
+    ]);
+    const pickers = bar.querySelector('[data-part="composer-pickers"]') as HTMLElement;
+    expect([...pickers.children].map((e) => e.getAttribute("data-part"))).toEqual([
+      "picker",
+      "picker",
+    ]);
     // no quick actions: no button, nothing left in its place
     cleanup();
     const none = wrap(box(<QuickActions items={[]} onPick={() => {}} />));

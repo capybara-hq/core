@@ -5,19 +5,25 @@ import pkg from "../../../package.json";
 import { HydrateCache } from "../../components/HydrateCache";
 import { AppFrame } from "../../components/shell/AppFrame";
 import { KernelStarting } from "../../components/shell/KernelStarting";
+import { ThemeRoot } from "../../components/theme-root";
 import { setupReady } from "../../lib/agents";
 import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { currentPath } from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
 import { getShell } from "../../lib/server/session";
+import { workspaceThemeMetadata } from "../../lib/server/theme";
 import { setupRouteOf } from "../../lib/setup-routes";
+
+/** The viewer's theme icon, when the theme has one (themes spec §4.3). */
+export const generateMetadata = workspaceThemeMetadata;
 
 /**
  * The signed-in pages: the frame (App Shell, setup frame or org chooser) and the session context.
  * On a document request it reads the shell and prefetches the route's queries in one parallel
- * wave (web query cache spec §3.1), and hands both to the browser's cache. Client navigations
- * don't re-render it. The URL has no `(app)`.
+ * wave (web query cache spec §3.1), and hands both to the browser's cache. The shell's themes read
+ * gives the viewer's theme, linked and branded by `ThemeRoot` before the first paint (themes spec
+ * §8). Client navigations don't re-render it. The URL has no `(app)`.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
   const qc = serverQueryClient();
@@ -43,7 +49,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (prefetched.route === "unknown" && matchRoute(pathname) === null) notFound();
   return (
     <HydrateCache state={dehydrateFor(qc)}>
-      <AppFrame version={`v${pkg.version}`}>{children}</AppFrame>
+      <ThemeRoot orgId={shell.org?.orgId ?? null}>
+        <AppFrame version={`v${pkg.version}`}>{children}</AppFrame>
+      </ThemeRoot>
     </HydrateCache>
   );
 }

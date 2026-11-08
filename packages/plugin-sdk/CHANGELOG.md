@@ -1,5 +1,21 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.8
+
+### Minor Changes
+
+- c1c7b0f: Theme file format: `parseThemeFile`, `ThemeFileSchema`, `THEME_LIMITS`, `themeIdOf` and the
+  `themes` field of `plugin.json` (a plugin may consist of themes only).
+  A parsed theme holds only the file's own values; `mergeThemeSchemes` merges it onto the current
+  built-in tokens (skipping overrides the built-ins no longer know), and
+  `parseThemeFile(id, json, { readability: false })` re-reads a version already in a catalog without
+  judging its readability again.
+- ff5e3bf: Add theme asset checks: `sanitizeThemeSvg` (strict, namespace-aware SVG sanitizer that re-serializes
+  the parsed tree), `checkWoff2`, `checkPng` and `validateThemeAssets`.
+- 00e742e: Add `THEME_FONTS` (the built-in font stacks, generated from the design tokens) and the stored-theme
+  re-validation helpers `canonicalThemeValue`, `isThemeFontFamily` and `isThemeAssetPath`.
+- 0158d0c: Add the theme token allowlist (`THEME_TOKENS`, `THEME_OVERRIDABLE`, `THEME_CONTRAST`, `THEME_SEPARATION`) and `checkThemeReadability`, with the color math (`contrastRatio`, `oklabL`, `compositeOver`) moved into the SDK.
+
 ## 0.1.0-rc.7
 
 ### Minor Changes

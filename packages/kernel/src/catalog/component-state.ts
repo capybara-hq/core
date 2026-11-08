@@ -1,18 +1,20 @@
 // Component scope (plugin scope phase 2, Task 6; spec §5 rules 2, 5, 8, 10, 11, §13.5): when a platform
-// component (skill, agent template, connector template) is on in an org, offered to it, or locked on,
-// and which agents of an org use one. Pure predicates plus the reads they need; the usable sets
+// component (skill, agent template, connector template, theme) is on in an org, offered to it, or
+// locked on, and which agents of an org use one. Pure predicates plus the reads they need; the usable sets
 // (skills/usable.ts, agents/templates.ts), the component scope service and the plugin scope preview
 // all decide with the same predicates.
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
 
 /** The kinds of platform components. */
-export type ComponentKind = "skill" | "agent_template" | "connector_template";
+export type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
 
+/** The kinds the scope, switch, ownership and preview flows (and the component routes) walk. */
 export const COMPONENT_KINDS: readonly ComponentKind[] = [
   "skill",
   "agent_template",
   "connector_template",
+  "theme",
 ];
 
 /** A component's own scope settings (ruling C2). */
@@ -119,13 +121,24 @@ export interface ComponentRow extends ComponentScopeFacts {
   /** The current version (a connector template: the catalog version that last changed it). */
   version: string;
   description: string | null;
+  /**
+   * A connector template's localized display name (its file's `displayName`); null for skills and
+   * agent templates, whose name is what they are shown by.
+   */
+  displayName: { zh: string; en: string } | null;
   shownToOthers: boolean;
   /** The owning org (null: the platform; ruling P3-1). */
   ownerOrgId: string | null;
-  /** The org it was created in (skills, agent templates; null: the platform, F27). */
+  /** The org it was created in (skills, agent templates, themes; null: the platform, F27). */
   originOrgId: string | null;
   /** Its owner shares it with other orgs (the share gate, P3-1). */
   shareable: boolean;
+}
+
+/** A `{ zh, en }` display name from stored JSON (a template file's), else null. */
+function localizedName(v: unknown): { zh: string; en: string } | null {
+  const n = v as { zh?: unknown; en?: unknown } | null | undefined;
+  return typeof n?.zh === "string" && typeof n.en === "string" ? { zh: n.zh, en: n.en } : null;
 }
 
 /** The live platform components of `kind` (`ids` / `itemId`: only those). */
@@ -178,19 +191,30 @@ export async function loadComponents(
     if (filter.itemId !== undefined) q = q.where("p.catalog_item_id", "=", filter.itemId);
     if (filter.name !== undefined) q = q.where("p.template_id", "=", filter.name);
     if (filter.forUpdate) q = q.forUpdate("p");
-    return (await q.orderBy("p.id").execute()).map((r) => ({
-      ...common(r),
-      ...((r.file as { defaultEnabled?: unknown } | null)?.defaultEnabled === false && {
-        defaultOff: true,
-      }),
-      name: r.template_id,
-      plugin: r.item_name,
-      version: r.current_version,
-      description: null,
-      originOrgId: null,
-    }));
+    return (await q.orderBy("p.id").execute()).map((r) => {
+      const file = r.file as {
+        defaultEnabled?: unknown;
+        displayName?: unknown;
+        description?: unknown;
+      } | null;
+      return {
+        ...common(r),
+        ...(file?.defaultEnabled === false && { defaultOff: true }),
+        name: r.template_id,
+        plugin: r.item_name,
+        version: r.current_version,
+        description: typeof file?.description === "string" ? file.description : null,
+        displayName: localizedName(file?.displayName),
+        originOrgId: null,
+      };
+    });
   }
-  const table = kind === "skill" ? "platform_skills" : "platform_agent_templates";
+  const table =
+    kind === "skill"
+      ? "platform_skills"
+      : kind === "theme"
+        ? "platform_themes"
+        : "platform_agent_templates";
   let q = db
     .selectFrom(`${table as "platform_skills"} as p`)
     .select([
@@ -219,6 +243,7 @@ export async function loadComponents(
     plugin: r.plugin_name,
     version: String(r.current_version),
     description: r.description as string | null,
+    displayName: null,
     originOrgId: r.origin_org_id,
   }));
 }
@@ -437,7 +462,8 @@ export async function agentDefinitionRefs(
 /**
  * The ids an org's agents may reference a platform component by: its own id and the org's copies
  * linked to it (ruling B2: unpinned ones resolve to it; ruling P2-18: pinned ones follow its
- * availability). Connector templates: none (connectors made from one stay the org's own).
+ * availability). Connector templates: none (connectors made from one stay the org's own); themes:
+ * none (no agent references a theme, and a theme has no org copies).
  */
 export async function referenceIds(
   db: KernelSchemaDb,
@@ -446,7 +472,7 @@ export async function referenceIds(
   ids: readonly string[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  if (kind === "connector_template" || ids.length === 0) return out;
+  if (kind === "connector_template" || kind === "theme" || ids.length === 0) return out;
   for (const id of ids) out.set(id, id);
   const copies =
     kind === "skill"
@@ -572,6 +598,29 @@ export async function skillNameClashes(
     ],
     plugins: platform.map((c) => c.plugin ?? "platform"),
   };
+}
+
+/**
+ * The live themes with id `name` that are on in the org (themes spec §6: theme ids are unique in an
+ * org's usable set, rule 10), except `self` (null: a theme with no row yet, e.g. one an update adds).
+ */
+export async function themeIdClashes(
+  db: KernelSchemaDb,
+  orgId: string,
+  self: { id: string } | null,
+  name: string,
+): Promise<ComponentRow[]> {
+  const others = (await loadComponents(db, "theme", { name })).filter((c) => c.id !== self?.id);
+  if (others.length === 0) return [];
+  const st = await loadScopeState(db, "theme", others);
+  return others.filter((c) =>
+    componentOn(
+      c,
+      pluginFactsOf(st, c.itemId, orgId),
+      listedIn(st, c.id, orgId),
+      switchOf(st, c.id, orgId),
+    ),
+  );
 }
 
 /** A connector template's id from its manifest path (`./connectors/<id>.json`). */

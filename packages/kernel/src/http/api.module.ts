@@ -86,6 +86,12 @@ import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { OrgThemesController } from "../themes/themes.controller.js";
+import { ThemesModule } from "../themes/themes.module.js";
+import {
+  PlatformThemeController,
+  ThemeDeliveryController,
+} from "../themes/themes-public.controller.js";
 import { ApprovalsController, ToolGrantsController } from "../tools/approvals.controller.js";
 import { ConnectorContentController } from "../tools/connector-content.controller.js";
 import { ConnectorsController } from "../tools/connectors.controller.js";
@@ -160,6 +166,9 @@ const CONTROLLERS: Type[] = [
   OrgOwnedPluginsController,
   OrgComponentsController,
   AdminCatalogRequestsController,
+  OrgThemesController,
+  ThemeDeliveryController,
+  PlatformThemeController,
   DeviceAuthController,
 ];
 
@@ -191,6 +200,7 @@ const CONTROLLERS: Type[] = [
     FilesModule,
     UiModule,
     InboxModule,
+    ThemesModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

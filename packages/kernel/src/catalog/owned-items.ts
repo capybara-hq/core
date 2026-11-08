@@ -23,6 +23,7 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { SkillsService } from "../skills/skills.service.js";
+import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import { type ActorOpts, CatalogService } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import { notOwnedError } from "./component-promotion.js";
@@ -85,12 +86,14 @@ const COMPONENT_TABLES = [
   "platform_skills",
   "platform_agent_templates",
   "platform_connector_templates",
+  "platform_themes",
 ] as const;
 
 const TABLE_OF: Record<ComponentKind, (typeof COMPONENT_TABLES)[number]> = {
   skill: "platform_skills",
   agent_template: "platform_agent_templates",
   connector_template: "platform_connector_templates",
+  theme: "platform_themes",
 };
 
 interface OwnedRow {
@@ -514,6 +517,14 @@ export class OwnedItems {
       afterCommit(() => this.enqueueCleanup(item.id));
       return "removed";
     }
+    // A transfer leaves none of its themes `all` (an `all` scope is narrowed, P3-39): refused
+    // while one is the platform default (themes spec §7), before anything changes
+    // (its theme rows FOR UPDATE first: the theme lock order is item, theme row, `uiTheme`)
+    await assertNotPlatformDefault(
+      t,
+      (await loadComponents(t, "theme", { itemId: item.id, forUpdate: true })).map((c) => c.id),
+      () => "narrower",
+    );
     // Read before anything changes: where each own-scope `all` component is on (P3-39)
     const narrow: { c: ComponentRow; orgs: string[] }[] = [];
     for (const kind of COMPONENT_KINDS) {

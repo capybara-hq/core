@@ -1,5 +1,47 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- bbd508e: The admin component list gives each theme its name and swatches (`theme: { name, swatches }`), and
+  an org's theme switch-off preview lists whether it is the org's default and how many members picked
+  it (`preview.themes`), so the pickers and dialogs show them.
+  
+  An org owner's update preview names the orgs whose default a removed theme is (in `orgNames`) and
+  counts only the owner org's own people in `pickedBy`.
+- 00e742e: Serve themes: the public, immutable `GET /api/v1/themes/:id/:version/theme.css` (rendered from the
+  stored theme, every value re-validated) and `…/assets/:file`, and the public
+  `GET /api/v1/platform/theme`; new error code `theme.not_found`.
+- b2b3faa: Plugin import, sync, update and removal carry themes: a plugin's `themes/*.json` (or
+  `manifest.themes`) are parsed, readability-checked and their fonts and logos validated at import
+  (refusals `theme.invalid` / `theme.unreadable`), synced as platform theme components with their
+  sanitized assets under `deployment/platform/themes/<id>/<version>-<catalogVersion>/`, updated with
+  their plugin and removed with it. Themes-only org uploads pass the custom content gate.
+  A stored theme version holds only the theme file's own values (merged with the built-in tokens
+  where they are used), and a catalog version is not judged for readability again on update or
+  rollback, so a core token change neither blocks nor re-versions existing themes.
+- f120273: Themes are components with scope, org switches and previews: theme ids are unique among the
+  themes on in an org (`theme.id_taken`), previews of changes that take a theme away list the orgs
+  whose default it is and how many people picked it, and changes that would take the platform
+  default theme away from an org are refused (`theme.platform_default`).
+- 2191e44: Which theme applies: the platform default (`uiTheme` in the deployment settings, a platform theme
+  whose scope is `all`), the org default and personal lock (`theme` in the org settings) and the
+  person's pick (`theme` in `PUT /api/v1/me/preferences`, which is now a partial update) are checked
+  where they are set (`theme.not_available`). `GET /api/v1/orgs/:orgId/themes` lists the themes on in
+  the org with swatches, the viewer's resolved theme and the org's setting; the Platform tool gains
+  `themes.list` and the theme fields in its settings operations.
+- c489ee6: Add storage for the `theme` component kind: `platform_themes` / `platform_theme_versions`, the
+  `theme` kind in the component scope, switch and install component tables, and `accounts.theme`.
+
+### Patch Changes
+
+- Updated dependencies [c1c7b0f]
+- Updated dependencies [ff5e3bf]
+- Updated dependencies [00e742e]
+- Updated dependencies [0158d0c]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.8
+
 ## 0.1.0-rc.10
 
 ### Minor Changes

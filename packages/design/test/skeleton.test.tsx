@@ -135,13 +135,16 @@ describe("PageHeader loading", () => {
   it("the placeholders follow the loaded parts' phone sizes below 640", () => {
     const shell = css("shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
     // Every rule of the phone block, read as a plain rule list (the openers dropped).
-    const phone = shell.slice(shell.indexOf(".cb-pageheader-actions .cb-skeleton-box"));
+    const phone = shell.slice(shell.indexOf(".cb-pageheader-tabs .cb-pageheader-tab-slots"));
     const loadedTab = declared(phone, ".cb-pageheader-tabs .cb-tab", "min-height");
     expect(loadedTab).toBe("40px");
-    expect(declared(phone, ".cb-pageheader-actions .cb-skeleton-box", "height")).toBe(loadedTab);
     expect(declared(phone, ".cb-pageheader-tabs .cb-pageheader-tab-slots", "height")).toBe(
       loadedTab,
     );
+    // The head's actions keep their default height on phones (a 40 px ring makes the tap
+    // target), so their placeholders keep the default control block too: no phone override.
+    expect(declared(phone, ".cb-pageheader-actions .cb-skeleton-box", "height")).toBeUndefined();
+    expect(declared(phone, ".cb-pageheader-actions .cb-btn", "min-height")).toBeUndefined();
   });
 
   it("known tabs render for real while loading", () => {

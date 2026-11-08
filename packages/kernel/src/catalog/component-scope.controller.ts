@@ -1,6 +1,7 @@
 import { Controller, Get, HttpCode, Inject, Post, Put, Req } from "@nestjs/common";
 import type { z } from "zod";
 import { ApiError } from "../errors.js";
+import { orgIconScope, type PluginIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -49,6 +50,21 @@ class ComponentDisabledBody extends createZodDto(DisabledBody, "ComponentDisable
 class ComponentShownBody extends createZodDto(ShownBody, "ComponentShownBody") {}
 class ComponentSwitchBody extends createZodDto(SwitchBody, "ComponentSwitchBody") {}
 
+/**
+ * Each component with `icon`: its plugin's icon URL on the reader's route (null without one, for
+ * a component without a plugin, or when the reader may not see the plugin; maintainer decision
+ * 2026-11-09: a connector template without an icon of its own shows its plugin's).
+ */
+async function withIcons<T extends { itemId: string | null }>(
+  icons: PluginIcons,
+  rows: T[],
+  scope: PluginIconScope,
+): Promise<(T & { icon: string | null })[]> {
+  const ids = rows.flatMap((r) => (r.itemId === null ? [] : [r.itemId]));
+  const urls = await icons.ofItems(ids, scope);
+  return rows.map((r) => ({ ...r, icon: r.itemId === null ? null : (urls.get(r.itemId) ?? null) }));
+}
+
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
   return tokenId !== undefined ? { actorTokenId: tokenId } : {};
@@ -66,6 +82,7 @@ export class AdminComponentsController {
   constructor(
     @Inject(ComponentScopeService) private readonly scope: ComponentScopeService,
     @Inject(PlatformComponents) private readonly components: PlatformComponents,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /**
@@ -113,12 +130,17 @@ export class AdminComponentsController {
     );
   }
 
-  /** `GET ?kind=`: every platform component of the kind (plugin, owner, scope, version, orgs on). */
+  /**
+   * `GET ?kind=`: every platform component of the kind (plugin, owner, scope, version, orgs on),
+   * each with its display name and its plugin's icon (`icon`, the admin route; null without one).
+   */
   @Get()
   async list(
     @ZQuery(ComponentListQuery) q: z.infer<typeof ListQuery>,
-  ): Promise<{ components: ComponentView[] }> {
-    return { components: await this.scope.list(q.kind) };
+  ): Promise<{ components: (ComponentView & { icon: string | null })[] }> {
+    return {
+      components: await withIcons(this.icons, await this.scope.list(q.kind), { kind: "admin" }),
+    };
   }
 
   /**
@@ -230,25 +252,29 @@ export class AdminComponentsController {
  */
 @Controller("api/v1/orgs/:orgId/components")
 export class OrgComponentsController {
-  constructor(@Inject(ComponentScopeService) private readonly scope: ComponentScopeService) {}
+  constructor(
+    @Inject(ComponentScopeService) private readonly scope: ComponentScopeService,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
+  ) {}
 
   /**
    * The platform components offered to the org (`?kind=`, `?itemId=`: only those; Task 10): each
    * with its state in the org (`on`, `locked` for `all`, the org's `switch`) and whether an org
-   * admin may switch it. Members read it (the workspace pages are read-only for them).
+   * admin may switch it. Members read it (the workspace pages are read-only for them). Each has
+   * its display name and `icon`, its plugin's icon on the org's catalog route (null without one,
+   * or when the org's catalog does not show the plugin to the reader: the share gate holds).
    */
   @Get()
   @OrgAction("catalog.read")
   async list(
     @CurrentOrg() org: OrgContext,
     @ZQuery(OrgComponentListQueryDto) q: z.infer<typeof OrgComponentListQuery>,
-  ): Promise<{ components: OrgOfferedComponentView[] }> {
-    return {
-      components: await this.scope.orgList(org.orgId, {
-        ...(q.kind !== undefined && { kind: q.kind }),
-        ...(q.itemId !== undefined && { itemId: q.itemId }),
-      }),
-    };
+  ): Promise<{ components: (OrgOfferedComponentView & { icon: string | null })[] }> {
+    const rows = await this.scope.orgList(org.orgId, {
+      ...(q.kind !== undefined && { kind: q.kind }),
+      ...(q.itemId !== undefined && { itemId: q.itemId }),
+    });
+    return { components: await withIcons(this.icons, rows, orgIconScope(org)) };
   }
 
   @Put(":kind/:id/switch")

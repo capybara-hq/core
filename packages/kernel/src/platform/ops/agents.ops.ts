@@ -50,6 +50,19 @@ const Skills = RouteSkills.pick({ pinned: true })
   .extend({ orgSkills: RouteSkills.shape.orgSkills.unwrap() })
   .strict();
 
+/**
+ * Whether `next` sets an `allow` that `current` does not have (decision 2026-11-09: `allow` on a
+ * connector tool lets an agent call it without asking). Such a change is confirmed every time and
+ * never remembered, so an agent can never loosen its own policies on a grant the person remembered
+ * for ordinary edits.
+ */
+function addsAllow(
+  next: Record<string, string> | undefined,
+  current: Record<string, string> | undefined,
+): boolean {
+  return Object.entries(next ?? {}).some(([k, v]) => v === "allow" && current?.[k] !== "allow");
+}
+
 /** The definition fields an agent can set through the tool; the rest keep the web's defaults. */
 const Fields = {
   name: Def.name,
@@ -172,8 +185,13 @@ export class AgentsOperations implements OnModuleInit {
    * `agents.update`'s class (spec §13): `personal` (may be remembered) only on a private agent the
    * actor owns; any other agent the actor may edit is shared, so each change is confirmed.
    */
-  private async updateClass(agentId: string, ctx: OperationContext): Promise<ConfirmClass> {
+  private async updateClass(
+    agentId: string,
+    toolPolicies: Record<string, string> | undefined,
+    ctx: OperationContext,
+  ): Promise<ConfirmClass> {
     const a = await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId);
+    if (addsAllow(toolPolicies, a.definition.toolPolicies)) return "org";
     return a.visibility === "private" && a.ownerAccountId === ctx.actorAccountId
       ? "personal"
       : "org";
@@ -241,6 +259,9 @@ export class AgentsOperations implements OnModuleInit {
         omits: ["memberIds", "profile"],
         loosens: { visibility: "optional: the operation creates private agents only" },
         confirm: "personal",
+        // an `allow` loosens: never on a remembered grant
+        confirmFor: async (i) =>
+          addsAllow(i.definition.toolPolicies, undefined) ? "org" : "personal",
         summary: (i) => ({
           zh: `新建私有智能体「${i.definition.name}」`,
           en: `Create private agent "${i.definition.name}"`,
@@ -273,7 +294,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.',
+          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent, or one that sets a tool policy to allow, is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
@@ -316,7 +337,7 @@ export class AgentsOperations implements OnModuleInit {
             next: "The agent changed since you read it: read it again with agents.get, then send its current version.",
           },
         ],
-        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, i.toolPolicies, ctx),
         summary: async (i, ctx) => {
           const a = await this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId);
           const name = named(a.definition.name);
@@ -388,7 +409,7 @@ export class AgentsOperations implements OnModuleInit {
         // needs no declaration: an input that accepts less than the route passes the parity test.
         omits: ["expectedUpdatedAt"],
         confirm: "personal",
-        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, undefined, ctx),
         errors: [
           {
             code: "agent.not_found",
@@ -558,7 +579,7 @@ export class AgentsOperations implements OnModuleInit {
         confirm: "personal",
         // destructive: asked every time and never remembered, a shared agent as an org write
         rememberable: false,
-        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, undefined, ctx),
         errors: [
           {
             code: "agent.not_found",
@@ -654,7 +675,7 @@ export class AgentsOperations implements OnModuleInit {
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/:key/bind"],
         confirm: "personal",
-        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, undefined, ctx),
         errors: [
           {
             code: "agent.pending_connector_not_found",

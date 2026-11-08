@@ -36,23 +36,42 @@ import NotFound from "../../../not-found";
  * update added) asks for each one's input with the install wizard's template step, then creates
  * them (`POST …/catalog/:itemId/connectors`). Nothing missing: says so and goes back.
  */
-export default function PluginConnectorsView({ itemId }: { itemId: string }) {
+export default function PluginConnectorsView({
+  itemId,
+  fromConnectors = false,
+}: {
+  itemId: string;
+  /** Opened from a `/connectors` card (`?from=connectors`): the path and the way back lead there. */
+  fromConnectors?: boolean;
+}) {
   const ws = useWorkspace({ min: "admin", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Connectors key={itemId} orgId={ws.orgId} itemId={itemId} />;
+  return (
+    <Connectors key={itemId} orgId={ws.orgId} itemId={itemId} fromConnectors={fromConnectors} />
+  );
 }
 
-function Connectors({ orgId, itemId }: { orgId: string; itemId: string }) {
+function Connectors({
+  orgId,
+  itemId,
+  fromConnectors,
+}: {
+  orgId: string;
+  itemId: string;
+  fromConnectors: boolean;
+}) {
   const scope = usePagePath("org");
   const t = useTranslations("catalog.org.connectors");
   const read = usePageQuery(orgCatalogItemQuery(orgId, itemId));
-  const path = [
-    ...scope,
-    { label: "plugins", href: "/plugins" },
-    { label: itemId, href: `/plugins/${encodeURIComponent(itemId)}` },
-    { label: "connectors" },
-  ];
+  const path = fromConnectors
+    ? [...scope, { label: "connectors", href: "/connectors" }, { label: "setup" }]
+    : [
+        ...scope,
+        { label: "plugins", href: "/plugins" },
+        { label: itemId, href: `/plugins/${encodeURIComponent(itemId)}` },
+        { label: "connectors" },
+      ];
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   if (read.kind === "loading") {
@@ -66,17 +85,28 @@ function Connectors({ orgId, itemId }: { orgId: string; itemId: string }) {
       />
     );
   }
-  return <Wizard key={read.data.item.id} orgId={orgId} detail={read.data} path={path} />;
+  return (
+    <Wizard
+      key={read.data.item.id}
+      orgId={orgId}
+      detail={read.data}
+      path={path}
+      backTo={fromConnectors ? "/connectors" : `/plugins/${encodeURIComponent(itemId)}`}
+    />
+  );
 }
 
 function Wizard({
   orgId,
   detail,
   path,
+  backTo,
 }: {
   orgId: string;
   detail: OrgCatalogDetail;
   path: { label: string; href?: string }[];
+  /** Where done, cancel and "nothing to do" lead. */
+  backTo: string;
 }) {
   const t = useTranslations("catalog.org.connectors");
   const ti = useTranslations("catalog.org.install");
@@ -116,7 +146,7 @@ function Wizard({
       ),
     invalidates: () => pluginChangeKeys(orgId),
   });
-  const back = () => router.push(`/plugins/${encodeURIComponent(item.id)}`);
+  const back = () => router.push(backTo);
   const header = { path, title: t("title", { name }) };
 
   if (templates.length === 0) {
@@ -185,6 +215,10 @@ function Wizard({
               },
       }}
     >
+      {/*
+        Slot: the template's setup guide (setup guides v2, a later task) goes here, above the
+        template's input, so the admin reads where to get the OAuth client or endpoint first.
+      */}
       {template !== undefined && draft !== undefined && (
         <TemplateStep
           template={template}

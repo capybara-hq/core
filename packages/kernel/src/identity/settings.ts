@@ -7,6 +7,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
 import { SuperAdminLock } from "./super-admin.js";
 
@@ -64,6 +65,18 @@ export type SubagentLimitOverride = z.infer<typeof SUBAGENT_LIMIT_OVERRIDE>;
 /** 组织能否自建连接器 / 技能（C22）：`deny` 时只能从平台目录安装（T26 执行）。 */
 const CustomPolicy = z.enum(["allow", "deny"]);
 
+/** The deployment setting key of the platform default theme (themes spec §7). */
+export const UI_THEME_SETTING = "uiTheme";
+
+/**
+ * The platform default theme (themes spec §7): a `platform_themes` id, or null for the built-in
+ * theme. Only a platform-owned theme whose effective scope is `all` can be set (checked by
+ * {@link SettingsService.update}); every reader goes through {@link readUiTheme} or
+ * {@link SettingsService.get}, both parsing with this schema.
+ */
+export const UiThemeSetting = z.object({ id: z.string().min(1).max(200).nullable() });
+export type UiTheme = z.infer<typeof UiThemeSetting>;
+
 export const DEPLOYMENT_SETTINGS = z.object({
   orgCreation: z.enum(["anyone", "super_admin"]).default("anyone"),
   /** 按组织覆盖运行并发上限（orgId → 上限）；未列出的组织用 `runtime.orgConcurrency`。 */
@@ -89,6 +102,8 @@ export const DEPLOYMENT_SETTINGS = z.object({
    * scope spec §5.1 rule 3). false hides the browse route and refuses those requests.
    */
   orgMarketplaceBrowse: z.boolean().default(true),
+  /** The platform default theme (themes spec §7); `{ id: null }`: the built-in theme. */
+  uiTheme: UiThemeSetting.default({ id: null }),
 });
 export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 
@@ -118,6 +133,11 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
     customConnectors: CustomPolicy.optional(),
     customSkills: CustomPolicy.optional(),
     orgMarketplaceBrowse: z.boolean().optional(),
+    /**
+     * The platform default theme: a platform-owned theme whose effective scope is `all`, not
+     * disabled (else 400 `theme.not_available`), or `{ id: null }` for the built-in theme.
+     */
+    uiTheme: UiThemeSetting.strict().optional(),
   })
   .strict();
 export type DeploymentSettingsPatch = z.infer<typeof DEPLOYMENT_SETTINGS_PATCH>;
@@ -209,6 +229,42 @@ export async function readOrgMarketplaceBrowse(db: KernelSchemaDb): Promise<bool
   return parsed.success ? parsed.data : true;
 }
 
+/**
+ * The platform default theme setting, read live from PG (in the caller's transaction when there is
+ * one) and parsed with {@link UiThemeSetting}: missing or invalid -> `{ id: null }`. `lock`: the
+ * row is read FOR SHARE, so a concurrent write of the setting (which holds it FOR UPDATE) waits for
+ * the caller's transaction, and the reverse.
+ */
+export async function readUiTheme(
+  db: KernelSchemaDb,
+  opts: { lock?: boolean } = {},
+): Promise<UiTheme> {
+  let q = db.selectFrom("deployment_settings").select("value").where("key", "=", UI_THEME_SETTING);
+  if (opts.lock) q = q.forShare();
+  const row = await q.executeTakeFirst();
+  const parsed = UiThemeSetting.safeParse(row?.value);
+  return parsed.success ? parsed.data : { id: null };
+}
+
+/**
+ * Locks the `uiTheme` row FOR UPDATE in the caller's transaction, creating it as `{ id: null }`
+ * first when it is missing (migration 0094 seeds it; a test may have truncated the table), so the
+ * FOR SHARE readers always find a row to wait on.
+ */
+async function lockUiThemeRow(db: KernelSchemaDb): Promise<void> {
+  await db
+    .insertInto("deployment_settings")
+    .values({ key: UI_THEME_SETTING, value: JSON.stringify({ id: null }) })
+    .onConflict((oc) => oc.column("key").doNothing())
+    .execute();
+  await db
+    .selectFrom("deployment_settings")
+    .select("key")
+    .where("key", "=", UI_THEME_SETTING)
+    .forUpdate()
+    .execute();
+}
+
 /** 按组织合并覆盖：值为 null 删除该组织，其余整项替换；未列出的组织不变。 */
 function mergeByOrg<T>(
   current: Record<string, T>,
@@ -294,6 +350,20 @@ export class SettingsService {
     if (patch.customSkills !== undefined) next.customSkills = patch.customSkills;
     if (patch.orgMarketplaceBrowse !== undefined) {
       next.orgMarketplaceBrowse = patch.orgMarketplaceBrowse;
+    }
+    if (patch.uiTheme !== undefined) {
+      // The one theme lock order (themes spec §7), inside the super admin lock above: the chosen
+      // theme's catalog item, then its `platform_themes` row FOR SHARE, then the `uiTheme` row FOR
+      // UPDATE, and only then the eligibility check (on in every live org). The writers that take
+      // a theme away or switch it off in an org (scope, disable, removal, the org switch and
+      // uninstall) hold the item or theme row before they read `uiTheme` FOR SHARE, so they and
+      // this write wait for each other in the same order and never deadlock.
+      if (patch.uiTheme.id !== null) await lockThemeShared(this.db.db, patch.uiTheme.id);
+      await lockUiThemeRow(this.db.db);
+      if (patch.uiTheme.id !== null) {
+        await assertPlatformDefaultEligible(this.db.db, patch.uiTheme.id);
+      }
+      next.uiTheme = { id: patch.uiTheme.id };
     }
     const {
       runConcurrencyOverrides: runPatch,

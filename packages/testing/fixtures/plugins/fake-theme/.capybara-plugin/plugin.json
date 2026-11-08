@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fake-theme",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a declarative plugin with two themes and no extension"
+}

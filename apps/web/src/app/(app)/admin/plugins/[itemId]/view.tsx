@@ -525,6 +525,7 @@ function usePluginComponents(itemId: string): (row: ComponentRow) => PlatformCom
     skill: skills?.components ?? [],
     connector_template: connectors?.components ?? [],
     agent_template: agents?.components ?? [],
+    theme: [],
   };
   return (row) => {
     const kind = PLATFORM_KIND[row.kind];

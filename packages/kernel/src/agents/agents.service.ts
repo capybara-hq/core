@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { parseToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -396,7 +397,16 @@ export class AgentsService {
         message: "subagentTools is set only on a sub-agent's definition at dispatch",
       });
     }
-    for (const key of Object.keys(def.toolPolicies)) {
+    for (const [key, policy] of Object.entries(def.toolPolicies)) {
+      // `allow` counts only for a connector tool (decision 2026-11-09): elsewhere a policy only
+      // tightens, so an `allow` there is refused rather than kept as a no-op
+      if (policy === "allow" && parseToolKey(key)?.kind !== "connector") {
+        details.push({
+          path: `toolPolicies.${key}`,
+          message: `"allow" applies only to a connector's tools; "${key}" can only be tightened (ask or deny)`,
+        });
+        continue;
+      }
       if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
         const renamed = legacyKeySaveText(key, keys);

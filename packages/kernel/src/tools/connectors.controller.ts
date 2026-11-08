@@ -2,6 +2,7 @@ import { ConnectorAuthSchema } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -12,7 +13,15 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
-import { ConnectorGuideAckSchema, CredentialValue } from "./connectors.schemas.js";
+import {
+  ConnectorAccountPolicies,
+  type MemberToolPolicyView,
+} from "./connector-account-policies.js";
+import {
+  ConnectorGuideAckSchema,
+  CredentialValue,
+  MemberToolPoliciesBody,
+} from "./connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorPreview,
@@ -90,16 +99,23 @@ class ConnectorPreviewBody extends createZodDto(PreviewBody, "ConnectorPreviewBo
 class ConnectorUpdateBody extends createZodDto(UpdateBody, "ConnectorUpdateBody") {}
 class ConnectorToolReviewBody extends createZodDto(ReviewBody, "ConnectorToolReviewBody") {}
 class ConnectorCredentialBody extends createZodDto(CredentialValue, "ConnectorCredentialBody") {}
+class MemberToolPoliciesDto extends createZodDto(
+  MemberToolPoliciesBody,
+  "MemberToolPoliciesBody",
+) {}
+
 class ConnectorGuideAckBody extends createZodDto(
   ConnectorGuideAckSchema,
   "ConnectorGuideAckBody",
 ) {}
 
 /**
- * A connector as the org's pages show it: with its template's setup guide and the drift since it
- * was set up (`setupGuide`, `guideDrift`; spec 2026-11-09-setup-guides-v2-design.md §9.3, §11).
+ * A connector as the org's pages show it: with its plugin's icon (`icon`, see `withIcons`), its
+ * template's setup guide and the drift since it was set up (`setupGuide`, `guideDrift`; spec
+ * 2026-11-09-setup-guides-v2-design.md §9.3, §11).
  */
-export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T & ConnectionGuideState;
+export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T &
+  ConnectionGuideState & { icon: string | null };
 
 /**
  * 连接器（`/api/v1/orgs/:orgId/connectors`）：读与个人凭据用 `connectors.use`（访客起），安装 / 修改 / 删除 / 刷新 /
@@ -107,7 +123,28 @@ export type ConnectorPage<T extends ConnectorSummary = ConnectorDetail> = T & Co
  */
 @Controller("api/v1/orgs/:orgId/connectors")
 export class ConnectorsController {
-  constructor(@Inject(ConnectorsService) private readonly connectors: ConnectorsService) {}
+  constructor(
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(ConnectorAccountPolicies) private readonly memberPolicies: ConnectorAccountPolicies,
+  ) {}
+
+  /**
+   * Each connector with `icon`: the icon of the plugin its template came from, on the org's catalog
+   * route (null for a custom connector, a plugin without an icon, or one the reader's catalog does
+   * not show: the share gate holds; maintainer decision 2026-11-09).
+   */
+  private async withIcons<T extends ConnectorSummary>(
+    org: OrgContext,
+    rows: T[],
+  ): Promise<(T & { icon: string | null })[]> {
+    const ids = rows.flatMap((r) => (r.catalogItemId === null ? [] : [r.catalogItemId]));
+    const urls = await this.icons.ofItems(ids, orgIconScope(org));
+    return rows.map((r) => ({
+      ...r,
+      icon: r.catalogItemId === null ? null : (urls.get(r.catalogItemId) ?? null),
+    }));
+  }
 
   @Get()
   @OrgAction("connectors.use")
@@ -118,16 +155,19 @@ export class ConnectorsController {
     return { connectors: await this.withGuides(org, list) };
   }
 
-  /** Adds the setup guide fields to connector views (one lookup for all of them). */
+  /** Adds the icon and the setup guide fields to connector views (one lookup each for all). */
   private async withGuides<T extends ConnectorSummary>(
     org: OrgContext,
     views: T[],
   ): Promise<ConnectorPage<T>[]> {
-    const states = await this.connectors.guideStates(
-      org,
-      views.map((v) => v.id),
-    );
-    return views.map((v) => ({
+    const [withIcons, states] = await Promise.all([
+      this.withIcons(org, views),
+      this.connectors.guideStates(
+        org,
+        views.map((v) => v.id),
+      ),
+    ]);
+    return withIcons.map((v) => ({
       ...v,
       ...(states.get(v.id) ?? { setupGuide: null, guideDrift: null }),
     }));
@@ -327,6 +367,41 @@ export class ConnectorsController {
       body,
       patTokenId(p),
     );
+  }
+
+  /**
+   * The caller's own tool policies for their own connection of a personal-credential connector
+   * (the card's 权限, decision 2026-11-09): each tool with the org default, the annotation default,
+   * the caller's setting and whether the org locked it. Only ever the caller's rows. A connector
+   * with one org credential -> 409 `connector.not_personal`.
+   */
+  @Get(":connectorId/tool-policies/me")
+  @OrgAction("connectors.use")
+  async myToolPolicies(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+  ): Promise<{ tools: MemberToolPolicyView[] }> {
+    const p = requireUser(principal);
+    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
+  }
+
+  /**
+   * Sets (`allow` / `ask` / `deny`) or clears (null) the caller's own policies for some tools:
+   * `{ tools: { <name>: policy | null } }` -> the sheet again. Unknown tool -> 404
+   * `connector.tool_not_found`.
+   */
+  @Put(":connectorId/tool-policies/me")
+  @OrgAction("connectors.use")
+  async setMyToolPolicies(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @Param("connectorId") connectorId: string,
+    @ZBody(MemberToolPoliciesDto) body: z.infer<typeof MemberToolPoliciesBody>,
+  ): Promise<{ tools: MemberToolPolicyView[] }> {
+    const p = requireUser(principal);
+    await this.memberPolicies.set(org.orgId, connectorId, p.account.id, body.tools, patTokenId(p));
+    return { tools: await this.memberPolicies.read(org.orgId, connectorId, p.account.id) };
   }
 
   @Delete(":connectorId/credentials/me")

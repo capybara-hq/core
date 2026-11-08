@@ -770,6 +770,56 @@
 .cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived {
   height: 40px;
 }
+/* The drawer's middle (the org switcher, the nav, the conversations) is one scroll region between
+   the fixed top row and the bottom block; the conversations inside it are not a scroller of their
+   own. It runs over the sidebar's side padding like the conversations' box, for the scrollbar. */
+.cb-sidebar-scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-height: 0;
+  margin: 0 calc(-1 * var(--cb-space-2));
+  padding: 0 var(--cb-space-2);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
+}
+.cb-sidebar-scroll > .cb-sidebar-convs {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+}
+/* In the drawer 更多 is a disclosure (maintainer decision 2026-11-09): its items are listed in
+   place under it, one level in (the indent is the icon's width and its gap), and the chevron turns
+   down while it is open. */
+.cb-sidebar-chevron {
+  display: inline-flex;
+  flex: none;
+}
+.cb-sidebar-item[data-part="more-toggle"][aria-expanded="true"] .cb-sidebar-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cb-sidebar-chevron {
+    transition: transform var(--cb-motion-hover);
+  }
+}
+.cb-sidebar-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cb-sidebar-item[data-depth="1"] {
+  padding-left: calc(var(--cb-pad-dense-x) + 16px + var(--cb-space-2));
+}
+.cb-sidebar-sub-sep {
+  height: 1px;
+  border: 0;
+  margin: var(--cb-space-1) 0 var(--cb-space-1)
+    calc(var(--cb-pad-dense-x) + 16px + var(--cb-space-2));
+  background: var(--cb-line-soft);
+}
 .cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu {
   width: 40px;
   height: 40px;

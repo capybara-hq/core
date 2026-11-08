@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -26,6 +27,7 @@ import {
   SDK_VERSION,
   type ToolCallContext,
 } from "@capybara-hq/plugin-sdk";
+import { pluginChecks } from "@capybara-hq/plugin-tools";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -1115,6 +1117,49 @@ describe("fake-openapi (connector kind openapi)", () => {
       });
     } finally {
       await s.close();
+    }
+  });
+});
+
+describe("fake-theme (a declarative plugin, no extension)", () => {
+  it("packs the themes, the font and the logo and no extension", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "testing-fake-theme-"));
+    try {
+      const r = await packFixture("fake-theme", dir);
+      const raw = execFileSync("tar", ["-tzf", r.file], { encoding: "utf8" })
+        .split("\n")
+        .filter((l) => l !== "" && !l.endsWith("/"));
+      const list = raw.map((l) => l.replace(/^\.?\/?(package\/)?/, ""));
+      expect(list).toEqual(
+        expect.arrayContaining([
+          ".capybara-plugin/plugin.json",
+          "themes/night-city.json",
+          "themes/paper.json",
+          "fonts/FakeSans.woff2",
+          "logo.svg",
+        ]),
+      );
+      expect(list.some((f) => f.startsWith("dist/") || f.startsWith("src/"))).toBe(false);
+      const manifest = JSON.parse(
+        execFileSync(
+          "tar",
+          ["-xzOf", r.file, raw[list.indexOf(".capybara-plugin/plugin.json")] ?? ""],
+          {
+            encoding: "utf8",
+          },
+        ),
+      ) as { extension?: unknown };
+      expect(manifest.extension).toBeUndefined();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("passes the plugin checks (capybara-plugin check)", async () => {
+    const plugins = [fakeExtensionDir("fake-theme")];
+    const checks = pluginChecks({ plugins, root: plugins[0] as string });
+    for (const c of checks) {
+      expect(await c.run(), c.name).toEqual([]);
     }
   });
 });

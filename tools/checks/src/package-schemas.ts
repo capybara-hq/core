@@ -6,6 +6,7 @@ import {
   ConnectorTemplateFileSchema,
   MarketplaceManifestSchema,
   PluginManifestSchema,
+  ThemeFileSchema,
 } from "@capybara-hq/plugin-sdk";
 import { type core, z } from "zod";
 import type { Finding } from "./source.js";
@@ -22,8 +23,8 @@ export interface PackageSchemaSpec {
 
 /**
  * The JSON Schemas the SDK publishes: the plugin manifest `plugin.json`, the marketplace manifest
- * `marketplace.json`, the connector template file `connectors/<id>.json` and the bootstrap manifest
- * `packages/kernel/bootstrap.json`.
+ * `marketplace.json`, the connector template file `connectors/<id>.json`, the bootstrap manifest
+ * `packages/kernel/bootstrap.json` and the theme file `themes/<id>.json`.
  */
 export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
   {
@@ -49,6 +50,12 @@ export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
     id: "https://capybarahq.com/schemas/bootstrap.v1.schema.json",
     title: "Capybara bootstrap manifest packages/kernel/bootstrap.json (schemaVersion 1)",
     schema: BootstrapManifestSchema,
+  },
+  {
+    file: "theme.v1.schema.json",
+    id: "https://capybarahq.com/schemas/theme.v1.schema.json",
+    title: "Capybara theme file themes/<id>.json",
+    schema: ThemeFileSchema,
   },
 ];
 

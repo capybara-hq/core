@@ -10,9 +10,9 @@ type NavGroup = { group: string; items: { id: string; label: string; href: strin
 
 /**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
- * Members, Models, Service tokens] and Capabilities [Sandbox] (plugins and extensions are the
+ * Appearance, Members, Models, Service tokens] and Capabilities [Sandbox] (plugins and extensions are the
  * workspace's 插件 and 扩展 pages). Members see
- * General, Members and Sandbox (read-only); the rest is for admins; guests never open these pages. This only hides items,
+ * General, Appearance, Members and Sandbox (read-only); the rest is for admins; guests never open these pages. This only hides items,
  * the kernel decides. Groups without items are dropped.
  */
 export function useOrgSettingsNav(): NavGroup[] {
@@ -25,6 +25,10 @@ export function useOrgSettingsNav(): NavGroup[] {
       group: t("groupOrg"),
       items: [
         { id: "organization", label: t("general"), href: "/settings/organization" },
+        // members read it (roles everywhere); admins change it
+        ...(member
+          ? [{ id: "appearance", label: t("appearance"), href: "/settings/appearance" }]
+          : []),
         ...(member ? [{ id: "members", label: t("members"), href: "/settings/members" }] : []),
         ...(admin ? [{ id: "models", label: t("models"), href: "/settings/models" }] : []),
         // org.tokens.manage: admins

@@ -6,6 +6,7 @@ import {
   CONNECTOR_TEMPLATE_LIMITS,
   type ConnectorTemplateFile,
   hostSdkProblem,
+  type ParsedTheme,
   PLUGIN_MANIFEST_FILE,
   PLUGIN_MANIFEST_LIMITS,
   type PluginManifest,
@@ -13,12 +14,17 @@ import {
   parseConnectorTemplateFile,
   parsePluginManifest,
   parseSkillMd,
+  parseThemeFile,
   SKILL_ENTRY_FILE,
   setupGuideDocPath,
   setupGuideDocProblem,
+  THEME_LIMITS,
+  themeIdOf,
   validatePluginPackageJsonFor,
   validateSetupGuide,
+  validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
+import { ApiError } from "../errors.js";
 import {
   HOST_ZOD_VERSION,
   LEGACY_FORMAT_MESSAGE,
@@ -44,22 +50,41 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
  * old formats.
  */
 
-/** Codes of {@link PluginPackageError}. */
-export type PluginPackageErrorCode = "catalog.invalid_manifest" | "catalog.legacy_format";
+/**
+ * Codes of {@link PluginPackageError}: `theme.invalid` / `theme.unreadable` when the package's only
+ * problems are in its themes (themes spec §5: a failing theme refuses the whole plugin).
+ */
+export type PluginPackageErrorCode =
+  | "catalog.invalid_manifest"
+  | "catalog.legacy_format"
+  | "theme.invalid"
+  | "theme.unreadable";
+
+/** The problems of one theme of a refused plugin (English; `unreadable:` lines for readability). */
+export interface PluginThemeProblem {
+  /** The theme id (the file's base name). */
+  theme: string;
+  problems: string[];
+}
 
 /** The plugin package is invalid; `issues` lists the problems (English, shown to the admin). */
 export class PluginPackageError extends Error {
   readonly code: PluginPackageErrorCode;
   readonly issues: string[];
-  constructor(code: PluginPackageErrorCode, issues: string[]) {
+  /** The failing themes of a `theme.*` code. */
+  readonly themes?: PluginThemeProblem[];
+  constructor(code: PluginPackageErrorCode, issues: string[], themes?: PluginThemeProblem[]) {
     super(
       code === "catalog.legacy_format"
         ? (issues[0] ?? LEGACY_FORMAT_MESSAGE)
-        : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
+        : code === "theme.invalid" || code === "theme.unreadable"
+          ? `Theme ${themes?.[0]?.theme ?? "?"} ${code === "theme.invalid" ? "is invalid" : "is not readable"}: ${issues[0] ?? "unknown problem"}`
+          : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
     );
     this.name = "PluginPackageError";
     this.code = code;
     this.issues = issues;
+    if (themes !== undefined) this.themes = themes;
   }
 }
 
@@ -87,6 +112,19 @@ export interface PluginPackageAgentTemplate {
   template: AgentTemplate;
 }
 
+/** A theme of the plugin (themes spec §4); `id` is the file's base name. */
+export interface PluginPackageTheme {
+  id: string;
+  /** Relative to the package root (no leading `./`). */
+  path: string;
+  theme: ParsedTheme;
+  /**
+   * The theme's fonts and logo files after `validateThemeAssets` (the SVGs sanitized, the rest
+   * unchanged), keyed by their path relative to the package root (no leading `./`).
+   */
+  assets: Map<string, Uint8Array>;
+}
+
 /** A validated plugin file tree. Paths are relative to the plugin root (no `package/`). */
 export interface PluginContents {
   /** `{}` when a git plugin has no package.json. */
@@ -97,6 +135,8 @@ export interface PluginContents {
   connectorTemplates: PluginPackageConnectorTemplate[];
   /** Agent templates (listed in plugin.json `agents`, else scanned from `agents/*.md`). */
   agentTemplates: PluginPackageAgentTemplate[];
+  /** Themes (listed in plugin.json `themes`, else scanned from `themes/*.json`). */
+  themes: PluginPackageTheme[];
   /** {@link contentDigest} of `files` (the same for a tgz and a git tree of the same files). */
   contentDigest: string;
 }
@@ -494,6 +534,8 @@ export function readPluginFiles(
     agentTemplates.push({ name: r.template.name, path, template: r.template });
   }
 
+  const { themes, themePaths, themeProblems } = readThemes(files, manifest);
+
   if (manifest.icon !== undefined) {
     const icon = files.get(packagePath(manifest.icon));
     const problem =
@@ -557,13 +599,25 @@ export function readPluginFiles(
         issues.push(`extension.${k}: directory ${dir} is missing or empty`);
       }
     }
-  } else if (skillDirs.length === 0 && templatePaths.length === 0 && agentPaths.length === 0) {
+  } else if (
+    skillDirs.length === 0 &&
+    templatePaths.length === 0 &&
+    agentPaths.length === 0 &&
+    themePaths.length === 0
+  ) {
     issues.push(
-      "a plugin must contain an extension, a skill, a connector template or an agent template",
+      "a plugin must contain an extension, a skill, a connector template, an agent template or a theme",
     );
   }
 
-  if (issues.length > 0) invalid(issues);
+  if (issues.length > 0) {
+    // Other problems first: the theme problems are listed with them as plain issues
+    invalid([
+      ...issues,
+      ...themeProblems.flatMap((t) => t.problems.map((p) => `themes/${t.theme}: ${p}`)),
+    ]);
+  }
+  if (themeProblems.length > 0) throw pluginThemeError(themeProblems);
   return {
     packageJson: (packageJson ?? {}) as Record<string, unknown>,
     manifest,
@@ -571,6 +625,115 @@ export function readPluginFiles(
     skills,
     connectorTemplates,
     agentTemplates,
+    themes,
     contentDigest: contentDigest(files),
   };
+}
+
+const UNREADABLE = "unreadable:";
+
+/**
+ * The refusal of a plugin whose only problems are in its themes: `theme.invalid` when any theme
+ * has a problem other than readability (those themes listed), else `theme.unreadable` (every
+ * failing theme listed with its failing pairs).
+ */
+export function pluginThemeError(problems: PluginThemeProblem[]): PluginPackageError {
+  const invalidOnes = problems.filter((t) => t.problems.some((p) => !p.startsWith(UNREADABLE)));
+  const code = invalidOnes.length > 0 ? "theme.invalid" : "theme.unreadable";
+  const listed = invalidOnes.length > 0 ? invalidOnes : problems;
+  return new PluginPackageError(
+    code,
+    listed.flatMap((t) => t.problems),
+    listed,
+  );
+}
+
+/**
+ * The API error of a `theme.*` {@link PluginPackageError}: 400 `theme.invalid` with details
+ * `[{ theme, errors }]`, or 400 `theme.unreadable` with details `[{ theme, issues }]`.
+ */
+export function themeApiError(e: PluginPackageError): ApiError {
+  const code = e.code === "theme.unreadable" ? "theme.unreadable" : "theme.invalid";
+  const key = code === "theme.invalid" ? "errors" : "issues";
+  return new ApiError(
+    code,
+    e.message,
+    (e.themes ?? []).map((t) => ({ theme: t.theme, [key]: t.problems })),
+  );
+}
+
+/**
+ * The plugin's themes (themes spec §4-§5): listed in `manifest.themes`, else scanned from
+ * `themes/*.json` (at most {@link THEME_LIMITS}`.perPlugin`); each parsed by `parseThemeFile`
+ * (shape, token grammar, readability) and its assets checked by `validateThemeAssets`. The asset
+ * limit is per plugin, so the sizes of the distinct asset paths are also summed over all themes.
+ * Problems are returned per theme, never thrown.
+ */
+function readThemes(
+  files: Map<string, Uint8Array>,
+  manifest: PluginManifest,
+): { themes: PluginPackageTheme[]; themePaths: string[]; themeProblems: PluginThemeProblem[] } {
+  const themeProblems: PluginThemeProblem[] = [];
+  const problem = (theme: string, problems: string[]) => {
+    const t = themeProblems.find((x) => x.theme === theme);
+    if (t) t.problems.push(...problems);
+    else themeProblems.push({ theme, problems: [...problems] });
+  };
+  const themePaths: string[] = [];
+  if (manifest.themes !== undefined) {
+    for (const t of manifest.themes) {
+      const path = packagePath(t.path);
+      if (!files.has(path)) problem(themeIdOf(path), [`${t.path} not found in the package`]);
+      else if (!themePaths.includes(path)) themePaths.push(path);
+    }
+  } else {
+    for (const p of [...files.keys()].sort()) {
+      if (/^themes\/[^/]+\.json$/.test(p)) themePaths.push(p);
+    }
+    if (themePaths.length > THEME_LIMITS.perPlugin) {
+      problem(themeIdOf(themePaths[THEME_LIMITS.perPlugin] as string), [
+        `themes/ holds ${themePaths.length} themes; a plugin may have at most ${THEME_LIMITS.perPlugin}`,
+      ]);
+    }
+  }
+  const themes: PluginPackageTheme[] = [];
+  const sizes = new Map<string, number>();
+  for (const path of themePaths) {
+    const id = themeIdOf(path);
+    if (themes.some((t) => t.id === id)) {
+      problem(id, [`${path}: another theme of the plugin has the id "${id}"`]);
+      continue;
+    }
+    const bytes = files.get(path) as Uint8Array;
+    if (bytes.byteLength > THEME_LIMITS.fileBytes) {
+      problem(id, [`${path}: the theme file is larger than ${THEME_LIMITS.fileBytes} bytes`]);
+      continue;
+    }
+    const json = decode(bytes);
+    if (json === undefined) {
+      problem(id, [`${path}: not valid UTF-8 text`]);
+      continue;
+    }
+    const parsed = parseThemeFile(id, json);
+    if ("errors" in parsed) {
+      problem(id, parsed.errors);
+      continue;
+    }
+    const { assets, errors } = validateThemeAssets(parsed, files);
+    if (errors.length > 0) {
+      problem(id, errors);
+      continue;
+    }
+    let total = 0;
+    for (const p of assets.keys()) sizes.set(p, (files.get(p) as Uint8Array).byteLength);
+    for (const n of sizes.values()) total += n;
+    if (total > THEME_LIMITS.assetsBytes) {
+      problem(id, [
+        `the plugin's theme assets are larger than ${THEME_LIMITS.assetsBytes} bytes in total (${total}); the limit covers all of the plugin's themes`,
+      ]);
+      continue;
+    }
+    themes.push({ id, path, theme: parsed, assets });
+  }
+  return { themes, themePaths, themeProblems };
 }

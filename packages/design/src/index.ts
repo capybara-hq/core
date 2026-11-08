@@ -9,9 +9,11 @@ export { type ForcedPseudo, ReferenceBlock } from "./layout/reference-block";
 export { ReferenceBoard } from "./layout/reference-board";
 export * from "./overlays/index";
 export {
+  type Brand,
   DesignProvider,
   type LinkComponent,
   LinkPendingMark,
+  useBrand,
   useDesignLink,
   useDesignLocale,
   useDesignT,

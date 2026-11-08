@@ -87,6 +87,7 @@ import {
 } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
+import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
 import { uiViewQuery } from "./ui";
 
@@ -173,8 +174,14 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/account/preferences",
-    // No org needed: my preferences.
-    queries: ({ me }) => (me === null ? [] : [q(preferencesQuery(me.account.id))]),
+    // No org needed: my preferences; with an org, its themes (外观: the cards or the lock).
+    queries: ({ me, orgId }) =>
+      me === null
+        ? []
+        : [
+            q(preferencesQuery(me.account.id)),
+            ...(orgId === null ? [] : [q(orgThemesQuery(orgId)), q(platformThemeQuery())]),
+          ],
   },
   {
     pattern: "/admin",
@@ -227,6 +234,26 @@ export const ROUTES: readonly RouteEntry[] = [
             q(adminComponentsQuery("skill")),
             q(componentVersionsQuery("skill", params.id)),
             q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/themes",
+    // The themes, the orgs (named scopes) and the settings (which one is the platform default).
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [q(adminComponentsQuery("theme")), q(adminOrgsQuery()), q(deploymentSettingsQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/themes/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("theme")),
+            q(componentVersionsQuery("theme", params.id)),
+            q(adminOrgsQuery()),
+            q(deploymentSettingsQuery()),
           ]
         : [],
   },
@@ -329,7 +356,9 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
+    // The settings and the themes (外观's eligible ones, with their names and swatches).
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(deploymentSettingsQuery()), q(adminComponentsQuery("theme"))] : [],
   },
   {
     pattern: "/agents",
@@ -546,8 +575,31 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/connectors",
-    // Guests read the list too.
-    queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
+    // Guests read the list too; members up also the connector templates offered to the org (a
+    // section: the cards of the ones without a connector here, with the admins' switches)
+    queries: ({ orgId, me }) =>
+      orgId === null
+        ? []
+        : [
+            q(connectorsQuery(orgId)),
+            ...(atLeast(me, "member")
+              ? [q(orgComponentsQuery(orgId, { kind: "connector_template" }))]
+              : []),
+          ],
+    // The personal connectors' cards show the viewer's own connection: their details
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      if (list === undefined) return;
+      await Promise.all(
+        personalConnectors(list.connectors).map((a) =>
+          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
+        ),
+      );
+    },
   },
   {
     pattern: "/connectors/[connectorId]",
@@ -780,6 +832,19 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/settings/organization",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
+  {
+    pattern: "/settings/appearance",
+    // Members read it: the org's themes and setting, and the theme components with their switches.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [
+            q(orgThemesQuery(orgId)),
+            q(orgComponentsQuery(orgId, { kind: "theme" })),
+            // 跟随平台's swatches
+            q(platformThemeQuery()),
+          ],
   },
   {
     pattern: "/settings/sandbox",

@@ -141,11 +141,7 @@
 /* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
    scroll on theirs; the tabs are 40 px tap targets. */
 @media (max-width: 639px) {
-  /* The placeholders follow the loaded parts' phone sizes (40 px tap targets), so nothing moves. */
-  .cb-pageheader-actions .cb-skeleton-box {
-    min-width: 40px;
-    height: 40px;
-  }
+  /* The placeholders follow the loaded parts' phone sizes (40 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
     height: 40px;
   }
@@ -313,14 +309,37 @@ a.cb-pageheader-path-seg:hover {
 .cb-pageheader-fold {
   display: contents;
 }
+/* Phones (below 640, spec §4.2, §4.3): the title and the description take the full width (the
+   description wraps), and the actions go under them, start-aligned: the primary as a button, the
+   others folded into ⋯ when there are several. The buttons keep their default height and reach a
+   40 px tap target through an invisible ring around them. */
 @media (max-width: 639px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
   }
-  /* 40 px tap targets on phones. */
+  .cb-pageheader-row {
+    flex-wrap: wrap;
+  }
+  .cb-pageheader-text {
+    flex: 1 1 0;
+  }
+  .cb-pageheader-description {
+    overflow: visible;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .cb-pageheader-actions {
+    flex: 1 1 100%;
+  }
   .cb-pageheader-actions .cb-btn {
-    min-width: 40px;
+    position: relative;
+  }
+  .cb-pageheader-actions .cb-btn::after {
+    content: "";
+    position: absolute;
+    inset: calc((var(--cb-control-default) - 40px) / 2) min(0px, calc((100% - 40px) / 2));
     min-height: 40px;
+    min-width: 40px;
   }
 }
 @media (min-width: 640px) {

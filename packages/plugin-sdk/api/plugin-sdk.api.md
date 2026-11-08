@@ -187,6 +187,9 @@ export const BootstrapManifestSchema: z.ZodType<BootstrapManifest>;
 export const BUILTIN_TOOL_NAME_RE: RegExp;
 
 // @public
+export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -349,7 +352,22 @@ export function checkEntryImports(specifiers: EntryImport[]): string[];
 export function checkParamValue(schema: ParamSchema, v: unknown): string | undefined;
 
 // @public
+export function checkPng(bytes: Uint8Array): string | undefined;
+
+// @public
+export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme, rules?: {
+    contrast: readonly (readonly [string, string, number, string?])[];
+    separation: readonly (readonly [string, string, number])[];
+}): ReadabilityIssue[];
+
+// @public
+export function checkWoff2(bytes: Uint8Array): string | undefined;
+
+// @public
 export function clipMediaName(name: string, max?: number): string;
+
+// @public
+export function compositeOver(color: string, ground: string): string | undefined;
 
 // @public
 export const CONFIG_UI_LIMITS: {
@@ -633,6 +651,9 @@ export type ContentBlock =
     source: MediaSource_2;
     name?: string;
 };
+
+// @public
+export function contrastRatio(fg: string, bg: string): number;
 
 // @public
 export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
@@ -1485,6 +1506,12 @@ export function isSecret(schema: z.ZodTypeAny): boolean;
 export function isSkillName(s: unknown): s is string;
 
 // @public
+export function isThemeAssetPath(v: unknown): v is string;
+
+// @public
+export function isThemeFontFamily(v: unknown): v is string;
+
+// @public
 export type JsonSchema = Record<string, unknown>;
 
 // @public
@@ -1650,6 +1677,16 @@ type MediaSource_2 = {
     attachmentId: string;
 };
 export { MediaSource_2 as MediaSource }
+
+// @public
+export type MergedScheme = {
+    color: Record<string, string>;
+    shadow: Record<string, string>;
+    radius: Record<string, number>;
+};
+
+// @public
+export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
@@ -1894,6 +1931,9 @@ export interface ObjectStore {
 }
 
 // @public
+export function oklabL(hex: string): number;
+
+// @public
 export type OrgAccess = "readonly" | "override";
 
 // @public
@@ -1970,6 +2010,12 @@ export interface ParsedSkillMd {
 }
 
 // @public
+export interface ParsedTheme extends ThemeFile {
+    id: string;
+    singleScheme: ThemeScheme | null;
+}
+
+// @public
 export type ParsedToolKey = {
     kind: "builtin";
     name: string;
@@ -2022,6 +2068,16 @@ export interface ParseSkillMdOptions {
 }
 
 // @public
+export function parseThemeFile(id: string, json: unknown, options?: ParseThemeOptions): ParsedTheme | {
+    errors: string[];
+};
+
+// @public
+export interface ParseThemeOptions {
+    readability?: boolean;
+}
+
+// @public
 export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public
@@ -2034,6 +2090,7 @@ export const PLUGIN_MANIFEST_LIMITS: {
     readonly skills: 50;
     readonly connectorTemplates: 20;
     readonly agents: 64;
+    readonly themes: 10;
     readonly descriptionChars: 1024;
     readonly publisherChars: 100;
     readonly displayNameChars: 100;
@@ -2100,6 +2157,7 @@ export interface PluginManifest {
     schemaVersion: 1;
     setupGuides?: PluginSetupGuide[];
     skills?: PluginSkillRef[];
+    themes?: PluginThemeRef[];
     version: string;
 }
 
@@ -2117,6 +2175,11 @@ export interface PluginSetupGuide {
 export interface PluginSkillRef {
     path: string;
     pinned?: boolean;
+}
+
+// @public
+export interface PluginThemeRef {
+    path: string;
 }
 
 // @public
@@ -2172,6 +2235,15 @@ export interface ProviderOpaque {
 
 // @public
 export function questionRenderableInline(form: InputForm): boolean;
+
+// @public
+export type ReadabilityIssue = {
+    kind: "contrast" | "separation" | "separation-order" | "unevaluable";
+    pair: string;
+    ratio: number;
+    floor: number;
+    detail?: string;
+};
 
 // @public
 export function renderCardAsText(card: ChannelCard, locale: Locale): string;
@@ -2332,7 +2404,14 @@ export function sanitizeParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.7";
+export function sanitizeThemeSvg(bytes: Uint8Array): {
+    svg: string;
+} | {
+    error: string;
+};
+
+// @public
+export const SDK_VERSION = "0.1.0-rc.8";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -2594,6 +2673,343 @@ export function staticManifestOf(m: ExtensionManifest): StaticExtensionManifest;
 
 // @public
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other";
+
+// @public
+export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
+
+// @public
+export const THEME_FONTS: {
+    readonly mono: "\"Sarasa Mono SC\", ui-monospace, monospace";
+    readonly prose: "\"Inter\", \"Source Han Sans SC\", system-ui, sans-serif";
+};
+
+// @public
+export const THEME_LIMITS: {
+    readonly fileBytes: number;
+    readonly perPlugin: 10;
+    readonly assetsBytes: number;
+    readonly fonts: 8;
+    readonly fontBytes: number;
+    readonly svgBytes: number;
+    readonly pngBytes: number;
+    readonly pngMinHeight: 64;
+    readonly wordmark: 24;
+};
+
+// @public
+export const THEME_OVERRIDABLE: {
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "diff-add", "diff-del"];
+    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
+    readonly radius: readonly ["sm", "md", "bubble"];
+};
+
+// @public
+export const THEME_SEPARATION: readonly (readonly [ground: string, surface: string, floor: number])[];
+
+// @public
+export const THEME_TOKENS: {
+    readonly color: {
+        readonly bg: {
+            readonly dark: "#0A0A0A";
+            readonly light: "#FAF9F6";
+        };
+        readonly panel: {
+            readonly dark: "#111110";
+            readonly light: "#FFFFFF";
+        };
+        readonly "panel-2": {
+            readonly dark: "#0E0E0D";
+            readonly light: "#FCFBF9";
+        };
+        readonly sidebar: {
+            readonly dark: "#111110";
+            readonly light: "#F3F2EE";
+        };
+        readonly "sidebar-active": {
+            readonly dark: "#1A1A18";
+            readonly light: "rgba(26,26,24,0.09)";
+        };
+        readonly raised: {
+            readonly dark: "#141413";
+            readonly light: "#FFFFFF";
+        };
+        readonly selected: {
+            readonly dark: "#1F1F1D";
+            readonly light: "rgba(26,26,24,0.07)";
+        };
+        readonly hover: {
+            readonly dark: "#171716";
+            readonly light: "rgba(26,26,24,0.04)";
+        };
+        readonly "line-soft": {
+            readonly dark: "#1C1C1A";
+            readonly light: "#E8E7E2";
+        };
+        readonly line: {
+            readonly dark: "#2A2A28";
+            readonly light: "#D9D8D2";
+        };
+        readonly "line-strong": {
+            readonly dark: "#3A3A37";
+            readonly light: "#B5B5AE";
+        };
+        readonly "line-card": {
+            readonly dark: "rgba(255,255,255,0.08)";
+            readonly light: "rgba(26,26,24,0.07)";
+        };
+        readonly "scroll-thumb": {
+            readonly dark: "rgba(255,255,255,0.15)";
+            readonly light: "rgba(26,26,24,0.20)";
+        };
+        readonly ink: {
+            readonly dark: "#E6E6E3";
+            readonly light: "#1A1A18";
+        };
+        readonly muted: {
+            readonly dark: "#8E8E89";
+            readonly light: "#5E5E5A";
+        };
+        readonly faint: {
+            readonly dark: "#5A5A56";
+            readonly light: "#9A9A94";
+        };
+        readonly disabled: {
+            readonly dark: "#6E6E69";
+            readonly light: "#82827C";
+        };
+        readonly accent: {
+            readonly dark: "#FF6A13";
+            readonly light: "#CC4609";
+        };
+        readonly "accent-hover": {
+            readonly dark: "#FF8240";
+            readonly light: "#B83F08";
+        };
+        readonly "accent-press": {
+            readonly dark: "#E85A08";
+            readonly light: "#A33707";
+        };
+        readonly "on-accent": {
+            readonly dark: "#0A0A0A";
+            readonly light: "#FFFFFF";
+        };
+        readonly "accent-tint": {
+            readonly dark: "color-mix(in srgb, var(--cb-accent) 12%, transparent)";
+            readonly light: "color-mix(in srgb, var(--cb-accent) 12%, transparent)";
+        };
+        readonly "focus-ring": {
+            readonly dark: "rgba(255,106,19,.25)";
+            readonly light: "rgba(204,70,9,.18)";
+        };
+        readonly ok: {
+            readonly dark: "#3FD483";
+            readonly light: "#16803F";
+        };
+        readonly fail: {
+            readonly dark: "#FF5C52";
+            readonly light: "#C8302A";
+        };
+        readonly warn: {
+            readonly dark: "#F2C14B";
+            readonly light: "#8F6500";
+        };
+        readonly scrim: {
+            readonly dark: "rgba(0,0,0,.60)";
+            readonly light: "rgba(10,10,10,.25)";
+        };
+        readonly "diff-add": {
+            readonly dark: "rgba(63,212,131,.08)";
+            readonly light: "rgba(22,128,63,.10)";
+        };
+        readonly "diff-del": {
+            readonly dark: "rgba(255,92,82,.08)";
+            readonly light: "rgba(207,34,46,.08)";
+        };
+        readonly "avatar-black": {
+            readonly dark: "#1C1C1A";
+            readonly light: "#1C1C1A";
+        };
+        readonly "avatar-white": {
+            readonly dark: "#F2F2EE";
+            readonly light: "#FFFFFF";
+        };
+        readonly "avatar-capybara-ground": {
+            readonly dark: "#3D2213";
+            readonly light: "#FBE3D2";
+        };
+        readonly "avatar-black-bear-ground": {
+            readonly dark: "#9C8468";
+            readonly light: "#E6D6C1";
+        };
+        readonly "avatar-black-bear-snout": {
+            readonly dark: "#C9A074";
+            readonly light: "#C49A6C";
+        };
+        readonly "avatar-panda-ground": {
+            readonly dark: "#5E9168";
+            readonly light: "#669D71";
+        };
+        readonly "avatar-elephant-ground": {
+            readonly dark: "#2A2838";
+            readonly light: "#E6E3F2";
+        };
+        readonly "avatar-elephant": {
+            readonly dark: "#9AA0A8";
+            readonly light: "#757B84";
+        };
+        readonly "avatar-elephant-ear": {
+            readonly dark: "#7D838C";
+            readonly light: "#5A6068";
+        };
+        readonly "avatar-fox-ground": {
+            readonly dark: "#3A2414";
+            readonly light: "#FCEBD9";
+        };
+        readonly "avatar-fox": {
+            readonly dark: "#F07A2E";
+            readonly light: "#D8601A";
+        };
+        readonly "avatar-fox-ear": {
+            readonly dark: "#8A3E16";
+            readonly light: "#7A3310";
+        };
+        readonly "avatar-owl-ground": {
+            readonly dark: "#2E2618";
+            readonly light: "#EFE6D4";
+        };
+        readonly "avatar-owl": {
+            readonly dark: "#B07D52";
+            readonly light: "#875A36";
+        };
+        readonly "avatar-owl-belly": {
+            readonly dark: "#D9B68C";
+            readonly light: "#D9B68C";
+        };
+        readonly "avatar-owl-eye": {
+            readonly dark: "#F5C542";
+            readonly light: "#F5C542";
+        };
+        readonly "avatar-beak": {
+            readonly dark: "#EE8A2A";
+            readonly light: "#EE8A2A";
+        };
+        readonly "avatar-penguin-ground": {
+            readonly dark: "#5F8AAD";
+            readonly light: "#6692B6";
+        };
+        readonly "avatar-rabbit-ground": {
+            readonly dark: "#3A2229";
+            readonly light: "#F8DDE3";
+        };
+        readonly "avatar-rabbit": {
+            readonly dark: "#B89A84";
+            readonly light: "#8F725C";
+        };
+        readonly "avatar-rabbit-pink": {
+            readonly dark: "#F2A7B5";
+            readonly light: "#F2A7B5";
+        };
+        readonly "avatar-turtle-ground": {
+            readonly dark: "#2E2A18";
+            readonly light: "#F2E8C9";
+        };
+        readonly "avatar-turtle": {
+            readonly dark: "#5FA548";
+            readonly light: "#4E8F3A";
+        };
+        readonly "avatar-turtle-shell": {
+            readonly dark: "#3B7330";
+            readonly light: "#2F5E24";
+        };
+        readonly "avatar-turtle-skin": {
+            readonly dark: "#A8C66C";
+            readonly light: "#9FBF62";
+        };
+        readonly "avatar-whale-ground": {
+            readonly dark: "#16283A";
+            readonly light: "#DCEFF5";
+        };
+        readonly "avatar-whale": {
+            readonly dark: "#5A92D6";
+            readonly light: "#3A72B5";
+        };
+        readonly "avatar-whale-belly": {
+            readonly dark: "#DCEAF5";
+            readonly light: "#FFFFFF";
+        };
+        readonly "avatar-whale-spout": {
+            readonly dark: "#8EC3E8";
+            readonly light: "#8EC3E8";
+        };
+    };
+    readonly shadow: {
+        readonly "shadow-1": {
+            readonly dark: "0 8px 24px rgba(0,0,0,.40)";
+            readonly light: "0 2px 8px rgba(10,10,10,.08)";
+        };
+        readonly "shadow-2": {
+            readonly dark: "0 16px 48px rgba(0,0,0,.50)";
+            readonly light: "0 8px 24px rgba(10,10,10,.12)";
+        };
+        readonly "shadow-sheet": {
+            readonly dark: "-16px 0 40px rgba(0,0,0,.40)";
+            readonly light: "-4px 0 16px rgba(10,10,10,.08)";
+        };
+        readonly "shadow-float": {
+            readonly dark: "0 8px 24px rgba(0,0,0,.45)";
+            readonly light: "0 8px 24px rgba(26,26,24,.08)";
+        };
+    };
+    readonly radius: {
+        readonly sm: 4;
+        readonly md: 8;
+        readonly bubble: 10;
+    };
+};
+
+// @public
+export interface ThemeFile {
+    description?: {
+        en: string;
+        zh?: string;
+    };
+    fonts?: ThemeFont[];
+    logo?: ThemeLogo;
+    name: LocalizedName;
+    schemes: Partial<Record<ThemeScheme, ThemeSchemeOverride>>;
+}
+
+// @public
+export const ThemeFileSchema: z.ZodType<ThemeFile>;
+
+// @public
+export interface ThemeFont {
+    family: string;
+    file: string;
+    role: "prose" | "mono";
+    style?: "normal" | "italic";
+    weight: number;
+}
+
+// @public
+export function themeIdOf(path: string): string;
+
+// @public
+export interface ThemeLogo {
+    favicon?: string;
+    mark?: string;
+    wordmark?: string;
+}
+
+// @public
+export type ThemeScheme = "dark" | "light";
+
+// @public
+export interface ThemeSchemeOverride {
+    color?: Record<string, string>;
+    radius?: Partial<Record<"sm" | "md" | "bubble", number>>;
+    shadow?: Record<string, string>;
+}
 
 // @public
 export const THINKING_VALUES: readonly string[];
@@ -2950,6 +3366,12 @@ export function validateSkillPackage(files: {
     path: string;
     size: number;
 }[]): string[];
+
+// @public
+export function validateThemeAssets(theme: ParsedTheme, files: Map<string, Uint8Array>): {
+    assets: Map<string, Uint8Array>;
+    errors: string[];
+};
 
 // @public
 export function validateToolDisplay(d: unknown): string[];

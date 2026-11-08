@@ -1,6 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { OrgSettingsPatchSchema, OrgSettingsService } from "../../orgs/settings.service.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -25,6 +26,7 @@ export class OrgSettingsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(OrgSettingsService) private readonly settings: OrgSettingsService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   onModuleInit(): void {
@@ -32,7 +34,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.get",
         description:
-          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress and wakeOnBackgroundTask (absent means it follows the deployment), the deployment's sandbox egress default and the sandbox cpu / memory limits in effect.",
+          "Read this org's settings: toolSearch, locale, sandboxToolPolicy, platformTool (on, read-only or off), sandboxEgress and wakeOnBackgroundTask (absent means it follows the deployment), theme (the org's default theme id, null or absent following the platform, and personal: allowed or locked), the deployment's sandbox egress default and the sandbox cpu / memory limits in effect.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },
@@ -47,7 +49,7 @@ export class OrgSettingsOperations implements OnModuleInit {
       defineOperation({
         id: "org-settings.update",
         description:
-          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress or wakeOnBackgroundTask so they follow the deployment again. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
+          "Change this org's settings (org admins). Give only the settings to change; null clears sandboxEgress or wakeOnBackgroundTask so they follow the deployment again. theme: { id, personal } sets the org's default theme (a theme id from themes.list, or null to follow the platform) and whether members may pick their own (allowed) or not (locked); null clears it. Setting platformTool to off or read-only takes effect from the next call and cuts this Platform tool off in the org, so say so before asking; an org admin switches it back on in the web settings.",
         input: OrgSettingsPatchSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
           message: "give at least one setting",
         }),
@@ -61,23 +63,47 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "This deployment disables sandbox network access, so the org can only set sandboxEgress to none; ask the super admin to change sandbox.limits.egress.",
           },
           {
+            code: "theme.not_available",
+            next: "Pick a theme id that themes.list shows for this org, or null to follow the platform.",
+          },
+          {
             code: "validation_failed",
             next: "Fix the setting as the message says (org-settings.get shows the current values).",
           },
         ],
         precheck: (i) => precheckBy(async () => this.settings.check(i)),
-        summary: (i) => {
-          const parts = Object.entries(i)
+        summary: async (i, ctx) => {
+          const { theme, ...rest } = i;
+          const parts = Object.entries(rest)
             .filter(([, v]) => v !== undefined)
             .map(([k, v]) => `${k} → ${show(v)}`);
+          const zhParts = [...parts];
+          const enParts = [...parts];
+          if (theme !== undefined) {
+            // the theme by its name when it is on in this org; any other id is shown as given
+            const name = theme?.id == null ? null : await this.themes.nameIn(ctx.orgId, theme.id);
+            if (theme === null) {
+              zhParts.push("theme → 清除（跟随平台，允许个人选择）");
+              enParts.push("theme → cleared (follow the platform, personal picks allowed)");
+            } else {
+              const zh = theme.id === null ? "跟随平台" : (name?.zh ?? theme.id);
+              const en = theme.id === null ? "follow the platform" : (name?.en ?? theme.id);
+              zhParts.push(
+                `theme → ${zh}（个人选择：${theme.personal === "locked" ? "锁定" : "允许"}）`,
+              );
+              enParts.push(
+                `theme → ${en} (personal picks ${theme.personal === "locked" ? "locked" : "allowed"})`,
+              );
+            }
+          }
           const warn = i.platformTool === "off" || i.platformTool === "read-only";
           return {
-            zh: `修改组织设置：${parts.join("，")}${
+            zh: `修改组织设置：${zhParts.join("，")}${
               warn
                 ? "（之后智能体不能再用平台工具" + (i.platformTool === "off" ? "" : "写入") + "）"
                 : ""
             }`,
-            en: `Update the org settings: ${parts.join(", ")}${
+            en: `Update the org settings: ${enParts.join(", ")}${
               warn
                 ? `; from the next call the Platform tool is ${
                     i.platformTool === "off" ? "off" : "read-only"

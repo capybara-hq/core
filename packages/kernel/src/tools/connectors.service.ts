@@ -129,6 +129,8 @@ export interface ConnectorSummary {
    * a custom one: the web offers it for a pending connector of that template (ruling P4-7).
    */
   platformTemplateId: string | null;
+  /** The plugin (catalog item) its template came from (`connectors.catalog_item_id`), else null. */
+  catalogItemId: string | null;
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
@@ -1133,6 +1135,7 @@ export class ConnectorsService {
       auth: r.auth as unknown as ConnectorAuth,
       status: r.status,
       platformTemplateId: r.platform_template_id ?? null,
+      catalogItemId: r.catalog_item_id ?? null,
       createdBy: r.created_by,
       createdAt: r.created_at,
       updatedAt: r.updated_at,

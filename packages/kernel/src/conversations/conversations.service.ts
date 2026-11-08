@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { AgentLookup, visibleTo } from "../agents/agent-lookup.js";
 import type { AgentDefinition, ModelRef } from "../agents/definition.js";
+import type { AgentAvatar } from "../agents/profile.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
@@ -94,7 +95,11 @@ function activitySql(ref: string) {
 
 /** One agent's group in the sidebar list: the caller's newest conversations with that agent. */
 export interface ConversationGroup {
-  agent: { id: string; name: string };
+  /**
+   * The agent's name and the avatar half of its profile, in the agents API's shape (the sidebar
+   * draws the group title from it without reading the agents list).
+   */
+  agent: { id: string; name: string; profile: { avatar: AgentAvatar; updatedAt: string } };
   /** max(updated_at) of the group's conversations. */
   latestAt: Date;
   /** At most `perGroup`, updated_at DESC, id DESC. */
@@ -750,6 +755,8 @@ export class ConversationsService {
       agent_id: string;
       latest_at: Date;
       agent_name: string | null;
+      profile_avatar: AgentAvatar;
+      profile_updated_at: Date;
       id: string;
       org_id: string;
       account_id: string;
@@ -779,7 +786,7 @@ export class ConversationsService {
         LIMIT ${opts.limit + 1}
       )
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
-        cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
+        a.profile_avatar, a.profile_updated_at, cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
         cs.archived_at, cs.environment_id, cs.activity
       FROM page
@@ -803,7 +810,14 @@ export class ConversationsService {
     for (const r of rows) {
       if (current?.agent.id !== r.agent_id) {
         current = {
-          agent: { id: r.agent_id, name: r.agent_name ?? "" },
+          agent: {
+            id: r.agent_id,
+            name: r.agent_name ?? "",
+            profile: {
+              avatar: r.profile_avatar,
+              updatedAt: r.profile_updated_at.toISOString(),
+            },
+          },
           latestAt: r.latest_at,
           conversations: [],
           more: false,

@@ -654,6 +654,18 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Writes the caller's connector credentials",
   },
   {
+    route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
+    category: "internal",
+    reason:
+      "Display list of the connector card's 权限 sheet; connectors.get gives an agent the tools and their org defaults",
+  },
+  {
+    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
+    category: "human-only",
+    reason:
+      "A member's own tool policies decide what agents may call with their connection without asking; an agent must never loosen them for itself",
+  },
+  {
     route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
     category: "secret",
     reason: "Deletes the caller's connector credentials",
@@ -709,5 +721,21 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/ui/stream",
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
+  },
+  // themes (themes spec §8-§9)
+  {
+    route: "GET /api/v1/themes/:id/:version/theme.css",
+    category: "transport",
+    reason: "Serves a theme version's stylesheet to the browser; an agent reads themes.list",
+  },
+  {
+    route: "GET /api/v1/themes/:id/:version/assets/:file",
+    category: "transport",
+    reason: "Serves a theme version's font and logo bytes to the browser",
+  },
+  {
+    route: "GET /api/v1/platform/theme",
+    category: "transport",
+    reason: "The platform default theme for the web's pages before sign-in; no session to act for",
   },
 ];

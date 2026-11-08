@@ -16,6 +16,7 @@ import { purposeTargetOf } from "../../models/purposes.controller.js";
 import { ModelPurposesService, PURPOSE_PUT, withDeclaredByNames } from "../../models/purposes.js";
 import { OrgsService } from "../../orgs/orgs.service.js";
 import { ProviderRegistry } from "../../runtime/providers.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -31,6 +32,7 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   customConnectors: true,
   customSkills: true,
   orgMarketplaceBrowse: true,
+  uiTheme: true,
 }).strict();
 
 const ProviderId = ModelProviderParams.shape.provider.describe(
@@ -62,6 +64,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -110,7 +113,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -125,6 +128,10 @@ export class AdminOperations implements OnModuleInit {
             code: "validation_failed",
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
+          {
+            code: "theme.not_available",
+            next: "The platform default must be a platform theme whose scope is all, not disabled, and on in every organization. When the details list orgs, the theme is off in those organizations: tell the person their names, then choose another theme (plugins.components with kind theme lists them) or have it switched on in those organizations first; { id: null } sets the built-in theme.",
+          },
         ],
         precheck: async (i) => {
           const r = DeploymentSettingsBody.safeParse(i);
@@ -132,11 +139,20 @@ export class AdminOperations implements OnModuleInit {
             ? { ok: true }
             : { ok: false, code: "validation_failed", message: r.error.issues[0]?.message ?? "" };
         },
-        summary: (i) => {
-          const parts = Object.entries(i).map(([k, v]) => `${k}=${String(v)}`);
+        summary: async (i) => {
+          const { uiTheme, ...rest } = i;
+          const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
+          const zh = [...parts];
+          const en = [...parts];
+          if (uiTheme !== undefined) {
+            // the theme by its name (the super admin sees every theme), the built-in one by name
+            const name = uiTheme.id === null ? null : await this.themes.nameOf(uiTheme.id);
+            zh.push(`uiTheme=${uiTheme.id === null ? "内置主题" : (name?.zh ?? uiTheme.id)}`);
+            en.push(`uiTheme=${uiTheme.id === null ? "built-in theme" : (name?.en ?? uiTheme.id)}`);
+          }
           return {
-            zh: `修改平台部署设置：${parts.join("，")}`,
-            en: `Change the deployment settings: ${parts.join(", ")}`,
+            zh: `修改平台部署设置：${zh.join("，")}`,
+            en: `Change the deployment settings: ${en.join(", ")}`,
           };
         },
         run: (input, ctx) =>

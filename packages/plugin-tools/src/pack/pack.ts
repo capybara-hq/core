@@ -31,17 +31,22 @@ import {
   parseConnectorTemplateFile,
   parsePluginManifest,
   parseSetupGuide,
+  parseThemeFile,
   SDK_VERSION,
   type StaticExtensionManifest,
   setupGuideDocPath,
   setupGuideDocProblem,
   staticManifestOf,
+  THEME_LIMITS,
+  themeIdOf,
   validatePluginPackageJsonFor,
   validateSetupGuide,
+  validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
 import { pack as tarPack } from "tar-stream";
+import { assetRefs, themePathsOf } from "../check/themes.js";
 import { extensionConfigSchemas, formatConfigSchemaProblem } from "./config-schemas.js";
 
 /** The extension entry the packer writes (relative to the package root). */
@@ -369,7 +374,13 @@ async function contentFiles(
   dir: string,
   label: string,
   m: PluginManifest,
-): Promise<{ files: Map<string, Buffer>; skills: number; templates: number; agents: number }> {
+): Promise<{
+  files: Map<string, Buffer>;
+  skills: number;
+  templates: number;
+  agents: number;
+  themes: number;
+}> {
   const files = new Map<string, Buffer>();
   const addTree = async (rel: string) => {
     for (const f of await listFiles(join(dir, rel))) {
@@ -445,6 +456,44 @@ async function contentFiles(
     agentNames.set(t.template.name, rel);
   }
 
+  // Themes: listed, else scanned from themes/*.json; each is parsed, its assets are checked and
+  // shipped (spec §4-§5), so a bad theme fails the pack before import
+  const { paths: themePaths } = themePathsOf(dir);
+  if (themePaths.length > THEME_LIMITS.perPlugin) {
+    throw new Error(
+      `${label}: ${themePaths.length} themes; a plugin may have at most ${THEME_LIMITS.perPlugin}`,
+    );
+  }
+  const themeFiles = new Map<string, Uint8Array>();
+  const assetSizes = new Map<string, number>();
+  for (const rel of themePaths) {
+    await addFile(rel, "theme");
+    const t = parseThemeFile(themeIdOf(rel), (files.get(rel) as Buffer).toString("utf8"));
+    if ("errors" in t) throw new Error(`${label}: ${rel}: ${t.errors.join("; ")}`);
+    for (const ref of assetRefs(t)) {
+      const key = stripDot(ref);
+      if (themeFiles.has(key)) continue;
+      const abs = join(dir, key);
+      if (!existsSync(abs) || !(await stat(abs)).isFile()) continue;
+      themeFiles.set(key, await readFile(abs));
+    }
+    const checked = validateThemeAssets(t, themeFiles);
+    if (checked.errors.length > 0) {
+      throw new Error(`${label}: ${rel}: ${checked.errors.join("; ")}`);
+    }
+    for (const key of checked.assets.keys()) {
+      files.set(key, Buffer.from(themeFiles.get(key) as Uint8Array));
+      assetSizes.set(key, (themeFiles.get(key) as Uint8Array).length);
+    }
+  }
+  let assetTotal = 0;
+  for (const n of assetSizes.values()) assetTotal += n;
+  if (assetTotal > THEME_LIMITS.assetsBytes) {
+    throw new Error(
+      `${label}: theme assets are larger than ${THEME_LIMITS.assetsBytes} bytes in total (${assetTotal})`,
+    );
+  }
+
   // Setup guides (spec 2026-11-09-setup-guides-v2-design.md §4): guides/<id>.md (required) and
   // guides/<id>.zh.md (optional) of each declared guide, usable as text; the documents are
   // validated in packPlugin once the extension's manifest (permissions.setupChecks) is known
@@ -469,6 +518,7 @@ async function contentFiles(
     skills: m.skills?.length ?? scannedSkills,
     templates: m.connectorTemplates?.length ?? templates.length,
     agents: agents.length,
+    themes: themePaths.length,
   };
 }
 
@@ -608,7 +658,7 @@ async function bundleExtension(
  * 2. when `src/index.ts` exists, bundles the extension ({@link bundleExtension}) and sets
  *    `extension = { entry: "./dist/index.mjs", manifest, migrations?: "./migrations", ui?: "./ui" }`;
  *    a declarative plugin (no `src/index.ts`) runs no esbuild and creates no staging dir;
- * 3. ships `skills/**`, `connectors/*.json`, `agents/*.md` and the listed paths ({@link contentFiles}), README,
+ * 3. ships `skills/**`, `connectors/*.json`, `agents/*.md`, `themes/*.json` with their assets and the listed paths ({@link contentFiles}), README,
  *    LICENSE, NOTICE and the plain files of package.json `files` ({@link extraFiles});
  * 4. writes a package.json with only name / version / type / license / {@link METADATA_FIELDS}
  *    and, with an extension, `main` / `exports` (the entry) and peerDependencies (no `capybara`
@@ -627,9 +677,15 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
   const source = await readSourceManifest(dir, label);
   const content = await contentFiles(dir, label, source);
   const hasExtension = existsSync(join(dir, "src/index.ts"));
-  if (!hasExtension && content.skills === 0 && content.templates === 0 && content.agents === 0) {
+  if (
+    !hasExtension &&
+    content.skills === 0 &&
+    content.templates === 0 &&
+    content.agents === 0 &&
+    content.themes === 0
+  ) {
     throw new Error(
-      `${label}: a plugin must contain an extension, a skill, a connector template or an agent template (src/index.ts, skills/<name>/SKILL.md, connectors/<id>.json or agents/<name>.md)`,
+      `${label}: a plugin must contain an extension, a skill, a connector template, an agent template or a theme (src/index.ts, skills/<name>/SKILL.md, connectors/<id>.json, agents/<name>.md or themes/<id>.json)`,
     );
   }
   const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;

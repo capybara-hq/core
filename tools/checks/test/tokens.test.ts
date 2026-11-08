@@ -9,6 +9,7 @@ import {
   contrastRatio,
   oklabL,
   parseTokens,
+  renderThemeTokensTs,
   renderTokensCss,
   renderTokensTs,
 } from "../src/tokens.js";
@@ -20,6 +21,7 @@ const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const JSON_PATH = "docs/design/tokens.json";
 const CSS_PATH = "packages/design/src/styles/tokens.css";
 const TS_PATH = "packages/design/src/tokens.ts";
+const SDK_PATH = "packages/plugin-sdk/src/theme-tokens.generated.ts";
 
 /** Loosely typed colors and lists of tokens.json, for the separation fixtures. */
 type LooseColors = {
@@ -68,6 +70,15 @@ describe("checkTokens", () => {
     expect(f[0]?.file).toMatch(/tokens\.ts$/);
   });
 
+  it("a hand-edited SDK theme-tokens file -> one tokens-stale naming that file", () => {
+    const root = copyOf("valid");
+    const ts = join(root, SDK_PATH);
+    writeFileSync(ts, readFileSync(ts, "utf8").replace('"bg":', '"bg-extra":'));
+    const f = checkTokens(root);
+    expect(f.map((x) => x.rule)).toEqual(["tokens-stale"]);
+    expect(f[0]?.file).toMatch(/theme-tokens\.generated\.ts$/);
+  });
+
   it("a missing generated file -> tokens-stale", () => {
     const root = copyOf("valid");
     rmSync(join(root, CSS_PATH));
@@ -103,6 +114,7 @@ describe("checkTokens", () => {
     if (!tokens) throw new Error("mutated fixture must parse");
     writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
     writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+    writeFileSync(join(root, SDK_PATH), renderThemeTokensTs(tokens));
     const f = checkTokens(root);
     expect(f.map((x) => x.rule)).toEqual(["tokens-contrast", "tokens-contrast"]);
     expect(f[0]?.message).toContain("ink on tint-test (dark)");
@@ -123,6 +135,7 @@ describe("checkTokens", () => {
     writeFileSync(join(root, JSON_PATH), JSON.stringify(j, null, 2));
     writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
     writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+    writeFileSync(join(root, SDK_PATH), renderThemeTokensTs(tokens));
     expect(checkTokens(root)).toEqual([]);
   });
 
@@ -135,6 +148,7 @@ describe("checkTokens", () => {
     writeFileSync(join(root, JSON_PATH), JSON.stringify(j, null, 2));
     writeFileSync(join(root, CSS_PATH), renderTokensCss(tokens));
     writeFileSync(join(root, TS_PATH), renderTokensTs(tokens));
+    writeFileSync(join(root, SDK_PATH), renderThemeTokensTs(tokens));
   };
   /** The approved light grounds (translucent ink overlays) on the lighter light palette. */
   const newLight = (j: LooseColors) => {
@@ -287,6 +301,27 @@ describe("rendering", () => {
     if (!tokens) return;
     expect(renderTokensCss(tokens)).toBe(readFileSync(join(root, CSS_PATH), "utf8"));
     expect(renderTokensTs(tokens)).toBe(readFileSync(join(root, TS_PATH), "utf8"));
+    expect(renderThemeTokensTs(tokens)).toBe(readFileSync(join(root, SDK_PATH), "utf8"));
+  });
+
+  it("the SDK file excludes avatar and color-mix tokens from the overridable list", () => {
+    const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
+    const { tokens } = parseTokens(text, "tokens.json");
+    if (!tokens) throw new Error("repository tokens.json must parse");
+    const ts = renderThemeTokensTs(tokens);
+    const overridable = ts.slice(ts.indexOf("THEME_OVERRIDABLE"), ts.indexOf("THEME_CONTRAST"));
+    expect(overridable).not.toContain("avatar-capybara-ground");
+    expect(overridable).not.toContain("accent-tint");
+    expect(overridable).toContain('"bg"');
+  });
+
+  it("the SDK file carries the built-in font stacks (THEME_FONTS)", () => {
+    const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
+    const { tokens } = parseTokens(text, "tokens.json");
+    if (!tokens) throw new Error("repository tokens.json must parse");
+    const ts = renderThemeTokensTs(tokens);
+    expect(ts).toContain(`  mono: ${JSON.stringify(tokens.font.mono)},`);
+    expect(ts).toContain(`  prose: ${JSON.stringify(tokens.font.prose)},`);
   });
 
   it("tokens.ts carries no color values", () => {

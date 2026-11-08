@@ -41,15 +41,34 @@ export const FAKE_EXTENSIONS = [
   "fake-config-form",
 ] as const;
 
+/**
+ * Fake plugins without an extension (declarative: they live in `fixtures/plugins/<name>`, same
+ * pack layout).
+ *
+ * | name | provides / covers |
+ * |---|---|
+ * | `fake-theme` | themes `night-city` (dark only, wordmark, font `FakeSans`, logo) and `paper` (light and dark); passes `capybara-plugin check` |
+ */
+export const FAKE_PLUGINS = ["fake-theme"] as const;
+
+/** The name of a fake plugin. */
+export type FakePluginName = (typeof FAKE_PLUGINS)[number];
+
 /** The name of a fake extension (also its plugin and extension name). */
 export type FakeExtensionName = (typeof FAKE_EXTENSIONS)[number];
 
 /** `fixtures/extensions/` of this package (same path from `src/` and from `dist/`). */
 const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/extensions/", import.meta.url));
 
+/** `fixtures/plugins/` of this package. */
+const PLUGINS_DIR = fileURLToPath(new URL("../fixtures/plugins/", import.meta.url));
+
 /** The plugin directory of a fake (pack layout), for `packFixture` or a packer of your own. */
-export function fakeExtensionDir(name: FakeExtensionName): string {
-  return join(FIXTURES_DIR, name);
+export function fakeExtensionDir(name: FakeExtensionName | FakePluginName): string {
+  return join(
+    (FAKE_PLUGINS as readonly string[]).includes(name) ? PLUGINS_DIR : FIXTURES_DIR,
+    name,
+  );
 }
 
 /**
@@ -111,8 +130,14 @@ async function packer(): Promise<Packer> {
  * skills and templates), writes it to `outDir` and returns its path, bytes and sha256. Packing
  * leaves no files in the fixture directory.
  */
-export async function packFixture(name: FakeExtensionName, outDir: string): Promise<PackedFixture> {
-  if (!FAKE_EXTENSIONS.includes(name)) throw new Error(`unknown fake extension ${String(name)}`);
+export async function packFixture(
+  name: FakeExtensionName | FakePluginName,
+  outDir: string,
+): Promise<PackedFixture> {
+  const known =
+    (FAKE_EXTENSIONS as readonly string[]).includes(name) ||
+    (FAKE_PLUGINS as readonly string[]).includes(name);
+  if (!known) throw new Error(`unknown fake extension or plugin ${String(name)}`);
   const pack = await packer();
   const r = await pack(fakeExtensionDir(name), outDir);
   return { file: r.file, bytes: new Uint8Array(await readFile(r.file)), sha256: r.sha256 };
