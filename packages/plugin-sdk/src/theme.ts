@@ -260,6 +260,30 @@ const GRAMMAR: Record<TokenGroup, { parse: (v: string) => string | undefined; fo
   },
 };
 
+/**
+ * The canonical form of a token value under the grammar of `group` (the one {@link parseThemeFile}
+ * applies), or undefined when `value` is not a string within it. For readers of stored themes that
+ * emit values again (the kernel's stylesheet, themes spec §8): a stored value is re-validated
+ * before it reaches CSS, so a changed database row cannot inject CSS.
+ */
+export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > MAX_VALUE_CHARS) return undefined;
+  return GRAMMAR[group].parse(value);
+}
+
+/** Whether `v` is a font family a theme may name: 1-64 letters, digits, spaces or `-`. */
+export function isThemeFontFamily(v: unknown): v is string {
+  return typeof v === "string" && FAMILY_RE.test(v);
+}
+
+/**
+ * Whether `v` is an asset path a theme may name: plugin-root relative (an optional leading `./`),
+ * every segment of `[A-Za-z0-9._-]`, no `.` / `..` segments (the extension is not checked).
+ */
+export function isThemeAssetPath(v: unknown): v is string {
+  return typeof v === "string" && v.length <= 512 && isPlainAssetPath(v);
+}
+
 /** The built-in values of one scheme. */
 function builtIn(scheme: ThemeScheme): MergedScheme {
   const pick = (group: Record<string, { dark: string; light: string }>) =>

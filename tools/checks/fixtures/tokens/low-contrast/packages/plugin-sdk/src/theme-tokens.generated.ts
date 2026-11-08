@@ -22,6 +22,12 @@ export const THEME_TOKENS = {
   radius: Record<"sm" | "md" | "bubble", number>;
 };
 
+/** The built-in font stacks a theme's fonts go in front of: `mono` is `--cb-font`, `prose` `--cb-font-prose`. */
+export const THEME_FONTS = {
+  mono: "\"Sarasa Mono SC\", ui-monospace, monospace",
+  prose: "\"Inter\", \"Source Han Sans SC\", system-ui, sans-serif",
+} as const;
+
 /** The tokens a theme may override: no avatar colors, no color-mix values (they derive). */
 export const THEME_OVERRIDABLE = {
   color: [

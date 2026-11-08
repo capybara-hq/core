@@ -315,6 +315,15 @@ describe("rendering", () => {
     expect(overridable).toContain('"bg"');
   });
 
+  it("the SDK file carries the built-in font stacks (THEME_FONTS)", () => {
+    const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
+    const { tokens } = parseTokens(text, "tokens.json");
+    if (!tokens) throw new Error("repository tokens.json must parse");
+    const ts = renderThemeTokensTs(tokens);
+    expect(ts).toContain(`  mono: ${JSON.stringify(tokens.font.mono)},`);
+    expect(ts).toContain(`  prose: ${JSON.stringify(tokens.font.prose)},`);
+  });
+
   it("tokens.ts carries no color values", () => {
     const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
     const { tokens } = parseTokens(text, "tokens.json");

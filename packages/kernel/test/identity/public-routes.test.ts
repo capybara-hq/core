@@ -28,6 +28,10 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/auth/sources",
   "GET /api/v1/auth/sso/:plugin/start",
   "GET /api/v1/auth/sso/:plugin/callback",
+  // Themes spec §8: styles are not sensitive; the URLs reveal only that a theme version exists
+  "GET /api/v1/themes/:id/:version/theme.css",
+  "GET /api/v1/themes/:id/:version/assets/:file",
+  "GET /api/v1/platform/theme",
   // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
   "POST /channels/webhook/:connectionId",
 ]);

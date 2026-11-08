@@ -116,6 +116,11 @@ export const ERROR_CODES = {
    * (§6, rule 10); details `[{ theme, orgId, themes, plugins }]`.
    */
   "theme.id_taken": 409,
+  /**
+   * A theme delivery URL names no stored theme version, or a file that version does not name (§8);
+   * a removed theme's versions are still served.
+   */
+  "theme.not_found": 404,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,

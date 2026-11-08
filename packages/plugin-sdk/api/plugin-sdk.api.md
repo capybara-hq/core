@@ -187,6 +187,9 @@ export const BootstrapManifestSchema: z.ZodType<BootstrapManifest>;
 export const BUILTIN_TOOL_NAME_RE: RegExp;
 
 // @public
+export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -1364,6 +1367,12 @@ export function isSecret(schema: z.ZodTypeAny): boolean;
 export function isSkillName(s: unknown): s is string;
 
 // @public
+export function isThemeAssetPath(v: unknown): v is string;
+
+// @public
+export function isThemeFontFamily(v: unknown): v is string;
+
+// @public
 export type JsonSchema = Record<string, unknown>;
 
 // @public
@@ -2271,6 +2280,12 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "o
 
 // @public
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
+
+// @public
+export const THEME_FONTS: {
+    readonly mono: "\"Sarasa Mono SC\", ui-monospace, monospace";
+    readonly prose: "\"Inter\", \"Source Han Sans SC\", system-ui, sans-serif";
+};
 
 // @public
 export const THEME_LIMITS: {

@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import {
+  canonicalThemeValue,
+  isThemeAssetPath,
+  isThemeFontFamily,
   type ParsedTheme,
   parseThemeFile,
   THEME_LIMITS,
@@ -357,5 +360,35 @@ describe("theme.v1 JSON Schema", () => {
   ])("agrees with zod: %s", (_label, json) => {
     const clean = JSON.parse(JSON.stringify(json));
     expect(validate(clean)).toBe(ThemeFileSchema.safeParse(clean).success);
+  });
+});
+
+describe("stored value re-validation (themes spec §8)", () => {
+  it("canonicalThemeValue accepts the grammar and re-renders it canonically", () => {
+    expect(canonicalThemeValue("color", "#fce300")).toBe("#FCE300");
+    expect(canonicalThemeValue("color", "rgba(0, 0, 0, 0.40)")).toBe("rgba(0,0,0,0.4)");
+    expect(canonicalThemeValue("shadow", "0 8px 24px rgba(0,0,0,.4)")).toBe(
+      "0 8px 24px rgba(0,0,0,0.4)",
+    );
+  });
+
+  it("canonicalThemeValue refuses anything outside the grammar", () => {
+    for (const v of ["#000;}x{", "red", "#000000 ", "var(--x)", "url(x)"]) {
+      expect(canonicalThemeValue("color", v)).toBeUndefined();
+    }
+    expect(canonicalThemeValue("shadow", "0 0 0 #000;}")).toBeUndefined();
+    expect(canonicalThemeValue("color", 5)).toBeUndefined();
+    expect(canonicalThemeValue("color", "#".padEnd(300, "0"))).toBeUndefined();
+  });
+
+  it("isThemeFontFamily and isThemeAssetPath", () => {
+    expect(isThemeFontFamily("MiSans VF")).toBe(true);
+    expect(isThemeFontFamily('MiSans"; }')).toBe(false);
+    expect(isThemeFontFamily(3)).toBe(false);
+    expect(isThemeAssetPath("./fonts/MiSans.woff2")).toBe(true);
+    expect(isThemeAssetPath("fonts/MiSans.woff2")).toBe(true);
+    for (const p of ["../x.woff2", "/abs.woff2", "fonts/a b.woff2", 'a").woff2', "a/./b.png"]) {
+      expect(isThemeAssetPath(p)).toBe(false);
+    }
   });
 });
