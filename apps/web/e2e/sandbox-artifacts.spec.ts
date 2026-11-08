@@ -24,7 +24,6 @@ async function openSandboxChat(page: Page): Promise<{ orgId: string; convId: str
         name: "Sandbox agent",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: ["Write", "Deliver"].map((name) => ({ kind: "builtin", name })),
       },
       visibility: "private",
     },
