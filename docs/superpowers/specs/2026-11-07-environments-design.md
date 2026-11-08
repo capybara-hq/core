@@ -530,7 +530,13 @@ tell the model the real paths (2026-11-08):
   stored in `environments.provider` and `environment_instances.provider`. `environments.source`
   gains `device`.
 - The `@device` `SandboxHandle` is created with the org's effective limits and carries them; a
-  handle without limits answers `SandboxGoneError`, so the kernel rebuilds the instance.
+  handle without limits answers `SandboxGoneError`, so the kernel rebuilds the instance. Each exec
+  uses the org's current effective limits (looked up per exec), not the ones the handle carries.
+- A replacement login rebuilds the instance (R23): issuing the new credential resets the
+  environment's `environment_instances` row in the same transaction (no handle, files ready), so
+  the next use creates a fresh instance; and `resume` answers gone (the kernel rebuilds) when the
+  active machine's `hello` roots differ from the handle's. A new `environment_paths` event follows
+  (§13.1).
 
 ### 13.3 Authorization
 
@@ -567,6 +573,19 @@ The shape of RFC 8628 for both cases (browser or not):
   is that socket's machine (a replacement login publishes it without a stop frame). `connectUrl` is
   built on `http.publicUrl`, so the deployment's proxy must route `/device/connect` on that origin
   to the `gateway` role (docs/deploy/README.md).
+- The web server forwards `/device/connect` (R28): `apps/web/server.mjs` pipes WebSocket upgrades
+  on exactly that path to a gateway replica (`CAPYBARA_WEB_GATEWAY_URL`; compose sets
+  `http://gateway:8080` on a `devices` network holding web and gateway), with the original request
+  line and headers; other upgrade paths are refused, and unset it answers 404 with a log line. An
+  external proxy may route the path to the gateway replicas directly instead.
+- Frame limit (R26): the token response also carries `maxFrameBytes`
+  (`environments.device.maxFrameBytes`), stored in `credential.json`; the program answers an
+  `error` result instead of sending a larger frame, and the `@device` provider clamps `readFile`'s
+  `maxBytes` so the base64 bytes and the envelope fit (Deliver then reports the file as too large).
+- Prompt failure on revoke or delete (R27): a waiting relay call that sees the lease gone checks
+  whether the machine and environment are still active, and fails at once with
+  `environment.forbidden` (machine revoked) or `environment.not_found` (environment deleted)
+  instead of waiting out the grace.
 - Frames are JSON. Device → kernel: `hello` (protocol, program version, OS, arch, mode, roots,
   session isolation), `res` (`id`, `ok`, `result` or `error: { kind: "gone" | "fs_gone" | "policy" |
   "error", message }`). Kernel → device: `req` (`id`, `op`, `args`, `deadlineMs`), `cancel` (`id`).
@@ -601,6 +620,13 @@ The shape of RFC 8628 for both cases (browser or not):
   gone-sweep (org or environment deleted); machine authentication also requires the org not deleted.
 - Deleting a connected environment revokes the machine and tells the program to stop; the files on
   the machine stay where they are (they are the machine owner's). The delete dialog says so.
+- Files lost (R24): `fs_gone` from any operation on a held instance marks its files lost and
+  answers `environment.files_lost`, as on create. Recovery is local: the machine owner runs
+  `capybara-device logout`, then `capybara-device login` into the same environment, which recreates
+  the directory and its marker (and rebuilds the instance, §13.2); the environment page says so.
+  Resetting files (the API and the Platform operation) is refused for connected environments with
+  an actionable error, the web hides 重建文件 for them, and `destroyFileSystem` /
+  `destroyFileSystemByName` are no-ops (the stop on deletion comes from revoking the machine).
 
 ### 13.6 The program
 
@@ -630,6 +656,11 @@ The shape of RFC 8628 for both cases (browser or not):
   equal to `--memory`, `--cap-drop ALL`, `no-new-privileges` and runs as uid 1000. Docker mode has
   no domain allowlist: a command has the full default bridge or no network at all.
 - Native Windows is refused with a message pointing at WSL or Docker.
+- Terminal exits (R25): the program exits 0 after a clear message on conditions a restart cannot
+  fix (401, 426, close 4002 replaced, close 4003 revoked, a `stop` operation, not logged in), so
+  launchd (`SuccessfulExit=false`) and systemd (`Restart=on-failure`) do not restart it; transient
+  failures stay non-zero. While connection attempts keep failing (a non-101 answer, close 4400) it
+  prints the HTTP status or close reason, at most once a minute.
 
 ## 14. Projects as a plugin (2026-11-08, decided)
 

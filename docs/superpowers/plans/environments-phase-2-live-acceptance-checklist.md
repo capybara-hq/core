@@ -1,7 +1,8 @@
 # Environments phase 2: live acceptance checklist
 
 Run on a deployment with this branch's kernel (gateway role reachable over `wss://` at
-`/device/connect`, see docs/deploy/README.md) and the `@capybara-hq/device` build from the same
+`/device/connect`, through web's forwarding (`CAPYBARA_WEB_GATEWAY_URL`) or a proxy route, see
+docs/deploy/README.md) and the `@capybara-hq/device` build from the same
 commit. Gates before calling phase 2 done: the maintainer's macOS machine and one Linux machine.
 
 ## macOS, OS mode
@@ -15,7 +16,9 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 - [ ] With an empty policy, `curl` fails; after
       `capybara-device policy set allowedDomains registry.npmjs.org` and a restart, npm's registry is
       reachable and another domain is not (policy change narrows or widens only the local side; the
-      environment's egress setting still caps it).
+      environment's egress setting still caps it). Then remove the domain again
+      (`capybara-device policy set allowedDomains ""`), restart, and confirm npm's registry is
+      refused again.
 
 ## Linux, `--no-browser`
 
@@ -39,6 +42,14 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 - [ ] Logging a second machine into the same environment replaces the first: the first is revoked and
       disconnected, the second is online.
 
+## Files lost
+
+- [ ] Stop the program, delete the environment's working directory by hand, start it again: the
+      environment page shows 文件已丢失 with the guidance and no 重建文件, and a tool call answers
+      files lost. Run `capybara-device logout`, then `capybara-device login` into the same
+      environment: the directory is recreated, the next conversation call works (a new
+      `environment_paths` line), and the page no longer says 文件已丢失.
+
 ## Docker mode
 
 - [ ] On a machine with Docker, `login --mode docker`: the container `capybara-device-<environmentId>`
@@ -58,3 +69,8 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
   directory; it should use the instance's skills root.
 - Device-only deployments' eval replays: a replay needs a connected machine or recorded results only.
 - Linux bubblewrap tests need `bwrap` and `socat` in CI.
+- A request frame sent on a socket that is dying can be lost: the gateway marked it taken, the
+  program never saw it, and the call waits out its timeout. The program could list the request ids
+  it knows right after `hello`, so the gateway re-sends or fails the others at once.
+- Migration 0094 builds its index without `CONCURRENTLY` (a lock on a large table during the
+  migration); fine before 0.1.0, revisit for later index migrations on big tables.

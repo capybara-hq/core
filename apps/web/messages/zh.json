@@ -316,6 +316,7 @@
       "unavailable": "该环境的沙箱提供方当前不可用，请联系超级管理员。",
       "files_lost": "该环境的文件已丢失。云端沙箱请在环境页面重建文件；接入设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
       "forbidden": "你已无法使用该环境。",
+      "files_on_device": "接入设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
       "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。"
     },

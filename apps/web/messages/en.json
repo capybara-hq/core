@@ -316,6 +316,7 @@
       "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
       "files_lost": "The files of this environment were lost. For a cloud sandbox, rebuild its files on the environments page; for a connected device, run capybara-device logout, then capybara-device login into the same environment on the machine.",
       "forbidden": "You can no longer use this environment.",
+      "files_on_device": "A connected device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same environment.",
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again."
     },
