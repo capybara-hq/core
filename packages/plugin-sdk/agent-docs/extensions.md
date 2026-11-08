@@ -44,7 +44,7 @@ look like `channel@1`: name and major version. The registered points:
 <!-- generated:extension-points -->
 | Extension point | Providers | Per org | What it is |
 |---|---|---|---|
-| `sandbox` | single | no | Runs an environment's instance and keeps its files for agents' commands (Docker, E2B). |
+| `sandbox` | single | no | Runs a device's instance and keeps its files for agents' commands (Docker, E2B). |
 | `config-source` | single | no | Supplies deployment configuration from an external store such as Nacos. |
 | `secret-store` | single | no | Stores and resolves secrets (connector credentials, secret config) outside the database. |
 | `object-store` | single | no | Stores files and artifacts in S3-compatible object storage, with presigned uploads. |

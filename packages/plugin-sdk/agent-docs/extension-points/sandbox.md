@@ -2,7 +2,7 @@
 
 <!-- generated:extension-point -->
 - Name: `sandbox` (a ref is `sandbox@<major>`)
-- Runs an environment's instance and keeps its files for agents' commands (Docker, E2B).
+- Runs a device's instance and keeps its files for agents' commands (Docker, E2B).
 - Providers: one at a time
 - Enabled per org: no
 - Brokered by the platform: yes (extensions use it only through `ctx`)

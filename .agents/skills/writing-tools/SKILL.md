@@ -189,16 +189,16 @@ the same transaction as the business rows.
 `Glob`, `Grep`, `Deliver`.
 
 - They exist only when the agent definition references them explicitly (`DEFAULT_AGENT_TOOLS` does not include them); when the deployment has no sandbox extension they are reported unavailable (`unavailable()`).
-- All run in the conversation's **environment** (spec `docs/superpowers/specs/2026-11-07-environments-design.md` §4.1, §4.2 items 8, 9, 12): `inSandbox`
-  first calls `ConversationEnvironments.forTool(orgId, rootConversationId)`, which binds a still unbound root conversation once (an IM thread to the
-  owner's still usable IM default, else the owner's default environment; `UPDATE … WHERE environment_id IS NULL`) and checks
-  `EnvironmentAccess.usable` for the conversation's **owner** on every call, so a conversation never reaches another person's environment; an
-  anonymous IM sender's conversation has no environment (`sandbox.unavailable`, an anonymous-specific tool error). Then
-  `SandboxService.withSandbox({ orgId, environmentId, holderConversationId, actor })` (instance created lazily, see
+- All run in the conversation's **device** (spec `docs/superpowers/specs/2026-11-07-environments-design.md` §4.1, §4.2 items 8, 9, 12): `inSandbox`
+  first calls `ConversationDevices.forTool(orgId, rootConversationId)`, which binds a still unbound root conversation once (an IM thread to the
+  owner's still usable IM default, else the owner's default device; `UPDATE … WHERE device_id IS NULL`) and checks
+  `DeviceAccess.usable` for the conversation's **owner** on every call, so a conversation never reaches another person's device; an
+  anonymous IM sender's conversation has no device (`sandbox.unavailable`, an anonymous-specific tool error). Then
+  `SandboxService.withSandbox({ orgId, deviceId, holderConversationId, actor })` (instance created lazily, see
   `.agents/skills/writing-sandbox-providers`), passing the lock-linked signal to every provider call; path leases (`withPathLease(deps, session, …)`)
-  are on the environment. `mapSandboxError` turns `environment.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors.
+  are on the device. `mapSandboxError` turns `device.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors.
   Paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`. A conversation is bound at create (`POST /conversations`
-  `environmentId`, checked with `usable`; without it the owner's default) and its environment is read at `GET …/conversations/:id/environment`.
+  `deviceId`, checked with `usable`; without it the owner's default) and its device is read at `GET …/conversations/:id/device`.
 - Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =
   `tools.timeoutMs` + `sandbox.lockWaitSeconds`, covering lock waiting and creation / resume); a `timeout` above the limit is lowered to it and the result says so.
   The other sandbox tools use only the margin (deliver twice). The provider's command time limit arrives first, the model gets `timedOut`, and the sandbox remains usable as usual.
@@ -212,8 +212,8 @@ the same transaction as the business rows.
   paused approval still carries is resolved from the run's own tools (and answered with a hint naming the new key); stored definitions are refused with a message
   naming the new key; migration 0063 rewrote stored grants, pending approvals and questions. `terms-tool-key` keeps old keys out of everything else.
 - Spilling: `Bash`'s `spillChars` is 30000, and large output is read as usual through `ReadToolOutput` / `{"$output": id}`.
-- Result prefix notices (English): on first use `Environment started (first use in this conversation)…`, on a new instance
-  `The environment's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
+- Result prefix notices (English): on first use `Device started (first use in this conversation)…`, on a new instance
+  `The device's instance was restarted; files are kept, running processes and /tmp are gone.`, and newly copied attachments list their paths. Before every call, attachments in the conversation that are ready are synced to
   `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id; the sync marker is per conversation).
 - Default policy is allow (the sandbox is isolated, D5); when the org setting `sandboxToolPolicy: "ask"` is set, bash / write / edit / deliver need approval,
   the setting is read **at the moment of execution**, and the read-only read / glob / grep are unaffected.
@@ -224,7 +224,7 @@ the same transaction as the business rows.
 `tools/builtins/sandbox/{bash,task-output,task-stop}.ts`):
 
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
-  per-root-conversation `XactLock`, `sid` null; the row records its `environment_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
+  per-root-conversation `XactLock`, `sid` null; the row records its `device_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
   output in `/workspace/.capybara/tasks/<id>.out`), then records the session id. The call returns at once; `timeout` is the task's own limit
   (default and cap `sandbox.background.maxSeconds`, itself at most `sandbox.limits.maxCommandSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
   "N background tasks are already running; stop one with TaskStop or wait for one to finish, then retry".
@@ -244,10 +244,10 @@ the same transaction as the business rows.
   agent version at run start, written only when it differs from the previous one, Ruling M17). It resolves the name to a skill id, version and `source` (object prefix) from the **latest snapshot**,
   fetches files strictly by `source`, and checks size and sha256. A `source` of the form `platform:<object prefix>` is a platform skill version (plugin scope
   phase 2, ruling D2) read from the `deployment/` store (`skillFileStore`); any other source is an org prefix under `kernel/<orgId>/`. `findSkillVersion` accepts a
-  platform version for the entry's own id or for the platform skill an org copy with that id links to (a linked copy keeps its id), and nothing once either is deleted. A skill with other files is copied into the environment at `/skills/<name>@<digest>/` (the first 12 hex digits of the sha256 of the version's file manifest, so versions coexist; marker `/skills/.capybara/<name>@<digest>.json`; read-only, scripts have no executable bit,
+  platform version for the entry's own id or for the platform skill an org copy with that id links to (a linked copy keeps its id), and nothing once either is deleted. A skill with other files is copied into the device at `/skills/<name>@<digest>/` (the first 12 hex digits of the sha256 of the version's file manifest, so versions coexist; marker `/skills/.capybara/<name>@<digest>.json`; read-only, scripts have no executable bit,
   the result tells you to run them with `sh` / `python3`; files left by older versions are listed as ignorable, Ruling M18). Old version directories accumulate in the
-  environment, which its conversations share: nothing deletes them (no delete primitive; another conversation may still use that version) until the files are reset or
-  the environment is deleted. When the agent has no sandbox tools only the body is returned.
+  device, which its conversations share: nothing deletes them (no delete primitive; another conversation may still use that version) until the files are reset or
+  the device is deleted. When the agent has no sandbox tools only the body is returned.
   The first catalog goes into the system cache segment, and later changes are rendered at their position as English reminders (append-only), so a change reaches the model only at **the start of the next run**.
 - **Qualified names** (phase B, spec §9.3): `Skill` also accepts `<plugin>:<name>` (Claude Code's namespace syntax, e.g. `superpowers:brainstorming`). An exact name wins; otherwise the prefix must equal the skill's `plugin` in the snapshot (the catalog item it was installed from), else the usual "not in the skills catalog" error listing the names. The catalog shown to the model keeps plain names, and the tool definition is unchanged (`maxLength: 64`, so a longer qualified name is refused by the schema while the plain one works). Skill bodies are never rewritten.
 - **Pinned skills** (spec §9.1): the agent definition's `skills.pinned` (skill ids already selected through `orgSkills` or the agent's own skills; at most 3, SKILL.md of the current versions ≤ 32768 bytes, checked when the list changes: 400 `agent.pinned_invalid` with `{ skill, reason: not_selected | not_found | duplicate | too_many | too_large, totalBytes? }`; no default, so definitions without it gain no version). At run start the bodies are read from object storage (sha256-checked, bounded retry) and written into the `skills_catalog` snapshot (`pinned`), in the owner's order while they fit (the rest dropped with a warning); a storage failure fails the run before any model request (`storage.unavailable`, naming an unreadable skill for the owner), and pinned skills that keep changing during the read fail it with `conflict`. Requests render them after the catalog in the system segment, as "Pinned skill …" notices when the set or a version changes, and again after compaction, all from the log. A pinned skill needs no `Skill`; calling it still copies the files into the sandbox. When the snapshot has a `claude-code` skill it also carries the fixed English tool-name map (`toolMap`, `runtime/context/claude-tools.ts`: `Bash` -> `Bash`, `Skill` -> `Skill`, `Task` / `Agent` -> `agent` when the agent has it, else not available, …). See `.agents/skills/replay-evals` for the drift rules.
@@ -347,7 +347,7 @@ Specs `docs/superpowers/specs/2026-10-26-subagents-design.md` §4–§9 (phase C
 - **A person's forked skill** (`/name` of a `context: fork` skill) dispatches through the same code but has no `Agent` call: the
   `Agent` tool's policy, approval and `tool.preExecute` do not apply (by design, phase D spec §6.2: the person dispatches); the
   child's own calls are gated as usual. A hook point for person-initiated dispatches comes later.
-- **Sandbox**: sub-agents at every depth use the root conversation's environment (`BuiltinCallContext.sandboxConversationId`) and may run commands at
+- **Sandbox**: sub-agents at every depth use the root conversation's device (`BuiltinCallContext.sandboxConversationId`) and may run commands at
   the same time; the `Bash` and `Agent` descriptions warn that shell commands writing one file are not serialized (kernel file
   tools are, per path).
 
@@ -378,7 +378,7 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
 - **Classes.** `read` runs; `personal` asks and may be remembered; `org` / `platform` ask every time and are
   never remembered (`remember: false`; the approval stores `scopes: ["once"]`, anything else is
   `approval.scope_not_allowed`, on the web, in IM cards and over the API). A `personal` operation with
-  `rememberable: false` (deleting a conversation, an agent, an agent's skill, an environment) is asked every
+  `rememberable: false` (deleting a conversation, an agent, an agent's skill, a device) is asked every
   time too: `remember = class === "personal" && rememberable !== false`. A read never prompts; a read an
   agent tightened to `ask` (`toolPolicies` on `Platform:<operation>`) asks once-only and no grant applies.
   When the class depends on the target, the operation's `confirmFor(input, ctx)` decides per call
