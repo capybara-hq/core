@@ -1,4 +1,4 @@
-import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { rootsOf, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { decodeTail, tailCommand } from "../../../background/session.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
@@ -63,7 +63,7 @@ async function lastLinesOf(
       async (p, h, sig) => {
         const res = await p.exec(h, {
           command: tailCommand(task.id),
-          cwd: "/workspace",
+          cwd: rootsOf(h).workspace,
           timeoutMs: TAIL_EXEC_TIMEOUT_MS,
           maxOutputBytes: 64 * 1024,
           signal: sig,
@@ -125,7 +125,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { task_id } = input as TaskStopInput;
-      const env = taskEnv(deps);
+      const env = await taskEnv(deps, ctx);
       const task = await ownedTask(env, ctx, task_id);
       await recheckEnvironment(env, ctx);
       if (task.status !== "running") {

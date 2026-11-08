@@ -39,7 +39,7 @@ const SPEC: ToolSpec = {
       file_path: {
         type: "string",
         minLength: 1,
-        description: 'Absolute path of the file, e.g. "/workspace/src/app.py".',
+        description: "Absolute path of the file, e.g. src/app.py in the workspace directory.",
       },
       old_string: { type: "string", minLength: 1, description: "The exact text to replace." },
       new_string: { type: "string", description: "The replacement text." },
@@ -88,14 +88,15 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { old_string, new_string, replace_all = false } = input as EditInput;
-      const path = checkWritable((input as EditInput).file_path);
       if (old_string === new_string) throw new ToolError(SAME_TEXT);
+      let path = "";
       const { value: edit, notices } = await inSandbox(
         deps,
         ctx,
-        ({ environmentId, h, p, signal }) =>
+        ({ environmentId, h, roots, p, signal }) => {
+          path = checkWritable((input as EditInput).file_path, roots);
           // read, replace, write: one holder at a time per file
-          withPathLease(deps, { environmentId }, path, signal, async (signal) => {
+          return withPathLease(deps, { environmentId }, path, signal, async (signal) => {
             const st = await p.stat(h, path, signal);
             if (st === null) throw new ToolError(notFound(path));
             if (st.isDir) throw new ToolError(notText(path));
@@ -129,7 +130,8 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
                 nextBytes.byteLength,
               ),
             };
-          }),
+          });
+        },
       );
       const { n } = edit;
       const text = `Edited ${path}: replaced ${n} occurrence${n === 1 ? "" : "s"}.`;

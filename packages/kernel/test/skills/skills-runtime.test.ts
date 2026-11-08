@@ -1128,6 +1128,7 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
   });
 
   it("the Skill spec hash is pinned (it changes only with a reviewed rename of the tool or its parameters)", () => {
-    expect(specHash(skillLoadTool({} as never).spec)).toBe("7bdc57e4c8e9ffa1");
+    // environments phase 2 (spec §13.1): the description names "the skills directory"
+    expect(specHash(skillLoadTool({} as never).spec)).toBe("14c7c8de50ac30df");
   });
 });

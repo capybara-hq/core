@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DEFAULT_SANDBOX_ROOTS,
   isSandboxGoneError,
   type SandboxHandle,
   type SandboxProvider,
@@ -275,7 +276,7 @@ describe("lazy creation", () => {
     expect(s.cloudAvailable).toBe(true);
     expect(await ops()).toEqual([]);
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, restarted: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     const limits = {
       cpu: 1,
       memoryMb: 2048,
@@ -302,7 +303,7 @@ describe("lazy creation", () => {
     expect(r?.handle).toEqual(a.h);
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h).toEqual(a.h);
     expect(await ops("create")).toHaveLength(1);
     expect(await ops("create-fs")).toHaveLength(1);
@@ -384,7 +385,7 @@ describe("lazy creation", () => {
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, restarted: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect((await row())?.status).toBe("running");
     expect(await ops("create-fs")).toHaveLength(1);
   });
@@ -429,7 +430,7 @@ describe("空闲休眠（审查重点 3）", () => {
     expect(await fakeSandboxState(root, a.h.id)).toBe("suspended");
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h).toEqual(a.h);
     expect(await ops("resume")).toEqual([["resume", a.h.id]]);
     expect((await row())?.status).toBe("running");
@@ -504,7 +505,7 @@ describe("the provider reports the instance gone", () => {
     await removeFakeSandbox(root, a.id);
 
     const b = await readIn(s, "a.txt");
-    expect(b.info).toEqual({ fresh: true, restarted: true });
+    expect(b.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h.id).not.toBe(a.id);
     expect(b.body).toBe("hi");
     expect((await ops("resume-gone")).map((o) => o[1])).toEqual([a.id]);
@@ -556,7 +557,7 @@ describe("destruction after inactivity", () => {
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     const next = await readIn(s, "notes.txt");
     expect(next.body).toBe("kept");
-    expect(next.info).toEqual({ fresh: true, restarted: true });
+    expect(next.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(next.h.id).not.toBe(first.id);
     expect((await row())?.status).toBe("running");
     expect(await ops("create-fs")).toHaveLength(1);
@@ -725,7 +726,7 @@ describe("lost files", () => {
     const next = await readIn(s, "a.txt");
     expect(next.body).toBeNull();
     // a fresh start on new files, not a restart on kept ones
-    expect(next.info).toEqual({ fresh: true, restarted: false });
+    expect(next.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(await ops("create-fs")).toHaveLength(2);
     expect((await row())?.fs_status).toBe("ready");
   });
@@ -930,7 +931,11 @@ describe("restarted is sticky (fix round 1)", () => {
     fail = true;
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
-    expect((await use(s)).info).toEqual({ fresh: true, restarted: true });
+    expect((await use(s)).info).toEqual({
+      fresh: true,
+      restarted: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
   });
 });
 
@@ -955,8 +960,8 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
       signal(),
     );
     expect(infos).toEqual([
-      { fresh: false, restarted: false },
-      { fresh: true, restarted: true },
+      { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+      { fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS },
     ]);
     expect(out.stdout).toBe("ok\n");
     expect(out.h.id).not.toBe(a.h.id);
@@ -994,9 +999,13 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
         signal(),
       );
     const first = await useAs();
-    expect(first.info).toEqual({ fresh: true, restarted: false });
+    expect(first.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     // a sub-agent joins the running sandbox: nothing was lost for it
-    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs(child)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
     // the instance is gone during the sub-agent's command: it rebuilds and is told
     await removeFakeSandbox(root, first.h.id);
     const infos: unknown[] = [];
@@ -1008,11 +1017,23 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
       },
       signal(),
     );
-    expect(infos.at(-1)).toEqual({ fresh: true, restarted: true });
+    expect(infos.at(-1)).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     // the parent's next use learns its processes are gone too, then not again
-    expect((await useAs()).info).toEqual({ fresh: false, restarted: true });
-    expect((await useAs()).info).toEqual({ fresh: false, restarted: false });
-    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs()).info).toEqual({
+      fresh: false,
+      restarted: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs()).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs(child)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
   });
 });
 
@@ -1221,7 +1242,7 @@ describe("锁的防护（fix round 2）", () => {
     // the sweeper's lease expires; B takes a lease and uses the running sandbox
     await redis.del(lockKey());
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     started.release();
     expect(await sweep).toBe(0);
     expect(failures).toHaveLength(1);
@@ -1318,7 +1339,7 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
       }),
       signal(),
     );
-    expect(out.info).toEqual({ fresh: false, restarted: false });
+    expect(out.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(out.r.stdout).toBe("a");
     expect(await ops("autostart")).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);

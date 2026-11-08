@@ -1,6 +1,8 @@
 import {
+  DEFAULT_SANDBOX_ROOTS,
   isSandboxGoneError,
   type SandboxHandle,
+  type SandboxRoots,
   ToolError,
   validateSandboxPath,
 } from "@capybara-hq/plugin-sdk";
@@ -16,6 +18,10 @@ import {
 } from "../../../environments/conversation-environments.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import {
+  environmentPathsIdemKey,
+  isDefaultRoots,
+} from "../../../runtime/context/environment-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
 import {
   type HeldProvider,
@@ -34,8 +40,13 @@ export interface SandboxToolDeps {
    */
   sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
-  /** The environment a call enters: the root conversation's, checked for its owner every call. */
-  environments: Pick<ConversationEnvironments, "forTool">;
+  /**
+   * The environment a call enters: the root conversation's, checked for its owner every call.
+   * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
+   * conversation's environment can run without a cloud provider (ruling R8).
+   */
+  environments: Pick<ConversationEnvironments, "forTool"> &
+    Partial<Pick<ConversationEnvironments, "usableNow">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -57,9 +68,12 @@ export interface SandboxToolDeps {
   };
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
-  /** `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). */
+  /**
+   * `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). `findByIdem` (absent in
+   * test stubs) spares an append when the conversation already has its `environment_paths` event.
+   */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
-    Partial<Pick<EventLog, "publishChanged">>;
+    Partial<Pick<EventLog, "publishChanged" | "findByIdem">>;
   config: Pick<KernelConfigService, "get">;
 }
 
@@ -72,19 +86,24 @@ export interface SandboxSession {
   /** The environment the call runs in (path leases are taken on it). */
   environmentId: string;
   h: SandboxHandle;
+  /** The instance's roots: every path the call builds or checks is under one of them. */
+  roots: SandboxRoots;
   p: HeldProvider;
   signal: AbortSignal;
 }
 
 // ---- 模型可见文案（英文） ----
 
-/** 没有沙箱提供方时「工具不可用」的原因（进提醒与调用结果）。 */
-/** This conversation's first use of its environment. */
-export const SANDBOX_STARTED_NOTICE =
-  "Environment started (first use in this conversation); the working directory is /workspace, shared with the environment's other conversations.";
+/** This conversation's first use of its environment (in the instance's workspace). */
+export const sandboxStartedNotice = (roots: SandboxRoots): string =>
+  `Environment started (first use in this conversation); the working directory is ${roots.workspace}, shared with the environment's other conversations.`;
+/** {@link sandboxStartedNotice} of an instance with the default roots. */
+export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS);
 /** A new instance came up on the environment's kept files. */
-export const SANDBOX_RESTARTED_NOTICE =
-  "The environment's instance was restarted; files are kept, running processes and /tmp are gone.";
+export const sandboxRestartedNotice = (roots: SandboxRoots): string =>
+  `The environment's instance was restarted; files are kept, running processes and ${roots.tmp} are gone.`;
+/** {@link sandboxRestartedNotice} of an instance with the default roots. */
+export const SANDBOX_RESTARTED_NOTICE = sandboxRestartedNotice(DEFAULT_SANDBOX_ROOTS);
 
 const BUSY_TEXT =
   "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
@@ -114,22 +133,31 @@ const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
 /** The directory of attachments in the environment (each conversation has a subdirectory). */
-export const ATTACHMENTS_ROOT = "/workspace/attachments";
+export const attachmentsRoot = (roots: SandboxRoots): string => `${roots.workspace}/attachments`;
+/** {@link attachmentsRoot} of an instance with the default roots. */
+export const ATTACHMENTS_ROOT = attachmentsRoot(DEFAULT_SANDBOX_ROOTS);
 /**
  * One conversation's attachment directory: the first 12 hex digits of the root conversation's
  * UUID, so conversations sharing an environment do not overwrite each other's files.
  */
-export const attachmentsDir = (rootConversationId: string): string =>
-  `${ATTACHMENTS_ROOT}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
+export const attachmentsDir = (roots: SandboxRoots, rootConversationId: string): string =>
+  `${attachmentsRoot(roots)}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
 /** The conversation's marker of synced attachments: `{ <attachment id>: <file name> }`. */
-export const syncMarkerPath = (rootConversationId: string): string =>
-  `${attachmentsDir(rootConversationId)}/.capybara-sync.json`;
+export const syncMarkerPath = (roots: SandboxRoots, rootConversationId: string): string =>
+  `${attachmentsDir(roots, rootConversationId)}/.capybara-sync.json`;
 const SYNC_MARKER_NAME = ".capybara-sync.json";
-const SYNC_MARKER_RE = new RegExp(
-  `^${ATTACHMENTS_ROOT}/[^/]+/${SYNC_MARKER_NAME.replaceAll(".", "\\.")}(?=$|[:-])`,
-);
-/** Whether a path, or a Grep output line starting with one, belongs to a sync marker (hidden from Glob / Grep). */
-export const isSyncMarkerEntry = (pathOrLine: string): boolean => SYNC_MARKER_RE.test(pathOrLine);
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/**
+ * Whether a path, or a Grep output line starting with one, belongs to a sync marker of the
+ * instance with `roots` (hidden from Glob / Grep).
+ */
+export const isSyncMarkerEntry = (
+  pathOrLine: string,
+  roots: SandboxRoots = DEFAULT_SANDBOX_ROOTS,
+): boolean =>
+  new RegExp(
+    `^${escapeRe(attachmentsRoot(roots))}/[^/]+/${escapeRe(SYNC_MARKER_NAME)}(?=$|[:-])`,
+  ).test(pathOrLine);
 const MARKER_MAX_BYTES = 1024 * 1024;
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
@@ -199,23 +227,26 @@ export function withNotices(notices: readonly string[], text: string): string {
   return [...notices, text].join("\n\n");
 }
 
-/** 校验沙箱内路径（`validateSandboxPath`）；不合法抛给模型可执行的错误。 */
-export function checkPath(path: string, field = "path"): string {
-  const errors = validateSandboxPath(path);
+/**
+ * Checks a path inside the instance with `roots` (`validateSandboxPath`: absolute, under one of its
+ * roots); an invalid one throws an error the model can act on, naming the instance's roots.
+ */
+export function checkPath(path: string, roots: SandboxRoots, field = "path"): string {
+  const errors = validateSandboxPath(path, roots);
   if (errors.length > 0) {
     throw new ToolError(
-      `Invalid ${field} "${clip(path, 200)}": ${errors.join("; ")}. Pass an absolute path under /workspace, /skills or /tmp.`,
+      `Invalid ${field} "${clip(path, 200)}": ${errors.join("; ")}. Pass an absolute path under ${roots.workspace}, ${roots.skills} or ${roots.tmp}.`,
     );
   }
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
-/** A writing tool's `file_path`: `/skills` is the read-only copy of the skill files. */
-export function checkWritable(path: string): string {
-  const p = checkPath(path, "file_path");
-  if (p === "/skills" || p.startsWith("/skills/")) {
+/** A writing tool's `file_path`: the skills root is the read-only copy of the skill files. */
+export function checkWritable(path: string, roots: SandboxRoots): string {
+  const p = checkPath(path, roots, "file_path");
+  if (p === roots.skills || p.startsWith(`${roots.skills}/`)) {
     throw new ToolError(
-      `Path ${clip(p, 200)} is read-only (/skills holds skill files); pass a path under /workspace or /tmp instead.`,
+      `Path ${clip(p, 200)} is read-only (${roots.skills} holds skill files); pass a path under ${roots.workspace} or ${roots.tmp} instead.`,
     );
   }
   return p;
@@ -312,7 +343,7 @@ function copyFailureReason(e: unknown): string {
 }
 
 /**
- * 把本对话已 ready 的附件复制到 `/workspace/attachments/<conversation>/<name>`（{@link attachmentsDir}），
+ * 把本对话已 ready 的附件复制到 `<workspace>/attachments/<conversation>/<name>`（{@link attachmentsDir}），
  * 标记文件记下已复制的（不重复复制）。对象已不在的附件跳过（下次再试）。
  * 每复制一个就更新标记文件：中途超时 / 中止，下次从停下的地方继续。
  * 单个附件失败（存储故障等）只跳过它并给出说明，不让工具调用失败；signal 已中止或实例已不在时照常抛出。
@@ -331,14 +362,14 @@ async function syncAttachments(
   const marker = await readSyncMarker(s, conv);
   if (list.every((a) => Object.hasOwn(marker, a.id))) return none;
   // the sync marker is read, changed and written: one holder at a time
-  return withPathLease(deps, s, syncMarkerPath(conv), s.signal, (signal) =>
+  return withPathLease(deps, s, syncMarkerPath(s.roots, conv), s.signal, (signal) =>
     copyAttachments(deps, ctx, { ...s, signal }, conv, list),
   );
 }
 
 /** The sync marker's entries (`{}` when it is missing, too large or unreadable). */
 async function readSyncMarker(s: SandboxSession, conv: string): Promise<Record<string, string>> {
-  const m = await s.p.readFile(s.h, syncMarkerPath(conv), {
+  const m = await s.p.readFile(s.h, syncMarkerPath(s.roots, conv), {
     maxBytes: MARKER_MAX_BYTES,
     signal: s.signal,
   });
@@ -361,7 +392,7 @@ async function copyAttachments(
   const failures: string[] = [];
   for (const a of pending) {
     const name = names.get(a.id) as string;
-    const path = `${attachmentsDir(conv)}/${name}`;
+    const path = `${attachmentsDir(s.roots, conv)}/${name}`;
     try {
       const opened = await deps.attachments.openForConversation(ctx.orgId, conv, a.id);
       if (!opened) continue;
@@ -378,7 +409,12 @@ async function copyAttachments(
     copied.push(path);
     const next = { ...marker, [a.id]: name };
     try {
-      await s.p.writeFile(s.h, syncMarkerPath(conv), utf8.encode(JSON.stringify(next)), s.signal);
+      await s.p.writeFile(
+        s.h,
+        syncMarkerPath(s.roots, conv),
+        utf8.encode(JSON.stringify(next)),
+        s.signal,
+      );
       marker = next;
     } catch (e) {
       if (s.signal.aborted || isSandboxGoneError(e)) throw e;
@@ -413,7 +449,8 @@ export function mapSandboxError(e: unknown): unknown {
  * rebuilt on the kept files as needed, every `exec` carrying the call's actor). Attachments are
  * synced first. Returns the value and the notices to put before the result (first use, a new
  * instance, newly copied attachments). When `withSandbox` rebuilds a gone instance and calls
- * `fn` again, the notices are the last call's.
+ * `fn` again, the notices are the last call's. An instance whose roots are not the defaults is
+ * described to the model once per conversation ({@link recordEnvironmentPaths}).
  */
 export async function inSandbox<T>(
   deps: SandboxToolDeps,
@@ -431,10 +468,11 @@ export async function inSandbox<T>(
         actor: { accountId: ctx.accountId, conversationId: ctx.conversationId },
       },
       async (h, p, info, signal) => {
-        const s: SandboxSession = { environmentId, h, p, signal };
+        const s: SandboxSession = { environmentId, h, roots: info.roots, p, signal };
+        await recordEnvironmentPaths(deps, ctx, info.roots);
         const notices: string[] = [];
-        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
-        else if (info.fresh) notices.push(SANDBOX_STARTED_NOTICE);
+        if (info.restarted) notices.push(sandboxRestartedNotice(info.roots));
+        else if (info.fresh) notices.push(sandboxStartedNotice(info.roots));
         const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
           notices.push(`Attachments copied into the sandbox: ${copied.join(", ")}.`);
@@ -447,6 +485,30 @@ export async function inSandbox<T>(
   } catch (e) {
     throw mapSandboxError(e);
   }
+}
+
+/**
+ * Environments spec §13.1: an instance whose roots are not the defaults (a connected machine's
+ * real paths) gets one `environment_paths` event in the calling conversation's log (the log its
+ * model reads; a sub-agent's own too), before the call's result. Idempotent per conversation and
+ * roots; the default roots write nothing, so cloud conversations are unchanged.
+ */
+async function recordEnvironmentPaths(
+  deps: Pick<SandboxToolDeps, "eventLog">,
+  ctx: BuiltinCallContext,
+  roots: SandboxRoots,
+): Promise<void> {
+  if (isDefaultRoots(roots)) return;
+  const idemKey = environmentPathsIdemKey(roots);
+  if (await deps.eventLog.findByIdem?.(ctx.conversationId, idemKey)) return;
+  await deps.eventLog.append(ctx.conversationId, [
+    {
+      type: "environment_paths",
+      ...(ctx.runId !== undefined && { runId: ctx.runId }),
+      idemKey,
+      payload: { roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp } },
+    },
+  ]);
 }
 
 /** The conversation whose environment a call uses (the root conversation's for a sub-agent). */
@@ -477,14 +539,28 @@ export async function withPathLease<T>(
 }
 
 /**
- * Whether this deployment has a cloud sandbox: without one, the reason the registry reports the
- * sandbox tools unavailable with. A listing has no environment yet, so it asks the cloud provider
- * only.
+ * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run: a
+ * cloud provider is loaded, or (ruling R8) the conversation's environment runs on a registered
+ * kernel provider (`@device`). Without a conversation only the cloud provider counts.
+ */
+export async function sandboxUsable(
+  deps: Pick<SandboxToolDeps, "sandbox" | "environments">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<boolean> {
+  if (deps.sandbox.cloudAvailable) return true;
+  if (conversationId === undefined || !deps.environments.usableNow) return false;
+  return deps.environments.usableNow(orgId, conversationId);
+}
+
+/**
+ * The reason the registry reports the sandbox tools unavailable with, or null when they can run
+ * ({@link sandboxUsable}; the listing passes the root conversation of the run).
  */
 export const unavailableWhenNoSandbox =
-  (deps: Pick<SandboxToolDeps, "sandbox">) =>
-  (_ctx?: { orgId: string }): string | null =>
-    deps.sandbox.cloudAvailable ? null : SANDBOX_UNAVAILABLE_REASON;
+  (deps: Pick<SandboxToolDeps, "sandbox" | "environments">) =>
+  async (ctx: { orgId: string; conversationId?: string }): Promise<string | null> =>
+    (await sandboxUsable(deps, ctx.orgId, ctx.conversationId)) ? null : SANDBOX_UNAVAILABLE_REASON;
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */
 export function looksBinary(data: Uint8Array): boolean {

@@ -272,7 +272,8 @@ describe("Bash run_in_background", { timeout: 30_000 }, () => {
       triggerAccountId: seed.accountId,
       description: "Sleep a while",
       command: "sleep 30",
-      outputPath: `.capybara/tasks/${row.id}.out`,
+      // absolute once started: under the instance's workspace root
+      outputPath: `/workspace/.capybara/tasks/${row.id}.out`,
       status: "running",
     });
     expect(row.sid).toMatch(/^[1-9][0-9]*$/);

@@ -1,4 +1,4 @@
-import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
+import { rootsOf, type SandboxHandle } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelConfig } from "../config/schema.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -171,7 +171,7 @@ export class BackgroundTaskPollJob {
   ): Promise<Map<string, TaskReport>> {
     const res = await p.exec(h, {
       command: pollScript(tasks.map((t) => ({ id: t.id, sid: t.sid as string }))),
-      cwd: "/workspace",
+      cwd: rootsOf(h).workspace,
       timeoutMs: POLL_EXEC_TIMEOUT_MS,
       maxOutputBytes: POLL_MAX_OUTPUT_BYTES,
       signal,

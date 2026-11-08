@@ -4,10 +4,12 @@ import {
   type FileSystemHandle,
   isFileSystemGoneError,
   isSandboxGoneError,
+  rootsOf,
   type SandboxActor,
   type SandboxHandle,
   type SandboxLimits,
   type SandboxProvider,
+  type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -88,7 +90,15 @@ export interface SandboxUseInfo {
    * new instance on the kept files, so earlier processes are gone.
    */
   restarted: boolean;
+  /**
+   * The instance's roots ({@link rootsOf} of its handle): every model-visible path is built from
+   * them (environments spec §13.1; a connected machine's real paths).
+   */
+  roots: SandboxRoots;
 }
+
+/** {@link SandboxUseInfo} before the roots are read from the handle. */
+type EnteredInfo = Omit<SandboxUseInfo, "roots">;
 
 /** Who uses the sandbox in {@link SandboxService.withSandbox}. */
 export interface SandboxUseContext {
@@ -154,7 +164,7 @@ interface Entered {
   createdAt: number;
   /** The id of the file system the instance runs on (a reset makes a new one). */
   fsId: string;
-  info: SandboxUseInfo;
+  info: EnteredInfo;
 }
 
 /** The signal of one provider call in maintenance: aborted on timeout or when the lease is lost. */
@@ -661,7 +671,7 @@ export class SandboxService {
     const impl = tagged<HeldProvider>(p.impl, e.lease.token, ctx.actor, () =>
       this.register(env, e.lease.token),
     );
-    return fn(e.handle, impl, e.info, sig);
+    return fn(e.handle, impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
   }
 
   /**
@@ -1282,7 +1292,7 @@ export class SandboxService {
     handle: SandboxHandle;
     createdAt: number;
     fsId: string;
-    info: SandboxUseInfo;
+    info: EnteredInfo;
     fence: Fence;
     resumed?: boolean;
   }> {

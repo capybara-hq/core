@@ -116,6 +116,10 @@ describe("renderSkillBody", () => {
     expect(renderSkillBody("${CLAUDE_SKILL_DIR}/run.sh", inv, "", "m", D)).toBe(
       "/skills/m@0123456789ab/run.sh",
     );
+    // an instance with its own skills root (a connected machine)
+    expect(renderSkillBody("${CLAUDE_SKILL_DIR}/run.sh", inv, "", "m", D, "/home/u/s")).toBe(
+      "/home/u/s/m@0123456789ab/run.sh",
+    );
     expect(renderSkillBody("${CLAUDE_SESSION_ID}", inv, "", "m", D)).toBe("${CLAUDE_SESSION_ID}");
   });
 

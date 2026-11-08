@@ -2145,7 +2145,7 @@ export interface RenderedPrompt {
 }
 
 // @public
-export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string): string;
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string, skillsRoot?: string): string;
 
 // @public
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
@@ -2328,10 +2328,10 @@ export function skillInvocation(frontmatter: Readonly<Record<string, unknown>>):
 export const SKILLS_SANDBOX_ROOT = "/skills";
 
 // @public
-export function skillSandboxDir(name: string, digest: string): string;
+export function skillSandboxDir(name: string, digest: string, root?: string): string;
 
 // @public
-export function skillSandboxPath(name: string, digest: string, path: string): string;
+export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
@@ -2698,7 +2698,7 @@ export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManif
 }): string[];
 
 // @public
-export function validateSandboxPath(p: string): string[];
+export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];
 
 // @public
 export function validateSkillPackage(files: {

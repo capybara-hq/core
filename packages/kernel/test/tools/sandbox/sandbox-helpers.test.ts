@@ -1,3 +1,4 @@
+import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
@@ -224,8 +225,12 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
           // 等锁用掉了 lockWaitSeconds + 25 秒
           withSandbox: async (_c, fn, sig) => {
             now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
-            // biome-ignore lint/suspicious/noExplicitAny: 只用到 stat / exec
-            return fn({ id: "h" }, p as any, { fresh: false, restarted: false }, sig);
+            return fn(
+              { id: "h" },
+              p as never,
+              { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+              sig,
+            );
           },
         },
         // biome-ignore lint/suspicious/noExplicitAny: 只列附件
@@ -343,7 +348,13 @@ describe("attachment sync", () => {
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
+      ) =>
+        fn(
+          { id: "x" },
+          p,
+          { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+          new AbortController().signal,
+        ),
     };
     return { files, writes, sandbox };
   }
@@ -466,7 +477,13 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
         withSandbox: async (
           _ctx: unknown,
           fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-        ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
+        ) =>
+          fn(
+            { id: "x" },
+            p,
+            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+            new AbortController().signal,
+          ),
       } as unknown as SandboxToolDeps["sandbox"],
       attachments: {
         listForConversation: async () => opts.attachments ?? [],
@@ -533,17 +550,17 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const r = rig({ storage: false });
     r.files.set("/workspace/out.txt", new TextEncoder().encode("x"));
     const deliver = r.tool("Deliver");
-    expect(deliver.unavailable?.({ orgId: "o" })).toMatch(
+    expect(await deliver.unavailable?.({ orgId: "o" })).toMatch(
       /^File storage is not configured in this deployment/,
     );
     // 其他沙箱工具不受影响
-    expect(r.tool("Read").unavailable?.({ orgId: "o" })).toBeNull();
+    expect(await r.tool("Read").unavailable?.({ orgId: "o" })).toBeNull();
     await expect(deliver.run({ file_path: "/workspace/out.txt" }, callCtx())).rejects.toThrow(
       /File storage is not configured/,
     );
     expect(r.reads()).toBe(0);
     expect(r.puts).toEqual([]);
-    expect(rig().tool("Deliver").unavailable?.({ orgId: "o" })).toBeNull();
+    expect(await rig().tool("Deliver").unavailable?.({ orgId: "o" })).toBeNull();
   });
 
   it("deliver deletes the uploaded object when writing artifact_created fails", async () => {
@@ -625,7 +642,13 @@ describe("read before write over Read's byte limit", () => {
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
-      ) => fn({ id: "x" }, p, { fresh: false, restarted: false }, new AbortController().signal),
+      ) =>
+        fn(
+          { id: "x" },
+          p,
+          { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+          new AbortController().signal,
+        ),
     } as unknown as SandboxToolDeps["sandbox"];
     const tools = sandboxTools({
       environments,
@@ -668,5 +691,205 @@ describe("read before write over Read's byte limit", () => {
     expect(first.view.file.size).toBe(11_000_000);
     const second = await run("small\n");
     expect(second.view.file.size).toBe(6);
+  });
+});
+
+describe("custom roots (environments phase 2, spec §13.1)", () => {
+  const ROOTS: SandboxRoots = {
+    workspace: "/Users/u/capybara-device/e1/workspace",
+    skills: "/Users/u/capybara-device/e1/skills",
+    tmp: "/Users/u/capybara-device/e1/tmp",
+  };
+  const cfg = KernelConfigSchema.parse({
+    db: { url: "postgres://x/y" },
+    redis: { url: "redis://x" },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+  const ctx = {
+    orgId: "o",
+    accountId: "a",
+    agentId: "g",
+    conversationId: "0123abcd-4567-4890-8bcd-ef0123456789",
+    callId: "call",
+    runId: "run",
+    signal: new AbortController().signal,
+  };
+
+  /** An instance whose handle carries `ROOTS`, with `attachments` waiting to be copied. */
+  function device(attachments: { id: string; name: string }[] = []) {
+    const files = new Map<string, Uint8Array>();
+    const writes: string[] = [];
+    let entered = 0;
+    const p = {
+      readFile: async (_h: unknown, path: string) => {
+        const d = files.get(path);
+        return d === undefined ? null : { data: d, truncated: false };
+      },
+      writeFile: async (_h: unknown, path: string, data: Uint8Array) => {
+        files.set(path, data);
+        writes.push(path);
+      },
+      stat: async (_h: unknown, path: string) => {
+        const d = files.get(path);
+        return d === undefined ? null : { size: d.byteLength, isDir: false };
+      },
+    };
+    const body = (t: string) => new Response(t).body as ReadableStream<Uint8Array>;
+    const tools = sandboxTools({
+      environments,
+      sandbox: {
+        cloudAvailable: true,
+        availableFor: async () => true,
+        withSandbox: async (_c, fn, sig) => {
+          entered++;
+          return fn(
+            { id: "env-1", roots: ROOTS },
+            p as never,
+            { fresh: false, restarted: false, roots: ROOTS },
+            sig,
+          );
+        },
+      },
+      attachments: {
+        listForConversation: async () => attachments,
+        openForConversation: async (_o: string, _c: string, id: string) => ({
+          name: id,
+          contentType: "text/plain",
+          size: 2,
+          body: body("ok"),
+        }),
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+      } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      storage: {} as any,
+      eventLog: {
+        append: async () => [],
+        findByIdem: async () => undefined,
+        latestFileState: async () => null,
+      },
+      config: { get: () => cfg },
+    });
+    const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
+    return { files, writes, tool, entered: () => entered };
+  }
+
+  const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
+
+  it("Write under custom roots lands in the device workspace", async () => {
+    const d = device();
+    const r = await d
+      .tool("Write")
+      .run({ file_path: `${ROOTS.workspace}/a.txt`, content: "hi" }, ctx);
+    expect(d.writes).toEqual([`${ROOTS.workspace}/a.txt`]);
+    expect(text(r)).toBe(`Created ${ROOTS.workspace}/a.txt (2 bytes).`);
+    await expect(
+      d.tool("Write").run({ file_path: `${ROOTS.skills}/x/run.sh`, content: "x" }, ctx),
+    ).rejects.toThrow(
+      `Path ${ROOTS.skills}/x/run.sh is read-only (${ROOTS.skills} holds skill files); pass a path under ${ROOTS.workspace} or ${ROOTS.tmp} instead.`,
+    );
+  });
+
+  it("a /workspace path is refused under custom roots with an actionable error naming the real workspace", async () => {
+    const d = device();
+    await expect(d.tool("Read").run({ file_path: "/workspace/a.txt" }, ctx)).rejects.toThrow(
+      `Invalid file_path "/workspace/a.txt": path must be under ${ROOTS.workspace}, ${ROOTS.skills}, ${ROOTS.tmp}. Pass an absolute path under ${ROOTS.workspace}, ${ROOTS.skills} or ${ROOTS.tmp}.`,
+    );
+    expect(d.writes).toEqual([]);
+  });
+
+  it("default roots keep the old path error, byte for byte", async () => {
+    const d = device();
+    const tools = sandboxTools({
+      environments,
+      sandbox: {
+        cloudAvailable: true,
+        availableFor: async () => true,
+        withSandbox: async (_c, fn, sig) =>
+          fn(
+            { id: "x" },
+            {} as never,
+            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+            sig,
+          ),
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: test stub
+      attachments: { listForConversation: async () => [] } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      storage: {} as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      eventLog: {} as any,
+      config: { get: () => cfg },
+    });
+    void d;
+    const read = tools.find((t) => t.spec.name === "Read") as BuiltinTool;
+    await expect(read.run({ file_path: "/etc/passwd" }, ctx)).rejects.toThrow(
+      'Invalid file_path "/etc/passwd": path must be under /workspace, /skills, /tmp. Pass an absolute path under /workspace, /skills or /tmp.',
+    );
+  });
+
+  it("attachments copy to <workspace>/attachments/<conv12>", async () => {
+    const d = device([{ id: "a1", name: "data.csv" }]);
+    d.files.set(`${ROOTS.workspace}/f.txt`, new TextEncoder().encode("hello\n"));
+    const r = await d.tool("Read").run({ file_path: `${ROOTS.workspace}/f.txt` }, ctx);
+    const dir = `${ROOTS.workspace}/attachments/0123abcd4567`;
+    expect(d.writes).toEqual([`${dir}/data.csv`, `${dir}/.capybara-sync.json`]);
+    expect(text(r)).toContain(`Attachments copied into the sandbox: ${dir}/data.csv.`);
+  });
+
+  it("Glob and Grep default to the instance's workspace and hide its sync markers", () => {
+    expect(isSyncMarkerEntry(`${ROOTS.workspace}/attachments/c/.capybara-sync.json`, ROOTS)).toBe(
+      true,
+    );
+    expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json", ROOTS)).toBe(false);
+  });
+
+  it("descriptions name no environment's root paths", () => {
+    const d = device();
+    for (const name of ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "Deliver"]) {
+      const spec = JSON.stringify(d.tool(name).spec);
+      expect(spec, name).not.toContain("/workspace/");
+      expect(spec, name).not.toContain("/skills/");
+    }
+  });
+});
+
+describe("sandbox tools listed by the conversation's environment (ruling R8)", () => {
+  const cfg = KernelConfigSchema.parse({
+    db: { url: "postgres://x/y" },
+    redis: { url: "redis://x" },
+    masterKey: Buffer.alloc(32, 7).toString("base64"),
+  });
+  const bash = (usable: (orgId: string, conversationId: string) => Promise<boolean>) =>
+    sandboxTools({
+      environments: { forTool: async () => "env-1", usableNow: usable },
+      sandbox: {
+        cloudAvailable: false,
+        availableFor: async () => true,
+        withSandbox: async () => {
+          throw new Error("not used");
+        },
+      },
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      attachments: {} as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      storage: {} as any,
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      eventLog: {} as any,
+      config: { get: () => cfg },
+    }).find((t) => t.spec.name === "Bash") as BuiltinTool;
+
+  it("a conversation in a connected machine's environment gets the tools without a cloud provider", async () => {
+    const seen: string[] = [];
+    const tool = bash(async (_o, c) => {
+      seen.push(c);
+      return c === "device-conv";
+    });
+    expect(await tool.unavailable?.({ orgId: "o", conversationId: "device-conv" })).toBeNull();
+    expect(await tool.unavailable?.({ orgId: "o", conversationId: "other" })).toMatch(
+      /^No sandbox is configured/,
+    );
+    // a listing without a conversation (the Platform tool's view) asks the cloud provider only
+    expect(await tool.unavailable?.({ orgId: "o" })).toMatch(/^No sandbox is configured/);
+    expect(seen).toEqual(["device-conv", "other"]);
   });
 });

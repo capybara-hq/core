@@ -22,15 +22,20 @@ export {
   SANDBOX_UNAVAILABLE_REASON,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
+  sandboxRestartedNotice,
+  sandboxStartedNotice,
+  sandboxUsable,
   searchTimeoutMs,
   shellQuote,
 } from "./common.js";
 export { compileGlob, GlobPatternError, MAX_GLOB_STARS } from "./glob-match.js";
 
 /**
- * 沙箱内置工具（M5 T8）：bash / read / write / edit / glob / grep / deliver，都在本对话的沙箱上执行
- * （`SandboxService.withSandbox`），执行前同步附件到 `/workspace/attachments`。没有沙箱提供方时报不可用。
- * 默认 allow；组织设置 `sandboxToolPolicy` 为 ask 时除 read / glob / grep 外需要审批（见 policy.ts）。
+ * The sandbox builtins (M5 T8): Bash / Read / Write / Edit / Glob / Grep / Deliver, all run in the
+ * conversation's environment (`SandboxService.withSandbox`) after syncing attachments to
+ * `<workspace>/attachments` (the instance's roots, environments spec §13.1); unavailable without
+ * a provider for it. Allowed by default; with the org setting `sandboxToolPolicy` set to ask,
+ * every one but Read / Glob / Grep needs approval (see policy.ts).
  * `TaskOutput` and `TaskStop` read and stop background `Bash` tasks through
  * `SandboxService.ifRunning` (never creating or resuming a sandbox); always allowed.
  */

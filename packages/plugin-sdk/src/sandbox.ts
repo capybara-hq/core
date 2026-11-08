@@ -284,8 +284,12 @@ export interface SandboxProvider {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-/** 校验沙箱内路径：返回错误列表，空数组表示合法。 */
-export function validateSandboxPath(p: string): string[] {
+/**
+ * Checks a path inside an instance; returns the errors, empty when valid. `roots`: the instance's
+ * roots ({@link rootsOf}); absent means {@link SANDBOX_ROOTS}. The path must be one of them or
+ * under one.
+ */
+export function validateSandboxPath(p: string, roots?: SandboxRoots): string[] {
   if (typeof p !== "string" || p.length === 0) return ["path must be a non-empty string"];
   if (p.length > MAX_PATH_LENGTH) return [`path must be at most ${MAX_PATH_LENGTH} characters`];
   if (CONTROL.test(p)) return ["path must not contain control characters"];
@@ -305,8 +309,10 @@ export function validateSandboxPath(p: string): string[] {
       break;
     }
   }
-  if (!SANDBOX_ROOTS.some((r) => p === r || p.startsWith(`${r}/`))) {
-    errors.push(`path must be under ${SANDBOX_ROOTS.join(", ")}`);
+  const allowed: readonly string[] =
+    roots === undefined ? SANDBOX_ROOTS : [roots.workspace, roots.skills, roots.tmp];
+  if (!allowed.some((r) => p === r || p.startsWith(`${r}/`))) {
+    errors.push(`path must be under ${allowed.join(", ")}`);
   }
   return errors;
 }

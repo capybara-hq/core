@@ -126,9 +126,13 @@ export interface BuiltinTool {
   /**
    * The factual reason this tool is unavailable for the org right now (English, actionable; it goes
    * into the "tool unavailable" reminder), or null when it is available. May be async (e.g. a
-   * per-org extension-point default).
+   * per-org extension-point default). `conversationId`: the root conversation of the run the
+   * listing is for, when there is one (the sandbox tools follow its environment, ruling R8).
    */
-  unavailable?: (ctx: { orgId: string }) => Promise<string | null> | string | null;
+  unavailable?: (ctx: {
+    orgId: string;
+    conversationId?: string;
+  }) => Promise<string | null> | string | null;
   /**
    * A policy key derived from the validated input (Platform tool spec §6.2), or null to use the
    * tool key. With a key, agent and parent policies, grants and approvals are keyed by it (an
@@ -522,6 +526,11 @@ export class ToolRegistry {
        * it reaches its parent with neither tool (`SendMessage` only to its own sub-agents).
        */
       forkChild?: boolean;
+      /**
+       * The root conversation of the run (a sub-agent's tree root): tools whose availability
+       * depends on the conversation's environment (the sandbox tools) are listed by it.
+       */
+      sandboxConversationId?: string;
     },
   ): Promise<AgentTools> {
     const resolved = await this.resolve(orgId, def);
@@ -579,9 +588,16 @@ export class ToolRegistry {
     def: {
       disabledTools?: readonly DisabledToolRef[] | undefined;
       subagents?: AgentDefinition["subagents"];
+      sandboxConversationId?: string;
     },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const disabled = def.disabledTools ?? [];
+    const scope = {
+      orgId,
+      ...(def.sandboxConversationId !== undefined && {
+        conversationId: def.sandboxConversationId,
+      }),
+    };
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
     const hidden: UnavailableTool[] = [];
@@ -605,7 +621,7 @@ export class ToolRegistry {
       if (builtinDisabled(disabled, name)) continue;
       const b = this.builtins.find((x) => x.spec.name === name);
       if (!b) continue;
-      const why = (await b.unavailable?.({ orgId })) ?? null;
+      const why = (await b.unavailable?.(scope)) ?? null;
       if (why !== null) {
         hidden.push({ ref: name, reason: why });
         continue;
@@ -623,7 +639,7 @@ export class ToolRegistry {
       if (name === BUILTIN.Bash) {
         for (const companion of BASH_COMPANION_TOOLS) {
           const c = this.builtins.find((x) => x.spec.name === companion);
-          if (c && ((await c.unavailable?.({ orgId })) ?? null) === null) {
+          if (c && ((await c.unavailable?.(scope)) ?? null) === null) {
             add(builtinTool(c, c.spec));
           }
         }

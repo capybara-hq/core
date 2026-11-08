@@ -134,3 +134,17 @@ describe("SandboxGoneError", () => {
     }
   });
 });
+
+describe("validateSandboxPath with an instance's roots", () => {
+  const roots = { workspace: "/home/u/e1/workspace", skills: "/home/u/e1/skills", tmp: "/tmp/e1" };
+  it("accepts paths under the given roots only", () => {
+    expect(validateSandboxPath("/home/u/e1/workspace/a.txt", roots)).toEqual([]);
+    expect(validateSandboxPath("/tmp/e1", roots)).toEqual([]);
+    expect(validateSandboxPath("/workspace/a.txt", roots)).toEqual([
+      "path must be under /home/u/e1/workspace, /home/u/e1/skills, /tmp/e1",
+    ]);
+    expect(validateSandboxPath("/home/u/e1/workspace/../x", roots)).toContain(
+      "path must not contain '..' segments",
+    );
+  });
+});

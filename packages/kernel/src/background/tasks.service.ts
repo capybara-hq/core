@@ -1,4 +1,4 @@
-import { isSandboxGoneError } from "@capybara-hq/plugin-sdk";
+import { isSandboxGoneError, rootsOf } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -206,7 +206,7 @@ export class BackgroundTasks {
           async (p, h, signal) => {
             const res = await actingAs(p, actor).exec(h, {
               command: tailScript(task.id, tail),
-              cwd: "/workspace",
+              cwd: rootsOf(h).workspace,
               timeoutMs: OUTPUT_READ_TIMEOUT_MS,
               maxOutputBytes: 2 * OUTPUT_TAIL_MAX_BYTES + 4096,
               signal,
@@ -233,7 +233,7 @@ export class BackgroundTasks {
   }
 }
 
-/** Prints `size <bytes>` and `out <base64 of the last `tail` bytes>`. Relative to `/workspace`. */
+/** Prints `size <bytes>` and `out <base64 of the last `tail` bytes>`. Relative to the workspace root. */
 function tailScript(id: string, tail: number): string {
   if (!TASK_ID_RE.test(id)) throw new Error(`invalid background task id: ${id}`);
   const f = `${TASKS_DIR}/${id}.out`;

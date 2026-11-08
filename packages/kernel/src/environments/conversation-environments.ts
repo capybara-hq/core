@@ -40,7 +40,9 @@ export class ConversationEnvironments {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "cloud">,
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud"> &
+      Partial<Pick<SandboxProviders, "forName">>,
     @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
     @Inject(EnvironmentsService)
     private readonly environments: Pick<EnvironmentsService, "ensureDefault">,
@@ -96,6 +98,47 @@ export class ConversationEnvironments {
       throw sandboxUnavailable();
     }
     return (await this.access.usable(orgId, conv.account_id, environmentId)).id;
+  }
+
+  /**
+   * Whether a sandbox tool call of the tree rooted at `rootConversationId` has a provider to run
+   * on, for tool listings (ruling R8; no binding, no access check, never throws): a cloud
+   * provider is loaded, or the environment the conversation is bound to (an unbound IM thread:
+   * its owner's IM default) runs on a registered kernel provider (`@device`). A forbidden or gone
+   * environment still counts: the call then says why.
+   */
+  async usableNow(orgId: string, rootConversationId: string): Promise<boolean> {
+    if (this.providers.cloud() !== undefined) return true;
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select(["account_id", "environment_id"])
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!conv) return false;
+    let environmentId = conv.environment_id;
+    if (environmentId === null) {
+      if (!(await this.isImThread(rootConversationId))) return false;
+      const row = await this.db
+        .selectFrom("environment_defaults")
+        .select("environment_id")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", conv.account_id)
+        .executeTakeFirst();
+      if (!row) return false;
+      environmentId = row.environment_id;
+    }
+    const env = await this.db
+      .selectFrom("environments")
+      .select("provider")
+      .where("id", "=", environmentId)
+      .executeTakeFirst();
+    const provider = env?.provider ?? null;
+    return (
+      provider !== null &&
+      isInternalProvider(provider) &&
+      this.providers.forName?.(provider) !== undefined
+    );
   }
 
   /**
