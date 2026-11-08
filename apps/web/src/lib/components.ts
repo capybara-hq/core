@@ -1,14 +1,20 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
-import type { LocalizedName, PluginScope, ScopeConflict } from "./catalog";
+import type { LocalizedName, PluginScope, ScopeConflict, ThemePreview } from "./catalog";
+import { type ThemeScheme, type ThemeSwatch, themeName } from "./themes";
 
 /**
  * Platform components (kernel `catalog/component-scope.controller.ts`, super admins): the
- * deployment's skills, connector templates and agent templates, each with the plugin it came from,
+ * deployment's skills, connector templates, agent templates and themes, each with the plugin it came from,
  * its scope (its plugin's, or its own), disable and visibility, its versions, and a new version of a
  * skill or agent template uploaded on its own (spec §5, §7.2).
  */
 
-export const PLATFORM_COMPONENT_KINDS = ["skill", "connector_template", "agent_template"] as const;
+export const PLATFORM_COMPONENT_KINDS = [
+  "skill",
+  "connector_template",
+  "agent_template",
+  "theme",
+] as const;
 export type PlatformComponentKind = (typeof PLATFORM_COMPONENT_KINDS)[number];
 
 /** Where each kind's admin pages live. */
@@ -16,6 +22,7 @@ export const COMPONENT_ROUTES: Record<PlatformComponentKind, string> = {
   skill: "/admin/skills",
   connector_template: "/admin/connector-templates",
   agent_template: "/admin/agent-templates",
+  theme: "/admin/themes",
 };
 
 /** The path segment each kind's pages show (`/admin/skills` -> `skills`). */
@@ -23,6 +30,7 @@ export const COMPONENT_SEGMENTS: Record<PlatformComponentKind, string> = {
   skill: "skills",
   connector_template: "connector-templates",
   agent_template: "agent-templates",
+  theme: "themes",
 };
 
 /** Who owns an item or component (kernel `catalog/ownership.ts`): the platform, or one org. */
@@ -69,7 +77,19 @@ export interface PlatformComponent {
   version: string;
   /** The orgs it is on in now. */
   onIn: string[];
+  /** A theme: its name and swatches from its current version. */
+  theme?: {
+    name: { en: string; zh?: string };
+    swatches: Partial<Record<ThemeScheme, ThemeSwatch>>;
+  };
 }
+
+/**
+ * A component's name as the UI shows it: a theme's own name in the locale, else its localized
+ * display name (a connector template), else `name`.
+ */
+export const componentName = (c: PlatformComponent, locale: string): string =>
+  c.theme !== undefined ? themeName(c.theme, locale) : componentLabel(c, locale);
 
 /**
  * An org's own skill or agent template not promoted yet (the org row's id, ruling P3-23): not a
@@ -126,6 +146,8 @@ export interface ComponentScopePreview {
     connectorsKept: number;
   }[];
   conflicts: ScopeConflict[];
+  /** A theme the change takes away: whose default it is and who picked it (themes spec §6). */
+  themes?: ThemePreview[];
   scopeHash: string;
 }
 
@@ -269,7 +291,12 @@ export const unavailableComponent = (
 
 /** What switching a component off in the org takes away: the agents using it, connectors kept. */
 export interface ComponentSwitchPreview {
-  preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
+  preview: {
+    agents: { id: string; name: string; refs: string[] }[];
+    connectorsKept: number;
+    /** A theme: whether it is the org's default and how many members picked it. */
+    themes?: ThemePreview[];
+  };
   confirm: string;
 }
 

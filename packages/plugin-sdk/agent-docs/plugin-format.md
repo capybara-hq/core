@@ -10,11 +10,12 @@ A plugin is a directory, packed into a `.tgz` with `capybara-plugin pack` (the p
   skills/<name>/SKILL.md         skills (scanned unless plugin.json lists them)
   connectors/<id>.json           connector templates (scanned unless listed)
   agents/<name>.md               agent templates (scanned unless listed)
+  themes/<id>.json               themes (scanned unless listed)
   src/index.ts                   the extension (optional; bundled by the packer)
   migrations/*.sql, ui/**        extension migrations and UI files (optional)
 ```
 
-A plugin without `src/index.ts` is declarative: skills and templates only, no code runs.
+A plugin without `src/index.ts` is declarative: skills, templates and themes only, no code runs.
 
 ## plugin.json
 
@@ -37,6 +38,7 @@ file is strict: an unknown key is an error. Fields (agent templates are listed u
 | `skills` | array of object | no |
 | `connectorTemplates` | array of object | no |
 | `agents` | array of object | no |
+| `themes` | array of object | no |
 | `setupGuides` | array of object | no |
 | `extension` | object | no |
 <!-- /generated -->
@@ -48,10 +50,12 @@ Rules that the schema cannot show:
   release candidates, ranges on official packages are written `^0.1.0-rc.0`.
 - `description` is a string or `{ en, zh? }`; `displayName` is `{ zh, en }`.
 - `icon` is a `./` path to an `.svg` or `.png` inside the plugin.
-- `skills`, `connectorTemplates`, `agents` list paths starting with `./` that stay inside the plugin.
+- `skills`, `connectorTemplates`, `agents`, `themes` list paths starting with `./` that stay inside the plugin.
   Omit them to scan the default folders. Names and ids are unique within the plugin.
 - `dependencies`: plugin name plus semver range; no self-dependency.
 - `agents`: at most 64 templates (see `agent-templates`).
+- `themes`: at most 10 `<id>.json` files; the id is the file's base name. A theme file is checked
+  by `parseThemeFile` (schema `https://capybarahq.com/schemas/theme.v1.schema.json`).
 - `setupGuides` (at most 8): setup material shown where a person configures what the plugin
   brings. Each guide has an `id`, a `place` (`channel-connection`: 新建渠道 and the channel detail;
   the plugin's extension must provide `channel@1`), a `title` and `steps` (`{ en, zh? }`, plain

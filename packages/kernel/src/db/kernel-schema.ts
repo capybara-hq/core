@@ -1,4 +1,4 @@
-import type { FileSystemHandle, SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -22,6 +22,8 @@ export interface AccountsTable {
   time_zone: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0090: the account must set its own password first (a generated initial password). */
   must_change_password: Generated<boolean>;
+  /** 0093: the person's theme id across all their orgs; null follows the org (themes spec §7). */
+  theme: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -1324,6 +1326,8 @@ export interface KernelDatabase {
   platform_agent_templates: PlatformAgentTemplatesTable;
   platform_agent_template_versions: PlatformAgentTemplateVersionsTable;
   platform_connector_templates: PlatformConnectorTemplatesTable;
+  platform_themes: PlatformThemesTable;
+  platform_theme_versions: PlatformThemeVersionsTable;
   component_scope_orgs: ComponentScopeOrgsTable;
   component_org_switches: ComponentOrgSwitchesTable;
   plugin_installs: PluginInstallsTable;
@@ -1473,7 +1477,7 @@ export interface CatalogItemOrgSwitchesTable {
 
 type ScopeMode = "follow" | "own";
 type ComponentScope = "all" | "optional" | "named";
-type ComponentKind = "skill" | "agent_template" | "connector_template";
+type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
 type Dflt<T> = ColumnType<T, T | undefined, T>;
 type NullableDflt<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
@@ -1568,6 +1572,41 @@ export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
+}
+
+/** 0093: a theme (themes spec §6); every theme comes from a plugin, owned by the platform or an org. */
+export interface PlatformThemesTable extends PlatformScopeColumns {
+  id: string;
+  /** The owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** The org it was created in; never changed. */
+  origin_org_id: NullableDflt<string>;
+  /** The owner shares it with other orgs. */
+  shareable: Dflt<boolean>;
+  catalog_item_id: NullableDflt<string>;
+  plugin_name: NullableDflt<string>;
+  name: string;
+  description: NullableDflt<string>;
+  description_zh: NullableDflt<string>;
+  current_version: number;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/**
+ * 0093: one version of a theme; `definition` is the parsed theme file, its fonts and logo live
+ * under `object_prefix` in `deployment/` (null without assets).
+ */
+export interface PlatformThemeVersionsTable {
+  theme_id: string;
+  version: number;
+  definition: Json<ParsedTheme>;
+  object_prefix: NullableDflt<string>;
+  catalog_version: NullableDflt<string>;
+  updated_on_own: Dflt<boolean>;
+  created_by: NullableDflt<string>;
+  created_at: Ts;
 }
 
 /** 0081: the orgs an own-scope `named` component is offered to. */
@@ -1815,8 +1854,8 @@ export interface PluginInstallsTable {
  */
 export interface PluginInstallComponentsTable {
   install_id: string;
-  /** 0053: 'agent_template', ref = the agent_templates id. */
-  kind: "extension" | "connector" | "skill" | "plugin" | "agent_template";
+  /** 0053: 'agent_template', ref = the agent_templates id; 0093: 'theme', ref = the platform_themes id. */
+  kind: "extension" | "connector" | "skill" | "plugin" | "agent_template" | "theme";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

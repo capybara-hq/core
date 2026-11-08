@@ -710,4 +710,20 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
   },
+  // themes (themes spec §8-§9)
+  {
+    route: "GET /api/v1/themes/:id/:version/theme.css",
+    category: "transport",
+    reason: "Serves a theme version's stylesheet to the browser; an agent reads themes.list",
+  },
+  {
+    route: "GET /api/v1/themes/:id/:version/assets/:file",
+    category: "transport",
+    reason: "Serves a theme version's font and logo bytes to the browser",
+  },
+  {
+    route: "GET /api/v1/platform/theme",
+    category: "transport",
+    reason: "The platform default theme for the web's pages before sign-in; no session to act for",
+  },
 ];

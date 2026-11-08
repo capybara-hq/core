@@ -24,6 +24,17 @@ export interface OrgSettings {
   platformTool?: "on" | "read-only" | "off";
   /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
   timeZone?: string;
+  /**
+   * The org's default theme (null: follow the platform) and whether members may pick their own
+   * (themes spec §7); absent: follow the platform, allowed.
+   */
+  theme?: OrgThemeSetting;
+}
+
+/** The org level of the themes (`orgs.settings.theme`). */
+export interface OrgThemeSetting {
+  id: string | null;
+  personal: "allowed" | "locked";
 }
 
 /** 部署默认值（旧内核不返回）。 */
@@ -45,7 +56,11 @@ export interface OrgSettingsResponse {
 }
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */
-export type OrgSettingsPatch = Partial<Omit<OrgSettings, "sandboxEgress" | "timeZone">> & {
+export type OrgSettingsPatch = Partial<
+  Omit<OrgSettings, "sandboxEgress" | "timeZone" | "theme">
+> & {
+  /** null clears the theme setting (follow the platform, allowed). */
+  theme?: OrgThemeSetting | null;
   sandboxEgress?: SandboxEgressSetting | null;
   /** null clears the default (UTC). */
   timeZone?: string | null;

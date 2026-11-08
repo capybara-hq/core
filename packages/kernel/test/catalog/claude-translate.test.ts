@@ -126,6 +126,7 @@ describe("translateClaudePlugin", () => {
       ],
       connectorTemplates: [],
       agents: [{ path: "./.capybara-generated/agents/code-reviewer.md" }],
+      themes: [],
     });
     // package.json (npm metadata for other harnesses) is not part of the translated tree.
     expect(t.tree.has("package.json")).toBe(false);

@@ -361,6 +361,9 @@ importers:
       kysely:
         specifier: ^0.29.6
         version: 0.29.6
+      saxes:
+        specifier: 6.0.0
+        version: 6.0.0
       semver:
         specifier: ^7.8.5
         version: 7.8.5

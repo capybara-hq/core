@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { LocalizedName, ThemeScheme } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { templateTypeClashes, templateTypeOf } from "../agents/templates.js";
@@ -12,6 +13,14 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
+import { type ThemeSwatch, themeDefinitions, themeSwatches } from "../themes/theme-state.js";
+import {
+  assertNotPlatformDefault,
+  platformDefaultThemeId,
+  type ThemeAfter,
+  type ThemePreview,
+  themesPreview,
+} from "../themes/theme-usage.js";
 import type { ActorOpts } from "./catalog.service.js";
 import { assertOrgsExist } from "./catalog-items.js";
 import {
@@ -42,6 +51,7 @@ import {
   type ScopeState,
   skillNameClashes,
   switchOf,
+  themeIdClashes,
 } from "./component-state.js";
 import {
   assertOwnerListed,
@@ -81,7 +91,14 @@ export interface ComponentScopePreview {
     plugins: string[];
     /** An agent template's: the owner of each clashing template, in `skills`' order. */
     owners?: Owner[];
+    /** A theme's: the clashing themes on in the org (`skills` then empty). */
+    themes?: string[];
   }[];
+  /**
+   * A theme the change takes away from some orgs (themes spec §6): the orgs among them whose
+   * default it is and how many people picked it. Absent when no theme is taken away.
+   */
+  themes?: ThemePreview[];
   scopeHash: string;
 }
 
@@ -135,6 +152,8 @@ export interface ComponentView {
    * other scopes, builtin plugins and orgs' own rows.
    */
   offCount: number;
+  /** A theme: its name and swatches from its current version (absent for other kinds). */
+  theme?: { name: LocalizedName; swatches: Partial<Record<ThemeScheme, ThemeSwatch>> };
 }
 
 /** One version of a platform component (`GET admin/components/:kind/:id/versions`). */
@@ -157,7 +176,10 @@ export interface OrgComponentView {
   /** The org's switch (null: never switched). */
   switch: boolean | null;
   on: boolean;
-  /** Of a builtin plugin: it cannot be switched off (an `all` one can, layering spec §4). */
+  /**
+   * Of a builtin plugin, or the platform default theme (themes spec §7): it cannot be switched off
+   * (an `all` one can, layering spec §4).
+   */
   locked: boolean;
 }
 
@@ -199,7 +221,15 @@ export type ComponentSwitchResult =
   | { kind: "done"; component: OrgComponentView }
   | {
       kind: "preview";
-      preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
+      preview: {
+        agents: { id: string; name: string; refs: string[] }[];
+        connectorsKept: number;
+        /**
+         * A theme: whether it is the org's default and how many of its members picked it (themes
+         * spec §6). Absent for other kinds and for a theme nobody there chose.
+         */
+        themes?: ThemePreview[];
+      };
       confirm: string;
     };
 
@@ -230,10 +260,13 @@ const ACTION: Record<ComponentKind, OrgAction> = {
   skill: "skills.manage",
   agent_template: "agents.manage",
   connector_template: "connectors.manage",
+  theme: "org.update",
 };
 
 /**
  * 409 `plugin.skill_conflict` listing the orgs whose own skills use a component's name (rule 10);
+ * for a theme 409 `theme.id_taken` listing the orgs where another theme with its id is on (details
+ * `[{ theme, orgId, themes, plugins }]`);
  * for an agent template 409 `agent_template.name_taken` listing the orgs that already use its
  * roster type (ruling P4-13; details `[{ orgId, type, templateId, owner }]`, one per clashing
  * template, `owner` as save-as names it).
@@ -242,6 +275,23 @@ export function nameConflictError(
   conflicts: ComponentScopePreview["conflicts"],
   kind: ComponentKind = "skill",
 ): ApiError {
+  if (kind === "theme") {
+    return new ApiError(
+      "theme.id_taken",
+      conflicts
+        .map(
+          (c) =>
+            `A theme with id ${c.name} is already on in organization ${c.orgName} (plugin "${c.plugins.join('", "')}"); one theme id cannot be on there twice. Switch that theme off there first.`,
+        )
+        .join("\n"),
+      conflicts.map((c) => ({
+        theme: c.name,
+        orgId: c.orgId,
+        themes: c.themes ?? [],
+        plugins: c.plugins,
+      })),
+    );
+  }
   if (kind === "agent_template") {
     // the save-as wording (ruling P4-9), naming each clashing template's owner
     const whose = (o: Owner | undefined, orgId: string) =>
@@ -303,6 +353,8 @@ function previewHash(
           .sort((a, b) => a.orgId.localeCompare(b.orgId))
           .map((a) => ({ ...a, agents: [...a.agents].sort((x, y) => x.id.localeCompare(y.id)) })),
         conflicts: [...p.conflicts].sort((a, b) => a.orgId.localeCompare(b.orgId)),
+        // only when present: a preview without themes keeps the hash it had before themes
+        ...(p.themes !== undefined && { themes: p.themes }),
       }),
     )
     .digest("hex");
@@ -312,7 +364,7 @@ function previewHash(
 function switchHash(
   orgId: string,
   c: { kind: ComponentKind; id: string },
-  preview: { agents: { id: string; refs: string[] }[]; connectorsKept: number },
+  preview: { agents: { id: string; refs: string[] }[]; connectorsKept: number; themes?: unknown },
 ): string {
   return createHash("sha256")
     .update(JSON.stringify({ orgId, kind: c.kind, id: c.id, ...preview }))
@@ -329,10 +381,11 @@ function switchHash(
  * An org admin switches one component on or off in the org (only that component, rule 5); one of a
  * builtin plugin -> 409 `plugin.scope_locked` (an `all` one may go off, layering spec §4); switching
  * off something in use is previewed with its agents first.
- * Name clashes are checked for skills only: an org agent template always carries its plugin's
- * type, so one with a platform template's type is a copy of it. Components are resolved at read
- * time (skills/usable.ts, agents/templates.ts), so nothing is enqueued. Stateless, shared by every
- * replica.
+ * Name clashes are checked for skills, agent templates by their roster type, and themes by their
+ * id among the themes on in an org (themes spec §6). A change that would take the platform default
+ * theme away from an org is refused (409 `theme.platform_default`, themes spec §7). Components are
+ * resolved at read time (skills/usable.ts, agents/templates.ts), so nothing is enqueued.
+ * Stateless, shared by every replica.
  */
 @Injectable()
 export class ComponentScopeService {
@@ -353,7 +406,7 @@ export class ComponentScopeService {
   /**
    * What the admin routes act on (ruling P3-23): the platform component `id`, an org row the org
    * promoted already (its platform row), or an org's own row not promoted yet. A connector
-   * template has no org rows; anything else -> 404 `component.not_found`.
+   * template or a theme has no org rows; anything else -> 404 `component.not_found`.
    */
   private async resolve(
     kind: ComponentKind,
@@ -361,7 +414,7 @@ export class ComponentScopeService {
   ): Promise<{ c: ComponentRow } | { org: OrgRow }> {
     const [c] = await loadComponents(this.db, kind, { ids: [id] });
     if (c) return { c };
-    if (kind === "connector_template") throw notFound();
+    if (kind === "connector_template" || kind === "theme") throw notFound();
     const org = await this.promotion.orgRow(kind, id);
     if (!org) throw notFound();
     if (org.link === null) return { org };
@@ -400,7 +453,16 @@ export class ComponentScopeService {
       this.db,
       comps.flatMap((c) => (c.ownerOrgId === null ? [] : [c.ownerOrgId])),
     );
+    // a theme's name and swatches come from its current definition (the admin pickers, §10)
+    const defs =
+      kind === "theme"
+        ? await themeDefinitions(
+            this.db,
+            comps.map((c) => c.id),
+          )
+        : null;
     const platform = comps.map((c): ComponentView => {
+      const def = defs?.get(c.id)?.definition;
       const plugin = c.itemId === null ? undefined : st.plugins.get(c.itemId);
       const follow = c.scopeMode === "follow" && c.itemId !== null;
       const scope: PluginScope = follow
@@ -438,6 +500,7 @@ export class ComponentScopeService {
           scope === "all" && plugin?.builtin !== true
             ? orgs.filter((o) => switchOf(st, c.id, o.id) === false).length
             : 0,
+        ...(def !== undefined && { theme: { name: def.name, swatches: themeSwatches(def) } }),
       };
     });
     const owned = await this.orgOwned(kind, orgs);
@@ -455,6 +518,8 @@ export class ComponentScopeService {
     filter: { kind?: ComponentKind; itemId?: string },
   ): Promise<OrgOfferedComponentView[]> {
     const out: OrgOfferedComponentView[] = [];
+    // the platform default theme is locked on in every org (themes spec §7)
+    const uiTheme = await platformDefaultThemeId(this.db);
     for (const kind of filter.kind !== undefined ? [filter.kind] : COMPONENT_KINDS) {
       const comps = await loadComponents(
         this.db,
@@ -474,7 +539,7 @@ export class ComponentScopeService {
         const sw = switchOf(st, c.id, orgId);
         const on = componentOn(c, p, listed, sw);
         if (!on && !componentOffered(c, p, listed)) continue;
-        const locked = componentLocked(c, p);
+        const locked = componentLocked(c, p) || isUiTheme(c, uiTheme);
         const pluginOn = componentPluginOn(c, p);
         rows.push({
           kind,
@@ -508,11 +573,11 @@ export class ComponentScopeService {
   /**
    * The org's copies of platform skills or agent templates linked without a pin (ruling B2), by
    * platform id: they resolve to it, so agents that select them use it (none for connector
-   * templates).
+   * templates and themes).
    */
   private async linkedCopies(orgId: string, kind: ComponentKind): Promise<Map<string, string[]>> {
     const out = new Map<string, string[]>();
-    if (kind === "connector_template") return out;
+    if (kind === "connector_template" || kind === "theme") return out;
     const rows =
       kind === "skill"
         ? await this.db
@@ -543,13 +608,14 @@ export class ComponentScopeService {
 
   /**
    * The orgs' own skills (org scope) and agent templates, not linked to a platform component
-   * (ruling P2-11): listed read-only, on in their org only. Connector templates have none.
+   * (ruling P2-11): listed read-only, on in their org only. Connector templates have none; an
+   * org's own theme is a platform_themes row with its org as owner, listed with the platform ones.
    */
   private async orgOwned(
     kind: ComponentKind,
     orgs: { id: string; name: string }[],
   ): Promise<ComponentView[]> {
-    if (kind === "connector_template") return [];
+    if (kind === "connector_template" || kind === "theme") return [];
     const live = new Set(orgs.map((o) => o.id));
     const rows =
       kind === "skill"
@@ -722,7 +788,8 @@ export class ComponentScopeService {
    * The org admin's switch of one component (`PUT orgs/:orgId/components/:kind/:id/switch`): only
    * this component (rule 5). A component not offered to the org -> 404. On: refused while the
    * component or its plugin is disabled (`plugin.disabled`) or an own skill of the org has its name
-   * (`plugin.skill_conflict`, rule 10). Off: of a builtin plugin -> `plugin.scope_locked`; while it
+   * (`plugin.skill_conflict`, rule 10; a theme: `theme.id_taken`). Off: the platform default theme
+   * while it is on -> `theme.platform_default`; of a builtin plugin -> `plugin.scope_locked`; while it
    * is on, without `confirm` the preview (agents that use it) and its hash are returned, with the
    * current hash the switch is written (a changed preview -> `plugin.switch_stale`).
    */
@@ -765,7 +832,28 @@ export class ComponentScopeService {
       );
     }
     if (body.enabled) {
-      if (kind !== "connector_template" && !on) {
+      if (kind === "theme") {
+        // theme ids are unique among the themes on in the org (themes spec §6)
+        if (!on && componentOn(c, p, listed, true)) {
+          const clash = await themeIdClashes(this.db, orgId, c, c.name);
+          if (clash.length > 0) {
+            const [org] = await this.liveOrgs(orgId);
+            throw nameConflictError(
+              [
+                {
+                  orgId,
+                  orgName: org?.name ?? orgId,
+                  name: c.name,
+                  skills: [],
+                  themes: clash.map((x) => x.id),
+                  plugins: clash.map((x) => x.plugin ?? "platform"),
+                },
+              ],
+              kind,
+            );
+          }
+        }
+      } else if (kind !== "connector_template" && !on) {
         const clash =
           kind === "skill"
             ? await skillNameClashes(this.db, orgId, c, c.name)
@@ -777,6 +865,9 @@ export class ComponentScopeService {
         }
       }
     } else {
+      // The platform default theme is locked on in every org (themes spec §7): refused before the
+      // preview, inside this transaction
+      if (kind === "theme" && on) await assertNotPlatformDefault(this.db, [c.id], () => "narrower");
       if (componentLocked(c, p)) {
         throw new ApiError(
           "plugin.scope_locked",
@@ -784,10 +875,16 @@ export class ComponentScopeService {
         );
       }
       if (on) {
+        const themes =
+          kind === "theme"
+            ? await themesPreview(this.db, new Map([[c.id, new Set([orgId])]]))
+            : undefined;
         const preview = {
           agents: await agentsUsing(this.db, orgId, kind, [c.id]),
           connectorsKept:
             kind === "connector_template" ? await connectorsMadeFrom(this.db, orgId, c.id) : 0,
+          // a theme only: other kinds keep the preview (and the hash) they had before themes
+          ...(themes !== undefined && { themes }),
         };
         const confirm = switchHash(orgId, c, preview);
         if (body.confirm === undefined) return { kind: "preview", preview, confirm };
@@ -842,7 +939,7 @@ export class ComponentScopeService {
         plugin: c.plugin,
         switch: body.enabled,
         on: componentOn(c, p, listed, body.enabled),
-        locked: componentLocked(c, p),
+        locked: componentLocked(c, p) || isUiTheme(c, await platformDefaultThemeId(this.db)),
       },
     };
   }
@@ -880,7 +977,7 @@ export class ComponentScopeService {
       listed,
     );
     if (!on && !offered) throw notFound();
-    const locked = componentLocked(c, p);
+    const locked = componentLocked(c, p) || isUiTheme(c, await platformDefaultThemeId(this.db));
     let preview = null;
     let confirm = null;
     if (on && !locked) {
@@ -917,6 +1014,7 @@ export class ComponentScopeService {
     if (x.promote) id = await this.promotion.promote(x.promote, actor);
     const c = await this.component(kind, id, true);
     const t = await this.targetOf(c, target);
+    if (kind === "theme") await this.assertKeepsPlatformDefault(c, t);
     const from = await this.listed(kind, id);
     // Its own scope: the owner stays listed (P3-17), widening goes through the share gate (P3-16);
     // following the plugin again takes the plugin's scope, which its own writer gates
@@ -952,8 +1050,9 @@ export class ComponentScopeService {
         .values(t.orgs.map((org_id) => ({ kind, component_id: id, org_id })))
         .execute();
     }
-    // An own scope that newly shows an org-owned component tells its owner (P3-22)
-    if (t.scopeMode === "own" && kind !== "connector_template") {
+    // An own scope that newly shows an org-owned component tells its owner (P3-22); not a theme:
+    // the `item_shared` notice names plugins, skills and agent templates only
+    if (t.scopeMode === "own" && kind !== "connector_template" && kind !== "theme") {
       const shared = newlySharedWith(before, t);
       if (shared === "all_orgs" || shared.length > 0) {
         await notifyItemShared(this.db, c.ownerOrgId, { kind, id }, c.name, shared);
@@ -988,7 +1087,9 @@ export class ComponentScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const c = await this.component(kind, id, true);
     if (c.disabled === disabled) return;
-    const p = await this.compute(c, await this.targetOf(c, { disabled }));
+    const t = await this.targetOf(c, { disabled });
+    if (kind === "theme") await this.assertKeepsPlatformDefault(c, t);
+    const p = await this.compute(c, t);
     if (disabled && p.scopeHash !== hash) throw staleError();
     if (p.conflicts.length > 0) throw nameConflictError(p.conflicts, kind);
     await this.db
@@ -1086,12 +1187,19 @@ export class ComponentScopeService {
             .where("skill_id", "=", id)
             .orderBy("version", "desc")
             .execute()
-        : await this.db
-            .selectFrom("platform_agent_template_versions")
-            .select(["version", "catalog_version", "updated_on_own", "created_at"])
-            .where("template_id", "=", id)
-            .orderBy("version", "desc")
-            .execute();
+        : kind === "theme"
+          ? await this.db
+              .selectFrom("platform_theme_versions")
+              .select(["version", "catalog_version", "updated_on_own", "created_at"])
+              .where("theme_id", "=", id)
+              .orderBy("version", "desc")
+              .execute()
+          : await this.db
+              .selectFrom("platform_agent_template_versions")
+              .select(["version", "catalog_version", "updated_on_own", "created_at"])
+              .where("template_id", "=", id)
+              .orderBy("version", "desc")
+              .execute();
     return rows.map((r) => ({
       version: String(r.version),
       catalogVersion: r.catalog_version,
@@ -1221,6 +1329,34 @@ export class ComponentScopeService {
     return { scopeMode: "own", scope: target.scope, orgs, disabled: c.disabled };
   }
 
+  /**
+   * 409 `theme.platform_default` when theme `c` is the platform default and `t` would leave it
+   * narrower than `all` or gone (themes spec §7), in the caller's transaction, before any write.
+   */
+  private async assertKeepsPlatformDefault(c: ComponentRow, t: Target): Promise<void> {
+    const after = await this.themeAfter(c, t);
+    await assertNotPlatformDefault(this.db, [c.id], () => after);
+  }
+
+  /**
+   * Theme `c`'s availability under `t`: gone when disabled (or its plugin is disabled or deleted
+   * while it follows it), else `all` when its effective scope (its own, or its plugin's; builtin:
+   * `all`) is `all`, else narrower.
+   */
+  private async themeAfter(c: ComponentRow, t: Target): Promise<ThemeAfter> {
+    if (t.disabled) return "gone";
+    if (t.scopeMode === "own") return t.scope === "all" ? "all" : "narrower";
+    if (c.itemId === null) return "gone";
+    const item = await this.db
+      .selectFrom("catalog_items")
+      .select(["scope", "builtin", "disabled"])
+      .where("id", "=", c.itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item || item.disabled) return "gone";
+    return item.builtin || item.scope === "all" ? "all" : "narrower";
+  }
+
   /** Live orgs (`only`: that one), sorted by id. */
   private async liveOrgs(only?: string): Promise<{ id: string; name: string }[]> {
     let q = this.db
@@ -1264,11 +1400,16 @@ export class ComponentScopeService {
     const listedAfter = new Set(target.orgs);
     const affected: ComponentScopePreview["affected"] = [];
     const conflicts: ComponentScopePreview["conflicts"] = [];
+    /** A theme: the orgs it is on in now and would be off in. */
+    const lost = new Set<string>();
     for (const org of await this.liveOrgs()) {
       const p: PluginFacts | null = pluginFactsOf(st, c.itemId, org.id);
       const listed = listedIn(st, c.id, org.id);
       const sw = switchOf(st, c.id, org.id);
-      if (componentOn(c, p, listed, sw) && !componentOn(after, p, listedAfter.has(org.id), sw)) {
+      const onNow = componentOn(c, p, listed, sw);
+      const onAfter = componentOn(after, p, listedAfter.has(org.id), sw);
+      if (onNow && !onAfter) {
+        lost.add(org.id);
         const agents = await agentsUsing(this.db, org.id, c.kind, [c.id]);
         affected.push({
           orgId: org.id,
@@ -1277,6 +1418,23 @@ export class ComponentScopeService {
           connectorsKept:
             c.kind === "connector_template" ? await connectorsMadeFrom(this.db, org.id, c.id) : 0,
         });
+      }
+      if (c.kind === "theme") {
+        // theme ids are unique among the themes on in an org (themes spec §6)
+        if (onAfter && !onNow) {
+          const clash = await themeIdClashes(this.db, org.id, c, c.name);
+          if (clash.length > 0) {
+            conflicts.push({
+              orgId: org.id,
+              orgName: org.name,
+              name: c.name,
+              skills: [],
+              themes: clash.map((x) => x.id),
+              plugins: clash.map((x) => x.plugin ?? "platform"),
+            });
+          }
+        }
+        continue;
       }
       if (
         c.kind !== "connector_template" &&
@@ -1294,10 +1452,16 @@ export class ComponentScopeService {
         }
       }
     }
-    const p = { affected, conflicts };
+    const themes =
+      c.kind === "theme" ? await themesPreview(this.db, new Map([[c.id, lost]])) : undefined;
+    const p = { affected, conflicts, ...(themes !== undefined && { themes }) };
     return { ...p, scopeHash: previewHash({ kind: c.kind, id: x.hashId ?? c.id }, target, p) };
   }
 }
+
+/** Whether `c` is the platform default theme `uiTheme` (locked on in every org, themes spec §7). */
+const isUiTheme = (c: { kind: ComponentKind; id: string }, uiTheme: string | null): boolean =>
+  c.kind === "theme" && c.id === uiTheme;
 
 /** The plugin row FOR SHARE (exclusive with its scope writers and an unshare, which hold it FOR UPDATE). */
 async function lockItemShared(db: KernelSchemaDb, itemId: string): Promise<void> {
@@ -1345,4 +1509,5 @@ const TABLE: Record<ComponentKind, string> = {
   skill: "platform_skills",
   agent_template: "platform_agent_templates",
   connector_template: "platform_connector_templates",
+  theme: "platform_themes",
 };

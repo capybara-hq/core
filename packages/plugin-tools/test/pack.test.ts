@@ -266,6 +266,31 @@ describe("packPlugin: other behavior", () => {
     expect(r.dropped).toEqual([]);
   });
 
+  it("a themes-only plugin packs its themes and the assets they reference", async () => {
+    const r = await packPlugin(fixture("plugin-theme-clean"), out);
+    const entries = await readTgz(r.file);
+    expect([...entries.keys()].sort()).toEqual(
+      [
+        ".capybara-plugin/plugin.json",
+        "LICENSE",
+        "NOTICE",
+        "fonts/Fixture-Regular.woff2",
+        "logo.svg",
+        "package.json",
+        "themes/night-city.json",
+      ].sort(),
+    );
+    expect(spies.build).not.toHaveBeenCalled();
+  });
+
+  it("a theme that does not parse fails the pack", async () => {
+    await expect(packPlugin(fixture("plugin-theme-invalid"), out)).rejects.toThrow(/broken\.json/);
+  });
+
+  it("a theme with a bad asset fails the pack", async () => {
+    await expect(packPlugin(fixture("plugin-theme-asset"), out)).rejects.toThrow(/bad\.woff2/);
+  });
+
   it("the declarative plugin packs reproducibly", async () => {
     const a = await packPlugin(fixture("declarative"), join(out, "da"));
     const b = await packPlugin(fixture("declarative"), join(out, "db"));
@@ -360,11 +385,11 @@ describe("packPlugin: other behavior", () => {
       );
     });
 
-    it("a plugin with no extension, skill, connector template or agent template fails", async () => {
+    it("a plugin with no extension, skill, connector template, agent template or theme fails", async () => {
       await rm(join(dir, "skills"), { recursive: true });
       await writeManifest(base);
       await expect(packPlugin(dir, out)).rejects.toThrow(
-        /a plugin must contain an extension, a skill, a connector template or an agent template/,
+        /a plugin must contain an extension, a skill, a connector template, an agent template or a theme/,
       );
     });
 

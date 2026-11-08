@@ -38,6 +38,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { useCapabilityLabel } from "./ExtensionTabs";
 import { FormError } from "./form-error";
+import { useAdminThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
 
@@ -61,6 +62,7 @@ export function PlatformUpdateDialog({
   orgId: string | null;
   onClose(): void;
 }) {
+  const adminThemeName = useAdminThemeName();
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const toast = useToast();
@@ -154,7 +156,11 @@ export function PlatformUpdateDialog({
             </Text>
           )
         ) : (
-          <PlatformUpdatePreviewBody preview={preview} orgName={orgName} />
+          <PlatformUpdatePreviewBody
+            preview={preview}
+            orgName={orgName}
+            themeName={adminThemeName}
+          />
         )}
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>
@@ -174,11 +180,14 @@ export function PlatformUpdateDialog({
 export function PlatformUpdatePreviewBody({
   preview,
   orgName,
+  themeName = (id) => id,
   hideUnknown = false,
 }: {
   preview: PlatformUpdatePreview;
   /** The org's name, or undefined when unknown (then its id, or a count with `hideUnknown`). */
   orgName(id: string): string | undefined;
+  /** A theme's name by its `platform_themes` id (the 主题 group). */
+  themeName?: (id: string) => string;
   hideUnknown?: boolean;
 }) {
   const t = useTranslations("catalog.update");
@@ -197,6 +206,10 @@ export function PlatformUpdatePreviewBody({
     if (known.length === 0) return t("orgCount", { count: unknown });
     return [...known, t("otherOrgs", { count: unknown })].join(sep);
   };
+  // the orgs whose default a removed theme is: named by the same rules as the other orgs here
+  const themeGroup = useThemeImpactGroup(preview.themes, themeName, (orgs) =>
+    names(orgs.map((o) => o.orgId)),
+  );
   const columns: Column<PlatformUpdateComponent>[] = [
     { key: "name", header: t("columns.name"), cell: (c) => c.name },
     { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },
@@ -322,6 +335,7 @@ export function PlatformUpdatePreviewBody({
         return { id: o.orgId, title: one(o.orgId), notes };
       }),
     },
+    ...(themeGroup === null ? [] : [themeGroup]),
   ];
   return (
     <>

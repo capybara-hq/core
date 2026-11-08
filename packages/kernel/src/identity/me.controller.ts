@@ -23,7 +23,7 @@ import type { OrgRole } from "../orgs/roles.js";
 import { type Account, AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
-import { PreferencesBody, type PreferencesSchema } from "./me.schemas.js";
+import { type Preferences, PreferencesBody, type PreferencesSchema } from "./me.schemas.js";
 import {
   AllowPendingPasswordChange,
   CurrentPrincipal,
@@ -95,25 +95,25 @@ export class MeController {
   }
 
   /**
-   * The person's preferences (run context spec §3.4): `timeZone` null = follow the browser's time
-   * zone sent with each message; a set zone overrides it for the messages sent afterwards.
+   * The person's preferences: `timeZone` null = follow the browser's time zone sent with each
+   * message, a set zone overrides it for the messages sent afterwards (run context spec §3.4);
+   * `theme` null = follow the org (themes spec §7).
    */
   @Get("preferences")
-  async preferences(
-    @CurrentPrincipal() principal: Principal,
-  ): Promise<{ timeZone: string | null }> {
+  async preferences(@CurrentPrincipal() principal: Principal): Promise<Preferences> {
     return this.accounts.preferences(requireUser(principal).account.id);
   }
 
-  /** Replaces the person's preferences; an unknown time zone → 400 `validation_failed`. */
+  /**
+   * Updates the preferences given; a field left out keeps its value. An unknown time zone → 400
+   * `validation_failed`; a theme on in none of the person's orgs → 400 `theme.not_available`.
+   */
   @Put("preferences")
   async setPreferences(
     @CurrentPrincipal() principal: Principal,
     @ZBody(PreferencesBody) body: z.infer<typeof PreferencesSchema>,
-  ): Promise<{ timeZone: string | null }> {
-    return this.accounts.setPreferences(requireUser(principal).account.id, {
-      timeZone: body.timeZone,
-    });
+  ): Promise<Preferences> {
+    return this.accounts.setPreferences(requireUser(principal).account.id, body);
   }
 
   /** 切换当前组织（仅 Web 会话）；`null` 清空。非成员或已软删除的组织 → `org.not_found`。 */

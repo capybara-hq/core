@@ -646,7 +646,7 @@ describe("platform", () => {
   it("platform.set-preferences sets your own time zone, personal and rememberable", async () => {
     const id = await agentOf(env.memId, "private");
     const c = ctxOf(env.memId, id);
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null });
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
     const o = op("platform.set-preferences");
     expect(o.confirm).toBe("personal");
     expect(o.rememberable).toBeUndefined();
@@ -659,14 +659,27 @@ describe("platform", () => {
     });
     expect(await run("platform.set-preferences", { timeZone: "Europe/Berlin" }, c)).toEqual({
       timeZone: "Europe/Berlin",
+      theme: null,
     });
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: "Europe/Berlin" });
+    expect(await run("platform.preferences", {}, c)).toEqual({
+      timeZone: "Europe/Berlin",
+      theme: null,
+    });
     // only the caller's own account: another member still follows the browser
     const other = ctxOf(env.bossId, randomUUID());
-    expect(await run("platform.preferences", {}, other)).toEqual({ timeZone: null });
+    expect(await run("platform.preferences", {}, other)).toEqual({ timeZone: null, theme: null });
     // null goes back to the browser's zone
     await run("platform.set-preferences", { timeZone: null }, c);
-    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null });
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
+    // a theme that is on in none of your orgs is refused; the time zone is left alone
+    await expect(run("platform.set-preferences", { theme: "nope" }, c)).rejects.toThrow(
+      /theme\.not_available/,
+    );
+    expect(await run("platform.preferences", {}, c)).toEqual({ timeZone: null, theme: null });
+    expect(await summarize("platform.set-preferences", { theme: null }, c)).toEqual({
+      zh: "把你的主题从「跟随组织」改为「跟随组织」",
+      en: 'Change your theme from "follow the org" to "follow the org"',
+    });
   });
 
   it("platform.set-preferences refuses a name that is not an IANA time zone before the card", () => {

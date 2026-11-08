@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-plugin-theme-unreadable",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a plugin with a theme and no extension"
+}

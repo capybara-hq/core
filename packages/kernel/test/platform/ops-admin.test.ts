@@ -380,6 +380,14 @@ describe("admin and models", () => {
     await run("admin.update-settings", { orgCreation: "anyone" });
   });
 
+  it("admin.update-settings: theme.not_available says the default must be on in every org", () => {
+    const next = op("admin.update-settings").errors?.find(
+      (e) => e.code === "theme.not_available",
+    )?.next;
+    expect(next).toMatch(/on in every organization/);
+    expect(next).toMatch(/details list orgs/);
+  });
+
   it("lists the providers, then one provider's models; disables one platform-wide", async () => {
     const providers = (await run("models.platform-list", {})) as {
       items: { id: string; state: string; models: number }[];

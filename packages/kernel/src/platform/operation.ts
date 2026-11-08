@@ -159,7 +159,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "platform",
     description:
-      "What this platform is, its tool families, what you and this agent can do, and your own preferences (time zone).",
+      "What this platform is, its tool families, what you and this agent can do, and your own preferences (time zone, theme).",
   },
   { id: "skills", description: "The org's skill library: list, read, create, switch on or off." },
   {
@@ -242,12 +242,17 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "org-settings",
     description:
-      "The org's settings (tool search, language, sandbox policy, the Platform tool switch): read and change.",
+      "The org's settings (tool search, language, sandbox policy, the Platform tool switch, the default theme): read and change.",
   },
   {
     id: "environments",
     description:
       "Your own cloud environments (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
+  },
+  {
+    id: "themes",
+    description:
+      "The themes on in this org, the one in effect for you and the org's theme setting: list. Themes are set through your preferences, the org settings and the deployment settings.",
   },
 ];
 

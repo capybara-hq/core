@@ -29,6 +29,8 @@ Wording: **must** / **must not** are mandatory; **should** is the default practi
 
 All colors, sizes and shadows may only be used through tokens. Color literals are allowed only in the generated `tokens.css`. Tailwind is not used.
 
+A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-themes-design.md`) replaces values of these tokens for a scope; the names, the contrast pairs and the dark / light split stay. Components never know a theme is on: they read `var(--cb-<token>)`, and the one color a theme adds to the DOM is the `ThemeSwatch` preview (§6.37), applied as data.
+
 ### 2.1 Colors
 
 | Token | Dark | Light | Purpose |
@@ -145,6 +147,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
 | Layout, tool policies (§6.36) | `policy-select` | 160 (a ToolPolicyList row's policy select: fits 需审批 / Ask for approval at `dense`) | `--cb-layout-<name>` |
+| Layout, theme pickers (§6.38) | `swatch-min` | 160 (a ThemeSwatchGroup column's least width) | `--cb-layout-<name>` |
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
 
@@ -208,6 +211,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 ```
 
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
+- **Brand from a theme**: a theme may replace the logo mark and the wordmark. The web passes the resolved theme's brand to `DesignProvider` (`brand: { markUrl, wordmark }`, either part null), and `Logo` draws it where it draws the pixel capybara: `markUrl` as an `img` as high as the bitmap would be (10 × the pixel unit, so 20 / 30 / 60; its width follows the file; `alt` is the wordmark, or "Logo") instead of the bitmap, `wordmark` as the wordmark text instead of `CAPYBARA` (only where the wordmark is drawn: the rail has none). A null part keeps the built-in one. The sidebar, `AuthPage` and `StatusPage` draw `Logo` and take no props for it.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
 - Apart from agent avatars: no illustrations, gradients, frosted glass or emoji.
@@ -3040,6 +3044,49 @@ States: `default`, `select-all`
 | tool-policy-count | select-all | font-size | type.small |
 | tool-policy-count | select-all | color | color.muted |
 | tool-policy-search input | select-all | height | control.dense |
+
+### 6.37 ThemeSwatch
+
+`ThemeSwatch({ name, swatches: { bg, panel, ink, accent }, scheme: "dark" | "light", selected?, onSelect?, disabled? })`: one choice of a theme picker (the 外观 settings of a person, an org or the platform). A `button` with `role="radio"` and `aria-checked`; pages put the cards in a `ThemeSwatchGroup` (§6.38), the radio group with its keyboard; Space or Enter selects.
+
+- **Card**: `space.2` padding, a 1px `line` border, `radius.md`; the preview over a foot row, `space.2` apart. Hover takes `line-strong`.
+- **Preview**: 48 high, `radius.sm`, a 1px `line` hairline (so a ground close to the page's own still reads), filled with the theme's `bg`; on it a rounded block in the theme's `panel` (the left 40%), a 4 px bar in `ink` and a 16 × 8 block in `accent` (the right half). The four colors are the theme's data, applied as `--cb-swatch-*` custom properties by the component; this is the only place a theme's color values reach the DOM, and pages pass them as props, never as literals (`web-ui-color`).
+- **Foot**: the theme's name (`body`, `ink`, one line with an ellipsis, its full text as the title) and a 12 px `moon` or `sun` icon in `muted` for the scheme (`data-scheme`).
+- **The built-in theme** in a picker draws `BUILTIN_THEME_SWATCHES[scheme]`: references to `--cb-builtin-<scheme>-{bg,panel,ink,accent}`, which `pnpm gen:tokens` writes into tokens.css from the built-in values, outside the token names, so a theme on the page never changes them.
+- **Selected** (`data-state="selected"`): the `selected` ground and a `line-strong` border; selection is neutral (§2.3), the focus ring (2 px `accent`, offset 2) carries the accent. `disabled` greys the card and the pointer shows not-allowed.
+
+<!-- states: theme-swatch -->
+States: `default`, `selected`
+
+<!-- size-table: theme-swatch -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| theme-swatch | default | padding-left | space.2 |
+| theme-swatch | default | row-gap | space.2 |
+| theme-swatch | default | border-top-color | color.line |
+| theme-swatch-preview | default | height | 48 |
+| theme-swatch-name | default | font-size | type.body |
+| theme-swatch-name | default | color | color.ink |
+| theme-swatch | selected | border-top-color | color.line-strong |
+| theme-swatch | selected | background-color | color.selected |
+
+### 6.38 ThemeSwatchGroup
+
+`ThemeSwatchGroup({ label, value, items: { value, name, swatches }[], onChange, scheme, disabled? })`: a theme picker, the `ThemeSwatch` cards (§6.37) of the 外观 settings (a person's, an org's, the platform's) in one `role="radiogroup"` named by `label`. Pages use it, never a hand-made group of swatches.
+
+- **Grid**: as many columns as fit, each at least `layout.swatch-min` (160) wide, `space.3` apart both ways; one column below that width.
+- **Scheme**: each card is drawn in `scheme` (the page's) when its item defines swatches for it, else in the scheme it has (a single-scheme theme), with that scheme's icon; an item without swatches draws `BUILTIN_THEME_SWATCHES`.
+- **Keyboard** (a radio group): one tab stop, the selected card (else the first); ←/↑ and →/↓ move to the previous / next card and select it, wrapping; Home / End to the first / last. Click or Space / Enter on a card selects it.
+- **Disabled** (a reader of a setting): every card disabled, the selected one still marked; the arrows do nothing.
+
+<!-- states: theme-swatch-group -->
+States: `default`
+
+<!-- size-table: theme-swatch-group -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| theme-swatch-group | default | column-gap | space.3 |
+| theme-swatch-group | default | row-gap | space.3 |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

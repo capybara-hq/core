@@ -197,6 +197,7 @@ describe("platform components from a plugin version", () => {
       skills: [],
       agentTemplates: [],
       connectorTemplates: [],
+      themes: [],
     });
   });
 

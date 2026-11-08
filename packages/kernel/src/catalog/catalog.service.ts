@@ -18,6 +18,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
+import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
   countInstalls,
   itemConfirmations,
@@ -159,6 +160,7 @@ export interface ComponentCounts {
   skills: number;
   connectorTemplates: number;
   agentTemplates: number;
+  themes: number;
 }
 
 /**
@@ -789,8 +791,8 @@ export class CatalogService {
   /**
    * Deletes the item (soft delete, audit `catalog.removed`; requests still pending are cancelled in
    * the same transaction): versions and stored files are kept (installed components still refer to
-   * them), organizations no longer see it; the same name can later be imported again as a new
-   * item. Deleted / missing -> `catalog.item_not_found`. A platform plugin whose extension is
+   * them), its themes are soft-deleted (nothing refers to their rows), organizations no longer see
+   * it; the same name can later be imported again as a new item. Deleted / missing -> `catalog.item_not_found`. A platform plugin whose extension is
    * still enabled on the deployment -> 409 `catalog.extension_enabled` (details
    * `[{ extension, displayName }]`): disable it on the Extensions page first, as an uninstall
    * requires. A disabled extension keeps its install record (the super admin uninstalls it on the
@@ -854,9 +856,10 @@ export class CatalogService {
    * The soft delete of {@link remove} in the caller's transaction, without its super admin check
    * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
    * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
-   * extension name claim of a first upload still waiting released (ruling P3-37, F10), pending
-   * requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
-   * item's name, or null when it is gone already.
+   * extension name claim of a first upload still waiting released (ruling P3-37, F10), its themes
+   * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default),
+   * pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the
+   * removed item's name, or null when it is gone already.
    */
   @Transactional({ propagation: "mandatory" })
   async removeIn(
@@ -866,6 +869,21 @@ export class CatalogService {
   ): Promise<{ name: string } | null> {
     const t = this.db;
     const now = sql<Date>`now()` as unknown as Date;
+    // Its themes go with it: refused while one is the platform default (themes spec §7), before
+    // anything is written
+    // (the theme rows FOR UPDATE first: the theme lock order is item, theme row, `uiTheme`)
+    const themes = await t
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .execute();
+    await assertNotPlatformDefault(
+      t,
+      themes.map((r) => r.id),
+      () => "gone",
+    );
     const row = await t
       .updateTable("catalog_items")
       .set({
@@ -887,6 +905,14 @@ export class CatalogService {
       await this.installLock.lock(row.name);
       await releaseExtensionClaim(t, row.name, row.package_name);
     }
+    // Its themes go with it (themes spec §6): nothing refers to a theme row (a theme picked by an
+    // org or a person is an id that falls back once no live theme has it)
+    await t
+      .updateTable("platform_themes")
+      .set({ deleted_at: now, updated_at: now })
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .execute();
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {

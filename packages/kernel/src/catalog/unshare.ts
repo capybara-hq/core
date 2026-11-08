@@ -137,4 +137,5 @@ const TABLE = {
   skill: "platform_skills",
   agent_template: "platform_agent_templates",
   connector_template: "platform_connector_templates",
+  theme: "platform_themes",
 } as const;

@@ -982,6 +982,9 @@ export function translateClaudePlugin(
     // the raw Claude agents/*.md the tree still holds and parse them as Capybara templates
     // (batch 12 review I1); normalizedManifest drops an empty list, so digests are unchanged
     agents: agents.agents.map((a) => ({ path: `./${a.path}` })),
+    // always empty, for the same reason: a Claude Code plugin's themes/*.json are not Capybara
+    // themes (themes spec §4); normalizedManifest drops the empty list
+    themes: [],
   };
   const checked = parsePluginManifest(manifest);
   if ("errors" in checked) {
