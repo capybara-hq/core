@@ -126,6 +126,30 @@ describe("/device", () => {
     expect(router.replace).toHaveBeenCalledWith("/environments/d1");
   });
 
+  it("an unnamed connected environment is labelled like everywhere else (environmentName)", async () => {
+    stubApi({
+      ...ROUTES,
+      [`GET ${ENVS}`]: () =>
+        json(200, {
+          ...LIST,
+          items: [
+            ...LIST.items,
+            env("d2", null, {
+              isDefault: false,
+              source: "device",
+              provider: "@device",
+              online: false,
+              demotedFrom: { provider: "sandbox-docker", displayName: null, ordinal: 2 },
+            }),
+          ],
+        }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("combobox", { name: D.environment }));
+    expect(await screen.findByRole("option", { name: "Personal (sandbox-docker) 2" })).toBeTruthy();
+  });
+
   it("confirming invalidates the org's environments", async () => {
     const calls = stubApi({
       ...ROUTES,
