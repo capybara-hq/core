@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { AGENT_VISIBILITIES } from "./agents.service.js";
 import { AgentDefinitionSchema, ModelRef } from "./definition.js";
-import { PRESET_IDS, ProfileInputSchema } from "./profile.js";
+import { PresetAvatarSchema, ProfileInputSchema } from "./profile.js";
 
 export const AgentMemberIds = z.array(z.string().min(1).max(100)).max(1000);
 
@@ -57,11 +57,6 @@ export const AgentUpdateBody = z
   })
   .strict();
 
-/** A built-in avatar: the only kind the tool and the template form set (an upload is the web's). */
-export const PresetAvatar = z
-  .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
-  .strict();
-
 /**
  * `PATCH …/profile`: the display data (avatar, quick actions). The description is part of the
  * agent's definition (run context spec §3.5), saved with `PATCH :agentId`.
@@ -86,7 +81,7 @@ export const AgentFromTemplateBody = z
     /** The person's choice; absent = the template's model resolution (P4-4). */
     model: ModelRef.strict().optional(),
     /** A preset avatar; absent = a random one. */
-    avatar: PresetAvatar.optional(),
+    avatar: PresetAvatarSchema.optional(),
     /** The preview's `previewHash`; another one → 409 `agent.template_preview_stale`. */
     previewHash: z.string().regex(/^[0-9a-f]{64}\.[0-9a-f]{16}$/),
   })

@@ -246,12 +246,20 @@ describe("sub-agents across two replicas", () => {
     await subQueue.resume();
     const ds = await finishedDeliveries(db, conv, 2);
     expect(ds.map((d) => d.text)).toEqual(["child ok", "child ok"]);
+    // the first delivery wakes the idle parent (agent map spec §5.3) and that run extends the log;
+    // wait for it to end (one wake per 60 s window), then read the dispatching run by its id
+    await waitForTerminal(db, conv, 2, 30_000);
     const events = await eventsOf(db, conv);
-    expect(finalText(events)).toBe("parent done");
-    expect(ofType(events, "run_finished").map((e) => e.runId)).toEqual([runId]);
+    const parentRun = events.filter((e) => e.runId === runId);
+    expect(finalText(parentRun)).toBe("parent done");
+    const finished = ofType(events, "run_finished");
+    expect(finished.map((e) => e.runId)).toHaveLength(2);
+    expect(finished[0]?.runId).toBe(runId);
+    const wakeStart = ofType(events, "run_started").find((e) => e.runId === finished[1]?.runId);
+    expect(wakeStart?.payload.trigger).toBe("subagent");
     expect(ofType(events, "subagent_finished")).toHaveLength(2);
     // both of the parent's steps ran on A, before the children
-    expect(ofType(events, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
+    expect(ofType(parentRun, "model_call").map((e) => e.payload.step)).toEqual([1, 2]);
     expect((await childRunsOf(db, conv)).map((c) => c.status)).toEqual(["completed", "completed"]);
     expect(b).toBeDefined();
   }, 90_000);

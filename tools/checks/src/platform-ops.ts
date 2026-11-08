@@ -19,14 +19,13 @@ import {
  *
  * - platform-op-missing: a route neither mirrored nor excluded;
  * - platform-op-exclusion-reason: an exclusion with an empty reason;
- * - platform-op-later: an exclusion of category `later`, with or without an issue: phase 2 closed
- *   the backlog, so a route is either an operation or excluded for good (human-only / secret /
- *   transport / internal), with no allow-list;
+ * - platform-op-later: an exclusion of category `later`: phase 2 closed the backlog, so a route
+ *   is either an operation or excluded for good (human-only / secret / transport / internal);
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
  * - platform-op-double: a route both mirrored by an operation and listed in the exclusions (an
- *   operation added without removing the route's exclusion, often its old `later` entry);
+ *   operation added without removing the route's exclusion);
  * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
  *   operations and exclusion entries with it, spec §14.1 item 4);
  * - platform-op-describe: an operation without `description`, `example`, or (not `read`) `summary`;

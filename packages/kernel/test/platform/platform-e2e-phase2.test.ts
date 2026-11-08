@@ -262,4 +262,38 @@ describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
     await decide(env.mem, second.payload.approvalId, { decision: "deny" });
     expect(lastResult(await conv.finish()).isError).toBe(true);
   });
+
+  it("(e) a profile change may be remembered on an own private agent, never on a shared one", async () => {
+    const conv = await conversation(env.root, privateAgent);
+    const mine = await conv.ask(
+      call("agents.update-profile", {
+        agentId: privateAgent,
+        avatar: { kind: "preset", id: "whale" },
+      }),
+    );
+    expect(mine.payload.toolKey).toBe("Platform:agents.update-profile");
+    const mineView = await approvalOf(env.root, mine.payload.approvalId);
+    expect(mineView.scopes).toEqual(["once", "session", "always"]);
+    expect(mineView.summary).toEqual({
+      zh: "修改私有智能体「Mine」的资料：头像设为预设「whale」",
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "whale"',
+    });
+    await decide(env.root, mine.payload.approvalId, { decision: "approve", scope: "once" });
+    expect(lastResult(await conv.finish()).isError).toBe(false);
+    const got = await env.root({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/agents/${privateAgent}`,
+    });
+    expect(
+      (got.json() as { agent: { profile: { avatar: unknown } } }).agent.profile.avatar,
+    ).toEqual({ kind: "preset", id: "whale" });
+
+    // the org's agent (the same owner): asked every time, once only
+    const shared = await conv.ask(
+      call("agents.update-profile", { agentId: orgAgent, quickActions: [] }),
+    );
+    expect((await approvalOf(env.root, shared.payload.approvalId)).scopes).toEqual(["once"]);
+    await decide(env.root, shared.payload.approvalId, { decision: "deny" });
+    expect(lastResult(await conv.finish()).isError).toBe(true);
+  });
 });

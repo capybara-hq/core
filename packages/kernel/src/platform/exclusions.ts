@@ -3,7 +3,7 @@ export type ExclusionCategory = "human-only" | "secret" | "transport" | "interna
 /**
  * Kernel HTTP routes the `Platform` tool does not mirror, each with a reason (spec §9);
  * `check:platform-ops` fails a route that is neither mirrored by an operation nor listed here.
- * Every exclusion is for good: a route the tool should offer is an operation, never a `later` entry.
+ * Every exclusion is for good: there is no "later" (rule `platform-op-later`).
  */
 
 export const PLATFORM_EXCLUSIONS: readonly {
@@ -70,8 +70,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
     category: "transport",
-    reason:
-      "Creates a presigned avatar upload: a custom image is bytes the person uploads on the web; agents.update-profile sets a preset avatar",
+    reason: "Creates a presigned avatar upload",
   },
   {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/avatar",

@@ -373,7 +373,7 @@ restart.
 **Bootstrap plugins.** The plugins every deployment needs, `openai-compatible` (models) and
 `object-store-s3` (storage), are pinned in `packages/kernel/bootstrap.json` by exact version and sha512,
 as required entries. The same manifest pins optional preinstalls: `anthropic`, `openai`,
-`connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
+`deepseek`, `bailian`, `ark`, `connector-mcp`, `connector-openapi`, `jina`, `sandbox-docker` and `todo`. They are installed and
 enabled on the deployment, but each organization gets them off until an org admin switches them on
 (catalog scope `optional`), and a super admin may disable or uninstall them; an uninstalled one
 is not reinstalled by later bootstrap runs.

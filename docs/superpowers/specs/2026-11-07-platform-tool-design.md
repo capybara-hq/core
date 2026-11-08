@@ -368,7 +368,8 @@ Decisions made while building, one per bullet (what, and why).
   applies, like an org write.
 - The `later` exclusions all point to one tracking issue, core#91 ("Platform operations: remaining
   routes", one section per domain), instead of one issue per domain (decided, 2026-11-08). The check
-  reads `issue` as a literal, so each entry carries the URL inline.
+  reads `issue` as a literal, so each entry carries the URL inline. (Superseded: §14.6, Task 12 removed
+  the `later` category and the `issue` field.)
 - Routes added by platform / org layering, merged first, were classified when this branch merged
   `main`: the org config copies (`…/extensions/:extension/overrides`, the admin `org-overrides`) are
   `secret`, the per-org extension tool switches `later`.
@@ -530,12 +531,16 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 **What was built**
 
 - 179 operations in 20 domains; every other kernel route is excluded for good
-  with a reason (`human-only` / `secret` / `transport` / `internal`). The `later` category is gone:
-  `platform-op-later` rejects any `later` entry, with no allow-list.
-- Agent profile (#91, after the run-context work): `agents.update-profile` sets quick actions and a
-  preset avatar (`personal` on your own private agent, `org` otherwise via `confirmFor`; precheck on
-  edit rights and `profile.updatedAt`); the description goes through `agents.update`; avatar
-  uploads stay `transport`; `platform.me` and `agents.get` return the profile.
+  with a reason (`human-only` / `secret` / `transport` / `internal`). No `later` route remains:
+  the category is gone from `ExclusionCategory` and `check:platform-ops` rule `platform-op-later`
+  rejects any `later` entry (red fixture in `tools/checks/fixtures/platform-ops/violations`).
+- Task 12, agent profile: `agents.update-profile` mirrors `PATCH …/agents/:agentId/profile` —
+  a preset avatar (or none) and the quick actions, built from the route's shared schemas
+  (`AgentProfileBody`, moved out of the controller into `agents.schemas.ts`); `confirmFor` as
+  `agents.update` (personal on an own private agent, org otherwise), precheck "not found / not
+  editable", role-keyed `forbidden`. `agents.get` already returned the profile (`AgentView`);
+  `platform.me` now returns it too (avatar, description, quick actions). `agents.update` takes the
+  description, saved with the definition (run context spec §3.5).
 - Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
   `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
   parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
@@ -595,8 +600,24 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   belong.
 - A route both mirrored and excluded is a check finding (`platform-op-double`) — a mirrored
   human-only or secret route is a hole in the fence.
-- Personal preference operations wait for the run-context work, which adds the preferences /
-  timezone routes; folded into #91 — no such kernel route exists on `main` yet.
+- `agents.update-profile` is one operation, not two (`set-avatar` / `set-quick-actions` in the
+  plan) — the route is one PATCH, and one card can say both changes.
+- It reads the profile's `updatedAt` itself just before the write and passes it as
+  `expectedUpdatedAt` (declared in `omits`) — the person approves the change as shown on the card,
+  not a guard on an earlier read; a save racing that read still answers `agent.profile_conflict`.
+- `description` is not an input — the run-context work moved it into the agent definition, so the
+  profile route dropped the field and `agents.update` takes it; `omits` names only
+  `expectedUpdatedAt`.
+- The avatar input is the route's `preset` variant only; the `upload` kind needs no declaration
+  — an input accepting less than the route passes the parity test, and `omits` names top-level
+  fields only. A custom image stays on the web (the upload route is `transport`).
+- A profile write through the tool audits `channel: "agent"` plus the `viaAgent` detail — it
+  said `web` for every non-token write before.
+- `later` and the exclusion `issue` field are removed with `LATER_ALLOWED` — nothing uses them,
+  and the rule still fails a `later` entry found by the source scan.
+- The run-context work's preference routes are excluded, not mirrored (#91): `GET /me/preferences`
+  is `internal` (the run context already gives the agent the zone in effect) and
+  `PUT /me/preferences` `human-only` (a person's own setting).
 - `evals.get-case` / `get-result` return metadata and scores, never conversation content — replay
   privacy (trajectories 404 to others, no export); copying a case into another log would be an
   export.

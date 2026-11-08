@@ -359,9 +359,9 @@ setup), `secret` (tokens, credentials, secret config values, cross-org config st
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry
-would need cross-file resolution the source scan does not do. `later` is closed:
-`platform-op-later` fails every `later` entry, with no allow-list. An operation that would touch a secret refuses with a pointer to the
-web page.
+would need cross-file resolution the source scan does not do. There is no `later`:
+`platform-op-later` fails any such exclusion. An operation that would touch a secret refuses with a
+pointer to the web page.
 
 **Adding a domain.** Add the id and its one-line description to `PLATFORM_DOMAINS`
 (`platform/operation.ts`), the provider to `PlatformOpsModule`, its routes to `ROUTE_SCHEMAS`, and the

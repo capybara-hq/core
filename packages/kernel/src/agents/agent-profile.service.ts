@@ -33,8 +33,8 @@ export class AgentProfileService {
   /**
    * Applies `patch` (only the given fields) when `expectedUpdatedAt` is still the profile's
    * `updatedAt`, else 409 `agent.profile_conflict` (never a silent overwrite). Audit
-   * `agent.profile_updated` `{ fields, channel }`: `api` for a personal access token, `agent` for
-   * the `Platform` tool (its `auditDetail` merged in), else `web`.
+   * `agent.profile_updated` `{ fields, channel, ...auditDetail }`: `api` for a personal access
+   * token, `agent` for a write through the `Platform` tool (`auditDetail` given), else `web`.
    * An `upload` avatar must be the actor's own upload that no other agent uses (else 404
    * `attachment.not_found`): it is finalized first (outside the transaction, it reads the object
    * store; 503 `storage.unavailable` without one) and bound to the agent inside it.
@@ -74,8 +74,8 @@ export class AgentProfileService {
     actorAccountId: string,
     patch: ProfilePatch,
     expectedUpdatedAt: string,
-    actorTokenId?: string,
-    auditDetail?: Record<string, unknown>,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<AgentProfile> {
     const t = this.db.db;
     await this.agents.lockForWrite(orgId, agentId, actorAccountId);
