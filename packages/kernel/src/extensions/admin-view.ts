@@ -36,7 +36,10 @@ import {
   permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
+import { PluginIcons } from "./plugin-icons.js";
 import { pluginItemsOf } from "./plugin-items.js";
+import { parseProviderConflict } from "./resolve.js";
+import { type SingleProviderBlock, SingleProviderGuard } from "./single-provider.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -128,6 +131,10 @@ export class ExtensionAdmin {
     private readonly deploymentConfig: ExtensionDeploymentConfigService,
     /** How many orgs still need their own config for such an extension. */
     @Inject(EffectiveConfigs) private readonly effectiveConfigs: EffectiveConfigs,
+    /** Which enabled extension keeps a disabled one from being enabled (`enableBlocked`). */
+    @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
+    /** The plugins' icons (admin catalog routes). */
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -407,7 +414,10 @@ export class ExtensionAdmin {
     if (subjects.length === 0) return [];
     const names = subjects.map((s) => s.name);
     const snapshots = await this.approvals.all();
-    const displayNames = await this.displayNames.many(names);
+    const [displayNames, icons] = await Promise.all([
+      this.displayNames.many(names),
+      this.icons.many(names, { kind: "admin" }),
+    ]);
     const staleSeconds =
       STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
     const rows = await this.db
@@ -418,7 +428,27 @@ export class ExtensionAdmin {
       .orderBy("replica_id")
       .execute();
     const items = await pluginItemsOf(this.db, names);
+    // The other providers named by a `conflict` row, for their display names.
+    const conflicts = new Map(
+      rows.flatMap((r) => {
+        const c =
+          r.state === "pending" && r.reason === "conflict" && parseProviderConflict(r.detail);
+        return c ? [[r.plugin, c] as const] : [];
+      }),
+    );
+    const otherNames = [
+      ...new Set([...conflicts].flatMap(([n, c]) => c.providers.filter((p) => p !== n))),
+    ];
+    const otherDisplay = otherNames.length > 0 ? await this.displayNames.many(otherNames) : null;
     const needing = await this.orgsNeedingConfig(subjects);
+    // A disabled install whose single-provider point another enabled extension provides: enabling
+    // it would be refused, so the view says which one to disable first.
+    const blocked = new Map<string, SingleProviderBlock>();
+    for (const s of subjects) {
+      if (s.install?.desiredState !== "disabled" || s.broken !== undefined) continue;
+      const block = await this.singleProvider.occupant(s.name, s.set.provides);
+      if (block) blocked.set(s.name, block);
+    }
     const counts = new Map(
       (
         await this.db
@@ -454,10 +484,12 @@ export class ExtensionAdmin {
         );
       const install = s.install;
       const displayName = displayNames.get(s.name) ?? null;
+      const icon = icons.get(s.name) ?? null;
       if (s.broken !== undefined) {
         return {
           name: s.name,
           displayName,
+          icon,
           version: s.version,
           source: s.source,
           sha256: target,
@@ -486,20 +518,34 @@ export class ExtensionAdmin {
         };
       }
       const permissions = permissionGroups(s.set);
+      const status = deriveExtensionStatus({
+        source: s.source,
+        desired: install && { sha256: install.sha256, state: install.desiredState },
+        pendingApproval: !snapshotCovers(snap, s.set),
+        configValid,
+        migratedSha: install?.migratedSha ?? null,
+        replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
+      });
+      const conflict = status === "conflict" ? conflicts.get(s.name) : undefined;
+      const enableBlocked = blocked.get(s.name);
       return {
         name: s.name,
         displayName,
+        icon,
         version: s.version,
         source: s.source,
         sha256: target,
-        status: deriveExtensionStatus({
-          source: s.source,
-          desired: install && { sha256: install.sha256, state: install.desiredState },
-          pendingApproval: !snapshotCovers(snap, s.set),
-          configValid,
-          migratedSha: install?.migratedSha ?? null,
-          replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
+        status,
+        ...(conflict && {
+          conflict: {
+            extensionPoint: conflict.extensionPoint,
+            providers: conflict.providers
+              .filter((p) => p !== s.name)
+              .map((p) => ({ name: p, displayName: otherDisplay?.get(p) ?? null })),
+            ...(conflict.unprovided && { unprovided: true as const }),
+          },
         }),
+        ...(enableBlocked && { enableBlocked }),
         desired: install && {
           version: install.version,
           sha256: install.sha256,

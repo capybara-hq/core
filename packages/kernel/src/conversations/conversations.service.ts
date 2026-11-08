@@ -27,7 +27,11 @@ import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
-import { type MessageContext, readMessageContext } from "./message-context.js";
+import {
+  type ImSenderContext,
+  type MessageContext,
+  readMessageContext,
+} from "./message-context.js";
 import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
 import { conversationTree } from "./tree.js";
 
@@ -257,6 +261,12 @@ export interface UserMessageInput {
   locale?: "zh" | "en";
   /** An anonymous IM guest's IM profile name (run context spec §7); other senders: none. */
   senderName?: string;
+  /**
+   * An IM message: the time zone and language the platform gave for the sender (channel@1
+   * `sender.timeZone` / `sender.locale`, checked and normalized by the inbound); they win over the
+   * account setting and the person's web language (run context spec §3.4).
+   */
+  im?: ImSenderContext;
 }
 
 interface UsageRow {
@@ -1178,6 +1188,7 @@ export class ConversationsService {
       accountId,
       senderName: input.senderName,
       browser: { timeZone: input.timeZone, locale: input.locale },
+      im: input.im,
     });
     events.push(this.userMessage(accountId, input, extra, blocks, invoked, context));
     const written = await this.eventLog.appendIn(conversationId, events);

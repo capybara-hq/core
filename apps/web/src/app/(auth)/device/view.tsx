@@ -17,6 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { FormError } from "../../../components/form-error";
+import { useEnvironmentName } from "../../../components/use-environment-name";
 import { useRouter } from "../../../i18n/navigation";
 import { ApiClientError } from "../../../lib/api";
 import { loginPathFor } from "../../../lib/auth-sources";
@@ -262,6 +263,7 @@ function ConfirmForm({
 }) {
   const t = useTranslations("device");
   const te = useTranslations("environments");
+  const environmentLabel = useEnvironmentName();
   const memberships = me.memberships;
   const [orgId, setOrgId] = useState(() => defaultDeviceOrg(me));
   const [target, setTarget] = useState(NEW);
@@ -346,7 +348,7 @@ function ConfirmForm({
               onChange={(e) => setTarget(e.target.value)}
               options={[
                 { value: NEW, label: t("newEnvironment") },
-                ...devices.map((e) => ({ value: e.id, label: e.name ?? te("personal") })),
+                ...devices.map((e) => ({ value: e.id, label: environmentLabel(e) })),
               ]}
             />
           </Field>

@@ -758,6 +758,35 @@
   padding-bottom: 0;
   border-bottom: 0;
 }
+/* With a title or a copy button (spec §6.9): one head row, the title at the left in `muted`, the
+   language label and the dense ghost 复制 at the right; inside a box no bottom line, as above. */
+.cb-code-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 4px 2px 8px;
+  border-bottom: 1px solid var(--cb-line);
+}
+.cb-code-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-code-head-lang {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: 16px;
+}
+.cb-code[data-framed="false"] > .cb-code-head {
+  border-bottom: 0;
+}
+
 /* <code> 的 UA 样式是 font-family: monospace（系统字体）：与外层 Sarasa 的基线 / 行高不一致，
    且 Linux 下系统等宽字体的度量不稳定（行距在 20 / 21px 间跳），一律继承设计字体。 */
 .cb-code-pre code {
@@ -1371,4 +1400,71 @@ a.cb-attachment:hover {
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+
+/* A mark's picture (spec §6.17, maintainer decision 2026-11-08): a plugin's declared icon, contained
+   in its tile (ObjectRow 36 / 24, ObjectCard 40 / 24, CellTitle and ObjectMark), never cropped. */
+.cb-mark-image {
+  display: block;
+  flex: none;
+  object-fit: contain;
+}
+/* A standalone mark tile (ObjectMark): an item row's, a Sheet head's or a page head's. */
+.cb-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-mark[data-size="24"] {
+  width: 24px;
+  height: 24px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-mark[data-size="28"] {
+  width: 28px;
+  height: 28px;
+  font-size: var(--cb-type-small-size);
+}
+.cb-mark[data-size="40"] {
+  width: 40px;
+  height: 40px;
+  font-size: var(--cb-type-h2-size);
+}
+
+/* Numbered instructions (spec §6.9, a setup guide's steps): the number in faint mono, the text in
+   the prose font; a backtick pair is the inline code of rendered Markdown. */
+.cb-instructions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-instructions-item {
+  display: flex;
+  gap: var(--cb-space-3);
+  align-items: baseline;
+}
+.cb-instructions-num {
+  flex: 0 0 2ch;
+  color: var(--cb-faint);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-small-size);
+  text-align: right;
+}
+.cb-instructions-text {
+  min-width: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  overflow-wrap: anywhere;
 }

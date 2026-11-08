@@ -2,6 +2,7 @@
 
 import { SettingsPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
+import { AgentChannels } from "../../../../components/AgentChannels";
 import { AgentPage } from "../../../../components/agent/AgentPage";
 import { loadingSection, useSectionNav } from "../../../../components/agent/frame";
 import { READ_ONLY_FIELDS, SECTION_FIELDS, sectionOf } from "../../../../components/agent/sections";
@@ -104,15 +105,24 @@ function AgentPageLoading({ agentId, section }: { agentId: string; section: stri
       }}
       nav={nav}
       activeNav={open}
-      loading={{
-        sections: [
-          loadingSection(
-            open,
-            editable ? SECTION_FIELDS[open] : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
-            t,
-          ),
-        ],
-      }}
-    />
+      // 渠道 draws its own frame (cards on the page ground), the other sections their fields
+      loading={
+        open === "channels"
+          ? {}
+          : {
+              sections: [
+                loadingSection(
+                  open,
+                  editable
+                    ? SECTION_FIELDS[open]
+                    : (READ_ONLY_FIELDS[open] ?? SECTION_FIELDS[open]),
+                  t,
+                ),
+              ],
+            }
+      }
+    >
+      {open === "channels" ? <AgentChannels agentId={agentId} channels={null} loading /> : null}
+    </SettingsPage>
   );
 }

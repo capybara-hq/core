@@ -221,6 +221,8 @@
       "name_mismatch": "扩展包里的扩展名与目标不符。",
       "downgrade_unsupported": "不能降级到这个版本：它有尚未执行的迁移。",
       "not_disabled": "请先停用再卸载。",
+      "single_provider_enabled": "只能启用一个提供方：请先停用已启用的那一个，再启用这个。",
+      "single_provider_required": "这个能力由部署必需的插件提供，不能替换。",
       "package_invalid": "扩展包不合法：",
       "legacy_format": "该包是 0.1.0 之前的旧格式。请用 pnpm pack-plugin 重新打包为带 .capybara-plugin/plugin.json 的插件后再上传。",
       "no_extension": "该插件不含扩展，部署上没有可安装的内容。请改为导入到目录。",
@@ -259,9 +261,11 @@
       "not_shareable": "所属组织没有把它设为可共享，不能展示或关联给其他组织。",
       "owner_required": "不能把所属组织从它自己的列表中移除。",
       "item_pending": "这个插件正在等待超级管理员确认，暂时不能修改。",
+      "extension_enabled": "这个插件的扩展仍在部署上启用：请先在扩展页停用它，再删除插件。",
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
-      "not_owned": "只能共享本组织自己的技能和智能体模板。"
+      "not_owned": "只能共享本组织自己的技能和智能体模板。",
+      "guide_not_found": "插件没有这份接入指南。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -278,7 +282,8 @@
       "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
       "webhook_unavailable": "该渠道无法使用 Webhook：扩展不支持，或部署未配置回调地址。",
       "webhook_not_found": "这个地址没有注册 Webhook。",
-      "webhook_retry": "事件暂时无法接收，请稍后重试。"
+      "webhook_retry": "事件暂时无法接收，请稍后重试。",
+      "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -1454,6 +1459,7 @@
     "title": "环境",
     "listLabel": "我的环境",
     "personal": "个人环境",
+    "demotedName": "个人环境（{provider}）",
     "new": "新建环境",
     "none": "无",
     "source": {
@@ -1518,6 +1524,7 @@
       "files": "文件",
       "filesNote": "文件保留到环境被删除。",
       "suspendNote": "暂停会结束正在运行的进程。",
+      "demotedNote": "这是平台更换沙箱提供方之前你的个人环境。平台换回{provider}后，它会重新成为你的默认环境，文件也随之回来。",
       "filesLostNote": "该环境的文件已在提供方丢失。重建文件后才能再次使用。",
       "deviceFilesLostNote": "这个环境在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个环境，即可重建目录后继续使用。",
       "created": "创建时间",
@@ -2344,6 +2351,19 @@
     "tabs": {
       "all": "全部",
       "error": "出错"
+    },
+    "guide": {
+      "title": "接入指南",
+      "hint": "按插件提供的步骤在平台上创建应用；下面的文件已按这个渠道填好，复制后粘贴即可。",
+      "modeLabel": "接入方式",
+      "stepsLabel": "接入步骤",
+      "unresolved": "{names} 现在还没有值，原样显示。",
+      "unresolvedOnSave": "{names} 现在还没有值，原样显示：保存渠道后才会填上。",
+      "unresolvedPublicUrl": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置平台的公开地址（http.publicUrl）。",
+      "unresolvedWebhookBase": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置 Webhook 回调地址（channels.webhookBaseUrl）。",
+      "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
+      "driftAck": "我已更新 {plugin} 应用",
+      "driftAcked": "已记录：应用与插件的接入配置一致。"
     }
   },
   "extensions": {
@@ -2362,6 +2382,7 @@
       "pending_migration": "正在准备",
       "loading": "正在加载",
       "dependency": "缺少依赖的扩展",
+      "conflict": "与其他扩展冲突",
       "failed": "加载失败",
       "deployment_disabled": "平台已停用"
     },
@@ -3483,6 +3504,7 @@
         "converging": "收敛中",
         "failed": "失败",
         "dependency": "依赖缺失",
+        "conflict": "冲突",
         "legacy_format": "需要重新打包",
         "runningOrgsConfigure": "运行中 · 组织需各自配置（{count}）"
       },
@@ -3526,6 +3548,7 @@
           "approval": "权限待批准",
           "migration": "另一个副本正在执行迁移",
           "dependency": "依赖的扩展点没有可用的提供方",
+          "conflict": "它提供的扩展点只能有一个提供方，已由其他扩展提供",
           "sync_failed": "同步扩展包失败",
           "sha_mismatch": "扩展包内容与记录的 sha256 不符",
           "import_failed": "导入扩展模块失败",
@@ -3545,6 +3568,12 @@
           "uninstall": "卸载"
         },
         "uninstallNeedsDisable": "卸载前须先停用",
+        "conflictLine": "{point}只能启用一个提供方：{others}已启用，先停用它，{name}就会加载。",
+        "conflictJoin": "、",
+        "enableBlocked": "{point}只能启用一个提供方：请先停用 {other}，再启用 {name}。",
+        "enableBlockedRequired": "{point}由部署必需的插件「{other}」提供，不能替换。",
+        "noProviderLine": "{point}没有正在运行的提供方：选中的 {others} 没有加载，{name}也不会加载。先让 {others} 正常运行，或停用它，{name}就会加载。",
+        "openOther": "查看 {name}",
         "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
         "disableConfirm": {
           "title": "停用「{name}」？",
@@ -3612,6 +3641,7 @@
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",
+      "calloutNoProvider": "{point}没有正在运行的提供方。",
       "configure": "配置",
       "settings": "设置",
       "upgrade": "升级",
@@ -3759,7 +3789,6 @@
       "bootstrap": "预装"
     },
     "newer": "有新版本",
-    "iconAlt": "{name} 的图标",
     "components": {
       "extension": "扩展",
       "extensionNone": "没有扩展。",
@@ -3825,8 +3854,11 @@
         "deleteConfirm": {
           "title": "删除插件 {name}",
           "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
-          "confirm": "删除"
+          "confirm": "删除",
+          "extensionNote": "插件的扩展在部署上启用时不能删除：须先在扩展页停用它。删除后扩展仍保留在扩展页，可在那里卸载。",
+          "openExtension": "去扩展页停用"
         },
+        "deleteExtensionEnabled": "请先在扩展页停用「{name}」，再删除插件。",
         "deletedToast": "已删除「{name}」。",
         "versionColumns": {
           "version": "版本",
@@ -3919,6 +3951,9 @@
         "done": "已导入插件「{name}」。",
         "deployResult": "部署结果",
         "deployFailed": "{name} {version}：装到部署失败（{code}），导入已保留。可在扩展后台重试。",
+        "deployLeftDisabled": "{name} {version} 已安装但保持停用：{point}只能启用一个提供方。请先停用 {other}，再启用它。",
+        "deployLeftDisabledRequired": "{name} {version} 已安装但保持停用：{point}由部署必需的插件「{other}」提供，不能替换。",
+        "openEnabled": "查看 {name}",
         "openItem": "查看插件",
         "gone": "暂存的导入已过期或已确认。请重新导入。",
         "restart": "重新导入",
@@ -4439,6 +4474,8 @@
       "confirm": "更新",
       "cancel": "取消",
       "done": "已把「{name}」更新到 {version}。",
+      "leftDisabled": "「{name}」的扩展已安装但保持停用：{point}只能启用一个提供方，{other} 已启用。请先停用它，再启用这个扩展。",
+      "leftDisabledRequired": "「{name}」的扩展已安装但保持停用：{point}由部署必需的插件「{other}」提供，不能替换。",
       "stale": "更新的内容已变化，请再看一遍后确认。",
       "orgCount": "{count} 个组织",
       "otherOrgs": "其他 {count} 个组织",
@@ -4455,7 +4492,8 @@
       "extensionOrgs": "在用的组织一起更新：{orgs}",
       "connectorsNote": "按新模板更新：{names}",
       "credentialsResetNote": "认证方式变了，凭据会清空，需要重新填写：{names}",
-      "needsConfigNote": "新增的连接器模板需要填写地址和凭据：{ids}"
+      "needsConfigNote": "将开启的连接器模板需要填写地址和凭据：{ids}",
+      "turnedOffNote": "新版本里默认关闭，在此组织关闭（已建的连接器保留）：{ids}"
     },
     "errorDetail": {
       "host": "主机：{host}",

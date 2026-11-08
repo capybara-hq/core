@@ -7,7 +7,8 @@ import { AgentChannels } from "../AgentChannels";
 import { AgentSectionFrame, useAgentPage } from "./frame";
 
 /**
- * 渠道 Channels (agent profile design §3.2): the IM connections bound to this agent, as today.
+ * 渠道 Channels (agent profile design §3.2): the IM connections bound to this agent, as cards on
+ * the page ground (maintainer decision 2026-11-08).
  * Bindings are saved on their own channel pages, so the section has no save of its own.
  */
 export function ChannelsSection() {
@@ -15,7 +16,11 @@ export function ChannelsSection() {
   const q = channelsQuery(orgId);
   const channels = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
   if (channels.data === undefined && channels.error === null) {
-    return <AgentSectionFrame loading />;
+    return (
+      <AgentSectionFrame loading>
+        <AgentChannels agentId={agent.id} channels={null} loading />
+      </AgentSectionFrame>
+    );
   }
   return (
     <AgentSectionFrame>

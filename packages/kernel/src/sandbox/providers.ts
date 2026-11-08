@@ -1,6 +1,7 @@
 import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import { guardProviderConnection } from "./unreachable.js";
 
 /** The kernel-internal provider of connected machines (`device` environments). */
 export const DEVICE_PROVIDER = "@device";
@@ -22,6 +23,11 @@ export interface SandboxProviderEntry {
  * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
  * extension load, and change with installs). Kernel-internal providers (`@device`) are registered
  * by their module on init, in every replica: they are code, not shared state.
+ *
+ * Every `sandbox@2` extension is handed out guarded: a network-level failure to reach it is
+ * rethrown as `SandboxProviderUnreachableError` (`./unreachable.ts`), so the tools can tell it
+ * apart. Internal providers are not: their failures (the device relay's Redis, the machine's
+ * connection) are the kernel's own and have their own errors.
  */
 @Injectable()
 export class SandboxProviders {
@@ -42,7 +48,9 @@ export class SandboxProviders {
   /** The cloud provider (the loaded `sandbox@2` extension); undefined without one. */
   cloud(): SandboxProviderEntry | undefined {
     const e = this.registry.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
-    return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
+    return e
+      ? { plugin: e.plugin, impl: guardProviderConnection(e.impl as SandboxProvider) }
+      : undefined;
   }
 
   /**
@@ -55,7 +63,9 @@ export class SandboxProviders {
     const e = this.registry
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === name);
-    return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
+    return e
+      ? { plugin: e.plugin, impl: guardProviderConnection(e.impl as SandboxProvider) }
+      : undefined;
   }
 }
 

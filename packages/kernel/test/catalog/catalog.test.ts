@@ -454,6 +454,52 @@ describe("importing an item's extension", () => {
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe("catalog.version_exists");
   });
+
+  it("delete is refused while the extension is enabled (409 catalog.extension_enabled); after a disable it deletes and keeps the install record", async () => {
+    const id = (
+      await db
+        .selectFrom("catalog_items")
+        .select("id")
+        .where("name", "=", "fake-tools-ui")
+        .where("deleted_at", "is", null)
+        .executeTakeFirstOrThrow()
+    ).id;
+    const installRow = () =>
+      db
+        .selectFrom("extension_installs")
+        .select(["desired_state", "catalog_item_id"])
+        .where("name", "=", "fake-tools-ui")
+        .executeTakeFirst();
+    expect((await installRow())?.desired_state).toBe("enabled");
+    const refused = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${id}` });
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect(refused.json().error).toMatchObject({
+      code: "catalog.extension_enabled",
+      details: [{ extension: "fake-tools-ui" }],
+    });
+    expect(refused.json().error.message).toContain("fake-tools-ui");
+    // nothing changed: the item is live, no catalog.removed audit
+    const live = await db
+      .selectFrom("catalog_items")
+      .select("deleted_at")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(live.deleted_at).toBeNull();
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "catalog.removed")
+        .where("target", "=", id)
+        .execute(),
+    ).toEqual([]);
+
+    await k.app.get(ExtensionAdminOps).disable("fake-tools-ui", null);
+    const del = await admin({ method: "DELETE", url: `/api/v1/admin/catalog/items/${id}` });
+    expect(del.statusCode, del.body).toBe(204);
+    // the disabled extension keeps its install record: the super admin uninstalls it separately
+    expect(await installRow()).toEqual({ desired_state: "disabled", catalog_item_id: id });
+  });
 });
 
 describe("scope, delete and permissions", () => {

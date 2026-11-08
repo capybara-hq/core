@@ -159,9 +159,20 @@ export async function renderRouteEmptyCache(
 export async function hydrateRouteWithCache(
   path: string,
   routes: Routes,
-  opts: RouteOpts & { clock?: ServerClock; beforeHydrate?: () => void },
+  /** `clock: null` renders without the server's clock (a control that shows the mismatch). */
+  opts: Omit<RouteOpts, "clock"> & { clock?: ServerClock | null; beforeHydrate?: () => void },
 ) {
-  const { clock, beforeHydrate, ...rest } = opts;
+  const { clock: given, beforeHydrate, ...rest } = opts;
+  // One clock for both renders, as the root layout passes the server's: without it the server
+  // render and the hydration each read Date.now(), and a running time that crosses a second in
+  // between ("Turn 1 · 3m 58s" vs "3m 59s") fails hydration now and then.
+  const clock: ServerClock | undefined =
+    given === null
+      ? undefined
+      : (given ?? {
+          now: Date.now(),
+          timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
   const { state, page, render } = await serverLoad(path, routes, rest);
   const html = renderToString(
     pageElement(withCache(page, state), {

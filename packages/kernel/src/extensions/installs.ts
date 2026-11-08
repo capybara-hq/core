@@ -1,5 +1,6 @@
 import { type PluginExtensionSection, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import type { core } from "zod";
 import { configFields } from "../config/fields.js";
 import type { Keyring } from "../ctx/secrets.js";
@@ -509,7 +510,11 @@ export class ExtensionInstalls {
     }));
   }
 
-  /** Install records desired enabled, with their reviewed extension sections (by name). */
+  /**
+   * Install records desired enabled, with their reviewed extension sections, the earliest enabled
+   * first (`enabled_at`, then the install time, then the name): of two enabled providers of a
+   * single-provider extension point the first one in this order is the one every replica loads.
+   */
   async desired(): Promise<DesiredExtension[]> {
     const rows = await this.db
       .selectFrom("extension_installs")
@@ -524,6 +529,8 @@ export class ExtensionInstalls {
         "extension_packages.blob_store",
       ])
       .where("extension_installs.desired_state", "=", "enabled")
+      .orderBy(sql`extension_installs.enabled_at ASC NULLS LAST`)
+      .orderBy("extension_installs.installed_at")
       .orderBy("extension_installs.name")
       .execute();
     return rows.map((r) => ({

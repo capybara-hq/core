@@ -32,7 +32,7 @@ import { uploadSkillZip } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
-import { PlatformUpdatePreviewBody } from "./PlatformUpdateDialog";
+import { PlatformUpdatePreviewBody, useLeftDisabledLine } from "./PlatformUpdateDialog";
 import { PluginReviewBody } from "./PluginReviewBody";
 
 const isZip = (f: File) => /\.zip$/i.test(f.name);
@@ -57,6 +57,7 @@ export function OrgPluginUploadDialog({
   onClose(): void;
 }) {
   const t = useTranslations("plugins.upload");
+  const leftDisabledLine = useLeftDisabledLine();
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -142,6 +143,9 @@ export function OrgPluginUploadDialog({
             ? t("updated", { name, version: versionLabel(staged.review.version) })
             : t("installed", { name }),
       );
+      if (r.extensionLeftDisabled !== undefined) {
+        toast.error(leftDisabledLine(r.extensionLeftDisabled, name));
+      }
       onClose();
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "plugin.review_stale") {

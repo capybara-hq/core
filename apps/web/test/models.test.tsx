@@ -543,6 +543,56 @@ describe("one box is enough (acceptance item AB)", () => {
   });
 });
 
+describe("provider icons (maintainer decision 2026-11-08)", () => {
+  it("/admin/models: a provider row draws its plugin's icon, one without its initial", async () => {
+    const icon = "/api/v1/admin/catalog/items/i1/icon?v=1.0.0";
+    adminRoutes({
+      "GET /api/v1/admin/models": () =>
+        json(200, {
+          ...ADMIN_MODELS,
+          providers: [
+            { ...ALPHA, icon },
+            { ...BROKEN, icon: null },
+          ],
+        }),
+    });
+    await renderRouteWithCache("/admin/models", lastStubRoutes());
+    const table = await screen.findByRole("table", { name: en.models.providers.label });
+    const tiles = [...table.querySelectorAll<HTMLElement>(".cb-cell-initial")];
+    expect(tiles).toHaveLength(2);
+    const img = tiles[0]?.querySelector('img[data-part="mark-image"]');
+    expect(img?.getAttribute("src")).toBe(icon);
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(tiles[1]?.querySelector("img")).toBeNull();
+    expect(tiles[1]?.textContent).toBe("B");
+  });
+
+  it("/settings/models: the provider select is led by the open provider's icon", async () => {
+    resetNavigation("/settings/models");
+    const icon = "/api/v1/orgs/o1/catalog/i1/icon?v=1.0.0";
+    stubApi({
+      "GET /api/v1/orgs/o1/model-purposes": () => json(200, { purposes: [evalView()] }),
+      "GET /api/v1/orgs/o1/models": () => json(200, { providers: [ALPHA] }),
+      "GET /api/v1/orgs/o1/models/catalog": () =>
+        json(200, { providers: [{ ...ALPHA, icon }, BROKEN] }),
+      "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
+    });
+    await renderRouteWithCache("/settings/models", lastStubRoutes());
+    await screen.findByRole("combobox", { name: en.models.providers.label });
+    const mark = document.querySelector('[data-part="object-mark"]') as HTMLElement;
+    expect(mark.querySelector("img")?.getAttribute("src")).toBe(icon);
+    // the failed one has no icon: the initial
+    await pickOption(
+      screen.getByRole("combobox", { name: en.models.providers.label }),
+      "broken",
+      userEvent.setup(),
+    );
+    const after = document.querySelector('[data-part="object-mark"]') as HTMLElement;
+    expect(after.querySelector("img")).toBeNull();
+    expect(after.textContent).toBe("B");
+  });
+});
+
 describe("sub-agent model tiers on the purposes page", () => {
   it.each(LOCALES)("the three tiers are listed with the fallback hint (%s)", async (locale) => {
     const m = msgs[locale];

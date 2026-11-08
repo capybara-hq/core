@@ -24,8 +24,13 @@ export function newReplicaId(): string {
   return `${hostname()}-${process.pid}-${randomBytes(3).toString("hex")}`;
 }
 
-/** Why `extension_replica_status.state = pending` (F-I: the admin view derives pending_config and so on from it). */
-export type PendingReason = "config" | "approval" | "migration" | "dependency";
+/**
+ * Why `extension_replica_status.state = pending` (F-I: the admin view derives pending_config and so
+ * on from it). `dependency`: an extension point it requires has no provider; `conflict`: it
+ * provides a single-provider extension point another loaded extension already provides (it loads
+ * once that one is disabled or uninstalled, no restart).
+ */
+export type PendingReason = "config" | "approval" | "migration" | "dependency" | "conflict";
 
 /** One load result (written to `extension_replica_status`). */
 export interface ExtensionLoadStatus {

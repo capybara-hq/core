@@ -14,6 +14,7 @@ import {
   parsePluginManifest,
   parseSkillMd,
   SKILL_ENTRY_FILE,
+  setupGuideFileProblem,
   validatePluginPackageJsonFor,
 } from "@capybara-hq/plugin-sdk";
 import {
@@ -501,6 +502,21 @@ export function readPluginFiles(
   }
 
   const ext = manifest.extension;
+  // Setup guides: their template files are text within the size limit (spec
+  // 2026-11-08-plugin-setup-guides-design.md §2); a channel guide needs a channel extension, which
+  // the manifest parser checks when the extension section is there
+  manifest.setupGuides?.forEach((g, i) => {
+    if (g.place === "channel-connection" && ext === undefined) {
+      issues.push(
+        `setupGuides.${i}: a channel-connection guide needs the plugin's extension to provide channel@1`,
+      );
+    }
+    g.files?.forEach((f, j) => {
+      const problem = setupGuideFileProblem(f.path, files.get(packagePath(f.path)));
+      if (problem !== undefined) issues.push(`setupGuides.${i}.files.${j}: ${problem}`);
+    });
+  });
+
   if (ext !== undefined) {
     if (!files.has(packagePath(ext.entry))) {
       issues.push(

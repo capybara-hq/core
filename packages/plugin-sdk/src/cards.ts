@@ -13,6 +13,13 @@ export type ChannelCard =
       toolName: string;
       appName?: string;
       agentName: string;
+      /**
+       * One line saying what the call does, as the web shows it: the tool's confirmation summary
+       * (e.g. a Platform operation's), else the tool's title and key argument; may be empty.
+       * Never the raw call input (it may hold a whole prompt, and a group sees the card); the
+       * full input is behind `webUrl`. Plain text written by the kernel from model-controlled
+       * values: render it as text, never as markup. The name is kept from when it held the input.
+       */
       inputPreview: string;
       scopes: ("once" | "session" | "always")[];
       expiresAt: string;
@@ -146,7 +153,7 @@ export function validateChannelCard(card: unknown): string[] {
 export type Locale = "zh" | "en";
 
 /**
- * 把模型可控的值（审批标题、输入预览、提问标题、回答摘要）放进代码里，退回文本里它们不会变成链接、强调或 HTML：
+ * 把模型可控的值（审批标题、调用摘要、提问标题、回答摘要）放进代码里，退回文本里它们不会变成链接、强调或 HTML：
  * 单行用行内代码，多行用围栏代码块（以换行开头），分隔符都比值里最长的反引号串更长（CommonMark 6.1 / 4.5）。
  * 选代码而不是给标点加反斜杠：代码是 CommonMark / GFM 里唯一保证内容按原样显示的写法（反斜杠挡不住 GFM 的裸网址
  * 自动链接，各渠道转换器对反斜杠的处理也不一致）。
@@ -176,7 +183,7 @@ const TEXT = {
     connect: (app: string) => `[Connect] ${app} needs to be connected.`,
     tool: "Tool",
     agent: "Agent",
-    input: "Input",
+    summary: "Summary",
     status: "Status",
     reason: "Reason",
     expires: "Expires",
@@ -206,7 +213,7 @@ const TEXT = {
     connect: (app: string) => `【连接】需要连接 ${app}。`,
     tool: "工具",
     agent: "Agent",
-    input: "输入",
+    summary: "摘要",
     status: "状态",
     reason: "原因",
     expires: "过期时间",
@@ -245,7 +252,7 @@ export function renderCardAsText(card: ChannelCard, locale: Locale): string {
         withCode(t.approval, asCode(card.title)),
         line(t.tool, card.appName ? `${card.appName} / ${card.toolName}` : card.toolName),
         line(t.agent, card.agentName),
-        line(t.input, asCode(card.inputPreview)),
+        ...(card.inputPreview !== "" ? [line(t.summary, asCode(card.inputPreview))] : []),
         line(t.status, card.decidedBy ? `${state} (${card.decidedBy})` : state),
       ];
       if (card.state === "denied" && card.denyReason)

@@ -118,6 +118,7 @@ export function OrgExtensionSheet({
         if (!o) onClose();
       }}
       title={label}
+      mark={{ text: label, image: plugin.icon ?? null }}
       meta={[plugin.displayName ? plugin.plugin : null, versionLabel(plugin.version)]
         .filter((x): x is string => x !== null)
         .join(" · ")}

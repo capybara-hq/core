@@ -483,6 +483,7 @@ export class ConnectorsService {
           client,
           { grant_type: "client_credentials", scope: auth.scopes?.join(" ") },
           http,
+          { tokenTypes: auth.tokenTypes },
         );
         return { client, tokens };
       } catch (e) {
@@ -1647,6 +1648,7 @@ export class ConnectorsService {
           client,
           { grant_type: "client_credentials", scope: (auth.scopes ?? client.scopes)?.join(" ") },
           oauthHttpOptions(this.config.get()),
+          { tokenTypes: auth.tokenTypes },
         );
       } catch (e) {
         throw connectFailed(e);

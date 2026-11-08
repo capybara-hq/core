@@ -25,7 +25,8 @@ export const MARKETPLACE_USAGE =
  * `--check` exits 1 on any finding that is not a warning (`marketplace-missing`,
  * `marketplace-display-stale`, `marketplace-integrity`, `marketplace-version-decrease`,
  * `marketplace-invalid`); `--write` writes each plugin's entry (replacing its other versions,
- * refreshing a listed entry's summary and displayName) and exits 1 only on `marketplace-invalid`.
+ * refreshing a listed entry's summary, displayName and icon) and exits 1 only on
+ * `marketplace-invalid`.
  * Relative paths resolve against `cwd`. Returns the exit code.
  */
 export async function marketplaceCommand(args: string[], cwd: string): Promise<number> {

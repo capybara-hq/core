@@ -439,12 +439,22 @@ export type ReadGitTreeOptions = GitOptions & {
  * {@link readGitTree}, plus the git tree oids of directories at the same commit: `trees` gets the
  * files read and returns directory paths relative to the repository root (`.` is the root); each
  * one that exists and is a directory gets its tree oid (equal oids mean equal contents, so a
- * plugin directory that did not change keeps its oid across commits).
+ * plugin directory that did not change keeps its oid across commits). `blobs` likewise names more
+ * files (paths relative to the root, from the same fetched commit, nothing else is downloaded):
+ * each that exists as a plain file of at most `maxBytes` is in `blobs` of the result; a missing
+ * path, a directory, a symlink, a submodule or a larger file is left out (never an error).
  */
 export async function readGitTreeAndOids(
   loc: GitLocation & { commit: string },
-  o: ReadGitTreeOptions & { trees?: (files: Map<string, Uint8Array>) => string[] },
-): Promise<{ files: Map<string, Uint8Array>; trees: Map<string, string> }> {
+  o: ReadGitTreeOptions & {
+    trees?: (files: Map<string, Uint8Array>) => string[];
+    blobs?: { paths: (files: Map<string, Uint8Array>) => string[]; maxBytes: number };
+  },
+): Promise<{
+  files: Map<string, Uint8Array>;
+  trees: Map<string, string>;
+  blobs: Map<string, Uint8Array>;
+}> {
   if (!SHA_RE.test(loc.commit)) throw failed(`"${loc.commit}" is not a full commit sha`);
   const commit = loc.commit.toLowerCase();
   const segs = pathSegments(loc.path);
@@ -564,7 +574,27 @@ export async function readGitTreeAndOids(
       }
       if (oid !== undefined) trees.set(dir, oid);
     }
-    return { files: sorted, trees };
+    const blobs = new Map<string, Uint8Array>();
+    const wanted = o.blobs;
+    for (const path of wanted?.paths(sorted).slice(0, GIT_LIMITS.maxFiles) ?? []) {
+      const want = pathSegments(path);
+      if (want === undefined || want.length === 0 || blobs.has(path)) continue;
+      let oid: string | undefined = c.tree;
+      for (const [i, seg] of want.entries()) {
+        const { tree: entries } = await git.readTree({ fs, gitdir, oid, cache });
+        const e = entries.find((x) => x.path === seg);
+        const last = i === want.length - 1;
+        oid =
+          e !== undefined && e.mode !== "120000" && e.type === (last ? "blob" : "tree")
+            ? e.oid
+            : undefined;
+        if (oid === undefined) break;
+      }
+      if (oid === undefined) continue;
+      const { blob } = await git.readBlob({ fs, gitdir, oid, cache });
+      if (wanted !== undefined && blob.byteLength <= wanted.maxBytes) blobs.set(path, blob);
+    }
+    return { files: sorted, trees, blobs };
   } catch (e) {
     throw mapError(e, op, o, what);
   } finally {

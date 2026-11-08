@@ -32,6 +32,11 @@ export interface AdminModelInfo extends ModelInfo {
 export interface AdminProvider {
   provider: string;
   displayName?: LocalizedName | null;
+  /**
+   * The URL of its plugin's icon (a kernel catalog icon route for this viewer's scope); null when
+   * the plugin has none or the viewer may not see it: draw the initial.
+   */
+  icon?: string | null;
   plugin: string;
   /** `org_configured`: the platform config leaves a required field empty, each org configures it. */
   status: "ok" | "error" | "org_configured" | "switched_off";

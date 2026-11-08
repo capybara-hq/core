@@ -221,6 +221,8 @@
       "name_mismatch": "The extension name in the package does not match.",
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
       "not_disabled": "Disable the extension before uninstalling it.",
+      "single_provider_enabled": "Only one extension may provide this; disable the enabled one first, then enable this one.",
+      "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
@@ -259,9 +261,11 @@
       "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
+      "extension_enabled": "This plugin's extension is still enabled on the deployment: disable it on the Extensions page first, then delete the plugin.",
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
-      "not_owned": "Only your organization's own skills and agent templates can be shared."
+      "not_owned": "Only your organization's own skills and agent templates can be shared.",
+      "guide_not_found": "The plugin has no such setup guide."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -278,7 +282,8 @@
       "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
       "webhook_unavailable": "Webhooks are not available for this channel: the extension does not support them or the deployment has no webhook address.",
       "webhook_not_found": "No webhook is registered at this address.",
-      "webhook_retry": "The event could not be accepted; retry later."
+      "webhook_retry": "The event could not be accepted; retry later.",
+      "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -1466,6 +1471,7 @@
     "title": "Environments",
     "listLabel": "Your environments",
     "personal": "Personal",
+    "demotedName": "Personal ({provider})",
     "new": "New environment",
     "none": "None",
     "source": {
@@ -1530,6 +1536,7 @@
       "files": "Files",
       "filesNote": "Files are kept until the environment is deleted.",
       "suspendNote": "Suspending ends the processes that are running.",
+      "demotedNote": "This was your personal environment before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default environment again, with its files.",
       "filesLostNote": "The files of this environment are gone at the provider. Rebuild the files to use it again.",
       "deviceFilesLostNote": "The files directory of this environment is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this environment to recreate the directory.",
       "created": "Created",
@@ -2356,6 +2363,19 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
+    },
+    "guide": {
+      "title": "Setup guide",
+      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
+      "modeLabel": "Inbound mode",
+      "stepsLabel": "Setup steps",
+      "unresolved": "{names} have no value yet and are shown as written.",
+      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
+      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
+      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
+      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+      "driftAck": "I updated the {plugin} app",
+      "driftAcked": "Recorded: the app matches the plugin's setup."
     }
   },
   "extensions": {
@@ -2374,6 +2394,7 @@
       "pending_migration": "being prepared",
       "loading": "loading",
       "dependency": "a required extension is missing",
+      "conflict": "conflicts with another extension",
       "failed": "failed to load",
       "deployment_disabled": "disabled on the platform"
     },
@@ -3495,6 +3516,7 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
+        "conflict": "Conflict",
         "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
@@ -3538,6 +3560,7 @@
           "approval": "Permissions awaiting approval",
           "migration": "Another replica is running the migrations",
           "dependency": "A required extension point has no available provider",
+          "conflict": "Another extension already provides an extension point that allows only one provider",
           "sync_failed": "Could not sync the extension package",
           "sha_mismatch": "Package contents do not match the recorded sha256",
           "import_failed": "Could not import the extension module",
@@ -3557,6 +3580,12 @@
           "uninstall": "Uninstall"
         },
         "uninstallNeedsDisable": "Disable the extension before uninstalling it",
+        "conflictLine": "Only one {point} provider can be enabled: {others} is enabled. Disable it and {name} loads.",
+        "conflictJoin": ", ",
+        "enableBlocked": "Only one {point} provider can be enabled: disable {other} first, then enable {name}.",
+        "enableBlockedRequired": "{point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "noProviderLine": "{point} has no running provider: {others} was chosen but is not loaded, so {name} does not load either. Get {others} running, or disable it and {name} loads.",
+        "openOther": "Open {name}",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
@@ -3624,6 +3653,7 @@
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
+      "calloutNoProvider": "{point} has no running provider.",
       "configure": "Configure",
       "settings": "Settings",
       "upgrade": "Upgrade",
@@ -3771,7 +3801,6 @@
       "bootstrap": "Preinstalled"
     },
     "newer": "New version",
-    "iconAlt": "{name} icon",
     "components": {
       "extension": "Extension",
       "extensionNone": "No extension.",
@@ -3837,8 +3866,11 @@
         "deleteConfirm": {
           "title": "Delete plugin {name}",
           "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
-          "confirm": "Delete"
+          "confirm": "Delete",
+          "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
+          "openExtension": "Disable it on the Extensions page"
         },
+        "deleteExtensionEnabled": "Disable \"{name}\" on the Extensions page first, then delete the plugin.",
         "deletedToast": "Deleted \"{name}\".",
         "versionColumns": {
           "version": "Version",
@@ -3931,6 +3963,9 @@
         "done": "Imported plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
+        "deployLeftDisabled": "{name} {version} is installed but left disabled: only one {point} provider can be enabled. Disable {other} first, then enable it.",
+        "deployLeftDisabledRequired": "{name} {version} is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "openEnabled": "Open {name}",
         "openItem": "Open plugin",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
@@ -4451,6 +4486,8 @@
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
+      "leftDisabled": "The extension of \"{name}\" is installed but left disabled: only one {point} provider can be enabled, and {other} is. Disable it first, then enable this extension.",
+      "leftDisabledRequired": "The extension of \"{name}\" is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
       "stale": "What the update does has changed. Review it again, then confirm.",
       "orgCount": "{count, plural, one {# organization} other {# organizations}}",
       "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
@@ -4467,7 +4504,8 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "needsConfigNote": "Added connector templates need an address and credentials: {ids}"
+      "needsConfigNote": "Connector templates turning on need an address and credentials: {ids}",
+      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {
       "host": "Host: {host}",

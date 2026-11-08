@@ -26,6 +26,11 @@ export const ChannelPatchSchema = z
   })
   .strict();
 
+/** 「我已更新应用」: the template hash of the setup guide the person was shown. */
+export const ChannelGuideAckSchema = z
+  .object({ hash: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
+
 export const ChannelPathParams = z.object({ connectionId: z.string().min(1).max(100) });
 
 export const CHANNEL_ROUTES: readonly RouteSchemas[] = [

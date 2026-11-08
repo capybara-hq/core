@@ -38,6 +38,10 @@ const ACTION_TEXT: Record<BootstrapEntryResult["action"], string> = {
   required_cleared: "no longer required",
 };
 
+/** One entry's line; an optional entry left disabled says why. */
+const entryLine = (r: BootstrapEntryResult): string =>
+  `${r.name} ${r.version}: ${ACTION_TEXT[r.action]}${r.leftDisabled !== undefined ? `, left disabled: ${r.leftDisabled.message}` : ""}\n`;
+
 /**
  * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7, startup
  * bootstrap spec): installs the plugins the bootstrap manifest pins (default: the `bootstrap.json`
@@ -105,9 +109,7 @@ export async function runBootstrap(
         results = await pass(e.results);
       } catch (e2) {
         if (!(e2 instanceof BootstrapFailedError) || e2.requiredFailed) throw e2;
-        for (const r of e2.results) {
-          io.stdout.write(`${r.name} ${r.version}: ${ACTION_TEXT[r.action]}\n`);
-        }
+        for (const r of e2.results) io.stdout.write(entryLine(r));
         for (const f of e2.failures) {
           io.stderr.write(`capybara: bootstrap: warning: ${f.name}: ${f.message}\n`);
         }
@@ -123,7 +125,7 @@ export async function runBootstrap(
       );
       return 0;
     }
-    for (const r of results) io.stdout.write(`${r.name} ${r.version}: ${ACTION_TEXT[r.action]}\n`);
+    for (const r of results) io.stdout.write(entryLine(r));
     io.stdout.write(`Bootstrap done (manifest sha256 ${sha.slice(0, 12)}).\n`);
     return 0;
   } catch (e) {

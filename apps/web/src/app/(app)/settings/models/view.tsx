@@ -354,6 +354,7 @@ function OrgProvider({
       pending={pending}
       onChange={(change) => onChange(p.provider, change)}
       picker={picker}
+      image={p.icon ?? null}
     />
   );
 }

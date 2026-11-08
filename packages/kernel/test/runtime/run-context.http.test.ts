@@ -114,9 +114,10 @@ describe("message sender, time zone and language", { timeout: 60_000 }, () => {
       locale: "zh",
     });
     await waitForTerminal(db, conv, 1, 30_000);
-    // an unknown zone is ignored, never a 400: the org default (UTC) and the org's language
+    // an unknown zone is ignored, never a 400: the org default (UTC); no language sent: the
+    // person's latest web language (the first message's), not the org's
     const second = await send(conv, "echo:two", { timeZone: "Not/AZone" });
-    expect(second.payload as UserPayload).toMatchObject({ timeZone: "UTC", locale: "en" });
+    expect(second.payload as UserPayload).toMatchObject({ timeZone: "UTC", locale: "zh" });
     await waitForTerminal(db, conv, 2, 30_000);
     // a rename afterwards leaves the logged messages unchanged
     await db
@@ -263,6 +264,55 @@ describe("run start", { timeout: 90_000 }, () => {
     const winner = written?.runId ?? runId;
     await service.record({ ...input, runId: winner, agent: { ...agent, name: "Other" } });
     expect(await contexts(conv)).toHaveLength(2);
+  });
+});
+
+describe("run start for a message that recorded no zone or language (older logs)", {
+  timeout: 60_000,
+}, () => {
+  /** A conversation whose only message is an older one: no `timeZone`, no `locale`. */
+  async function oldConversation(): Promise<string> {
+    const conv = await createConv(owner, orgId, agentId);
+    await db
+      .insertInto("conversation_events")
+      .values({
+        conversation_id: conv,
+        seq: "1",
+        type: "user_message",
+        payload: JSON.stringify({
+          content: [{ type: "text", text: "old" }],
+          authorAccountId: ownerId,
+        }),
+      })
+      .execute();
+    await db.updateTable("conversations").set({ last_seq: "1" }).where("id", "=", conv).execute();
+    return conv;
+  }
+  const record = (conv: string) =>
+    k.app.get(RunContextService).record({
+      orgId,
+      conversationId: conv,
+      runId: randomUUID(),
+      triggerSeq: 1,
+      agent: { name: "Grant", instructions: "" } as AgentDefinition,
+    });
+
+  it("falls back to the author's zone and latest web language, then the org's", async () => {
+    const bare = await oldConversation();
+    await record(bare);
+    expect((await contexts(bare))[0]).toMatchObject({ timeZone: "UTC", locale: "en" });
+
+    const prefs = await owner({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      payload: { timeZone: "Europe/Berlin" },
+    });
+    expect(prefs.statusCode, prefs.body).toBe(200);
+    const web = await createConv(owner, orgId, agentId);
+    await send(web, "echo:web", { timeZone: "Asia/Shanghai", locale: "zh" });
+    const conv = await oldConversation();
+    await record(conv);
+    expect((await contexts(conv))[0]).toMatchObject({ timeZone: "Europe/Berlin", locale: "zh" });
   });
 });
 

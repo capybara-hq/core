@@ -173,7 +173,11 @@ describe("config UI hints: load-time validation, static schemas, issue message k
         url: `/api/v1/orgs/${orgId}/channels/schema/chan-throwhints`,
       });
       expect(res.statusCode, res.body).toBe(200);
-      expect(res.json()).toEqual({ plugin: "chan-throwhints", schema: { type: "object" } });
+      expect(res.json()).toEqual({
+        plugin: "chan-throwhints",
+        schema: { type: "object" },
+        guide: null,
+      });
     }
     const on = await admin({
       method: "PUT",

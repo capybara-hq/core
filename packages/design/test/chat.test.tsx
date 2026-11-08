@@ -186,6 +186,41 @@ describe("CodeBlock", () => {
     expect(container.querySelector("pre code")?.textContent).toBe("const a = 1;");
     expect(screen.getByText("ts")).toBeTruthy();
   });
+
+  it("a title and 复制 share one head; copying reads 已复制, then the label returns", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      const { container } = wrap(
+        <CodeBlock title="应用 manifest" language="yaml" text={"name: x\n"} copyable />,
+      );
+      const head = container.querySelector('[data-part="code-block-head"]') as HTMLElement;
+      expect(within(head).getByText("应用 manifest")).toBeTruthy();
+      expect(within(head).getByText("yaml")).toBeTruthy();
+      // the bare language label is not drawn a second time
+      expect(container.querySelector(".cb-code-lang")).toBeNull();
+      await userEvent.click(within(head).getByRole("button", { name: "复制" }));
+      expect(writeText).toHaveBeenCalledWith("name: x\n");
+      expect(within(head).getByRole("button", { name: "已复制" })).toBeTruthy();
+      expect(container.querySelector('[data-part="code-block"]')?.getAttribute("data-state")).toBe(
+        "copied",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("without a clipboard the code is selected for a manual copy", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    try {
+      const { container } = wrap(<CodeBlock text="abc" copyable />, "en");
+      await userEvent.click(screen.getByRole("button", { name: "Copy" }));
+      expect(screen.getByRole("button", { name: /Ctrl\+C/ })).toBeTruthy();
+      expect(window.getSelection()?.toString()).toBe(container.querySelector("pre")?.textContent);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("EmbedFrame", () => {

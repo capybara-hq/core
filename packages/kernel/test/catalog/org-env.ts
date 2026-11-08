@@ -362,6 +362,8 @@ export async function seedPlugin(
     extension?: boolean;
     skills?: string[];
     templates?: boolean | Record<string, Partial<ConnectorTemplateSpec>>;
+    /** Templates whose file says `"defaultEnabled": false`. */
+    defaultOff?: string[];
     skillScripts?: Record<string, string>;
     extensionSha256?: string;
     policy?: Policy;
@@ -419,6 +421,7 @@ export async function seedPlugin(
       data: new TextEncoder().encode(
         JSON.stringify({
           displayName: t === "gh" ? { zh: "GitHub", en: "GitHub" } : { zh: t, en: t },
+          ...(o.defaultOff?.includes(t) && { defaultEnabled: false }),
           template: {
             ...mcpTemplate(),
             ...(o.templatePlugin !== undefined && { plugin: o.templatePlugin }),

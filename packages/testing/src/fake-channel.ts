@@ -52,7 +52,7 @@ export interface FakeChannelSent {
   pid: number;
   /** 内核给的幂等键（`ChannelSendArgs.idempotencyKey`）。 */
   idempotencyKey?: string;
-  /** 内核给的组织语言（`ChannelSendArgs.locale`）。 */
+  /** The language the kernel gave (`ChannelSendArgs.locale`: the recipient's, else the org's). */
   locale?: "zh" | "en";
   at: number;
 }
@@ -461,6 +461,10 @@ export async function startFakeChannelServer(
 export interface FakeSenderProfile {
   displayName?: string;
   avatarUrl?: string;
+  /** The sender's IANA time zone on the platform (channel@1 `sender.timeZone`). */
+  timeZone?: string;
+  /** The sender's language tag on the platform (channel@1 `sender.locale`). */
+  locale?: string;
 }
 
 const senderOf = (externalId: string, tenantId: string, profile: FakeSenderProfile = {}) => ({
@@ -468,6 +472,8 @@ const senderOf = (externalId: string, tenantId: string, profile: FakeSenderProfi
   tenantId,
   ...(profile.displayName !== undefined && { displayName: profile.displayName }),
   ...(profile.avatarUrl !== undefined && { avatarUrl: profile.avatarUrl }),
+  ...(profile.timeZone !== undefined && { timeZone: profile.timeZone }),
+  ...(profile.locale !== undefined && { locale: profile.locale }),
 });
 
 /** 私聊文本消息（chat id 为 `dm-<externalId>`）；`profile` 给了就带上发言人的显示名 / 头像。 */

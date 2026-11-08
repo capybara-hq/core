@@ -163,11 +163,15 @@ describe("SandboxProviders", () => {
     const ext = createFakeSandbox(cloudRoot);
     const internal = createFakeSandbox(deviceRoot);
     const p = new SandboxProviders(registry([{ plugin: "sandbox-docker", impl: ext }]));
-    expect(p.cloud()).toEqual({ plugin: "sandbox-docker", impl: ext });
+    // an extension is handed out guarded (connection failures become unreachable errors)
+    expect(p.cloud()?.plugin).toBe("sandbox-docker");
+    expect(p.cloud()?.impl).not.toBe(ext);
     expect(p.forName(DEVICE_PROVIDER)).toBeUndefined();
     p.register({ plugin: DEVICE_PROVIDER, impl: internal });
+    // an internal provider is handed out as registered (not guarded)
     expect(p.forName(DEVICE_PROVIDER)).toEqual({ plugin: DEVICE_PROVIDER, impl: internal });
-    expect(p.forName("sandbox-docker")).toEqual({ plugin: "sandbox-docker", impl: ext });
+    expect(p.forName(DEVICE_PROVIDER)?.impl).toBe(internal);
+    expect(p.forName("sandbox-docker")?.plugin).toBe("sandbox-docker");
     expect(p.forName("sandbox-e2b")).toBeUndefined();
     // an internal provider is never the cloud provider
     expect(new SandboxProviders(registry([])).cloud()).toBeUndefined();

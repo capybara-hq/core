@@ -790,17 +790,64 @@ export class CatalogService {
    * Deletes the item (soft delete, audit `catalog.removed`; requests still pending are cancelled in
    * the same transaction): versions and stored files are kept (installed components still refer to
    * them), organizations no longer see it; the same name can later be imported again as a new
-   * item. Deleted / missing -> `catalog.item_not_found`.
+   * item. Deleted / missing -> `catalog.item_not_found`. A platform plugin whose extension is
+   * still enabled on the deployment -> 409 `catalog.extension_enabled` (details
+   * `[{ extension, displayName }]`): disable it on the Extensions page first, as an uninstall
+   * requires. A disabled extension keeps its install record (the super admin uninstalls it on the
+   * Extensions page); an org-owned item's extension is taken out by `OwnedPluginCleanup`.
    */
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.writeRemove(actor, itemId, opts);
   }
 
+  /**
+   * The precheck of {@link remove} (the Platform tool's `plugins.delete`): throws what the delete
+   * would throw for an enabled extension; read-only, no locks.
+   */
+  async assertRemovable(itemId: string): Promise<void> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    await this.assertExtensionDisabled(this.kdb.db, itemId);
+  }
+
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
+    await this.assertExtensionDisabled(this.db, itemId, true);
     if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
+  }
+
+  /**
+   * A live platform item whose extension (the install of the item's name from its package) is
+   * enabled -> 409 `catalog.extension_enabled`. With `lock`, under the per-name install lock an
+   * enable takes too (the caller's transaction), so no enable slips in between.
+   */
+  private async assertExtensionDisabled(
+    db: KernelSchemaDb,
+    itemId: string,
+    lock = false,
+  ): Promise<void> {
+    const item = await db
+      .selectFrom("catalog_items")
+      .select(["name", "package_name", "owner_org_id", "display_name"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item || item.owner_org_id !== null) return;
+    if (lock) await this.installLock.lock(item.name);
+    const install = await db
+      .selectFrom("extension_installs as x")
+      .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+      .select(["x.desired_state", "p.package_name"])
+      .where("x.name", "=", item.name)
+      .executeTakeFirst();
+    if (install === undefined || install.desired_state !== "enabled") return;
+    if (item.package_name !== null && install.package_name !== item.package_name) return;
+    throw new ApiError(
+      "catalog.extension_enabled",
+      `The extension "${item.name}" of this plugin is enabled on the deployment; disable it on the Extensions page first, then delete the plugin`,
+      [{ extension: item.name, displayName: item.display_name ?? null }],
+    );
   }
 
   /**

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type {
   ChannelWebhook,
@@ -5,6 +6,7 @@ import type {
   ChannelWebhookResult,
   ExtensionContext,
   InboundEvent,
+  PluginSetupGuide,
 } from "@capybara-hq/plugin-sdk";
 import {
   FAKE_WEBHOOK_SIGNATURE_HEADER,
@@ -28,7 +30,9 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
+import { setupGuideHash } from "../../src/extensions/plugin-guides.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { channelWebhooksFor } from "../helpers/channels.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -75,6 +79,7 @@ const redisClient = (): Redis => {
   return c;
 };
 let owner: Req;
+let ownerId: string;
 let orgId: string;
 let agentId: string;
 
@@ -106,11 +111,12 @@ beforeAll(async () => {
   );
   raw = createDb(pgc.url, 3);
   queue = new Queue(CHANNEL_QUEUE_NAME, { connection: redisClient() });
-  await accountsFor(kernelDb(raw)).createLocal({
+  const o = await accountsFor(kernelDb(raw)).createLocal({
     login: "owner",
     password: PW,
     displayName: "Owner",
   });
+  ownerId = o.id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
   agentId = await createAgent(owner, orgId);
@@ -386,6 +392,170 @@ describe("channel webhook route (single replica, api + gateway)", () => {
     } finally {
       await k2.close();
     }
+  });
+});
+
+// Plugin setup guides (spec 2026-11-08-plugin-setup-guides-design.md §6): a PATCH that switches
+// the inbound mode re-baselines the guide ack only when it shows no drift, so switching modes there
+// and back never clears the update notice; only the human guide-ack route does.
+describe("setup guide ack across mode switches", () => {
+  const GUIDE: PluginSetupGuide = {
+    id: "app",
+    place: "channel-connection",
+    title: { en: "Create the app" },
+    files: [
+      {
+        path: "./guides/s.yaml.tmpl",
+        title: { en: "M" },
+        language: "yaml",
+        mode: "long_connection",
+      },
+      { path: "./guides/w.yaml.tmpl", title: { en: "M" }, language: "yaml", mode: "webhook" },
+    ],
+  };
+  const files = (socket: string, webhook: string) => [
+    { path: "guides/s.yaml.tmpl", size: 10, sha256: socket.repeat(64) },
+    { path: "guides/w.yaml.tmpl", size: 10, sha256: webhook.repeat(64) },
+  ];
+  type Page = {
+    guideAck: { guideId: string; version: string; hash: string; mode: string } | null;
+    guideDrift: { from: string; to: string } | null;
+  };
+  const db = () => kernelDb(raw);
+  const get = async (id: string): Promise<Page> => {
+    const r = await owner({ method: "GET", url: `${channels()}/${id}` });
+    expect(r.statusCode, r.body).toBe(200);
+    return (r.json() as { channel: Page }).channel;
+  };
+  /** A fake-im catalog item at `version` (the extension itself comes from the startup config). */
+  const seedVersion = async (itemId: string, version: string, f: ReturnType<typeof files>) => {
+    await db()
+      .insertInto("catalog_item_versions")
+      .values({
+        item_id: itemId,
+        version,
+        manifest: JSON.stringify({
+          schemaVersion: 1,
+          name: "fake-im",
+          version,
+          publisher: "Acme",
+          description: "IM",
+          setupGuides: [GUIDE],
+        }),
+        source: "file",
+        source_ref: "upload",
+        object_prefix: null,
+        files: JSON.stringify(f),
+        size: 1000,
+      })
+      .execute();
+    await db()
+      .updateTable("catalog_items")
+      .set({ latest_version: version })
+      .where("id", "=", itemId)
+      .execute();
+  };
+  let itemId: string;
+
+  beforeAll(async () => {
+    itemId = randomUUID();
+    await db()
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "fake-im",
+        package_name: "@acme/plugin-fake-im",
+        publisher: "Acme",
+        description: "IM",
+        latest_version: "1.0.0",
+        policy: "allow",
+        disabled: false,
+      })
+      .execute();
+  });
+
+  afterAll(async () => {
+    await db().deleteFrom("catalog_item_versions").where("item_id", "=", itemId).execute();
+    await db().deleteFrom("catalog_items").where("id", "=", itemId).execute();
+  });
+
+  const ack = (id: string, hash: string) =>
+    owner({ method: "POST", url: `${channels()}/${id}/guide-ack`, payload: { hash } });
+
+  it("a switch without drift re-baselines; with drift the notice survives there and back", async () => {
+    await seedVersion(itemId, "1.0.0", files("a", "b"));
+    const id = await createChannel("fake-im", "cli_guide", TOKEN);
+    expect((await get(id)).guideAck).toMatchObject({ version: "1.0.0", mode: "long_connection" });
+
+    // no drift: the ack moves to the webhook guide
+    expect((await patch(id, { inboundMode: "webhook" })).statusCode).toBe(200);
+    let page = await get(id);
+    expect(page.guideAck).toEqual({
+      guideId: "app",
+      version: "1.0.0",
+      hash: setupGuideHash(GUIDE, files("a", "b"), "webhook"),
+      mode: "webhook",
+    });
+    expect(page.guideDrift).toBeNull();
+
+    // 1.1.0 changes the webhook template: drift; switching away and back keeps the old ack
+    await seedVersion(itemId, "1.1.0", files("a", "c"));
+    const drifted = await get(id);
+    expect(drifted.guideDrift).toEqual({ from: "1.0.0", to: "1.1.0" });
+    expect((await patch(id, { inboundMode: "long_connection" })).statusCode).toBe(200);
+    page = await get(id);
+    expect(page.guideAck).toEqual(drifted.guideAck);
+    expect(page.guideDrift).toEqual({ from: "1.0.0", to: "1.1.0" });
+    expect((await patch(id, { inboundMode: "webhook" })).statusCode).toBe(200);
+    page = await get(id);
+    expect(page.guideAck).toEqual(drifted.guideAck);
+    expect(page.guideDrift).toEqual({ from: "1.0.0", to: "1.1.0" });
+
+    // the ack's mode differs from the connection's: the confirm button posts the hash of the guide
+    // shown for the current mode, which is accepted and clears the notice
+    expect((await patch(id, { inboundMode: "long_connection" })).statusCode).toBe(200);
+    expect((await get(id)).guideAck?.mode).toBe("webhook");
+    const shown = setupGuideHash(GUIDE, files("a", "c"), "long_connection");
+    const confirmed = await ack(id, shown);
+    expect(confirmed.statusCode, confirmed.body).toBe(200);
+    page = await get(id);
+    expect(page.guideAck).toEqual({
+      guideId: "app",
+      version: "1.1.0",
+      hash: shown,
+      mode: "long_connection",
+    });
+    expect(page.guideDrift).toBeNull();
+    expect((await owner({ method: "DELETE", url: `${channels()}/${id}` })).statusCode).toBe(204);
+  });
+
+  it("the Platform tool's channels.update keeps a drifted ack too", async () => {
+    await seedVersion(itemId, "2.0.0", files("e", "f"));
+    const id = await createChannel("fake-im", "cli_guide_op", TOKEN);
+    await seedVersion(itemId, "2.1.0", files("g", "f"));
+    const before = await get(id);
+    expect(before.guideDrift).toEqual({ from: "2.0.0", to: "2.1.0" });
+    const update = k.app.get(PlatformOperations).get("channels.update");
+    if (update === null) throw new Error("no operation channels.update");
+    const ctx = {
+      orgId,
+      actorAccountId: ownerId,
+      agentId,
+      conversationId: randomUUID(),
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    };
+    for (const inboundMode of ["webhook", "long_connection"]) {
+      await update.run(update.input.parse({ connectionId: id, inboundMode }), ctx);
+      const page = await get(id);
+      expect(page.guideAck).toEqual(before.guideAck);
+      expect(page.guideDrift).toEqual({ from: "2.0.0", to: "2.1.0" });
+    }
+    expect(
+      (await ack(id, setupGuideHash(GUIDE, files("g", "f"), "long_connection"))).statusCode,
+    ).toBe(200);
+    expect((await get(id)).guideDrift).toBeNull();
+    expect((await owner({ method: "DELETE", url: `${channels()}/${id}` })).statusCode).toBe(204);
   });
 });
 

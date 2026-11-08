@@ -3,6 +3,7 @@ import {
   DeviceProtocolError,
   isFileSystemGoneError,
   isSandboxGoneError,
+  type Logger,
   type SandboxHandle,
   type SandboxRoots,
   ToolError,
@@ -28,6 +29,7 @@ import {
   SandboxLockLostError,
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
+import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
@@ -75,6 +77,8 @@ export interface SandboxToolDeps {
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
     Partial<Pick<EventLog, "publishChanged" | "latestOfType">>;
   config: Pick<KernelConfigService, "get">;
+  /** Where a mapped provider failure keeps its raw error (warn); absent in test stubs. */
+  log?: Pick<Logger, "warn">;
 }
 
 /**
@@ -102,6 +106,14 @@ export const SANDBOX_STARTED_NOTICE = sandboxStartedNotice(DEFAULT_SANDBOX_ROOTS
 /** A new instance came up on the environment's kept files. */
 export const SANDBOX_RESTARTED_NOTICE =
   "The environment's instance was restarted; files are kept, running processes are gone and temporary files may be gone.";
+/**
+ * The environment's files were reset (on request, or after they were lost) since this conversation
+ * last used it.
+ */
+export const sandboxFilesResetNotice = (roots: SandboxRoots): string =>
+  `The environment's files were reset; earlier files in ${roots.workspace} and running processes are gone and temporary files may be gone, so recreate anything you still need.`;
+/** {@link sandboxFilesResetNotice} of an instance with the default roots. */
+export const SANDBOX_FILES_RESET_NOTICE = sandboxFilesResetNotice(DEFAULT_SANDBOX_ROOTS);
 
 const BUSY_TEXT =
   "The environment is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
@@ -127,6 +139,15 @@ const ENV_UNAVAILABLE_TEXT =
   "This conversation's environment is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation in another environment, or an administrator to re-enable that provider.";
 const ENV_FILES_LOST_TEXT =
   "This environment's files are gone. Ask the user to reset its files on the environments page, then retry.";
+/**
+ * A provider call that never connected (refused, unknown host, unreachable network): the request
+ * did not reach the provider, so the call did nothing in the sandbox.
+ */
+export const SANDBOX_UNREACHABLE_TEXT =
+  "The sandbox provider can't be reached (the connection failed), so this call did nothing in the sandbox; retrying won't help until a super admin checks the sandbox extension's configuration (Admin console → Extensions). Continue without the sandbox, or ask the person to have a super admin check it.";
+/** A provider connection that broke during the call: the provider may have acted before it broke. */
+export const SANDBOX_CONNECTION_DROPPED_TEXT =
+  "The connection to the sandbox provider broke during this call, so it may or may not have taken effect; check the sandbox state before retrying. If it fails again, continue without the sandbox and ask the person to have a super admin check the sandbox extension's configuration (Admin console → Extensions).";
 const DEVICE_FILES_LOST_TEXT =
   "This environment's directory is gone from its connected machine. Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine, then retry.";
 const FILES_GONE_TEXT =
@@ -449,8 +470,21 @@ async function copyAttachments(
   return { copied, failures };
 }
 
-/** 沙箱服务的错误 → 给模型的可执行说明；其余原样抛出（管线按「工具失败」处理）。 */
-export function mapSandboxError(e: unknown): unknown {
+/**
+ * Sandbox service errors → actionable text for the model; anything else is returned unchanged
+ * (the pipeline reports a generic tool failure). A provider that cannot be reached becomes a
+ * fixed text (providers never write model-visible text) with `kind: "unavailable"`, and its raw
+ * error is logged to `log` as a warning (the pipeline logs only errors it did not get as a
+ * `ToolError`).
+ */
+export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
+  if (e instanceof SandboxProviderUnreachableError) {
+    log?.warn("sandbox provider unreachable", { failure: e.failure, err: e.cause });
+    if (e.failure === "connect") {
+      return new ToolError(SANDBOX_UNREACHABLE_TEXT, { kind: "unavailable" });
+    }
+    return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
+  }
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
     if (e.code === "sandbox.unavailable") {
@@ -509,7 +543,8 @@ export async function inSandbox<T>(
         const s: SandboxSession = { environmentId, h, roots: info.roots, p, signal };
         await recordEnvironmentPaths(deps, ctx, info.roots);
         const notices: string[] = [];
-        if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
+        if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
+        else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
         else if (info.fresh) notices.push(sandboxStartedNotice(info.roots));
         const { copied, failures } = await syncAttachments(deps, ctx, s);
         if (copied.length > 0) {
@@ -521,7 +556,7 @@ export async function inSandbox<T>(
       ctx.signal,
     );
   } catch (e) {
-    throw mapSandboxError(e);
+    throw mapSandboxError(e, deps.log);
   }
 }
 

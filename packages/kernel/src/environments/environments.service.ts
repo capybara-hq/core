@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { deviceLeaseKey } from "../devices/keys.js";
 import { MachinesService } from "../devices/machines.js";
 import { ApiError } from "../errors.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -18,18 +19,32 @@ import { SandboxJobs } from "../sandbox/jobs.js";
 import { DEVICE_PROVIDER, isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
+  demotedProvider,
   EnvironmentAccess,
   environmentProvider,
   environmentUnavailable,
+  type InstanceStatus,
+  inUseForDefault,
   type ProviderFacts,
 } from "./access.js";
 
 /** An environment as its owner sees it (`GET /orgs/:orgId/environments`). */
 export interface EnvironmentView {
   id: string;
-  /** null for the default environment (shown as 「个人环境」 / "Personal"). */
+  /**
+   * null for the default environment (shown as 「个人环境」 / "Personal") and for a demoted default
+   * (shown as 「个人环境（Docker 沙箱）」 / "Personal (Docker sandbox)", from {@link demotedFrom}).
+   */
   name: string | null;
   isDefault: boolean;
+  /**
+   * A former default demoted by a sandbox provider switch (spec §4.2 item 13): the provider it was
+   * demoted from, that extension's display name (null when it has none, e.g. uninstalled: show the
+   * id), and its place among the person's unnamed former defaults of that provider (1, 2, … by
+   * creation; a label shows " 2", " 3", … after the first). Switching back to that provider makes
+   * it the default again. null for every other environment.
+   */
+  demotedFrom: { provider: string; displayName: LocalizedName | null; ordinal: number } | null;
   ownerKind: "personal";
   /** `device`: a connected machine (provider `@device`). */
   source: "cloud" | "device";
@@ -98,6 +113,8 @@ export class EnvironmentsService {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy" | "resetFiles">,
     @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
+    @Inject(ExtensionDisplayNames)
+    private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** Reads the device relay's lease (`online`). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
@@ -314,7 +331,11 @@ export class EnvironmentsService {
     }
   }
 
-  /** Renames one of the person's live environments (the default too); see {@link create}. */
+  /**
+   * Renames one of the person's live environments (the default too); see {@link create}. A
+   * renamed former default is the person's own from then on: it loses its demotion mark, so a
+   * switch back to its provider no longer restores it.
+   */
   async rename(
     orgId: string,
     accountId: string,
@@ -345,7 +366,7 @@ export class EnvironmentsService {
     try {
       await this.db
         .updateTable("environments")
-        .set({ name, updated_at: sql<Date>`now()` })
+        .set({ name, demoted_from_provider: null, updated_at: sql<Date>`now()` })
         .where("id", "=", id)
         .execute();
     } catch (e) {
@@ -466,20 +487,35 @@ export class EnvironmentsService {
    * The person's default environment in the org, created when missing (named by the UI, `name`
    * NULL). An existing usable one is read without locking. A live default whose files or
    * instance are kept by a provider that is not the current one (a provider switch, spec §4.2
-   * item 13) is stranded: it is demoted, named `Personal (<provider>)` (` 2`, ` 3`, … when that
-   * name is taken) and stays listed as unavailable and deletable, and a fresh default is created,
-   * in one transaction. Creating one first takes the person's membership row (`FOR SHARE`, after
-   * the org row), so an offboarding that removes them cannot leave a live default behind, and
-   * their creates and renames (`FOR NO KEY UPDATE`) cannot race the demoted name; not a member
-   * (any more) → `org.not_found`. Idempotent under concurrency: the demotion locks the default
-   * row and re-checks it, the partial unique index on the live default makes a racing insert do
-   * nothing, and the select that follows reads the winner. Needs a current sandbox provider
+   * item 13) is stranded: it is demoted (marked with the provider it was demoted from; the UI
+   * names it 「个人环境（<provider display name>）」) and stays listed as unavailable and deletable.
+   * Its replacement is the person's former default demoted from the current provider when there
+   * is one (switching back restores it, with its files), else a fresh default. A live default
+   * not in use yet (no healthy files, no instance, none being created: {@link inUseForDefault})
+   * is likewise swapped for a former default holding healthy files at the current provider; it is
+   * demoted (from the provider it was made under) so it can come back in turn. A former default
+   * belongs to the provider holding its resources once it holds any, else to the one it was
+   * demoted from ({@link demotedProvider}), so one swapped out empty and used afterwards is
+   * labelled and restored by where its files are.
+   * All of it in one transaction: switching back and forth never adds environments.
+   *
+   * Replacing one first takes the person's membership row (`FOR SHARE`, after the org row), so an
+   * offboarding that removes them cannot leave a live default behind; not a member (any more) →
+   * `org.not_found`. Idempotent under concurrency: the live default row and the person's former
+   * defaults of the current provider are locked (`FOR NO KEY UPDATE`) and the live default re-read
+   * after them, the partial unique index on the live default makes a racing insert do nothing, and
+   * the select that follows reads the winner. Needs a current sandbox provider
    * (`environment.unavailable`). It is the person's baseline, so it is created even at
    * `environments.maxPersonal`.
    */
   async ensureDefault(orgId: string, accountId: string): Promise<string> {
     const live = await this.defaultOf(orgId, accountId);
-    if (live && !this.stranded(live)) return live.id;
+    if (live && !this.stranded(live)) {
+      const current = this.providers.cloud()?.plugin;
+      if (inUseForDefault(live) || current === undefined) return live.id;
+      const former = await this.formerDefaults(orgId, accountId, current);
+      if (!former.some((f) => f.holdsFiles)) return live.id;
+    }
     return this.insertDefault(orgId, accountId);
   }
 
@@ -488,11 +524,29 @@ export class EnvironmentsService {
     const current = this.providers.cloud();
     if (!current) throw environmentUnavailable(null);
     await this.lockMember(orgId, accountId, "share");
-    const live = await this.defaultOf(orgId, accountId, true);
-    if (live && !this.stranded(live)) return live.id;
+    const locked = await this.defaultOf(orgId, accountId, true);
+    const former = await this.formerDefaults(orgId, accountId, current.plugin, true);
+    // a racing replacement committed while this waited: its default is the answer
+    const live = locked ?? (await this.defaultOf(orgId, accountId));
+    if (live && live !== locked) return live.id;
+    const stranded = live !== undefined && this.stranded(live);
+    const withFiles = former.find((f) => f.holdsFiles);
+    if (live && !stranded && (inUseForDefault(live) || withFiles === undefined)) return live.id;
+    // a default is needed (none, or a stranded one): any former default will do, files first
+    const restore = withFiles ?? (live === undefined || stranded ? former[0] : undefined);
     if (live) {
-      const held = environmentProvider(live, current.plugin) ?? "unknown";
-      await this.demote(orgId, accountId, live.id, held);
+      const from = stranded
+        ? (environmentProvider(live, current.plugin) ?? "unknown")
+        : (live.provider ?? current.plugin);
+      await this.demote(live.id, from);
+    }
+    if (restore) {
+      await this.db
+        .updateTable("environments")
+        .set({ is_default: true, demoted_from_provider: null, updated_at: sql<Date>`now()` })
+        .where("id", "=", restore.id)
+        .execute();
+      return restore.id;
     }
     await this.db
       .insertInto("environments")
@@ -519,36 +573,80 @@ export class EnvironmentsService {
   }
 
   /**
-   * Turns a stranded default into an ordinary environment named `Personal (<provider>)`, with
-   * ` 2`, ` 3`, … appended while that name is one of the person's live names (case-insensitive).
-   * Runs under the person's membership lock and the default row's lock.
+   * Turns the live default into an ordinary environment marked as demoted from `provider`; a name
+   * the person gave it stays. Runs under the person's membership lock and the default row's lock,
+   * before any other row becomes the default (the partial unique index).
    */
-  private async demote(
-    orgId: string,
-    accountId: string,
-    id: string,
-    provider: string,
-  ): Promise<void> {
-    const base = `Personal (${provider})`;
-    const taken = new Set(
-      (
-        await this.db
-          .selectFrom("environments")
-          .select("name")
-          .where("org_id", "=", orgId)
-          .where("owner_account_id", "=", accountId)
-          .where("deleted_at", "is", null)
-          .where("name", "is not", null)
-          .execute()
-      ).map((r) => (r.name as string).toLowerCase()),
-    );
-    let name = base;
-    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  private async demote(id: string, provider: string): Promise<void> {
     await this.db
       .updateTable("environments")
-      .set({ is_default: false, name, updated_at: sql<Date>`now()` })
+      .set({ is_default: false, demoted_from_provider: provider, updated_at: sql<Date>`now()` })
       .where("id", "=", id)
       .execute();
+  }
+
+  /**
+   * The person's live former defaults of `provider` ({@link demotedProvider}: files or an instance
+   * kept by `provider`, or none and demoted from it), the ones holding healthy files first (lost
+   * files count as none), then the most recently used, then the most recently demoted. `lock`
+   * takes their rows (`FOR NO KEY UPDATE`, in id order, so racing replacements queue on the same
+   * rows).
+   */
+  private async formerDefaults(
+    orgId: string,
+    accountId: string,
+    provider: string,
+    lock = false,
+  ): Promise<{ id: string; holdsFiles: boolean }[]> {
+    const rows = await this.db
+      .selectFrom("environments as e")
+      .leftJoin("environment_instances as i", "i.environment_id", "e.id")
+      .select([
+        "e.id",
+        "e.provider",
+        "e.updated_at",
+        "i.provider as instance_provider",
+        "i.fs_status",
+        "e.demoted_from_provider",
+        "i.handle",
+        "i.status",
+        "i.last_used_at",
+      ])
+      .where("e.org_id", "=", orgId)
+      .where("e.owner_kind", "=", "personal")
+      .where("e.owner_account_id", "=", accountId)
+      .where("e.is_default", "=", false)
+      .where("e.demoted_from_provider", "is not", null)
+      .where((eb) =>
+        eb.or([eb("e.demoted_from_provider", "=", provider), eb("i.provider", "=", provider)]),
+      )
+      .where("e.deleted_at", "is", null)
+      .orderBy("e.id")
+      .$if(lock, (q) => q.forNoKeyUpdate("e"))
+      .execute();
+    const time = (d: Date | null) => d?.getTime() ?? 0;
+    return rows
+      .map((r) => {
+        const facts: ProviderFacts = {
+          provider: r.provider,
+          instanceProvider: r.instance_provider,
+          fsStatus: r.fs_status,
+          hasInstance: r.handle !== null,
+        };
+        return {
+          r,
+          holdsFiles: inUseForDefault({ ...facts, status: r.status }),
+          belongs: demotedProvider(r.demoted_from_provider, facts) === provider,
+        };
+      })
+      .filter(({ belongs }) => belongs)
+      .sort(
+        (a, b) =>
+          Number(b.holdsFiles) - Number(a.holdsFiles) ||
+          time(b.r.last_used_at) - time(a.r.last_used_at) ||
+          time(b.r.updated_at) - time(a.r.updated_at),
+      )
+      .map(({ r, holdsFiles }) => ({ id: r.id, holdsFiles }));
   }
 
   /**
@@ -613,11 +711,18 @@ export class EnvironmentsService {
     orgId: string,
     accountId: string,
     lock = false,
-  ): Promise<(ProviderFacts & { id: string }) | undefined> {
+  ): Promise<(ProviderFacts & { id: string; status: InstanceStatus | null }) | undefined> {
     const row = await this.db
       .selectFrom("environments as e")
       .leftJoin("environment_instances as i", "i.environment_id", "e.id")
-      .select(["e.id", "e.provider", "i.provider as instance_provider", "i.fs_status", "i.handle"])
+      .select([
+        "e.id",
+        "e.provider",
+        "i.provider as instance_provider",
+        "i.fs_status",
+        "i.handle",
+        "i.status",
+      ])
       .where("e.org_id", "=", orgId)
       .where("e.owner_kind", "=", "personal")
       .where("e.owner_account_id", "=", accountId)
@@ -632,6 +737,7 @@ export class EnvironmentsService {
         instanceProvider: row.instance_provider,
         fsStatus: row.fs_status,
         hasInstance: row.handle !== null,
+        status: row.status,
       }
     );
   }
@@ -644,7 +750,8 @@ export class EnvironmentsService {
 
   /** The person's live environments (or the one `id`) as views. */
   private async views(orgId: string, accountId: string, id?: string): Promise<EnvironmentView[]> {
-    const rows = await this.db
+    // all of them even for one `id`: a former default's ordinal counts its siblings
+    const all = await this.db
       .selectFrom("environments as e")
       .leftJoin("environment_instances as i", "i.environment_id", "e.id")
       .leftJoin("environment_machines as m", (j) =>
@@ -656,6 +763,7 @@ export class EnvironmentsService {
         "e.is_default",
         "e.source",
         "e.provider",
+        "e.demoted_from_provider",
         "e.created_at",
         "m.id as machine_id",
         "m.name as machine_name",
@@ -674,13 +782,40 @@ export class EnvironmentsService {
       .where("e.owner_kind", "=", "personal")
       .where("e.owner_account_id", "=", accountId)
       .where("e.deleted_at", "is", null)
-      .$if(id !== undefined, (q) => q.where("e.id", "=", id as string))
       .orderBy("e.is_default", "desc")
       .orderBy("e.created_at")
       .orderBy("e.id")
       .execute();
+    const rows = id === undefined ? all : all.filter((r) => r.id === id);
     if (rows.length === 0) return [];
-    const limits = await this.sandbox.orgLimits(orgId);
+    const factsOf = (r: (typeof all)[number]): ProviderFacts => ({
+      provider: r.provider,
+      instanceProvider: r.instance_provider,
+      fsStatus: r.fs_status,
+      hasInstance: r.handle !== null,
+    });
+    // a former default is labelled after the provider holding its resources, else its marker
+    const demoted = new Map(
+      all.map((r) => [r.id, demotedProvider(r.demoted_from_provider, factsOf(r))]),
+    );
+    const ordinals = new Map<string, number>();
+    const seen = new Map<string, number>();
+    for (const r of [...all].sort(
+      (a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id),
+    )) {
+      const from = demoted.get(r.id) ?? null;
+      if (from === null || r.name !== null) continue;
+      const n = (seen.get(from) ?? 0) + 1;
+      seen.set(from, n);
+      ordinals.set(r.id, n);
+    }
+    const demotedProviders = [
+      ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
+    ];
+    const [limits, names] = await Promise.all([
+      this.sandbox.orgLimits(orgId),
+      this.displayNames.many(demotedProviders),
+    ]);
     const current = this.providers.cloud()?.plugin;
     // a device environment is online while a replica holds its machine's connection lease
     const online = new Map(
@@ -694,20 +829,21 @@ export class EnvironmentsService {
       ),
     );
     return rows.map((r) => {
-      const provider = environmentProvider(
-        {
-          provider: r.provider,
-          instanceProvider: r.instance_provider,
-          fsStatus: r.fs_status,
-          hasInstance: r.handle !== null,
-        },
-        current,
-      );
+      const provider = environmentProvider(factsOf(r), current);
       const live = (r.status === "running" || r.status === "suspended") && r.last_used_at;
+      const from = demoted.get(r.id) ?? null;
       return {
         id: r.id,
         name: r.name,
         isDefault: r.is_default,
+        demotedFrom:
+          from === null
+            ? null
+            : {
+                provider: from,
+                displayName: names.get(from) ?? null,
+                ordinal: ordinals.get(r.id) ?? 1,
+              },
         ownerKind: "personal",
         source: r.source,
         provider,

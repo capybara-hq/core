@@ -180,7 +180,7 @@ function Pending({
             return (
               <ObjectRow
                 key={i.id}
-                mark={{ text: name, tone: "warn" }}
+                mark={{ text: name, image: i.icon ?? null, tone: "warn" }}
                 name={name}
                 href={`/admin/plugins/${encodeURIComponent(i.id)}`}
                 chips={[{ label: t("upload.by", { org: owner.name }) }]}
@@ -204,7 +204,7 @@ function Pending({
           return (
             <ObjectRow
               key={i.id}
-              mark={{ text: name, tone: "warn" }}
+              mark={{ text: name, image: i.icon ?? null, tone: "warn" }}
               name={name}
               href={`/admin/plugins/${encodeURIComponent(i.id)}`}
               chips={i.builtin ? [{ label: ta("chips.builtin") }] : []}

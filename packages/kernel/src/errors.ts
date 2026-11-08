@@ -68,6 +68,16 @@ export const ERROR_CODES = {
   "extension.name_mismatch": 409,
   "extension.downgrade_unsupported": 409,
   "extension.not_disabled": 409,
+  /**
+   * Another enabled extension provides a single-provider extension point this one provides
+   * (details `[{ extensionPoint, enabled: { name, displayName } }]`): disable it first.
+   */
+  "extension.single_provider_enabled": 409,
+  /**
+   * A required bootstrap plugin provides a single-provider extension point this one provides
+   * (details as above, `required: true`): it cannot be disabled, so it cannot be replaced.
+   */
+  "extension.single_provider_required": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,
@@ -91,6 +101,8 @@ export const ERROR_CODES = {
   "catalog.not_owned": 409,
   /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
   "catalog.item_pending": 409,
+  /** Deleting a platform plugin whose extension is still enabled on the deployment. */
+  "catalog.extension_enabled": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */
   "catalog.item_removed": 409,
   /** What deleting an org's own plugin does changed since its preview (P3-19). */
@@ -121,6 +133,7 @@ export const ERROR_CODES = {
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
+  "catalog.guide_not_found": 404,
   "marketplace.not_found": 404,
   "marketplace.entry_not_found": 404,
   "marketplace.fetch_failed": 502,
@@ -229,6 +242,7 @@ export const ERROR_CODES = {
   "channel.webhook_not_found": 404,
   "channel.webhook_unavailable": 409,
   "channel.webhook_retry": 503,
+  "channel.guide_changed": 409,
   "ui.not_found": 404,
   "ui.render_failed": 502,
   "ui.action_failed": 502,

@@ -1,11 +1,17 @@
 import { Children, type ReactNode, useId } from "react";
 import { LinkPendingMark, useDesignLink } from "../provider";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
+import { ObjectMark } from "./object-mark";
 
 export type ItemListRow = {
   id: string;
   /** A short kind label before the title ("Tool approval"); `accent` for what waits on the viewer. */
   tag?: { label: string; tone?: "default" | "accent" };
+  /**
+   * A 28 px mark tile before the text, for a thing a plugin brings (an agent's channels): the
+   * plugin's declared icon (`image`), else the initial of `text` (spec §6.17, §6.33).
+   */
+  mark?: { text: string; image?: string | null };
   title: string;
   /** One muted line under the title (who, where, when). */
   meta?: string;
@@ -72,6 +78,7 @@ export function ItemList({ label, rows, children, empty, inset = "card" }: ItemL
               {r.tag.label}
             </span>
           ) : null}
+          {r.mark ? <ObjectMark text={r.mark.text} image={r.mark.image ?? null} size={28} /> : null}
           <span className="cb-item-list-text">
             {r.href ? (
               <Link href={r.href} className="cb-item-list-title">

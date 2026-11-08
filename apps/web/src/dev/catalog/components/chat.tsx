@@ -9,6 +9,7 @@ import {
   FileDrop,
   Grid,
   ImageBlock,
+  InstructionList,
   IoBlock,
   Stack,
   Tabs,
@@ -159,7 +160,7 @@ export function ChatSection() {
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">
-          代码块 CodeBlock · 有 / 无语言
+          代码块 CodeBlock · 有 / 无语言 · 标题 + 复制
         </Text>
         <Grid columns={1} gap={8}>
           <CodeBlock
@@ -167,7 +168,27 @@ export function ChatSection() {
             text={"SELECT topic, count(*)\n  FROM feedback\n GROUP BY topic;"}
           />
           <CodeBlock text="capybara extensions review todo" />
+          <CodeBlock
+            title="应用 manifest"
+            language="yaml"
+            copyable
+            text={
+              'display_information:\n  name: "Sales bot"\nsettings:\n  socket_mode_enabled: true'
+            }
+          />
         </Grid>
+      </Grid>
+      <Grid columns="form" gap={12}>
+        <Text variant="small" tone="muted">
+          步骤 InstructionList · 编号、反引号为行内代码
+        </Text>
+        <InstructionList
+          label="接入步骤"
+          items={[
+            "打开 `https://api.slack.com/apps`，选择 Create New App → From a manifest。",
+            "粘贴下面的 manifest，安装到工作区。",
+          ]}
+        />
       </Grid>
       <Grid columns="form" gap={12}>
         <Text variant="small" tone="muted">

@@ -27,6 +27,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   id,
   name,
   isDefault: name === null,
+  demotedFrom: null,
   ownerKind: "personal",
   source: "cloud",
   provider: "sandbox-docker",
@@ -95,6 +96,66 @@ describe("environments list", () => {
     expect(screen.getByRole("link", { name: "Build box" }).getAttribute("href")).toBe(
       "/environments/e2",
     );
+  });
+
+  it("a former default is 个人环境（<provider display name>）, the id without one, numbered after the first", async () => {
+    const docker = { zh: "Docker 沙箱", en: "Docker sandbox" };
+    const former = (id: string, displayName: typeof docker | null, ordinal = 1) =>
+      env(id, null, {
+        isDefault: false,
+        available: false,
+        demotedFrom: { provider: "sandbox-docker", displayName, ordinal },
+      });
+    const items = [
+      env("e1", null),
+      former("e2", docker),
+      former("e3", docker, 2),
+      {
+        ...former("e4", null),
+        demotedFrom: { provider: "sandbox-e2b", displayName: null, ordinal: 1 },
+      },
+    ];
+    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
+    await renderList({ locale: "zh" });
+    let cards = await screen.findAllByRole("listitem");
+    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
+      "个人环境",
+      "个人环境（Docker 沙箱）",
+      "个人环境（Docker 沙箱） 2",
+      "个人环境（sandbox-e2b）",
+    ]);
+    cleanup();
+    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
+    await renderList({ locale: "en" });
+    cards = await screen.findAllByRole("listitem");
+    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
+      "Personal",
+      "Personal (Docker sandbox)",
+      "Personal (Docker sandbox) 2",
+      "Personal (sandbox-e2b)",
+    ]);
+  });
+
+  it("a former default's page says it comes back with its provider", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          environment: env("e1", null, {
+            isDefault: false,
+            available: false,
+            demotedFrom: {
+              provider: "sandbox-docker",
+              displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+              ordinal: 1,
+            },
+          }),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByRole("heading", { name: "Personal (Docker sandbox)" })).toBeTruthy();
+    expect(
+      screen.getByText(E.detail.demotedNote.replace("{provider}", "Docker sandbox")),
+    ).toBeTruthy();
   });
 
   it("environments list first render from hydrated cache makes no browser read", async () => {

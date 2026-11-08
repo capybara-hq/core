@@ -26,6 +26,7 @@ import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorTemplateRef, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import type { CatalogItemView } from "./catalog.service.js";
+import { readDisplayFiles } from "./catalog-files.js";
 import type {
   ConnectorInstallInput,
   PluginInstallInput,
@@ -243,7 +244,6 @@ export async function catalogHasIcon(db: KernelSchemaDb, itemId: string): Promis
  */
 export async function readCatalogIcon(
   db: KernelSchemaDb,
-  storage: StorageService,
   itemId: string,
   includeDisabled: boolean,
 ): Promise<CatalogIcon> {
@@ -251,7 +251,7 @@ export async function readCatalogIcon(
   const path = iconPath(v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
-  const [file] = await readCatalogFiles(storage, v.object_prefix, [f]);
+  const [file] = await readCatalogDisplayFiles(db, [f]);
   if (!file) throw iconNotFound();
   const problem = iconProblem(path, file.data);
   if (problem !== undefined) throw new ApiError("internal", `Stored icon is invalid: ${problem}`);
@@ -490,6 +490,23 @@ export async function readCatalogFiles(
     out.push({ path: f.path.slice(dir.length), size: data.byteLength, sha256: f.sha256, data });
   }
   return out;
+}
+
+/**
+ * Reads a version's display files (icons, setup guide files; `catalog-files.ts`) from PG, sha256
+ * checked, in the order given; no object storage is involved. A listed file missing from PG is lost
+ * or tampered data (`internal`).
+ */
+export async function readCatalogDisplayFiles(
+  db: Parameters<typeof readDisplayFiles>[0],
+  files: { path: string; size: number; sha256: string }[],
+): Promise<SkillPackageFile[]> {
+  const stored = await readDisplayFiles(db, files);
+  return files.map((f) => {
+    const got = stored.get(f.path);
+    if (!got) throw new ApiError("internal", `Catalog file ${f.path} is not stored`);
+    return got;
+  });
 }
 
 /** 校验技能文件并取名字与描述（导入时已校验过；这里防存储被改）。 */

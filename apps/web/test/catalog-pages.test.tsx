@@ -497,6 +497,47 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     );
   });
 
+  it("org admins: a 市场 row's mark is the icon the kernel gives, else the initial", async () => {
+    const p = en.plugins;
+    const base = {
+      sourceId: "official",
+      sourceName: "Official",
+      version: "1.2.0",
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    };
+    const icon = `${ORG}/marketplaces/official/icons/${"a".repeat(64)}`;
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, {
+          items: [
+            { ...base, name: "jina", icon },
+            { ...base, name: "plain", icon: null },
+          ],
+        }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    const rows = within(list).getAllByRole("listitem") as HTMLElement[];
+    const src = (name: string) =>
+      (rows.find((r) => within(r).queryByText(name) !== null) as HTMLElement)
+        .querySelector("img")
+        ?.getAttribute("src") ?? null;
+    expect(src("jina")).toBe(icon);
+    expect(src("plain")).toBeNull();
+  });
+
   it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
     const p = en.plugins;
     const entry = {
@@ -1896,6 +1937,40 @@ describe("/admin/plugins and marketplace entries", () => {
     expect(within(git).queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("entries: a row's mark is the icon the kernel gives (installed or marketplace), else the initial", async () => {
+    const c = en.catalog.admin.entries;
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            // imported: the catalog item's icon
+            entry({ icon: `/api/v1/admin/catalog/items/${ID}/icon?v=1.0.0` }),
+            // not imported: the marketplace's icon
+            entry({
+              name: "cat-m",
+              adopted: null,
+              newerAvailable: false,
+              icon: `/api/v1/admin/marketplaces/official/icons/${"a".repeat(64)}`,
+            }),
+            // none: the initial
+            entry({ name: "plain", adopted: null, newerAvailable: false, icon: null }),
+          ],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    const rows = within(list).getAllByRole("listitem") as HTMLElement[];
+    const src = (name: string) => {
+      const row = rows.find((r) => within(r).queryByText(name) !== null) as HTMLElement;
+      return row.querySelector("img")?.getAttribute("src") ?? null;
+    };
+    expect(src("cat-a")).toBe(`/api/v1/admin/catalog/items/${ID}/icon?v=1.0.0`);
+    expect(src("cat-m")).toBe(`/api/v1/admin/marketplaces/official/icons/${"a".repeat(64)}`);
+    expect(src("plain")).toBeNull();
+  });
+
   it("entries: importing stages the plugin and opens the import review; an integrity mismatch is a prominent error", async () => {
     const c = en.catalog.admin.entries;
     let fail = true;
@@ -2194,7 +2269,131 @@ describe("/admin/plugins and marketplace entries", () => {
     ).toBeTruthy();
   });
 
-  it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
+  describe("item detail: 删除 while the plugin's extension is enabled", () => {
+    const sandboxItem = () =>
+      json(200, {
+        item: {
+          ...item({ name: "sandbox-docker" }),
+          packageName: "@capybara-hq/plugin-sandbox-docker",
+          deletedAt: null,
+        },
+        versions: [
+          version("1.0.0", {
+            name: "sandbox-docker",
+            extension: {
+              entry: "./dist/index.mjs",
+              manifest: {
+                name: "sandbox-docker",
+                version: "1.0.0",
+                sdk: "^0.1.0-rc.0",
+                provides: ["sandbox@2"],
+                requires: [],
+                optional: [],
+                permissions: {},
+                config: { deployment: [], org: [] },
+              },
+            },
+          }),
+        ],
+        hasIcon: false,
+      });
+    const extension = (state: "enabled" | "disabled") => ({
+      name: "sandbox-docker",
+      displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+      version: "1.0.0",
+      source: "install",
+      installSource: "bootstrap",
+      required: false,
+      sha256: "a".repeat(64),
+      status: state,
+      desired: { version: "1.0.0", sha256: "a".repeat(64), state },
+      replicas: [],
+      permissions: [],
+      added: [],
+      addedItems: [],
+      removed: [],
+      warnings: [],
+      reviewHash: "0",
+      sensitive: false,
+      snapshot: null,
+      configurable: false,
+      configValid: true,
+      removable: true,
+    });
+    const openDelete = async (locale: "zh" | "en") => {
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: RAW_MORE[locale] }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: msgs[locale].catalog.admin.detail.delete }),
+      );
+      return { user, dialog: await screen.findByRole("dialog") };
+    };
+
+    it.each(LOCALES)(
+      "enabled: the confirm names the extension, links to it and cannot be confirmed (%s)",
+      async (locale) => {
+        params.current = { itemId: ID };
+        const d = msgs[locale].catalog.admin.detail;
+        stubApi({
+          [`GET /api/v1/admin/catalog/items/${ID}`]: sandboxItem,
+          "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+          "GET /api/v1/admin/extensions/sandbox-docker": () => json(200, extension("enabled")),
+        });
+        await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale });
+        const { user, dialog } = await openDelete(locale);
+        const label = locale === "zh" ? "Docker 沙箱" : "Docker sandbox";
+        expect(
+          await within(dialog).findByText(fill(d.deleteExtensionEnabled, { name: label })),
+        ).toBeTruthy();
+        if (locale === "zh") {
+          expect(fill(d.deleteExtensionEnabled, { name: label })).toBe(
+            "请先在扩展页停用「Docker 沙箱」，再删除插件。",
+          );
+        }
+        const link = within(dialog).getByRole("link", { name: d.deleteConfirm.openExtension });
+        expect(link.getAttribute("href")).toBe("/admin/extensions/sandbox-docker");
+        await user.type(within(dialog).getByRole("textbox"), "sandbox-docker");
+        const confirm = within(dialog).getByRole("button", { name: d.deleteConfirm.confirm });
+        expect((confirm as HTMLButtonElement).disabled).toBe(true);
+        expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+      },
+    );
+
+    it("disabled here but enabled meanwhile: the 409 shows the named message in the dialog", async () => {
+      params.current = { itemId: ID };
+      const d = zh.catalog.admin.detail;
+      const calls = stubApi({
+        [`GET /api/v1/admin/catalog/items/${ID}`]: sandboxItem,
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/extensions/sandbox-docker": () => json(200, extension("disabled")),
+        [`DELETE /api/v1/admin/catalog/items/${ID}`]: () =>
+          json(409, {
+            error: {
+              code: "catalog.extension_enabled",
+              message: "The extension is enabled",
+              details: [
+                {
+                  extension: "sandbox-docker",
+                  displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+                },
+              ],
+            },
+          }),
+      });
+      await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale: "zh" });
+      const { user, dialog } = await openDelete("zh");
+      expect(within(dialog).getByText(d.deleteConfirm.extensionNote)).toBeTruthy();
+      await user.type(within(dialog).getByRole("textbox"), "sandbox-docker");
+      await user.click(within(dialog).getByRole("button", { name: d.deleteConfirm.confirm }));
+      expect(
+        await within(dialog).findByText(fill(d.deleteExtensionEnabled, { name: "Docker 沙箱" })),
+      ).toBeTruthy();
+      expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+      expect(router.push).not.toHaveBeenCalledWith("/admin/plugins");
+    });
+  });
+
+  it("item detail: the icon is a 40 px mark beside the title, an <img> of the kernel route, never inline", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
@@ -2207,9 +2406,11 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const img = (await screen.findByRole("img", {
-      name: fill(en.catalog.iconAlt, { name: "gh" }),
-    })) as HTMLImageElement;
+    await screen.findByRole("heading", { name: "gh" });
+    const img = document.querySelector(
+      '[data-part="page-header-avatar"] [data-part="object-mark"][data-size="40"] img',
+    ) as HTMLImageElement;
+    expect(img).not.toBeNull();
     expect(img.src).toMatch(new RegExp(`/api/v1/admin/catalog/items/${ID}/icon$`));
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
   });

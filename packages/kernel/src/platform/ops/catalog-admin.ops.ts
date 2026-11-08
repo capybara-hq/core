@@ -599,7 +599,7 @@ export class CatalogAdminOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.delete",
         description:
-          "Delete a platform catalog plugin (super admin): it leaves the catalog and its pending requests are cancelled; what orgs installed from it stays installed. To take it away from orgs, use plugins.set-disabled or plugins.set-scope instead.",
+          "Delete a platform catalog plugin (super admin): it leaves the catalog and its pending requests are cancelled; what orgs installed from it stays installed. A plugin whose extension is enabled on the platform is refused (catalog.extension_enabled): disable the extension first with extensions.platform-disable. To take it away from orgs, use plugins.set-disabled or plugins.set-scope instead.",
         input: z.object({ itemId: ItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
@@ -611,9 +611,18 @@ export class CatalogAdminOperations implements OnModuleInit {
             code: "catalog.item_not_found",
             next: "Check the plugin id with plugins.platform-list.",
           },
+          {
+            code: "catalog.extension_enabled",
+            next: "The plugin's extension (named in the message) is still enabled on the platform: disable it first with extensions.platform-disable (or in the admin console under Extensions), then delete the plugin again.",
+          },
         ],
-        precheck: async (i, ctx) =>
-          (await this.otherOrgs(i.itemId, ctx.orgId)) ?? this.live(i.itemId),
+        precheck: async (i, ctx) => {
+          const other = await this.otherOrgs(i.itemId, ctx.orgId);
+          if (other !== null) return other;
+          const live = await this.live(i.itemId);
+          if (!live.ok) return live;
+          return precheckBy(() => this.catalog.assertRemovable(i.itemId));
+        },
         summary: async (i) => {
           const { item } = await this.catalog.get(i.itemId);
           const n = localized(item.displayName, item.name);

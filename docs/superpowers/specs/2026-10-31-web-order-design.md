@@ -118,12 +118,14 @@ the top of the rail; 更多 opens the same flyout.
 
 ### 3.1 Object list (canvas "组织 · Agents")
 
-For things people own and configure: Agents, 技能, 连接器, 插件 (org catalog), 渠道, 评测集, admin 扩展, admin
-企业目录, 市场 entries, org 已安装的插件.
+For things people own and configure: Agents, 技能, 连接器, 插件 (org catalog), 评测集, admin 扩展, admin
+企业目录, 市场 entries, org 已安装的插件. (渠道 became a card list, maintainer decision 2026-11-08: one
+`ObjectCard` per connection in a `CardGrid`, design spec §6.34.)
 
 - One panel (`panel`, 1 px `line-soft`, radius 8) holding rows split by `line-soft`.
-- **Object row** (min 64 px): a 36 px mark (initials in mono on `selected`, or the object's icon; tinted
-  warn when it needs attention), then
+- **Object row** (min 64 px): a 36 px mark (initials in mono on `selected`; for a thing a plugin brings,
+  such as a channel, an extension or a model provider, the plugin's declared icon with the initial as its
+  fallback, maintainer decision 2026-11-08, design spec §6.17; tinted warn when it needs attention), then
   - line 1: name (600; mono for package names) + scope / kind chips (`仅自己`, `组织共享`, `必需`) + an
     attention chip when relevant (`回退模型不可用`);
   - line 2: one-line description in `muted`;
@@ -162,6 +164,9 @@ A channel connection already belongs to one agent (`channel_connections.agent_id
 gets a 渠道 section listing the connections bound to it (kind, name, state) with "接入渠道", which opens
 the channel form with the agent preset and returns to the agent afterwards. The section is shown to users who may manage channels (org admins);
 members see none, because the kernel's channel list requires `channels.manage`. The 更多 · 渠道 page stays as the org-wide list.
+The section draws the connections as the same cards as the 更多 · 渠道 page (`ObjectCard`s in a `CardGrid`,
+maintainer decision 2026-11-08, replacing the earlier `ItemList` rows): no outer card, the heading and
+description on the page ground with 接入渠道 beside them, design spec §6.34.
 
 ### 3.4 Settings (canvas "组织 · 设置 / 成员")
 
@@ -280,7 +285,7 @@ pages through `SetupContext`; pages never read it themselves.
 | 技能 | work · 更多 · 技能 | object list / detail | unchanged |
 | 连接器 | work · 更多 · 连接器 | object list / detail / wizard | unchanged |
 | 企业目录 (org) `/catalog` | work · 更多 · **插件** | object list / detail | unchanged (label "插件") |
-| 渠道 | work · 更多 · 渠道 | object list / form | unchanged |
+| 渠道 | work · 更多 · 渠道 | card list (maintainer decision 2026-11-08) / form | unchanged |
 | 评测 `/evals`, 运行记录 `/trajectories` | work · 更多 · **评测与运行** (tabs 评测集 · 运行记录) | object list + record table | unchanged |
 | 设置 · 组织设置 | 组织设置 · 通用 (+ 沙箱 split out) | settings | `/settings/organization`, `/settings/sandbox` |
 | 设置 · 成员 / 扩展 / 已安装的插件 / 模型用途 | 组织设置 · 成员 / 扩展 / 插件 / 模型 | settings | unchanged |

@@ -953,3 +953,54 @@ Creating a template from scratch, linking agents to templates after creation, th
 orgs' agents, a member-visible restriction on ordinary agent creation (today any member may create an
 org-visible agent; only the template flow gates it), per-org versions of shared templates, and
 template files beyond instructions (attachments).
+
+## 16. Marketplace entry icons (2026-11-08)
+
+Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not only initials.
+
+- **Imported plugins** show the catalog item's own icon, the image 已安装 shows (the item's current
+  version, `PluginIcons`), also on an entry of a newer version that is not imported yet.
+- **Plugins not imported** show the icon the marketplace gives: an optional `icon` on a
+  `marketplace.json` entry (SDK `MarketplaceEntry.icon`, display only). It is either
+  - an absolute `https://` URL whose path ends in `.svg` / `.png` (a query is allowed, no fragment;
+    http only on loopback in tests), or
+  - `./<path>.svg|png` inside the marketplace's repository, read at the commit the marketplace was
+    refreshed at, from the pack that refresh fetched anyway. Git marketplaces only: an http
+    marketplace has no repository, so such an icon is ignored there. A single-plugin repository's
+    entry takes its `plugin.json` `icon` this way.
+- **Toolchain:** `capybara-plugin marketplace --write` fills each entry's `icon` with the repository
+  path of the plugin's `plugin.json` `icon` (`./plugins/<dir>/<icon>`) and refreshes it like
+  `summary` / `displayName` (`marketplace-display-stale`). A repository path moves with the
+  marketplace commit, so it stays right after every release without naming a tag (a tag does not
+  exist yet when the Version Packages PR writes the file; a commit is not known before it is made).
+  The official marketplace is a git marketplace, so it uses this form.
+- **Kernel:** each refresh that reads a manifest, or finds it unchanged, brings the marketplace's
+  icons in line with its stored entries (`catalog/marketplace-icons.ts`, migration 0101
+  `marketplace_icons`: one row per marketplace and icon as written, svg / png bytes, sha256,
+  content type). A URL is downloaded through `packages/kernel/src/net` under the marketplace
+  network rules (https, public addresses or `allowPrivateHosts`, `net.httpsProxy`, no redirects,
+  10 s, at most 64 KiB) and `marketplaces.allowedHosts`, never with the marketplace token, and only
+  when it is not stored yet: a URL's content counts as fixed, a new icon needs a new URL. At most
+  100 downloads per refresh, 4 at a time. A failed download is remembered
+  (`marketplace_icon_failures`) and retried only after 6 hours, after the URLs never tried, so
+  broken URLs never starve the cap. A repository path is read again at every new commit; a commit
+  counts as read only once its icons are stored (`marketplaces.icons_commit`), so a failed icon
+  write (or a refresh from before icons) reads the same commit again next time. The
+  content must really be an svg / png of at most 64 KiB (the plugin icon check), checked again
+  with its sha256 when served. A missing, refused,
+  oversized or invalid icon is logged and skipped; it never fails the refresh, and the row falls
+  back to the initial. Icons (and failures) no entry names any more are deleted; deleting the
+  marketplace deletes its icons.
+- **API:** `GET /api/v1/admin/marketplaces/entries` gives each entry `icon` (the imported item's
+  icon URL, else `/api/v1/admin/marketplaces/:id/icons/:sha256`, else null). The icon route serves
+  the stored bytes from PG with the plugin icon headers (`sendCatalogIcon`: content type, nosniff,
+  CSP sandbox). Both are super admin routes.
+- **Org browse** (follow-up decision 2026-11-08: the icon is the same everywhere):
+  `GET /api/v1/orgs/:orgId/marketplaces/entries` gives `icon` too: the item's org icon route
+  (`/api/v1/orgs/:orgId/catalog/:itemId/icon`) when the org's catalog shows the item (the share
+  gate; a hidden item reads as not imported and shows the marketplace icon), else
+  `GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256`, gated like the org browse
+  (`catalog.decide`, `orgMarketplaceBrowse` on, the marketplace enabled; else 404) and served
+  the same way. Both icon routes are Platform exclusions (transport: image bytes).
+- **Web:** the admin and the workspace market rows' mark is `ObjectMark` with `image: icon` (the
+  initial when null or when the image fails).

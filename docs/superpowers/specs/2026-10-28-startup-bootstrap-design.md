@@ -71,6 +71,18 @@ The bootstrap step is part of kernel start and fetches what it needs itself.
   bootstrap plugins" becomes "the bootstrap step of a starting kernel (or `capybara bootstrap`)
   downloads them, once per manifest".
 
+## Catalog files during bootstrap (amendment, 2026-11-08)
+
+No object store serves during the first bootstrap pass: `object-store-s3` is itself a bootstrap
+entry, and even an installed one is only loaded after the step. Once the official plugins shipped
+icons, every entry's import asserted object storage and a fresh deployment could not start. Display
+files (icons, setup guide files) are therefore kept in PG (`catalog_files`, package ecosystem spec
+§5.4 amendment), so an entry with them imports without storage, on a fresh deployment and on an
+upgrade from a version without files alike. Skills, connector templates and agent templates still
+need object storage: an entry shipping them fails the first pass with `storage.unavailable` naming
+the plugin; an optional one is retried after the extensions loaded, a required one stops the start.
+Required bootstrap plugins therefore ship no skills or templates.
+
 ## Not changed
 
 Manifest format, `bootstrap_runs`, the per-entry install / upgrade / keep rules, the advisory

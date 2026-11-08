@@ -5,6 +5,7 @@ import {
   CellTitle,
   type Column,
   DataTable,
+  initialOf,
   ListPage,
   Sheet,
   Stack,
@@ -37,6 +38,7 @@ import {
 } from "../../../../lib/admin-extensions";
 import {
   capabilitiesIn,
+  capabilityOfPoint,
   type ExtensionTab,
   inTab,
   matchesSearch,
@@ -148,6 +150,9 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       cell: (p) => (
         <CellTitle
           title={extensionLabel(p, lang)}
+          // the plugin's icon, the initial without one (spec §6.17)
+          initial={initialOf(extensionLabel(p, lang))}
+          image={p.icon ?? null}
           description={[p.displayName ? p.name : null, `v${p.version}`]
             .filter((x): x is string => x !== null)
             .join(" · ")}
@@ -242,6 +247,7 @@ function AdminExtensions({
   const te = useTranslations("extensions");
   const locale = useLocale();
   const lang = labelLocale(locale);
+  const capabilityLabel = useCapabilityLabel();
   const [open, setOpen] = useState<string | null>(null);
   const columns = useColumns(tab);
   const sorted = sortExtensions(all, rankOf, (p) => extensionLabel(p, lang), locale);
@@ -249,14 +255,25 @@ function AdminExtensions({
     matchesSearch(search, extensionLabel(p, lang), p.name),
   );
   const attention = sorted.filter(needsAttention);
+  // A single-provider point whose elected provider is not running has no provider at all
+  const unprovided = [
+    ...new Set(
+      attention.flatMap((p) =>
+        p.conflict?.unprovided === true ? [capabilityOfPoint(p.conflict.extensionPoint)] : [],
+      ),
+    ),
+  ];
   const callout =
     attention.length > 0
       ? {
           tone: "warn" as const,
-          children: t("callout", {
-            n: attention.length,
-            names: attention.map((p) => extensionLabel(p, lang)).join(", "),
-          }),
+          children: [
+            t("callout", {
+              n: attention.length,
+              names: attention.map((p) => extensionLabel(p, lang)).join(", "),
+            }),
+            ...unprovided.map((c) => t("calloutNoProvider", { point: capabilityLabel(c) })),
+          ].join(" "),
           // One: open it; several sort first in the list.
           ...(attention.length === 1
             ? {
@@ -371,6 +388,7 @@ function AdminExtensionSheet({
         if (!o) onClose();
       }}
       title={extensionLabel(plugin, lang)}
+      mark={{ text: extensionLabel(plugin, lang), image: plugin.icon ?? null }}
       meta={[plugin.displayName ? plugin.name : null, `v${plugin.version}`]
         .filter((x): x is string => x !== null)
         .join(" · ")}

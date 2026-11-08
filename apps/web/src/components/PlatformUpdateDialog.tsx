@@ -18,6 +18,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SingleProviderNote } from "../lib/admin-extensions";
 import { ApiClientError } from "../lib/api";
 import {
   type CatalogItem,
@@ -27,12 +28,15 @@ import {
   previewPlatformUpdate,
   updatePlatformPlugin,
 } from "../lib/catalog";
+import { capabilityOfPoint } from "../lib/extension-capabilities";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { adminOrgsQuery } from "../lib/query/admin";
 import { pluginScopeChangeKeys } from "../lib/query/catalog";
 import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
+import { useCapabilityLabel } from "./ExtensionTabs";
 import { FormError } from "./form-error";
 
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
@@ -60,6 +64,7 @@ export function PlatformUpdateDialog({
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const toast = useToast();
+  const leftDisabledLine = useLeftDisabledLine();
   const errorMessage = useErrorMessage();
   const oq = adminOrgsQuery();
   const orgs = useQuery({ ...oq, retryOnMount: retryOnMountOf(oq.queryKey) }).data?.orgs ?? [];
@@ -101,8 +106,11 @@ export function PlatformUpdateDialog({
     setError(undefined);
     setNotice(undefined);
     try {
-      await update.mutateAsync(preview.diffHash);
+      const r = await update.mutateAsync(preview.diffHash);
       toast.success(t("done", { name, version: versionLabel(version) }));
+      if (r.extensionLeftDisabled !== undefined) {
+        toast.error(leftDisabledLine(r.extensionLeftDisabled, name));
+      }
       onClose();
     } catch (e) {
       if (e instanceof ApiClientError && e.code === "plugin.upgrade_stale") {
@@ -306,6 +314,11 @@ export function PlatformUpdatePreviewBody({
             text: t("needsConfigNote", { ids: o.needsConfig.join(sep) }),
             tone: "warn",
           });
+        if (o.turnedOff !== undefined && o.turnedOff.length > 0)
+          notes.push({
+            text: t("turnedOffNote", { ids: o.turnedOff.map((x) => x.templateId).join(sep) }),
+            tone: "warn",
+          });
         return { id: o.orgId, title: one(o.orgId), notes };
       }),
     },
@@ -322,4 +335,20 @@ export function PlatformUpdatePreviewBody({
       <ImpactPreview groups={groups} empty={t("none")} />
     </>
   );
+}
+
+/**
+ * The line of an update that left the plugin's extension disabled (kernel
+ * `extensionLeftDisabled`): which single-provider point is held, and by which extension.
+ */
+export function useLeftDisabledLine(): (note: SingleProviderNote, name: string) => string {
+  const t = useTranslations("catalog.update");
+  const capabilityLabel = useCapabilityLabel();
+  const lang = labelLocale(useLocale());
+  return (note, name) =>
+    t(note.singleProvider.required === true ? "leftDisabledRequired" : "leftDisabled", {
+      name,
+      point: capabilityLabel(capabilityOfPoint(note.singleProvider.extensionPoint)),
+      other: extensionLabel(note.singleProvider.enabled, lang),
+    });
 }

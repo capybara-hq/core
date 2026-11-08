@@ -23,6 +23,7 @@ import {
 } from "../extensions/config-json-schema.js";
 import { enabledExtensionsByOrg } from "../extensions/enabled.js";
 import type { InflightTracker } from "../extensions/inflight.js";
+import { type GuideAck, PluginGuides } from "../extensions/plugin-guides.js";
 import { type ExtensionPointEntry, ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -36,6 +37,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
+import type { ChannelLocale } from "./phrases.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
@@ -81,6 +83,11 @@ export interface ChannelConnectionView {
   lastError: string | null;
   botUserId: string | null;
   tenantId: string | null;
+  /**
+   * The plugin's setup guide the connection was last set up with (recorded on create, on a mode
+   * switch and by `guide-ack`); null when unknown.
+   */
+  guideAck: GuideAck | null;
   config: Record<string, unknown>;
   secrets: { path: string; set: boolean }[];
   createdBy: string;
@@ -177,6 +184,7 @@ const COLUMNS = [
   "last_error",
   "bot_user_id",
   "tenant_id",
+  "guide_ack",
   "created_by",
   "created_at",
   "updated_at",
@@ -210,6 +218,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     /** Secret values handled here (written or decrypted) are redacted from the logs (`addOrgSecrets`). */
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "addOrgSecrets">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The setup guide acks (spec 2026-11-08-plugin-setup-guides-design.md §6). */
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "currentAck" | "ackDrifted">,
   ) {
     this.unsubscribe = [
       // a deleted org's channel connections drop their long connections at once
@@ -369,6 +379,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       last_error: string | null;
       bot_user_id: string | null;
       tenant_id: string | null;
+      guide_ack: GuideAck | null;
       created_by: string;
       created_at: Date;
       updated_at: Date;
@@ -400,6 +411,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       lastError: r.last_error,
       botUserId: r.bot_user_id,
       tenantId: r.tenant_id,
+      guideAck: r.guide_ack ?? null,
       config: r.config ?? {},
       secrets: paths.map((path) => ({ path, set: setPaths.has(path) })),
       createdBy: r.created_by,
@@ -469,6 +481,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     const verified = await this.verify(channel, full);
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
+    // the guide the 新建渠道 page showed: the plugin's current one, for the default mode
+    const guideAck = await this.guides.currentAck(input.plugin, "long_connection");
     const row = await this.insertIn({
       orgId,
       id,
@@ -476,6 +490,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       plain,
       secrets,
       verified,
+      guideAck,
       actorAccountId,
       actorTokenId,
     });
@@ -493,6 +508,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     plain: Obj;
     secrets: Obj;
     verified: { botUserId: string; tenantId: string };
+    guideAck: GuideAck | null;
     actorAccountId: string;
     actorTokenId: string | undefined;
   }) {
@@ -518,6 +534,7 @@ export class ChannelConnections implements OnApplicationShutdown {
         unbound_policy: input.unboundPolicy ?? "bind",
         bot_user_id: a.verified.botUserId,
         tenant_id: a.verified.tenantId,
+        guide_ack: a.guideAck === null ? null : JSON.stringify(a.guideAck),
         created_by: actorAccountId,
       })
       .returning(COLUMNS)
@@ -582,12 +599,23 @@ export class ChannelConnections implements OnApplicationShutdown {
       patch.inboundMode !== undefined && patch.inboundMode !== current.inbound_mode;
     if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
     if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
+    // A mode switch sets the platform app up for the new mode: the guide of that mode is the one
+    // on the page. Only an ack without drift moves on: a drifted one stays until the person
+    // confirms through guide-ack, so switching modes never clears the update notice (spec
+    // 2026-11-08-plugin-setup-guides-design.md §6)
+    const guideAck =
+      modeChanged &&
+      patch.inboundMode !== undefined &&
+      !(await this.guides.ackDrifted(current.plugin, current.guide_ack ?? null))
+        ? await this.guides.currentAck(current.plugin, patch.inboundMode)
+        : undefined;
     const row = await this.updateIn({
       orgId,
       id,
       patch,
       rotated,
       verified,
+      guideAck,
       actorAccountId,
       actorTokenId,
       auditDetail,
@@ -621,6 +649,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     patch: UpdateChannelInput;
     rotated: { plain: Obj; secrets: Obj } | undefined;
     verified: { botUserId: string; tenantId: string } | undefined;
+    /** Undefined: unchanged. */
+    guideAck: GuideAck | null | undefined;
     actorAccountId: string;
     actorTokenId: string | undefined;
     auditDetail: Record<string, unknown> | undefined;
@@ -644,6 +674,9 @@ export class ChannelConnections implements OnApplicationShutdown {
         ...(patch.unboundPolicy !== undefined && { unbound_policy: patch.unboundPolicy }),
         ...(patch.status !== undefined && { status: patch.status }),
         ...(patch.inboundMode !== undefined && { inbound_mode: patch.inboundMode }),
+        ...(a.guideAck !== undefined && {
+          guide_ack: a.guideAck === null ? null : JSON.stringify(a.guideAck),
+        }),
         ...(rotated && { config: JSON.stringify(rotated.plain) }),
         // 跳过了 verify：机器人 id 与租户保留原值（重新启用后插件按新凭据连接，入站以连接行的租户判断外部人员）
         ...(verified && { bot_user_id: verified.botUserId, tenant_id: verified.tenantId }),
@@ -673,6 +706,65 @@ export class ChannelConnections implements OnApplicationShutdown {
       },
     });
     return updated;
+  }
+
+  /**
+   * 「我已更新应用」: records the plugin's current channel-connection guide for the connection's
+   * mode as the one it is set up with. `hash` is the template hash of the guide the person was
+   * shown; when the plugin has moved on since, 409 `channel.guide_changed` (show the new guide
+   * first). A plugin without a guide -> 404 `catalog.guide_not_found`.
+   */
+  async ackGuide(
+    orgId: string,
+    id: string,
+    hash: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<ChannelConnectionView> {
+    const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
+    if (!current) throw notFound();
+    const ack = await this.guides.currentAck(current.plugin, current.inbound_mode);
+    if (ack === null) {
+      throw new ApiError("catalog.guide_not_found", "The plugin has no channel setup guide");
+    }
+    if (ack.hash !== hash) {
+      throw new ApiError(
+        "channel.guide_changed",
+        "The plugin's setup guide changed since it was shown; review the new guide first",
+      );
+    }
+    const row = await this.ackIn(orgId, id, ack, actorAccountId, actorTokenId);
+    return this.viewOf(row);
+  }
+
+  /** The row of {@link ackGuide}, in its own transaction. */
+  @Transactional({ propagation: "requires_new" })
+  private async ackIn(
+    orgId: string,
+    id: string,
+    ack: GuideAck,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ) {
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
+    const row = await this.db
+      .updateTable("channel_connections")
+      .set({ guide_ack: JSON.stringify(ack), updated_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .returning(COLUMNS)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    await audit(this.db.db, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "channel.guide_confirmed",
+      target: id,
+      detail: { guideId: ack.guideId, version: ack.version },
+    });
+    return row;
   }
 
   /** 删除（软删除，同一事务删掉密钥）；持有长连接的副本收到广播后断开。 */
@@ -829,40 +921,46 @@ export class ChannelConnections implements OnApplicationShutdown {
    */
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
     const { row, channel, config } = await this.runtime(connectionId);
-    // 组织语言随每次发送 / 更新交给插件（Ruling A22）；本次会话内不变
+    // the language handed to the extension with each send / update (Ruling A22): the recipient's
+    // when the caller gives it (IM language is per person, run context spec §3.4), else the org's
     const { locale } = await readOrgSettings(this.db.db, row.orgId);
     return {
       row,
       features: channel.features,
       redact: createRedactor(secretValues(channel.connectionSchema, config), 4),
-      send: (target, message, idempotencyKey) =>
+      send: (target, message, idempotencyKey, to = locale) =>
         channel.send({
           config,
-          ...adaptToFeatures(channel.features, target, message, locale),
+          ...adaptToFeatures(channel.features, target, message, to),
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
-          locale,
+          locale: to,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
-      update: (target, messageId, message, idempotencyKey) =>
+      update: (target, messageId, message, idempotencyKey, to = locale) =>
         channel.update({
           config,
-          ...adaptToFeatures(channel.features, target, message, locale),
+          ...adaptToFeatures(channel.features, target, message, to),
           messageId,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
-          locale,
+          locale: to,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
     };
   }
 
-  /** 经连接的插件直接发一条消息（入站处理回绑定卡片、固定话术，卡片操作回说明）；`idempotencyKey` 原样交给插件。 */
+  /**
+   * Sends one message through the connection's extension (inbound replies: bind cards, fixed
+   * phrases, card-action notes); `idempotencyKey` is passed through as is, `locale` is the
+   * recipient's language (else the org's).
+   */
   async send(
     connectionId: string,
     target: ChannelTarget,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<{ messageId: string }> {
-    return (await this.outbound(connectionId)).send(target, message, idempotencyKey);
+    return (await this.outbound(connectionId)).send(target, message, idempotencyKey, locale);
   }
 }
 
@@ -871,17 +969,23 @@ export interface ChannelOutboundSession {
   row: ChannelConnectionRow;
   features: Channel["features"];
   redact: (s: string) => string;
-  /** `idempotencyKey` 原样交给插件（见 `ChannelSendArgs.idempotencyKey`）。 */
+  /**
+   * `idempotencyKey` is passed through (see `ChannelSendArgs.idempotencyKey`); `locale` is the
+   * recipient's language for the extension's own wording and the card text fallback (default: the
+   * org's).
+   */
   send(
     target: ChannelTarget,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<{ messageId: string }>;
-  /** 只在 `features.edit` 为 true 时调用。 */
+  /** Called only when `features.edit` is true; `locale` as for `send`. */
   update(
     target: ChannelTarget,
     messageId: string,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<void>;
 }

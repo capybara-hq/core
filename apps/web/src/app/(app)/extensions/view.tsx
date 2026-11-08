@@ -4,6 +4,7 @@ import {
   CellTitle,
   type Column,
   DataTable,
+  initialOf,
   ListPage,
   Stack,
   Switch,
@@ -496,6 +497,9 @@ function ExtensionList({
       cell: (r) => (
         <CellTitle
           title={r.label}
+          // the plugin's icon, the initial without one (spec §6.17)
+          initial={initialOf(r.label)}
+          image={r.ext.icon ?? null}
           description={[r.ext.displayName ? r.ext.plugin : null, versionLabel(r.ext.version)]
             .filter((x): x is string => x !== null)
             .join(" · ")}

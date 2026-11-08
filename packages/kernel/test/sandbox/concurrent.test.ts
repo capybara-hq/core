@@ -24,6 +24,7 @@ import { sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import {
   createFakeSandbox,
+  fakeSandboxRunningTags,
   readFakeSandboxOps,
   removeFakeSandbox,
   setFakeSandboxDelays,
@@ -137,6 +138,40 @@ const ops = async (op?: string) =>
 const execIntervals = async () =>
   (await ops("exec")).map((o) => ({ tag: o[2], start: Number(o[3]), end: Number(o[4]) }));
 
+/** Polls `check` every 20 ms until it holds; fails after 10 s. */
+const until = async (what: string, check: () => Promise<boolean>) => {
+  const deadline = Date.now() + 10_000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
+
+/**
+ * A crashed holder of instance `id`: its tagged `sleep 30` is running (waited for: the fake starts
+ * a command only after a few file reads, and a kill sent before that finds nothing), its holder
+ * record is left behind, it has no lease. `left` is the command's result.
+ */
+const crashedHolder = async (id: string, dead: string) => {
+  const left = provider.exec(
+    { id },
+    {
+      command: "sleep 30",
+      timeoutMs: 60_000,
+      maxOutputBytes: 10,
+      signal: signal(),
+      tag: dead,
+      actor: ctx().actor,
+    },
+  );
+  await until("the dead holder's command", async () =>
+    (await fakeSandboxRunningTags(root, id)).includes(dead),
+  );
+  await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+  await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
+  return { left };
+};
+
 /** Runs one command in the sandbox through the service. */
 const run = (s: SandboxService, command: string) =>
   s.withSandbox(
@@ -215,14 +250,15 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(3);
     const s = service();
     const first = await run(s, "true");
+    expect(first.info.fresh).toBe(true);
+    const id = (await ops("create"))[0]?.[1] as string;
     // A holds a shared lease with a command running
     const a = run(s, "sleep 0.8").then(() => Date.now());
-    await new Promise((r) => setTimeout(r, 150));
-    expect(first.info.fresh).toBe(true);
-    await removeFakeSandbox(root, (await ops("create"))[0]?.[1] as string);
-    // B finds the instance gone and needs the exclusive lease to rebuild
+    await until("A's command", async () => (await fakeSandboxRunningTags(root, id)).length > 0);
+    await removeFakeSandbox(root, id);
+    // B finds the instance gone and needs the exclusive lease to rebuild: it waits with its intent
     const b = run(s, "echo b");
-    await new Promise((r) => setTimeout(r, 150));
+    await until("B's intent", async () => (await redis.exists(`capk:sandbox-intent:${envId}`)) > 0);
     // C arrives while B waits: the intent keeps it out until B has rebuilt
     let cEntered = 0;
     const c = s.withSandbox(
@@ -400,23 +436,14 @@ describe("concurrent commands (fake sandbox)", () => {
     const { info } = await run(s, "true");
     expect(info.fresh).toBe(true);
     const id = (await ops("create"))[0]?.[1] as string;
-    // a crashed holder: a tagged command still running, its holder record left behind, no lease
     const dead = randomUUID();
-    const left = provider.exec(
-      { id },
-      {
-        command: "sleep 30",
-        timeoutMs: 60_000,
-        maxOutputBytes: 10,
-        signal: signal(),
-        tag: dead,
-        actor: ctx().actor,
-      },
+    const { left } = await crashedHolder(id, dead);
+    // the sibling enters first (it is the acquirer that kills the dead tag) and is still running
+    // its command, under a live lease, when the next acquirer enters
+    const sibling = run(s, "sleep 2");
+    await until("the sibling's command", async () =>
+      (await fakeSandboxRunningTags(root, id)).some((t) => t !== dead && t !== ""),
     );
-    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
-    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
-    const sibling = run(s, "sleep 1");
-    await new Promise((r) => setTimeout(r, 200));
     const r = await run(s, "echo ok");
     expect(r.r.stdout).toBe("ok\n");
     expect(await left).toMatchObject({ exitCode: null });
@@ -444,21 +471,8 @@ describe("concurrent commands (fake sandbox)", () => {
     const s = service();
     await run(s, "true");
     const id = (await ops("create"))[0]?.[1] as string;
-    // a crashed holder: its tagged command still runs, its record is left, its lease is gone
     const dead = randomUUID();
-    const left = provider.exec(
-      { id },
-      {
-        command: "sleep 30",
-        timeoutMs: 60_000,
-        maxOutputBytes: 10,
-        signal: signal(),
-        tag: dead,
-        actor: ctx().actor,
-      },
-    );
-    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
-    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
+    const { left } = await crashedHolder(id, dead);
     // the sweep gets the exclusive lease (no live lease) and suspends
     expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
     // three holders arrive at once: one resumes under the exclusive lease and kills everything
@@ -501,8 +515,12 @@ describe("concurrent commands (fake sandbox)", () => {
     await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours'`.execute(
       raw,
     );
+    const id = (await ops("create"))[0]?.[1] as string;
     const busy = run(s, "sleep 0.1");
-    await new Promise((r) => setTimeout(r, 30));
+    await until(
+      "the running command",
+      async () => (await fakeSandboxRunningTags(root, id)).length > 0,
+    );
     expect(await s.suspendIdle(new Date())).toBe(1);
     await busy;
     expect(await ops("suspend")).toHaveLength(1);
