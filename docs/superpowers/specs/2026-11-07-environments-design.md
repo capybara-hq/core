@@ -143,7 +143,12 @@ Anti-goals (a failure even if it works):
     `environment.not_found` **(designer's call)**.
 13. **One cloud provider per deployment.** The `sandbox` extension point stays single-select, as
     today (`SandboxProviders.current()`, `packages/kernel/src/sandbox/providers.ts`): a deployment
-    runs Docker or E2B, never both, so the 新建环境 dialog has no provider field. Connected
+    runs Docker or E2B, never both, so the 新建环境 dialog has no provider field. **Switching
+    (decided 2026-11-08, acceptance):** enabling a second sandbox provider while one is enabled is
+    refused (409 `extension.single_provider_enabled`); the super admin disables the current one
+    first, then enables the other. An import or bootstrap preinstall of a second one installs it
+    disabled and says why; two left enabled from before load the earliest enabled
+    (`extension_installs.enabled_at`) on every replica. Connected
     environments are not an extension: the kernel's own device transport (§6.3) implements the same
     operations. Each environment records its provider; when the super admin switches provider, the
     environments of the old one show 「不可用」 until it is back (their files are not migrated);
