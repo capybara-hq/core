@@ -66,18 +66,32 @@ const mf = (over: Partial<ExtensionManifest> = {}) =>
     sdk: "^0.1.0-rc.0",
     provides: [],
     ui: [
-      { id: "tasks", title: { zh: "任务", en: "Tasks" }, place: "conversation", kind: "view" },
+      { id: "tasks", title: { zh: "任务", en: "Tasks" }, slot: "conversation.panel", kind: "view" },
       {
         id: "board",
         title: { zh: "看板", en: "Board" },
-        place: "page",
+        slot: "org.page",
+        kind: "embed",
+        path: "/ui/board",
+      },
+      {
+        id: "settings",
+        title: { zh: "设置", en: "Settings" },
+        slot: "org.settings.section",
+        kind: "embed",
+        path: "/ui/board",
+      },
+      {
+        id: "platform",
+        title: { zh: "平台", en: "Platform" },
+        slot: "platform.page",
         kind: "embed",
         path: "/ui/board",
       },
     ],
     permissions: {
       http: [{ method: "GET", path: "/ui/board" }],
-      ui: { views: ["tasks"], embeds: ["board"] },
+      ui: { views: ["tasks"], embeds: ["board", "settings", "platform"] },
     },
     setup() {},
     ...over,
@@ -274,7 +288,7 @@ describe("ctx.ui.invalidate", () => {
     await ctx.close();
   });
 
-  it("verifyEmbedToken：返回当前角色；被降为 guest 后组织页面的令牌失效，对话位置的照常", async () => {
+  it("an org.page token verifies null after demotion to guest", async () => {
     const ctx = createExtensionContext(deps, mf(), {});
     const c = await seed("admin");
     const page = issue(c);
@@ -285,6 +299,27 @@ describe("ctx.ui.invalidate", () => {
     );
     expect(await ctx.ui.verifyEmbedToken(page)).toBeNull();
     expect(await ctx.ui.verifyEmbedToken(conv)).toMatchObject({ role: "guest" });
+    await ctx.close();
+  });
+
+  it("an org.settings.section token verifies null after demotion to member", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
+    const c = await seed("admin");
+    const settings = issue(c, { contribution: "settings" });
+    expect(await ctx.ui.verifyEmbedToken(settings)).toMatchObject({ role: "admin" });
+    await sql`UPDATE capybara.memberships SET role = 'member' WHERE org_id = ${c.orgId}`.execute(
+      deps.db,
+    );
+    expect(await ctx.ui.verifyEmbedToken(settings)).toBeNull();
+    // the org.page token of the same member still verifies
+    expect(await ctx.ui.verifyEmbedToken(issue(c))).toMatchObject({ role: "member" });
+    await ctx.close();
+  });
+
+  it("an org token naming a platform.page contribution verifies null, even for the owner", async () => {
+    const ctx = createExtensionContext(deps, mf(), {});
+    const c = await seed("owner");
+    expect(await ctx.ui.verifyEmbedToken(issue(c, { contribution: "platform" }))).toBeNull();
     await ctx.close();
   });
 });

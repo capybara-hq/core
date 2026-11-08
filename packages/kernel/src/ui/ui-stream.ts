@@ -13,7 +13,7 @@ import {
   type StreamBus,
   type StreamHandle,
 } from "../runtime/stream.js";
-import { isUiBusMessage, orgUiTopic, PAGE_MIN_ROLE, uiFrame } from "./registry.js";
+import { isUiBusMessage, orgUiTopic, uiFrame } from "./registry.js";
 
 interface OrgUiStreamsDeps {
   bus: StreamBus;
@@ -53,12 +53,18 @@ export class UiStreamMembership {
   }
 }
 
+/**
+ * The org refresh stream is member and above (UI slots spec §7): it carries `org.page` and
+ * `org.settings.section` refreshes; an `agent.detail.section` a guest views refreshes on navigation.
+ */
+export const ORG_STREAM_MIN_ROLE: OrgRole = "member";
+
 async function authorize(d: OrgUiStreamsDeps, p: OrgUiStreamParams): Promise<ErrorCode | null> {
   const denied = await p.credential();
   if (denied !== null) return denied;
   const role = await d.memberRole(p.orgId, p.viewerAccountId);
   if (role === undefined) return "org.not_found";
-  return roleAtLeast(role, PAGE_MIN_ROLE) ? null : "ui.not_found";
+  return roleAtLeast(role, ORG_STREAM_MIN_ROLE) ? null : "ui.not_found";
 }
 
 /** 慢客户端的积压上限（刷新帧很小，超过即说明客户端不读了）。 */

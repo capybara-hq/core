@@ -1,7 +1,7 @@
-import { UI_LIMITS, type UiActionResult, type UiView } from "@capybara-hq/plugin-sdk";
+import type { UiActionResult, UiView } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, HttpCode, Inject, Post, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
+import type { z } from "zod";
 import { ApiTokenService } from "../identity/api-tokens.js";
 import { credentialCheck } from "../identity/credential-check.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
@@ -10,72 +10,23 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { EMBED_TOKEN_TTL_SECONDS, EmbedTokens } from "./embed-token.js";
+import {
+  ActionBody,
+  ContributionParams,
+  ContributionsQuery,
+  EmbedTokenBody,
+  ViewQuery,
+} from "./ui.schemas.js";
 import { OrgUiStreams } from "./ui-stream.js";
 import { type UiContributionItem, UiViews } from "./views.js";
 
 const BEARER_RE = /^Bearer\s+(\S+)$/i;
 
-const Locale = z.enum(["zh", "en"]).default("en");
-const Id = z.string().min(1).max(100);
-/** The contribution named in a view / action / embed path (`:plugin/:id`). */
-const ContributionParams = z.object({ plugin: Id, id: Id });
-
-const ViewQuery = z
-  .object({
-    conversationId: z.string().min(1).max(100).optional(),
-    locale: Locale,
-    /** A panel opened from an open target: the item to scroll to. */
-    item: z.string().min(1).max(200).optional(),
-    /** An inline card: the tool call it hangs off, and its `ToolResult.card.key`. */
-    callId: z.string().min(1).max(200).optional(),
-    key: z.string().min(1).max(200).optional(),
-  })
-  .refine((q) => q.key === undefined || q.callId !== undefined, {
-    message: "key needs callId",
-  });
-
-/**
- * 表单答案（plugin-sdk 的 `FormAnswer`）。SDK 的 InputForm 没有单独的字段数 / 选项数上限，
- * 这里沿用视图的上限：键数与多选数组长度 ≤ `UI_LIMITS.tableRows`，单个文本 ≤ `UI_LIMITS.textChars`。
- */
-const AnswerText = z.string().max(UI_LIMITS.textChars);
-const FormAnswerSchema = z
-  .record(
-    z.string().max(100),
-    z.union([AnswerText, z.number(), z.boolean(), z.array(AnswerText).max(UI_LIMITS.tableRows)]),
-  )
-  .refine((a) => Object.keys(a).length <= UI_LIMITS.tableRows, {
-    message: `answer must have at most ${UI_LIMITS.tableRows} fields`,
-  });
-
-/** 按钮 payload 的 JSON 序列化后 UTF-8 字节数（与 `validateUiView` 对按钮 payload 的上限一致）。 */
-const payloadBytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v) ?? "", "utf8");
-
-const ActionBody = z.object({
-  actionId: z.string().min(1).max(200),
-  payload: z
-    .unknown()
-    .optional()
-    .refine((v) => v === undefined || payloadBytes(v) <= UI_LIMITS.payloadBytes, {
-      message: `payload must be at most ${UI_LIMITS.payloadBytes} bytes as JSON`,
-    }),
-  answer: FormAnswerSchema.optional(),
-  conversationId: z.string().min(1).max(100).optional(),
-  locale: Locale,
-});
-
-const EmbedTokenBody = z
-  .object({
-    conversationId: z.string().min(1).max(100).optional(),
-    /** Only a `file-preview` embed: the file version it previews. */
-    fileId: z.uuid().optional(),
-  })
-  .default({});
-
 /** 嵌入页的同源代理前缀（网页 `/plugin-ui/<plugin>/<rest>` → 内核 `/plugins/<plugin>/ui/<rest>`）。 */
 const embedSrc = (plugin: string, path: string) =>
   `/plugin-ui/${plugin}/${path.replace(/^\/ui\//, "")}`;
 
+class UiContributionsQueryDto extends createZodDto(ContributionsQuery, "UiContributionsQuery") {}
 class UiContributionParamsDto extends createZodDto(ContributionParams, "UiContributionParams") {}
 class UiViewQueryDto extends createZodDto(ViewQuery, "UiViewQuery") {}
 class UiActionBodyDto extends createZodDto(ActionBody, "UiActionBody") {}
@@ -83,23 +34,28 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
 
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
- * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, kind, path?, icon }[] }`
- *   (place: what the contribution's resolved slot stands for; aliases, file.preview embeds and
- *   slots without a place are not listed)
- *   （`path` 仅 embed）；
- * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&locale=&item=&callId=&key=` → `{ view }`
- *   （`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；
- * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`（`{ actionId, payload?, answer?, conversationId?, locale? }`）
- *   → `{ toast }` | `{ view }`；
- * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`）；
- * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId? }`）
+ * - `GET  /api/v1/orgs/:orgId/ui/contributions?slot=` →
+ *   `{ items: { plugin, id, title, slot, after?, kind, path?, icon }[] }`: every org-reachable slot
+ *   (all but `platform.page`) or one slot; `after` is the resolved anchor of a slot with anchors,
+ *   `path` only for an embed; aliases and `file.preview` contributions are not listed; ordered by
+ *   extension name, then manifest order;
+ * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&agentId=&locale=&item=&callId=&key=`
+ *   → `{ view }`（`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；
+ * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`
+ *   （`{ actionId, payload?, answer?, conversationId?, agentId?, locale? }`）→ `{ toast }` | `{ view }`；
+ * - `GET  /api/v1/orgs/:orgId/ui/stream`：组织级刷新 SSE（`event: ui`，`data: {"plugin","contribution"}`），
+ *   member and above；
+ * - `POST /api/v1/orgs/:orgId/ui/embeds/:plugin/:id/token`（`{ conversationId?, agentId?, fileId? }`）
  *   → `{ token, src: "/plugin-ui/<plugin>/<path 去掉 /ui/>", expiresAt, expiresIn }`：嵌入令牌
- *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`）。
- *   插件须在组织启用、贡献须是 embed；对话嵌入要求能访问该对话（否则 404）。令牌只给插件路由用，
- *   内核鉴权守卫不认它（它不是 API 令牌）。
+ *   （300 秒，`expiresIn` 为秒数，见 `embed-token.ts`；`agentId` goes into the claims）。
+ *   令牌只给插件路由用，内核鉴权守卫不认它（它不是 API 令牌）。
  * 对话视图的刷新走现有的会话流 `/conversations/:id/stream`。
- * 角色（A38）：组织页面（`place: "page"`，含组织级刷新流）只给 member 以上，guest 一律 404 `ui.not_found`、
- * 列表里也不出现；对话位置的贡献给能访问该对话的任何成员。插件收到的 `role` 来自 OrgGuard 查出的成员关系。
+ * Access (UI slots spec §7): every route checks the slot of the contribution it names, its
+ * `minRole` (guest for conversation and agent slots, member for `org.page`, admin for
+ * `org.settings.section`; `platform.page` never through these routes), then its scope rule
+ * (conversation: whoever can read it; agent: whoever can read the agent, in this org; org: the
+ * role alone; file: the previewer's read grant). Anything refused is 404 `ui.not_found`, the same
+ * as a contribution that does not exist. 插件收到的 `role` 来自 OrgGuard 查出的成员关系。
  */
 @Controller("api/v1/orgs/:orgId/ui")
 export class UiController {
@@ -116,9 +72,10 @@ export class UiController {
   async contributions(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
+    @ZQuery(UiContributionsQueryDto) q: z.infer<typeof ContributionsQuery>,
   ): Promise<{ items: UiContributionItem[] }> {
     requireUser(principal);
-    return { items: await this.views.contributions(org.orgId, org.role) };
+    return { items: await this.views.contributions(org.orgId, org.role, q.slot) };
   }
 
   @Get("views/:plugin/:id")
@@ -137,6 +94,7 @@ export class UiController {
       plugin,
       id,
       ...(q.conversationId !== undefined && { conversationId: q.conversationId }),
+      ...(q.agentId !== undefined && { agentId: q.agentId }),
       locale: q.locale,
       ...(q.item !== undefined && { item: q.item }),
       ...(q.callId !== undefined && {
@@ -164,6 +122,7 @@ export class UiController {
         plugin,
         id,
         ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
+        ...(body.agentId !== undefined && { agentId: body.agentId }),
         locale: body.locale,
       },
       {
@@ -191,6 +150,7 @@ export class UiController {
       plugin,
       id,
       ...(body.conversationId !== undefined && { conversationId: body.conversationId }),
+      ...(body.agentId !== undefined && { agentId: body.agentId }),
       ...(body.fileId !== undefined && { fileId: body.fileId }),
     });
     const { token, expiresAt } = this.embeds.issue({
@@ -199,6 +159,7 @@ export class UiController {
       accountId: p.account.id,
       role: org.role,
       ...(target.conversationId !== undefined && { conversationId: target.conversationId }),
+      ...(target.agentId !== undefined && { agentId: target.agentId }),
       ...(target.fileId !== undefined && { fileId: target.fileId }),
       contribution: target.contribution,
     });

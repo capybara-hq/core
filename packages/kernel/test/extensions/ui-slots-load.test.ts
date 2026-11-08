@@ -191,6 +191,8 @@ describe("UI slots at load", () => {
       ["platform-home", "platform.page"],
       ["page", "org.page"],
       ["platform-embed", "platform.page"],
+      ["page-embed", "org.page"],
+      ["notes-embed", "agent.detail.section"],
     ]);
     expect(host.uiDropped("ui-slots")).toEqual([
       { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
@@ -253,7 +255,7 @@ describe("UI slots at load", () => {
     });
   });
 
-  it("slots without a place are neither listed nor served through the org routes yet", async () => {
+  it("dropped contributions are neither listed nor served; platform.page not through an org", async () => {
     const { orgId } = await conversation();
     const ui = `/api/v1/orgs/${orgId}/ui`;
     const list = await admin({ method: "GET", url: `${ui}/contributions` });
@@ -262,8 +264,8 @@ describe("UI slots at load", () => {
       (list.json() as { items: { plugin: string; id: string }[] }).items
         .filter((i) => i.plugin === "ui-slots")
         .map((i) => i.id),
-    ).toEqual(["page"]);
-    for (const id of ["notes", "org-admin", "platform-home", "lost", "old-page"]) {
+    ).toEqual(["notes", "org-admin", "page", "page-embed", "notes-embed"]);
+    for (const id of ["platform-home", "lost", "old-page"]) {
       const r = await admin({ method: "GET", url: `${ui}/views/ui-slots/${id}` });
       expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
     }

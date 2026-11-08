@@ -1,49 +1,23 @@
-import {
-  type ExtensionManifest,
-  PLACE_SLOTS,
-  parseSlotRef,
-  slotRefOf,
-  type UiActionArgs,
-  type UiActionResult,
-  type UiContribution,
-  type UiPlace,
-  type UiRenderArgs,
-  type UiSlotSpec,
-  type UiView,
+import type {
+  ExtensionManifest,
+  UiActionArgs,
+  UiActionResult,
+  UiRenderArgs,
+  UiSlotSpec,
+  UiView,
 } from "@capybara-hq/plugin-sdk";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 
 /** 会话 id 的格式（UUID）。 */
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
-export const PAGE_MIN_ROLE: OrgRole = "member";
-
-/** Slots on the conversation page (conversation and file scope): they need a `conversationId`. */
-export const isConversationSlot = (slot: UiSlotSpec): boolean =>
-  slot.scope === "conversation" || slot.scope === "file";
-
 /**
- * Whether the role may use a contribution in this slot, until the slot rules land (UI slots plan
- * Task 5): conversation-page slots for any member, `org.page` for member and above, and no other
- * slot (agent, org settings, platform) is served through the org routes yet.
+ * Whether an org role may use contributions in this slot (UI slots spec §7): never a `superAdmin`
+ * slot (`platform.page` is served only by the org-less platform routes), else the slot's
+ * `minRole`. The slot's scope rule (conversation, agent, file) is checked after this.
  */
-export const canUseLoadedSlot = (slot: UiSlotSpec, role: OrgRole): boolean =>
-  isConversationSlot(slot) || (slot.id === "org.page" && roleAtLeast(role, PAGE_MIN_ROLE));
-
-/** The slot of each place, inverted (`conversation.panel` → `panel`, never the old `conversation`). */
-const SLOT_PLACES: ReadonlyMap<string, Exclude<UiPlace, "conversation">> = new Map(
-  (Object.entries(PLACE_SLOTS) as [UiPlace, string][])
-    .filter((e): e is [Exclude<UiPlace, "conversation">, string] => e[0] !== "conversation")
-    .map(([place, slot]) => [slot, place]),
-);
-
-/**
- * Compile shim of the UI slots migration (removed when the host resolves slots): the place a
- * contribution's slot (or deprecated `place`) stands for; `page` for any slot without a place.
- */
-export function placeOf(c: UiContribution): Exclude<UiPlace, "conversation"> {
-  return SLOT_PLACES.get(parseSlotRef(slotRefOf(c))?.id ?? "") ?? "page";
+export function canUseSlot(slot: UiSlotSpec, role: OrgRole): boolean {
+  return slot.minRole !== "superAdmin" && roleAtLeast(role, slot.minRole);
 }
 
 /** 插件视图的 render 函数（`ctx.ui.view` 注册）。 */

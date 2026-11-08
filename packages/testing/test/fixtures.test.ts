@@ -735,6 +735,8 @@ describe("loaded by path in a kernel", () => {
           orgId,
           accountId: randomUUID(),
           role: "member",
+          slot: "conversation.panel",
+          scope: "conversation",
           conversationId: "c1",
           locale: "en",
           signal: new AbortController().signal,

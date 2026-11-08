@@ -44,7 +44,7 @@ import type { HookRunner } from "../runtime/hook-calls.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
 import {
-  canUseLoadedSlot,
+  canUseSlot,
   orgUiTopic,
   PluginUiRegistration,
   type UiActionHandler,
@@ -676,14 +676,17 @@ export function createExtensionContext(
       },
       // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；再用一条查询核对此刻：本插件仍在该组织
       // 启用、组织未删除、账号 active 且仍是成员（每次查 PG、不缓存：停用插件、离职、停用账号后已签出的令牌立即失效）。
-      // 返回的 role 是此刻的角色；组织页面的令牌在调用者已降为 guest 时失效（A38）。其余一律 null
+      // 返回的 role 是此刻的角色；令牌在此刻的角色低于贡献所在位置的 minRole 时失效（A38, UI slots spec §7）。其余一律 null
       async verifyEmbedToken(token) {
         const claims = embedTokens.verify(token, name);
         if (claims === null) return null;
         const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
         if (role === undefined) return null;
+        // the contribution's slot as loaded now: never `platform.page` through an org token, and the
+        // current role still meets the slot's minRole (a demoted caller's token stops working)
         const slot = uiSlots.get(claims.contribution);
-        if (slot === undefined || !canUseLoadedSlot(slot, role)) return null;
+        if (slot === undefined || slot.id === "platform.page" || !canUseSlot(slot, role))
+          return null;
         return { ...claims, role };
       },
     },

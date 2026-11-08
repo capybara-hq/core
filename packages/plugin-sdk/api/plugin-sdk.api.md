@@ -881,6 +881,7 @@ export type EmbedChildMessage =
 // @public
 export interface EmbedClaims {
     accountId: string;
+    agentId?: string;
     contribution: string;
     conversationId?: string;
     exp: number;
@@ -3173,6 +3174,7 @@ export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" |
 // @public
 export interface UiRenderArgs {
     accountId: string;
+    agentId?: string;
     card?: {
         callId: string;
         key?: string;
@@ -3183,7 +3185,9 @@ export interface UiRenderArgs {
     locale: Locale;
     orgId: string;
     role: UiRole;
+    scope: UiSlotScope;
     signal: AbortSignal;
+    slot: UiSlotId;
 }
 
 // @public

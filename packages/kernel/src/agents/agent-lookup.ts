@@ -112,6 +112,27 @@ export async function isAgentVisibleTo(
 }
 
 /**
+ * {@link isAgentVisibleTo} for an agent of `orgId` only: an agent the account can read in another
+ * org is not visible here (UI slots spec R6, the `agent.detail.section` scope rule).
+ */
+export async function isAgentVisibleIn(
+  db: KernelSchemaDb,
+  orgId: string,
+  agentId: string,
+  accountId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("agents")
+    .select("id")
+    .where("id", "=", agentId)
+    .where("org_id", "=", orgId)
+    .where("deleted_at", "is", null)
+    .where(visibleTo(accountId))
+    .executeTakeFirst();
+  return row !== undefined;
+}
+
+/**
  * Reads agents for a viewer (the visibility rule {@link visibleTo}): the part of `AgentsService`
  * the conversations, the skill invoker and the attachments read, with no dependency on the
  * services that write agents (it breaks the agents ↔ skills module cycle, spec §3 (a)). Reads go

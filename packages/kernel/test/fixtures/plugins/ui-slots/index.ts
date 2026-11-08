@@ -11,11 +11,11 @@ const named =
 
 /**
  * UI slots fixture (UI slots spec): one view in each slot without a deprecated place
- * (`agent.detail.section`, `org.settings.section`, `platform.page`) plus an `org.page` view, a
- * `platform.page` embed whose data route answers the verified embed claims (401 without), a view
+ * (`agent.detail.section`, `org.settings.section`, `platform.page`) plus an `org.page` view, each
+ * with an action answering a toast; embeds in `platform.page`, `org.page` and
+ * `agent.detail.section`, whose data route answers the verified embed claims (401 without); a view
  * `lost` in a slot the catalog does not know and a view `old-page` at `org.page@2` (both dropped at
- * load, the extension still loads) and a
- * tool `ping`.
+ * load, the extension still loads) and a tool `ping`.
  */
 export default defineExtension({
   name: "ui-slots",
@@ -44,6 +44,20 @@ export default defineExtension({
       kind: "embed",
       path: "/ui/platform",
     },
+    {
+      id: "page-embed",
+      title: t("页面嵌入", "Page embed"),
+      slot: "org.page",
+      kind: "embed",
+      path: "/ui/platform",
+    },
+    {
+      id: "notes-embed",
+      title: t("笔记嵌入", "Notes embed"),
+      slot: "agent.detail.section",
+      kind: "embed",
+      path: "/ui/platform",
+    },
     { id: "lost", title: t("丢失", "Lost"), slot: "nowhere.at-all", kind: "view" },
     // a known slot at a version the catalog does not have: dropped as unsupported-version
     { id: "old-page", title: t("旧页面", "Old page"), slot: "org.page@2", kind: "view" },
@@ -55,7 +69,7 @@ export default defineExtension({
     ],
     ui: {
       views: ["notes", "org-admin", "platform-home", "page", "lost", "old-page"],
-      embeds: ["platform-embed"],
+      embeds: ["platform-embed", "page-embed", "notes-embed"],
     },
     tools: ["ping"],
   },
@@ -71,6 +85,7 @@ export default defineExtension({
     );
     for (const id of ["notes", "org-admin", "platform-home", "page", "lost", "old-page"]) {
       ctx.ui.view(id, named(id));
+      ctx.ui.action(id, async () => ({ toast: t("好", "OK") }));
     }
     ctx.http.route("GET", "/ui/platform", async () => new Response("platform"));
     ctx.http.route("GET", "/ui/platform-data", async (req) => {

@@ -164,10 +164,7 @@ export default defineExtension({
     ];
     const done = async () => ({ toast: { zh: "已完成", en: "Done" } });
     ctx.ui.view("agent-notes", async (args) => ({
-      blocks: [
-        { type: "heading", text: `Agent ${(args as { agentId?: string }).agentId ?? ""}`.trim() },
-        ...ping,
-      ],
+      blocks: [{ type: "heading", text: `Agent ${args.agentId ?? ""}`.trim() }, ...ping],
     }));
     ctx.ui.action("agent-notes", done);
     ctx.ui.view("org-admin", async () => ({

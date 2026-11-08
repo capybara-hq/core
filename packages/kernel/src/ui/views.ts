@@ -6,13 +6,14 @@ import {
   type UiContribution,
   type UiIcon,
   type UiOpen,
-  type UiPlace,
   type UiSlotId,
+  type UiSlotScope,
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { isAgentVisibleIn } from "../agents/agent-lookup.js";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -23,7 +24,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { callExtension } from "./call-extension.js";
-import { canUseLoadedSlot, isConversationSlot, UUID_RE } from "./registry.js";
+import { canUseSlot, UUID_RE } from "./registry.js";
 
 export { callExtension } from "./call-extension.js";
 
@@ -35,25 +36,16 @@ export interface UiContributionItem {
   plugin: string;
   id: string;
   title: UiContribution["title"];
-  /** The place the contribution's slot stands for (until the listing names slots). */
-  place: Exclude<UiPlace, "conversation" | "file-preview">;
+  /** The catalog slot the contribution resolved to. */
+  slot: UiSlotId;
+  /** For a slot with anchors: the anchor it goes after (resolved: the slot's first by default). */
+  after?: string;
   kind: UiContribution["kind"];
   /** 仅 embed：插件路由下 `/ui/` 开头的路径（网页经 `/plugin-ui/<plugin>/...` 代理访问）。 */
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
 }
-
-/**
- * The place each listed slot is shown as, until the listing names slots (UI slots plan Task 5).
- * Contributions to the other slots are not listed.
- */
-const LISTED_PLACE: Partial<Record<UiSlotId, UiContributionItem["place"]>> = {
-  "conversation.panel": "panel",
-  "conversation.properties.section": "section",
-  "conversation.tool-result.card": "inline",
-  "org.page": "page",
-};
 
 /** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
 export interface UiEmbedTarget {
@@ -62,6 +54,8 @@ export interface UiEmbedTarget {
   /** 清单里的 `path`（`/ui/` 开头）。 */
   path: string;
   conversationId?: string;
+  /** Only an agent embed: the agent the token is for. */
+  agentId?: string;
   /** Only a `file.preview` embed: the one file the token is for. */
   fileId?: string;
 }
@@ -78,6 +72,8 @@ interface UiViewsDeps {
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
   canAccessConversation(orgId: string, conversationId: string, accountId: string): Promise<boolean>;
+  /** Whether the caller can read the agent and it belongs to `orgId` ({@link isAgentVisibleIn}). */
+  canReadAgent(orgId: string, agentId: string, accountId: string): Promise<boolean>;
   /**
    * Throws unless the caller may write to the conversation: a sub-agent's is read-only (409
    * `conversation.read_only`, sub-agents spec §6.1). Checked before an action (final review m3).
@@ -115,6 +111,8 @@ export interface UiTarget {
   plugin: string;
   id: string;
   conversationId?: string;
+  /** Only an agent view or embed (`agent.detail.section`). */
+  agentId?: string;
   locale: "zh" | "en";
   /** A panel opened from an open target: the item to scroll to. */
   item?: string;
@@ -196,9 +194,11 @@ function actionResultProblems(r: unknown): string[] {
 /**
  * 插件视图（第一档：渲染 schema）：列出贡献、调用插件 `render` / `action`。
  * - 只认在该组织已启用、且已在本副本加载的插件（启用状态每次查库）；
- * - 对话视图要求调用者能访问这个对话（与 SSE 流一致），访问不了与不存在一样返回 404 `ui.not_found`；
- * - 组织页面（`slot: "org.page"`，视图与嵌入）只给 member 以上：guest 列表里看不到、取视图 / 动作 / 令牌一律 404；
- * - 组织页面视图不接受 `conversationId`（带了 400，与对话视图缺它一致）；
+ * - every request goes through one gate (`resolve`): the slot's `minRole` (never `platform.page`),
+ *   then its scope rule (conversation: readable, like the SSE stream; agent: readable and in this
+ *   org; org: the role alone); refused is 404 `ui.not_found`, the same as not existing;
+ * - a view takes only the context id of its scope (`conversationId` / `agentId`): a missing one or
+ *   one of another scope is 400 `validation_failed`;
  * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
  *   超时 504 `ui.timeout`、返回非法视图 502
  *   `ui.invalid_view`，都记告警日志、不写对话日志（这些不是模型可见的内容）。
@@ -223,6 +223,8 @@ export class UiViews {
       enabledPlugins: (orgId) => host.enabledPlugins(orgId),
       canAccessConversation: (orgId, id, accountId) =>
         conversations.isAccessible(orgId, id, accountId),
+      canReadAgent: (orgId, agentId, accountId) =>
+        isAgentVisibleIn(db.db, orgId, agentId, accountId),
       checkWritable: async (orgId, id, accountId) => {
         await conversations.writable(orgId, id, accountId);
       },
@@ -232,8 +234,17 @@ export class UiViews {
     };
   }
 
-  /** 该组织、该角色可见的界面贡献：插件已启用且已加载；kind view 的要求插件注册了 render；组织页面要 member 以上。 */
-  async contributions(orgId: string, role: OrgRole): Promise<UiContributionItem[]> {
+  /**
+   * The contributions the role may use in the org, of one slot or of every org-reachable slot:
+   * the extension enabled and loaded, a view's render registered, the slot's `minRole`
+   * ({@link canUseSlot}, so never `platform.page`); no alias, no `file.preview` contribution (the
+   * file previewers list those). Base order (spec §5): extension name, then manifest order.
+   */
+  async contributions(
+    orgId: string,
+    role: OrgRole,
+    slot?: UiSlotId,
+  ): Promise<UiContributionItem[]> {
     const all = this.d.host.uiContributions();
     if (all.length === 0) return [];
     const enabled = await this.d.enabledPlugins(orgId);
@@ -242,15 +253,19 @@ export class UiViews {
         (c) =>
           enabled.has(c.plugin) &&
           c.contribution.aliasOf === undefined &&
-          LISTED_PLACE[c.slot.id] !== undefined &&
+          c.slot.id !== "file.preview" &&
+          (slot === undefined || c.slot.id === slot) &&
           (c.contribution.kind === "embed" || c.render) &&
-          canUseLoadedSlot(c.slot, role),
+          canUseSlot(c.slot, role),
       )
-      .map(({ plugin, contribution: c, slot }) => ({
+      .map((c, i) => ({ c, i }))
+      .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
+      .map(({ c: { plugin, contribution: c, slot: s, after } }) => ({
         plugin,
         id: c.id,
         title: c.title,
-        place: LISTED_PLACE[slot.id] as UiContributionItem["place"],
+        slot: s.id,
+        ...(after !== undefined && { after }),
         kind: c.kind,
         ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
         icon: c.icon ?? "puzzle",
@@ -293,6 +308,7 @@ export class UiViews {
       contribution: t.id,
       path,
       ...(args.conversationId !== undefined && { conversationId: args.conversationId }),
+      ...(args.agentId !== undefined && { agentId: args.agentId }),
       ...(fileId !== undefined && { fileId }),
     };
   }
@@ -338,7 +354,15 @@ export class UiViews {
     );
   }
 
-  /** 找贡献、核对组织启用与对话访问；返回传给插件的参数（不含 signal）。 */
+  /**
+   * The single access gate of the org UI routes (UI slots spec §7): finds the contribution (a
+   * retired alias answers with the one it names), then checks, in order, that its slot is reachable
+   * from an org (not `platform`), the role meets the slot's `minRole`, the extension is enabled in
+   * the org, its effective config is valid, and the slot's scope rule (conversation: readable;
+   * agent: readable and in this org; org: the role alone; file: a conversation the caller reads,
+   * the previewer's grant is checked by `embed`). Returns the args passed to the extension (no
+   * signal). Anything refused for a contribution that exists is 404 `ui.not_found`.
+   */
   private async resolve(
     t: UiTarget,
     need: "render" | "action" | "embed",
@@ -348,9 +372,12 @@ export class UiViews {
       orgId: string;
       accountId: string;
       role: OrgRole;
+      slot: UiSlotId;
+      scope: UiSlotScope;
       locale: UiTarget["locale"];
       config: unknown;
       conversationId?: string;
+      agentId?: string;
       item?: string;
       card?: { callId: string; key?: string };
     };
@@ -369,28 +396,54 @@ export class UiViews {
           ? c.contribution.kind === "embed"
           : c.contribution.kind === "view" && c[need] !== undefined),
     );
-    if (!entry || !canUseLoadedSlot(entry.slot, t.role)) throw notFound();
+    if (!entry || entry.slot.scope === "platform" || !canUseSlot(entry.slot, t.role)) {
+      throw notFound();
+    }
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     // spec A §6: the extension is not called for an org whose effective config is not valid
     const effective = await this.d.effective.get(t.orgId, t.plugin);
     if (!effective.ok) {
       throw new ApiError("extension.needs_config", `Extension ${t.plugin} ${NEEDS_CONFIG_REASON}`);
     }
+    const scope = entry.slot.scope;
     const base = {
       orgId: t.orgId,
       accountId: t.accountId,
       role: t.role,
+      slot: entry.slot.id,
+      scope,
       locale: t.locale,
       config: effective.config,
     };
-    if (!isConversationSlot(entry.slot)) {
-      if (t.item !== undefined || t.card !== undefined) {
-        throw new ApiError("validation_failed", "item and callId are for conversation views");
-      }
+    const what = need === "embed" ? "embed" : "view";
+    const conversational = scope === "conversation" || scope === "file";
+    if (!conversational && (t.item !== undefined || t.card !== undefined)) {
+      throw new ApiError("validation_failed", "item and callId are for conversation views");
+    }
+    if (scope !== "agent" && t.agentId !== undefined) {
+      throw new ApiError("validation_failed", `agentId is only allowed for an agent ${what}`);
+    }
+    if (scope === "agent") {
       if (t.conversationId !== undefined) {
         throw new ApiError(
           "validation_failed",
-          `conversationId is not allowed for an organization page ${need === "embed" ? "embed" : "view"}`,
+          `conversationId is not allowed for an agent ${what}`,
+        );
+      }
+      const agentId = t.agentId;
+      if (agentId === undefined) {
+        throw new ApiError("validation_failed", `agentId is required for an agent ${what}`);
+      }
+      if (!UUID_RE.test(agentId) || !(await this.d.canReadAgent(t.orgId, agentId, t.accountId))) {
+        throw notFound();
+      }
+      return { entry, args: { ...base, agentId } };
+    }
+    if (!conversational) {
+      if (t.conversationId !== undefined) {
+        throw new ApiError(
+          "validation_failed",
+          `conversationId is not allowed for an organization page ${what}`,
         );
       }
       return { entry, args: base };
@@ -399,7 +452,7 @@ export class UiViews {
     if (conversationId === undefined) {
       throw new ApiError(
         "validation_failed",
-        `conversationId is required for a conversation ${need === "embed" ? "embed" : "view"}`,
+        `conversationId is required for a conversation ${what}`,
       );
     }
     if (

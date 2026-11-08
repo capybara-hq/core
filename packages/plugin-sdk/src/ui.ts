@@ -1,5 +1,6 @@
 import type { Locale } from "./cards.js";
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
+import type { UiSlotId, UiSlotScope } from "./ui-slots.js";
 import { isHttpUrl } from "./url.js";
 
 /**
@@ -382,9 +383,11 @@ export function validateUiView(v: unknown): string[] {
 
 /**
  * The caller's role in the org (owner / admin / member / guest, highest first). A slot's `minRole`
- * decides who may use its contributions: an `org.page` contribution only member and up (the kernel
- * answers a guest 404, so the extension never sees a guest's org page request); conversation slots
- * any role that can access the conversation.
+ * decides who may use its contributions, then its scope's rule (the kernel answers 404 to anyone
+ * else, so the extension never sees such a request): `org.page` member and up,
+ * `org.settings.section` admin and up; conversation slots any role that can read the
+ * conversation; `agent.detail.section` any role that can read the agent (read-only viewers
+ * included: tighten on `role` if you must).
  */
 export type UiRole = "owner" | "admin" | "member" | "guest";
 
@@ -394,8 +397,14 @@ export interface UiRenderArgs {
   accountId: string;
   /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
   role: UiRole;
+  /** The catalog slot the contribution resolved to. */
+  slot: UiSlotId;
+  /** The scope of {@link slot}: which of the context ids below are set. */
+  scope: UiSlotScope;
   /** 仅对话视图。 */
   conversationId?: string;
+  /** Only an agent view (`agent.detail.section`): an agent of `orgId` the caller can read. */
+  agentId?: string;
   locale: Locale;
   signal: AbortSignal;
   /** A panel opened from an open target: the block or item `id` to scroll to. */
@@ -434,6 +443,8 @@ export interface EmbedClaims {
   /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
   role: UiRole;
   conversationId?: string;
+  /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
+  agentId?: string;
   /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
   fileId?: string;
   contribution: string;

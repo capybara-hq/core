@@ -30,6 +30,13 @@ const tokens = (now: number, ring = createKeyring(K1, [])) => {
 
 const b64 = (s: string | Buffer) => Buffer.from(s).toString("base64url");
 
+/** Signs arbitrary claims with the K1-derived key (a token the kernel could not have issued). */
+const signK1 = (claims: unknown): string => {
+  const p = b64(JSON.stringify(claims));
+  const key = createKeyring(K1, []).deriveKey("capybara-embed/1").current;
+  return `${p}.${b64(createHmac("sha256", key).update(`capybara-embed/1.${p}`).digest())}`;
+};
+
 describe("EmbedTokens", () => {
   it("签发：有效期 300 秒，校验返回声明（只含已知字段）", () => {
     const t = tokens(T0);
@@ -48,6 +55,26 @@ describe("EmbedTokens", () => {
     const conv = "33333333-3333-4333-8333-333333333333";
     const { token } = t.issue({ ...CLAIMS, contribution: "board-conv", conversationId: conv });
     expect(t.verify(token, "example-board")).toMatchObject({ conversationId: conv });
+  });
+
+  it("agentId round-trips in the claims", () => {
+    const t = tokens(T0);
+    const agentId = "44444444-4444-4444-8444-444444444444";
+    const { token } = t.issue({ ...CLAIMS, contribution: "notes", agentId });
+    expect(t.verify(token, "example-board")).toEqual({
+      ...CLAIMS,
+      contribution: "notes",
+      agentId,
+      exp: (T0 + 300_000) / 1000,
+    });
+    // an agent token names no conversation; a non-string agentId is refused
+    const exp = (T0 + 300_000) / 1000;
+    const conv = "33333333-3333-4333-8333-333333333333";
+    expect(
+      t.verify(signK1({ ...CLAIMS, exp, agentId, conversationId: conv }), CLAIMS.plugin),
+    ).toBeNull();
+    expect(t.verify(signK1({ ...CLAIMS, exp, agentId: 1 }), CLAIMS.plugin)).toBeNull();
+    expect(() => t.issue({ ...CLAIMS, agentId, conversationId: conv })).toThrow(/invalid/);
   });
 
   it("给别的插件用 → null", () => {
