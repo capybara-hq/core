@@ -15,7 +15,7 @@
 - **No behaviour change.** Every renamed path keeps its tests. A test changes only in names and strings, never in what it asserts.
 - **Vocabulary per spec §15.1:**
   - device 设备; cloud device 云端设备; local device 本地设备; 个人设备 / "Personal".
-  - zh UI never says 环境. 环境变量 ("environment variable") is the only exception.
+  - zh UI says 设备 for this concept. 环境 stays allowed for unrelated meanings (e.g. 环境变量); no automated check (maintainer's call).
 - **Names per spec §15.2, verbatim:**
   - Tables: `devices`, `device_instances`, `device_defaults`, `device_machines`.
   - Columns: `device_id`.
@@ -26,14 +26,15 @@
   - Config: `devices.maxPersonal` and `devices.local.*`.
   - Platform ops: `devices.*`.
   - HTTP: `orgs/:orgId/devices…`.
-  - Web: `/devices`, `/devices/[id]`. `/device` stays.
-  - IM: `/device`.
+  - Web: `/devices`, `/devices/[id]`; the sign-in confirmation `/device` → `/devices/link` (also the kernel's `verificationUri`).
+  - IM (every channel): `/device`.
+  - Sandbox resource names: `cap-env-<id>` → `cap-device-<id>` (old cloud files orphaned by decision).
 - **Kept, never renamed:**
-  - the sandbox resource prefix `cap-env-<id>`;
   - `sandbox@2` and the SDK device protocol;
   - the routes `api/v1/device/*` and `GET /device/connect`;
   - the package and binary name `capybara-device`;
-  - applied migrations 0088/0093/0094 (immutable), CHANGELOG files, and spec §1-§14 (history).
+  - applied migrations 0088/0093/0094 (immutable), CHANGELOG files, and spec §1-§14 (history);
+  - "environment variable" (环境变量) wherever it means that.
 - **Migration** `0095_devices_rename.sql` uses `ALTER TABLE … RENAME` and `ALTER INDEX … RENAME`, with `IF EXISTS` where Postgres supports it, plus `UPDATE`s for `source`, `provider` and the event type. Destructive statements carry the exemption comment the writing-migrations skill requires.
 - **Replay:** run the zero-drift tests (`reconstruct.test.ts`, `rename-compat.test.ts`) before and after Task 3. The event rename is a log data change, not a new model input, so no `DriftReason`.
 - **Repository rules:**
@@ -45,11 +46,11 @@
 
 ## Review Focus
 
-1. **A deployment upgraded across 0095** must keep every device, instance, default, machine, conversation binding and background task. Cloud files stay reachable, because the `cap-env-` names are kept. → Task 1 test "0095 keeps every row and its links".
+1. **A deployment upgraded across 0095** must keep every device, instance, default, machine, conversation binding and background task. Cloud files under the old `cap-env-` names are orphaned by decision; new instances use `cap-device-`. → Task 1 test "0095 keeps every row and its links".
 2. **Old conversation logs that hold `environment_paths`** must render identically after the rename. → Task 1 (migration updates rows) and Task 3 (the zero-drift tests plus a test that a migrated `device_paths` row renders the same line).
 3. **A local device already signed in before the upgrade** keeps connecting: its credential hash row moves tables, and `@device` rows become `@local`. → Task 1 test, plus Task 2's gateway tests on migrated data.
 4. **`capybara-device` 0.1.0-rc.1 talking to the renamed kernel:** the program parses the sign-in error codes. Program and kernel must agree after the rename. An old rc.1 program is out of support before 0.1.0, but the new program must handle the new codes. → Task 4 tests against the renamed codes.
-5. **Leftover vocabulary:** a stray 环境 in zh copy, or "environment" in model-visible text. → Task 5 adds the zh copy check, and Task 3 asserts tool errors say "device".
+5. **Leftover vocabulary:** "environment" in model-visible text, or 环境 in zh copy for this concept. → Task 3 asserts tool errors say "device"; Task 5 reports a final grep of the remaining 环境 / environment hits in apps/web with a reason for each.
 
 ---
 
@@ -74,7 +75,7 @@
 
 ### Task 2: Kernel modules, routes, Platform ops, IM (risk: high)
 
-**Files:** `git mv packages/kernel/src/devices packages/kernel/src/local-devices`, then `git mv packages/kernel/src/environments packages/kernel/src/devices`. Every importer is updated, along with the controllers, DTOs, schemas, `platform/ops/environments.ops.ts` → `devices.ops.ts`, `platform/exclusions.ts`, `channels/inbound.ts` and `phrases.ts` (`/device`), `sandbox/*`, `background/*`, `kernel.module.ts`, `roles/*`, and the tests under `packages/kernel/test/environments` → `test/devices` and `test/devices` → `test/local-devices`.
+**Files:** `git mv packages/kernel/src/devices packages/kernel/src/local-devices`, then `git mv packages/kernel/src/environments packages/kernel/src/devices`. Every importer is updated, along with the controllers, DTOs, schemas, `platform/ops/environments.ops.ts` → `devices.ops.ts`, `platform/exclusions.ts`, `channels/inbound.ts` and `phrases.ts` (`/device`), `sandbox/*` (the file-system name `cap-device-<id>` in `sandbox.service.ts` and the prefix parsed by the local device provider, R1), `background/*`, `kernel.module.ts`, `roles/*`, the sign-in `verificationUri` → `<web>/devices/link`, and the tests under `packages/kernel/test/environments` → `test/devices` and `test/devices` → `test/local-devices`.
 
 **Interfaces:**
 - Consumes: Task 1 names.
@@ -113,12 +114,12 @@
 - `apps/web/src/lib/environments.ts` → `devices.ts`, and `lib/query/environments.ts` → `query/devices.ts`
 - components: `EnvironmentCreateDialog` → `DeviceCreateDialog`, and the picker in `components/conversation/*`
 - the route table, navigation, `apps/web/messages/{zh,en}.json`, tests, e2e specs
-- `tools/checks` or the i18n check: zh copy must not contain 环境 except 环境变量, with a red fixture first
+- the sign-in confirmation page `app/(auth)/device` → `/devices/link` (keep its sign-in redirect behaviour); the kernel's `verificationUri` (Task 2) points there
 
-- [ ] Step 1: Write the zh copy check with a failing fixture, then run it. It fails on today's copy.
-- [ ] Step 2: Do the renames and the copy (设备 / device; 新建设备 offers 云端 / 本地).
-- [ ] Step 3: Run the web tests, `check:web-ui`, `check:i18n`, the new check and `typecheck`. All pass, and `/environments` no longer exists. Test: visiting `/environments` gives the app's 404.
-- [ ] Step 4: Commit `refactor(web)!: devices pages and copy; no 环境 in zh copy`.
+- [ ] Step 1: Do the renames and the copy (设备 / device; 新建设备 offers 云端 / 本地).
+- [ ] Step 2: Run the web tests, `check:web-ui`, `check:i18n` and `typecheck`. All pass. Tests: `/environments` and `/device` give the app's 404; `/devices/link?code=…` confirms.
+- [ ] Step 3: Report a final grep of 环境 / environment in apps/web with the reason for each remaining hit.
+- [ ] Step 4: Commit `refactor(web)!: devices pages and copy`.
 
 ### Task 6: Docs and skills (risk: normal)
 

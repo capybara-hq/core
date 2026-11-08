@@ -722,14 +722,14 @@ Sections 1-14 keep their original wording as history; this section wins where th
 - **Config**: `environments.maxPersonal` → `devices.maxPersonal`; `environments.device.*` →
   `devices.local.*` (env vars follow: `CAPYBARA_DEVICES__…`).
 - **Web**: `/environments` and `/environments/[id]` → `/devices` and `/devices/[id]`; navigation
-  item 设备; the sign-in confirmation page stays at `/device` (the short address `capybara-device`
-  prints, RFC 8628 style); all copy says 设备 / device.
-- **IM**: `/env` → `/device`.
+  item 设备; the sign-in confirmation page `/device` → `/devices/link` (the address the kernel hands
+  `capybara-device` as `verificationUri`); all copy says 设备 / device.
+- **IM** (every channel, not only Lark): `/env` → `/device`.
 - **Model-visible text**: tool errors and the paths line say "device" (e.g. "The device's machine
   is offline"). The tool descriptions already name no environment.
-- **Kept**: sandbox resource names `cap-env-<id>` (Docker volumes, E2B sandbox metadata). They are
-  provider-side names of existing files; renaming them would orphan every cloud device's files.
-  `sandbox@2` (instances and file systems) is unchanged; the SDK's device protocol is unchanged.
+- **Sandbox resource names** `cap-env-<id>` → `cap-device-<id>` (Docker volumes, E2B sandbox
+  metadata). Existing cloud files under the old names are orphaned; accepted by the maintainer before
+  any release. `sandbox@2` (instances and file systems) and the SDK's device protocol are unchanged.
 - **Docs**: this spec keeps its file name; docs, skills (`writing-sandbox-providers`), the deploy
   section, the device README and the checklists say device. The plugins repository follows with a
   docs-only PR (provider READMEs, its writing-sandbox-providers skill).
