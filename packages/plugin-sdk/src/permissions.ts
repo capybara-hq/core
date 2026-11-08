@@ -223,8 +223,8 @@ const UI_EMBED_PREFIX = "/ui/";
  * contribution's id is listed in exactly `permissions.ui.views` (kind view) or
  * `permissions.ui.embeds` (kind embed), and `permissions.ui` lists no id the `ui` lacks; an embed's
  * path starts with `/ui/` and is declared in `permissions.http` as GET; exactly one of `slot` (a
- * well-formed slot reference) and `place` (a known place); for a slot the catalog knows, a kind it
- * accepts and, unless an alias, the icon it requires. An unknown slot id or version is not a
+ * well-formed slot reference) and `place` (a known place); for a slot the catalog knows at the
+ * version named, a kind it accepts and, unless an alias, the icon it requires. An unknown slot id or version is not a
  * problem here: `resolveUiSlots` drops that contribution and the rest of the extension loads.
  * Assumes `permissions` passed {@link validatePermissions}.
  */
@@ -288,7 +288,10 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
     }
     if (c.icon !== undefined && !(UI_ICONS as readonly unknown[]).includes(c.icon))
       errs.push(`ui "${id}" icon must be one of ${UI_ICONS.join(", ")}`);
-    const spec = slotRef === null ? undefined : uiSlot(slotRef.id);
+    // the slot checks describe only the catalog's version: another version is left to
+    // resolveUiSlots, which drops it (unsupported-version) without failing the extension
+    const known = slotRef === null ? undefined : uiSlot(slotRef.id);
+    const spec = known !== undefined && known.version === slotRef?.version ? known : undefined;
     if (spec !== undefined) {
       if (!spec.accepts.includes(c.kind))
         errs.push(`ui "${id}" slot ${spec.id} does not accept kind ${c.kind}`);

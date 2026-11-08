@@ -7,6 +7,7 @@ import {
   type ExtensionContext,
   type ExtensionManifest,
   parseEmbedChildMessage,
+  resolveUiSlots,
   type ToolResult,
   UI_ICONS,
   UI_LIMITS,
@@ -581,6 +582,20 @@ describe("contributions name a slot (UI slots spec §3.2, §4)", () => {
         views("a"),
       ),
     ).toEqual([]);
+  });
+
+  it("a known slot at an unsupported version skips the slot checks and is only dropped", () => {
+    const http = [{ method: "GET", path: "/ui/pdf" }];
+    const ui = [
+      { id: "a", title, slot: "file.preview@2", kind: "view" as const },
+      { id: "pdf", title, slot: "file.preview", kind: "embed" as const, path: "/ui/pdf" },
+    ];
+    expect(validateUiContributions(ui, { http, ui: { views: ["a"], embeds: ["pdf"] } })).toEqual(
+      [],
+    );
+    const r = resolveUiSlots(ui);
+    expect(r.dropped).toEqual([{ id: "a", ref: "file.preview@2", reason: "unsupported-version" }]);
+    expect(r.resolved.map((x) => x.contribution.id)).toEqual(["pdf"]);
   });
 
   it("a malformed slot ref is structural", () => {
