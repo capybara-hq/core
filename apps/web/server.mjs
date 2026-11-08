@@ -12,15 +12,21 @@
 // (/<bucket>/**) so browsers upload and download attachments on the web origin; that path never
 // reaches Next. Details: src/lib/object-store-proxy.ts.
 //
+// With CAPYBARA_WEB_GATEWAY_URL set, WebSocket upgrades on exactly /device/connect (connected
+// machines, `capybara-device`) are piped to a gateway replica; any other upgrade path is refused
+// (dev: handed to Next's HMR). Details: src/lib/device-connect-proxy.ts.
+//
 // Idle keep-alive connections stay open for CAPYBARA_WEB_KEEP_ALIVE_TIMEOUT_MS (default 65 s), longer
 // than a load balancer in front keeps them, so the proxy closes first instead of reusing a
 // connection this server is closing. Details: src/lib/keep-alive.ts.
 //
-// Node 24 strips the types from peer.ts, object-store-proxy.ts and keep-alive.ts itself, so the
-// imports need no build step.
+// Node 24 strips the types from peer.ts, object-store-proxy.ts, device-connect-proxy.ts and
+// keep-alive.ts itself, so the imports need no build step.
 import { randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import next from "next";
+import { handleUpgrade, parseGatewayProxy } from "./src/lib/device-connect-proxy.ts";
 import { applyKeepAlive, KEEP_ALIVE_ENV, parseKeepAliveTimeout } from "./src/lib/keep-alive.ts";
 import {
   isObjectStorePath,
@@ -41,6 +47,8 @@ const hostname = process.env.CAPYBARA_WEB_HOST;
 const trust = parseTrustProxy(process.env[TRUST_PROXY_ENV]);
 // Off (undefined) unless CAPYBARA_WEB_OBJECT_STORE_URL is set; a malformed setting stops here too.
 const objectStore = parseObjectStoreProxy(process.env);
+// Off (undefined) unless CAPYBARA_WEB_GATEWAY_URL is set; a malformed setting stops here too.
+const gateway = parseGatewayProxy(process.env);
 const graceMs = shutdownGraceMs(process.env.CAPYBARA_WEB_SHUTDOWN_GRACE_MS);
 // A malformed value stops the server here too.
 const keepAliveMs = parseKeepAliveTimeout(process.env[KEEP_ALIVE_ENV]);
@@ -49,7 +57,16 @@ const keepAliveMs = parseKeepAliveTimeout(process.env[KEEP_ALIVE_ENV]);
 const token = randomBytes(32).toString("base64url");
 process.env[PEER_TOKEN_ENV] = token;
 
-const app = next({ dev, dir: import.meta.dirname, port, ...(hostname && { hostname }) });
+// Next attaches its own upgrade listener (dev HMR) to `httpServer`; this emitter receives only the
+// upgrades handleUpgrade hands on, so Next never sees (or ends) a /device/connect socket.
+const nextUpgrades = new EventEmitter();
+const app = next({
+  dev,
+  dir: import.meta.dirname,
+  port,
+  httpServer: nextUpgrades,
+  ...(hostname && { hostname }),
+});
 const handle = app.getRequestHandler();
 await app.prepare();
 
@@ -71,10 +88,17 @@ const server = createServer((req, res) => {
   sanitizeIncoming(req, token, trust);
   handle(req, res);
 });
+server.on(
+  "upgrade",
+  handleUpgrade(
+    gateway,
+    dev ? (req, socket, head) => nextUpgrades.emit("upgrade", req, socket, head) : undefined,
+  ),
+);
 applyKeepAlive(server, keepAliveMs);
 server.listen(port, hostname, () => {
   console.log(
-    `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})${objectStore ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}` : ""}`,
+    `> web listening on http://${hostname ?? "localhost"}:${port} (${dev ? "dev" : "production"})${objectStore ? `; object storage /${objectStore.bucket}/ -> ${objectStore.upstream.origin}` : ""}${gateway ? `; /device/connect -> ${gateway.upstream.origin}` : ""}`,
   );
 });
 

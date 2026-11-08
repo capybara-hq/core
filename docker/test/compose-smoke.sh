@@ -96,15 +96,15 @@ const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
 for (const [n, s] of Object.entries(cfg.services)) if ((s.ports ?? []).length > 0) console.log(n);
 ' "$TMP/config.json")"
 [ "$PUBLISHED" = "web" ] || fail "services publishing ports: $(echo $PUBLISHED) (expected only web)"
-# frontend holds exactly web and api, objectstore exactly web and the S3 gateway; web is on
-# nothing else.
+# frontend holds exactly web and api, objectstore exactly web and the S3 gateway, devices exactly
+# web and the kernel gateway; web is on nothing else.
 NETS="$(node -e '
 const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
 const nets = (s) => Object.keys(s.networks ?? { default: null }).sort();
 const on = (net) => Object.entries(cfg.services).filter(([, s]) => nets(s).includes(net)).map(([n]) => n).sort().join(" ");
-console.log(`${on("frontend")} | ${on("objectstore")} | ${nets(cfg.services.web).join(",")}`);
+console.log(`${on("frontend")} | ${on("objectstore")} | ${on("devices")} | ${nets(cfg.services.web).join(",")}`);
 ' "$TMP/config.json")"
-[ "$NETS" = "api web | seaweedfs-s3 web | frontend,objectstore" ] || fail "networks: $NETS"
+[ "$NETS" = "api web | seaweedfs-s3 web | gateway web | devices,frontend,objectstore" ] || fail "networks: $NETS"
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
   echo "==> building the images (compose.build.yaml)"
