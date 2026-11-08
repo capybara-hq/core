@@ -330,6 +330,7 @@ States: `list`, `list-tabs`, `detail`, `form`, `settings`, `settings-avatar`, `o
   - a `Grid columns="list-detail"` (a 220 px list beside a flexible detail, top-aligned: the agent page's prompt files and the open file's editor) is one column, the list above the detail;
   - tap targets are at least 40 px: the page head's actions and tabs, row actions (ObjectRow, §6.17; the DataTable row menu), the drawer menu bar's and the conversation title bar's buttons (§6.16.1); the sidebar drawer's rows are 40 high (§6.13);
   - type keeps its sizes: `micro` (11) stays the smallest (§2.2).
+  - on a touch screen (`pointer: coarse`, any width) text fields (inputs, textareas, selects, editable text) are at least 16 px, so iOS Safari never zooms the page into a focused field; the viewport keeps pinch zoom (no `maximum-scale`).
 
 ### 4.4 ActionRow and StatusBar
 
