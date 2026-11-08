@@ -13,20 +13,21 @@ export interface UiViewTarget {
 
 /**
  * One extension view (its own request, 10 s timeout; aborted when nothing reads it any more).
- * `conversationId` scopes it to a conversation (`"org"` scope without one). Each read is the
+ * `conversationId` scopes it to a conversation, `agentId` to an agent (`agent:<id>`); `"org"`
+ * scope without either. Each read is the
  * extension rendering it again, so it is never fresh by time: refreshes (`event: ui`) and retries
  * read it.
  */
 export const uiViewQuery = (
   orgId: string,
   t: UiViewTarget,
-  opts: { conversationId?: string; locale: UiLocale },
+  opts: { conversationId?: string; agentId?: string; locale: UiLocale },
 ) =>
   defineQuery({
     key: keys
       .org(orgId)
       .uiView(
-        opts.conversationId ?? "org",
+        opts.conversationId ?? (opts.agentId === undefined ? "org" : `agent:${opts.agentId}`),
         t.plugin,
         t.id,
         JSON.stringify([opts.locale, t.item ?? null, t.card ?? null]),
@@ -34,6 +35,7 @@ export const uiViewQuery = (
     fn: ({ signal }) =>
       getUiView(orgId, t.plugin, t.id, {
         ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
+        ...(opts.agentId !== undefined && { agentId: opts.agentId }),
         locale: opts.locale,
         ...(t.item !== undefined && { item: t.item }),
         ...(t.card !== undefined && { card: t.card }),

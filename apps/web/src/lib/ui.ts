@@ -154,6 +154,8 @@ export async function getUiView(
   id: string,
   opts: {
     conversationId?: string;
+    /** An `agent.detail.section` view: the agent it is shown on. */
+    agentId?: string;
     locale: UiLocale;
     item?: string;
     card?: { callId: string; key?: string };
@@ -162,6 +164,7 @@ export async function getUiView(
 ) {
   const q = new URLSearchParams();
   if (opts.conversationId !== undefined) q.set("conversationId", opts.conversationId);
+  if (opts.agentId !== undefined) q.set("agentId", opts.agentId);
   q.set("locale", opts.locale);
   if (opts.item !== undefined) q.set("item", opts.item);
   if (opts.card !== undefined) {
@@ -185,7 +188,7 @@ export const postUiAction = (
   orgId: string,
   plugin: string,
   id: string,
-  body: UiActionRequest & { conversationId?: string; locale: UiLocale },
+  body: UiActionRequest & { conversationId?: string; agentId?: string; locale: UiLocale },
 ) =>
   apiFetch<UiActionResult>(`${base(orgId)}/actions/${target(plugin, id)}`, {
     method: "POST",
@@ -197,12 +200,13 @@ export const requestEmbedToken = (
   orgId: string,
   plugin: string,
   id: string,
-  opts: { conversationId?: string; fileId?: string } = {},
+  opts: { conversationId?: string; agentId?: string; fileId?: string } = {},
 ) =>
   apiFetch<EmbedToken>(`${base(orgId)}/embeds/${target(plugin, id)}/token`, {
     method: "POST",
     body: JSON.stringify({
       ...(opts.conversationId !== undefined && { conversationId: opts.conversationId }),
+      ...(opts.agentId !== undefined && { agentId: opts.agentId }),
       ...(opts.fileId !== undefined && { fileId: opts.fileId }),
     }),
   });

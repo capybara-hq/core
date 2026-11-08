@@ -141,7 +141,9 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
       ) : null;
     case "org.settings.section":
       return <OrgSettingsSlot args={p.args} />;
-    // agent.detail.section and platform.page: rendered from Tasks 13 and 14
+    case "agent.detail.section":
+      return p.select ? <AgentSectionSlot args={p.args} select={p.select} /> : null;
+    // platform.page: rendered from Task 14
     default:
       return null;
   }
@@ -298,6 +300,73 @@ function OrgSettingsSection({ orgId, c }: { orgId: string; c: UiContributionItem
         </BlockBoundary>
       </div>
     </FormSection>
+  );
+}
+
+/**
+ * An agent page's extension section: the section card (titled by the contribution's title) holding
+ * the view or the embed, scoped to the agent (the kernel serves it to whoever may read the agent,
+ * read-only viewers included). No save bar: the extension's own actions run through `onAction`.
+ * The view is read when the section opens, not live.
+ */
+function AgentSectionSlot({
+  args,
+  select,
+}: {
+  args: SlotArgs["agent.detail.section"];
+  select: { plugin: string; id: string };
+}) {
+  const locale = uiLocale(useLocale());
+  const { items } = useSlotContributions(args.orgId, "agent.detail.section");
+  const c = items.find((x) => matches(x, select));
+  if (!c) return null;
+  const title = c.title[locale];
+  const key = uiKey(c.plugin, c.id);
+  return (
+    <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+      <div data-extension-section={key}>
+        <BlockBoundary name={title}>
+          {c.kind === "embed" ? (
+            <EmbedTab
+              key={`${key}/${args.agentId}`}
+              orgId={args.orgId}
+              plugin={c.plugin}
+              id={c.id}
+              title={title}
+              agentId={args.agentId}
+            />
+          ) : (
+            <AgentSectionView key={`${key}/${args.agentId}`} args={args} c={c} />
+          )}
+        </BlockBoundary>
+      </div>
+    </FormSection>
+  );
+}
+
+function AgentSectionView({
+  args,
+  c,
+}: {
+  args: SlotArgs["agent.detail.section"];
+  c: UiContributionItem;
+}) {
+  const locale = uiLocale(useLocale());
+  const { plugin, id } = c;
+  const targets = useMemo(() => [{ plugin, id }], [plugin, id]);
+  const views = useExtensionViews(args.orgId, targets, { agentId: args.agentId, locale });
+  const runAction = useUiAction(args.orgId, {
+    agentId: args.agentId,
+    locale,
+    onView: views.setView,
+  });
+  const key = uiKey(plugin, id);
+  return (
+    <ExtensionViewTab
+      state={views.states[key]}
+      onRetry={() => views.retry(key)}
+      onAction={runAction({ plugin, id })}
+    />
   );
 }
 

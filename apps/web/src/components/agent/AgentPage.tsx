@@ -1,12 +1,20 @@
 "use client";
 
-import { Avatar, Button, Dialog, type PageHeaderProps, Text } from "@capybara-hq/design";
+import {
+  Avatar,
+  Button,
+  Dialog,
+  type PageHeaderProps,
+  SettingsPage,
+  Text,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useEffect, useId, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { type Agent, avatarValue } from "../../lib/agents";
 import { canUpdateOrg } from "../../lib/org-settings";
 import { newConversationPath } from "../../lib/routes";
+import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { ReassignOwnerDialog } from "../ReassignOwnerDialog";
 import { SaveAsTemplateDialog } from "../SaveAsTemplateDialog";
 import { navLevelOf } from "../shell/nav";
@@ -14,13 +22,19 @@ import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
 import { BasicsSection } from "./BasicsSection";
 import { ChannelsSection } from "./ChannelsSection";
-import { AgentPageContext, type AgentPageValue, useSectionNav } from "./frame";
+import {
+  AgentPageContext,
+  type AgentPageValue,
+  useAgentPage,
+  useExtSections,
+  useSectionNav,
+} from "./frame";
 import { ModelSection } from "./ModelSection";
 import { PromptSection } from "./PromptSection";
 import { QuickActionsSection } from "./QuickActionsSection";
 import { SkillsSection } from "./SkillsSection";
 import { SubagentsSection } from "./SubagentsSection";
-import { type AgentSection, sectionOf } from "./sections";
+import { type AgentSectionId, extSectionId, sectionOf } from "./sections";
 import { ToolsSection } from "./ToolsSection";
 
 export { type AgentPageValue, AgentSectionFrame, useAgentPage } from "./frame";
@@ -68,8 +82,9 @@ export function AgentPage({
   const t = useTranslations();
   const router = useRouter();
   const { me } = useSession();
-  const open = sectionOf(section, editable);
-  const nav = useSectionNav(agent.id, editable);
+  const ext = useExtSections(orgId);
+  const open = sectionOf(section, editable, ext);
+  const nav = useSectionNav(orgId, agent.id, editable);
   const [dirty, setDirty] = useState(false);
   const [leaving, setLeaving] = useState<string | null>(null);
   const [reassigning, setReassigning] = useState(false);
@@ -212,7 +227,8 @@ export function AgentPage({
  * not change the agent only reaches basics, quick actions and the model (`sectionOf`), each of
  * which draws its read-only form for them.
  */
-function OpenSection({ section }: { section: AgentSection }) {
+function OpenSection({ section }: { section: AgentSectionId }) {
+  if (section.startsWith("ext.")) return <ExtensionSection section={section} />;
   switch (section) {
     case "basics":
       return <BasicsSection />;
@@ -230,5 +246,24 @@ function OpenSection({ section }: { section: AgentSection }) {
       return <SubagentsSection />;
     case "channels":
       return <ChannelsSection />;
+    default:
+      return <BasicsSection />;
   }
+}
+
+/** An extension's section (`agent.detail.section`): its view in the page's frame, with no save bar. */
+function ExtensionSection({ section }: { section: AgentSectionId }) {
+  const page = useAgentPage();
+  const c = useExtSections(page.orgId).find((x) => extSectionId(x) === section);
+  return (
+    <SettingsPage header={page.header} nav={page.nav} activeNav={section}>
+      {c ? (
+        <ExtensionSlot
+          slot="agent.detail.section"
+          args={{ orgId: page.orgId, agentId: page.agent.id }}
+          select={{ plugin: c.plugin, id: c.id }}
+        />
+      ) : null}
+    </SettingsPage>
+  );
 }

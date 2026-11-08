@@ -38,6 +38,7 @@ export function EmbedTab({
   id,
   title,
   conversationId,
+  agentId,
   file,
   failed,
 }: {
@@ -46,6 +47,8 @@ export function EmbedTab({
   id: string;
   title: string;
   conversationId?: string;
+  /** An `agent.detail.section` embed: the agent it is shown on. */
+  agentId?: string;
   /** A `file-preview` embed: the file it previews, posted once after `init`. */
   file?: { id: string; read(): Promise<EmbedFile>; maxBytes: number };
   /** Renders a failure in place of the built-in one (the conversation page's frames). */
@@ -72,9 +75,16 @@ export function EmbedTab({
   const fileId = file?.id;
   // A token is minted for the bridge (its handshake and renewals): nothing cached changes.
   const { mutateAsync } = useAppMutation({
-    fn: (v: { plugin: string; id: string; conversationId?: string; fileId?: string }) =>
+    fn: (v: {
+      plugin: string;
+      id: string;
+      conversationId?: string;
+      agentId?: string;
+      fileId?: string;
+    }) =>
       requestEmbedToken(orgId, v.plugin, v.id, {
         ...(v.conversationId !== undefined && { conversationId: v.conversationId }),
+        ...(v.agentId !== undefined && { agentId: v.agentId }),
         ...(v.fileId !== undefined && { fileId: v.fileId }),
       }),
     invalidates: () => [],
@@ -100,6 +110,7 @@ export function EmbedTab({
           plugin,
           id,
           ...(conversationId !== undefined && { conversationId }),
+          ...(agentId !== undefined && { agentId }),
           ...(fileRef.current !== undefined && { fileId: fileRef.current.id }),
         });
         src ??= r.src;
@@ -148,7 +159,7 @@ export function EmbedTab({
       b.dispose();
       if (bridge.current === b) bridge.current = null;
     };
-  }, [orgId, plugin, id, conversationId, locale, attempt, fileId]);
+  }, [orgId, plugin, id, conversationId, agentId, locale, attempt, fileId]);
 
   // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
   // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。

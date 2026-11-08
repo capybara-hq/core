@@ -399,7 +399,9 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/agents/[id]",
     queries: ({ orgId, params }) =>
-      orgId === null || params.id === undefined ? [] : [q(agentQuery(orgId, params.id))],
+      orgId === null || params.id === undefined
+        ? []
+        : [q(agentQuery(orgId, params.id)), q(contributionsQuery(orgId))],
     // A viewer who may change the agent also gets every section's reads (whichever `?s=` opens,
     // so a section switch paints at once): the form's reads, the tools of the connectors it uses,
     // the channel connections and the attachment limits (Basics: whether uploads are on); anyone

@@ -21,6 +21,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/components`]: ok({ components: [] }),
     [`GET ${ORG}/agents/${agentId}/skills`]: ok({ skills: [] }),
     [`GET ${ORG}/channels`]: ok({ channels: [] }),
+    [`GET ${ORG}/ui/contributions`]: ok({ items: [] }),
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
     [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
     [`GET ${ORG}/attachments/limits`]: ok({

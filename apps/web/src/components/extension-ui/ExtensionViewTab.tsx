@@ -60,17 +60,18 @@ const readOf = (t: ViewTarget): UiViewTarget => ({
 export function useExtensionViews(
   orgId: string,
   targets: readonly ViewTarget[],
-  opts: { conversationId?: string; locale: UiLocale },
+  opts: { conversationId?: string; agentId?: string; locale: UiLocale },
 ): {
   states: Readonly<Record<string, ViewState>>;
   retry(key: string): void;
   setView(key: string, view: UiView): void;
 } {
-  const { conversationId, locale } = opts;
+  const { conversationId, agentId, locale } = opts;
   const qc = useQueryClient();
   const queries = targets.map((t) =>
     uiViewQuery(orgId, readOf(t), {
       ...(conversationId !== undefined && { conversationId }),
+      ...(agentId !== undefined && { agentId }),
       locale,
     }),
   );
@@ -112,9 +113,14 @@ export function useExtensionViews(
  */
 export function useUiAction(
   orgId: string,
-  opts: { conversationId?: string; locale: UiLocale; onView(key: string, view: UiView): void },
+  opts: {
+    conversationId?: string;
+    agentId?: string;
+    locale: UiLocale;
+    onView(key: string, view: UiView): void;
+  },
 ): (target: ViewTarget) => (req: UiActionRequest) => Promise<void> {
-  const { conversationId, locale, onView } = opts;
+  const { conversationId, agentId, locale, onView } = opts;
   const toast = useToast();
   const errorMessage = useErrorMessage();
   // The answer is the new view (`onView`), or a toast: nothing to invalidate.
@@ -123,6 +129,7 @@ export function useUiAction(
       postUiAction(orgId, v.target.plugin, v.target.id, {
         ...v.req,
         ...(conversationId !== undefined && { conversationId }),
+        ...(agentId !== undefined && { agentId }),
         locale,
       }),
     invalidates: () => [],
