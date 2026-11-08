@@ -20,3 +20,15 @@ State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-d
 `credential.json` (mode 0600; the program refuses a file other users can read) and `policy.json`.
 The working directory (default `~/capybara-device/<environmentId>`) holds `workspace/`, `skills/`
 and `tmp/`.
+
+In OS mode every command runs inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux
+bubblewrap; Linux needs `bwrap` and `socat`): writes only under `workspace/` and `tmp/`,
+`skills/` read only, `~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles and
+this program's state directory unreadable. Network is limited to the domains of the local policy
+that the environment's egress also allows; with an empty policy (the default) commands reach no
+network at all. Only you edit the policy, the platform can never widen it:
+
+```bash
+capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
+capybara-device policy show   # changes apply at the next start
+```

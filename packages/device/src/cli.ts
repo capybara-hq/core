@@ -3,6 +3,7 @@ import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { drain } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
+import { policyCommand } from "./commands/policy.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
@@ -20,6 +21,18 @@ export interface CliEnv {
   err?: (line: string) => void;
   createExecutor?: (cred: Credential, policy: Policy) => Promise<Executor> | Executor;
   kill?: typeof process.kill;
+}
+
+/** The executor for the credential's mode; the program's state directory is unreadable to commands. */
+function defaultCreateExecutor(stateDir: string, home: string) {
+  return async (cred: Credential, policy: Policy): Promise<Executor> => {
+    if (cred.mode === "docker") {
+      throw new Error("Docker mode is not available in this build; log in again with --mode os");
+    }
+    // Loaded on demand: the sandbox runtime is only needed by start.
+    const { createOsExecutor } = await import("./exec/os.js");
+    return createOsExecutor({ dir: cred.dir, policy, home, denyRead: [stateDir] });
+  };
 }
 
 /** Runs one command line and returns the exit code. */
@@ -65,15 +78,17 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         stateDir: dir,
         out,
         err,
-        ...(io.createExecutor && { createExecutor: io.createExecutor }),
+        createExecutor: io.createExecutor ?? defaultCreateExecutor(dir, home),
         ...(io.kill && { kill: io.kill }),
       });
     case "stop":
       return stop(dir, out, err, io.kill);
     case "drain":
       return drain(dir, out, err, io.kill);
+    case "policy":
+      return policyCommand(cmd, { stateDir: dir, out, err });
     default:
-      // policy and service arrive with a later task of the plan.
+      // service arrives with a later task of the plan.
       err(`capybara-device ${cmd.command}: not implemented yet`);
       return 2;
   }
