@@ -189,7 +189,8 @@
       "connect_failed": "Could not connect to the connector's server. Check the URL and credential.",
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
-      "resources_disabled": "Reading resources is turned off for this connector."
+      "resources_disabled": "Reading resources is turned off for this connector.",
+      "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
