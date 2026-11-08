@@ -38,7 +38,10 @@ export interface OAuthTokenRecord {
 
 export type OAuthOwner = { kind: "org" } | { kind: "user"; accountId: string };
 
-/** 令牌端点以 400 / 401 + RFC 6749 错误码明确拒绝（如 `invalid_grant`）。 */
+/**
+ * The token endpoint refused with an RFC 6749-shaped error code (`invalid_grant`, ...): a 400 / 401
+ * with `error`, or a 200 whose body carries `ok: false` (Slack) or an `error` and no token.
+ */
 export class OAuthGrantError extends Error {
   constructor(readonly error: string) {
     super(`The authorization server rejected the token request (${error})`);
@@ -46,12 +49,36 @@ export class OAuthGrantError extends Error {
   }
 }
 
-/** 这些错误码说明凭据本身已失效（refresh token / 客户端），只有它们才作废令牌。 */
+/**
+ * These codes say the credential itself is dead (refresh token / client); only they invalidate the
+ * tokens. Besides RFC 6749's, Slack's `invalid_refresh_token`, `token_revoked` and `token_expired`.
+ */
 export const INVALIDATING_ERRORS: ReadonlySet<string> = new Set([
   "invalid_grant",
   "invalid_client",
   "unauthorized_client",
+  "invalid_refresh_token",
+  "token_revoked",
+  "token_expired",
 ]);
+
+/**
+ * Error codes of a 200 `ok: false` body that mean "try again later" (Slack's Web API codes), not a
+ * refusal: they count as unavailable like a 429 / 5xx.
+ */
+const TRANSIENT_ERRORS: ReadonlySet<string> = new Set([
+  "ratelimited",
+  "service_unavailable",
+  "internal_error",
+  "fatal_error",
+  "request_timeout",
+]);
+
+/**
+ * `token_type` values (lower case) stored and sent as `Authorization: Bearer`: RFC 6750 `Bearer`
+ * and Slack's `user` (`oauth.v2.user.access`). A template may allow more with `auth.tokenTypes`.
+ */
+export const BEARER_TOKEN_TYPES: ReadonlySet<string> = new Set(["bearer", "user"]);
 
 /** 授权服务器暂时不可用（网络、超时、5xx、畸形响应）：模型可见的英文说明，计入「服务不可用」。 */
 export class OAuthUnavailable extends ToolError {
@@ -82,15 +109,30 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 /** RFC 6749 §5.2 形式的错误码（只有这种串才写进日志 / 错误，不回显对方任意文本）。 */
 const OAUTH_ERROR_RE = /^[a-z][a-z0-9_]{0,63}$/;
 
+/** What the connector's auth settings add to a token request. */
+export interface TokenRequestOptions {
+  /** More `token_type` values to accept as bearer tokens (`auth.tokenTypes`, case-insensitive). */
+  tokenTypes?: readonly string[] | undefined;
+}
+
 /**
- * 调令牌端点（RFC 6749 §3.2）：按客户端认证方式带 client_id / secret（Basic 按 §2.3.1 先表单编码）。
- * 400 / 401 且正文带可解析的 RFC 6749 `error` 码 → OAuthGrantError；其余（网络错误、超时、429、408、
- * 403 等其他 4xx、没有错误码的 4xx、5xx、3xx、畸形响应）→ OAuthUnavailable——网关限流或 WAF 拦截不能当成凭据失效。
+ * Calls the token endpoint (RFC 6749 §3.2), sending client_id / secret per the client's auth method
+ * (Basic form-encodes them first, §2.3.1).
+ * - 400 / 401 with a parsable RFC 6749 `error` code -> OAuthGrantError.
+ * - 200 with `ok: false` (Slack reports every error this way), or with an `error` code and no
+ *   `access_token` -> OAuthGrantError with that code; a transient Slack code (`ratelimited`, ...)
+ *   or no parsable code -> OAuthUnavailable.
+ * - Everything else (network error, timeout, 429, 408, 403 and other 4xx, a 4xx without a code,
+ *   5xx, 3xx, a malformed body) -> OAuthUnavailable: a gateway's rate limit or a WAF block is not a
+ *   dead credential.
+ * - A `token_type` other than Bearer / `user` / `opts.tokenTypes` -> OAuthGrantError
+ *   `unsupported_token_type`; an accepted one is stored as `Bearer`.
  */
 export async function tokenRequest(
   client: OAuthClientRecord,
   params: Record<string, string | undefined>,
   http: OAuthHttpOptions,
+  opts: TokenRequestOptions = {},
 ): Promise<OAuthTokenRecord> {
   const form = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") form.set(k, v);
@@ -127,10 +169,19 @@ export async function tokenRequest(
     if (typeof code === "string" && OAUTH_ERROR_RE.test(code)) throw new OAuthGrantError(code);
   }
   if (res.status !== 200 || !isObj(body)) throw new OAuthUnavailable();
+  if (body.ok === false || (body.access_token === undefined && body.error !== undefined)) {
+    const code = body.error;
+    if (typeof code === "string" && OAUTH_ERROR_RE.test(code) && !TRANSIENT_ERRORS.has(code)) {
+      throw new OAuthGrantError(code);
+    }
+    throw new OAuthUnavailable();
+  }
   const { access_token, refresh_token, expires_in, token_type, scope } = body;
   if (typeof access_token !== "string" || access_token === "") throw new OAuthUnavailable();
-  const type = typeof token_type === "string" ? token_type : "Bearer";
-  if (type.toLowerCase() !== "bearer") throw new OAuthGrantError("unsupported_token_type");
+  const type = (typeof token_type === "string" ? token_type : "Bearer").toLowerCase();
+  const accepted =
+    BEARER_TOKEN_TYPES.has(type) || opts.tokenTypes?.some((t) => t.toLowerCase() === type);
+  if (!accepted) throw new OAuthGrantError("unsupported_token_type");
   return {
     access_token,
     ...(typeof refresh_token === "string" && refresh_token !== "" && { refresh_token }),
@@ -161,9 +212,10 @@ export interface OAuthStore {
 }
 
 /** 取 token 所需的认证方式字段（与 credentials.ts 的 OAuthAuth 对应）。 */
-export type TokenAuth =
+export type TokenAuth = (
   | { type: "oauth_code" }
-  | { type: "oauth_client"; scopes?: string[] | undefined };
+  | { type: "oauth_client"; scopes?: string[] | undefined }
+) & { tokenTypes?: string[] | undefined };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -312,6 +364,7 @@ export class OAuthTokens {
             resource: client.resource,
           },
           this.http(),
+          { tokenTypes: auth.tokenTypes },
         );
         // 授权服务器不轮换时沿用旧 refresh token
         if (next.refresh_token === undefined) next = { ...next, refresh_token: rec.refresh_token };
@@ -321,6 +374,7 @@ export class OAuthTokens {
           client,
           { grant_type: "client_credentials", scope: scopes?.join(" "), resource: client.resource },
           this.http(),
+          { tokenTypes: auth.tokenTypes },
         );
       }
     } catch (e) {

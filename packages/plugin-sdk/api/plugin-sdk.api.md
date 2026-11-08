@@ -510,6 +510,7 @@ export const ConnectorAuthSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         client_secret_basic: "client_secret_basic";
         client_secret_post: "client_secret_post";
     }>>;
+    tokenTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
 }, z.core.$strict>, z.ZodObject<{
     type: z.ZodLiteral<"oauth_client">;
     ownership: z.ZodLiteral<"org">;
@@ -519,6 +520,7 @@ export const ConnectorAuthSchema: z.ZodDiscriminatedUnion<[z.ZodObject<{
         client_secret_basic: "client_secret_basic";
         client_secret_post: "client_secret_post";
     }>>;
+    tokenTypes: z.ZodOptional<z.ZodArray<z.ZodString>>;
 }, z.core.$strict>], "type">;
 
 // @public
