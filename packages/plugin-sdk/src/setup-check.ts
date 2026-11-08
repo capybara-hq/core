@@ -120,6 +120,16 @@ const TEXT_KEYS: ReadonlySet<PropertyKey> = new Set(["en", "zh"]);
 // C0 controls except tab, LF, CR; DEL; C1 controls.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
+// Bidi embeddings, overrides and isolates reorder what a reader sees (Trojan Source); the marks
+// (LRM, RLM, ALM) stay allowed, real right-to-left names carry them.
+const BIDI_RE = /[\u202a-\u202e\u2066-\u2069]/;
+// Line and paragraph separators: invisible line breaks in plain text.
+const SEPARATOR_RE = /[\u2028\u2029]/;
+// A surrogate without its pair: not valid Unicode, and PostgreSQL jsonb refuses it.
+const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+// A key short and plain enough to name in a problem; others are not echoed, because the problem is
+// logged and a truncated echo of a secret-valued key would slip past value redaction.
+const ECHO_KEY_RE = /^[A-Za-z0-9_-]{1,32}$/;
 
 type Problem = { problem: string };
 
@@ -143,7 +153,8 @@ function plainCopy(
   const out: Record<string, unknown> = {};
   for (const key of Reflect.ownKeys(x)) {
     if (!allowed.has(key)) {
-      return { problem: `${label} has unknown key "${String(key)}"` };
+      const shown = typeof key === "string" && ECHO_KEY_RE.test(key) ? `"${key}"` : "(not shown)";
+      return { problem: `${label} has an unknown key ${shown}` };
     }
     const d = Object.getOwnPropertyDescriptor(x, key);
     if (!d || !("value" in d) || !d.enumerable) {
@@ -170,6 +181,17 @@ function text(label: string, x: unknown, max: number): SetupCheckText | Problem 
     if (CONTROL_RE.test(v)) {
       return { problem: `${label}.${lang} contains control characters` };
     }
+    if (BIDI_RE.test(v)) {
+      return {
+        problem: `${label}.${lang} contains bidi embedding, override or isolate characters`,
+      };
+    }
+    if (SEPARATOR_RE.test(v)) {
+      return { problem: `${label}.${lang} contains line or paragraph separators` };
+    }
+    if (LONE_SURROGATE_RE.test(v)) {
+      return { problem: `${label}.${lang} is not well-formed UTF-16 (lone surrogate)` };
+    }
     out[lang] = v;
   }
   return out;
@@ -181,6 +203,16 @@ function text(label: string, x: unknown, max: number): SetupCheckText | Problem 
  * kernel redaction on the returned copy, then validate again (redaction can change the length).
  */
 export function validateSetupCheckResult(x: unknown): SetupCheckResult | Problem {
+  // A proxy (revoked, or with throwing traps) can throw while being read: that is an invalid
+  // result, never an exception the caller has to expect.
+  try {
+    return validateResult(x);
+  } catch {
+    return { problem: "result could not be read (a proxy or an object that throws when read)" };
+  }
+}
+
+function validateResult(x: unknown): SetupCheckResult | Problem {
   const o = plainCopy("result", x, RESULT_KEYS);
   if ("problem" in o) return o as Problem;
   if (!STATUSES.includes(o.status)) {

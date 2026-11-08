@@ -131,6 +131,57 @@ describe("validateSetupCheckResult", () => {
   });
 });
 
+describe("validateSetupCheckResult hardening", () => {
+  it("rejects bidi embeddings, overrides and isolates (Trojan Source)", () => {
+    for (const c of ["\u202a", "\u202b", "\u202c", "\u202d", "\u202e"]) {
+      expect(problem({ status: "ok", reason: { en: `Acme${c}txt.exe` } })).toMatch(/bidi/);
+    }
+    for (const c of ["\u2066", "\u2067", "\u2068", "\u2069"]) {
+      expect(problem({ status: "ok", fix: { en: `a${c}b` } })).toMatch(/bidi/);
+    }
+    // marks (LRM, RLM, ALM) stay allowed: real right-to-left names carry them
+    expect(
+      validateSetupCheckResult({ status: "ok", reason: { en: "\u200fشركة\u200e ok\u061c" } }),
+    ).not.toHaveProperty("problem");
+  });
+  it("rejects line and paragraph separators", () => {
+    expect(problem({ status: "ok", reason: { en: "a\u2028b" } })).toMatch(/separator/);
+    expect(problem({ status: "ok", reason: { en: "a", zh: "a\u2029b" } })).toMatch(/separator/);
+  });
+  it("rejects lone surrogates (not storable as jsonb)", () => {
+    expect(problem({ status: "ok", reason: { en: "a\ud800b" } })).toMatch(/UTF-16/);
+    expect(problem({ status: "ok", fix: { en: "a\udc00" } })).toMatch(/UTF-16/);
+    expect(
+      validateSetupCheckResult({ status: "ok", reason: { en: "ok \u{1f600}" } }),
+    ).not.toHaveProperty("problem");
+  });
+  it("returns a problem, never throws, for an unreadable result", () => {
+    const { proxy, revoke } = Proxy.revocable({ status: "ok" }, {});
+    revoke();
+    expect(problem(proxy)).toMatch(/could not be read/);
+    const throwing = new Proxy(
+      { status: "ok" },
+      {
+        ownKeys() {
+          throw new Error("boom");
+        },
+      },
+    );
+    expect(problem(throwing)).toMatch(/could not be read/);
+    const nested = { status: "ok", reason: Proxy.revocable({ en: "a" }, {}) };
+    nested.reason.revoke();
+    expect(problem({ status: "ok", reason: nested.reason.proxy })).toMatch(/could not be read/);
+  });
+  it("does not echo long or odd keys into the problem (it is logged)", () => {
+    const secret = `xoxb-${"1".repeat(200)}`;
+    const p = problem({ status: "ok", [secret]: 1 });
+    expect(p).not.toContain("xoxb");
+    expect(p.length).toBeLessThan(120);
+    expect(problem({ status: "ok", "a\nb": 1 })).not.toContain("\n");
+    expect(problem({ status: "ok", data: 1 })).toMatch(/"data"/);
+  });
+});
+
 describe("SetupCheckTarget", () => {
   it("has no field for an OAuth client secret or a member token", () => {
     // Type-level guard: these must stay compile errors.
