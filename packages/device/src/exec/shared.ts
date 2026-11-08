@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { DeviceOpError } from "./types.js";
 
-/** The file that marks a directory as an device directory this program has used. */
+/** The file that marks a directory as a device directory this program has used. */
 export const ROOT_MARKER = ".capybara-device";
 
 /** How long a finished command's output pipes may stay open (held by a background child). */
@@ -12,7 +12,7 @@ export const PIPE_GRACE_MS = 200;
 
 export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** The roots of an device directory: `<dir>/workspace`, `<dir>/skills`, `<dir>/tmp`. */
+/** The roots of a device directory: `<dir>/workspace`, `<dir>/skills`, `<dir>/tmp`. */
 export function osRoots(dir: string): SandboxRoots {
   return { workspace: join(dir, "workspace"), skills: join(dir, "skills"), tmp: join(dir, "tmp") };
 }
@@ -82,7 +82,7 @@ export class OutputCap {
 const MARKER_TEXT = "This directory is a capybara-device directory.\n";
 
 /**
- * Creates (or completes) an device directory: the marker and the three roots. Only `login`
+ * Creates (or completes) a device directory: the marker and the three roots. Only `login`
  * calls it, so logging in again after the files were lost starts the device afresh.
  */
 export function prepareDeviceDir(dir: string): void {

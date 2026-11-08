@@ -1,6 +1,6 @@
 /**
  * Device protocol v1: the WebSocket frames between the kernel and a `capybara-device` program
- * (a connected machine that serves as an device). Pure types and hand-written guards.
+ * (a connected machine that serves as a device). Pure types and hand-written guards.
  */
 import {
   type ExecResult,

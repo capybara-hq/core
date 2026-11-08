@@ -53,7 +53,7 @@ const FILE_OP_TIMEOUT_S = 30;
 
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
 
-/** Container name of an device. */
+/** Container name of a device. */
 export function containerName(deviceId: string): string {
   return `capybara-device-${deviceId}`;
 }

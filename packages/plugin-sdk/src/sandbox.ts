@@ -4,7 +4,7 @@
  * primitives below; the kernel builds `glob` / `grep` / `edit` from `exec` plus `readFile` /
  * `writeFile`.
  *
- * `@2` separates an device's **file system** from its **instance**: the file system
+ * `@2` separates a device's **file system** from its **instance**: the file system
  * (`createFileSystem`) lives until the device is deleted (`destroyFileSystem`); instances
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
@@ -54,7 +54,7 @@ export function rootsOf(h: SandboxHandle): SandboxRoots {
   return h.roots ?? DEFAULT_SANDBOX_ROOTS;
 }
 
-/** The provider's file system handle (an device's files, independent of any instance). */
+/** The provider's file system handle (a device's files, independent of any instance). */
 export interface FileSystemHandle {
   /** The provider's file system id. */
   id: string;
@@ -133,7 +133,7 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
 /**
  * The `sandbox@2` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
- * **File systems and instances.** `createFileSystem` makes an device's files; they live until
+ * **File systems and instances.** `createFileSystem` makes a device's files; they live until
  * `destroyFileSystem` (the device is deleted). `create` makes an instance attached to an
  * existing file system; `destroy` / `destroyByName` drop the instance only and keep the files, and
  * `suspend` keeps them too. When the file system is gone, `create` must throw
@@ -180,7 +180,7 @@ export interface SandboxProvider {
    */
   readonly sessionIsolation?: boolean;
   /**
-   * Creates an device's file system. `name` looks like `cap-device-<deviceId>`. If a file
+   * Creates a device's file system. `name` looks like `cap-device-<deviceId>`. If a file
    * system with this name already exists, return it.
    */
   createFileSystem(args: {

@@ -1,7 +1,7 @@
 # @capybara-hq/device
 
 `capybara-device` connects a laptop or server to a [Capybara](https://github.com/capybara-hq/core)
-deployment as an device: the platform's agents run commands and read and write files on this
+deployment as a device: the platform's agents run commands and read and write files on this
 machine, inside a sandbox, while the program is online.
 
 Runs on macOS and Linux. Native Windows is refused: use WSL (then it is a Linux machine) or Docker

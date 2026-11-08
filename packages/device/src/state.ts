@@ -62,7 +62,7 @@ export function policyPath(dir: string): string {
   return join(dir, "policy.json");
 }
 
-/** The default working directory of an device: `~/capybara-device/<deviceId>`. */
+/** The default working directory of a device: `~/capybara-device/<deviceId>`. */
 export function defaultWorkDir(deviceId: string, home: string = homedir()): string {
   return join(home, "capybara-device", deviceId);
 }
