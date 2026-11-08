@@ -36,6 +36,7 @@ import {
   permissionKeyItems,
   reviewHash,
 } from "./permission-view.js";
+import { PluginIcons } from "./plugin-icons.js";
 import { pluginItemsOf } from "./plugin-items.js";
 import { parseProviderConflict } from "./resolve.js";
 import { type SingleProviderBlock, SingleProviderGuard } from "./single-provider.js";
@@ -132,6 +133,8 @@ export class ExtensionAdmin {
     @Inject(EffectiveConfigs) private readonly effectiveConfigs: EffectiveConfigs,
     /** Which enabled extension keeps a disabled one from being enabled (`enableBlocked`). */
     @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
+    /** The plugins' icons (admin catalog routes). */
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -411,7 +414,10 @@ export class ExtensionAdmin {
     if (subjects.length === 0) return [];
     const names = subjects.map((s) => s.name);
     const snapshots = await this.approvals.all();
-    const displayNames = await this.displayNames.many(names);
+    const [displayNames, icons] = await Promise.all([
+      this.displayNames.many(names),
+      this.icons.many(names, { kind: "admin" }),
+    ]);
     const staleSeconds =
       STALE_RECONCILE_PERIODS * this.config.get().extensionHost.reconcileIntervalSeconds;
     const rows = await this.db
@@ -478,10 +484,12 @@ export class ExtensionAdmin {
         );
       const install = s.install;
       const displayName = displayNames.get(s.name) ?? null;
+      const icon = icons.get(s.name) ?? null;
       if (s.broken !== undefined) {
         return {
           name: s.name,
           displayName,
+          icon,
           version: s.version,
           source: s.source,
           sha256: target,
@@ -523,6 +531,7 @@ export class ExtensionAdmin {
       return {
         name: s.name,
         displayName,
+        icon,
         version: s.version,
         source: s.source,
         sha256: target,

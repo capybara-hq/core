@@ -6,11 +6,12 @@ import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
 import { enabledExtensionsQuery } from "../../src/extensions/enabled.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { OrgExtensionConfigs } from "../../src/extensions/org-config.js";
+import { type PluginIconScope, PluginIcons } from "../../src/extensions/plugin-icons.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { Credentials } from "../../src/tools/credentials.js";
-import { waitFor } from "../helpers/runs.js";
+import { createOrg, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -853,6 +854,131 @@ describe("条目详情与图标（安装向导、网页只以 <img> 显示）", 
       url: `/api/v1/orgs/${env.orgId}/catalog/${skillId}/icon`,
     });
     expect(admin.json().error.code).toBe("catalog.icon_not_found");
+  });
+
+  it("plugin icons: a URL only when the latest version has an icon, on the reader's routes", async () => {
+    const itemId = await importIconPlugin();
+    await importSkill(env);
+    const icons = env.k.app.get(PluginIcons);
+    const member = { kind: "org", orgId: env.orgId, isAdmin: false } as const;
+    const org = await icons.many([TEMPLATE_ID, "pdf-tools", "no-such-plugin"], member);
+    // the skill plugin has no icon, the unknown name no item: both absent
+    expect([...org.keys()]).toEqual([TEMPLATE_ID]);
+    const url = org.get(TEMPLATE_ID) as string;
+    expect(url).toBe(`/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon?v=1.0.0`);
+    // the URL is one the member can load
+    const r = await env.mem({ method: "GET", url });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.headers["content-type"]).toBe("image/svg+xml");
+    // the catalog lists carry each item's icon (null without one)
+    const orgItems = (
+      await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/catalog` })
+    ).json() as { items: { id: string; name: string; icon: string | null }[] };
+    expect(orgItems.items.find((i) => i.id === itemId)?.icon).toBe(url);
+    expect(orgItems.items.find((i) => i.name === "pdf-tools")?.icon).toBeNull();
+    const adminItems = (
+      await env.root({ method: "GET", url: "/api/v1/admin/catalog/items" })
+    ).json() as { items: { id: string; icon: string | null }[] };
+    expect(adminItems.items.find((i) => i.id === itemId)?.icon).toBe(
+      `/api/v1/admin/catalog/items/${itemId}/icon?v=1.0.0`,
+    );
+    const admin = await icons.many([TEMPLATE_ID], { kind: "admin" });
+    expect(admin.get(TEMPLATE_ID)).toBe(`/api/v1/admin/catalog/items/${itemId}/icon?v=1.0.0`);
+    expect(
+      (await env.root({ method: "GET", url: admin.get(TEMPLATE_ID) as string })).statusCode,
+    ).toBe(200);
+  });
+
+  it("plugin icons follow the org's catalog: disabled, named lists, the share gate", async () => {
+    const itemId = await importIconPlugin();
+    const icons = env.k.app.get(PluginIcons);
+    const member = { kind: "org", orgId: env.orgId, isAdmin: false } as const;
+    const orgAdmin = { kind: "org", orgId: env.orgId, isAdmin: true } as const;
+    const has = async (scope: PluginIconScope) => (await icons.many([TEMPLATE_ID], scope)).size > 0;
+    // disabled: org admins still see the item (unavailable), members do not
+    await setPolicy(env, itemId, "disabled");
+    expect(await has(member)).toBe(false);
+    expect(await has(orgAdmin)).toBe(true);
+    expect(await has({ kind: "admin" })).toBe(true);
+    await setPolicy(env, itemId, "allow");
+    // a named item that does not list the org and is not shown to others: absent, even for admins
+    await setScope(env, itemId, "named", []);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await has(orgAdmin)).toBe(false);
+    expect(await has({ kind: "admin" })).toBe(true);
+    // shown to other orgs: requestable, so the org sees it
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await has(member)).toBe(true);
+    // listed: on the list
+    await setScope(env, itemId, "named", [env.orgId]);
+    expect(await has(member)).toBe(true);
+    // owned by another org that has not made it shareable: hidden outside its list
+    const otherOrg = await createOrg(env.root, `Icons ${randomUUID().slice(0, 8)}`);
+    await setScope(env, itemId, "all");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: otherOrg, shareable: false })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await has(orgAdmin)).toBe(false);
+    expect(await has({ kind: "org", orgId: otherOrg, isAdmin: false })).toBe(true);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shareable: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect(await has(member)).toBe(true);
+  });
+
+  it("the org extensions list carries each extension's plugin icon (null without one)", async () => {
+    const itemId = await seedPluginItem(env, "fake-tools-ui");
+    const list = async () => {
+      const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { extensions: { plugin: string; icon: string | null }[] }).extensions;
+    };
+    expect((await list()).find((e) => e.plugin === "fake-tools-ui")?.icon).toBeNull();
+    // the latest version declares an icon that its files hold
+    const v = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["version", "manifest", "files"])
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    await env.db
+      .updateTable("catalog_item_versions")
+      .set({
+        manifest: JSON.stringify({ ...(v.manifest as object), icon: "./icon.svg" }),
+        files: JSON.stringify([
+          ...(v.files as { path: string }[]),
+          { path: "icon.svg", size: 10, sha256: "0".repeat(64) },
+        ]),
+      })
+      .where("item_id", "=", itemId)
+      .execute();
+    const items = await list();
+    expect(items.find((e) => e.plugin === "fake-tools-ui")?.icon).toBe(
+      `/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon?v=${v.version}`,
+    );
+    // extensions without a catalog item have none
+    expect(items.find((e) => e.plugin === "fake-connector")?.icon).toBeNull();
+    // the admin extension list has the admin route
+    const adminList = (
+      await env.root({ method: "GET", url: "/api/v1/admin/extensions" })
+    ).json() as {
+      extensions: { name: string; icon: string | null }[];
+    };
+    expect(adminList.extensions.find((e) => e.name === "fake-tools-ui")?.icon).toBe(
+      `/api/v1/admin/catalog/items/${itemId}/icon?v=${v.version}`,
+    );
+    expect(adminList.extensions.find((e) => e.name === "fake-connector")?.icon).toBeNull();
   });
 
   it("the admin detail gives hasIcon: true for a plugin with an icon, false without", async () => {

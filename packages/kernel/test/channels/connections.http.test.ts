@@ -165,6 +165,10 @@ describe("渠道连接 HTTP", () => {
         { path: "appSecret", set: true },
         { path: "webhookToken", set: false },
       ],
+      // the plugin's name and icon for the pages: a config-declared fixture without a display
+      // name or a catalog item has neither
+      pluginDisplayName: null,
+      pluginIcon: null,
     });
     const id = ch.id as string;
     // 非密钥列不含密钥；密钥在 secrets（命名空间 kernel）
@@ -184,9 +188,13 @@ describe("渠道连接 HTTP", () => {
       expect(r.statusCode).toBe(200);
       expect(r.body).not.toContain(SECRET);
     }
-    expect(
-      ((await owner({ method: "GET", url: base() })).json() as { channels: unknown[] }).channels,
-    ).toHaveLength(1);
+    const listed = (
+      (await owner({ method: "GET", url: base() })).json() as {
+        channels: Record<string, unknown>[];
+      }
+    ).channels;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ pluginDisplayName: null, pluginIcon: null });
 
     // 长连接由 worker 建立
     await waitFor(async () => im.active(id).length === 1, 10_000, "long connection");

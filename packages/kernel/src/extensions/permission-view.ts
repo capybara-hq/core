@@ -257,6 +257,11 @@ export interface AdminExtensionView {
   name: string;
   /** The plugin's display name (`ExtensionDisplayNames`); null when it has none. */
   displayName: LocalizedName | null;
+  /**
+   * The URL of its plugin's icon on the admin catalog route (`PluginIcons`); null when the plugin's
+   * latest version has none or there is no catalog item; absent on a degraded view (the read failed).
+   */
+  icon?: string | null;
   version: string;
   source: ExtensionSource;
   /** 安装记录的包；配置声明为 null。 */

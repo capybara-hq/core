@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -116,16 +117,23 @@ export class OrgCatalogController {
     @Inject(OrgCatalogService) private readonly catalog: OrgCatalogService,
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
+  /** The org's catalog; each item carries `icon`, its icon's URL here (null without one). */
   @Get("catalog")
   @OrgAction("catalog.read")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ items: OrgCatalogItem[] }> {
+  ): Promise<{ items: (OrgCatalogItem & { icon: string | null })[] }> {
     const p = requireUser(principal);
-    return { items: await this.catalog.list(org.orgId, p.account.id) };
+    const items = await this.catalog.list(org.orgId, p.account.id);
+    const icons = await this.icons.ofItems(
+      items.map((i) => i.id),
+      orgIconScope(org),
+    );
+    return { items: items.map((i) => ({ ...i, icon: icons.get(i.id) ?? null })) };
   }
 
   /**

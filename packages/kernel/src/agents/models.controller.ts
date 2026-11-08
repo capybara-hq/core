@@ -2,6 +2,7 @@ import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Controller, Get, Inject } from "@nestjs/common";
 import { z } from "zod";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZQuery } from "../infra/validation/zod-params.js";
@@ -40,6 +41,7 @@ export class ModelsController {
   constructor(
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   @Get()
@@ -48,17 +50,27 @@ export class ModelsController {
     @CurrentOrg() org: OrgContext,
     @ZQuery(ModelsQueryDto) q: z.infer<typeof ModelsQuery>,
   ): Promise<{
-    providers: { provider: string; displayName: LocalizedName | null; models: KernelModelInfo[] }[];
+    providers: {
+      provider: string;
+      displayName: LocalizedName | null;
+      icon: string | null;
+      models: KernelModelInfo[];
+    }[];
   }> {
     const providers = await this.registry.list(
       org.orgId,
       q.kind === undefined ? {} : { kind: q.kind },
     );
-    const names = await this.displayNames.many(providers.map((p) => p.provider));
+    const plugins = providers.map((p) => p.provider);
+    const [names, icons] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.icons.many(plugins, orgIconScope(org)),
+    ]);
     return {
       providers: providers.map((p) => ({
         provider: p.provider,
         displayName: names.get(p.provider) ?? null,
+        icon: icons.get(p.provider) ?? null,
         models: p.models,
       })),
     };
@@ -74,12 +86,22 @@ export class ModelsController {
   async catalog(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ providers: (ProviderStatus & { displayName: LocalizedName | null })[] }> {
+  ): Promise<{
+    providers: (ProviderStatus & { displayName: LocalizedName | null; icon: string | null })[];
+  }> {
     requireUser(principal);
     const providers = await this.registry.catalog(org.orgId);
-    const names = await this.displayNames.many(providers.map((p) => p.plugin));
+    const plugins = providers.map((p) => p.plugin);
+    const [names, icons] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.icons.many(plugins, orgIconScope(org)),
+    ]);
     return {
-      providers: providers.map((p) => ({ ...p, displayName: names.get(p.plugin) ?? null })),
+      providers: providers.map((p) => ({
+        ...p,
+        displayName: names.get(p.plugin) ?? null,
+        icon: icons.get(p.plugin) ?? null,
+      })),
     };
   }
 }
