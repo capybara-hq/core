@@ -126,6 +126,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves icon image bytes",
   },
+  {
+    route: "GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
   // org-catalog
   {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",

@@ -2,7 +2,7 @@ import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Res } fr
 import type { FastifyReply } from "fastify";
 import type { z } from "zod";
 import { ApiError } from "../errors.js";
-import { PluginIcons } from "../extensions/plugin-icons.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -17,6 +17,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
+import { orgMarketplaceIconUrl } from "./marketplace-icons.js";
 import {
   MarketplaceImportBody as ImportBody,
   MarketplaceAddBody,
@@ -235,14 +236,40 @@ export class MarketplacesController {
  * Org admins browse the marketplaces read-only (`GET /api/v1/orgs/:orgId/marketplaces/entries`,
  * `catalog.decide`; plugin scope spec §5.1 rule 3) to request an import. The deployment setting
  * `orgMarketplaceBrowse` off -> 404 `not_found`. An entry imported as an item the org can neither
- * see nor request (a hidden `named` item) reads as not imported (`adopted: null`).
+ * see nor request (a hidden `named` item) reads as not imported (`adopted: null`). `icon`: the
+ * catalog item's org icon route when the org's catalog shows the item (the share gate,
+ * `PluginIcons`), else the marketplace icon on this controller's icon route, else null.
  */
 @Controller("api/v1/orgs/:orgId/marketplaces")
 export class OrgMarketplacesController {
   constructor(
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
+
+  /** The org browse is off (`orgMarketplaceBrowse`) -> 404, like the entries. */
+  private async assertBrowse(): Promise<void> {
+    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
+      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
+    }
+  }
+
+  /**
+   * A marketplace entry icon for the org browse (`catalog.decide`, the org admins), gated like the
+   * entries: browsing on, the marketplace enabled; served like plugin icons (`sendCatalogIcon`).
+   * Not stored -> 404 `catalog.icon_not_found`.
+   */
+  @Get(":id/icons/:sha256")
+  @OrgAction("catalog.decide")
+  async icon(
+    @Param("id") id: string,
+    @Param("sha256") sha256: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await this.assertBrowse();
+    await sendCatalogIcon(reply, await this.marketplaces.icon(id, sha256, { browsable: true }));
+  }
 
   @Get("entries")
   @OrgAction("catalog.decide")
@@ -250,27 +277,32 @@ export class OrgMarketplacesController {
     @CurrentOrg() org: OrgContext,
     @ZQuery(MarketplaceEntriesQueryDto) q: z.infer<typeof MarketplaceEntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
-    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
-      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
-    }
-    const r = await this.marketplaces.entries({
-      ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
-      ...(q.q !== undefined && { q: q.q }),
-    });
+    await this.assertBrowse();
+    const r = await this.marketplaces.entries(
+      {
+        ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
+        ...(q.q !== undefined && { q: q.q }),
+      },
+      orgMarketplaceIconUrl(org.orgId),
+    );
     // A hidden `named` item the org is not listed on stays unknown to it: the entry reads as not
-    // imported. Icons are served only on the super admin routes: none here.
-    const seen = await itemsSeenBy(
-      this.kdb.db,
-      org.orgId,
-      r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+    // imported (and shows the marketplace icon, never the item's)
+    const adoptedIds = r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : []));
+    const seen = await itemsSeenBy(this.kdb.db, org.orgId, adoptedIds);
+    const own = await this.icons.ofItems(
+      adoptedIds.filter((id) => seen.has(id)),
+      orgIconScope(org),
     );
     return {
       ...r,
-      items: r.items.map((e) =>
-        e.adopted === null || seen.has(e.adopted.itemId)
-          ? { ...e, icon: null }
-          : { ...e, icon: null, adopted: null, newerAvailable: false, contentChanged: false },
-      ),
+      items: r.items.map((e) => {
+        if (e.adopted === null) return e;
+        if (!seen.has(e.adopted.itemId)) {
+          return { ...e, adopted: null, newerAvailable: false, contentChanged: false };
+        }
+        const icon = own.get(e.adopted.itemId);
+        return icon === undefined ? e : { ...e, icon };
+      }),
     };
   }
 }

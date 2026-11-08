@@ -497,6 +497,47 @@ describe("/plugins: states and actions follow the scope and the switch", () => {
     );
   });
 
+  it("org admins: a 市场 row's mark is the icon the kernel gives, else the initial", async () => {
+    const p = en.plugins;
+    const base = {
+      sourceId: "official",
+      sourceName: "Official",
+      version: "1.2.0",
+      summary: { en: "Web tools" },
+      minKernel: null,
+      homepage: null,
+      permissions: null,
+      source: { npm: { package: "@x/jina", version: "1.2.0", integrity: "sha512-x" } },
+      compatible: true,
+      importable: true,
+      adopted: null,
+      newerAvailable: false,
+      contentChanged: false,
+    };
+    const icon = `${ORG}/marketplaces/official/icons/${"a".repeat(64)}`;
+    stubApi({
+      [`GET ${ORG}/catalog`]: () => json(200, { items: [orgItem()] }),
+      [`GET ${ORG}/marketplaces/entries`]: () =>
+        json(200, {
+          items: [
+            { ...base, name: "jina", icon },
+            { ...base, name: "plain", icon: null },
+          ],
+        }),
+    });
+    await renderPlugins();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: new RegExp(p.tabs.market) }));
+    const list = await screen.findByRole("list", { name: p.market.title });
+    const rows = within(list).getAllByRole("listitem") as HTMLElement[];
+    const src = (name: string) =>
+      (rows.find((r) => within(r).queryByText(name) !== null) as HTMLElement)
+        .querySelector("img")
+        ?.getAttribute("src") ?? null;
+    expect(src("jina")).toBe(icon);
+    expect(src("plain")).toBeNull();
+  });
+
   it("org admins: the 市场 tab lists the entries with 申请引入; it is hidden when browsing is off", async () => {
     const p = en.plugins;
     const entry = {

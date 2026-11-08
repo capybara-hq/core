@@ -145,3 +145,9 @@ export function wantedIcons(
 /** The admin route of a stored icon (content addressed: the URL changes with the bytes). */
 export const marketplaceIconUrl = (sourceId: string, sha256: string): string =>
   `/api/v1/admin/marketplaces/${encodeURIComponent(sourceId)}/icons/${sha256}`;
+
+/** The org browse route of a stored icon (org admins of `orgId`, like the org browse). */
+export const orgMarketplaceIconUrl =
+  (orgId: string) =>
+  (sourceId: string, sha256: string): string =>
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/marketplaces/${encodeURIComponent(sourceId)}/icons/${sha256}`;

@@ -353,7 +353,8 @@ function Market({
         return (
           <ObjectRow
             key={plugin.key}
-            mark={{ text: name }}
+            // the imported plugin's icon (when this org sees it), else the marketplace's
+            mark={{ text: name, image: e.icon ?? null }}
             name={name}
             mono={e.displayName === null}
             description={summaryOf(e)}

@@ -166,8 +166,8 @@ export interface MarketplaceEntryView {
   /**
    * The icon to show (a kernel URL behind the super admin gate), null without one: the entry's
    * marketplace icon as stored by the last refresh (`GET /api/v1/admin/marketplaces/:id/icons/:sha256`);
-   * the admin entries route replaces it with the catalog item's own icon when the plugin is
-   * imported. The org browse route leaves it null.
+   * the entries routes replace it with the catalog item's own icon when the plugin is imported
+   * and the reader may see it. The org browse route gives the org routes of both.
    */
   icon: string | null;
   /**
@@ -1541,12 +1541,25 @@ export class MarketplacesService {
 
   /**
    * A stored marketplace icon by its sha256 (the address the entries carry); not stored ->
-   * `catalog.icon_not_found`. Read from PG, never from the network.
+   * `catalog.icon_not_found`. Read from PG, never from the network. `browsable` (the org route):
+   * the marketplace must also be one the org browse lists (effective), else not found.
    */
   async icon(
     id: string,
     sha256: string,
+    opts: { browsable?: boolean } = {},
   ): Promise<{ contentType: "image/svg+xml" | "image/png"; data: Uint8Array }> {
+    if (opts.browsable) {
+      // the org browse lists enabled marketplaces only (official also needs the config on)
+      const m = await this.db
+        .selectFrom("marketplaces")
+        .select(["builtin", "enabled"])
+        .where("id", "=", id)
+        .executeTakeFirst();
+      if (!m || !sourceEffective(m, this.config.get())) {
+        throw new ApiError("catalog.icon_not_found", "This marketplace has no such icon");
+      }
+    }
     const row = /^[0-9a-f]{64}$/.test(sha256)
       ? await this.db
           .selectFrom("marketplace_icons")
@@ -1592,6 +1605,8 @@ export class MarketplacesService {
    */
   async entries(
     q: { marketplaceId?: string; q?: string } = {},
+    /** The URL of a stored marketplace icon (default: the admin route). */
+    iconUrl: (sourceId: string, sha256: string) => string = marketplaceIconUrl,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     const config = this.config.get();
     let query = this.db
@@ -1685,7 +1700,7 @@ export class MarketplacesService {
     const iconOf = new Map(iconRows.map((i) => [`${i.source_id}\0${i.ref}`, i.sha256]));
     const iconUrlOf = (sourceId: string, ref: string | undefined): string | null => {
       const sha = ref === undefined ? undefined : iconOf.get(`${sourceId}\0${ref}`);
-      return sha === undefined ? null : marketplaceIconUrl(sourceId, sha);
+      return sha === undefined ? null : iconUrl(sourceId, sha);
     };
     const views = rows.map((r): MarketplaceEntryView => {
       const e = r.entry as MarketplaceEntry;

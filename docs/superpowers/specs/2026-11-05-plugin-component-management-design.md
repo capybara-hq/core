@@ -989,7 +989,13 @@ Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not
 - **API:** `GET /api/v1/admin/marketplaces/entries` gives each entry `icon` (the imported item's
   icon URL, else `/api/v1/admin/marketplaces/:id/icons/:sha256`, else null). The icon route serves
   the stored bytes from PG with the plugin icon headers (`sendCatalogIcon`: content type, nosniff,
-  CSP sandbox). Both are super admin routes; the org browse route returns `icon: null`. The icon
-  route is a Platform exclusion (transport: image bytes).
-- **Web:** the market row's mark is `ObjectMark` with `image: icon` (the initial when null or when
-  the image fails).
+  CSP sandbox). Both are super admin routes.
+- **Org browse** (follow-up decision 2026-11-08: the icon is the same everywhere):
+  `GET /api/v1/orgs/:orgId/marketplaces/entries` gives `icon` too: the item's org icon route
+  (`/api/v1/orgs/:orgId/catalog/:itemId/icon`) when the org's catalog shows the item (the share
+  gate; a hidden item reads as not imported and shows the marketplace icon), else
+  `GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256`, gated like the org browse
+  (`catalog.decide`, `orgMarketplaceBrowse` on, the marketplace enabled; else 404) and served
+  the same way. Both icon routes are Platform exclusions (transport: image bytes).
+- **Web:** the admin and the workspace market rows' mark is `ObjectMark` with `image: icon` (the
+  initial when null or when the image fails).

@@ -14,7 +14,8 @@ import {
   MARKETPLACE_ICON_MAX_BYTES,
   wantedIcons,
 } from "../../src/catalog/marketplace-icons.js";
-import { type OrgEnv, startOrgEnv } from "./org-env.js";
+import { createOrg } from "../helpers/runs.js";
+import { type OrgEnv, setDeployment, startOrgEnv } from "./org-env.js";
 
 // Marketplace entry icons (maintainer decision 2026-11-08): an entry's `icon` (an https URL, or a
 // path in a git marketplace's repository) is read on refresh through the marketplace network
@@ -309,7 +310,7 @@ describe("marketplace entry icons", { timeout: 60_000 }, () => {
     }
   });
 
-  it("only super admins reach the icons: org admins and members get 403, the org browse has none", async () => {
+  it("only super admins reach the admin icon routes; org admins get theirs on the org browse", async () => {
     market.setManifest({
       schemaVersion: 1,
       name: "Icons",
@@ -329,6 +330,117 @@ describe("marketplace entry icons", { timeout: 60_000 }, () => {
       url: `/api/v1/orgs/${env.orgId}/marketplaces/entries?sourceId=${id}`,
     });
     expect(org.statusCode, org.body).toBe(200);
-    expect(org.json().items).toEqual([expect.objectContaining({ name: "ok-svg", icon: null })]);
+    const orgUrl = org.json().items[0].icon as string;
+    const sha = url.split("/").pop() as string;
+    expect(orgUrl).toBe(`/api/v1/orgs/${env.orgId}/marketplaces/${id}/icons/${sha}`);
+    const got = await env.boss({ method: "GET", url: orgUrl });
+    expect(got.statusCode).toBe(200);
+    expect(got.headers["content-type"]).toBe("image/svg+xml");
+    expect(got.headers["x-content-type-options"]).toBe("nosniff");
+    expect(got.headers["content-security-policy"]).toMatch(/^sandbox; default-src 'none'/);
+    expect(got.body).toBe(SVG);
+    // a member of the org: not an org admin
+    expect((await env.mem({ method: "GET", url: orgUrl })).statusCode).toBe(403);
+    // another org's route: the org admin is not in it
+    const other = await createOrg(env.root, `Other ${randomUUID().slice(0, 6)}`);
+    const otherUrl = orgUrl.replace(env.orgId, other);
+    expect([403, 404]).toContain((await env.boss({ method: "GET", url: otherUrl })).statusCode);
+    // a sha of another marketplace, or a disabled marketplace: not found
+    expect(
+      (await env.boss({ method: "GET", url: orgUrl.replace(sha, "f".repeat(64)) })).statusCode,
+    ).toBe(404);
+    const off = await env.root({
+      method: "PATCH",
+      url: `/api/v1/admin/marketplaces/${id}`,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    expect((await env.boss({ method: "GET", url: orgUrl })).statusCode).toBe(404);
+    await env.root({
+      method: "PATCH",
+      url: `/api/v1/admin/marketplaces/${id}`,
+      payload: { enabled: true },
+    });
+    // browsing off for orgs: 404 like the entries
+    await setDeployment(env, { orgMarketplaceBrowse: false });
+    try {
+      expect((await env.boss({ method: "GET", url: orgUrl })).statusCode).toBe(404);
+    } finally {
+      await setDeployment(env, { orgMarketplaceBrowse: true });
+    }
+  });
+
+  it("the org browse shows an imported item's org icon only when the org sees it (share gate)", async () => {
+    market.setManifest({
+      schemaVersion: 1,
+      name: "Icons",
+      plugins: [
+        entry("seen-item", `${iconBase}/icon.svg`),
+        entry("hidden-item", `${iconBase}/icon.svg`),
+      ],
+    });
+    const id = await addMarketplace(market.url);
+    await refresh(id);
+    const items: Record<string, string> = {};
+    for (const [name, scope] of [
+      ["seen-item", "all"],
+      ["hidden-item", "named"],
+    ] as const) {
+      const itemId = randomUUID();
+      items[name] = itemId;
+      await env.db
+        .insertInto("catalog_items")
+        .values({
+          id: itemId,
+          name,
+          package_name: `@acme/plugin-${name}`,
+          publisher: "Acme",
+          description: "x",
+          latest_version: "1.0.0",
+          scope,
+          // not shown to other orgs: unknown to an org outside the list
+          shown_to_others: false,
+        })
+        .execute();
+      await env.db
+        .insertInto("catalog_item_versions")
+        .values({
+          item_id: itemId,
+          version: "1.0.0",
+          manifest: JSON.stringify({ name, version: "1.0.0", icon: "./icon.svg" }),
+          source: "file",
+          source_ref: "upload",
+          object_prefix: null,
+          files: JSON.stringify([{ path: "icon.svg", size: SVG.length, sha256: "0".repeat(64) }]),
+          size: 1,
+        })
+        .execute();
+    }
+    try {
+      const r = await env.boss({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/marketplaces/entries?sourceId=${id}`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      const by = new Map(
+        (r.json().items as { name: string; icon: string | null; adopted: unknown }[]).map((e) => [
+          e.name,
+          e,
+        ]),
+      );
+      expect(by.get("seen-item")?.icon).toBe(
+        `/api/v1/orgs/${env.orgId}/catalog/${items["seen-item"]}/icon?v=1.0.0`,
+      );
+      // the hidden item stays unknown: not imported, the marketplace's icon, never the item's
+      expect(by.get("hidden-item")?.adopted).toBeNull();
+      expect(by.get("hidden-item")?.icon).toMatch(
+        new RegExp(`^/api/v1/orgs/${env.orgId}/marketplaces/${id}/icons/[0-9a-f]{64}$`),
+      );
+    } finally {
+      for (const itemId of Object.values(items)) {
+        await env.db.deleteFrom("catalog_item_versions").where("item_id", "=", itemId).execute();
+        await env.db.deleteFrom("catalog_items").where("id", "=", itemId).execute();
+      }
+    }
   });
 });
