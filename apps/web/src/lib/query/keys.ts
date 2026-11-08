@@ -387,6 +387,23 @@ export const keys = {
       adminPurposes: (): readonly unknown[] => [...all, "adminPurposes"],
       /** The deployment's extensions (with the drain time limit). */
       extensions: (): readonly unknown[] => [...all, "extensions"],
+      /** The platform's UI contributions (`platform.page`; the admin console's 扩展 pages). */
+      uiContributions: (): readonly unknown[] => [...all, "uiContributions"],
+      /** Platform page views: all of them, or one contribution's (prefixes). */
+      uiViews: (plugin?: string, contribution?: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        ...(plugin === undefined ? [] : [plugin]),
+        ...(contribution === undefined ? [] : [contribution]),
+      ],
+      /** One platform page view (`rest`: locale, item, card). */
+      uiView: (plugin: string, contribution: string, rest: string): readonly unknown[] => [
+        ...all,
+        "uiView",
+        plugin,
+        contribution,
+        rest,
+      ],
       /** One extension (the detail page's poll while it converges). */
       extension: (name: string): readonly unknown[] => [...all, "extension", name],
       /** Every extension's deployment config (an invalidation prefix). */

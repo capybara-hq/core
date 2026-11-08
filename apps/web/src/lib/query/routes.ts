@@ -89,7 +89,7 @@ import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
-import { uiViewQuery } from "./ui";
+import { adminUiContributionsQuery, uiViewQuery } from "./ui";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -203,6 +203,23 @@ export const ROUTES: readonly RouteEntry[] = [
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
+  },
+  {
+    pattern: "/admin/p/[plugin]/[id]",
+    // Super admins: the platform's UI contributions, then the page's view when it is a schema view
+    // (an embed's token handshake stays in the browser).
+    queries: ({ me }) => (superAdmin(me) ? [q(adminUiContributionsQuery())] : []),
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params, locale }, qc) => {
+      const { plugin, id } = params;
+      if (!superAdmin(me) || plugin === undefined || id === undefined) return;
+      const items = qc.getQueryData<UiContributionItem[]>(adminUiContributionsQuery().queryKey);
+      const page = items?.find(
+        (c) => c.plugin === plugin && c.id === id && c.slot === "platform.page",
+      );
+      if (page?.kind !== "view") return;
+      await qc.prefetchQuery({ ...uiViewQuery(null, { plugin, id }, { locale }), retry: false });
+    },
   },
   {
     pattern: "/admin/inbox",

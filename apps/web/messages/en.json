@@ -3252,7 +3252,8 @@
       "agent-templates": "Agent templates",
       "themes": "Themes",
       "models": "Models",
-      "plugins": "Plugins"
+      "plugins": "Plugins",
+      "extensionPages": "Extensions"
     },
     "overview": {
       "intro": "Manage the whole deployment: accounts, organizations, extensions and deployment settings.",
@@ -3534,6 +3535,17 @@
         "consistent": "Replicas in sync {ok}/{n}",
         "diverged": "Replicas out of sync {ok}/{n}",
         "none": "No replica reported"
+      },
+      "uiDropped": {
+        "title": "Interfaces not in effect",
+        "description": "These interfaces declared by the extension are not shown: the slot they target does not exist on this platform, or its version is not supported. The rest of the extension works as usual.",
+        "columns": {
+          "id": "Interface",
+          "slot": "Slot",
+          "reason": "Reason"
+        },
+        "unknownSlot": "The slot does not exist",
+        "unsupportedVersion": "The slot version is not supported"
       },
       "detail": {
         "tabsLabel": "Extension details",

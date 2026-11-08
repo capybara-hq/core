@@ -1,6 +1,8 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { type UiContributionItem, uiLocale } from "../lib/ui";
+import { usePlatformPages } from "./extension-ui/ExtensionSlot";
 
 /** 后台各页的 id 与路由（只列已存在的页面）。 */
 export const ADMIN_PAGES = [
@@ -18,23 +20,62 @@ export const ADMIN_PAGES = [
   { id: "settings", href: "/admin/settings" },
 ] as const;
 
+/** The admin console route of a platform page (`platform.page`): `/admin/p/<plugin>/<id>`. */
+export const adminPageHref = (plugin: string, id: string) =>
+  `/admin/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
+
+/** An extension page of the admin console (slot `platform.page`), as a nav item. */
+export type AdminExtensionPage = { id: string; label: string; href: string };
+
+/** The nav items of `pages`, labelled by title (with the plugin name when two share a title). */
+export function adminExtensionItems(
+  pages: readonly UiContributionItem[],
+  locale: string,
+): AdminExtensionPage[] {
+  const lang = uiLocale(locale);
+  const titles = pages.map((p) => p.title[lang]);
+  return pages.map((p) => {
+    const title = p.title[lang];
+    const shared = titles.filter((x) => x === title).length > 1;
+    return {
+      id: `${p.plugin}/${p.id}`,
+      label: shared ? `${title} · ${p.plugin}` : title,
+      href: adminPageHref(p.plugin, p.id),
+    };
+  });
+}
+
+/**
+ * The admin console's extension pages (the extensions' `platform.page` contributions, read while
+ * `enabled`); empty while loading, without pages or on a failed read.
+ */
+export function useAdminExtensionPages(enabled = true): AdminExtensionPage[] {
+  const locale = useLocale();
+  const { items } = usePlatformPages(enabled);
+  return adminExtensionItems(items, locale);
+}
+
 export type AdminPageId = (typeof ADMIN_PAGES)[number]["id"];
 
 /**
  * The admin console's (super admins) navigation: overview, the inbox, accounts, orgs, plugins (its
  * tabs hold the marketplaces and the pending confirmations), extensions, the platform skills,
- * connector templates, agent templates and themes, models, deployment settings. It feeds the sidebar's admin context only;
- * admin pages carry no inner navigation. An org's own settings stay under `/settings/*`.
+ * connector templates, agent templates and themes, models, deployment settings, then a 扩展 group
+ * of the extensions' platform pages (hidden when there are none). It feeds the sidebar's admin
+ * context only; admin pages carry no inner navigation. An org's own settings stay under
+ * `/settings/*`.
  */
 export function useAdminNav(): {
   group: string;
-  items: { id: AdminPageId; label: string; href: string }[];
+  items: { id: string; label: string; href: string }[];
 }[] {
   const t = useTranslations("admin.nav");
+  const pages = useAdminExtensionPages();
   return [
     {
       group: t("group"),
       items: ADMIN_PAGES.map((p) => ({ id: p.id, label: t(p.id), href: p.href })),
     },
+    ...(pages.length === 0 ? [] : [{ group: t("extensionPages"), items: pages }]),
   ];
 }

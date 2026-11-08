@@ -26,7 +26,7 @@ export type EmbedParentMessage =
       locale: "zh" | "en";
       theme: EmbedTheme;
       tokens: Record<string, string>;
-      context: { orgId: string; conversationId?: string };
+      context: { orgId?: string; conversationId?: string };
     }
   | { protocol: typeof EMBED_PROTOCOL; type: "token"; token: string }
   | {
@@ -191,7 +191,7 @@ export interface EmbedBridgeOptions {
   /** 取一个新令牌（内核 `POST .../ui/embeds/:plugin/:id/token`）；`expiresIn` 为有效期秒数。 */
   fetchToken(): Promise<{ token: string; expiresIn: number }>;
   locale: "zh" | "en";
-  context: { orgId: string; conversationId?: string };
+  context: { orgId?: string; conversationId?: string };
   readTheme(): { theme: EmbedTheme; tokens: Record<string, string> };
   onResize(height: number): void;
   onNavigate(path: string): void;
@@ -265,7 +265,7 @@ export function createEmbedBridge(o: EmbedBridgeOptions): EmbedBridge {
       theme,
       tokens,
       context: {
-        orgId: o.context.orgId,
+        ...(o.context.orgId !== undefined && { orgId: o.context.orgId }),
         ...(o.context.conversationId !== undefined && {
           conversationId: o.context.conversationId,
         }),

@@ -3240,7 +3240,8 @@
       "agent-templates": "智能体模板",
       "themes": "主题",
       "models": "模型",
-      "plugins": "插件"
+      "plugins": "插件",
+      "extensionPages": "扩展"
     },
     "overview": {
       "intro": "管理整个部署：账号、组织、扩展与部署设置。",
@@ -3522,6 +3523,17 @@
         "consistent": "副本一致 {ok}/{n}",
         "diverged": "副本不一致 {ok}/{n}",
         "none": "无副本上报"
+      },
+      "uiDropped": {
+        "title": "未生效的界面",
+        "description": "这个扩展声明的下列界面没有生效：它们指向的插槽在本平台不存在，或插槽版本不受支持。扩展的其他功能不受影响。",
+        "columns": {
+          "id": "界面",
+          "slot": "插槽",
+          "reason": "原因"
+        },
+        "unknownSlot": "插槽不存在",
+        "unsupportedVersion": "插槽版本不受支持"
       },
       "detail": {
         "tabsLabel": "扩展详情",
