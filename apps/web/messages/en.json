@@ -3008,7 +3008,9 @@
       "label": "Providers",
       "provider": "Provider",
       "count": "Models",
-      "failed": "Failed"
+      "failed": "Failed",
+      "option": "{name} · {count, plural, one {# model} other {# models}}",
+      "optionFailed": "{name} · failed to list models"
     },
     "admin": {
       "title": "Models",

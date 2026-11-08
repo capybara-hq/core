@@ -189,7 +189,10 @@ describe("/admin/models（ListPage）", () => {
     const large = within(table).getByText("Alpha Large").closest("tr") as HTMLElement;
     // Capabilities are text, not badges (「工具 · 图片 · 推理」), one no-break unit per item
     const caps = [m.models.capability.tools, m.models.capability.vision];
-    const capsCell = large.querySelector('td[data-wrap="true"]') as HTMLElement;
+    // the model name wraps too; the capabilities cell is the wrapping list
+    const capsCell = [...large.querySelectorAll('td[data-wrap="true"]')].find((td) =>
+      td.querySelector('[data-part="cell-list-item"]'),
+    ) as HTMLElement;
     expect(capsCell.textContent).toBe([...caps, m.models.capability.reasoning].join(" · "));
     expect(
       [...capsCell.querySelectorAll('[data-part="cell-list-item"]')].map((i) => i.textContent),
@@ -461,7 +464,15 @@ describe("one box is enough (acceptance item AB)", () => {
     expect(chat.querySelector('[data-part="table-toolbar"]')).toBeNull();
     const head = chat.querySelector('[data-part="subsection-head"]') as HTMLElement;
     expect(within(head).getByText("2")).toBeTruthy();
-    expect(within(head).getByRole("button", { name: en.models.catalog.turnAllOff })).toBeTruthy();
+    // both bulk buttons share one variant: a disabled one reads as off, never as the primary
+    const bulk = [en.models.catalog.turnAllOff, en.models.catalog.turnAllOn].map((name) =>
+      within(head).getByRole("button", { name }),
+    );
+    expect(bulk.map((b) => b.getAttribute("data-variant"))).toEqual(["default", "default"]);
+    // the model name wraps inside its cell, which never widens the table (not a wrap column)
+    const name = within(chat).getByText("Alpha Large");
+    expect(name.getAttribute("data-pre")).toBe("true");
+    expect(name.closest("td")?.getAttribute("data-wrap")).toBeNull();
     expect(within(chat).getByRole("table", { name: "alpha" })).toBeTruthy();
     noNested();
   });
@@ -511,9 +522,23 @@ describe("one box is enough (acceptance item AB)", () => {
       "GET /api/v1/orgs/o1/extensions": () => json(200, { extensions: [] }),
     });
     await renderRouteWithCache("/settings/models", lastStubRoutes());
-    const list = await screen.findByRole("table", { name: en.models.providers.label });
-    expect(list.closest('[data-columns="list-detail"]')).not.toBeNull();
+    // beside the settings nav there is no providers column: a select picks the provider
+    const picker = await screen.findByRole("combobox", { name: en.models.providers.label });
+    expect(document.querySelector('[data-columns="list-detail"]')).toBeNull();
+    expect(screen.queryByRole("table", { name: en.models.providers.label })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 3, name: "alpha" })).toBeNull();
+    expect(picker.textContent).toContain("alpha · 2 models");
     expect(screen.getByRole("table", { name: "alpha" })).toBeTruthy();
+    // a failed provider is marked among the options and shows its error once picked
+    const user = userEvent.setup();
+    await pickOption(picker, "broken", user);
+    expect(window.location.search).toBe("?provider=broken");
+    expect(screen.getByRole("combobox", { name: en.models.providers.label }).textContent).toContain(
+      fill(en.models.providers.optionFailed, { name: "broken" }),
+    );
+    expect(
+      screen.getByText(fill(en.models.admin.providerError, { provider: "broken" })),
+    ).toBeTruthy();
     noNested();
   });
 });

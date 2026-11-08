@@ -12,11 +12,12 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
+import type { ReactNode } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import {
   ModelCatalog,
-  ModelProviders,
   ModelProvidersLoading,
+  ProviderSelect,
 } from "../../../../components/ModelCatalog";
 import { useModelDisabling } from "../../../../components/ModelDisabling";
 import { NoAccess } from "../../../../components/NoAccess";
@@ -127,9 +128,10 @@ function OrgModels({
   if (catalog.kind === "error") return <ErrorFrame reset={catalog.retry} />;
   if (purposes.kind === "loading" || models.kind === "loading" || catalog.kind === "loading") {
     return tab === "models" ? (
-      // The providers grid while it loads (the provider names come with the data)
+      // The picker's slot over the loading chat table (the provider names come with the data)
       <SettingsPage header={header} nav={nav} activeNav="models">
         <ModelProvidersLoading
+          picker
           columns={[
             ...(["model", "capabilities", "context"] as const).map((key) => ({
               key,
@@ -249,26 +251,28 @@ function ModelsBody({
           <Text variant="prose" tone="muted">
             {t("catalog.orgDescription")}
           </Text>
-          <ModelProviders
-            providers={catalog.map((p) => ({
-              plugin: p.plugin,
-              name: nameOf(p),
-              id: p.plugin,
-              ...(p.status === "ok" ? { count: p.models.length } : {}),
-              failed: p.status !== "ok",
-            }))}
-            selected={open.plugin}
-            onSelect={onProvider}
-          >
-            <OrgProvider
-              key={open.plugin}
-              orgId={orgId}
-              provider={open}
-              name={nameOf(open)}
-              pending={disabling.pending}
-              onChange={disabling.change}
-            />
-          </ModelProviders>
+          {/* No providers column here: beside the settings nav it would squeeze the tables, so
+              a select above the detail picks the provider */}
+          <OrgProvider
+            key={open.plugin}
+            orgId={orgId}
+            provider={open}
+            name={nameOf(open)}
+            pending={disabling.pending}
+            onChange={disabling.change}
+            picker={
+              <ProviderSelect
+                providers={catalog.map((p) => ({
+                  plugin: p.plugin,
+                  name: nameOf(p),
+                  ...(p.status === "ok" ? { count: p.models.length } : {}),
+                  failed: p.status !== "ok",
+                }))}
+                selected={open.plugin}
+                onSelect={onProvider}
+              />
+            }
+          />
         </Stack>
       )}
     </SettingsPage>
@@ -287,11 +291,13 @@ function OrgProvider({
   name,
   pending,
   onChange,
+  picker,
 }: {
   orgId: string;
   provider: AdminProvider;
   name: string;
   pending: boolean;
+  picker: ReactNode;
   onChange(provider: string, change: ModelDisableChange): void;
 }) {
   const t = useTranslations("models");
@@ -347,6 +353,7 @@ function OrgProvider({
           })}
       pending={pending}
       onChange={(change) => onChange(p.provider, change)}
+      picker={picker}
     />
   );
 }

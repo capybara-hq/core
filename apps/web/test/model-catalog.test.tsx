@@ -454,7 +454,10 @@ describe("the models pages' tabs and provider selection", () => {
       if (path === "/admin/models") adminMixed();
       else orgRoutes("following");
       await renderRouteWithCache(path, lastStubRoutes());
-      expect(await screen.findByRole("table", { name: en.models.providers.label })).toBeTruthy();
+      // the admin page lists the providers in a column; the org page picks one with a select
+      const role = path === "/admin/models" ? "table" : "combobox";
+      const providers = () => screen.queryByRole(role, { name: en.models.providers.label });
+      expect(await screen.findByRole(role, { name: en.models.providers.label })).toBeTruthy();
       expect(tabOf(en.models.tabs.models).getAttribute("aria-selected")).toBe("true");
       const purposesTitle =
         path === "/admin/models" ? en.models.admin.purposes.title : en.models.org.title;
@@ -463,10 +466,10 @@ describe("the models pages' tabs and provider selection", () => {
       await user.click(tabOf(en.models.tabs.purposes));
       expect(window.location.search).toBe("?tab=purposes");
       expect(screen.getByRole("region", { name: purposesTitle })).toBeTruthy();
-      expect(screen.queryByRole("table", { name: en.models.providers.label })).toBeNull();
+      expect(providers()).toBeNull();
       await user.click(tabOf(en.models.tabs.models));
       expect(window.location.search).toBe("");
-      expect(screen.getByRole("table", { name: en.models.providers.label })).toBeTruthy();
+      expect(providers()).toBeTruthy();
     },
   );
 

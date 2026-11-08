@@ -114,6 +114,7 @@ export function ModelCatalog<M extends AdminModelInfo>({
   pending = false,
   onChange,
   extras,
+  picker,
 }: {
   /** The provider's name for the tables' accessible names. */
   provider: string;
@@ -124,6 +125,11 @@ export function ModelCatalog<M extends AdminModelInfo>({
   canSwitch?: boolean;
   /** The provider has no list here (its error, a note): shown in place of the models. */
   unlisted?: ReactNode;
+  /**
+   * The provider picker in place of the h3 name (the org page, where the settings nav leaves no
+   * room for a providers column): the description sits beside it.
+   */
+  picker?: ReactNode;
   /** A change is being saved: the switches wait. */
   pending?: boolean;
   onChange(change: ModelDisableChange): void;
@@ -175,20 +181,23 @@ export function ModelCatalog<M extends AdminModelInfo>({
   const modelColumn: Column<M> = {
     key: "model",
     header: tm("admin.columns.model"),
-    // A minimum for the names (「deepseek/deepseek-chat」 is not cut to 「deepseek/dee」)
+    // A minimum for the names (「deepseek/deepseek-chat」 is not cut to 「deepseek/dee」). The cell
+    // never widens the table (not a `wrap` column: a long description would set its width): the
+    // display name wraps inside it (`pre`), the id and the description stay one line each with an
+    // ellipsis and the full text on hover
     width: 240,
     cell: (m) => {
       const text = describe(m.description, lang);
       return (
         <Stack gap={0}>
-          <Text>{m.displayName}</Text>
+          <Text pre>{m.displayName}</Text>
           {m.displayName !== m.id ? (
-            <Text variant="small" tone="muted">
+            <Text variant="small" tone="muted" truncate>
               {m.id}
             </Text>
           ) : null}
           {text !== undefined ? (
-            <Text variant="small" tone="muted">
+            <Text variant="small" tone="muted" truncate>
               {text}
             </Text>
           ) : null}
@@ -208,6 +217,9 @@ export function ModelCatalog<M extends AdminModelInfo>({
     key: "publisher",
     header: t("publisher"),
     tone: "muted",
+    // Common names in full (Moonshot AI, ByteDance, DeepSeek); a longer one wraps
+    width: 120,
+    wrap: true,
     cell: (m) => m.publisher ?? "—",
   };
   const switchColumn: Column<M> = {
@@ -286,7 +298,7 @@ export function ModelCatalog<M extends AdminModelInfo>({
                     <>
                       <Button
                         density="dense"
-                        variant="ghost"
+                        variant="default"
                         disabled={pending || !anyOn}
                         onClick={() => bulk(g.kind, true)}
                       >
@@ -294,7 +306,7 @@ export function ModelCatalog<M extends AdminModelInfo>({
                       </Button>
                       <Button
                         density="dense"
-                        variant="ghost"
+                        variant="default"
                         disabled={pending || !anyOff}
                         onClick={() => bulk(g.kind, false)}
                       >
@@ -336,10 +348,17 @@ export function ModelCatalog<M extends AdminModelInfo>({
 
   return (
     <Stack gap={16}>
-      <Stack gap={4}>
-        <Text variant="h3">{title}</Text>
-        {description}
-      </Stack>
+      {picker !== undefined ? (
+        <Stack direction="row" gap={12} align="center" wrap>
+          {picker}
+          {description}
+        </Stack>
+      ) : (
+        <Stack gap={4}>
+          <Text variant="h3">{title}</Text>
+          {description}
+        </Stack>
+      )}
       {unlisted === undefined ? filters : null}
       {body}
     </Stack>
@@ -422,12 +441,65 @@ export function ModelProviders({
 }
 
 /**
+ * The provider picker of a models tab without a providers column (the org page, beside the
+ * settings nav): one option per provider, its display name with its model count, a failed one
+ * marked 失败; the value is the URL's `?provider=`. Passed to {@link ModelCatalog} as `picker`.
+ */
+export function ProviderSelect({
+  providers,
+  selected,
+  onSelect,
+}: {
+  providers: ProviderRow[];
+  selected: string;
+  onSelect(plugin: string): void;
+}) {
+  const t = useTranslations("models.providers");
+  return (
+    <Select
+      aria-label={t("label")}
+      value={selected}
+      onChange={(e) => onSelect(e.target.value)}
+      options={providers.map((p) => ({
+        value: p.plugin,
+        label: p.failed
+          ? t("optionFailed", { name: p.name })
+          : p.count === undefined
+            ? p.name
+            : t("option", { name: p.name, count: p.count }),
+      }))}
+    />
+  );
+}
+
+/**
  * The models tab while its read is on the way: the same grid, the providers table loading on the
  * left and, on the right, the name's slot over a loading chat table with the loaded table's
- * header (`columns`, the page's chat columns).
+ * header (`columns`, the page's chat columns); with `picker`, only the picker's slot over the
+ * table.
  */
-export function ModelProvidersLoading({ columns }: { columns: { key: string; header: string }[] }) {
+export function ModelProvidersLoading({
+  columns,
+  picker = false,
+}: {
+  columns: { key: string; header: string }[];
+  /** The page picks the provider with a select (no providers column): its slot over the table. */
+  picker?: boolean;
+}) {
   const t = useTranslations("models");
+  const detail = (
+    <Stack gap={16}>
+      <SkeletonText width={picker ? 240 : 160} />
+      <DataTable<AdminModelInfo>
+        label={t("kind.chat")}
+        columns={columns.map((c) => ({ ...c, cell: () => null }))}
+        rows={[]}
+        rowKey={(m) => m.id}
+        state="loading"
+      />
+    </Stack>
+  );
+  if (picker) return detail;
   return (
     <Grid columns="list-detail" divided>
       <DataTable<ProviderRow>
@@ -442,16 +514,7 @@ export function ModelProvidersLoading({ columns }: { columns: { key: string; hea
         rowKey={(p) => p.plugin}
         state="loading"
       />
-      <Stack gap={16}>
-        <SkeletonText width={160} />
-        <DataTable<AdminModelInfo>
-          label={t("kind.chat")}
-          columns={columns.map((c) => ({ ...c, cell: () => null }))}
-          rows={[]}
-          rowKey={(m) => m.id}
-          state="loading"
-        />
-      </Stack>
+      {detail}
     </Grid>
   );
 }
