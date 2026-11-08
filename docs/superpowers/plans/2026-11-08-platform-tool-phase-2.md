@@ -210,7 +210,7 @@ Owner of `platform/exclusions.ts`: Task 5 in wave 2 and Task 9 in wave 3. The ot
 
 **Files:** `ops/agents.ops.ts` (profile: `agents.set-quick-actions`, `agents.set-avatar` with preset ids; `confirmFor` like `agents.update`), `ops/platform.ops.ts` (`me` returns description, quick actions, avatar), `agents.get` result. Custom avatar upload stays `transport`.
 
-- [x] Before starting, confirm the run-context merge on `main` (`docs/superpowers/specs/2026-11-08-run-context-design.md` §3.5: the description lives in the agent definition, edited by `agents.update`). Then follow the domain template, with tests for a private agent (rememberable) and a shared agent (`remember: false`).
+- [x] Done before the run-context merge (the profile route was already on `main`): one operation `agents.update-profile` without `description`, which run-context §3.5 moves into the agent definition, edited by `agents.update`, once it merges. Then follow the domain template, with tests for a private agent (rememberable) and a shared agent (`remember: false`).
 
 ### Task 13: Close
 

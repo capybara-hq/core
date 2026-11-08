@@ -24,7 +24,7 @@ import {
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
-import { AvatarInputSchema } from "../../agents/profile.js";
+import { PresetAvatarSchema } from "../../agents/profile.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
@@ -81,7 +81,7 @@ const Fields = {
  * spec §3.5), so it is not mirrored here.
  */
 const Profile = AgentProfileBody.shape;
-const [PresetAvatar] = AvatarInputSchema.options;
+const PresetAvatar = PresetAvatarSchema;
 
 /** One change of `agents.update-profile` as the card says it. */
 function profileChanges(i: {
@@ -101,11 +101,10 @@ function profileChanges(i: {
     zh.push("清空快捷操作");
     en.push("clear the quick actions");
   } else if (i.quickActions !== undefined) {
-    const titles = i.quickActions.map((q) => named(q.title));
-    zh.push(`快捷操作设为 ${titles.length} 条：${titles.map((t) => `「${t}」`).join("")}`);
-    en.push(
-      `set ${titles.length} quick action${titles.length === 1 ? "" : "s"}: ${titles.map((t) => `"${t}"`).join(", ")}`,
-    );
+    // a count only: the titles are model text (spec §6.3); the card's parameters list them
+    const n = i.quickActions.length;
+    zh.push(`快捷操作设为 ${n} 条（替换现有的）`);
+    en.push(`set ${n} quick action${n === 1 ? "" : "s"} (replacing the current ones)`);
   }
   return { zh, en };
 }

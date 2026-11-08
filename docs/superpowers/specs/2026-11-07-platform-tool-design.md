@@ -368,7 +368,8 @@ Decisions made while building, one per bullet (what, and why).
   applies, like an org write.
 - The `later` exclusions all point to one tracking issue, core#91 ("Platform operations: remaining
   routes", one section per domain), instead of one issue per domain (decided, 2026-11-08). The check
-  reads `issue` as a literal, so each entry carries the URL inline.
+  reads `issue` as a literal, so each entry carries the URL inline. (Superseded: §14.6, Task 12 removed
+  the `later` category and the `issue` field.)
 - Routes added by platform / org layering, merged first, were classified when this branch merged
   `main`: the org config copies (`…/extensions/:extension/overrides`, the admin `org-overrides`) are
   `secret`, the per-org extension tool switches `later`.

@@ -49,8 +49,13 @@ export const DescriptionSchema = z.string().max(PROFILE_LIMITS.description);
 export const QuickActionsSchema = z.array(QuickActionSchema).max(PROFILE_LIMITS.quickActions);
 
 /** What a client may write (`external` is migrated data only). */
+/** A preset avatar: the only kind the `Platform` tool sets (an upload is the web's). */
+export const PresetAvatarSchema = z
+  .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
+  .strict();
+
 export const AvatarInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) }).strict(),
+  PresetAvatarSchema,
   z.object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(200) }).strict(),
 ]);
 

@@ -444,8 +444,8 @@ describe("agent profile", () => {
         mc,
       ),
     ).toEqual({
-      zh: "修改共享智能体「Team helper」的资料：移除头像；快捷操作设为 1 条：「Weekly report」",
-      en: 'Update the profile of shared agent "Team helper": remove the avatar; set 1 quick action: "Weekly report"',
+      zh: "修改共享智能体「Team helper」的资料：移除头像；快捷操作设为 1 条（替换现有的）",
+      en: 'Update the profile of shared agent "Team helper": remove the avatar; set 1 quick action (replacing the current ones)',
     });
     expect(
       await summarize("agents.update-profile", { agentId: mine, quickActions: [] }, mc),
