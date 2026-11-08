@@ -1,9 +1,15 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
+import { BackgroundModule } from "../background/background.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { ChannelsModule } from "../channels/channels.module.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
+import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { FilesModule } from "../files/files.module.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -11,20 +17,29 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
+import { AgentSkillsOperations } from "./ops/agent-skills.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { ApprovalsOperations } from "./ops/approvals.ops.js";
+import { BackgroundOperations } from "./ops/background.ops.js";
 import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
+import { ChannelsOperations } from "./ops/channels.ops.js";
 import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
 import { ConversationsOperations } from "./ops/conversations.ops.js";
+import { EnvironmentsOperations } from "./ops/environments.ops.js";
+import { EvalsOperations } from "./ops/evals.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
 import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
+import { InboxOperations } from "./ops/inbox.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
 import { ModelsOperations } from "./ops/models.ops.js";
 import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
+import { OrgSettingsOperations } from "./ops/org-settings.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
+import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { PlatformModule } from "./platform.module.js";
@@ -54,6 +69,19 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   OrgPluginsOperations,
   ExtensionsAdminOperations,
   ModelsOperations,
+  // Task 9: inbox and pending reads
+  InboxOperations,
+  ApprovalsOperations,
+  // Task 10: channels, org settings
+  ChannelsOperations,
+  OrgSettingsOperations,
+  // Task 11: evals, background tasks, file previewers
+  EvalsOperations,
+  BackgroundOperations,
+  PreviewersOperations,
+  // Task 11b: environments, agent skills
+  EnvironmentsOperations,
+  AgentSkillsOperations,
 ] as const;
 
 /**
@@ -74,6 +102,12 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     IdentityModule,
     ModelsModule,
     ProvidersModule,
+    InboxModule,
+    ChannelsModule,
+    EvalsModule,
+    EnvironmentsModule,
+    BackgroundModule,
+    FilesModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

@@ -1,14 +1,17 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { ModelsQuery } from "../../agents/models.controller.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
 import { ModelDisabledPatch, ModelProviderParams } from "../../models/enablement.controller.js";
 import { ModelEnablement } from "../../models/enablement.js";
 import { ModelPurposePathParams } from "../../models/org-models.schemas.js";
 import { ModelPurposesService, withDeclaredByNames } from "../../models/purposes.js";
+import { ProviderRegistry } from "../../runtime/providers.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
+import { Cursor, pageOf, startOf } from "./paging.js";
 import { named } from "./summary.js";
 
 const Purpose = ModelPurposePathParams.shape.purpose.max(100);
@@ -49,6 +52,7 @@ export class ModelsOperations implements OnModuleInit {
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
     @Inject(ExtensionRegistry) private readonly extensions: ExtensionRegistry,
+    @Inject(ProviderRegistry) private readonly providers: ProviderRegistry,
   ) {}
 
   /** The precheck refusal of a provider that is not a running model-provider extension. */
@@ -177,6 +181,68 @@ export class ModelsOperations implements OnModuleInit {
             { disable: input.disable, enable: input.enable },
             { accountId: ctx.actorAccountId, auditDetail: viaAgent("models.set-disabled", ctx) },
           ),
+      }),
+      defineOperation({
+        id: "models.available",
+        description:
+          "List the models agents of this org can use now: the models of the installed model providers that neither the platform nor the org switched off, one row per model with its provider, kind and context window. Optionally only one kind (chat, embedding, ...). Pages by 50: pass the returned next as params.cursor. An empty list means no model provider is set up for this org.",
+        input: z.object({ kind: ModelsQuery.shape.kind, cursor: Cursor.optional() }).strict(),
+        example: { kind: "chat" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/models"],
+        extras: ["cursor"],
+        confirm: "read",
+        run: async (input, ctx) => {
+          const providers = await this.providers.list(
+            ctx.orgId,
+            input.kind === undefined ? {} : { kind: input.kind },
+          );
+          const names = await this.displayNames.many(providers.map((p) => p.provider));
+          const rows = providers.flatMap((p) =>
+            p.models.map((m) => ({
+              id: `${p.provider}/${m.id}`,
+              name: m.displayName,
+              state: "enabled",
+              provider: names.get(p.provider)?.en ?? p.provider,
+              kind: m.kind,
+              contextWindow: m.contextWindow,
+            })),
+          );
+          return pageOf(rows, startOf(input.cursor), 50);
+        },
+      }),
+      defineOperation({
+        id: "models.catalog",
+        description:
+          "Read the org's model catalog (org admins): every installed model provider with its status for this org and the models the platform left on, each marked enabled or disabled by the org's own list. Use it before models.set-disabled. Optionally one provider. Pages by 50 providers: pass the returned next as params.cursor.",
+        input: z.object({ provider: Provider.optional(), cursor: Cursor.optional() }).strict(),
+        example: {},
+        authz: { orgAction: "org.models.manage" },
+        mirrors: ["GET /api/v1/orgs/:orgId/models/catalog"],
+        extras: ["provider", "cursor"],
+        confirm: "read",
+        run: async (input, ctx) => {
+          const all = await this.providers.catalog(ctx.orgId);
+          const names = await this.displayNames.many(all.map((p) => p.plugin));
+          const rows = all
+            .filter((p) => input.provider === undefined || p.plugin === input.provider)
+            .map((p) => ({
+              id: p.plugin,
+              name: names.get(p.plugin)?.en ?? p.plugin,
+              state: p.status,
+              ...(p.error !== undefined && { reason: p.error.slice(0, 300) }),
+              ...(p.status === "org_configured" && {
+                next: "The platform left this provider without a key, so this org needs its own: configure it on the org's models settings page of the web app.",
+              }),
+              models: p.models.map((m) => ({
+                id: m.id,
+                name: m.displayName,
+                state: m.disabled === true ? "disabled" : "enabled",
+                kind: m.kind,
+              })),
+            }));
+          return pageOf(rows, startOf(input.cursor), 50);
+        },
       }),
     ]);
   }

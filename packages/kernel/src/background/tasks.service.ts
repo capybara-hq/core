@@ -138,6 +138,7 @@ export class BackgroundTasks {
     accountId: string,
     taskId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<BackgroundTaskView> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
     const after = await this.stopper.stop(task, "person");
@@ -147,7 +148,12 @@ export class BackgroundTasks {
       orgId,
       action: "background_task.stopped",
       target: task.id,
-      detail: { taskId: task.id, conversationId: task.conversationId, status: after.status },
+      detail: {
+        taskId: task.id,
+        conversationId: task.conversationId,
+        status: after.status,
+        ...auditDetail,
+      },
     });
     return this.view(after, conversationId);
   }

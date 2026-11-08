@@ -36,6 +36,17 @@ const platformRow = (r: CatalogRequestView) => ({
   createdAt: r.createdAt,
 });
 
+/** A member's pending request as the org admins' list shows it: a compact row (the inbox's). */
+const pendingRow = (r: CatalogRequestView) => ({
+  id: r.id,
+  name: r.item?.name ?? r.entry?.name ?? r.agent?.name ?? r.kind,
+  state: r.status,
+  kind: r.kind,
+  requestedBy: r.requestedByName,
+  note: r.note,
+  next: "Decide it on the web, in the inbox; agents never decide requests.",
+});
+
 /**
  * Request operations of the `Platform` tool (spec §7): a member asks the org admins to switch a
  * plugin on, an org admin asks the super admin for access to a plugin or for an import from a
@@ -158,6 +169,20 @@ export class RequestsOperations implements OnModuleInit {
             ),
           ),
         }),
+      }),
+      defineOperation({
+        id: "requests.pending",
+        description:
+          "List the requests members sent this org's admins that wait for a decision (org admins), as the inbox shows them, newest first: kind enable (switch a plugin on) or connector_setup (set up an agent's connectors), what it is about (the plugin or the agent), who asked and their note. Deciding them is done on the web. Pages by 50: pass the returned next as params.cursor.",
+        input: z.object({ cursor: Cursor.optional() }).strict(),
+        example: {},
+        authz: { orgAction: "catalog.decide" },
+        mirrors: [],
+        confirm: "read",
+        run: async (input, ctx) => {
+          const all = await this.requests.listForOrgAdmin(ctx.orgId, ctx.actorAccountId);
+          return pageOf(all.map(pendingRow), startOf(input.cursor), 50);
+        },
       }),
       defineOperation({
         id: "requests.platform-list",

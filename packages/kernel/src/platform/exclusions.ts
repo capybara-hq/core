@@ -80,95 +80,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Streams avatar image bytes",
   },
   {
-    route: "DELETE /api/v1/orgs/:orgId/agents/:agentId",
-    category: "later",
-    reason: "Agent deletion an agent could request later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/owner",
     category: "human-only",
     reason: "Transfers ownership of an agent to another person",
   },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/versions",
-    category: "later",
-    reason: "Agent version history an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/models",
-    category: "later",
-    reason: "Model list available to the org, readable by an agent later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/models/catalog",
-    category: "later",
-    reason: "Org model catalog with enablement, readable by an agent later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/:key/bind",
-    category: "later",
-    reason: "Binds a pending connector to an agent, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
-    category: "later",
-    reason: "Sending a setup request to the org admins is not a decision; mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request",
-    category: "later",
-    reason: "Setup request status an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/readiness",
-    category: "later",
-    reason: "Org readiness checklist an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/agent-templates/:id",
-    category: "later",
-    reason: "Org agent template edit an agent could do later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agent-templates/:id/delete-preview",
-    category: "later",
-    reason: "Template delete preview an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/agent-templates/:id",
-    category: "later",
-    reason: "Template deletion an agent could request later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/agent-templates/:id/shareable",
-    category: "later",
-    reason: "Sharing an org template with other orgs, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
   // background
-  {
-    route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks",
-    category: "later",
-    reason: "Background task list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/stop",
-    category: "later",
-    reason: "Stopping a background task, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/output",
     category: "transport",
@@ -283,44 +199,21 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // channels
   {
-    route: "GET /api/v1/orgs/:orgId/channels",
-    category: "later",
-    reason: "Channel connection list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/channels/schema/:plugin",
-    category: "later",
-    reason: "Channel config schema an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "The config form schema of the create and credential routes, which stay on the web; an agent has no use for it",
   },
   {
     route: "POST /api/v1/orgs/:orgId/channels",
     category: "secret",
     reason: "Creates a channel connection with app secrets",
   },
-  {
-    route: "GET /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "secret",
-    reason: "Returns a channel connection whose config holds secret fields",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "secret",
-    reason: "Writes channel config that includes secret fields",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/channels/:connectionId",
-    category: "later",
-    reason: "Removing a channel connection, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
   // attachments
   {
     route: "GET /api/v1/orgs/:orgId/attachments/limits",
-    category: "later",
-    reason: "Attachment limits an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason: "The composer's pre-upload check on the web; an agent does not upload attachments",
   },
   {
     route: "POST /api/v1/orgs/:orgId/attachments",
@@ -372,40 +265,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // environments (personal cloud environments, environments design phase 1)
   {
-    route: "GET /api/v1/orgs/:orgId/environments",
-    category: "later",
-    reason: "The person's environments, an agent could list later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/environments",
-    category: "later",
-    reason: "Creates a personal cloud environment; an agent could do it later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/environments/:id",
-    category: "later",
-    reason: "One environment's details, an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/environments/:id",
-    category: "later",
-    reason: "Renames an environment; an agent could do it later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/environments/:id",
-    category: "human-only",
-    reason: "Deletes an environment and its files",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/environments/:id/files/reset",
-    category: "human-only",
-    reason: "Wipes an environment's files to start with an empty workspace",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/tools",
     category: "internal",
     reason:
@@ -453,108 +312,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // evals
   {
-    route: "POST /api/v1/orgs/:orgId/eval-sets/:setId/runs/estimate",
-    category: "later",
-    reason: "Eval run cost estimate, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/eval-sets/:setId/runs",
-    category: "later",
-    reason: "Starting an eval run, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-sets/:setId/runs",
-    category: "later",
-    reason: "Eval run list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-runs/:runId",
-    category: "later",
-    reason: "Eval run detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-runs/:runId/results",
-    category: "later",
-    reason: "Eval results an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-runs/:runId/results/:resultId",
-    category: "later",
-    reason: "Eval result detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/eval-runs/:runId/cancel",
-    category: "later",
-    reason: "Cancelling an eval run, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/eval-results/:resultId/label",
-    category: "later",
-    reason: "Labelling an eval result, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/eval-sets",
-    category: "later",
-    reason: "Creating an eval set, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-sets",
-    category: "later",
-    reason: "Eval set list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-sets/:setId",
-    category: "later",
-    reason: "Eval set detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/eval-sets/:setId",
-    category: "later",
-    reason: "Editing an eval set, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/eval-sets/:setId",
-    category: "later",
-    reason: "Deleting an eval set, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/eval-sets/:setId/cases",
-    category: "later",
-    reason: "Adding an eval case, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/eval-sets/:setId/cases/sample",
-    category: "later",
-    reason: "Sampling eval cases from conversations, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/eval-sets/:setId/cases/:caseId",
-    category: "later",
-    reason: "Eval case detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/eval-sets/:setId/cases/:caseId",
-    category: "later",
-    reason: "Removing an eval case, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/trajectories",
     category: "human-only",
     reason: "Lists other people's conversation trajectories, audited as a human review",
@@ -575,18 +332,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/previews/:plugin/:previewerId",
     category: "transport",
     reason: "Serves a rendered file preview",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/file-previewers",
-    category: "later",
-    reason: "File previewer settings an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/file-previewers",
-    category: "later",
-    reason: "File previewer settings an agent could change later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // identity
   {
@@ -663,25 +408,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "DELETE /api/v1/me/identities/:source/:externalId",
     category: "human-only",
     reason: "Unlinks a login identity",
-  },
-  // inbox
-  {
-    route: "GET /api/v1/admin/inbox",
-    category: "later",
-    reason: "Platform inbox list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/admin/inbox/count",
-    category: "later",
-    reason: "Platform inbox badge count, readable later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/admin/inbox/notices/:id/dismiss",
-    category: "later",
-    reason: "Dismissing a platform notice, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   // health
   { route: "GET /healthz", category: "transport", reason: "Liveness probe for the orchestrator" },
@@ -765,18 +491,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason: "Revokes a service token",
   },
-  {
-    route: "GET /api/v1/orgs/:orgId/settings",
-    category: "later",
-    reason: "Org settings read an agent could do later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/settings",
-    category: "later",
-    reason: "Org settings write, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
   // runtime
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/runs/:runId/draft",
@@ -790,45 +504,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // skills
   {
-    route: "GET /api/v1/orgs/:orgId/skill-changes/:id",
-    category: "later",
-    reason: "Skill change detail an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/skill-changes/:id/decide",
     category: "human-only",
     reason: "Decides a proposed skill change",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/skills",
-    category: "later",
-    reason: "Skills attached to an agent, readable later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/agents/:agentId/skills/:skillId",
-    category: "later",
-    reason: "Detaching a skill from an agent, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/inbox",
-    category: "later",
-    reason: "Org inbox list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/inbox/notices/:id/dismiss",
-    category: "later",
-    reason: "Dismissing an org notice, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/agents/:agentId/invocable-skills",
-    category: "later",
-    reason: "Invocable skill list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
     route: "POST /api/v1/orgs/:orgId/skills/uploads",
@@ -837,19 +515,10 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // approvals
   {
-    route: "GET /api/v1/orgs/:orgId/approvals",
-    category: "human-only",
-    reason: "Lists approvals awaiting a person's decision",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/approvals/:id",
-    category: "human-only",
-    reason: "Shows an approval awaiting a person's decision",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",
     category: "human-only",
-    reason: "Decides a tool permission approval",
+    reason:
+      "Decides a tool permission approval; only the person decides (spec §6.4); reading what waits is approvals.waiting / approvals.get",
   },
   {
     route: "GET /api/v1/orgs/:orgId/me/tool-grants",
@@ -864,27 +533,27 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // connectors
   {
     route: "GET /api/v1/orgs/:orgId/connectors/prompts",
-    category: "later",
-    reason: "Connector prompt list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "Feeds the slash menu of the web input box: prompt templates of remote servers, written for a person to fill in and send; an agent has no one to send them to",
   },
   {
     route: "GET /api/v1/orgs/:orgId/connectors/resources",
-    category: "later",
-    reason: "Connector resource list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "Feeds the @ reference picker of the web input box; an agent reads connector resources through its connector tools",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/prompts/:name",
-    category: "later",
-    reason: "Rendering a connector prompt, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "Renders a remote server's prompt into text for the web input box, for the person to send; it calls the server with the person's own credential",
   },
   {
     route: "GET /api/v1/orgs/:orgId/connectors/kinds",
-    category: "later",
-    reason: "Connector kinds an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "The protocols the web's create-connector form offers; creating a connector stays on the web (secret credentials)",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors",
@@ -900,18 +569,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
     category: "secret",
     reason: "Edits connector endpoint config that can carry credentials",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId",
-    category: "later",
-    reason: "Deleting a connector, mirrored later behind confirmation",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/refresh",
-    category: "later",
-    reason: "Refreshing a connector's tool list, mirrored later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",
@@ -935,9 +592,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "GET /api/v1/orgs/:orgId/tools/extensions",
-    category: "later",
-    reason: "Extension-provided tool list an agent could read later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason:
+      "Display list of the agent form's tools picker; extensions.tools gives an agent the same facts",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/connect",
@@ -962,9 +619,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   // ui
   {
     route: "GET /api/v1/orgs/:orgId/ui/contributions",
-    category: "later",
-    reason: "Extension UI contribution list, readable later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
+    category: "internal",
+    reason: "Navigation entries of the web shell (panels, pages, embeds); nothing an agent acts on",
   },
   {
     route: "GET /api/v1/orgs/:orgId/ui/views/:plugin/:id",

@@ -9,6 +9,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { BackgroundConversationParams, BackgroundTaskParams } from "./background.schemas.js";
 import {
   type BackgroundTaskOutput,
   BackgroundTasks,
@@ -16,8 +17,8 @@ import {
   OUTPUT_TAIL_MAX_BYTES,
 } from "./tasks.service.js";
 
-const ConversationParams = z.object({ id: z.string().min(1).max(100) });
-const TaskParams = z.object({ id: z.string().min(1).max(100), taskId: z.string().min(1).max(100) });
+const ConversationParams = BackgroundConversationParams;
+const TaskParams = BackgroundTaskParams;
 const OutputQuery = z.object({
   tail: z.coerce.number().int().min(1).max(OUTPUT_TAIL_MAX_BYTES).default(OUTPUT_TAIL_MAX_BYTES),
 });

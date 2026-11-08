@@ -54,6 +54,12 @@ describe("PlatformOperations", () => {
       "accounts",
       "admin",
       "models",
+      "evals",
+      "inbox",
+      "approvals",
+      "channels",
+      "org-settings",
+      "environments",
     ]);
   });
 

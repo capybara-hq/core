@@ -163,6 +163,8 @@ describe("registration and who may call", () => {
       "admin.overview",
       "admin.settings",
       "admin.update-settings",
+      "models.available",
+      "models.catalog",
       "models.platform-list",
       "models.platform-purposes",
       "models.prices",

@@ -197,6 +197,7 @@ export class PreviewerRegistry {
     orgId: string,
     items: { plugin: string; id: string; disabled: boolean }[],
     actor: { accountId?: string; tokenId?: string } = {},
+    auditDetail?: Record<string, unknown>,
   ): Promise<OrgPreviewerItem[]> {
     const known = new Set((await this.ordered(orgId)).map((l) => `${l.plugin}/${l.previewer.id}`));
     const seen = new Set<string>();
@@ -210,7 +211,7 @@ export class PreviewerRegistry {
       }
       seen.add(k);
     }
-    await this.putIn(orgId, items, known, actor);
+    await this.putIn(orgId, items, known, actor, auditDetail);
     return this.list(orgId);
   }
 
@@ -221,6 +222,7 @@ export class PreviewerRegistry {
     items: { plugin: string; id: string; disabled: boolean }[],
     known: Set<string>,
     actor: { accountId?: string; tokenId?: string },
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     if (known.size > 0) {
       await this.d.db
@@ -248,7 +250,7 @@ export class PreviewerRegistry {
       ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
       orgId,
       action: "org.file_previewers.updated",
-      detail: { items },
+      detail: { items, ...auditDetail },
     });
   }
 

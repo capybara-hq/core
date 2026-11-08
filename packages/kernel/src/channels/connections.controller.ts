@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import type { JsonSchema } from "../extensions/config-json-schema.js";
 import {
   CurrentPrincipal,
@@ -10,32 +10,11 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import {
+  ChannelCreateSchema as CreateBody,
+  ChannelPatchSchema as PatchBody,
+} from "./channels.schemas.js";
 import { ChannelConnections, type ChannelConnectionView } from "./connections.service.js";
-
-const Config = z.record(z.string().max(200), z.unknown());
-const Policy = z.enum(["bind", "anonymous"]);
-
-const CreateBody = z
-  .object({
-    plugin: z.string().min(1).max(214),
-    name: z.string().trim().min(1).max(100),
-    agentId: z.string().min(1).max(100),
-    config: Config,
-    unboundPolicy: Policy.optional(),
-  })
-  .strict();
-
-const PatchBody = z
-  .object({
-    name: z.string().trim().min(1).max(100).optional(),
-    agentId: z.string().min(1).max(100).optional(),
-    unboundPolicy: Policy.optional(),
-    status: z.enum(["active", "disabled"]).optional(),
-    // webhook needs plugin support and channels.webhookBaseUrl (409 channel.webhook_unavailable)
-    inboundMode: z.enum(["long_connection", "webhook"]).optional(),
-    config: Config.optional(),
-  })
-  .strict();
 
 class ChannelCreateBody extends createZodDto(CreateBody, "ChannelCreateBody") {}
 class ChannelPatchBody extends createZodDto(PatchBody, "ChannelPatchBody") {}

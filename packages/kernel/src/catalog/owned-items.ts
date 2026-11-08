@@ -362,7 +362,12 @@ export class OwnedItems {
       orgId,
       action: "agent_template.deleted",
       target: row.id,
-      detail: { name: row.name, outcome, ...(row.link !== null && { platformId: row.link }) },
+      detail: {
+        name: row.name,
+        outcome,
+        ...(row.link !== null && { platformId: row.link }),
+        ...opts.auditDetail,
+      },
     });
     return outcome;
   }

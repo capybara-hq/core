@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Inject, Post } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import {
   CurrentPrincipal,
   type Principal,
@@ -8,9 +8,10 @@ import {
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZParam } from "../infra/validation/zod-params.js";
+import { InboxNoticeParams } from "./inbox.schemas.js";
 import { PlatformInboxService, type PlatformInboxView } from "./platform-inbox.service.js";
 
-const NoticeParamsSchema = z.object({ id: z.string().min(1).max(100) });
+const NoticeParamsSchema = InboxNoticeParams;
 class NoticeParams extends createZodDto(NoticeParamsSchema, "PlatformInboxNoticeParams") {}
 
 /**

@@ -1,6 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { AdminExtensionNamePathParams } from "../../admin/extensions.schemas.js";
+import { type CatalogItemView, CatalogService } from "../../catalog/catalog.service.js";
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
@@ -51,6 +52,32 @@ const detail = (v: AdminExtensionView) => {
   return { ...rest, ...why(v) };
 };
 
+/** Where a super admin confirms permissions: a person, on the web (spec §6.4). */
+const CONFIRM_ON_WEB =
+  "Review and confirm its permissions in the admin console; agents never confirm permissions.";
+
+/** An extension waiting for a permission confirmation: a compact row, the keys it adds. */
+const pendingExtension = (v: AdminExtensionView) => ({
+  id: v.name,
+  name: enName(v),
+  state: v.status,
+  kind: "extension" as const,
+  version: v.version,
+  permissions: { added: v.added, removed: v.removed, sensitive: v.sensitive },
+  next: `${CONFIRM_ON_WEB} (Extensions → ${enName(v)})`,
+});
+
+/** A catalog plugin waiting for a permission confirmation (or this org's upload): a compact row. */
+const pendingPlugin = (i: CatalogItemView) => ({
+  id: i.id,
+  name: i.name,
+  state: "pending",
+  kind: "plugin" as const,
+  version: i.pendingVersion ?? i.latestVersion,
+  owner: i.owner.kind === "org" ? i.owner.name : "platform",
+  next: `${CONFIRM_ON_WEB} (plugins, pending tab)`,
+});
+
 /**
  * The super admin's extension operations of the `Platform` tool (spec §14.2 "admin console",
  * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall. Installing
@@ -65,6 +92,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(ExtensionAdminOps) private readonly ops: ExtensionAdminOps,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(CatalogService) private readonly catalog: CatalogService,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -110,6 +138,37 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             ...pageOf(all.map(row), startOf(input.cursor), 50),
             otherOrgExtensions: theirs.size,
             drainSeconds: this.config.get().extensionHost.drainSeconds,
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.pending-permissions",
+        description:
+          "List what waits for a super admin to confirm extension permissions (super admin): extensions whose permissions changed since they were approved (state pending_approval, with the permission keys added and removed and whether they are sensitive) and catalog plugins waiting for a confirmation, including this org's uploads with an extension. State and permission keys only, never config values. Other orgs' own plugins are only counted (otherOrgItems, otherOrgExtensions). Confirming is done by you in the admin console, never by an agent. Pages by 50: pass the returned next as params.cursor.",
+        input: z.object({ cursor: Cursor.optional() }).strict(),
+        example: {},
+        authz: { superAdmin: true },
+        mirrors: [],
+        confirm: "read",
+        run: async (input, ctx) => {
+          const [all, items, theirs] = await Promise.all([
+            this.admin.list(),
+            this.catalog.list({ pending: true }),
+            otherOrgExtensions(this.kdb.db, ctx.orgId),
+          ]);
+          const waiting = all.filter((v) => v.status === "pending_approval");
+          const exts = waiting.filter((v) => !theirs.has(v.name));
+          const ours = items.filter(
+            (i) => i.owner.kind === "platform" || i.owner.orgId === ctx.orgId,
+          );
+          return {
+            ...pageOf(
+              [...exts.map(pendingExtension), ...ours.map(pendingPlugin)],
+              startOf(input.cursor),
+              50,
+            ),
+            otherOrgItems: items.length - ours.length,
+            otherOrgExtensions: waiting.length - exts.length,
           };
         },
       }),

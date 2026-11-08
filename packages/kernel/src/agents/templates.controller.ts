@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, Inject, Post, Put } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
 import {
   CurrentPrincipal,
@@ -20,17 +20,12 @@ import {
   AgentTemplateIdParams,
   SaveAsAgentIdParams,
   SaveAsTemplateBody,
+  AgentTemplateShareableBody as ShareableBodySchema,
+  AgentTemplateUpdateBody as UpdateBodySchema,
 } from "./templates.schemas.js";
 
-const ShareableBody = z.object({ shareable: z.boolean() }).strict();
-const UpdateBody = z
-  .object({
-    /** The whole definition (the `AgentTemplate` shape), validated like a template file. */
-    definition: z.record(z.string(), z.unknown()),
-    /** The `version` the editor read; another one -> 409 `agent_template.version_conflict`. */
-    expectedVersion: z.number().int().min(1),
-  })
-  .strict();
+const ShareableBody = ShareableBodySchema;
+const UpdateBody = UpdateBodySchema;
 class AgentTemplateIdParamsDto extends createZodDto(
   AgentTemplateIdParams,
   "AgentTemplateIdParams",

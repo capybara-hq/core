@@ -9,6 +9,8 @@ import {
   AgentFromTemplatePreviewBody,
   AgentPathParams,
   AgentUpdateBody,
+  PendingConnectorBindBody,
+  PendingConnectorParams,
 } from "../../agents/agents.schemas.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import {
@@ -19,9 +21,22 @@ import {
 } from "../../agents/definition.js";
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
-import { type ConfirmClass, defineOperation, type OperationContext } from "../operation.js";
+import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
+import { CatalogRequestsService } from "../../catalog/requests.service.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { roleAtLeast } from "../../orgs/roles.js";
+import { ProviderRegistry } from "../../runtime/providers.js";
+import { rootConversationOf } from "../../runtime/subagents/child.js";
+import { ConnectorsService } from "../../tools/connectors.service.js";
+import {
+  type ConfirmClass,
+  defineOperation,
+  type OperationContext,
+  type PrecheckResult,
+} from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
+import { roleOf } from "./role.js";
 import { named, orElse } from "./summary.js";
 
 const AgentId = AgentPathParams.shape.agentId.max(100);
@@ -80,7 +95,49 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
     @Inject(OrgAgentTemplates) private readonly orgTemplates: OrgAgentTemplates,
+    @Inject(PendingConnectorsService) private readonly pending: PendingConnectorsService,
+    @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
+    @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
+    @Inject(ProviderRegistry) private readonly providers: ProviderRegistry,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /**
+   * The edit rule the service enforces, read before the card: the agent is visible, and the actor
+   * owns it or is an org admin. Returns the agent too for the checks that follow.
+   */
+  private async editCheck(
+    agentId: string,
+    ctx: OperationContext,
+  ): Promise<PrecheckResult & { agent?: AgentView }> {
+    let agent: AgentView;
+    try {
+      agent = await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId);
+    } catch (e) {
+      const r = await precheckBy(() => Promise.reject(e));
+      if (!r.ok) return r;
+      throw e;
+    }
+    if (agent.ownerAccountId !== ctx.actorAccountId) {
+      const role = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
+      if (role === null || !roleAtLeast(role, "admin")) {
+        return {
+          ok: false,
+          code: "forbidden",
+          message: "Only the agent owner or an organization admin can modify it",
+        };
+      }
+    }
+    return { ok: true, agent };
+  }
+
+  private agentName(ctx: OperationContext, agentId: string): Promise<string> {
+    return orElse(
+      async () =>
+        named((await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId)).definition.name),
+      agentId,
+    );
+  }
 
   /**
    * `agents.update`'s class (spec §13): `personal` (may be remembered) only on a private agent the
@@ -370,6 +427,257 @@ export class AgentsOperations implements OnModuleInit {
             viaAgent("agents.create-from-template", ctx),
           );
         },
+      }),
+      defineOperation({
+        id: "agents.delete",
+        description:
+          "Delete an agent you may edit: your own, and as an org admin any agent of the org. Its conversations stay readable but it can no longer be used, its eval runs stop and its pending skill changes are cancelled. The person confirms every delete; it is never remembered. The agent you are running as cannot be deleted.",
+        input: z.object({ agentId: AgentId }).strict(),
+        example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["DELETE /api/v1/orgs/:orgId/agents/:agentId"],
+        confirm: "personal",
+        // destructive: asked every time and never remembered, a shared agent as an org write
+        rememberable: false,
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        errors: [
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list; you can only delete agents you own, and org admins any agent of the org.",
+          },
+          {
+            code: "forbidden",
+            next: {
+              orgAdmin: "Only the agent's owner or an org admin can delete it.",
+              member: "Only the agent's owner or an org admin can delete it; ask one of them.",
+            },
+          },
+          {
+            code: "agent.delete_current",
+            next: "This is the agent you are running as: ask the person to delete it on the agents page of the web app, or delete a different agent.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          // the run's agent is the root conversation's: a sub-agent runs under its parent's agent
+          const rootId = await rootConversationOf(this.kdb.db, ctx.conversationId);
+          const root = await this.kdb.db
+            .selectFrom("conversations")
+            .select("agent_id")
+            .where("id", "=", rootId)
+            .executeTakeFirst();
+          if (i.agentId === ctx.agentId || i.agentId === root?.agent_id) {
+            return {
+              ok: false,
+              code: "agent.delete_current",
+              message: "The agent you are running as cannot be deleted from here.",
+            };
+          }
+          const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
+          return check;
+        },
+        summary: async (i, ctx) => {
+          const a = await orElse(
+            () => this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId),
+            null,
+          );
+          const n = named(a?.definition.name ?? i.agentId);
+          return a?.visibility === "private"
+            ? { zh: `删除私有智能体「${n}」`, en: `Delete private agent "${n}"` }
+            : { zh: `删除共享智能体「${n}」`, en: `Delete shared agent "${n}"` };
+        },
+        run: async (input, ctx) => {
+          await this.agents.softDelete(
+            ctx.orgId,
+            input.agentId,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("agents.delete", ctx),
+          );
+          return { id: input.agentId, deleted: true };
+        },
+      }),
+      defineOperation({
+        id: "agents.versions",
+        description:
+          "List the versions of an agent you can see, newest first: the version number, who saved it and when. Read the definition of the current one with agents.get.",
+        input: z.object({ agentId: AgentId }).strict(),
+        example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/agents/:agentId/versions"],
+        confirm: "read",
+        errors: [
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list; only agents you can see can be read.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId);
+          return { versions: await this.agents.listVersions(input.agentId) };
+        },
+      }),
+      defineOperation({
+        id: "agents.bind-connector",
+        description:
+          "Bind one of the org's connectors to a pending connector of an agent (an agent created from a template waits for connectors the org lacked): the agent gets a new version with that connector's tools and the entry is gone. Needs the owner or an org admin; the connector must match the entry's template or protocol and have its tools synced. Read the pending entries from agents.get.",
+        input: z
+          .object({
+            agentId: AgentId,
+            key: PendingConnectorParams.shape.key.max(200),
+            connectorId: PendingConnectorBindBody.shape.connectorId,
+          })
+          .strict(),
+        example: {
+          agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",
+          key: "crm",
+          connectorId: "5d2e8f1a-0b3c-4d5e-8f9a-1b2c3d4e5f60",
+        },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/:key/bind"],
+        confirm: "personal",
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        errors: [
+          {
+            code: "agent.pending_connector_not_found",
+            next: "The agent has no pending connector with this key; read its pending entries with agents.get.",
+          },
+          {
+            code: "agent.pending_connector_mismatch",
+            next: "That connector does not fit the entry (another template or protocol, no tools synced yet, or none of the entry's tools); pick another with connectors.list, or ask an org admin to set one up.",
+          },
+          { code: "connector.not_found", next: "Check the connector id with connectors.list." },
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list; only the owner or an org admin can bind.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const { agent: _a, ...found } = await this.editCheck(i.agentId, ctx);
+          if (!found.ok) return found;
+          return precheckBy(() =>
+            this.connectors.get(ctx.orgId, i.connectorId, ctx.actorAccountId),
+          );
+        },
+        summary: async (i, ctx) => {
+          const agent = await this.agentName(ctx, i.agentId);
+          const c = named(
+            await orElse(
+              async () =>
+                (await this.connectors.get(ctx.orgId, i.connectorId, ctx.actorAccountId)).name,
+              i.connectorId,
+            ),
+          );
+          return {
+            zh: `把连接器「${c}」绑定到智能体「${agent}」的待配置连接器「${named(i.key)}」，智能体将获得新版本`,
+            en: `Bind connector "${c}" to pending connector "${named(i.key)}" of agent "${agent}"; the agent gets a new version`,
+          };
+        },
+        run: async (input, ctx) => {
+          const r = await this.pending.bind(
+            ctx.orgId,
+            input.agentId,
+            input.key,
+            input.connectorId,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("agents.bind-connector", ctx),
+          );
+          return {
+            agent: brief(r.agent),
+            currentVersion: r.agent.currentVersion,
+            dropped: r.dropped,
+          };
+        },
+      }),
+      defineOperation({
+        id: "agents.request-connector-setup",
+        description:
+          "Send the org admins a request to set up the connectors an agent is still waiting for (the owner or an org admin may). If a request is already pending it is returned instead of a second one. This only asks: the admins decide on the web.",
+        input: z.object({ agentId: AgentId }).strict(),
+        example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request"],
+        confirm: "personal",
+        errors: [
+          {
+            code: "agent.no_pending_connectors",
+            next: "The agent waits for no connectors; nothing to request.",
+          },
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list; only the owner or an org admin can request.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const { agent, ...check } = await this.editCheck(i.agentId, ctx);
+          if (!check.ok || agent === undefined) return check;
+          return (agent.definition.pendingConnectors ?? []).length === 0
+            ? {
+                ok: false,
+                code: "agent.no_pending_connectors",
+                message: "The agent has no connectors waiting to be configured",
+              }
+            : { ok: true };
+        },
+        summary: async (i, ctx) => {
+          const n = await this.agentName(ctx, i.agentId);
+          return {
+            zh: `请求组织管理员为智能体「${n}」配置所缺的连接器`,
+            en: `Ask the org admins to set up the connectors agent "${n}" is waiting for`,
+          };
+        },
+        run: async (input, ctx) => {
+          const r = await this.pending.reopen(
+            ctx.orgId,
+            input.agentId,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("agents.request-connector-setup", ctx),
+          );
+          return { created: r.created, request: await this.requests.view(r.id) };
+        },
+      }),
+      defineOperation({
+        id: "agents.connector-setup-status",
+        description:
+          "Read the latest connector setup request of an agent, whatever its status (pending, approved, cancelled), or null when none was sent. Only the agent's owner or an org admin may read it.",
+        input: z.object({ agentId: AgentId }).strict(),
+        example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/request"],
+        confirm: "read",
+        errors: [
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list.",
+          },
+          {
+            code: "forbidden",
+            next: {
+              orgAdmin: "Only the agent's owner or an org admin can read its setup request.",
+              member:
+                "Only the agent's owner or an org admin can read its setup request; ask one of them.",
+            },
+          },
+        ],
+        run: async (input, ctx) => {
+          const id = await this.pending.latestRequest(ctx.orgId, input.agentId, ctx.actorAccountId);
+          return { request: id === null ? null : await this.requests.view(id) };
+        },
+      }),
+      defineOperation({
+        id: "agents.readiness",
+        description:
+          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org (none otherwise), and how many agents you can see.",
+        input: z.object({}).strict(),
+        example: {},
+        authz: { orgAction: "org.read" },
+        mirrors: ["GET /api/v1/orgs/:orgId/readiness"],
+        confirm: "read",
+        run: async (_input, ctx) => ({
+          modelProvider: (await this.providers.hasProvider(ctx.orgId)) ? "ready" : "none",
+          agents: (await this.agents.listVisible(ctx.orgId, ctx.actorAccountId)).length,
+        }),
       }),
     ]);
   }
