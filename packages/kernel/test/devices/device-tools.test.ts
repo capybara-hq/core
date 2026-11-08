@@ -15,7 +15,10 @@ import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { sandboxFilesResetNotice } from "../../src/tools/builtins/sandbox/common.js";
+import {
+  SANDBOX_RESTARTED_NOTICE,
+  sandboxFilesResetNotice,
+} from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -153,13 +156,14 @@ async function signIn(
   accountId: string,
   roots: SandboxRoots,
   dir: MachineDir = { files: new Map(), gone: false, hold: new Set() },
+  name = "box",
 ) {
   const issued = await txHost.run(() =>
     machines.issue({
       orgId,
       environmentId,
       accountId,
-      name: "box",
+      name,
       os: "linux",
       arch: "x64",
       programVersion: "0.1.0",
@@ -173,6 +177,19 @@ async function signIn(
     async () => (await redis.get(deviceLeaseKey(environmentId))) !== null,
     10_000,
     "lease held",
+  );
+  // the hello is recorded after the lease is claimed (it may move the files-reset count on)
+  await waitFor(
+    async () =>
+      (
+        await db
+          .selectFrom("environment_machines")
+          .select("roots")
+          .where("id", "=", issued.machineId)
+          .executeTakeFirst()
+      )?.roots != null,
+    10_000,
+    "hello recorded",
   );
   return { machine, dir, ...issued };
 }
@@ -257,8 +274,14 @@ describe("connected environments through the sandbox tools", () => {
     expect((await first.machine.closed).code).toBeGreaterThanOrEqual(4000);
     expect(await m.instance()).toMatchObject({ status: "none", handle: null, fs_status: "ready" });
 
-    await m.tool("Write").run({ file_path: `${ROOTS_B.workspace}/b.txt`, content: "b" }, m.ctx());
+    const written = await m
+      .tool("Write")
+      .run({ file_path: `${ROOTS_B.workspace}/b.txt`, content: "b" }, m.ctx());
     expect(second.dir.files.has(`${ROOTS_B.workspace}/b.txt`)).toBe(true);
+    // another directory holds other files: the conversation is told its files were reset
+    expect(JSON.stringify(written)).toContain(
+      JSON.stringify(sandboxFilesResetNotice(ROOTS_B)).slice(1, -1),
+    );
     expect(second.machine.frames.find((f) => f.type === "req")).toMatchObject({ op: "create" });
     expect(m.paths()).toEqual([ROOTS_A, ROOTS_B]);
     // a path of the old roots is now outside the environment
@@ -267,6 +290,40 @@ describe("connected environments through the sandbox tools", () => {
         m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" }, m.ctx()),
       ),
     ).toMatch(/workspace/i);
+  }, 60_000);
+
+  it("a new login on the same machine and directory keeps the files; another machine resets them", async () => {
+    const m = await member();
+    await signIn(m.environmentId, m.accountId, ROOTS_A);
+    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    const resets = async () =>
+      (
+        await db
+          .selectFrom("environment_instances")
+          .select("fs_resets")
+          .where("environment_id", "=", m.environmentId)
+          .executeTakeFirstOrThrow()
+      ).fs_resets;
+    const before = await resets();
+
+    // the same machine, the same directory: a restart on kept files
+    await signIn(m.environmentId, m.accountId, ROOTS_A);
+    expect(await resets()).toBe(before);
+    const kept = await m
+      .tool("Write")
+      .run({ file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" }, m.ctx());
+    expect(JSON.stringify(kept)).toContain(SANDBOX_RESTARTED_NOTICE);
+    expect(JSON.stringify(kept)).not.toContain("files were reset");
+
+    // another machine with the same roots: other files
+    await signIn(m.environmentId, m.accountId, ROOTS_A, undefined, "laptop");
+    expect(await resets()).toBe(before + 1);
+    const reset = await m
+      .tool("Write")
+      .run({ file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" }, m.ctx());
+    expect(JSON.stringify(reset)).toContain(
+      JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
+    );
   }, 60_000);
 
   it("every exec carries the org's egress of the moment (R27)", async () => {

@@ -565,6 +565,12 @@ tell the model the real paths (2026-11-08):
   the next use creates a fresh instance; and `resume` answers gone (the kernel rebuilds) when the
   active machine's `hello` roots differ from the handle's. A new `environment_paths` event follows
   (§13.1).
+- The files-reset count (`environment_instances.fs_resets`) moves on when a new login means other
+  files (maintainer decision 2026-11-08), so conversations get the files-reset notice instead of
+  "files are kept": at issue when the files were lost or the login comes from another machine
+  (name, OS or arch differ from the environment's previous machine); at the new machine's first
+  `hello` when the same machine serves another directory or mode (roots or mode differ from the
+  previous machine's last reported ones). Same machine, same roots: a restart on kept files.
 
 ### 13.3 Authorization
 
