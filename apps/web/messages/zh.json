@@ -3702,7 +3702,6 @@
       "bootstrap": "预装"
     },
     "newer": "有新版本",
-    "iconAlt": "{name} 的图标",
     "components": {
       "extension": "扩展",
       "extensionNone": "没有扩展。",

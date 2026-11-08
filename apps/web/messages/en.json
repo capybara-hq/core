@@ -3714,7 +3714,6 @@
       "bootstrap": "Preinstalled"
     },
     "newer": "New version",
-    "iconAlt": "{name} icon",
     "components": {
       "extension": "Extension",
       "extensionNone": "No extension.",

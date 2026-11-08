@@ -10,6 +10,7 @@ import {
   DetailPage,
   formatBytes,
   KeyValue,
+  ObjectMark,
   Stack,
   Text,
   useToast,
@@ -20,7 +21,6 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useComponentScopeText } from "../../../../../components/AdminComponents";
 import {
-  CatalogIcon,
   ComponentSection,
   LicenseView,
   ScopeBadge,
@@ -98,7 +98,7 @@ type Tab = (typeof TABS)[number];
  * skills, connector templates and agent templates with kind, version and scope (跟随插件 or the
  * component's own, linking to the component); its dependencies; the translation report), 组织
  * (the scope and the orgs it names, or how many turned it on), 版本 (each version's source, origin and import time). One centred column (no inspector): the full
- * description first, the notes, the icon and the facts (package, source, publisher, owner, scope,
+ * description first, the notes and the facts (the icon is the head's 40 px mark) (package, source, publisher, owner, scope,
  * orgs using it, the permissions with their state, updated) as a KeyValue, the tab, then the
  * license folded at the end; 删除 is the head's ⋯ menu item. From the query cache (the layout
  * prefetched the reads on a first load): the item (a 404 is the not-found state); the marketplaces,
@@ -332,6 +332,13 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
       <DetailPage
         header={{
           path: [...scope, { label: "plugins", href: "/admin/plugins" }, { label: name }],
+          avatar: (
+            <ObjectMark
+              size={40}
+              text={name}
+              image={detail.hasIcon ? adminIconUrl(item.id) : null}
+            />
+          ),
           title: name,
           count: versionLabel(platformVersion),
           status: (
@@ -369,7 +376,6 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
                 {description}
               </Text>
             )}
-            {detail.hasIcon && <CatalogIcon src={adminIconUrl(item.id)} name={item.name} />}
             <KeyValue
               keyWidth="10ch"
               rows={[

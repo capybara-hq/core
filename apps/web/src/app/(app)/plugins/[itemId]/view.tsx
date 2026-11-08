@@ -7,6 +7,7 @@ import {
   DetailPage,
   ItemList,
   KeyValue,
+  ObjectMark,
   Stack,
   SwitchField,
   Text,
@@ -16,7 +17,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { CatalogIcon, ComponentSection, useOwnerLabel } from "../../../../components/CatalogParts";
+import { ComponentSection, useOwnerLabel } from "../../../../components/CatalogParts";
 import { ComponentSwitchList } from "../../../../components/ComponentSwitch";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
@@ -168,6 +169,13 @@ function CatalogItemDetail({
           { label: "plugins", href: "/plugins" },
           { label: displayNameOf(item, locale) },
         ],
+        avatar: (
+          <ObjectMark
+            size={40}
+            text={displayNameOf(item, locale)}
+            image={detail.hasIcon ? orgIconUrl(orgId, item.id) : null}
+          />
+        ),
         title: displayNameOf(item, locale),
         count: versionLabel(item.latestVersion),
         ...(owned && { status: <Badge>{tp("chips.ownUpload")}</Badge> }),
@@ -192,7 +200,6 @@ function CatalogItemDetail({
               {description}
             </Text>
           )}
-          {detail.hasIcon && <CatalogIcon src={orgIconUrl(orgId, item.id)} name={item.name} />}
           <KeyValue
             keyWidth="10ch"
             rows={[

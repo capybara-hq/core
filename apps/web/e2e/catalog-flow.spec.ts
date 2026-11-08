@@ -84,8 +84,11 @@ test("catalog: refresh the official marketplace -> import a dependency plugin wi
   await page.getByRole("button", { name: D.admin.review.confirm }).click();
   await expect(page).toHaveURL(/\/admin\/plugins\/[0-9a-f-]{36}$/);
   await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
-  // The icon is shown as <img> through the kernel route; the components are listed
-  await expect(page.getByRole("img", { name: fill(D.iconAlt, { name: "crm" }) })).toBeVisible();
+  // The icon is the 40 px mark beside the title (an <img> of the kernel route); the components are
+  // listed
+  await expect(
+    page.locator('[data-part="page-header-avatar"] [data-part="object-mark"] img'),
+  ).toHaveAttribute("src", /\/icon(\?|$)/);
   await expect(page.getByRole("region", { name: D.components.dependencies })).toContainText(
     "crm-core",
   );

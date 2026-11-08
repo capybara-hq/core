@@ -2393,7 +2393,7 @@ describe("/admin/plugins and marketplace entries", () => {
     });
   });
 
-  it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
+  it("item detail: the icon is a 40 px mark beside the title, an <img> of the kernel route, never inline", async () => {
     params.current = { itemId: ID };
     stubApi({
       [`GET /api/v1/admin/catalog/items/${ID}`]: () =>
@@ -2406,9 +2406,11 @@ describe("/admin/plugins and marketplace entries", () => {
       "GET /api/v1/admin/catalog/items": () => json(200, { items: [], nextOffset: null }),
     });
     await renderRouteWithCache(adminItemPath(), lastStubRoutes());
-    const img = (await screen.findByRole("img", {
-      name: fill(en.catalog.iconAlt, { name: "gh" }),
-    })) as HTMLImageElement;
+    await screen.findByRole("heading", { name: "gh" });
+    const img = document.querySelector(
+      '[data-part="page-header-avatar"] [data-part="object-mark"][data-size="40"] img',
+    ) as HTMLImageElement;
+    expect(img).not.toBeNull();
     expect(img.src).toMatch(new RegExp(`/api/v1/admin/catalog/items/${ID}/icon$`));
     expect(document.querySelector("svg[data-directory-icon]")).toBeNull();
   });
