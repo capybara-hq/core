@@ -140,6 +140,7 @@ describe("registration", () => {
       "agents.request-connector-setup",
       "agents.skills",
       "agents.update",
+      "agents.update-profile",
       "agents.versions",
       "platform.me",
       "platform.overview",
@@ -414,6 +415,156 @@ describe("agents", () => {
   });
 });
 
+describe("agent profile", () => {
+  const ACTIONS = [{ title: "Weekly report", body: "Write this week's report from my notes." }];
+
+  it("agents.update-profile is personal on the actor's own private agent, org on a shared one", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const shared = await agentOf(env.memId, "org", "Team helper");
+    const mc = ctxOf(env.memId, mine);
+    const avatar = (agentId: string) => ({ agentId, avatar: { kind: "preset", id: "owl" } });
+    // personal and not marked never-remembered: the person may remember it on a private agent
+    expect(op("agents.update-profile").rememberable).toBeUndefined();
+    expect(await classOf("agents.update-profile", avatar(mine), mc)).toBe("personal");
+    // a shared agent: org, so each change is confirmed and never remembered
+    expect(await classOf("agents.update-profile", avatar(shared), mc)).toBe("org");
+    // an org admin editing a member's shared agent: not the admin's own, so org
+    expect(await classOf("agents.update-profile", avatar(shared), ctxOf(env.bossId, mine))).toBe(
+      "org",
+    );
+    // the card names the agent, whether it is shared and each change
+    expect(await summarize("agents.update-profile", avatar(mine), mc)).toEqual({
+      zh: "修改私有智能体「Mine」的资料：头像设为预设「owl」",
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "owl"',
+    });
+    expect(
+      await summarize(
+        "agents.update-profile",
+        { agentId: shared, avatar: null, quickActions: ACTIONS },
+        mc,
+      ),
+    ).toEqual({
+      zh: "修改共享智能体「Team helper」的资料：移除头像；快捷操作设为 1 条（替换现有的）",
+      en: 'Update the profile of shared agent "Team helper": remove the avatar; set 1 quick action (replacing the current ones)',
+    });
+    expect(
+      await summarize("agents.update-profile", { agentId: mine, quickActions: [] }, mc),
+    ).toMatchObject({ en: 'Update the profile of private agent "Mine": clear the quick actions' });
+  });
+
+  it("takes a preset avatar and quick actions only: no upload, no description, at least one field", () => {
+    const input = op("agents.update-profile").input;
+    const agentId = randomUUID();
+    expect(input.safeParse({ agentId, avatar: { kind: "preset", id: "fox" } }).success).toBe(true);
+    expect(input.safeParse({ agentId, avatar: null }).success).toBe(true);
+    expect(input.safeParse({ agentId, avatar: { kind: "upload", uploadId: "u1" } }).success).toBe(
+      false,
+    );
+    expect(input.safeParse({ agentId, avatar: { kind: "preset", id: "dragon" } }).success).toBe(
+      false,
+    );
+    expect(input.safeParse({ agentId, description: "Hi" }).success).toBe(false);
+    expect(input.safeParse({ agentId, expectedUpdatedAt: "x" }).success).toBe(false);
+    expect(input.safeParse({ agentId }).success).toBe(false);
+    // the route's bound: at most 9 quick actions
+    const ten = Array.from({ length: 10 }, (_, i) => ({ title: `t${i}`, body: "b" }));
+    expect(input.safeParse({ agentId, quickActions: ten }).success).toBe(false);
+  });
+
+  it("the owner sets a preset avatar, then quick actions; agents.get shows them and the audit says via", async () => {
+    const id = await agentOf(env.memId, "private", "Mine");
+    const c = ctxOf(env.memId, id);
+    expect(
+      await precheck(
+        "agents.update-profile",
+        { agentId: id, avatar: { kind: "preset", id: "owl" } },
+        c,
+      ),
+    ).toEqual({ ok: true });
+    const first = (await run(
+      "agents.update-profile",
+      { agentId: id, avatar: { kind: "preset", id: "owl" } },
+      c,
+    )) as { profile: { avatar: unknown; quickActions: unknown[]; updatedAt: string } };
+    expect(first.profile.avatar).toEqual({ kind: "preset", id: "owl" });
+    expect(first.profile.quickActions).toEqual([]);
+    // no updatedAt from the model: the operation reads the current one each time
+    const second = (await run(
+      "agents.update-profile",
+      { agentId: id, quickActions: ACTIONS },
+      c,
+    )) as { profile: { avatar: unknown; quickActions: unknown[] } };
+    expect(second.profile).toMatchObject({
+      avatar: { kind: "preset", id: "owl" },
+      quickActions: ACTIONS,
+    });
+    const got = (await run("agents.get", { agentId: id }, c)) as {
+      agent: { profile: { avatar: unknown; quickActions: unknown[]; description: string } };
+    };
+    expect(got.agent.profile).toMatchObject({
+      avatar: { kind: "preset", id: "owl" },
+      quickActions: ACTIONS,
+    });
+    // a profile change is display data: no new agent version
+    expect((await run("agents.versions", { agentId: id }, c)) as { versions: unknown[] }).toEqual({
+      versions: [expect.anything()],
+    });
+    const rows = await audits("agent.profile_updated");
+    expect(rows.map((r) => r.detail)).toEqual([
+      expect.objectContaining({ fields: ["avatar"], channel: "agent", via: "agent" }),
+      expect.objectContaining({
+        fields: ["quickActions"],
+        operation: "agents.update-profile",
+        agentConversationId: c.conversationId,
+        agentRunId: c.runId,
+      }),
+    ]);
+  });
+
+  it("an org admin may change a member's shared agent; a member is refused another's with the next step", async () => {
+    const other = (
+      await accountsFor(env.db).createLocal({
+        login: "profile-other",
+        password: PW,
+        displayName: "O",
+      })
+    ).id;
+    await env.db
+      .insertInto("memberships")
+      .values({ org_id: env.orgId, account_id: other, role: "member" })
+      .execute();
+    const theirs = await agentOf(other, "org", "Theirs");
+    const input = { agentId: theirs, avatar: { kind: "preset", id: "fox" } };
+    // the member: refused before the card, with the step for a member
+    expect(await precheck("agents.update-profile", input, ctxOf(env.memId, theirs))).toEqual({
+      ok: false,
+      code: "forbidden",
+      message: "Only the agent owner or an organization admin can modify it",
+    });
+    const errors = op("agents.update-profile").errors;
+    expect(nextStepFor(errors, "forbidden", "member")).toContain("ask the owner, or an org admin");
+    expect(nextStepFor(errors, "forbidden", "orgAdmin")).not.toContain("ask");
+    // the service refuses it too, should the card be approved anyway
+    await expect(run("agents.update-profile", input, ctxOf(env.memId, theirs))).rejects.toThrow(
+      /^forbidden:/,
+    );
+    // an agent the actor cannot see is not found
+    const hidden = await agentOf(other, "private", "Hidden");
+    expect(
+      await precheck(
+        "agents.update-profile",
+        { agentId: hidden, avatar: null },
+        ctxOf(env.memId, hidden),
+      ),
+    ).toMatchObject({ ok: false, code: "agent.not_found" });
+    // the org admin may
+    const c = ctxOf(env.bossId, theirs);
+    expect(await precheck("agents.update-profile", input, c)).toEqual({ ok: true });
+    const out = (await run("agents.update-profile", input, c)) as { profile: { avatar: unknown } };
+    expect(out.profile.avatar).toEqual({ kind: "preset", id: "fox" });
+  });
+});
+
 describe("agent templates", () => {
   it("a member lists and reads; saving needs an admin, who saves with via in the audit", async () => {
     const agent = await agentOf(env.bossId, "org", "Source");
@@ -460,6 +611,23 @@ describe("platform", () => {
     });
     const text = JSON.stringify(out);
     expect(text).not.toMatch(/secret|password|token|apiKey/i);
+  });
+
+  it("platform.me shows the agent's profile: avatar, description and quick actions", async () => {
+    const id = await agentOf(env.memId, "private");
+    const c = ctxOf(env.memId, id);
+    const actions = [{ title: "Triage", body: "Triage the new issues." }];
+    await run(
+      "agents.update-profile",
+      { agentId: id, avatar: { kind: "preset", id: "panda" }, quickActions: actions },
+      c,
+    );
+    const out = (await run("platform.me", {}, c)) as { profile: unknown };
+    expect(out.profile).toEqual({
+      avatar: { kind: "preset", id: "panda" },
+      description: "",
+      quickActions: actions,
+    });
   });
 
   it("platform.overview gives the role, what it may build and the domains", async () => {

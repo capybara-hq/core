@@ -164,7 +164,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "agents",
     description:
-      "Agents in the org: list, read, create private ones, update or delete those you may edit, versions, pending connectors, readiness.",
+      "Agents in the org: list, read, create private ones, update or delete those you may edit, their profile (avatar, quick actions), versions, pending connectors, readiness.",
   },
   {
     id: "agent-templates",

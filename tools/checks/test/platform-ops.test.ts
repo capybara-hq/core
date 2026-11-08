@@ -40,7 +40,6 @@ describe("checkPlatformOps", () => {
         "platform-op-errors",
         "platform-op-errors",
         "platform-op-exclusion-reason",
-        "platform-op-exclusion-reason",
         "platform-op-later",
         "platform-op-later",
         "platform-op-literal",
@@ -99,7 +98,6 @@ describe("checkPlatformOps", () => {
       "mirrored by skills.list",
     );
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/a"'), "reason");
-    has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
     has("platform-op-later", exc, lineOf(exc, 'skills/b"'), "exclude it for good");
     has("platform-op-later", exc, lineOf(exc, "even with an issue URL") + 1, "skills/c");
     // a @SessionOnly route is human-only or secret: never mirrored, never another category

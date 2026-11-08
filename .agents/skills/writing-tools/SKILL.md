@@ -418,8 +418,8 @@ section of `.agents/skills/writing-kernel-api`; the short list for a tool change
 - Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
   `-double`, `-describe`, `-literal`, `-errors`) and the parity test
   `tools/checks/test/platform-parity.test.ts`.
-- Exclusion categories: `human-only`, `secret`, `transport`, `internal`; `later` is closed
-  (`LATER_ALLOWED` in the check holds what still waits).
+- Exclusion categories: `human-only`, `secret`, `transport`, `internal`; there is no `later`
+  (`platform-op-later` fails it).
 - A new domain: `PLATFORM_DOMAINS`, `PlatformOpsModule`, `ROUTE_SCHEMAS`, and the domain list in
   `test/tools/platform-tool.test.ts`.
 
