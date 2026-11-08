@@ -392,7 +392,7 @@ export function validateUiView(v: unknown): string[] {
 export type UiRole = "owner" | "admin" | "member" | "guest";
 
 /** The render args every scope shares (identity comes from the kernel's auth, never the caller's credentials). */
-interface UiRenderArgsBase {
+export interface UiRenderArgsBase {
   accountId: string;
   /** The catalog slot the contribution resolved to. */
   slot: UiSlotId;
@@ -447,7 +447,7 @@ export interface UiPlatformRenderArgs extends UiRenderArgsBase {
 export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
 
 /** What a button or form submit adds to the render args. */
-interface UiActionInput {
+export interface UiActionInput {
   actionId: string;
   payload?: unknown;
   answer?: FormAnswer;
@@ -463,27 +463,42 @@ export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 /** 动作结果：一条提示，或一份新的视图。 */
 export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
 
-/**
- * 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）。`exp` 为 Unix 秒。`scope` is `"platform"`
- * exactly when `orgId` is absent and `role` is `"superAdmin"` (a `platform.page` embed, which names
- * no conversation, agent or file).
- */
-export interface EmbedClaims {
+/** The embed claims both scopes share. `exp` 为 Unix 秒。 */
+export interface EmbedClaimsBase {
   plugin: string;
-  scope: "org" | "platform";
-  /** The org of an org-scope token; absent for the platform scope. */
-  orgId?: string;
   accountId: string;
+  contribution: string;
+  exp: number;
+}
+
+/** An org-scope embed token's claims (every slot but `platform.page`). */
+export interface OrgEmbedClaims extends EmbedClaimsBase {
+  scope: "org";
+  orgId: string;
   /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
-  role: UiRole | "superAdmin";
+  role: UiRole;
   conversationId?: string;
   /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
   agentId?: string;
   /** Only a `file-preview` embed's token: the one file (of `conversationId`) it previews. */
   fileId?: string;
-  contribution: string;
-  exp: number;
 }
+
+/** A `platform.page` embed token's claims: a super admin's, with no org, conversation, agent or file. */
+export interface PlatformEmbedClaims extends EmbedClaimsBase {
+  scope: "platform";
+  orgId?: undefined;
+  role: "superAdmin";
+  conversationId?: undefined;
+  agentId?: undefined;
+  fileId?: undefined;
+}
+
+/**
+ * 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）: narrow on `scope` (`"platform"` has no
+ * `orgId` and `role` `"superAdmin"`).
+ */
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
 
 /** 外层页面与嵌入 iframe 之间 `postMessage` 协议的版本标识。 */
 export const EMBED_PROTOCOL = "capybara-embed/1";

@@ -90,9 +90,9 @@ describe("EmbedTokens", () => {
     for (const extra of [{ conversationId: conv }, { agentId: conv }, { fileId: conv }]) {
       expect(t.verify(signK1({ ...platform, ...extra }), CLAIMS.plugin)).toBeNull();
     }
-    expect(() => t.issue({ ...rest, scope: "platform", role: "superAdmin", orgId })).toThrow(
-      /invalid/,
-    );
+    // not expressible in the type; refused at run time too
+    const bad = { ...rest, scope: "platform", role: "superAdmin", orgId } as never;
+    expect(() => t.issue(bad)).toThrow(/invalid/);
   });
 
   it("org claims without an orgId do not parse", () => {

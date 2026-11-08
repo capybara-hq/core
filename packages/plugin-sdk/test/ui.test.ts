@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   defineExtension,
   EMBED_PROTOCOL,
+  type EmbedClaims,
   type EmbedParentMessage,
   type ExtensionContext,
   type ExtensionManifest,
@@ -13,6 +14,7 @@ import {
   UI_LIMITS,
   type UiBlock,
   type UiRenderArgs,
+  type UiRole,
   type UiView,
   validatePermissions,
   validateToolDisplay,
@@ -413,6 +415,17 @@ describe("类型", () => {
       .parameter(0)
       .toEqualTypeOf<{ orgId?: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();
+  });
+
+  it("EmbedClaims and UiRenderArgs narrow on scope", () => {
+    const org = (c: EmbedClaims) => (c.scope === "org" ? c : null);
+    expectTypeOf<NonNullable<ReturnType<typeof org>>["orgId"]>().toEqualTypeOf<string>();
+    expectTypeOf<NonNullable<ReturnType<typeof org>>["role"]>().toEqualTypeOf<UiRole>();
+    const platform = (c: EmbedClaims) => (c.scope === "platform" ? c : null);
+    expectTypeOf<NonNullable<ReturnType<typeof platform>>["orgId"]>().toEqualTypeOf<undefined>();
+    expectTypeOf<NonNullable<ReturnType<typeof platform>>["role"]>().toEqualTypeOf<"superAdmin">();
+    const orgArgs = (a: UiRenderArgs) => (a.scope !== "platform" ? a : null);
+    expectTypeOf<NonNullable<ReturnType<typeof orgArgs>>["orgId"]>().toEqualTypeOf<string>();
   });
 });
 

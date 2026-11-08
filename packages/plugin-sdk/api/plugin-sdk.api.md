@@ -879,17 +879,14 @@ export type EmbedChildMessage =
 };
 
 // @public
-export interface EmbedClaims {
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
+
+// @public
+export interface EmbedClaimsBase {
     accountId: string;
-    agentId?: string;
     contribution: string;
-    conversationId?: string;
     exp: number;
-    fileId?: string;
-    orgId?: string;
     plugin: string;
-    role: UiRole | "superAdmin";
-    scope: "org" | "platform";
 }
 
 // @public
@@ -1945,6 +1942,16 @@ export function orgAccess<T extends z.ZodTypeAny>(schema: T, access: OrgAccess):
 export function orgAccessOf(schema: z.ZodTypeAny): OrgAccess | undefined;
 
 // @public
+export interface OrgEmbedClaims extends EmbedClaimsBase {
+    agentId?: string;
+    conversationId?: string;
+    fileId?: string;
+    orgId: string;
+    role: UiRole;
+    scope: "org";
+}
+
+// @public
 export interface OutboundMessage {
     cards?: ChannelCard[];
     text: string;
@@ -2078,6 +2085,16 @@ export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public @deprecated
 export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>>;
+
+// @public
+export interface PlatformEmbedClaims extends EmbedClaimsBase {
+    agentId?: undefined;
+    conversationId?: undefined;
+    fileId?: undefined;
+    orgId?: undefined;
+    role: "superAdmin";
+    scope: "platform";
+}
 
 // @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
@@ -3060,6 +3077,13 @@ export const UI_SLOTS: readonly UiSlotSpec[];
 export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 
 // @public
+export interface UiActionInput {
+    actionId: string;
+    answer?: FormAnswer;
+    payload?: unknown;
+}
+
+// @public
 export type UiActionResult = {
     toast?: {
         zh: string;
@@ -3165,14 +3189,10 @@ export interface UiOpen {
     item?: string;
 }
 
-// Warning: (ae-forgotten-export) The symbol "UiActionInput" needs to be exported by the entry point index.d.ts
-//
 // @public
 export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {
 }
 
-// Warning: (ae-forgotten-export) The symbol "UiRenderArgsBase" needs to be exported by the entry point index.d.ts
-//
 // @public
 export interface UiOrgRenderArgs extends UiRenderArgsBase {
     agentId?: string;
@@ -3207,6 +3227,15 @@ export interface UiPlatformRenderArgs extends UiRenderArgsBase {
 
 // @public
 export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
+
+// @public
+export interface UiRenderArgsBase {
+    accountId: string;
+    config?: unknown;
+    locale: Locale;
+    signal: AbortSignal;
+    slot: UiSlotId;
+}
 
 // @public
 export type UiRole = "owner" | "admin" | "member" | "guest";

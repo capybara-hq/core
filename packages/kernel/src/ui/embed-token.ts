@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { EmbedClaims } from "@capybara-hq/plugin-sdk";
+import type { EmbedClaims, OrgEmbedClaims, PlatformEmbedClaims } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Keyring } from "../ctx/secrets.js";
 import { KEYRING } from "../infra/tokens.js";
@@ -79,7 +79,7 @@ function parseClaims(v: unknown): EmbedClaims | null {
     scope: "org",
     orgId: c.orgId,
     accountId: c.accountId,
-    role: c.role as EmbedClaims["role"],
+    role: c.role as OrgEmbedClaims["role"],
     ...(c.conversationId !== undefined && { conversationId: c.conversationId }),
     ...(c.agentId !== undefined && { agentId: c.agentId }),
     ...(c.fileId !== undefined && { fileId: c.fileId }),
@@ -115,7 +115,11 @@ export class EmbedTokens {
   }
 
   /** 签发：`exp` = 现在 + {@link EMBED_TOKEN_TTL_SECONDS}。 */
-  issue(c: Omit<EmbedClaims, "exp">): { token: string; claims: EmbedClaims; expiresAt: Date } {
+  issue(c: Omit<OrgEmbedClaims, "exp"> | Omit<PlatformEmbedClaims, "exp">): {
+    token: string;
+    claims: EmbedClaims;
+    expiresAt: Date;
+  } {
     const exp = Math.floor(this.now() / 1000) + EMBED_TOKEN_TTL_SECONDS;
     const claims = parseClaims({ ...c, exp });
     if (claims === null) throw new Error("embed token claims are invalid");

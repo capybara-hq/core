@@ -353,8 +353,15 @@ export class UiViews {
    * 组织页面不收 `conversationId`。返回签发令牌所需的目标（令牌由调用方签）。
    */
   async embed(t: UiEmbedRequest): Promise<UiEmbedTarget> {
-    const { fileId, ...target } = t.scope === "platform" ? { ...t, fileId: undefined } : t;
-    const { entry, args } = await this.resolve({ ...target, locale: "en" } as UiTarget, "embed");
+    let fileId: string | undefined;
+    let target: UiTarget;
+    if (t.scope === "platform") target = { ...t, locale: "en" };
+    else {
+      const { fileId: f, ...org } = t;
+      fileId = f;
+      target = { ...org, locale: "en" };
+    }
+    const { entry, args } = await this.resolve(target, "embed");
     const path = entry.contribution.path;
     if (path === undefined) throw notFound();
     const preview = entry.slot.id === "file.preview";
@@ -566,10 +573,8 @@ export class UiViews {
    */
   private platformArgs(t: UiPlatformTarget, entry: LoadedUiContribution): ResolvedArgs {
     const effective = this.d.effective.platform(t.plugin);
-    if (!effective.ok) {
-      if (effective.notRunning) throw notFound();
-      throw new ApiError("extension.needs_config", `Extension ${t.plugin} ${NEEDS_CONFIG_REASON}`);
-    }
+    // `platform()` fails only when the extension is not running here: not found
+    if (!effective.ok) throw notFound();
     return {
       scope: "platform",
       accountId: t.accountId,
