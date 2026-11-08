@@ -724,6 +724,7 @@ describe("admin plugin detail: components and the platform update", () => {
         orgId: "o2",
         connectors: [{ id: "k1", name: "GitHub", templateId: "gh", credentialsReset: true }],
         needsConfig: ["linear"],
+        turnedOff: [{ templateId: "slack-user", agents: [], connectorsKept: 1 }],
       },
     ],
     diffHash: "d".repeat(64),
@@ -831,6 +832,7 @@ describe("admin plugin detail: components and the platform update", () => {
     const beta = within(group(U.groups.orgs)).getByText("Beta").closest("li") as HTMLElement;
     expect(within(beta).getByText(fill(U.credentialsResetNote, { names: "GitHub" }))).toBeTruthy();
     expect(within(beta).getByText(fill(U.needsConfigNote, { ids: "linear" }))).toBeTruthy();
+    expect(within(beta).getByText(fill(U.turnedOffNote, { ids: "slack-user" }))).toBeTruthy();
     expect(dialog.textContent).not.toMatch(/[·−] /);
     await user.click(within(dialog).getByRole("button", { name: U.confirm }));
     expect(await within(dialog).findByText(U.stale)).toBeTruthy();

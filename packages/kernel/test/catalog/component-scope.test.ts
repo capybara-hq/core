@@ -693,6 +693,28 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     expect(await connectorTemplateState(env.db, org2, tplId)).toBe("off");
   });
 
+  it("a defaultEnabled false template moved from its own scope back to follow: the preview lists the orgs it turns off in", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    const itemId = await seedPlugin(env, { name: "github", skills: [] });
+    tplId = await templateId();
+    await env.db
+      .updateTable("platform_connector_templates")
+      .set({
+        file: sql`file || '{"defaultEnabled": false}'::jsonb`,
+        scope_mode: "own",
+        scope: "all",
+      })
+      .execute();
+    expect((await install(env.boss, env, itemId, ghBody)).statusCode).toBe(201);
+    expect(await connectorTemplateState(env.db, env.orgId, tplId)).toBe("on");
+    const pv = await previewScope("connector_template", tplId, { follow: true });
+    // following its plugin again, the template is off where no org switch turned it on: also in
+    // the org that has the plugin on
+    expect(pv.affected).toContainEqual(
+      expect.objectContaining({ orgId: env.orgId, agents: [], connectorsKept: 1 }),
+    );
+  });
+
   it("a template on in the org: needs input; switched off after the install, its connector stays and the preview counts it", async () => {
     ghBody.connectors.gh.endpoint.url = env.mcp.url;
     const itemId = await seedPlugin(env, { name: "github", skills: [] });

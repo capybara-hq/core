@@ -582,13 +582,15 @@ export const templateIdOfPath = (path: string): string =>
  * The connector templates among `ids` (of catalog item `itemId`) that are on in the org once the
  * plugin is on there (ruling P2-6): the component switch, its own scope and disabled flags decide;
  * a template without a platform row counts as on. Installs create connectors only from these, and
- * only these need the org's input (`needs_config`).
+ * only these need the org's input (`needs_config`). `defaultOff`: by template id, whether another
+ * version's file (an update's target) ships it off, in place of the platform row's.
  */
 export async function connectorTemplatesOn(
   db: KernelSchemaDb,
   orgId: string,
   itemId: string,
   ids: readonly string[],
+  defaultOff?: ReadonlyMap<string, boolean>,
 ): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const comps = await loadComponents(db, "connector_template", { itemId });
@@ -597,8 +599,9 @@ export async function connectorTemplatesOn(
     comps
       .filter((c) => {
         const p = pluginFactsOf(st, c.itemId, orgId);
+        const shipped = defaultOff?.get(c.name);
         return !componentOn(
-          c,
+          shipped === undefined ? c : { ...c, defaultOff: shipped },
           p && { ...p, installed: true },
           listedIn(st, c.id, orgId),
           switchOf(st, c.id, orgId),

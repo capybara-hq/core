@@ -939,8 +939,14 @@ export interface PlatformUpdateComponent {
 export interface PlatformUpdateConnectorOrg {
   orgId: string;
   connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
-  /** Added templates whose connectors need the org's input (the update creates none). */
+  /** Templates the update turns on (added, or no longer shipped off): their connectors need the org's input. */
   needsConfig: string[];
+  /** Templates now shipped off that turn off in the org; their connectors stay. Absent when none. */
+  turnedOff?: {
+    templateId: string;
+    agents: { id: string; name: string }[];
+    connectorsKept: number;
+  }[];
 }
 
 /** `POST /api/v1/admin/catalog/items/:id/update/preview` (kernel `PlatformUpdatePreview`). */

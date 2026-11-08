@@ -4415,7 +4415,8 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "needsConfigNote": "Added connector templates need an address and credentials: {ids}"
+      "needsConfigNote": "Connector templates turning on need an address and credentials: {ids}",
+      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {
       "host": "Host: {host}",

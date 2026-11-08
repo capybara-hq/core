@@ -4403,7 +4403,8 @@
       "extensionOrgs": "在用的组织一起更新：{orgs}",
       "connectorsNote": "按新模板更新：{names}",
       "credentialsResetNote": "认证方式变了，凭据会清空，需要重新填写：{names}",
-      "needsConfigNote": "新增的连接器模板需要填写地址和凭据：{ids}"
+      "needsConfigNote": "将开启的连接器模板需要填写地址和凭据：{ids}",
+      "turnedOffNote": "新版本里默认关闭，在此组织关闭（已建的连接器保留）：{ids}"
     },
     "errorDetail": {
       "host": "主机：{host}",

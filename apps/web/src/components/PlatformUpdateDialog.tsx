@@ -314,6 +314,11 @@ export function PlatformUpdatePreviewBody({
             text: t("needsConfigNote", { ids: o.needsConfig.join(sep) }),
             tone: "warn",
           });
+        if (o.turnedOff !== undefined && o.turnedOff.length > 0)
+          notes.push({
+            text: t("turnedOffNote", { ids: o.turnedOff.map((x) => x.templateId).join(sep) }),
+            tone: "warn",
+          });
         return { id: o.orgId, title: one(o.orgId), notes };
       }),
     },

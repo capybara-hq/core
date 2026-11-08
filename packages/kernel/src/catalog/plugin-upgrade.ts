@@ -51,6 +51,7 @@ import {
   clashingOrgSkills,
   clashingPlatformSkills,
   componentOn,
+  connectorsMadeFrom,
   connectorTemplatesOn,
   listedIn,
   loadScopeState,
@@ -105,10 +106,21 @@ export interface PlatformUpdateConnectorOrg {
    */
   connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
   /**
-   * Added templates on in the org where the plugin is on: their connectors need the org's input
-   * (endpoint, credentials), so the update creates none.
+   * Templates the update turns on in the org where the plugin is on: added ones, and ones the
+   * target no longer ships off (`defaultEnabled`) without an org switch. Their connectors need the
+   * org's input (endpoint, credentials), so the update creates none.
    */
   needsConfig: string[];
+  /**
+   * Templates the target ships off (`defaultEnabled: false`) that were on in the org only by
+   * default (no org switch): they turn off there, with the agents using them; the connectors made
+   * from them stay as the org's own (`connectorsKept`). Absent when none.
+   */
+  turnedOff?: {
+    templateId: string;
+    agents: { id: string; name: string }[];
+    connectorsKept: number;
+  }[];
 }
 
 /** `POST /api/v1/admin/catalog/items/:id/update/preview`. */
@@ -297,7 +309,8 @@ const filesDigest = (row: CatalogVersionFiles): string =>
  *   components updated on their own, components with their own scope and the orgs whose linked
  *   copy is pinned; lists removed components agents still use (they stay, spec §7.3), the org
  *   connectors made from changed templates (all orgs, ruling E2; `credentialsReset` when the
- *   credential shape changed) and the added templates that will need an org's input, the
+ *   credential shape changed), the templates it turns on that will need an org's input (added, or
+ *   no longer shipped off) and those it turns off (now shipped off, on only by default), the
  *   deployment's extension move, and a `diffHash`. Refused: same version, a disabled or deleted
  *   item, a target without the extension the deployment runs for it or moving a config-declared
  *   one, a template moving to another connector, a plugin another platform plugin depends on
@@ -1184,6 +1197,10 @@ export class PlatformPluginUpdater {
     const toTemplates = contents.templates;
     const deps = this.installer.templateDeps();
     const connectors: ConnectorChange[] = [];
+    const shippedOff = (f: ConnectorTemplateFile) => f.defaultEnabled === false;
+    /** Templates whose `defaultEnabled` the target flips: id -> shipped off, and the platform id. */
+    const flipped = new Map<string, boolean>();
+    const flippedIds = new Map<string, string>();
     for (const ct of toTemplates) {
       const l = live.templates.find((x) => x.name === ct.id);
       if (!l) {
@@ -1205,6 +1222,10 @@ export class PlatformPluginUpdater {
         pinnedOrgs: [],
       });
       if (same) continue;
+      if (shippedOff(l.file) !== shippedOff(ct.file)) {
+        flipped.set(ct.id, shippedOff(ct.file));
+        flippedIds.set(ct.id, l.id);
+      }
       const before = l.file.template;
       const after = ct.file.template;
       if (before.plugin !== after.plugin || before.connector !== after.connector) {
@@ -1353,10 +1374,15 @@ export class PlatformPluginUpdater {
       }
     }
 
-    // The org connectors: changed templates' connectors, added templates needing input
+    // The org connectors: changed templates' connectors, templates turned on (needing input) or off
     const addedTemplates = components
       .filter((c) => c.kind === "connector_template" && c.change === "added")
-      .map((c) => c.name);
+      .map((c) => c.name)
+      // an added template shipped off is on nowhere (no org can have switched it on yet)
+      .filter((id) => {
+        const f = toTemplates.find((x) => x.id === id)?.file;
+        return item.builtin || f === undefined || !shippedOff(f);
+      });
     const byOrg = new Map<string, PlatformUpdateConnectorOrg>();
     const entry = (orgId: string) => {
       const e = byOrg.get(orgId) ?? { orgId, connectors: [], needsConfig: [] };
@@ -1374,12 +1400,40 @@ export class PlatformPluginUpdater {
     if (addedTemplates.length > 0) {
       for (const orgId of onOrgs) {
         const on = await connectorTemplatesOn(db, orgId, itemId, addedTemplates);
-        if (on.size > 0) entry(orgId).needsConfig.push(...[...on].sort());
+        if (on.size > 0) entry(orgId).needsConfig.push(...on);
+      }
+    }
+    if (flipped.size > 0) {
+      const ids = [...flipped.keys()].sort();
+      for (const orgId of onOrgs) {
+        const before = await connectorTemplatesOn(db, orgId, itemId, ids);
+        const after = await connectorTemplatesOn(db, orgId, itemId, ids, flipped);
+        for (const id of ids) {
+          const platformId = flippedIds.get(id) as string;
+          if (after.has(id) && !before.has(id)) {
+            // connectors already made from it (it was on before) need no input
+            if ((await connectorsMadeFrom(db, orgId, platformId)) === 0) {
+              entry(orgId).needsConfig.push(id);
+            }
+          } else if (before.has(id) && !after.has(id)) {
+            const agents = await agentsUsing(db, orgId, "connector_template", [platformId]);
+            const e = entry(orgId);
+            e.turnedOff = [
+              ...(e.turnedOff ?? []),
+              {
+                templateId: id,
+                agents: agents.map((a) => ({ id: a.id, name: a.name })),
+                connectorsKept: await connectorsMadeFrom(db, orgId, platformId),
+              },
+            ];
+          }
+        }
       }
     }
     const connectorOrgs = [...byOrg.values()]
       .map((e) => ({
         ...e,
+        needsConfig: e.needsConfig.sort(),
         connectors: e.connectors.sort((a, b) =>
           `${a.templateId}\0${a.id}`.localeCompare(`${b.templateId}\0${b.id}`),
         ),

@@ -1250,6 +1250,8 @@ export class ComponentScopeService {
       scope: target.scope,
       disabled: target.disabled,
       itemId: c.itemId,
+      // a template shipped off stays so: following its plugin again, it is off without a switch
+      ...(c.defaultOff === true && { defaultOff: true }),
     };
     const listedAfter = new Set(target.orgs);
     const affected: ComponentScopePreview["affected"] = [];
