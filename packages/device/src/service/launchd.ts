@@ -1,3 +1,4 @@
+import { copyFileSync, statSync, truncateSync } from "node:fs";
 import { join } from "node:path";
 
 export const LAUNCHD_LABEL = "top.capybara.device";
@@ -21,7 +22,7 @@ function xml(s: string): string {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-/** The launchd agent: `node <bin> start`, at login, restarted when it exits. */
+/** The launchd agent: `node <bin> start`, at login, restarted when it exits with a failure (a clean stop stays stopped). */
 export function plistContent(spec: ServiceSpec): string {
   const env = Object.entries(spec.env)
     .map(([k, v]) => `    <key>${xml(k)}</key>\n    <string>${xml(v)}</string>`)
@@ -41,7 +42,10 @@ export function plistContent(spec: ServiceSpec): string {
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
   <key>EnvironmentVariables</key>
   <dict>
 ${env}
@@ -53,4 +57,18 @@ ${env}
 </dict>
 </plist>
 `;
+}
+
+export const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Keeps `service.log` from growing without bound: past 10 MiB it is copied to `.1` and emptied. */
+export function rotateServiceLog(stateDir: string, maxBytes: number = SERVICE_LOG_MAX_BYTES): void {
+  const file = join(stateDir, "service.log");
+  try {
+    if (statSync(file).size < maxBytes) return;
+    copyFileSync(file, `${file}.1`);
+    truncateSync(file, 0);
+  } catch {
+    // No log yet, or not ours to rotate.
+  }
 }

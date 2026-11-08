@@ -1,10 +1,17 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import { serviceCommand } from "../src/commands/service.js";
-import { plistContent, plistPath } from "../src/service/launchd.js";
+import { plistContent, plistPath, rotateServiceLog } from "../src/service/launchd.js";
 import { unitContent, unitPath } from "../src/service/systemd.js";
 
 const spec = {
@@ -22,7 +29,9 @@ describe("service files", () => {
       "<string>/opt/node 22/bin/node</string>\n    <string>/usr/lib/node_modules/@capybara-hq/device/bin/capybara-device.mjs</string>\n    <string>start</string>",
     );
     expect(p).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
-    expect(p).toMatch(/<key>KeepAlive<\/key>\s*<true\/>/);
+    expect(p).toMatch(
+      /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>\s*<\/dict>/,
+    );
     expect(p).toContain("<string>/home/u/.config/capybara-device/service.log</string>");
     expect(p).toContain("<key>PATH</key>");
     expect(plistPath("/Users/u")).toBe("/Users/u/Library/LaunchAgents/top.capybara.device.plist");
@@ -42,6 +51,19 @@ describe("service files", () => {
     expect(u).toContain('Environment="PATH=/usr/local/bin:/usr/bin"');
     expect(unitPath("/home/u")).toBe("/home/u/.config/systemd/user/capybara-device.service");
     expect(unitContent({ ...spec, binPath: "/x/100%/b" })).toContain("100%%");
+  });
+});
+
+describe("service log", () => {
+  it("is copied to .1 and emptied past the limit", () => {
+    const d = realpathSync(mkdtempSync(join(tmpdir(), "device-svclog-")));
+    writeFileSync(join(d, "service.log"), "x".repeat(100));
+    rotateServiceLog(d, 1000);
+    expect(readFileSync(join(d, "service.log"), "utf8")).toHaveLength(100);
+    rotateServiceLog(d, 50);
+    expect(readFileSync(join(d, "service.log"), "utf8")).toBe("");
+    expect(readFileSync(join(d, "service.log.1"), "utf8")).toHaveLength(100);
+    rmSync(d, { recursive: true });
   });
 });
 

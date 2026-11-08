@@ -2,6 +2,7 @@ import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
+import { rotateServiceLog } from "../service/launchd.js";
 import { type Credential, type Policy, readCredential, readPolicy } from "../state.js";
 
 export interface StartDeps {
@@ -35,6 +36,7 @@ export async function start(deps: StartDeps): Promise<number> {
     err("capybara-device start: no execution backend is available in this build");
     return 1;
   }
+  rotateServiceLog(stateDir);
   const running = readRunningPid(stateDir, deps.kill);
   if (running !== undefined && running !== proc.pid) {
     err(`capybara-device is already running (pid ${running}). Stop it first: capybara-device stop`);

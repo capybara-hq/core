@@ -45,7 +45,8 @@ down with it).
 (`capybara-device-<environmentId>`, started on first use from
 `ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release) as the image's
 `sandbox` user (uid 1000). `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
-at `/workspace`, `/skills` and `/tmp`; the container drops all capabilities. The policy's `cpu` and
+at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit, no swap beyond `memoryMb`, and drops
+all capabilities. The policy's `cpu` and
 `memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and limits
 match and recreated when they change; it stays running (idle) between starts.
 
@@ -59,6 +60,8 @@ directories must be writable by uid 1000.
 `capybara-device service install` makes the program start at login: on macOS a launchd agent
 (`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
 Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`, restarted on
-failure; run `loginctl enable-linger $USER` to start it at boot instead of at login). The service
+failure; a user unit runs only while you have a session, so run `loginctl enable-linger $USER` to
+start it at boot and keep it running after you log out). `service.log` is emptied into `service.log.1`
+at 10 MiB when the program starts. The service
 runs `node <bin> start` with the `PATH` of the shell that installed it (so `docker` is found).
 `service uninstall` reverses it.

@@ -102,7 +102,9 @@ function systemd(
     writeFileSync(file, unitContent(spec));
     run("systemctl", ["--user", "daemon-reload"]);
     run("systemctl", ["--user", "enable", "--now", SYSTEMD_UNIT]);
-    deps.out(`Installed ${file}; capybara-device now starts at login.`);
+    deps.out(
+      `Installed ${file}; capybara-device now starts at login. A user unit runs only while you have a session unless you run: loginctl enable-linger $USER`,
+    );
     return 0;
   }
   try {

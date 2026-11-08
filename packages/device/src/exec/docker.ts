@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
@@ -30,6 +30,8 @@ export const SANDBOX_IMAGE = `ghcr.io/capybara-hq/capybara-sandbox:${SANDBOX_IMA
 
 /** The image's `sandbox` user. */
 const CONTAINER_USER = "1000:1000";
+
+const SPEC_LABEL = "capybara.device.spec";
 
 /** A file operation in the container that takes longer than this is killed. */
 const FILE_OP_TIMEOUT_S = 30;
@@ -100,15 +102,18 @@ else tr '\\0' '\\n' < "$e" 2>/dev/null | grep -q "^${EXEC_MARKER}=$pre" && kill 
 done; done; exit 0`;
 
 /**
- * The command wrapper: runs the command, then records its exit status in a file under /tmp. The
- * host reads that file, because `docker exec` itself ends only when every process holding its
- * output (a background child) has closed it.
+ * The command wrapper. The host sends a random nonce on stdin; the wrapper keeps it in a shell
+ * variable, runs the command (stdin `/dev/null`), then writes one final line on stderr with the
+ * nonce and the exit status. `docker exec` itself ends only when every process holding its
+ * output (a background child) has closed it, so the host reads the status from this line instead.
+ * The command cannot suppress the line (the wrapper writes it after waiting) and never sees the
+ * nonce; a forged line without it is ordinary output.
  */
 const EXEC_WRAPPER =
-  's=0; /bin/bash -c "$1" || s=$?; echo $s > "$2.tmp" && mv "$2.tmp" "$2"; exit $s';
+  'read -r n; /bin/bash -c "$1" </dev/null; s=$?; printf \'\\nCAPYBARA-DONE:%s:%d:END\\n\' "$n" "$s" >&2; exit $s';
 
-/** How often the host looks for a finished command's status file. */
-const DONE_POLL_MS = 40;
+/** The pids limit of a container (as the cloud sandbox). */
+const PIDS_LIMIT = 1024;
 
 /** The shared prologue of the file scripts: `under` checks a real path against the three roots. */
 const FILE_PROLOGUE = `under() { case "$1" in /workspace|/workspace/*|/tmp|/tmp/*) return 0;; esac; return 1; }
@@ -150,6 +155,15 @@ export interface DockerExecutorOptions {
   policy: Policy;
 }
 
+interface Waiter {
+  open: boolean;
+  dead: boolean;
+  /** The caller was counted in `inflight`. */
+  counted: boolean;
+  resolve: () => void;
+  reject: (e: unknown) => void;
+}
+
 interface Running {
   tag: string;
   killed: boolean;
@@ -157,7 +171,7 @@ interface Running {
 }
 
 interface Inspected {
-  Config: { Image: string };
+  Config: { Image: string; Labels: Record<string, string> | null };
   State: { Running: boolean };
   Mounts: { Source: string; Destination: string; RW: boolean }[];
   HostConfig: { NanoCpus: number; Memory: number };
@@ -189,7 +203,9 @@ export class DockerExecutor implements Executor {
   /** The container has the default bridge (commands may reach the network). */
   private netOpen = false;
   private inflight = 0;
-  private waiters: (() => void)[] = [];
+  private readonly queue: Waiter[] = [];
+  private pumping = false;
+  private dirty = false;
 
   constructor(private readonly opts: DockerExecutorOptions) {
     const dir = resolve(opts.dir);
@@ -229,17 +245,46 @@ export class DockerExecutor implements Executor {
     ];
   }
 
-  /** Whether an existing container is the one this environment needs (image, mounts, limits). */
+  /** Every `docker run` flag of the container except its name and spec label. */
+  private runArgs(): string[] {
+    const { policy } = this.opts;
+    return [
+      "--init",
+      "--read-only",
+      "--user",
+      CONTAINER_USER,
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--pids-limit",
+      String(PIDS_LIMIT),
+      "--workdir",
+      ROOTS.workspace,
+      "--label",
+      `capybara.device.environment=${this.opts.environmentId}`,
+      ...this.wanted().flatMap((m) => [
+        "--mount",
+        `type=bind,source=${m.source},target=${m.dest}${m.rw ? "" : ",readonly"}`,
+      ]),
+      ...(policy.cpu !== null ? ["--cpus", String(policy.cpu)] : []),
+      ...(policy.memoryMb !== null
+        ? ["--memory", `${policy.memoryMb}m`, "--memory-swap", `${policy.memoryMb}m`]
+        : []),
+      "--entrypoint",
+      "sleep",
+      SANDBOX_IMAGE,
+      "infinity",
+    ];
+  }
+
+  /** A hash of the run flags: a container made with other flags is recreated. */
+  private specHash(): string {
+    return createHash("sha256").update(JSON.stringify(this.runArgs())).digest("hex").slice(0, 16);
+  }
+
   private matches(c: Inspected): boolean {
-    if (c.Config.Image !== SANDBOX_IMAGE) return false;
-    const mounts = c.Mounts.map((m) => `${m.Destination}|${m.Source}|${m.RW}`).sort();
-    const want = this.wanted()
-      .map((m) => `${m.dest}|${m.source}|${m.rw}`)
-      .sort();
-    if (mounts.length !== want.length || mounts.some((m, i) => m !== want[i])) return false;
-    const nano = this.opts.policy.cpu !== null ? Math.round(this.opts.policy.cpu * 1e9) : 0;
-    const mem = this.opts.policy.memoryMb !== null ? this.opts.policy.memoryMb * 1024 * 1024 : 0;
-    return c.HostConfig.NanoCpus === nano && c.HostConfig.Memory === mem;
+    return c.Config.Labels?.[SPEC_LABEL] === this.specHash();
   }
 
   private async mustDocker(args: string[], what: string): Promise<DockerRun> {
@@ -259,38 +304,27 @@ export class DockerExecutor implements Executor {
     if (!existsSync(this.dir)) {
       throw new DeviceOpError("error", "the environment directory is gone");
     }
-    for (const r of Object.values(this.hostRoots)) mkdirSync(r, { recursive: true });
+    for (const r of Object.values(this.hostRoots)) {
+      if (r.includes(",")) {
+        throw new DeviceOpError("error", `the environment directory ${this.dir} contains a comma`);
+      }
+      mkdirSync(r, { recursive: true });
+    }
     let c = await this.inspect();
     if (c !== null && !this.matches(c)) {
       await this.mustDocker(["rm", "-f", this.name], "removing the old container");
       c = null;
     }
     if (c === null) {
-      const { policy } = this.opts;
       await this.mustDocker(
         [
           "run",
           "-d",
           "--name",
           this.name,
-          "--init",
-          "--user",
-          CONTAINER_USER,
-          "--cap-drop",
-          "ALL",
-          "--security-opt",
-          "no-new-privileges:true",
-          "--workdir",
-          ROOTS.workspace,
           "--label",
-          `capybara.device.environment=${this.opts.environmentId}`,
-          ...this.wanted().flatMap((m) => ["-v", `${m.source}:${m.dest}${m.rw ? "" : ":ro"}`]),
-          ...(policy.cpu !== null ? ["--cpus", String(policy.cpu)] : []),
-          ...(policy.memoryMb !== null ? ["--memory", `${policy.memoryMb}m`] : []),
-          "--entrypoint",
-          "sleep",
-          SANDBOX_IMAGE,
-          "infinity",
+          `${SPEC_LABEL}=${this.specHash()}`,
+          ...this.runArgs(),
         ],
         "creating the container",
       );
@@ -316,37 +350,93 @@ export class DockerExecutor implements Executor {
     this.netOpen = open;
   }
 
-  /** Waits until the container exists with the wanted network state; counts the caller as running. */
-  private async acquire(open: boolean, signal: AbortSignal): Promise<void> {
-    for (;;) {
-      signal.throwIfAborted();
-      const got = await this.serial(async () => {
-        await this.ensureContainer();
-        if (this.netOpen !== open) {
-          // Other commands run with the other network state: wait for them.
-          if (this.inflight > 0) return false;
-          await this.setNet(open);
-        }
-        this.inflight++;
-        return true;
-      });
-      if (got) return;
-      await new Promise<void>((res, rej) => {
-        const onAbort = (): void => rej(signal.reason);
-        signal.addEventListener("abort", onAbort, { once: true });
-        this.waiters.push(() => {
-          signal.removeEventListener("abort", onAbort);
-          res();
-        });
-      });
+  /**
+   * Waits until the container exists with the wanted network state and counts the caller as
+   * running. Callers are served in arrival order: once one needs the other network state, later
+   * callers for the current state queue behind it, so it is not starved.
+   */
+  private acquire(open: boolean, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    return new Promise<void>((resolveWait, rejectWait) => {
+      const w: Waiter = {
+        open,
+        dead: false,
+        counted: false,
+        resolve: resolveWait,
+        reject: rejectWait,
+      };
+      const onAbort = (): void => {
+        w.dead = true;
+        const i = this.queue.indexOf(w);
+        if (i >= 0) this.queue.splice(i, 1);
+        rejectWait(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const done = w.resolve;
+      w.resolve = () => {
+        signal.removeEventListener("abort", onAbort);
+        done();
+      };
+      this.queue.push(w);
+      this.pump();
+    });
+  }
+
+  private pump(): void {
+    if (this.pumping) {
+      this.dirty = true;
+      return;
     }
+    this.pumping = true;
+    void this.drain().finally(() => {
+      this.pumping = false;
+      if (this.dirty) this.pump();
+    });
+  }
+
+  private async drain(): Promise<void> {
+    do {
+      this.dirty = false;
+      while (this.queue.length > 0) {
+        const w = this.queue[0] as Waiter;
+        if (w.dead) {
+          this.queue.shift();
+          continue;
+        }
+        let served: boolean;
+        try {
+          served = await this.serial(async () => {
+            await this.ensureContainer();
+            if (w.dead) return true;
+            if (this.netOpen !== w.open) {
+              // Commands run with the other network state: wait for them.
+              if (this.inflight > 0) return false;
+              await this.setNet(w.open);
+            }
+            this.inflight++;
+            w.counted = true;
+            return true;
+          });
+        } catch (e) {
+          this.queue.shift();
+          if (!w.dead) w.reject(e);
+          continue;
+        }
+        if (!served) break;
+        this.queue.shift();
+        if (w.dead) {
+          // Aborted while being served: give back the slot if it was counted.
+          if (w.counted) this.inflight--;
+          continue;
+        }
+        w.resolve();
+      }
+    } while (this.dirty);
   }
 
   private release(): void {
     this.inflight--;
-    const w = this.waiters;
-    this.waiters = [];
-    for (const f of w) f();
+    this.pump();
   }
 
   /** A docker-level failure that means the container vanished: the next call recreates it. */
@@ -384,14 +474,13 @@ export class DockerExecutor implements Executor {
     env: Record<string, string>,
     signal: AbortSignal,
   ): Promise<ExecResult> {
-    const doneName = `.capybara-exec-${randomBytes(8).toString("hex")}`;
-    const doneInContainer = `${ROOTS.tmp}/${doneName}`;
-    const doneOnHost = join(this.hostRoots.tmp, doneName);
+    const nonce = randomBytes(16).toString("hex");
     return new Promise<ExecResult>((resolvePromise, reject) => {
       const child = spawn(
         "docker",
         [
           "exec",
+          "-i",
           "--workdir",
           cwd,
           ...Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
@@ -401,10 +490,12 @@ export class DockerExecutor implements Executor {
           EXEC_WRAPPER,
           "capybara-exec",
           args.command,
-          doneInContainer,
         ],
-        { stdio: ["ignore", "pipe", "pipe"] },
+        { stdio: ["pipe", "pipe", "pipe"] },
       );
+      child.stdin?.on("error", () => {});
+      child.stdin?.end(`${nonce}\n`);
+      const sentinel = Buffer.from(`\nCAPYBARA-DONE:${nonce}:`);
       const entry: Running = { tag: args.tag, killed: false, child };
       this.running.add(entry);
       const cap = new OutputCap(args.maxOutputBytes);
@@ -426,26 +517,9 @@ export class DockerExecutor implements Executor {
       }, args.timeoutMs);
       const onAbort = (): void => kill();
       signal.addEventListener("abort", onAbort, { once: true });
-      const readDone = (): number | undefined => {
-        try {
-          const n = Number.parseInt(readFileSync(doneOnHost, "utf8"), 10);
-          return Number.isNaN(n) ? undefined : n;
-        } catch {
-          return undefined;
-        }
-      };
-      const poll = setInterval(() => {
-        if (exit !== undefined || settled) return;
-        const code = readDone();
-        if (code === undefined) return;
-        exit = { code, sig: null };
-        grace = setTimeout(finish, PIPE_GRACE_MS);
-      }, DONE_POLL_MS);
       const cleanup = (): void => {
         clearTimeout(timer);
-        clearInterval(poll);
         if (grace) clearTimeout(grace);
-        rmSync(doneOnHost, { force: true });
         // A background child may keep the client attached: it is not needed any more.
         child.kill("SIGKILL");
         signal.removeEventListener("abort", onAbort);
@@ -457,6 +531,7 @@ export class DockerExecutor implements Executor {
         cleanup();
         child.stdout?.destroy();
         child.stderr?.destroy();
+        if (status === undefined && pending.length > 0) cap.push("stderr", pending);
         const stderr = cap.text("stderr");
         if (exit.code === 126 || exit.code === 125 || exit.code === 1) {
           this.noteFailure(Buffer.concat(dockerErr).toString("utf8"));
@@ -470,10 +545,35 @@ export class DockerExecutor implements Executor {
         });
       };
       child.stdout?.on("data", (b: Buffer) => cap.push("stdout", b));
-      child.stderr?.on("data", (b: Buffer) => {
-        cap.push("stderr", b);
+      // stderr carries the wrapper's final status line; hold back a tail that might begin it.
+      let pending = Buffer.alloc(0);
+      let status: Buffer | undefined;
+      const onStderr = (b: Buffer): void => {
         if (dockerErr.length < 64) dockerErr.push(b);
-      });
+        if (status !== undefined) {
+          status = Buffer.concat([status, b]);
+        } else {
+          const data = Buffer.concat([pending, b]);
+          const at = data.indexOf(sentinel);
+          if (at >= 0) {
+            cap.push("stderr", data.subarray(0, at));
+            pending = Buffer.alloc(0);
+            status = data.subarray(at + sentinel.length);
+          } else {
+            const keep = Math.min(data.length, sentinel.length - 1);
+            cap.push("stderr", data.subarray(0, data.length - keep));
+            pending = data.subarray(data.length - keep);
+          }
+        }
+        if (status !== undefined && exit === undefined) {
+          const m = /^(\d+):END\n/.exec(status.toString("latin1"));
+          if (m) {
+            exit = { code: Number(m[1]), sig: null };
+            grace = setTimeout(finish, PIPE_GRACE_MS);
+          }
+        }
+      };
+      child.stderr?.on("data", onStderr);
       child.once("error", (e) => {
         if (settled) return;
         settled = true;
@@ -482,7 +582,7 @@ export class DockerExecutor implements Executor {
       });
       child.once("exit", (code, sig) => {
         if (exit !== undefined) return;
-        exit = { code: readDone() ?? code, sig };
+        exit = { code, sig };
         grace = setTimeout(finish, PIPE_GRACE_MS);
       });
       child.once("close", () => finish());

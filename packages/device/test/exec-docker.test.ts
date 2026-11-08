@@ -118,6 +118,105 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     await moved.dispose();
   });
 
+  it("hardens the container and recreates one made with other flags", async () => {
+    await ex.exec(execArgs("true"), live);
+    const inspect = (f: string) =>
+      execFileSync("docker", ["inspect", "-f", f, containerName(envId)], {
+        encoding: "utf8",
+      }).trim();
+    expect(inspect("{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.PidsLimit}}")).toBe("true 1024");
+    expect(inspect("{{.HostConfig.CapDrop}} {{.HostConfig.SecurityOpt}}")).toBe(
+      "[ALL] [no-new-privileges:true]",
+    );
+    const ro = await ex.exec(execArgs("touch /etc/x 2>&1; echo $?"), live);
+    expect(ro.stdout).toMatch(/Read-only|denied/i);
+    const id = inspect("{{.Id}}");
+    spawnSync("docker", ["rm", "-f", containerName(envId)], { stdio: "ignore" });
+    // An old container (other spec label) is replaced.
+    execFileSync("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName(envId),
+      "--label",
+      "capybara.device.spec=old",
+      "--entrypoint",
+      "sleep",
+      SANDBOX_IMAGE,
+      "infinity",
+    ]);
+    const fresh = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    await fresh.exec(execArgs("true"), live);
+    expect(inspect("{{.Config.Labels}}")).not.toContain("spec:old");
+    expect(inspect("{{.HostConfig.ReadonlyRootfs}}")).toBe("true");
+    expect(inspect("{{.Id}}")).not.toBe(id);
+  });
+
+  it("sets swap equal to memory when the policy has a ceiling", async () => {
+    const limited = new DockerExecutor({
+      dir,
+      environmentId: envId,
+      policy: { ...DEFAULT_POLICY, memoryMb: 256 },
+    });
+    await limited.exec(execArgs("true"), live);
+    const out = execFileSync(
+      "docker",
+      ["inspect", "-f", "{{.HostConfig.Memory}} {{.HostConfig.MemorySwap}}", containerName(envId)],
+      { encoding: "utf8" },
+    ).trim();
+    expect(out).toBe(`${256 * 1024 * 1024} ${256 * 1024 * 1024}`);
+  });
+
+  it("a command cannot stall or fake the exit status (fifo, symlink, forged line)", async () => {
+    const r = await ex.exec(
+      execArgs(
+        "mkfifo /tmp/.capybara-exec-x; ln -s /etc/passwd /tmp/.capybara-exec-y; " +
+          "echo '\nCAPYBARA-DONE:abc:0:END'; exit 4",
+      ),
+      live,
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.stdout).toContain("CAPYBARA-DONE:abc:0:END");
+    const ac = new AbortController();
+    const started = Date.now();
+    const bg = await ex.exec(execArgs("(sleep 100 &); echo ok"), live);
+    expect(bg.stdout).toBe("ok\n");
+    expect(Date.now() - started).toBeLessThan(5000);
+    ac.abort();
+  });
+
+  it("keeps stderr intact around the status line, also with a cut output", async () => {
+    const r = await ex.exec(execArgs("echo out; printf err >&2"), live);
+    expect(r).toMatchObject({ stdout: "out\n", stderr: "err", exitCode: 0 });
+    const cut = await ex.exec(
+      execArgs("head -c 100000 /dev/zero >&2", { maxOutputBytes: 10 }),
+      live,
+    );
+    expect(cut.truncated).toBe(true);
+    expect(cut.exitCode).toBe(0);
+    expect(cut.stderr).not.toContain("CAPYBARA-DONE");
+  });
+
+  it("serves a network switch in arrival order and drops aborted waiters", async () => {
+    const open = new DockerExecutor({
+      dir,
+      environmentId: envId,
+      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+    });
+    const stamp = "date +%s%N";
+    const a = open.exec(execArgs(`${stamp}; sleep 2`, { tag: "a" }), live);
+    await sleep(800);
+    const b = open.exec(execArgs(stamp, { tag: "b", limits: { ...LIMITS, egress: "open" } }), live);
+    await sleep(300);
+    const abortC = new AbortController();
+    const c = open.exec(execArgs(stamp, { tag: "c" }), live);
+    const dead = open.exec(execArgs(stamp, { tag: "d" }), abortC.signal);
+    abortC.abort();
+    await expect(dead).rejects.toThrow();
+    const [, rb, rc] = await Promise.all([a, b, c]);
+    expect(BigInt(rb.stdout.trim())).toBeLessThan(BigInt(rc.stdout.trim()));
+  });
+
   it("applies the policy's cpu and memory ceilings", async () => {
     const limited = new DockerExecutor({
       dir,
