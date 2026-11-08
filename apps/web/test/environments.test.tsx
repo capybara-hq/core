@@ -523,14 +523,16 @@ describe("connected environments (environments spec §6, §9)", () => {
     expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true);
   });
 
-  it("a device environment that lost its files says to log in again and offers no 重建文件", async () => {
+  it("a device environment that lost its files says to log out and in again and offers no 重建文件", async () => {
     stubApi({
       [`GET ${BASE}/e1`]: () =>
         json(200, { environment: device("e1", "Laptop", { filesLost: true }) }),
     });
     await renderDetail();
     expect(await screen.findByText(E.detail.deviceFilesLostNote)).toBeTruthy();
-    expect(E.detail.deviceFilesLostNote).toContain("capybara-device login");
+    expect(E.detail.deviceFilesLostNote).toContain(
+      "capybara-device logout, then capybara-device login",
+    );
     expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });

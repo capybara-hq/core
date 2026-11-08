@@ -51,8 +51,9 @@ import NotFound from "../../not-found";
  * files are back) and 删除 (typing its name; the files are deleted with it, a destructive item of
  * the ⋯ menu; deleting 个人环境 says a new empty one is created the next time one is needed). A
  * connected environment never offers 重建文件 (the kernel refuses it): its files-lost note tells
- * the person to run `capybara-device login` on the machine again. From the query cache (the layout
- * prefetched it on a first load); an environment the kernel does not find is the not-found state.
+ * the person to run `capybara-device logout`, then `capybara-device login` on the machine. From
+ * the query cache (the layout prefetched it on a first load); an environment the kernel does not
+ * find is the not-found state.
  */
 export default function EnvironmentView({ id }: { id: string }) {
   const ws = useWorkspace();

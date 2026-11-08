@@ -314,7 +314,7 @@
       "name_taken": "You already have an environment with this name. Choose another name.",
       "limit_reached": "You have reached the limit of environments. Delete one to create another.",
       "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
-      "files_lost": "The files of this environment were lost. For a cloud sandbox, rebuild its files on the environments page; for a connected device, run capybara-device login on the machine again.",
+      "files_lost": "The files of this environment were lost. For a cloud sandbox, rebuild its files on the environments page; for a connected device, run capybara-device logout, then capybara-device login into the same environment on the machine.",
       "forbidden": "You can no longer use this environment.",
       "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again."
@@ -1530,7 +1530,7 @@
       "filesNote": "Files are kept until the environment is deleted.",
       "suspendNote": "Suspending ends the processes that are running.",
       "filesLostNote": "The files of this environment are gone at the provider. Rebuild the files to use it again.",
-      "deviceFilesLostNote": "The files directory of this environment is gone from the machine. Run capybara-device login on the machine again and connect it to this environment to recreate the directory.",
+      "deviceFilesLostNote": "The files directory of this environment is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this environment to recreate the directory.",
       "created": "Created",
       "rename": "Rename",
       "renameTitle": "Rename environment",
