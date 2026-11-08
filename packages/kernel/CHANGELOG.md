@@ -1,5 +1,34 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.9
+
+### Patch Changes
+
+- fe7c389: Connected environments groundwork: `device` environments and the `environment_machines` table
+  (migration 0093), the `environments.device` config section, and the `environment.offline`,
+  `environment.program_outdated` and `device.*` error codes.
+- cfc888b: Device sign-in for connected machines: `POST /api/v1/device/authorize` and `/token` (RFC 8628
+  shape, public), the confirmation routes `GET /api/v1/device/pending/:userCode`,
+  `POST /api/v1/device/confirm` and `/deny` (web session), per-machine `cap_dev_` credentials
+  accepted only by the device connection, `DELETE /api/v1/orgs/:orgId/environments/:id/machine`,
+  and deleting a device environment revokes its machine.
+- 60fe3b6: The gateway role holds connected machines' WebSocket connections at `GET /device/connect`: the
+  machine credential and protocol are checked before the upgrade, one connection per environment
+  across replicas under a Redis lease (the newest connection wins), relayed requests are forwarded
+  and results written back; revocation, takeover, lease loss and shutdown close the socket.
+- af3c477: The `@device` sandbox provider: sandbox operations on a connected environment are relayed through
+  Redis to the gateway replica holding the machine's connection, waiting up to the operation's
+  deadline plus `environments.device.reconnectGraceSeconds`; registered on every role.
+- ebbfeb5: Sandbox tools use the instance's real paths: `validateSandboxPath`, `skillSandboxDir`,
+  `skillSandboxPath` and `renderSkillBody` take an optional instance root, `validateSandboxPathShape`
+  checks a path without its roots, and device protocol roots must be clean absolute paths; the
+  kernel builds every model-visible path from the held instance's roots, tool descriptions say "the
+  workspace directory", and each conversation records its environment's directories in an
+  `environment_paths` system line on its first sandbox call and whenever they change.
+- Updated dependencies [c505b45]
+- Updated dependencies [ebbfeb5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.6
+
 ## 0.1.0-rc.8
 
 ### Patch Changes
