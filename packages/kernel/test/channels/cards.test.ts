@@ -3,9 +3,11 @@ import {
   answerSummary,
   approvalCard,
   approvalToolName,
+  CARD_SUMMARY_MAX,
+  callSummary,
   connectUrl,
-  INPUT_PREVIEW_MAX,
-  inputPreview,
+  KEY_ARG_MAX,
+  keyArgument,
   maskSecrets,
   webBase,
 } from "../../src/channels/cards.js";
@@ -44,7 +46,7 @@ describe("IM 卡片内容", () => {
     ).toBe("Bash");
   });
 
-  it("参数预览：凭据样式的键（任意层级）打码，截断到 500 字符", () => {
+  it("masks credential-like keys at any depth, by whole words", () => {
     const masked = maskSecrets({
       q: "weather",
       apiKey: "sk-1",
@@ -75,16 +77,53 @@ describe("IM 卡片内容", () => {
       refreshToken: "***",
       "x-api-key": "***",
     });
-    // 按值打码（连接的密钥值）
+  });
+
+  it("the call line: the summary in the card language, else the title and key argument", () => {
+    const summary = { zh: "添加市场源 https://x", en: "Add marketplace source https://x" };
+    const input = { action: "call", params: { instructions: "the whole prompt" } };
+    expect(callSummary({ summary, input }, undefined, "zh")).toBe("添加市场源 https://x");
+    expect(callSummary({ summary, input }, undefined, "en")).toBe(
+      "Add marketplace source https://x",
+    );
+    // no summary: the declared title and the first declared key argument present
+    const fetchInfo = { title: "Fetch a page", keyArgs: ["url", "prompt"] };
     expect(
-      inputPreview({ note: "pre app-secret-1234567 post" }, (s) =>
-        s.replaceAll("app-secret-1234567", "[REDACTED]"),
+      callSummary(
+        { summary: null, input: { prompt: "p", url: "https://a.example" } },
+        fetchInfo,
+        "en",
       ),
-    ).toBe('{"note":"pre [REDACTED] post"}');
-    const long = inputPreview({ text: "x".repeat(2000) });
-    expect(long).toHaveLength(INPUT_PREVIEW_MAX);
+    ).toBe("Fetch a page: https://a.example");
+    // no title: the key argument alone; no declared key argument: the first string input
+    expect(
+      callSummary({ summary: null, input: { command: "npm test\nmore" } }, undefined, "en"),
+    ).toBe("npm test");
+    expect(
+      callSummary({ summary: null, input: { n: 1 } }, { title: "Count", keyArgs: [] }, "en"),
+    ).toBe("Count");
+    expect(callSummary({ summary: null, input: {} }, undefined, "en")).toBe("");
+    // never raw JSON, never a credential, redacted by value, cut short
+    const line = callSummary(
+      {
+        summary: null,
+        input: { apiKey: "sk-1", description: "d", note: "pre app-secret-1234567 post", n: 2 },
+      },
+      undefined,
+      "en",
+      (s) => s.replaceAll("app-secret-1234567", "[REDACTED]"),
+    );
+    expect(line).toBe("pre [REDACTED] post");
+    expect(line).not.toContain("{");
+    expect(keyArgument({ token: "t", q: "x".repeat(500) }, ["token"])).toHaveLength(KEY_ARG_MAX);
+    expect(keyArgument({ q: 3 }, ["q"])).toBe("3");
+    const long = callSummary(
+      { summary: { zh: "x".repeat(900), en: "x".repeat(900) }, input },
+      undefined,
+      "en",
+    );
+    expect(long).toHaveLength(CARD_SUMMARY_MAX);
     expect(long.endsWith("…")).toBe(true);
-    expect(inputPreview(undefined)).toBe("{}");
   });
 
   it("答案摘要、链接拼接", () => {
@@ -162,6 +201,12 @@ describe("a Platform confirmation card", () => {
     ({
       db: {} as never,
       approvals: { describe: async () => v },
+      registry: {
+        builtinSpecs: () => [
+          { name: "Bash", description: "", inputSchema: {}, title: "Run", keyArgs: ["command"] },
+        ],
+        extensionToolSpecs: () => [],
+      },
     }) as never;
 
   it("names the operation, leads with the summary in the card language and offers only once", async () => {
@@ -170,21 +215,23 @@ describe("a Platform confirmation card", () => {
       toolName: "Platform [marketplaces.add]",
       scopes: ["once"],
     });
-    expect(zh?.inputPreview.startsWith("添加市场源 https://x\n")).toBe(true);
-    expect(zh?.inputPreview).toContain('"operation":"marketplaces.add"');
+    // the summary only: the raw call input (with the whole prompt) never reaches the IM
+    expect(zh?.inputPreview).toBe("添加市场源 https://x");
     const en = await approvalCard(deps(view), "ap1", "https://cap.example", "en");
-    expect(en?.inputPreview.startsWith("Add marketplace source https://x\n")).toBe(true);
+    expect(en?.inputPreview).toBe("Add marketplace source https://x");
   });
 
-  it("a call without a summary shows the params alone and the scopes of the approval", async () => {
+  it("a call without a summary shows the tool title and key argument, and the approval's scopes", async () => {
     const plain = {
       ...view,
+      orgId: "o1",
       toolKey: "Bash",
       summary: null,
+      input: { description: "run the tests", command: "pnpm test", timeout: 5 },
       scopes: ["once", "session", "always"],
     };
     const card = await approvalCard(deps(plain), "ap1", "https://cap.example", "en");
     expect(card?.scopes).toEqual(["once", "session", "always"]);
-    expect(card?.inputPreview.startsWith("{")).toBe(true);
+    expect(card?.inputPreview).toBe("Run: pnpm test");
   });
 });

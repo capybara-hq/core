@@ -60,7 +60,8 @@ export const SECTION_FIELDS: Record<AgentSection, FieldShape[]> = {
   tools: [{ control: "item-group", options: 2 }],
   skills: [{ control: "item-group", options: 2 }],
   subagents: [{ control: "item-group", options: 1 }],
-  channels: [{ control: "item-group", options: 1 }],
+  // not drawn: 渠道 has no card; it draws its own frame with skeleton cards (AgentChannels loading)
+  channels: [],
 };
 
 /**

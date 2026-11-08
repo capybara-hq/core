@@ -23,6 +23,21 @@ export interface InboundSender {
   tenantId: string;
   displayName?: string;
   avatarUrl?: string;
+  /**
+   * The sender's time zone on the platform, an IANA name (`Asia/Shanghai`; Slack `users.info`
+   * `user.tz`), when the platform gives one. Include it on `message` events when you can get it
+   * within the acknowledgement deadline (cache it per user); leave it out otherwise. It wins over
+   * the person's account setting and the org default for the run's date and zone (run context
+   * spec §3.4); a name the kernel does not know is ignored.
+   */
+  timeZone?: string;
+  /**
+   * The sender's language on the platform: `zh` / `en` or a BCP 47 tag (`zh-CN`, `en-US`; Slack
+   * `users.info` with `include_locale=true`, `user.locale`), when the platform gives one. The
+   * kernel normalizes it (`zh` and `zh-*` are Chinese, any other tag English); it wins over the
+   * person's latest web UI language and the org default (run context spec §3.4).
+   */
+  locale?: string;
 }
 
 /**
@@ -80,7 +95,11 @@ export interface ChannelSendArgs {
    */
   message: OutboundMessage;
   signal: AbortSignal;
-  /** 连接所属组织的界面语言：插件自己渲染的文案（卡片按钮、降级文本里的固定词）按它选择。 */
+  /**
+   * The recipient's language (the sender's platform language, else their latest web language,
+   * else the org's): the wording the extension renders itself (card buttons, fixed words in the
+   * text fallback) follows it.
+   */
   locale: Locale;
   /**
    * 幂等键（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符，同一条逻辑消息的每次重试（崩溃后其他副本续投、

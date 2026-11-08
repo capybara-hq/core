@@ -52,6 +52,8 @@ const keyOf = (e: MarketplaceEntry) => `${e.sourceId}/${e.name}/${e.version ?? "
 /**
  * `/admin/plugins/market`: browse marketplace entries (super admins, the 插件 tab 市场), as
  * object rows.
+ * A row's mark is the plugin's icon when there is one (the imported plugin's own icon, else the
+ * one its marketplace gives; the kernel's `icon`), else its initial.
  * One entry is one version of a plugin; a row is one plugin of one marketplace, at its latest
  * version (see {@link groupMarketplaceEntries}). A row: the mono name, the summary, a meta line (the
  * marketplace, its source: npm package, archive URL, a git URL pinned to a commit or following a
@@ -358,6 +360,8 @@ function Catalog({ initial }: { initial: { sourceId: string; q: string } }) {
             key={plugin.key}
             mark={{
               text: name,
+              // the imported plugin's icon, else the marketplace's (the kernel picks it)
+              image: e.icon ?? null,
               ...(!e.importable ? { tone: "warn" as const } : {}),
             }}
             name={name}

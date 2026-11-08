@@ -243,7 +243,7 @@ component model (`2026-11-05-plugin-component-management-design.md`):
 - **Updates**: a theme updates with its plugin; a new version is checked at its import (§5), and
   a failing one blocks the plugin update with the same refusal. Re-reading a version already in
   the catalog (update, rollback) re-checks grammar, token names and assets, not readability (§5).
-- **Locks**: migration 0094 seeds the `uiTheme` setting row, so it can be locked. The one theme
+- **Locks**: migration 0103 seeds the `uiTheme` setting row, so it can be locked. The one theme
   lock order is catalog item → theme row → `uiTheme` row; the scope, disable, switch, uninstall
   and owner-delete writers and the settings writes all take it in that order.
 

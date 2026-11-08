@@ -1,5 +1,60 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.8
+
+### Minor Changes
+
+- 2435645: `capybara-plugin marketplace --write` fills each entry's `icon` with the repository path of the
+  plugin's `plugin.json` `icon` (`./plugins/<dir>/<icon>`) and refreshes it on listed entries like
+  `summary` / `displayName` (`marketplace-display-stale` in `--check`).
+- d38fcfd: `capybara-plugin pack` (and so `capybara-plugin check`) ships a plugin's setup guide template
+  files and refuses a missing, oversized or binary one, a placeholder the guide's place does not
+  define (in a file or a step), and a `channel-connection` guide without an extension. The `fake-im`
+  test plugin carries a channel setup guide with a file per inbound mode.
+
+### Patch Changes
+
+- Updated dependencies [6599de8]
+- Updated dependencies [2de4f26]
+- Updated dependencies [dbea14d]
+- Updated dependencies [fa23383]
+- Updated dependencies [eb83fb5]
+- Updated dependencies [09dea3e]
+- Updated dependencies [c85f0b6]
+- Updated dependencies [cafa6e4]
+- Updated dependencies [c3e12b3]
+- Updated dependencies [60ce217]
+- Updated dependencies [3cbf6e8]
+- Updated dependencies [5ec789c]
+- Updated dependencies [ff9cd78]
+- Updated dependencies [2435645]
+- Updated dependencies [2435645]
+- Updated dependencies [ebe127f]
+- Updated dependencies [48b244e]
+- Updated dependencies [f74afee]
+- Updated dependencies [d6fd4a9]
+- Updated dependencies [733a954]
+- Updated dependencies [a4ab6e3]
+- Updated dependencies [f035baa]
+- Updated dependencies [0e8592b]
+- Updated dependencies [cb6f42d]
+  - @capybara-hq/kernel@0.1.0-rc.10
+  - @capybara-hq/plugin-sdk@0.1.0-rc.7
+
+## 0.1.0-rc.7
+
+### Patch Changes
+
+- 812318c: New package `@capybara-hq/device`: the `capybara-device` program with `login`, `logout`, `status`, `start`, `stop`, `drain` and `policy`: the connection to the deployment, operation dispatch, results kept across reconnects, a local command log, and the OS sandbox mode (every command inside `@anthropic-ai/sandbox-runtime`: writes only under the environment directory, secret paths unreadable, network limited to the local policy intersected with the environment's egress). The plugin-tools dependency check can hold a package to the plugin-sdk-only boundary (`deviceDirs`).
+- Updated dependencies [fe7c389]
+- Updated dependencies [cfc888b]
+- Updated dependencies [60fe3b6]
+- Updated dependencies [c505b45]
+- Updated dependencies [af3c477]
+- Updated dependencies [ebbfeb5]
+  - @capybara-hq/kernel@0.1.0-rc.9
+  - @capybara-hq/plugin-sdk@0.1.0-rc.6
+
 ## 0.1.0-rc.6
 
 ### Minor Changes

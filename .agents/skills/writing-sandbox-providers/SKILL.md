@@ -76,6 +76,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then recreates the instance on the same file system and retries once; the model sees a recreated notice (processes are gone, files are kept).
   Losing the file system is a different error, `FileSystemGoneError` (above). If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
   throw an **ordinary error**; otherwise one network blip wipes the user's files. Use `isSandboxGoneError` to decide (duck-typed, compatible with an extension bundling its own copy of the SDK).
+  Throw network errors as they come (node's `code` / `syscall`, or wrapped as `cause` / `AggregateError.errors`, as `fetch` does): `SandboxProviders`
+  hands every provider out through `guardProviderConnection` (`sandbox/unreachable.ts`), which rethrows a connection failure (`ECONNREFUSED`,
+  `ENOTFOUND`, any `connect` / `getaddrinfo` error → never connected; `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, socket hang up → dropped) as
+  `SandboxProviderUnreachableError` with the raw error as `cause`; the sandbox tools give it a fixed text. Never write model-visible text in a provider.
   E2B treats only E2B-format 404s (`{code: 404, …}`) as gone; failing to obtain the envd access token is also reported as gone (better to rebuild than to send a request without the token).
 - **Auto-start**: when the instance still exists but is stopped / paused (host or daemon restart, the suspension sweep stopped it before it could record `suspended`, someone ran
   `docker pause`), `exec` / `readFile` / `writeFile` / `stat` / `killAll` first start it the way `resume` does and then proceed,
@@ -138,6 +142,34 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
   Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
 
+## The kernel-internal provider `@device` (connected machines)
+
+Connected environments (spec §6 and §13) run on a person's machine, driven through a program that
+connects to the gateway. Their provider is `@device`, registered by the kernel itself
+(`packages/kernel/src/sandbox/providers.ts`, `packages/kernel/src/devices`); it is not an extension and
+no plugin can take the name.
+
+- **Per-environment resolution.** The provider is chosen by the environment's row
+  (`environments.provider`), not by the deployment's one sandbox extension, so cloud and connected
+  environments coexist. Handle ids are the environment id (parsed from `cap-env-<environmentId>`).
+- **Relay.** Calls become requests on `capk:device-req:<environmentId>` and results come back under
+  `capk:device-res:<requestId>`; no holder means `environment.offline` at once. See
+  `packages/kernel/src/devices` and spec §13.4. The handle carries the org's limits from `create`; a
+  handle without them answers `SandboxGoneError`, which rebuilds the instance.
+- **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and
+  `destroyFileSystemByName` never fail because the machine is away (a stop is relayed only when it is
+  online and is fire-and-forget). Files on the machine are never removed.
+- **Never swept.** Idle suspension, `maxRunning` eviction and inactivity destruction skip `@device`;
+  the only sweep that includes its rows is the gone-sweep for a deleted org or environment.
+- **Roots and real paths.** `SandboxHandle.roots` (`{ workspace, skills, tmp }`, absolute paths in the
+  instance) is optional; absent means `SANDBOX_ROOTS`. A device reports its roots in `hello`. Every
+  kernel tool, attachment copy, skill file and background task builds paths from the **held
+  instance's roots**, never from constants, and tool descriptions never name `/workspace` ("the
+  workspace directory"). Root-independent path checks run before entering the instance
+  (`validateSandboxPathShape`). Each conversation records an `environment_paths` event on its first
+  sandbox call and whenever the roots change, including back to the defaults; it is in the log, so it
+  needs no `DriftReason`. A new tool must use the roots too.
+
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 
 The kernel owns it; the extension implements only primitives. **Do not do scheduling, timing or state tables in the extension**:
@@ -196,8 +228,9 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   conversation of the environment shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
   version). They are small and stay until the files are reset or the environment is deleted.
 - **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
-  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset the next use is a fresh start (`restarted: false`):
-  the seen key records `<created_at>:<file system id>`. A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
+  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset each conversation's next use is told the files were
+  reset instead (`filesReset: true`, `SANDBOX_FILES_RESET_NOTICE`): the seen key records `<created_at>:<fs_resets>`, a count of resets the kernel keeps itself, because a
+  provider may give the new file system the old id (sandbox-docker's volumes are named after the environment; the fake does it with `setFakeFileSystemIdsByName`). A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
 - **Provider switch**: an environment whose files or instance belong to a provider that is not the current one cannot be used (`environment.unavailable`, nothing changes; its
   files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
   is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).

@@ -997,13 +997,23 @@ describe("修复波 W1", () => {
     });
     // 本轮结束时取走脏标记、投递补跑；补跑（worker）的那一轮移除 dc-2
     expect(await redis.get(dirty)).toBeNull();
-    await waitFor(
-      async () => ((await memberOf(orgId, "dc-2")) === undefined ? true : undefined),
+    // Wait for the rerun's audit, not for dc-2's membership: each removal commits on its own and
+    // the round's audit is written after all of them, so under load the membership is gone while
+    // the latest audit is still this round's (the flake seen in the full parallel run)
+    // the rerun's audit is the one right after this round's (it may already be written)
+    const last = await waitFor(
+      async () => {
+        const all = await audits(orgId, "org.directory.synced");
+        const i = all.findIndex(
+          (a) => (a.detail as { partialReason?: string }).partialReason === "changed_during_sync",
+        );
+        return i === -1 ? undefined : all[i + 1]?.detail;
+      },
       15_000,
-      "rerun removes dc-2",
+      "the rerun's audit",
     );
-    const last = (await audits(orgId, "org.directory.synced")).at(-1)?.detail;
     expect(last).toMatchObject({ trigger: "changed", removed: 1, partial: false });
+    expect(await memberOf(orgId, "dc-2")).toBeUndefined();
     expect(await memberOf(orgId, "dc-1")).toMatchObject({ source: DIR_SOURCE });
   }, 30_000);
 

@@ -29,10 +29,10 @@
   max-width: min(1100px, calc(100vw - 32px));
 }
 .cb-amap-dialog[data-level="detail"] {
-  height: min(600px, calc(100vh - 32px));
+  height: min(600px, calc(100dvh - 32px));
 }
 .cb-amap-dialog[data-level="transcript"] {
-  height: min(640px, calc(100vh - 32px));
+  height: min(640px, calc(100dvh - 32px));
 }
 
 /* The head of every level: [back] [dot] title close, then the meta lines past the back button;

@@ -91,6 +91,7 @@ describe("渠道队列优先级（行为）", () => {
       },
       {} as never,
       {} as never,
+      {} as never,
       {
         handle: async () => {
           order.push("inbound");

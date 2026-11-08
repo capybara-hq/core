@@ -34,14 +34,19 @@ import {
   enableExtension,
   replicaSummary,
   reviewSensitive,
+  SINGLE_PROVIDER_CODES,
+  type SingleProviderBlock,
+  singleProviderBlockOf,
   uninstallExtension,
 } from "../lib/admin-extensions";
 import { ApiClientError } from "../lib/api";
+import { capabilityOfPoint } from "../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { adminExtensionQuery, adminExtensionsQuery, extensionChangeKeys } from "../lib/query/admin";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useCapabilityLabel } from "./ExtensionTabs";
 import { FormError } from "./form-error";
 import { PermissionReview } from "./PermissionReview";
 
@@ -71,12 +76,16 @@ const REPLICA_STATUS: Partial<Record<string, "enabled" | "disabled" | "failed">>
 };
 /** Why a replica waits → the list's status word. */
 const PENDING_STATUS: Partial<
-  Record<string, "pending_config" | "pending_approval" | "pending_migration" | "dependency">
+  Record<
+    string,
+    "pending_config" | "pending_approval" | "pending_migration" | "dependency" | "conflict"
+  >
 > = {
   config: "pending_config",
   approval: "pending_approval",
   migration: "pending_migration",
   dependency: "dependency",
+  conflict: "conflict",
 };
 
 /** 收敛中自动重读的间隔与次数上限（只是浏览器里的轮询）。 */
@@ -183,14 +192,29 @@ export function AdminExtensionOverview({
 } & AdminExtensionChanged) {
   const t = useTranslations("admin.extensions");
   const lang = labelLocale(useLocale());
+  const capabilityLabel = useCapabilityLabel();
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirm, setConfirm] = useState<"disable" | "uninstall" | null>(null);
+  /** An enable the kernel refused for a single-provider point (before the list caught up). */
+  const [refused, setRefused] = useState<SingleProviderBlock>();
   const installed = plugin.source === "install";
   const desiredState = plugin.desired?.state;
+  // A single-provider point another enabled extension provides: 启用 is off, the line says which
+  // one to disable first and links to it.
+  const blocked = desiredState === "disabled" ? (plugin.enableBlocked ?? refused) : undefined;
+  // A required plugin holds it: it cannot be disabled, so this one cannot replace it
+  const blockedLine =
+    blocked === undefined
+      ? null
+      : t(blocked.required === true ? "detail.enableBlockedRequired" : "detail.enableBlocked", {
+          point: capabilityLabel(capabilityOfPoint(blocked.extensionPoint)),
+          other: extensionLabel(blocked.enabled, lang),
+          name: extensionLabel(plugin, lang),
+        });
   const { failed } = replicaSummary(plugin);
   const lifecycle = useAppMutation({
     fn: (op: "enable" | "disable") =>
@@ -203,6 +227,20 @@ export function AdminExtensionOverview({
     fn: uninstallExtension,
     invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
   });
+  // A single-provider conflict: which extension is in the way, and that disabling it is the fix.
+  // When the provider chosen is not running either, the point has none: that comes first.
+  const conflictLine =
+    plugin.status === "conflict" &&
+    plugin.conflict !== undefined &&
+    plugin.conflict.providers.length > 0
+      ? t(plugin.conflict.unprovided === true ? "detail.noProviderLine" : "detail.conflictLine", {
+          point: capabilityLabel(capabilityOfPoint(plugin.conflict.extensionPoint)),
+          others: plugin.conflict.providers
+            .map((p) => extensionLabel(p, lang))
+            .join(t("detail.conflictJoin")),
+          name: extensionLabel(plugin, lang),
+        })
+      : null;
   /** 原因码 → 界面文案（没有译文的码原样显示）。 */
   const reasonText = (code: string | null): string | null =>
     code === null || code === ""
@@ -217,9 +255,15 @@ export function AdminExtensionOverview({
     try {
       await lifecycle.mutateAsync(op);
       toast.success(t(`detail.done.${op}`));
+      setRefused(undefined);
       setConfirm(null);
     } catch (e) {
-      setError(errorMessage(e));
+      const block =
+        e instanceof ApiClientError && SINGLE_PROVIDER_CODES.includes(e.code)
+          ? singleProviderBlockOf(e.rawDetails)
+          : undefined;
+      if (block !== undefined) setRefused(block);
+      else setError(errorMessage(e));
       setConfirm(null);
     } finally {
       setBusy(false);
@@ -351,7 +395,12 @@ export function AdminExtensionOverview({
         <Stack gap={8}>
           <Stack direction="row" gap={8}>
             {desiredState === "disabled" ? (
-              <Button variant="primary" loading={busy} onClick={() => void run("enable")}>
+              <Button
+                variant="primary"
+                loading={busy}
+                disabled={blocked !== undefined}
+                onClick={() => void run("enable")}
+              >
                 {t("detail.actions.enable")}
               </Button>
             ) : (
@@ -382,6 +431,18 @@ export function AdminExtensionOverview({
         </Stack>
       )}
       {error !== undefined && <FormError message={error} />}
+      {blocked !== undefined && blockedLine !== null && (
+        <Callout
+          tone="warn"
+          action={{
+            label: t("detail.openOther", { name: extensionLabel(blocked.enabled, lang) }),
+            href: `/admin/extensions/${encodeURIComponent(blocked.enabled.name)}`,
+          }}
+        >
+          {blockedLine}
+        </Callout>
+      )}
+      {conflictLine !== null && <Callout tone="warn">{conflictLine}</Callout>}
       {moving && (
         <Stack direction="row" gap={8} align="center">
           <Text tone="muted">{t("detail.converging")}</Text>

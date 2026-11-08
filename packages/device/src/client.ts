@@ -1,0 +1,389 @@
+import {
+  DEVICE_PROTOCOL_VERSION,
+  type DeviceHello,
+  type DeviceRes,
+  type KernelReq,
+  parseDeviceFrame,
+} from "@capybara-hq/plugin-sdk";
+import WebSocket from "ws";
+import type { CommandLog } from "./command-log.js";
+import type { Executor } from "./exec/types.js";
+import { logEntryFor, runOp } from "./server-ops.js";
+import type { Credential } from "./state.js";
+import { PROGRAM_VERSION } from "./version.js";
+
+export const OUTDATED_MESSAGE =
+  "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device";
+export const DISCONNECTED_MESSAGE =
+  "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";
+export const REPLACED_MESSAGE =
+  "This machine connected elsewhere: a newer connection to this environment replaced this one.";
+export const DELETED_MESSAGE =
+  "The environment was deleted on the deployment. The files on this machine stay where they are.";
+
+/** The answer sent instead of a result whose frame would exceed the connection's frame limit. */
+export const TOO_LARGE_MESSAGE = "result larger than the connection's frame limit";
+
+/** A failing connection is reported at most this often. */
+const FAILURE_REPORT_INTERVAL_MS = 60_000;
+
+const BACKOFF_BASE_MS = 1000;
+const BACKOFF_MAX_MS = 60_000;
+
+export interface ConnectOptions {
+  log?: CommandLog;
+  err?: (line: string) => void;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  random?: () => number;
+  now?: () => number;
+  programVersion?: string;
+  /** A connection must stay up this long before the backoff resets (default 10 s). */
+  stableMs?: number;
+  /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
+  livenessMs?: number;
+  /** Terminate a socket still closing this long after we asked it to close (default 2 s). */
+  closeTimeoutMs?: number;
+}
+
+/**
+ * A running connection. `done` resolves with the exit code once the program should end: 0 for the
+ * terminal conditions (revoked, outdated, replaced, deleted, stopped, drained), so a service
+ * manager that restarts on failure leaves it stopped.
+ */
+export interface Connection {
+  readonly done: Promise<number>;
+  /** Accept no new operations; end when the running ones have finished. */
+  drain(): void;
+  /** Close the socket and end. */
+  stop(): void;
+}
+
+/** Backoff before reconnect attempt `attempt` (0-based): 1 s doubling to 60 s, with jitter. */
+export function backoffMs(attempt: number, random: () => number): number {
+  const ceiling = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** attempt);
+  return Math.round(ceiling * (0.5 + random() * 0.5));
+}
+
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+type SessionEnd = { exit: number; message?: string } | { reconnect: true };
+
+/** Connects this machine to the deployment and serves operations until told to stop. */
+export function connect(
+  cred: Credential,
+  executor: Executor,
+  opts: ConnectOptions = {},
+): Connection {
+  const err = opts.err ?? ((l: string) => console.error(l));
+  const sleep = opts.sleep ?? defaultSleep;
+  const random = opts.random ?? Math.random;
+  const now = opts.now ?? Date.now;
+  const graceMs = cred.reconnectGraceSeconds * 1000;
+  const stableMs = opts.stableMs ?? 10_000;
+  const livenessMs = opts.livenessMs ?? 60_000;
+  const closeTimeoutMs = opts.closeTimeoutMs ?? 2000;
+
+  const lifetime = new AbortController();
+  let ws: WebSocket | undefined;
+  let draining = false;
+  let stopping = false;
+  let exitAfterStop: { exit: number; message?: string } | undefined;
+  let session: ((end: SessionEnd) => void) | undefined;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const running = new Map<string, AbortController>();
+  /** Requests the kernel gave up on: never started, or their result is dropped. */
+  const cancelled = new Map<string, number>();
+  /** Requests already seen (running, answered): a repeated req is ignored. */
+  const known = new Map<string, number>();
+  /** Answers produced while no socket was open, with their expiry. */
+  const pending = new Map<string, { res: DeviceRes; expires: number }>();
+
+  const prune = (): void => {
+    const t = now();
+    for (const m of [cancelled, known]) for (const [k, exp] of m) if (exp <= t) m.delete(k);
+    for (const [k, v] of pending) if (v.expires <= t) pending.delete(k);
+  };
+
+  const isOpen = (): boolean => ws !== undefined && ws.readyState === WebSocket.OPEN;
+
+  /** `res`, or an error answer when its frame would exceed the deployment's frame limit. */
+  const fit = (res: DeviceRes): DeviceRes =>
+    Buffer.byteLength(JSON.stringify(res)) <= cred.maxFrameBytes
+      ? res
+      : {
+          type: "res",
+          id: res.id,
+          ok: false,
+          error: { kind: "error", message: TOO_LARGE_MESSAGE },
+        };
+
+  const deliver = (answer: DeviceRes): void => {
+    const res = fit(answer);
+    if (isOpen()) {
+      ws?.send(JSON.stringify(res), (e) => {
+        if (e) pending.set(res.id, { res, expires: now() + graceMs });
+      });
+    } else {
+      pending.set(res.id, { res, expires: now() + graceMs });
+    }
+  };
+
+  const endSession = (end: SessionEnd): void => {
+    const s = session;
+    session = undefined;
+    s?.(end);
+  };
+
+  /** Ends the loop: no more reconnects, and a backoff sleep in progress wakes up. */
+  const halt = (): void => {
+    stopping = true;
+    lifetime.abort();
+  };
+
+  /** Asks the socket to close; terminates it if the close handshake does not finish. */
+  const closeSocket = (sock: WebSocket | undefined): void => {
+    if (!sock) return;
+    sock.close(1000);
+    setTimeout(() => sock.terminate(), closeTimeoutMs).unref();
+  };
+
+  const finishDrain = (): void => {
+    clearTimeout(drainTimer);
+    exitAfterStop = { exit: 0 };
+    halt();
+    closeSocket(ws);
+    if (!isOpen()) endSession({ exit: 0 });
+  };
+
+  const maybeFinishDrain = (): void => {
+    if (!draining || running.size > 0 || stopping) return;
+    prune();
+    if (pending.size > 0 && !isOpen()) {
+      // Results wait for a reconnect, at most the grace.
+      drainTimer ??= setTimeout(finishDrain, graceMs);
+      return;
+    }
+    finishDrain();
+  };
+
+  const handleReq = (req: KernelReq): void => {
+    prune();
+    if (cancelled.has(req.id)) return; // the kernel gave up before it started: never start it
+    if (running.has(req.id) || known.has(req.id)) return;
+    known.set(req.id, now() + graceMs + req.deadlineMs);
+    if (draining && req.op !== "stop") {
+      deliver({
+        type: "res",
+        id: req.id,
+        ok: false,
+        error: { kind: "error", message: "draining" },
+      });
+      return;
+    }
+    const ctl = new AbortController();
+    running.set(req.id, ctl);
+    void runOp(executor, req, ctl.signal).then((res) => {
+      running.delete(req.id);
+      opts.log?.append(logEntryFor(req, res, new Date(now())));
+      if (cancelled.has(req.id)) {
+        // The kernel is no longer waiting for this one.
+      } else if (req.op === "stop") {
+        const reason = (req.args as { reason: "revoked" | "deleted" }).reason;
+        exitAfterStop =
+          reason === "revoked"
+            ? { exit: 0, message: DISCONNECTED_MESSAGE }
+            : { exit: 0, message: DELETED_MESSAGE };
+        halt();
+        const sock = ws;
+        if (isOpen() && sock) {
+          sock.send(JSON.stringify(res), () => closeSocket(sock));
+        } else {
+          endSession(exitAfterStop);
+        }
+        return;
+      } else {
+        deliver(res);
+      }
+      maybeFinishDrain();
+    });
+  };
+
+  const handleCancel = (id: string): void => {
+    prune();
+    cancelled.set(id, now() + graceMs);
+    pending.delete(id);
+    running.get(id)?.abort();
+  };
+
+  const onMessage = (raw: string): void => {
+    let frame: ReturnType<typeof parseDeviceFrame>;
+    try {
+      frame = parseDeviceFrame(raw, "kernel");
+    } catch (e) {
+      // Best effort: tell the kernel a request it sent was unusable.
+      try {
+        const o = JSON.parse(raw) as { type?: string; id?: unknown };
+        if (o.type === "req" && typeof o.id === "string" && o.id !== "") {
+          deliver({
+            type: "res",
+            id: o.id,
+            ok: false,
+            error: { kind: "error", message: `invalid request: ${(e as Error).message}` },
+          });
+        }
+      } catch {
+        // not JSON: ignore
+      }
+      return;
+    }
+    if (frame.type === "req") handleReq(frame);
+    else if (frame.type === "cancel") handleCancel(frame.id);
+  };
+
+  const hello = (): DeviceHello => ({
+    type: "hello",
+    protocol: DEVICE_PROTOCOL_VERSION,
+    programVersion: opts.programVersion ?? PROGRAM_VERSION,
+    os: process.platform === "darwin" ? "darwin" : "linux",
+    arch: process.arch,
+    mode: executor.mode,
+    roots: executor.roots,
+    sessionIsolation: false,
+  });
+
+  let attempt = 0;
+  /** When a failing connection was last reported; reset once a connection stays up. */
+  let lastReport: number | undefined;
+
+  /** Reports why connecting keeps failing, at most once a minute. */
+  const reportFailure = (why: string): void => {
+    const t = now();
+    if (lastReport !== undefined && t - lastReport < FAILURE_REPORT_INTERVAL_MS) return;
+    lastReport = t;
+    err(`${why} Retrying.`);
+  };
+
+  const runSession = (): Promise<SessionEnd> =>
+    new Promise<SessionEnd>((resolve) => {
+      session = resolve;
+      const sock = new WebSocket(cred.connectUrl, {
+        headers: {
+          Authorization: `Bearer ${cred.credential}`,
+          "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+        },
+      });
+      ws = sock;
+      let liveness: ReturnType<typeof setTimeout> | undefined;
+      let stable: ReturnType<typeof setTimeout> | undefined;
+      let opened = false;
+      /** The deployment answered the upgrade with an HTTP status (already handled). */
+      let answered = false;
+      const heard = (): void => {
+        clearTimeout(liveness);
+        liveness = setTimeout(() => sock.terminate(), livenessMs);
+      };
+      sock.on("ping", heard);
+      sock.on("open", () => {
+        opened = true;
+        heard();
+        stable = setTimeout(() => {
+          attempt = 0;
+          lastReport = undefined;
+        }, stableMs);
+        sock.send(JSON.stringify(hello()));
+        prune();
+        for (const [id, p] of pending) {
+          pending.delete(id);
+          deliver(p.res);
+        }
+        maybeFinishDrain();
+      });
+      sock.on("message", (data, isBinary) => {
+        heard();
+        if (isBinary) return;
+        onMessage(data.toString("utf8"));
+      });
+      sock.on("unexpected-response", (_req, res) => {
+        answered = true;
+        const status = res.statusCode ?? 0;
+        res.resume();
+        sock.terminate();
+        if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (status === 426) return endSession({ exit: 0, message: OUTDATED_MESSAGE });
+        reportFailure(
+          status === 404
+            ? `Connecting to ${cred.connectUrl} failed: HTTP 404. The deployment must route ` +
+                "/device/connect to its gateway (see the deployment docs)."
+            : `Connecting to ${cred.connectUrl} failed: HTTP ${status}.`,
+        );
+        endSession({ reconnect: true });
+      });
+      sock.on("error", (e) => {
+        // 'close' follows; the reason is decided there. A failure before the socket opened is a
+        // connection attempt that did not reach the deployment.
+        if (!opened && !answered && !stopping) {
+          reportFailure(`Cannot reach ${cred.connectUrl}: ${e.message}.`);
+        }
+      });
+      sock.on("close", (code, reason) => {
+        clearTimeout(liveness);
+        clearTimeout(stable);
+        if (ws === sock) ws = undefined;
+        if (exitAfterStop) return endSession(exitAfterStop);
+        if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });
+        if (code === 4003) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (code === 4400) {
+          const why = reason.toString("utf8");
+          reportFailure(`The deployment closed the connection: 4400${why ? ` ${why}` : ""}.`);
+        }
+        endSession({ reconnect: true });
+      });
+    });
+
+  const loop = async (): Promise<number> => {
+    while (!stopping) {
+      const end = await runSession();
+      if ("exit" in end) {
+        if (end.message) err(end.message);
+        return end.exit;
+      }
+      if (stopping) break;
+      await sleep(backoffMs(attempt++, random), lifetime.signal);
+    }
+    if (exitAfterStop?.message) err(exitAfterStop.message);
+    return exitAfterStop?.exit ?? 0;
+  };
+
+  const done = loop().finally(() => {
+    clearTimeout(drainTimer);
+    lifetime.abort();
+    for (const ctl of running.values()) ctl.abort();
+  });
+
+  return {
+    done,
+    drain() {
+      draining = true;
+      maybeFinishDrain();
+    },
+    stop() {
+      halt();
+      if (ws) closeSocket(ws);
+      else endSession({ exit: 0 });
+    },
+  };
+}

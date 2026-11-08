@@ -10,10 +10,10 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0093_themes.sql: the theme component kind (themes spec §6, §7). Migrates to 0092, seeds an org,
- * an account and an agent template switch, then migrates to 0093.
+ * 0102_themes.sql: the theme component kind (themes spec §6, §7). Migrates to 0101, seeds an org,
+ * an account and an agent template switch, then migrates to 0102.
  */
-const FILE = "0093_themes.sql";
+const FILE = "0102_themes.sql";
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
 const dirs: string[] = [];
@@ -45,7 +45,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0093 themes", () => {
+describe("0102 themes", () => {
   it("accepts the theme kind in the scope, switch and install component tables", async () => {
     const k = kernelDb(db);
     await k

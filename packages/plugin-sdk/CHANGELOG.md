@@ -1,5 +1,75 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.7
+
+### Minor Changes
+
+- 09dea3e: A connector template file may say `"defaultEnabled": false`: the template then starts switched
+  off in every org, even where its plugin is on, until an org admin switches it on, and while off it
+  creates no connector and needs no org input (no 需要配置). Ignored for a builtin plugin and for a
+  template the super admin gave its own scope.
+- 60ce217: IM approval cards show what the web shows, never the raw call input: the approval card's
+  `inputPreview` now carries one line, the tool's confirmation summary in the card language (a
+  Platform operation's `summary`), else the tool's title and key argument (`Title: arg`), redacted
+  and at most 300 characters; the full input stays behind the card's web link. `renderCardAsText`
+  labels the line Summary / 摘要 and leaves it out when it is empty.
+- 5ec789c: IM time zone and language per person: channel@1 `InboundSender` gains optional `timeZone` (IANA)
+  and `locale` (`zh` / `en` or a BCP 47 tag). The kernel records on an IM `user_message` the
+  platform's zone (when valid), else the account setting, else the org default, and the platform's
+  language (`zh` / `zh-*` Chinese, any other tag English), else the UI language of the person's most
+  recent web message in the org, else the org's `locale`. Any message without a language uses the
+  latest web language the same way, and run start falls back to the author's settings for a message
+  from an older log. The fake channel's sender profile takes `timeZone` and `locale`.
+- 2435645: A `marketplace.json` entry may carry `icon`: an absolute `https://` URL whose path ends in `.svg` /
+  `.png`, or a `./<path>.svg|png` inside a git marketplace's repository (read at the refreshed
+  commit). Display only; the SDK exports `marketplaceEntryIcon`, `MARKETPLACE_ICON_RE` and
+  `MARKETPLACE_LIMITS.iconBytes` (the plugin icon limit), and the JSON Schema has the field.
+- ebe127f: OAuth connectors work with Slack-like token endpoints. A token response with `token_type: "user"`
+  (Slack's `oauth.v2.user.access`) is accepted and sent as `Authorization: Bearer`, like `Bearer`;
+  an `oauth_code` / `oauth_client` auth preset may list more accepted types in `tokenTypes`, and
+  any other type is still refused (`unsupported_token_type`). A token endpoint error reported as
+  HTTP 200 with `{ "ok": false, "error": … }` (or an `error` and no token) is a refusal with that
+  code, like a 400: `invalid_refresh_token`, `token_revoked` and `token_expired` join `invalid_grant`
+  in deleting the person's connection so they are asked to reconnect, transient codes such as
+  `ratelimited` count as unavailable, and other codes keep the credential.
+- d6fd4a9: `plugin.json` gains `setupGuides`: setup material a plugin ships for a place (`channel-connection`
+  first), with localized plain-text steps and template files (`yaml` / `json` / `text`, optionally
+  one per mode). The SDK exports the places, their modes and variables, the limits,
+  `setupGuidePlaceholders`, `unknownSetupGuidePlaceholders`, `setupGuideModes`,
+  `setupGuideFileProblem` and the pure renderer `renderSetupGuideText` (`{{name}}` placeholders, no
+  other syntax; values escaped per language).
+
+### Patch Changes
+
+- c85f0b6: Connector templates shipped `"defaultEnabled": false` show up correctly in previews. Moving one
+  from its own scope back to following its plugin lists the orgs it turns off in. A platform update
+  no longer asks for input on an added template that is shipped off. An update that changes
+  `defaultEnabled` on a template lists, for each org without a switch of its own, the template
+  under `needsConfig` (now on) or under the new `turnedOff` (now off, with the agents using it and
+  the connectors it keeps). OAuth hardening: an auth preset's `tokenTypes` refuses `DPoP`, and a
+  token endpoint's HTTP 200 with RFC 6749's `temporarily_unavailable` or `server_error` counts as
+  unavailable instead of a refusal.
+- 3cbf6e8: Kernel-generated IM text speaks the person's language, not the org's: `/new`, `/env`, bind prompts
+  and card-click replies use the sender's platform language, else the bound person's latest web
+  message language, else the org's; delivered cards and notices use the language recorded on the
+  conversation's latest user message (in a group thread, the person who triggered the run).
+  `ChannelSendArgs.locale` carries that language to the extension.
+
+## 0.1.0-rc.6
+
+### Minor Changes
+
+- c505b45: Add `SandboxRoots`, `DEFAULT_SANDBOX_ROOTS` and `rootsOf`, an optional `roots` on `SandboxHandle`, and the device protocol v1 frames with `parseDeviceFrame`.
+
+### Patch Changes
+
+- ebbfeb5: Sandbox tools use the instance's real paths: `validateSandboxPath`, `skillSandboxDir`,
+  `skillSandboxPath` and `renderSkillBody` take an optional instance root, `validateSandboxPathShape`
+  checks a path without its roots, and device protocol roots must be clean absolute paths; the
+  kernel builds every model-visible path from the held instance's roots, tool descriptions say "the
+  workspace directory", and each conversation records its environment's directories in an
+  `environment_paths` system line on its first sandbox call and whenever they change.
+
 ## 0.1.0-rc.5
 
 ### Patch Changes

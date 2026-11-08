@@ -14,6 +14,7 @@ const MARK: Record<ExtensionStatus, "success" | "cancelled" | "failed" | "runnin
   converging: "running",
   failed: "failed",
   dependency: "failed",
+  conflict: "waiting",
   legacy_format: "failed",
 };
 

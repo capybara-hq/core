@@ -68,6 +68,16 @@ export const ERROR_CODES = {
   "extension.name_mismatch": 409,
   "extension.downgrade_unsupported": 409,
   "extension.not_disabled": 409,
+  /**
+   * Another enabled extension provides a single-provider extension point this one provides
+   * (details `[{ extensionPoint, enabled: { name, displayName } }]`): disable it first.
+   */
+  "extension.single_provider_enabled": 409,
+  /**
+   * A required bootstrap plugin provides a single-provider extension point this one provides
+   * (details as above, `required: true`): it cannot be disabled, so it cannot be replaced.
+   */
+  "extension.single_provider_required": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,
@@ -91,6 +101,8 @@ export const ERROR_CODES = {
   "catalog.not_owned": 409,
   /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
   "catalog.item_pending": 409,
+  /** Deleting a platform plugin whose extension is still enabled on the deployment. */
+  "catalog.extension_enabled": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */
   "catalog.item_removed": 409,
   /** What deleting an org's own plugin does changed since its preview (P3-19). */
@@ -146,6 +158,7 @@ export const ERROR_CODES = {
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
+  "catalog.guide_not_found": 404,
   "marketplace.not_found": 404,
   "marketplace.entry_not_found": 404,
   "marketplace.fetch_failed": 502,
@@ -254,6 +267,7 @@ export const ERROR_CODES = {
   "channel.webhook_not_found": 404,
   "channel.webhook_unavailable": 409,
   "channel.webhook_retry": 503,
+  "channel.guide_changed": 409,
   "ui.not_found": 404,
   "ui.render_failed": 502,
   "ui.action_failed": 502,
@@ -279,6 +293,30 @@ export const ERROR_CODES = {
   "environment.name_taken": 409,
   /** The person already has `environments.maxPersonal` live personal environments. */
   "environment.limit_reached": 409,
+  /**
+   * A connected environment's files are on its machine: they cannot be reset from the platform;
+   * run `capybara-device logout`, then `capybara-device login` into the environment, on the machine
+   * (ruling R24).
+   */
+  "environment.files_on_device": 409,
+  /** The environment's connected machine is not connected now (no replica holds its lease). */
+  "environment.offline": 503,
+  /** The connected machine runs a device program too old for this kernel; update the program. */
+  "environment.program_outdated": 426,
+  /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
+  "device.authorization_pending": 400,
+  /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */
+  "device.slow_down": 400,
+  /** Device sign-in: the code expired before it was approved; start over. */
+  "device.expired": 400,
+  /** Device sign-in: the person denied the code. */
+  "device.denied": 400,
+  /** Device sign-in: no pending code matches the one given. */
+  "device.code_invalid": 404,
+  /** Device sign-in: the confirmation could not hand the credential to the program; start over. */
+  "device.unavailable": 503,
+  /** The machine credential is unknown or revoked. */
+  "device.credential_invalid": 401,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,

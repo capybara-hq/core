@@ -27,6 +27,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   id,
   name,
   isDefault: name === null,
+  demotedFrom: null,
   ownerKind: "personal",
   source: "cloud",
   provider: "sandbox-docker",
@@ -97,6 +98,66 @@ describe("environments list", () => {
     );
   });
 
+  it("a former default is 个人环境（<provider display name>）, the id without one, numbered after the first", async () => {
+    const docker = { zh: "Docker 沙箱", en: "Docker sandbox" };
+    const former = (id: string, displayName: typeof docker | null, ordinal = 1) =>
+      env(id, null, {
+        isDefault: false,
+        available: false,
+        demotedFrom: { provider: "sandbox-docker", displayName, ordinal },
+      });
+    const items = [
+      env("e1", null),
+      former("e2", docker),
+      former("e3", docker, 2),
+      {
+        ...former("e4", null),
+        demotedFrom: { provider: "sandbox-e2b", displayName: null, ordinal: 1 },
+      },
+    ];
+    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
+    await renderList({ locale: "zh" });
+    let cards = await screen.findAllByRole("listitem");
+    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
+      "个人环境",
+      "个人环境（Docker 沙箱）",
+      "个人环境（Docker 沙箱） 2",
+      "个人环境（sandbox-e2b）",
+    ]);
+    cleanup();
+    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
+    await renderList({ locale: "en" });
+    cards = await screen.findAllByRole("listitem");
+    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
+      "Personal",
+      "Personal (Docker sandbox)",
+      "Personal (Docker sandbox) 2",
+      "Personal (sandbox-e2b)",
+    ]);
+  });
+
+  it("a former default's page says it comes back with its provider", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          environment: env("e1", null, {
+            isDefault: false,
+            available: false,
+            demotedFrom: {
+              provider: "sandbox-docker",
+              displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+              ordinal: 1,
+            },
+          }),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByRole("heading", { name: "Personal (Docker sandbox)" })).toBeTruthy();
+    expect(
+      screen.getByText(E.detail.demotedNote.replace("{provider}", "Docker sandbox")),
+    ).toBeTruthy();
+  });
+
   it("environments list first render from hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     stubApi(routes);
@@ -125,17 +186,17 @@ describe("environments list", () => {
     await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
   });
 
-  it("no provider shows the empty state without 新建环境", async () => {
+  it("no provider shows the empty state (新建环境 still connects a device)", async () => {
     stubApi({
       [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
     });
     await renderList();
     expect(await screen.findByText(E.noCloud.text)).toBeTruthy();
     expect(screen.getByText(E.noCloud.hint)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
+    expect(screen.getByRole("button", { name: E.new })).toBeTruthy();
   });
 
-  it("without a provider the existing environments are still listed as 不可用, with a notice and no 新建环境", async () => {
+  it("without a provider the existing environments are still listed as 不可用, with a notice", async () => {
     stubApi({
       [`GET ${BASE}`]: () =>
         json(
@@ -152,7 +213,6 @@ describe("environments list", () => {
     expect(within(card).getByText(E.state.unavailable, { exact: false })).toBeTruthy();
     expect(screen.getByText(E.noCloud.notice)).toBeTruthy();
     expect(screen.queryByText(E.noCloud.text)).toBeNull();
-    expect(screen.queryByRole("button", { name: E.new })).toBeNull();
   });
 
   it("an environment whose instance never started is 未启动", async () => {
@@ -389,5 +449,162 @@ describe("environment detail", () => {
     await renderDetail();
     await screen.findByText(E.detail.filesNote);
     expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
+  });
+});
+
+describe("connected environments (environments spec §6, §9)", () => {
+  const MACHINE = {
+    id: "m1",
+    name: "grant-mbp",
+    os: "darwin",
+    mode: "os",
+    programVersion: "0.1.0",
+    lastSeenAt: T,
+  };
+  const device = (id: string, name: string, over: Record<string, unknown> = {}) =>
+    env(id, name, {
+      source: "device",
+      provider: "@device",
+      online: true,
+      machine: MACHINE,
+      ...over,
+    });
+
+  it("a device card says 接入设备 and whether its machine is online", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(200, list([device("d1", "Laptop"), device("d2", "Server", { online: false })])),
+    });
+    await renderList();
+    const cards = await screen.findAllByRole("listitem");
+    expect(within(cards[0] as HTMLElement).getByText(E.source.device)).toBeTruthy();
+    expect(
+      within(cards[0] as HTMLElement).getByText(E.state.online, { exact: false }),
+    ).toBeTruthy();
+    expect(
+      within(cards[1] as HTMLElement).getByText(E.state.offline, { exact: false }),
+    ).toBeTruthy();
+  });
+
+  it("without a cloud sandbox 新建环境 still connects a device", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    // no choice to make: only 接入设备, its steps at once
+    expect(within(dialog).queryByRole("radiogroup")).toBeNull();
+    expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
+  });
+
+  it("新建环境 → 接入设备 shows the steps and waits until the new machine appears", async () => {
+    let connected = false;
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list(connected ? [env("e1", null), device("d7", "grant-mbp")] : [env("e1", null)]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.device) }));
+    expect(within(dialog).getByDisplayValue("npm install -g @capybara-hq/device")).toBeTruthy();
+    expect(
+      within(dialog).getByDisplayValue(`capybara-device login --url ${window.location.origin}`),
+    ).toBeTruthy();
+    expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(2);
+    expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
+    connected = true;
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/d7"), {
+      timeout: 6000,
+    });
+  });
+
+  it("新建环境 → 接入设备 also stops waiting when a login again replaces a known machine", async () => {
+    let replaced = false;
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([
+            env("e1", null),
+            device("d7", "grant-mbp", replaced ? { machine: { ...MACHINE, id: "m2" } } : {}),
+          ]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.device) }));
+    expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
+    await settle();
+    expect(router.push).not.toHaveBeenCalled();
+    replaced = true;
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/d7"), {
+      timeout: 6000,
+    });
+  });
+
+  it("environment page shows the machine and revokes it", async () => {
+    let revoked = false;
+    const calls = stubApi({
+      [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          environment: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
+        }),
+      [`DELETE ${BASE}/e1/machine`]: () => {
+        revoked = true;
+        return new Response(null, { status: 204 });
+      },
+    });
+    const { client } = await renderDetail();
+    client.setQueryData(["org", "o1", "environments"], list([device("e1", "Laptop")]));
+    expect(await screen.findByText("grant-mbp")).toBeTruthy();
+    expect(screen.getByText(E.source.device)).toBeTruthy();
+    expect(screen.getByText(E.state.online)).toBeTruthy();
+    expect(screen.getByText("macOS")).toBeTruthy();
+    expect(screen.getByText(E.mode.os)).toBeTruthy();
+    expect(screen.getByText("v0.1.0")).toBeTruthy();
+    // the cloud facts do not apply to a machine
+    expect(screen.queryByText(E.detail.suspendNote)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: E.machine.revoke }));
+    const dialog = await screen.findByRole("dialog");
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: E.machine.revokeSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+    expect(await screen.findByText(E.machine.none)).toBeTruthy();
+    expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true);
+  });
+
+  it("a device environment that lost its files says to log out and in again and offers no 重建文件", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { environment: device("e1", "Laptop", { filesLost: true }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(E.detail.deviceFilesLostNote)).toBeTruthy();
+    expect(E.detail.deviceFilesLostNote).toContain(
+      "capybara-device logout, then capybara-device login",
+    );
+    expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
+    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
+  });
+
+  it("deleting a device environment says the files on the machine stay", async () => {
+    stubApi({ [`GET ${BASE}/e1`]: () => json(200, { environment: device("e1", "Laptop") }) });
+    await renderDetail();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: en.common.moreActions }));
+    await user.click(await screen.findByRole("menuitem", { name: E.detail.delete }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain(E.detail.deleteDeviceHint.replace("{name}", "Laptop"));
   });
 });

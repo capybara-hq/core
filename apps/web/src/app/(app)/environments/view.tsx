@@ -7,6 +7,7 @@ import { EnvironmentCreateDialog } from "../../../components/EnvironmentCreateDi
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
+import { useEnvironmentName } from "../../../components/use-environment-name";
 import { type Environment, environmentState } from "../../../lib/environments";
 import { environmentsQuery } from "../../../lib/query/environments";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -14,12 +15,13 @@ import { useWorkspace } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
 
 /**
- * `/environments` (环境): the person's environments as cards (the default shows as 个人环境): source,
- * state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用) and whether sessions are isolated; a card opens
- * the environment's page. 新建环境 opens a dialog; without a sandbox provider the page says the platform
- * has no cloud sandbox and offers no 新建环境; the environments it still has are listed as 不可用 under
- * a notice (they can be deleted). From the query cache (the layout prefetched it on a
- * first load).
+ * `/environments` (环境): the person's environments as cards (the default shows as 个人环境): source
+ * (云端沙箱 / 接入设备), state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
+ * 离线) and whether sessions are isolated; a card opens the environment's page. 新建环境 opens a
+ * dialog (a cloud sandbox or a connected device); without a sandbox provider the page says the
+ * platform has no cloud sandbox and the dialog only connects a device; the cloud environments it
+ * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the
+ * layout prefetched it on a first load).
  */
 export default function EnvironmentsView() {
   const ws = useWorkspace();
@@ -35,17 +37,11 @@ function Environments({ orgId }: { orgId: string }) {
   const list = usePageQuery(environmentsQuery(orgId));
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
-  const cloud = list.kind === "ready" && list.data.cloudAvailable;
+  // 新建环境 is always there: without a cloud sandbox it still connects a device
   const header = {
     path: [...scope, { label: "environments" }],
     title: t("title"),
-    ...(cloud
-      ? {
-          actions: [
-            { label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) },
-          ],
-        }
-      : {}),
+    actions: [{ label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) }],
   };
   const common = { variant: "cards" as const, listLabel: t("listLabel") };
   if (list.kind === "loading")
@@ -75,18 +71,25 @@ function Environments({ orgId }: { orgId: string }) {
           <EnvironmentCard key={e.id} environment={e} />
         ))}
       </ListPage>
-      {creating && <EnvironmentCreateDialog orgId={orgId} onClose={() => setCreating(false)} />}
+      {creating && (
+        <EnvironmentCreateDialog
+          orgId={orgId}
+          cloudAvailable={list.data.cloudAvailable}
+          onClose={() => setCreating(false)}
+        />
+      )}
     </>
   );
 }
 
 function EnvironmentCard({ environment: e }: { environment: Environment }) {
   const t = useTranslations("environments");
+  const nameOf = useEnvironmentName();
   const state = environmentState(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
-      title={e.name ?? t("personal")}
+      title={nameOf(e)}
       href={`/environments/${encodeURIComponent(e.id)}`}
       description={t(`source.${e.source}`)}
       meta={[

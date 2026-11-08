@@ -10,7 +10,13 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import { EnvironmentsService } from "../environments/environments.service.js";
+import {
+  type ImSenderContext,
+  imSenderContext,
+  recipientLocale,
+} from "../conversations/message-context.js";
+import { EnvironmentsService, type EnvironmentView } from "../environments/environments.service.js";
+import { DEFAULT_ENVIRONMENT_ALIASES, environmentLabel } from "../environments/label.js";
 import { ApiError } from "../errors.js";
 import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
@@ -18,7 +24,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { DirectorySync } from "../orgs/directory-sync.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import { parseSlashCommand } from "../skills/invoke.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -207,7 +212,11 @@ export class ChannelInbound {
     const threadKey = threadKeyOf(e.target, e.sender.externalId, e.messageId);
     // 群里回在话题里（新话题以这条消息为根）
     const replyTarget: ChannelTarget = isGroup ? { ...e.target, threadId: threadKey } : e.target;
-    const { locale } = await readOrgSettings(db, row.orgId);
+    // the sender's zone and language as the platform gives them (run context spec §3.4)
+    const im = imSenderContext(e.sender);
+    // kernel text speaks the person's language (maintainer decision 2026-11-08): before the
+    // speaker is known, the platform's language, else the org's
+    let locale: ChannelLocale = await recipientLocale(db, { orgId: row.orgId, im: im.locale });
     // 回复带幂等键：任务重试时平台不会重复显示（一条消息至多一句回复）
     const replyKey = idempotencyKey(`${connectionId}-${e.messageId}-reply`);
     const replyText = async (text: string, cards?: ChannelCard[]) => {
@@ -216,6 +225,7 @@ export class ChannelInbound {
         replyTarget,
         { text, ...(cards !== undefined && { cards }) },
         replyKey,
+        locale,
       );
     };
     const reply = (key: ChannelPhrase, cards?: ChannelCard[]) =>
@@ -224,6 +234,10 @@ export class ChannelInbound {
     const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (speaker === undefined) return;
     const { accountId, threadAccount } = speaker;
+    // a bound person without a platform language: their latest web message's, else the org's
+    if (im.locale === undefined && threadAccount !== null) {
+      locale = await recipientLocale(db, { orgId: row.orgId, accountId: threadAccount });
+    }
 
     const k: ThreadKey = {
       connectionId,
@@ -277,6 +291,7 @@ export class ChannelInbound {
         // person by their account's name (the kernel reads it)
         ...(threadAccount === null &&
           e.sender.displayName !== undefined && { senderName: e.sender.displayName }),
+        im,
       });
       seq = posted.event.seq;
       // best-effort (batch 5 review m4): a failed note must not fail the job before the thread
@@ -320,7 +335,9 @@ export class ChannelInbound {
   /**
    * Direct-message `/env` (environments spec §4.2 item 8): lists the person's usable environments,
    * or with a name sets the IM default their next new conversation is bound to. The name matches
-   * case-insensitively; the default environment (no name) answers to 个人环境 / Personal.
+   * case-insensitively against each label (`environmentLabel`: a former default demoted by a
+   * provider switch answers to e.g. "Personal (Docker sandbox)"); the default environment also
+   * answers to 个人环境 / Personal.
    */
   private async envCommand(
     orgId: string,
@@ -331,7 +348,7 @@ export class ChannelInbound {
   ): Promise<void> {
     const { items, defaultId } = await this.environments.list(orgId, accountId);
     const usable = items.filter((v) => v.available);
-    const labelOf = (v: { name: string | null }) => v.name ?? phrase("envPersonal", locale);
+    const labelOf = (v: EnvironmentView) => environmentLabel(v, locale);
     const current = (await this.environments.imDefault(orgId, accountId)) ?? defaultId;
     const list = usable
       .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("envCurrent", locale) : ""}`)
@@ -341,16 +358,16 @@ export class ChannelInbound {
     if (usable.length === 0) return replyText(phrase("envNone", locale));
     if (name === null) return replyText(fill("envList", { list }));
     const wanted = name.toLowerCase();
-    // an environment the person named "Personal" wins over the default's alias
+    const is = (v: EnvironmentView) => labelOf(v).toLowerCase() === wanted;
+    // a name the person gave wins over a generated label, and both over the default's aliases
     const hit =
-      usable.find((v) => v.name !== null && v.name.toLowerCase() === wanted) ??
-      usable.find((v) => v.name === null && (wanted === "personal" || wanted === "个人环境"));
+      usable.find((v) => v.name !== null && is(v)) ??
+      usable.find(is) ??
+      usable.find((v) => v.isDefault && DEFAULT_ENVIRONMENT_ALIASES.includes(wanted));
     if (hit === undefined) {
-      const unavailable = items.find(
-        (v) => !v.available && v.name !== null && v.name.toLowerCase() === wanted,
-      );
+      const unavailable = items.find((v) => !v.available && is(v));
       if (unavailable !== undefined) {
-        return replyText(fill("envUnavailable", { name: unavailable.name as string, list }));
+        return replyText(fill("envUnavailable", { name: labelOf(unavailable), list }));
       }
       return replyText(fill("envUnknown", { name, list }));
     }
@@ -377,7 +394,7 @@ export class ChannelInbound {
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId: string; senderName?: string },
+    input: { text: string; clientMessageId: string; senderName?: string; im: ImSenderContext },
   ): Promise<{ event: ConversationEvent; skillNotRun: boolean }> {
     const cmd = parseSlashCommand(input.text.trimStart());
     let skillNotRun = false;

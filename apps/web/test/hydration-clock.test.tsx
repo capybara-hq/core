@@ -91,6 +91,7 @@ describe("a route's server-rendered times", () => {
     expectNoFirstPaintFetch();
     const { errors, unmount } = await hydrateRouteWithCache("/settings/tokens", tokenRoutes(), {
       locale: "zh",
+      clock: null,
       beforeHydrate: () => vi.setSystemTime(T + 61_000),
     });
     expect(errors.join("\n")).toMatch(/hydrat|didn't match/i);

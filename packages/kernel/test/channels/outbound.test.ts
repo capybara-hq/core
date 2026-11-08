@@ -435,7 +435,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   let target: ChannelTarget;
   let conv: string;
 
-  it("审批卡片（打码的参数预览、网页链接）→ 有权者点批准 → 卡片更新为已批准，运行续跑并继续投递", async () => {
+  it("approval card (the call line, no raw input; web link) → 有权者点批准 → 卡片更新为已批准，运行续跑并继续投递", async () => {
     const chat = "dm-u-owner";
     const before = sentTo("cli_out", chat).length;
     im.push(connId, dm("a1", "u-owner", ECHO));
@@ -461,12 +461,9 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       scopes: ["once", "session", "always"],
       webUrl: `https://cap.example/chat/${conv}`,
     });
-    expect(card.inputPreview).toContain('"text":"hi"');
+    // the call line only (no summary: the tool's title and key argument), never the raw input
+    expect(card.inputPreview).toBe("Echo: hi");
     expect(card.inputPreview).not.toContain("sk-live-0123456789abcdef");
-    // 按值打码（连接的密钥）；max_tokens 这类键不误伤
-    expect(card.inputPreview).not.toContain("app-secret-1234567");
-    expect(card.inputPreview).toContain('"max_tokens":42');
-    expect(card.inputPreview.length).toBeLessThanOrEqual(500);
     // The card is recorded as pending before the send; its message id is filled in, and the row
     // marked sent, in the transaction that advances last_seq after the send
     const rows = await waitFor(
@@ -801,6 +798,59 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       .executeTakeFirstOrThrow();
     expect(a.scope).toBe("once");
     await settled(await convOf(anonId, chat));
+  });
+});
+
+describe("cards speak the requester's language (run context spec §3.4)", {
+  timeout: 40_000,
+}, () => {
+  it("a person whose latest web message is Chinese gets a Chinese approval card in an en org", async () => {
+    const mem = await session(k, "mem");
+    const web = await mem({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "from the web", clientMessageId: "web-zh-1", locale: "zh" },
+      },
+    });
+    expect(web.statusCode, web.body).toBe(201);
+    const chat = "dm-u-member";
+    const before = sentTo("cli_out", chat).length;
+    im.push(connId, dm("zh-1", "u-member", ECHO));
+    const cardMsg = await waitFor(
+      async () =>
+        sentTo("cli_out", chat)
+          .slice(before)
+          .find((s) => cardOf(s)?.kind === "approval"),
+      10_000,
+      "approval card",
+    );
+    expect(cardMsg.locale).toBe("zh");
+    expect(cardMsg.message.text).toBe("需要你的批准");
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    expect(card.title).toBe("需要你的批准");
+    await cardRecorded(db, cardMsg);
+    im.push(
+      connId,
+      cardAction(
+        "zh-1-act",
+        "u-member",
+        { cardKind: "approval", cardId: card.id, action: "deny" },
+        cardMsg.target,
+      ),
+    );
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "denied",
+        ),
+      10_000,
+      "card denied",
+    );
+    expect(up.locale).toBe("zh");
+    expect((cardOf(up) as { title: string }).title).toBe("需要你的批准");
+    await settled(await convOf(connId, chat));
   });
 });
 

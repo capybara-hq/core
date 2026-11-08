@@ -2,13 +2,14 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
-  isSyncMarkerEntry,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
+  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -26,7 +27,7 @@ const SPEC: ToolSpec = {
   description:
     "Find files by name pattern in this conversation's sandbox. Use it to list files and to " +
     'locate files by name, e.g. pattern "**/*.py" for all Python files. The pattern is matched ' +
-    "against paths relative to path (default /workspace): * matches within one directory, ** " +
+    "against paths relative to path (default: the workspace directory): * matches within one directory, ** " +
     "matches across directories, ? matches one character, {a,b} matches either. Returns absolute " +
     "paths sorted by name, up to 1000. To search file contents, use Grep.",
   inputSchema: {
@@ -40,7 +41,7 @@ const SPEC: ToolSpec = {
       path: {
         type: "string",
         minLength: 1,
-        description: "Absolute directory to search in. Default /workspace.",
+        description: "Absolute directory to search in. Default: the workspace directory.",
       },
     },
     required: ["pattern"],
@@ -56,8 +57,8 @@ interface GlobInput {
 
 const ABSOLUTE_PATTERN =
   'The pattern must be relative to path; pass the directory in path and a relative pattern such as "**/*.py".';
-const notDirectory = (path: string) =>
-  `${clip(path, 200)} is not a directory; pass an existing directory in path (default /workspace).`;
+const notDirectory = (path: string, workspace: string) =>
+  `${clip(path, 200)} is not a directory; pass an existing directory in path (default ${workspace}).`;
 const FIND_FAILED =
   "Listing files did not finish in time; pass a narrower path or pattern and retry.";
 
@@ -72,7 +73,6 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
       const startedAt = Date.now();
       const { pattern } = input as GlobInput;
       if (pattern.startsWith("/")) throw new ToolError(ABSOLUTE_PATTERN);
-      const dir = checkPath((input as GlobInput).path ?? "/workspace");
       let matches: (rel: string) => boolean;
       try {
         matches = compileGlob(pattern);
@@ -82,34 +82,43 @@ export function sandboxGlobTool(deps: SandboxToolDeps): BuiltinTool {
           `Invalid glob pattern: ${e.message}; pass a simpler pattern (fewer wildcards and braces) and retry.`,
         );
       }
-      const { value: files, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-        const st = await p.stat(h, dir, signal);
-        if (!st?.isDir) throw new ToolError(notDirectory(dir));
-        const r = await p.exec(h, {
-          command: "find . -type f -print0",
-          cwd: dir,
-          timeoutMs: searchTimeoutMs(deps.config.get(), startedAt, Date.now(), ctx.runDeadline),
-          maxOutputBytes: MAX_FIND_BYTES,
-          signal,
-        });
-        if (r.timedOut || r.exitCode === null) throw new ToolError(FIND_FAILED);
-        // -print0：文件名里可能有换行，按 NUL 切分；最后一项（截断时不完整）丢掉
-        const names = r.stdout.split("\0");
-        names.pop();
-        if (r.truncated) names.pop();
-        const base = dir === "/" ? "" : dir;
-        return (
-          names
-            .filter((l) => l.startsWith("./"))
-            .map((l) => l.slice(2))
-            .filter((rel) => matches(rel))
-            .map((rel) => `${base}/${rel}`)
-            .filter((abs) => !isSyncMarkerEntry(abs))
-            .sort()
-            // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
-            .map((abs) => abs.replace(/\n/g, "\\n"))
-        );
-      });
+      const given = (input as GlobInput).path;
+      if (given !== undefined) checkPathShape(given);
+      let dir = "";
+      const { value: files, notices } = await inSandbox(
+        deps,
+        ctx,
+        async ({ h, roots, p, signal }) => {
+          dir = checkPath((input as GlobInput).path ?? roots.workspace, roots);
+          const st = await p.stat(h, dir, signal);
+          if (!st?.isDir) throw new ToolError(notDirectory(dir, roots.workspace));
+          const r = await p.exec(h, {
+            command: "find . -type f -print0",
+            cwd: dir,
+            timeoutMs: searchTimeoutMs(deps.config.get(), startedAt, Date.now(), ctx.runDeadline),
+            maxOutputBytes: MAX_FIND_BYTES,
+            signal,
+          });
+          if (r.timedOut || r.exitCode === null) throw new ToolError(FIND_FAILED);
+          // -print0：文件名里可能有换行，按 NUL 切分；最后一项（截断时不完整）丢掉
+          const names = r.stdout.split("\0");
+          names.pop();
+          if (r.truncated) names.pop();
+          const base = dir === "/" ? "" : dir;
+          const isMarker = syncMarkerMatcher(roots);
+          return (
+            names
+              .filter((l) => l.startsWith("./"))
+              .map((l) => l.slice(2))
+              .filter((rel) => matches(rel))
+              .map((rel) => `${base}/${rel}`)
+              .filter((abs) => !isMarker(abs))
+              .sort()
+              // 文件名里的换行显示为 `\n`（与 Grep 一致），一行一个文件
+              .map((abs) => abs.replace(/\n/g, "\\n"))
+          );
+        },
+      );
       const shown = files.slice(0, MAX_RESULTS);
       const text =
         files.length === 0

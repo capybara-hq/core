@@ -419,6 +419,18 @@ describe("buildTimeline", () => {
     );
   });
 
+  it("the environment's paths (model-facing only) add no entry", () => {
+    const events = [
+      user(1, "hi"),
+      ev(2, "environment_paths", {
+        roots: { workspace: "/Users/me/work", skills: "/Users/me/.skills", tmp: "/tmp/x" },
+      }),
+    ];
+    expect(buildTimeline(events, [], new Map(), "en")).toEqual(
+      buildTimeline([user(1, "hi")], [], new Map(), "en"),
+    );
+  });
+
   it("drafts stream at the end: live thinking, then prose", () => {
     const out = buildTimeline(
       [],

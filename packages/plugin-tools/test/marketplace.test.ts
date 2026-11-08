@@ -8,6 +8,7 @@ import { parseMarketplaceManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { integrityOf } from "../src/integrity.js";
 import { marketplaceCommand, syncMarketplace } from "../src/marketplace/index.js";
+import { repoIconPath } from "../src/marketplace/marketplace.js";
 import { packPlugin } from "../src/pack/index.js";
 
 const repo = fileURLToPath(new URL("../../../", import.meta.url));
@@ -215,6 +216,54 @@ describe("capybara-plugin marketplace", () => {
     expect(Object.keys(after).slice(0, 4)).toEqual(["name", "version", "summary", "displayName"]);
     expect((await sync(false)).findings).toEqual([]);
   }, 60_000);
+
+  it("icon: --write fills the repository path of the plugin.json icon and refreshes it on a listed entry", async () => {
+    const dir = join(root, "plugins/declarative");
+    const pj = join(dir, ".capybara-plugin/plugin.json");
+    const before = readFileSync(pj, "utf8");
+    try {
+      mkdirSync(join(dir, "assets"), { recursive: true });
+      writeFileSync(join(dir, "assets/icon.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+      writeFileSync(pj, JSON.stringify({ ...JSON.parse(before), icon: "./assets/icon.svg" }));
+      // a new entry carries it, right after summary / displayName
+      await sync(true);
+      const added = readManifest().plugins[0] as Record<string, unknown>;
+      expect(added.icon).toBe("./plugins/declarative/assets/icon.svg");
+      expect(Object.keys(added).slice(0, 5)).toEqual([
+        "name",
+        "version",
+        "summary",
+        "displayName",
+        "icon",
+      ]);
+      const parsed = parseMarketplaceManifest(readManifest());
+      expect("errors" in parsed).toBe(false);
+      // a listed entry without it (or with another one) is stale; --write sets it again
+      const stale = readManifest();
+      delete (stale.plugins[0] as Record<string, unknown>).icon;
+      writeManifest(stale);
+      expect((await sync(false)).findings.map((f) => [f.rule, f.message.split(" ")[0]])).toEqual([
+        ["marketplace-display-stale", "fixture-declarative@0.1.0"],
+      ]);
+      expect((await sync(true)).refreshed).toEqual(["fixture-declarative@0.1.0"]);
+      expect((readManifest().plugins[0] as Record<string, unknown>).icon).toBe(
+        "./plugins/declarative/assets/icon.svg",
+      );
+      // plugin.json drops its icon: the entry drops it too
+      writeFileSync(pj, before);
+      expect((await sync(true)).refreshed).toEqual(["fixture-declarative@0.1.0"]);
+      expect(readManifest().plugins[0]).not.toHaveProperty("icon");
+    } finally {
+      writeFileSync(pj, before);
+      await rm(join(dir, "assets"), { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("repoIconPath: a plugin at the repository root and one under plugins/", () => {
+    expect(repoIconPath("/r", "/r", "./icon.svg")).toBe("./icon.svg");
+    expect(repoIconPath("/r", "/r/plugins/x", "./icons/a.png")).toBe("./plugins/x/icons/a.png");
+    expect(repoIconPath("/r", "/r/plugins/x", "icon.svg")).toBe("./plugins/x/icon.svg");
+  });
 
   it("deprecated is set by hand on an entry: --write and --check keep it, a new version has none", async () => {
     await sync(true);

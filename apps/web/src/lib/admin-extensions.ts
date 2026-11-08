@@ -21,6 +21,7 @@ export const EXTENSION_STATUSES = [
   "converging",
   "failed",
   "dependency",
+  "conflict",
   "legacy_format",
 ] as const;
 export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number];
@@ -66,6 +67,8 @@ export interface AdminExtension {
   name: string;
   /** The extension's display name; null when it has none (show the id). */
   displayName?: LocalizedName | null;
+  /** The URL of its plugin's icon (an admin catalog icon route); null without one: the initial. */
+  icon?: string | null;
   version: string;
   source: ExtensionLoadSource;
   /** An install record's package source; null for a config-declared extension. */
@@ -110,6 +113,57 @@ export interface AdminExtension {
   removable: boolean;
   /** 包读不到时的说明（此时 status 为 failed、权限为空）。 */
   error?: string;
+  /**
+   * Only with status `conflict`: the single-provider extension point (`sandbox@2`) and the other
+   * extensions providing it; disabling them loads this one, no restart.
+   */
+  conflict?: {
+    extensionPoint: string;
+    providers: { name: string; displayName: LocalizedName | null }[];
+    /** The provider elected for the point (the first of `providers`) is not loaded: none runs. */
+    unprovided?: true;
+  };
+  /**
+   * Only on a disabled install: another enabled extension provides a single-provider extension
+   * point this one provides, so the kernel refuses to enable it (409
+   * `extension.single_provider_enabled`, same details) until that one is disabled.
+   */
+  enableBlocked?: SingleProviderBlock;
+}
+
+/**
+ * The single-provider point and the enabled extension providing it; `required`: a required plugin
+ * of the deployment, which cannot be disabled, so it cannot be replaced.
+ */
+export interface SingleProviderBlock {
+  extensionPoint: string;
+  enabled: { name: string; displayName: LocalizedName | null };
+  required?: true;
+}
+
+/** The kernel's single-provider refusal codes (another provider enabled / a required one). */
+export const SINGLE_PROVIDER_CODES: readonly string[] = [
+  "extension.single_provider_enabled",
+  "extension.single_provider_required",
+];
+
+/** The block of a single-provider refusal (its first detail), if well formed. */
+export function singleProviderBlockOf(details: unknown[]): SingleProviderBlock | undefined {
+  const d = details[0] as Partial<SingleProviderBlock> | undefined;
+  return typeof d?.extensionPoint === "string" && typeof d.enabled?.name === "string"
+    ? {
+        extensionPoint: d.extensionPoint,
+        enabled: { name: d.enabled.name, displayName: d.enabled.displayName ?? null },
+        ...(d.required === true && { required: true as const }),
+      }
+    : undefined;
+}
+
+/** A plugin's extension installed but left disabled by an update (kernel `SingleProviderNote`). */
+export interface SingleProviderNote {
+  code: string;
+  message: string;
+  singleProvider: SingleProviderBlock;
 }
 
 /** 迁移 SQL 的审阅警告（敏感，不拒绝）。 */

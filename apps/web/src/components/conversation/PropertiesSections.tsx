@@ -28,6 +28,7 @@ import {
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
+import { useEnvironmentName } from "../use-environment-name";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
@@ -156,6 +157,7 @@ export function ContextSection({
     [connectors],
   );
   const te = useTranslations("environments");
+  const nameOf = useEnvironmentName();
   const rowQ = conversationQuery(orgId, conversationId);
   const environmentId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
     ?.environmentId;
@@ -176,7 +178,7 @@ export function ContextSection({
           ? t("environmentDeleted")
           : t("environmentNone")
         : t("environmentLine", {
-            name: environment.data.name ?? te("personal"),
+            name: nameOf(environment.data),
             state: te(`state.${environmentState(environment.data)}`),
           });
   return (

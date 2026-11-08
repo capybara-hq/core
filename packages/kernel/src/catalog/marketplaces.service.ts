@@ -57,6 +57,18 @@ import {
   marketplaceNetPolicy,
   marketplaceUrlProblem,
 } from "./marketplace-fetch.js";
+import {
+  type CheckedIcon,
+  checkMarketplaceIcon,
+  fetchMarketplaceIcon,
+  gitIconPaths,
+  MARKETPLACE_ICON_CONCURRENCY,
+  MARKETPLACE_ICON_FETCHES_MAX,
+  MARKETPLACE_ICON_MAX_BYTES,
+  MARKETPLACE_ICON_RETRY_MS,
+  marketplaceIconUrl,
+  wantedIcons,
+} from "./marketplace-icons.js";
 import { compareVersions, newestFirst, sameRelease } from "./versions.js";
 
 /** 官方清单来源的 id。 */
@@ -153,6 +165,13 @@ export interface MarketplaceEntryView {
   /** Imported as a catalog item (a non-deleted item with the same name) and its versions. */
   adopted: { itemId: string; versions: string[] } | null;
   /**
+   * The icon to show (a kernel URL behind the super admin gate), null without one: the entry's
+   * marketplace icon as stored by the last refresh (`GET /api/v1/admin/marketplaces/:id/icons/:sha256`);
+   * the entries routes replace it with the catalog item's own icon when the plugin is imported
+   * and the reader may see it. The org browse route gives the org routes of both.
+   */
+  icon: string | null;
+  /**
    * Adopted, and this compatible entry, not deprecated, is newer than the newest imported version
    * (never automatic).
    */
@@ -176,6 +195,8 @@ type RefreshOutcome =
       trees?: Map<string, string>;
       overlays?: Map<string, ClaudeEntryOverlay>;
       skipped?: { name: string; reason: MarketplaceSkipReason }[];
+      /** A git marketplace's icon files at `commit` (repository path without `./` -> bytes). */
+      icons?: Map<string, Uint8Array>;
     }
   | "not_modified"
   | undefined;
@@ -194,6 +215,8 @@ interface SourceRow {
   form: MarketplaceForm;
   ref: string | null;
   last_commit: string | null;
+  /** The commit whose repository-path icons were last stored completely (0101). */
+  icons_commit: string | null;
   owner_name: string | null;
   mirrors: string[];
   builtin: boolean;
@@ -1109,6 +1132,23 @@ export class MarketplacesService {
       this.log.info("marketplace changed during refresh; result discarded", { marketplace: id });
       return this.get(id);
     }
+    if (outcome !== undefined) {
+      // a failed icon never fails the refresh: the entry shows its initial
+      try {
+        await this.syncIcons(row, outcome === "not_modified" ? undefined : outcome.icons, signal);
+        // only now is the commit fully synced: a refresh at it may be not_modified from here on
+        if (outcome !== "not_modified" && outcome.commit !== undefined) {
+          await this.db
+            .updateTable("marketplaces")
+            .set({ icons_commit: outcome.commit })
+            .where("id", "=", id)
+            .where("last_commit", "=", outcome.commit)
+            .execute();
+        }
+      } catch (err) {
+        this.log.warn("marketplace icons not updated", { marketplace: id, err });
+      }
+    }
     if (from !== status) {
       if (status === "error") {
         this.log.warn("marketplace refresh failed", { marketplace: id, error: lastError });
@@ -1132,8 +1172,9 @@ export class MarketplacesService {
 
   /**
    * Reads a git marketplace (spec §5.1): resolves `ref` (default the remote HEAD); the same commit
-   * as the last refresh -> `not_modified` (nothing else is fetched). Otherwise only what the root
-   * needs is read, in this order: `.capybara-plugin/marketplace.json` (at most
+   * as the last refresh, whose path icons were stored too (`icons_commit`) -> `not_modified`
+   * (nothing else is fetched; a commit whose icons were not stored is read again). Otherwise only
+   * what the root needs is read, in this order: `.capybara-plugin/marketplace.json` (at most
    * `marketplaces.maxIndexBytes`, validated like an http manifest); `.claude-plugin/marketplace.json`
    * (a Claude Code marketplace: each entry's component fields and `strict` become its overlay, and
    * entries Capybara cannot store are `skipped`); else a single-plugin repo (the root has
@@ -1153,6 +1194,7 @@ export class MarketplacesService {
         trees: Map<string, string>;
         overlays?: Map<string, ClaudeEntryOverlay>;
         skipped?: { name: string; reason: MarketplaceSkipReason }[];
+        icons?: Map<string, Uint8Array>;
       }
     | "not_modified"
   > {
@@ -1165,11 +1207,15 @@ export class MarketplacesService {
     };
     const loc = { url: row.url, ...(row.ref !== null && { ref: row.ref }) };
     const commit = await resolveGitCommit(loc, options);
-    if (commit === row.last_commit) return "not_modified";
+    if (commit === row.last_commit && commit === row.icons_commit) return "not_modified";
     const MANIFEST = ".capybara-plugin/marketplace.json";
     let hasSkills = false;
     const dec = (b: Uint8Array) => new TextDecoder().decode(b);
-    const { files, trees } = await readGitTreeAndOids(
+    const {
+      files,
+      trees,
+      blobs: icons,
+    } = await readGitTreeAndOids(
       { url: row.url, commit },
       {
         ...options,
@@ -1193,6 +1239,19 @@ export class MarketplacesService {
                 config.marketplaces.maxIndexBytes,
                 config.marketplaces.allowInsecureLoopback,
               ),
+        // the icon files the entries name (a Claude Code marketplace names none)
+        blobs: {
+          paths: (read) =>
+            read.has(MANIFEST) || !read.has(CLAUDE_MARKETPLACE_FILE)
+              ? gitIconPaths(
+                  read,
+                  MANIFEST,
+                  config.marketplaces.maxIndexBytes,
+                  MARKETPLACE_ICON_FETCHES_MAX,
+                )
+              : [],
+          maxBytes: MARKETPLACE_ICON_MAX_BYTES,
+        },
       },
     );
     const raw = files.get(MANIFEST);
@@ -1271,6 +1330,8 @@ export class MarketplacesService {
             ...(d.zh !== undefined && { zh: d.zh.slice(0, SUMMARY_MAX) }),
           },
           ...(m.displayName !== undefined && { displayName: m.displayName }),
+          // the plugin's own icon, read from the same commit
+          ...(m.icon !== undefined && { icon: `./${normalGitPath(m.icon)}` }),
           version: m.version,
           source: { path: "." },
         };
@@ -1292,7 +1353,7 @@ export class MarketplacesService {
       }
       manifest = { schemaVersion: 1, name: row.name, plugins: [entry] };
     }
-    return { manifest, etag: null, commit, trees };
+    return { manifest, etag: null, commit, trees, icons };
   }
 
   /**
@@ -1375,6 +1436,229 @@ export class MarketplacesService {
     return out;
   }
 
+  /**
+   * Brings the marketplace's stored icons (`marketplace_icons`) in line with its stored entries
+   * after a refresh (outside any transaction: downloads first, then one short write). A repository
+   * path (git marketplaces) is taken from `fresh`, the files of the commit just read, and kept as
+   * stored when the commit did not change (`fresh` undefined). A URL is downloaded only when it is
+   * not stored yet (its content is treated as fixed), at most {@link MARKETPLACE_ICON_FETCHES_MAX}
+   * per refresh, under the marketplace network rules and `marketplaces.allowedHosts`, never with
+   * the token. A failed download is remembered (`marketplace_icon_failures`) and retried only after
+   * {@link MARKETPLACE_ICON_RETRY_MS}, URLs never tried first, so broken URLs never starve the
+   * cap. An icon that is missing, too large or not a real svg / png is skipped and logged; icons
+   * (and failures) no entry names any more are deleted.
+   */
+  private async syncIcons(
+    row: SourceRow,
+    fresh: Map<string, Uint8Array> | undefined,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const config = this.config.get();
+    const entries = await this.db
+      .selectFrom("marketplace_entries")
+      .select("entry")
+      .where("source_id", "=", row.id)
+      .execute();
+    const { paths, urls } = wantedIcons(
+      entries.map((r) => r.entry as MarketplaceEntry),
+      row.form,
+    );
+    const have = new Set(
+      (
+        await this.db
+          .selectFrom("marketplace_icons")
+          .select("ref")
+          .where("source_id", "=", row.id)
+          .execute()
+      ).map((r) => r.ref),
+    );
+    // the URLs that failed before, oldest failure first, and whether their backoff is over
+    const failures = await this.db
+      .selectFrom("marketplace_icon_failures")
+      .select([
+        "ref",
+        sql<boolean>`failed_at <= now() - make_interval(secs => ${MARKETPLACE_ICON_RETRY_MS / 1000})`.as(
+          "due",
+        ),
+      ])
+      .where("source_id", "=", row.id)
+      .orderBy("failed_at")
+      .orderBy("ref")
+      .execute();
+    const failedBefore = new Map(failures.map((f) => [f.ref, f.due]));
+    const put: { ref: string; icon: CheckedIcon }[] = [];
+    const keep = new Set<string>();
+    const problems: { icon: string; problem: string }[] = [];
+    for (const ref of paths) {
+      if (fresh === undefined) {
+        if (have.has(ref)) keep.add(ref);
+        continue;
+      }
+      const data = fresh.get(ref.slice(2));
+      const r =
+        data === undefined
+          ? `${ref} is not a file of at most ${MARKETPLACE_ICON_MAX_BYTES} bytes in the repository`
+          : checkMarketplaceIcon(ref, data);
+      if (typeof r === "string") problems.push({ icon: ref, problem: r });
+      else put.push({ ref, icon: r });
+    }
+    // IPv6 hostnames come bracketed from URL; allowedHosts entries are written without brackets
+    const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+    const neverTried: string[] = [];
+    for (const url of urls) {
+      if (have.has(url)) {
+        keep.add(url);
+        continue;
+      }
+      const host = hostOf(url);
+      if (!hostAllowed(host, config)) {
+        problems.push({ icon: url, problem: `${host} is not in marketplaces.allowedHosts` });
+      } else if (!failedBefore.has(url)) {
+        neverTried.push(url);
+      }
+    }
+    // retries after the never-tried URLs, oldest failure first, within the cap
+    const retries = failures
+      .filter((f) => f.due && urls.has(f.ref) && !have.has(f.ref))
+      .map((f) => f.ref)
+      .filter((url) => hostAllowed(hostOf(url), config));
+    const toFetch = [...neverTried, ...retries].slice(0, MARKETPLACE_ICON_FETCHES_MAX);
+    const net = marketplaceNetPolicy(config);
+    const queue = [...toFetch];
+    const failed: string[] = [];
+    await Promise.all(
+      Array.from({ length: Math.min(MARKETPLACE_ICON_CONCURRENCY, queue.length) }, async () => {
+        for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
+          if (signal.aborted) return;
+          const r = await fetchMarketplaceIcon(url, { net, signal });
+          if (typeof r === "string") {
+            problems.push({ icon: url, problem: r });
+            // an aborted refresh says nothing about the URL
+            if (!signal.aborted) failed.push(url);
+          } else put.push({ ref: url, icon: r });
+        }
+      }),
+    );
+    if (problems.length > 0) {
+      this.log.warn("marketplace icons skipped", {
+        marketplace: row.id,
+        count: problems.length,
+        problems: problems.slice(0, 5),
+      });
+    }
+    const gone = [...have].filter((ref) => !keep.has(ref) && !put.some((p) => p.ref === ref));
+    // failures of URLs now stored or named by no entry
+    const cleared = [...failedBefore.keys()].filter(
+      (ref) => !urls.has(ref) || put.some((p) => p.ref === ref),
+    );
+    if (put.length > 0 || gone.length > 0 || failed.length > 0 || cleared.length > 0) {
+      await this.writeIcons(row.id, { put, gone, failed, cleared });
+    }
+  }
+
+  /**
+   * Writes a refresh's icons: upserts `put`, deletes `gone`, records the `failed` downloads and
+   * forgets the `cleared` failures (see {@link syncIcons}).
+   */
+  @Transactional()
+  private async writeIcons(
+    id: string,
+    w: {
+      put: { ref: string; icon: CheckedIcon }[];
+      gone: string[];
+      failed: string[];
+      cleared: string[];
+    },
+  ): Promise<void> {
+    const t = this.db;
+    if (w.gone.length > 0) {
+      await t
+        .deleteFrom("marketplace_icons")
+        .where("source_id", "=", id)
+        .where("ref", "in", w.gone)
+        .execute();
+    }
+    for (const { ref, icon } of w.put) {
+      const values = {
+        sha256: icon.sha256,
+        content_type: icon.contentType,
+        data: Buffer.from(icon.data),
+        fetched_at: sql<Date>`now()` as unknown as Date,
+      };
+      await t
+        .insertInto("marketplace_icons")
+        .values({ source_id: id, ref, ...values })
+        .onConflict((oc) => oc.columns(["source_id", "ref"]).doUpdateSet(values))
+        .execute();
+    }
+    if (w.cleared.length > 0) {
+      await t
+        .deleteFrom("marketplace_icon_failures")
+        .where("source_id", "=", id)
+        .where("ref", "in", w.cleared)
+        .execute();
+    }
+    // sorted: two replicas refreshing at once lock the rows in the same order
+    for (const ref of [...w.failed].sort()) {
+      await t
+        .insertInto("marketplace_icon_failures")
+        .values({ source_id: id, ref })
+        .onConflict((oc) =>
+          oc.columns(["source_id", "ref"]).doUpdateSet({
+            failed_at: sql<Date>`now()` as unknown as Date,
+            attempts: sql<number>`marketplace_icon_failures.attempts + 1`,
+          }),
+        )
+        .execute();
+    }
+  }
+
+  /**
+   * A stored marketplace icon by its sha256 (the address the entries carry); not stored ->
+   * `catalog.icon_not_found`. Read from PG, never from the network. `browsable` (the org route):
+   * the marketplace must also be one the org browse lists (effective), else not found.
+   */
+  async icon(
+    id: string,
+    sha256: string,
+    opts: { browsable?: boolean } = {},
+  ): Promise<{ contentType: "image/svg+xml" | "image/png"; data: Uint8Array }> {
+    if (opts.browsable) {
+      // the org browse lists enabled marketplaces only (official also needs the config on)
+      const m = await this.db
+        .selectFrom("marketplaces")
+        .select(["builtin", "enabled"])
+        .where("id", "=", id)
+        .executeTakeFirst();
+      if (!m || !sourceEffective(m, this.config.get())) {
+        throw new ApiError("catalog.icon_not_found", "This marketplace has no such icon");
+      }
+    }
+    const row = /^[0-9a-f]{64}$/.test(sha256)
+      ? await this.db
+          .selectFrom("marketplace_icons")
+          .select(["content_type", "data"])
+          .where("source_id", "=", id)
+          .where("sha256", "=", sha256)
+          .limit(1)
+          .executeTakeFirst()
+      : undefined;
+    if (!row) throw new ApiError("catalog.icon_not_found", "This marketplace has no such icon");
+    // checked again on read, like a catalog icon (`readCatalogIcon`): PG may have been changed
+    const data = new Uint8Array(row.data);
+    const checked = checkMarketplaceIcon(
+      row.content_type === "image/svg+xml" ? "icon.svg" : "icon.png",
+      data,
+    );
+    if (typeof checked === "string") {
+      throw new ApiError("internal", `Stored marketplace icon is invalid: ${checked}`);
+    }
+    if (checked.sha256 !== sha256) {
+      throw new ApiError("internal", "Stored marketplace icon does not match its recorded hash");
+    }
+    return { contentType: checked.contentType, data };
+  }
+
   /** The token of a custom marketplace (undefined without one; official never has one). */
   async token(id: string): Promise<string | undefined> {
     return (await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
@@ -1407,6 +1691,8 @@ export class MarketplacesService {
    */
   async entries(
     q: { marketplaceId?: string; q?: string } = {},
+    /** The URL of a stored marketplace icon (default: the admin route). */
+    iconUrl: (sourceId: string, sha256: string) => string = marketplaceIconUrl,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     const config = this.config.get();
     let query = this.db
@@ -1492,6 +1778,16 @@ export class MarketplacesService {
       a.imported.sort(newestFirst);
       a.versions = a.imported.map((v) => v.version);
     }
+    const iconRows = await this.db
+      .selectFrom("marketplace_icons")
+      .select(["source_id", "ref", "sha256"])
+      .where("source_id", "in", [...new Set(rows.map((r) => r.source_id))])
+      .execute();
+    const iconOf = new Map(iconRows.map((i) => [`${i.source_id}\0${i.ref}`, i.sha256]));
+    const iconUrlOf = (sourceId: string, ref: string | undefined): string | null => {
+      const sha = ref === undefined ? undefined : iconOf.get(`${sourceId}\0${ref}`);
+      return sha === undefined ? null : iconUrl(sourceId, sha);
+    };
     const views = rows.map((r): MarketplaceEntryView => {
       const e = r.entry as MarketplaceEntry;
       const version = marketplaceEntryVersion(e);
@@ -1517,6 +1813,7 @@ export class MarketplacesService {
         importable,
         ...(reason !== undefined && { reason }),
         adopted: adopted ? { itemId: adopted.itemId, versions: [...adopted.versions] } : null,
+        icon: iconUrlOf(r.source_id, e.icon),
         newerAvailable:
           compatible &&
           !entryDeprecated(e) &&

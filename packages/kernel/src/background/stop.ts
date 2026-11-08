@@ -1,3 +1,4 @@
+import { rootsOf } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -33,7 +34,7 @@ const TAIL_EXEC_TIMEOUT_MS = 10_000;
 /**
  * Exit code 0 with `exited <code>` when the task had already finished (its exit file exists),
  * else sends SIGTERM to the session and waits up to {@link STOP_GRACE_MS} for it to empty, then
- * prints `term`. Relative to `/workspace`.
+ * prints `term`. Relative to the workspace root.
  */
 function termScript(id: string, sid: string): string {
   const f = `${TASKS_DIR}/${id}`;
@@ -168,7 +169,7 @@ export class BackgroundTaskStopper {
         const p = actingAs(tp, taskActor(cur));
         const term = await p.exec(h, {
           command: termScript(cur.id, sid),
-          cwd: "/workspace",
+          cwd: rootsOf(h).workspace,
           timeoutMs: TERM_EXEC_TIMEOUT_MS,
           maxOutputBytes: 4096,
           signal: sig,
@@ -183,7 +184,7 @@ export class BackgroundTaskStopper {
         }
         const tail = await p.exec(h, {
           command: tailCommand(cur.id),
-          cwd: "/workspace",
+          cwd: rootsOf(h).workspace,
           timeoutMs: TAIL_EXEC_TIMEOUT_MS,
           maxOutputBytes: 64 * 1024,
           signal: sig,

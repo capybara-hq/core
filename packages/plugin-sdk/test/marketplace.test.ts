@@ -7,6 +7,7 @@ import {
   type MarketplaceManifest,
   MarketplaceManifestSchema,
   marketplaceEntryDeprecation,
+  marketplaceEntryIcon,
   marketplaceEntryVersion,
   parseMarketplaceManifest,
 } from "../src/index.js";
@@ -240,6 +241,60 @@ describe("deprecated", () => {
   });
 });
 
+describe("icon", () => {
+  const parsedEntry = (over: Record<string, unknown>, loopback = false) => {
+    const r = parseMarketplaceManifest(manifest([entry(over)]), {
+      allowInsecureLoopback: loopback,
+    });
+    if ("errors" in r) throw new Error(r.errors.join("; "));
+    return r.plugins[0] as MarketplaceEntry;
+  };
+
+  it("an https URL ending in .svg / .png and a ./ repository path parse and are kept", () => {
+    for (const icon of [
+      "https://raw.githubusercontent.com/acme/plugins/v1/plugins/x/icon.svg",
+      "https://cdn.example.com/x/ICON.PNG?v=2",
+      "./plugins/x/icon.svg",
+      "./icon.png",
+    ]) {
+      expect(parsedEntry({ icon }).icon).toBe(icon);
+    }
+    expect(parsedEntry({}).icon).toBeUndefined();
+  });
+
+  it("http, other types, unsafe paths and bare paths are refused with one message", () => {
+    for (const icon of [
+      "http://example.com/icon.svg",
+      "https://example.com/icon.jpg",
+      "https://example.com/icon.svg#x",
+      "https://example.com/icon",
+      "./../outside/icon.svg",
+      "./x/icon.gif",
+      "icon.svg",
+      "/abs/icon.svg",
+      "",
+      42,
+    ]) {
+      const errors = errorsOf(manifest([entry({ icon })]));
+      expect(errors, String(icon)).toHaveLength(1);
+      expect(errors[0]).toMatch(/^plugins\.0\.icon: icon must be an https URL/);
+    }
+  });
+
+  it("http on loopback only with allowInsecureLoopback (tests)", () => {
+    const icon = "http://127.0.0.1:4000/icon.svg";
+    expect(parsedEntry({ icon }, true).icon).toBe(icon);
+    expect(errorsOf(manifest([entry({ icon })]))).toHaveLength(1);
+  });
+
+  it("marketplaceEntryIcon tells a URL from a repository path", () => {
+    const e = (icon?: string) => (icon === undefined ? {} : { icon });
+    expect(marketplaceEntryIcon(e())).toBeNull();
+    expect(marketplaceEntryIcon(e("https://x.com/i.svg"))).toEqual({ url: "https://x.com/i.svg" });
+    expect(marketplaceEntryIcon(e("./plugins/x/i.png"))).toEqual({ path: "plugins/x/i.png" });
+  });
+});
+
 describe("JSON Schema (ajv) agrees with zod", () => {
   const schema = JSON.parse(
     readFileSync(new URL("../schemas/marketplace.v1.schema.json", import.meta.url), "utf8"),
@@ -258,6 +313,11 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["bad name", manifest([entry({ name: "Bad" })])],
     ["displayName", manifest([entry({ displayName: { zh: "超能力", en: "Superpowers" } })])],
     ["deprecated true", manifest([entry({ deprecated: true })])],
+    ["icon URL", manifest([entry({ icon: "https://example.com/x/icon.svg" })])],
+    ["icon path", manifest([entry({ icon: "./plugins/x/icon.png" })])],
+    ["icon http", manifest([entry({ icon: "http://example.com/icon.svg" })])],
+    ["icon jpg", manifest([entry({ icon: "./plugins/x/icon.jpg" })])],
+    ["icon bare path", manifest([entry({ icon: "icon.svg" })])],
     ["deprecated reason", manifest([entry({ deprecated: { reason: "Use 2.x" } })])],
     ["deprecated empty reason", manifest([entry({ deprecated: { reason: "" } })])],
     ["deprecated string", manifest([entry({ deprecated: "yes" })])],

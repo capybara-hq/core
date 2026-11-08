@@ -375,6 +375,11 @@ export interface ProviderModels {
   provider: string;
   /** The provider extension's display name; null when it has none (show the id). */
   displayName?: LocalizedName | null;
+  /**
+   * The URL of its plugin's icon (a kernel catalog icon route for this viewer's scope); null when
+   * the plugin has none or the viewer may not see it: draw the initial.
+   */
+  icon?: string | null;
   models: ModelInfo[];
 }
 

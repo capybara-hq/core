@@ -8,6 +8,7 @@ import {
   providesOf,
 } from "../extensions/org-config.js";
 import { OrgOverrides, type OrgOverrideView } from "../extensions/org-overrides.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -82,11 +83,14 @@ class OrgOverridesPutBody extends createZodDto(OverridesPut, "OrgOverridesPutBod
 class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTakeBody") {}
 
 /**
- * One extension of the org list: the org view plus the plugin's display name and the extension
- * points it provides (`channel@1`, `web-search@1`, … the names only, also for members).
+ * One extension of the org list: the org view plus the plugin's display name, the URL of its
+ * plugin's icon on the org's catalog route (null without one or when the org may not see the
+ * plugin's item) and the extension points it provides (`channel@1`, `web-search@1`, … the names
+ * only, also for members).
  */
 export type OrgExtensionItem = OrgExtensionView & {
   displayName: LocalizedName | null;
+  icon: string | null;
   provides: string[];
 };
 
@@ -110,6 +114,7 @@ export class OrgExtensionConfigsController {
     @Inject(OrgExtensionConfigs) private readonly configs: OrgExtensionConfigs,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
     @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /**
@@ -122,10 +127,15 @@ export class OrgExtensionConfigsController {
     @CurrentOrg() org: OrgContext,
   ): Promise<{ extensions: OrgExtensionItem[] | OrgExtensionMemberItem[] }> {
     const views = await this.configs.list(org.orgId);
-    const names = await this.displayNames.many(views.map((v) => v.plugin));
+    const plugins = views.map((v) => v.plugin);
+    const [names, icons] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.icons.many(plugins, orgIconScope(org)),
+    ]);
     const items = views.map((v) => ({
       ...v,
       displayName: names.get(v.plugin) ?? null,
+      icon: icons.get(v.plugin) ?? null,
       provides: providesOf(v),
     }));
     if (roleAtLeast(org.role, "admin")) return { extensions: items };
@@ -151,10 +161,15 @@ export class OrgExtensionConfigsController {
     const p = requireUser(principal);
     const r = await this.extSwitch.put(org.orgId, p.account.id, extension, body, patTokenId(p));
     if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
+    const [displayName, icons] = await Promise.all([
+      this.displayNames.get(r.view.plugin),
+      this.icons.many([r.view.plugin], orgIconScope(org)),
+    ]);
     return {
       extension: {
         ...r.view,
-        displayName: await this.displayNames.get(r.view.plugin),
+        displayName,
+        icon: icons.get(r.view.plugin) ?? null,
         provides: providesOf(r.view),
       },
     };

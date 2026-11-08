@@ -9,6 +9,7 @@ import {
   SandboxGoneError,
   validateAllowHost,
   validateSandboxPath,
+  validateSandboxPathShape,
 } from "../src/index.js";
 
 describe("sandbox@2", () => {
@@ -132,5 +133,37 @@ describe("SandboxGoneError", () => {
     for (const bad of ["", "A", "a b", "a/b", "a.*", "a".repeat(65)]) {
       expect(SANDBOX_TAG_RE.test(bad), bad).toBe(false);
     }
+  });
+});
+
+describe("validateSandboxPath with an instance's roots", () => {
+  const roots = { workspace: "/home/u/e1/workspace", skills: "/home/u/e1/skills", tmp: "/tmp/e1" };
+  it("accepts paths under the given roots only", () => {
+    expect(validateSandboxPath("/home/u/e1/workspace/a.txt", roots)).toEqual([]);
+    expect(validateSandboxPath("/tmp/e1", roots)).toEqual([]);
+    expect(validateSandboxPath("/workspace/a.txt", roots)).toEqual([
+      "path must be under /home/u/e1/workspace, /home/u/e1/skills, /tmp/e1",
+    ]);
+    expect(validateSandboxPath("/home/u/e1/workspace/../x", roots)).toContain(
+      "path must not contain '..' segments",
+    );
+  });
+});
+
+describe("validateSandboxPathShape", () => {
+  it("checks everything but root membership", () => {
+    expect(validateSandboxPathShape("/etc/passwd")).toEqual([]);
+    expect(validateSandboxPathShape("rel/a")).toEqual(["path must be absolute"]);
+    expect(validateSandboxPathShape("")).toEqual(["path must be a non-empty string"]);
+    expect(validateSandboxPathShape("/a//b")).toEqual(["path must not contain empty segments"]);
+    expect(validateSandboxPathShape("/a/../b")).toEqual(["path must not contain '..' segments"]);
+    expect(validateSandboxPathShape("/a/\u0001")).toEqual([
+      "path must not contain control characters",
+    ]);
+    // validateSandboxPath keeps its combined errors
+    expect(validateSandboxPath("/etc/../x")).toEqual([
+      "path must not contain '..' segments",
+      "path must be under /workspace, /skills, /tmp",
+    ]);
   });
 });

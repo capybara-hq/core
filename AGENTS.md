@@ -26,6 +26,7 @@ their old names (`plugin_<name>` schemas, `/plugin-ui`, `/plugins/<name>/…` ro
 | `packages/kernel` | The kernel: one NestJS + Fastify app (config, db, `ctx`, extension host, HTTP) |
 | `packages/testing` | Test containers, dual-replica helpers, fake servers, fake extensions (`fixtures/extensions/*`) |
 | `packages/plugin-tools` | The published plugin toolchain `capybara-plugin` (`pack`, `check`, `marketplace`, `release`, …) |
+| `packages/device` | The published program `capybara-device` that connects a laptop or server to a deployment as an environment (HTTP and WebSocket only; imports only `plugin-sdk`) |
 | `packages/design` | Web design system (spec `docs/design/spec.md`) |
 | `apps/capybara` | CLI |
 | `apps/web` | Next web app; talks to the kernel only over HTTP; pages built only from `@capybara-hq/design` |
@@ -43,7 +44,8 @@ Kernel / extensions / external apps; dependencies only point downward.
 - Extensions -> `@capybara-hq/plugin-sdk` and third-party npm packages, **never** the kernel. Nest
   stops at the extension boundary: an extension sees only the SDK `ctx`.
 - `kernel` -> `plugin-sdk`; `testing` -> `kernel`; `plugin-tools` -> `plugin-sdk`, `kernel`;
-  the CLI -> `kernel` only; `plugin-sdk` and `design` depend on no `@capybara-hq/*`.
+  the CLI -> `kernel` only; `device` -> `plugin-sdk` only (`pnpm check:deps`); `plugin-sdk` and
+  `design` depend on no `@capybara-hq/*`.
 - Tests use `@capybara-hq/testing` as a devDependency. Core tests load no official plugin except
   `model-fake`, listed in `tools/ci/test-plugins.json`, never as a devDependency
   (`pnpm check:test-plugins`).

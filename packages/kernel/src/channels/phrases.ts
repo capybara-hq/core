@@ -1,8 +1,9 @@
-/** 组织默认语言（`orgs.settings.locale`）。 */
+/** The language of kernel IM text: the recipient's, else the org's (`orgs.settings.locale`). */
 export type ChannelLocale = "zh" | "en";
 
 /**
- * 机器人在 IM 里说的固定话术（全部集中在这里，zh / en 同步）：按连接所属组织的默认语言选择。
+ * 机器人在 IM 里说的固定话术（全部集中在这里，zh / en 同步）. Chosen per recipient (run context spec
+ * §3.4): the sender's platform language, else their latest web language, else the org's.
  * 模型回复不经过这里，原样转换为 IM 富文本、不翻译。
  */
 export const CHANNEL_PHRASES = {
@@ -33,8 +34,6 @@ export const CHANNEL_PHRASES = {
     zh: "你目前没有可用的环境。",
     en: "You have no usable environments.",
   },
-  /** 环境列表里默认环境的名字。 */
-  envPersonal: { zh: "个人环境", en: "Personal" },
   /** 环境列表里当前 IM 默认环境的标记。 */
   envCurrent: { zh: "（当前）", en: " (current)" },
   /** 未绑定的人在私聊里发消息：附绑定卡片。 */

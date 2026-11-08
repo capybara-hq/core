@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  DEFAULT_SANDBOX_ROOTS,
   isSandboxGoneError,
   type SandboxHandle,
   type SandboxProvider,
@@ -27,6 +28,7 @@ import {
   readFakeSandboxOps,
   removeFakeFileSystem,
   removeFakeSandbox,
+  setFakeFileSystemIdsByName,
   setFakeSandboxDelays,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -204,9 +206,9 @@ const readIn = (s: SandboxService, name: string, env = envId) =>
   );
 
 describe("没有提供方", () => {
-  it("available 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
+  it("cloudAvailable 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
     const s = service(() => undefined);
-    expect(s.available).toBe(false);
+    expect(s.cloudAvailable).toBe(false);
     const err = await use(s).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("sandbox.unavailable");
@@ -272,10 +274,10 @@ describe("组织出站设置（Ruling M19）", () => {
 describe("lazy creation", () => {
   it("the first use creates the file system, then the instance on it (name cap-env-<environment>, no image by default, limits from config); later uses reuse them", async () => {
     const s = service();
-    expect(s.available).toBe(true);
+    expect(s.cloudAvailable).toBe(true);
     expect(await ops()).toEqual([]);
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, restarted: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     const limits = {
       cpu: 1,
       memoryMb: 2048,
@@ -302,7 +304,7 @@ describe("lazy creation", () => {
     expect(r?.handle).toEqual(a.h);
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h).toEqual(a.h);
     expect(await ops("create")).toHaveLength(1);
     expect(await ops("create-fs")).toHaveLength(1);
@@ -384,7 +386,7 @@ describe("lazy creation", () => {
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
     const a = await use(s);
-    expect(a.info).toEqual({ fresh: true, restarted: false });
+    expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect((await row())?.status).toBe("running");
     expect(await ops("create-fs")).toHaveLength(1);
   });
@@ -429,7 +431,7 @@ describe("空闲休眠（审查重点 3）", () => {
     expect(await fakeSandboxState(root, a.h.id)).toBe("suspended");
 
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h).toEqual(a.h);
     expect(await ops("resume")).toEqual([["resume", a.h.id]]);
     expect((await row())?.status).toBe("running");
@@ -504,7 +506,7 @@ describe("the provider reports the instance gone", () => {
     await removeFakeSandbox(root, a.id);
 
     const b = await readIn(s, "a.txt");
-    expect(b.info).toEqual({ fresh: true, restarted: true });
+    expect(b.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(b.h.id).not.toBe(a.id);
     expect(b.body).toBe("hi");
     expect((await ops("resume-gone")).map((o) => o[1])).toEqual([a.id]);
@@ -556,7 +558,7 @@ describe("destruction after inactivity", () => {
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     const next = await readIn(s, "notes.txt");
     expect(next.body).toBe("kept");
-    expect(next.info).toEqual({ fresh: true, restarted: true });
+    expect(next.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(next.h.id).not.toBe(first.id);
     expect((await row())?.status).toBe("running");
     expect(await ops("create-fs")).toHaveLength(1);
@@ -725,9 +727,75 @@ describe("lost files", () => {
     const next = await readIn(s, "a.txt");
     expect(next.body).toBeNull();
     // a fresh start on new files, not a restart on kept ones
-    expect(next.info).toEqual({ fresh: true, restarted: false });
+    expect(next.info).toEqual({
+      fresh: true,
+      restarted: false,
+      filesReset: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
     expect(await ops("create-fs")).toHaveLength(2);
     expect((await row())?.fs_status).toBe("ready");
+  });
+
+  it("after a reset every holder is told once, also when the provider reuses the file system id", async () => {
+    // sandbox-docker names a file system's volumes after the environment: the id comes back
+    await setFakeFileSystemIdsByName(root, true);
+    const s = service();
+    const other = await newConversation();
+    const useAs = (holder: string) =>
+      s.withSandbox(at(envId, orgId, holder), async (h, _p, info) => ({ h, info }), signal());
+    const a = await useAs(conversationId);
+    expect((await useAs(other)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    const fsBefore = (await fakeSandboxMeta(root, a.h.id))?.fileSystem;
+    await s.resetFileSystem(envId);
+    const next = await useAs(conversationId);
+    expect((await fakeSandboxMeta(root, next.h.id))?.fileSystem).toBe(fsBefore);
+    // empty files, not an instance restarted on kept ones
+    expect(next.info).toEqual({
+      fresh: true,
+      restarted: false,
+      filesReset: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs(other)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      filesReset: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs(conversationId)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs(other)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    // a holder that never used the environment just starts
+    expect((await useAs(await newConversation())).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+  });
+
+  it("an instance destroyed after inactivity on kept files is still a restart, not a reset", async () => {
+    await setFakeFileSystemIdsByName(root, true);
+    const s = service();
+    await use(s);
+    await s.suspendIdle(later(11 * MIN));
+    expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
+    expect((await use(s)).info).toEqual({
+      fresh: true,
+      restarted: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
   });
 
   it("resetFileSystem after files_lost makes the environment usable again", async () => {
@@ -738,7 +806,12 @@ describe("lost files", () => {
     await expect(use(s)).rejects.toMatchObject({ code: "environment.files_lost" });
     await s.resetFileSystem(envId);
     const next = await use(s);
-    expect(next.info.fresh).toBe(true);
+    expect(next.info).toEqual({
+      fresh: true,
+      restarted: false,
+      filesReset: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
     expect(await row()).toMatchObject({ status: "running", fs_status: "ready" });
   });
 });
@@ -930,7 +1003,11 @@ describe("restarted is sticky (fix round 1)", () => {
     fail = true;
     await expect(use(s)).rejects.toThrow("docker down");
     fail = false;
-    expect((await use(s)).info).toEqual({ fresh: true, restarted: true });
+    expect((await use(s)).info).toEqual({
+      fresh: true,
+      restarted: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
   });
 });
 
@@ -955,8 +1032,8 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
       signal(),
     );
     expect(infos).toEqual([
-      { fresh: false, restarted: false },
-      { fresh: true, restarted: true },
+      { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
+      { fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS },
     ]);
     expect(out.stdout).toBe("ok\n");
     expect(out.h.id).not.toBe(a.h.id);
@@ -994,9 +1071,13 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
         signal(),
       );
     const first = await useAs();
-    expect(first.info).toEqual({ fresh: true, restarted: false });
+    expect(first.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     // a sub-agent joins the running sandbox: nothing was lost for it
-    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs(child)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
     // the instance is gone during the sub-agent's command: it rebuilds and is told
     await removeFakeSandbox(root, first.h.id);
     const infos: unknown[] = [];
@@ -1008,11 +1089,23 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
       },
       signal(),
     );
-    expect(infos.at(-1)).toEqual({ fresh: true, restarted: true });
+    expect(infos.at(-1)).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     // the parent's next use learns its processes are gone too, then not again
-    expect((await useAs()).info).toEqual({ fresh: false, restarted: true });
-    expect((await useAs()).info).toEqual({ fresh: false, restarted: false });
-    expect((await useAs(child)).info).toEqual({ fresh: false, restarted: false });
+    expect((await useAs()).info).toEqual({
+      fresh: false,
+      restarted: true,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs()).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
+    expect((await useAs(child)).info).toEqual({
+      fresh: false,
+      restarted: false,
+      roots: DEFAULT_SANDBOX_ROOTS,
+    });
   });
 });
 
@@ -1221,7 +1314,7 @@ describe("锁的防护（fix round 2）", () => {
     // the sweeper's lease expires; B takes a lease and uses the running sandbox
     await redis.del(lockKey());
     const b = await use(s);
-    expect(b.info).toEqual({ fresh: false, restarted: false });
+    expect(b.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     started.release();
     expect(await sweep).toBe(0);
     expect(failures).toHaveLength(1);
@@ -1318,7 +1411,7 @@ describe("被内核之外的原因停掉（fix wave S2 I1）", () => {
       }),
       signal(),
     );
-    expect(out.info).toEqual({ fresh: false, restarted: false });
+    expect(out.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(out.r.stdout).toBe("a");
     expect(await ops("autostart")).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);

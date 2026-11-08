@@ -536,6 +536,8 @@ export class ToolPipeline {
           subagents: ctx.agent.subagents,
           child: ctx.parent !== undefined,
           forkChild: ctx.parent?.forSkill === true,
+          sandboxConversationId: ctx.parent?.rootConversationId ?? ctx.conversationId,
+          replay: ctx.conversationKind === "eval",
         });
       }
       return resolved;

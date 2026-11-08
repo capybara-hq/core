@@ -1,4 +1,4 @@
-import type { PackageWarning } from "./admin-extensions";
+import type { PackageWarning, SingleProviderBlock, SingleProviderNote } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { Owner } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
@@ -36,6 +36,11 @@ export interface CatalogItem {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /**
+   * The URL of its icon on this viewer's catalog icon route (the lists only); null or absent when
+   * the latest version has none: draw the initial.
+   */
+  icon?: string | null;
   /** The English description. */
   description: string;
   /** The latest version's Chinese description; null without one (see {@link descriptionOf}). */
@@ -478,11 +483,17 @@ export interface PluginDeployResult {
   action: "install" | "upgrade";
   version: string;
   sha256: string;
-  result: "enabled" | "failed";
+  /** `installed`: left disabled, see `singleProvider`. */
+  result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
+  /**
+   * Installed but left disabled (code `extension.single_provider_enabled`): another enabled
+   * extension provides this single-provider extension point; disable it first, then enable this.
+   */
+  singleProvider?: SingleProviderBlock;
 }
 
 export interface PluginConfirmResult {
@@ -585,6 +596,12 @@ export interface MarketplaceEntry {
   /** host_not_allowed: outside `marketplaces.allowedHosts`; a path entry of an http marketplace. */
   reason?: "host_not_allowed" | "path_needs_git_marketplace";
   adopted: { itemId: string; versions: string[] } | null;
+  /**
+   * The icon's kernel URL (super admins): an imported plugin's catalog icon (the one 已安装
+   * shows), else the icon the marketplace gives for the entry; null (or absent from older kernels)
+   * without one: the row draws the initial.
+   */
+  icon?: string | null;
   newerAvailable: boolean;
   /**
    * A version of this release is imported, but the entry now points at other content (a moved
@@ -943,8 +960,14 @@ export interface PlatformUpdateComponent {
 export interface PlatformUpdateConnectorOrg {
   orgId: string;
   connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
-  /** Added templates whose connectors need the org's input (the update creates none). */
+  /** Templates the update turns on (added, or no longer shipped off): their connectors need the org's input. */
   needsConfig: string[];
+  /** Templates now shipped off that turn off in the org; their connectors stay. Absent when none. */
+  turnedOff?: {
+    templateId: string;
+    agents: { id: string; name: string }[];
+    connectorsKept: number;
+  }[];
 }
 
 /** `POST /api/v1/admin/catalog/items/:id/update/preview` (kernel `PlatformUpdatePreview`). */
@@ -983,6 +1006,11 @@ export interface PlatformUpdateResult {
   components: PlatformUpdateComponent[];
   extension: PlatformUpdatePreview["extension"];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The update installed the extension but left it disabled: a single-provider extension point it
+   * provides is held by another enabled extension (`required`: by a required plugin).
+   */
+  extensionLeftDisabled?: SingleProviderNote;
 }
 
 export const KEPT_REASONS = [
@@ -1237,10 +1265,12 @@ export const confirmOrgUpload = (
   stagingId: string,
   body: { reviewHash: string; shareable?: boolean },
 ) =>
-  apiFetch<{ item: OrgCatalogItem; outcome: OrgUploadOutcome }>(
-    `${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`,
-    post(body),
-  );
+  apiFetch<{
+    item: OrgCatalogItem;
+    outcome: OrgUploadOutcome;
+    /** An update left the plugin's extension disabled (see `PlatformUpdateResult`). */
+    extensionLeftDisabled?: SingleProviderNote;
+  }>(`${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`, post(body));
 
 /** Sets 可共享 on the org's own plugin (P3-17). */
 export const setOwnedShareable = (orgId: string, itemId: string, shareable: boolean) =>

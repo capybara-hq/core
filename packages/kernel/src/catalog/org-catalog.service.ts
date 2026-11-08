@@ -345,7 +345,7 @@ export class OrgCatalogService {
    * (the super admin) every item.
    */
   async icon(itemId: string, isAdmin: boolean, orgId?: string): Promise<CatalogIcon> {
-    if (orgId === undefined) return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
+    if (orgId === undefined) return readCatalogIcon(this.db, itemId, isAdmin);
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     // A hidden `named` item stays absent here too
     const item = await this.db
@@ -364,7 +364,7 @@ export class OrgCatalogService {
         .executeTakeFirst();
       if (listed === undefined) throw itemNotFound();
     }
-    return readCatalogIcon(this.db, this.storage, itemId, isAdmin);
+    return readCatalogIcon(this.db, itemId, isAdmin);
   }
 
   /** For the admin item detail: whether the latest version has an icon. */

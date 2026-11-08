@@ -1,12 +1,15 @@
 import {
   Callout,
   Card,
+  CardGrid,
   EmptyState,
   Grid,
   ItemList,
+  ObjectCard,
   ObjectList,
   ObjectRow,
 } from "@capybara-hq/design";
+import { PLUGIN_ICON_FIXTURE } from "@capybara-hq/design/fixtures";
 import { Row, Section } from "../frame";
 
 const noop = () => {};
@@ -87,6 +90,45 @@ export function ObjectsSection() {
               menu={[{ label: "停用", onSelect: noop }]}
             />
           </ObjectList>
+        </Grid>
+      </Row>
+      <Row label="插件图标作标记（§6.17，2026-11-08）：有图标画图标，没有或加载失败画首字">
+        <Grid columns={1}>
+          <ObjectList label="插件图标">
+            <ObjectRow
+              mark={{ text: "客服机器人", image: PLUGIN_ICON_FIXTURE }}
+              name="客服机器人"
+              description="Slack"
+              meta="研究助手 · 提示绑定"
+              state={{ label: "运行中", tone: "ok" }}
+            />
+            <ObjectRow
+              mark={{ text: "飞书助手", image: "/dev/ui/missing-icon.svg" }}
+              name="飞书助手"
+              description="飞书（图标加载失败：首字）"
+              state={{ label: "已停用", tone: "muted" }}
+            />
+          </ObjectList>
+          <CardGrid label="渠道卡片">
+            <ObjectCard
+              key="a"
+              avatar={{ image: PLUGIN_ICON_FIXTURE }}
+              title="客服机器人"
+              href="/dev/ui/components"
+              description="Slack"
+              meta={["研究助手", "提示绑定"]}
+              state={{ label: "运行中", tone: "ok" }}
+            />
+            <ObjectCard
+              key="b"
+              avatar={{ image: null }}
+              title="飞书助手"
+              href="/dev/ui/components"
+              description="connect failed with status 503"
+              meta={["飞书", "研究助手", "匿名访客"]}
+              state={{ label: "出错", tone: "fail" }}
+            />
+          </CardGrid>
         </Grid>
       </Row>
       <Row label="Callout · 说明 / 警告 / 失败">

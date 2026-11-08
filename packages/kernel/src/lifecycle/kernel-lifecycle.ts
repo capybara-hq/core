@@ -74,6 +74,8 @@ export const STOP_BUDGET_MS = {
 
 /** 停机时留给渠道长连接交还租约的最少时间（与 runs 阶段并行开始，runs 用尽预算时仍保底）。 */
 const CHANNELS_STOP_MIN_MS = 2_000;
+/** The time the device connections get to close and hand their leases back. */
+const DEVICES_STOP_MS = 2_000;
 
 /** runs 阶段里留给强制关闭 worker 的余量（预算的其余部分用于等运行到达步骤边界）。 */
 const RUNS_FORCE_CLOSE_MS = 500;
@@ -419,6 +421,9 @@ export class KernelLifecycle
       (gateway?.unsubscribe() ?? Promise.resolve()).catch(() => {}),
       1_000,
     );
+    // Device connections: closed (1001) and their leases handed back before the HTTP server
+    // closes, so the machines reconnect to another gateway replica at once
+    await within("devices", gateway?.stopDevices() ?? Promise.resolve(), DEVICES_STOP_MS);
     // 不再接 reconcile（进行中的那次由宿主关闭收尾）
     await within("plugin-lifecycle", this.extensionLifecycle.stop(), 1_000);
     // http 阶段：等 listen 与关闭 HTTP 共用一个截止时间；listen 卡满预算时关闭只剩 0ms，直接强制断开

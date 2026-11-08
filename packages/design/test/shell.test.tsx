@@ -786,3 +786,29 @@ describe("清理：PageHeader 链接操作", () => {
     expect(ok.length + (bad ? 1 : 0)).toBe(3);
   });
 });
+
+describe("AppShell on iOS: the document scrolled by the keyboard goes back to the top", () => {
+  it("after a text field loses focus with the keyboard closed, the document returns to the top", async () => {
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback) => {
+        cb(0);
+        return 1;
+      });
+    zh(shell(<input aria-label="消息" />));
+    const input = screen.getByRole("textbox", { name: "消息" });
+    input.focus();
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 120 });
+    act(() => input.blur());
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    // Not scrolled: nothing to put back
+    scrollTo.mockClear();
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 0 });
+    input.focus();
+    act(() => input.blur());
+    expect(scrollTo).not.toHaveBeenCalled();
+    scrollTo.mockRestore();
+    raf.mockRestore();
+  });
+});

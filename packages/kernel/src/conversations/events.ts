@@ -300,9 +300,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       sender: MessageSenderSchema.optional(),
       /**
-       * The sender's time zone (IANA) and language at send time (run context spec §3.4): the
-       * account setting, else the browser's, else the org defaults. Not model-visible: the next
-       * run's `run_context` is derived from them.
+       * The sender's time zone (IANA) and language at send time (run context spec §3.4): an IM
+       * platform's values, the account setting, the browser's, the person's latest web language,
+       * the org defaults (`readMessageContext`). Not model-visible: the next run's `run_context`
+       * is derived from them.
        */
       timeZone: z.string().min(1).max(64).optional(),
       locale: z.enum(RUN_CONTEXT_LOCALES).optional(),
@@ -530,6 +531,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   ev(
     "tools_changed",
     z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
+  ),
+  /**
+   * The directories of the instance a sandbox tool call entered, when they differ from the
+   * defaults (environments spec §13.1: a connected machine's real paths). Written once per
+   * conversation and roots, before that call's result. **Model-visible**: rendered at its position
+   * as a system message (`environmentPathsText`); a summary covering it is followed by the latest
+   * one again.
+   */
+  ev(
+    "environment_paths",
+    z.object({
+      roots: z.object({
+        workspace: z.string().min(1).max(4096),
+        skills: z.string().min(1).max(4096),
+        tmp: z.string().min(1).max(4096),
+      }),
+    }),
   ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(

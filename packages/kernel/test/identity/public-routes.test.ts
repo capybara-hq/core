@@ -32,8 +32,13 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/themes/:id/:version/theme.css",
   "GET /api/v1/themes/:id/:version/assets/:file",
   "GET /api/v1/platform/theme",
+  // Device sign-in (environments spec §13.3): the program has no credential yet
+  "POST /api/v1/device/authorize",
+  "POST /api/v1/device/token",
   // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
   "POST /channels/webhook/:connectionId",
+  // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)
+  "GET /device/connect",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

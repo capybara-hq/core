@@ -1483,6 +1483,66 @@ export const KernelConfigSchema = z.object({
               "Most personal environments a member may have in one org, the default one included; creating one more fails with environment.limit_reached",
           }),
         ),
+      device: z
+        .object({
+          reconnectGraceSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(120)
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "Seconds a connected machine may stay disconnected before its environment is reported offline; also sent to the device program at sign-in",
+              }),
+            ),
+          leaseTtlMs: z
+            .number()
+            .int()
+            .min(6000)
+            .default(30000)
+            .meta(
+              meta({
+                description:
+                  "Milliseconds the replica holding a machine's connection keeps its lease without renewing it; at least 6000",
+              }),
+            ),
+          authCodeTtlSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(600)
+            .meta(
+              meta({
+                description:
+                  "Seconds a device sign-in code stays valid before the program must start over (device.expired)",
+              }),
+            ),
+          pollIntervalSeconds: z
+            .number()
+            .int()
+            .positive()
+            .default(5)
+            .meta(
+              meta({
+                description:
+                  "Seconds the device program waits between token polls during sign-in; polling faster gets device.slow_down",
+              }),
+            ),
+          maxFrameBytes: z
+            .number()
+            .int()
+            .positive()
+            .default(16 * 1024 * 1024)
+            .meta(
+              meta({
+                description:
+                  "Largest WebSocket frame in bytes accepted from or sent to a connected machine",
+              }),
+            ),
+        })
+        .prefault({} as never),
     })
     .prefault({} as never),
   evals: z

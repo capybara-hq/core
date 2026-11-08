@@ -42,14 +42,14 @@ describe("adaptToFeatures（Ruling A33）", () => {
     expect(r.target).toEqual({ chatId: "g1", chatType: "group" });
   });
 
-  it("features.cards = false：审批卡片里模型给的标题与输入预览放在代码里，不成为链接", () => {
+  it("features.cards = false: the model-given title and call summary go into code, never links", () => {
     const approval: ChannelCard = {
       kind: "approval",
       id: "ap_1",
       title: "[Approve now](https://evil.example/a)",
       toolName: "t",
       agentName: "A",
-      inputPreview: '{"u":"[x](https://evil.example/b)"}',
+      inputPreview: "Fetch: [x](https://evil.example/b)",
       scopes: ["once"],
       expiresAt: "2026-10-19T12:00:00.000Z",
       state: "pending",
@@ -62,6 +62,6 @@ describe("adaptToFeatures（Ruling A33）", () => {
       "en",
     );
     expect(r.message.text).toContain("[Approval] `[Approve now](https://evil.example/a)`");
-    expect(r.message.text).toContain('Input: `{"u":"[x](https://evil.example/b)"}`');
+    expect(r.message.text).toContain("Summary: `Fetch: [x](https://evil.example/b)`");
   });
 });

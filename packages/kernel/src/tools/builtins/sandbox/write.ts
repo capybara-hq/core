@@ -2,6 +2,7 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import { lineDiff, TOOL_VIEW_DIFF_MAX_BYTES, viewPath } from "../../view.js";
 import {
+  checkPathShape,
   checkWritable,
   clip,
   display,
@@ -28,8 +29,8 @@ const SPEC: ToolSpec = {
   description:
     "Write a text file in this conversation's sandbox, creating parent directories as needed. " +
     "Each call replaces the whole file (it is created if missing). Use it to create scripts, " +
-    "source files and data files. The path is absolute, under /workspace or /tmp (/skills is " +
-    "read-only). Read an existing file first; overwriting a file you have not read, or one changed " +
+    "source files and data files. The path is absolute, under the workspace directory or the " +
+    "temporary files directory (the skills directory is read-only). Read an existing file first; overwriting a file you have not read, or one changed " +
     "since you read it, fails. To change part of an existing file, use Edit instead; to give a file to " +
     "the user, use Deliver.",
   inputSchema: {
@@ -38,7 +39,7 @@ const SPEC: ToolSpec = {
       file_path: {
         type: "string",
         minLength: 1,
-        description: 'Absolute path of the file, e.g. "/workspace/report.md".',
+        description: "Absolute path of the file, e.g. report.md in the workspace directory.",
       },
       content: { type: "string", description: "The complete new content of the file." },
     },
@@ -72,36 +73,42 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
     unavailable: unavailableWhenNoSandbox(deps),
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
-      const path = checkWritable((input as WriteInput).file_path);
       const data = new TextEncoder().encode((input as WriteInput).content);
-      const { value, notices } = await inSandbox(deps, ctx, ({ environmentId, h, p, signal }) =>
-        // stat, read the previous content, write: one holder at a time per file
-        withPathLease(deps, { environmentId }, path, signal, async (signal) => {
-          const st = await p.stat(h, path, signal);
-          if (st?.isDir) throw new ToolError(isDirectory(path));
-          // the previous content: for the read-before-write check, and the diff on the row (display
-          // only: a file too large or binary to diff just leaves the view without hunks)
-          let previous: string | null = "";
-          if (st !== null) {
-            const got = await p.readFile(h, path, { maxBytes: READ_MAX_BYTES, signal });
-            if (got === null) throw new ToolError(vanished(path));
-            await assertReadAndUnchanged(
-              deps,
-              ctx.conversationId,
-              path,
-              fileStateOf(got.data, st.size),
-            );
-            previous =
-              st.size > PREVIOUS_MAX_BYTES ||
-              got.truncated ||
-              looksBinary(got.data) ||
-              got.data.includes(0)
-                ? null
-                : new TextDecoder().decode(got.data);
-          }
-          await p.writeFile(h, path, data, signal);
-          return { existed: st !== null, previous };
-        }),
+      checkPathShape((input as WriteInput).file_path, "file_path");
+      let path = "";
+      const { value, notices } = await inSandbox(
+        deps,
+        ctx,
+        ({ environmentId, h, roots, p, signal }) => {
+          path = checkWritable((input as WriteInput).file_path, roots);
+          // stat, read the previous content, write: one holder at a time per file
+          return withPathLease(deps, { environmentId }, path, signal, async (signal) => {
+            const st = await p.stat(h, path, signal);
+            if (st?.isDir) throw new ToolError(isDirectory(path));
+            // the previous content: for the read-before-write check, and the diff on the row (display
+            // only: a file too large or binary to diff just leaves the view without hunks)
+            let previous: string | null = "";
+            if (st !== null) {
+              const got = await p.readFile(h, path, { maxBytes: READ_MAX_BYTES, signal });
+              if (got === null) throw new ToolError(vanished(path));
+              await assertReadAndUnchanged(
+                deps,
+                ctx.conversationId,
+                path,
+                fileStateOf(got.data, st.size),
+              );
+              previous =
+                st.size > PREVIOUS_MAX_BYTES ||
+                got.truncated ||
+                looksBinary(got.data) ||
+                got.data.includes(0)
+                  ? null
+                  : new TextDecoder().decode(got.data);
+            }
+            await p.writeFile(h, path, data, signal);
+            return { existed: st !== null, previous };
+          });
+        },
       );
       const { existed, previous } = value;
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;

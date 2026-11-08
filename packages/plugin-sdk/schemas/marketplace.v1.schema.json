@@ -129,6 +129,20 @@
             "maxLength": 2000,
             "pattern": "^https:\\/\\/\\S+$"
           },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "pattern": "^https:\\/\\/[^\\s?#]+\\.(?:[sS][vV][gG]|[pP][nN][gG])(?:\\?[^\\s#]*)?$"
+              },
+              {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^\\.\\/[^\\s?#]+\\.(?:[sS][vV][gG]|[pP][nN][gG])$"
+              }
+            ]
+          },
           "deprecated": {
             "anyOf": [
               {

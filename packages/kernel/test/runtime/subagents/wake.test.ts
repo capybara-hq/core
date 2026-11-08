@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelRequest } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
@@ -17,6 +17,7 @@ import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { reconstructRequest } from "../../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../../src/evals/snapshot.js";
+import { environmentPathsText } from "../../../src/runtime/context/environment-paths.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
@@ -430,7 +431,11 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     const sent = parentRequests("SCENARIO absorb");
     expect(sent).toHaveLength(3);
     expect(systemTexts(sent[1])).toEqual([]);
-    expect(systemTexts(sent[2])).toEqual([renderSubagentDelivery(delivery.payload)]);
+    // ruling R22: the step's first sandbox call recorded the environment's directories
+    expect(systemTexts(sent[2])).toEqual([
+      renderSubagentDelivery(delivery.payload),
+      environmentPathsText(DEFAULT_SANDBOX_ROOTS),
+    ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
     ).toBeGreaterThanOrEqual(delivery.seq);
@@ -464,7 +469,11 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
     expect(all.map((d) => d.seq)).toContain(Number(wake.trigger_seq));
     const wakeRequests = parentRequests("SCENARIO trio").slice(2);
     expect(wakeRequests).toHaveLength(2);
-    expect(systemTexts(wakeRequests[1])).toEqual(all.map((d) => renderSubagentDelivery(d.payload)));
+    expect(systemTexts(wakeRequests[1])).toEqual([
+      ...all.map((d) => renderSubagentDelivery(d.payload)),
+      // ruling R22: the wake run's first sandbox call recorded the environment's directories
+      environmentPathsText(DEFAULT_SANDBOX_ROOTS),
+    ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
     // everything consumed: no delayed wake waits for this conversation
     const queue = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));

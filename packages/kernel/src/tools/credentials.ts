@@ -46,6 +46,8 @@ export type OAuthAuth =
       client: "dcr" | "manual";
       /** 令牌端点的客户端认证方式（有密钥时），默认 client_secret_basic。 */
       tokenAuthMethod?: "client_secret_basic" | "client_secret_post" | undefined;
+      /** More `token_type` values accepted as bearer tokens (besides Bearer and `user`). */
+      tokenTypes?: string[] | undefined;
     }
   | {
       type: "oauth_client";
@@ -53,6 +55,7 @@ export type OAuthAuth =
       tokenUrl: string;
       scopes?: string[] | undefined;
       tokenAuthMethod?: "client_secret_basic" | "client_secret_post" | undefined;
+      tokenTypes?: string[] | undefined;
     };
 
 export type ConnectorAuth = StaticAuth | OAuthAuth;

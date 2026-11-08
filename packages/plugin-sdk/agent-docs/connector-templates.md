@@ -30,6 +30,7 @@ The file is strict. Top-level fields:
 | `displayName` | object | yes |
 | `description` | string | no |
 | `icon` | string | no |
+| `defaultEnabled` | boolean | no |
 | `template` | object | yes |
 <!-- /generated -->
 

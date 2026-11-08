@@ -80,7 +80,13 @@ import {
   UI_VIEW_KEY_PREFIX,
 } from "./permission-set.js";
 import { type ExtensionPointEntry, ExtensionRegistry } from "./registry.js";
-import { ExtensionResolveError, resolveExtensions } from "./resolve.js";
+import {
+  ExtensionResolveError,
+  electSingleProviders,
+  PROVIDER_CONFLICT,
+  providerConflictMessage,
+  resolveExtensions,
+} from "./resolve.js";
 import {
   type ExtensionLoadStatus,
   type ExtensionSource,
@@ -228,8 +234,39 @@ async function permissionSets(
   return sets;
 }
 
+/**
+ * The single-provider extension points `manifest` provides that `others` already provide, with
+ * those providers (a `conflict` pending's {@link PendingExtension.conflicts}).
+ */
+function conflictsOf(
+  manifest: ExtensionManifest,
+  others: ExtensionManifest[],
+): { extensionPoint: string; providers: string[] }[] {
+  return manifest.provides
+    .filter((ref) => EXTENSION_POINT_CARDINALITY[parseExtensionPoint(ref).name] === "single")
+    .map((extensionPoint) => ({
+      extensionPoint,
+      providers: others
+        .filter((m) => m.name !== manifest.name && m.provides.includes(extensionPoint))
+        .map((m) => m.name),
+    }))
+    .filter((c) => c.providers.length > 0);
+}
+
+/** The replica status reason of a pending extension (`new` / `added` are both `approval`). */
+function pendingReasonOf(p: PendingExtension): PendingReason {
+  return p.reason === "dependency" || p.reason === "conflict" ? p.reason : "approval";
+}
+
 /** 待批准插件的 warn 日志：点名插件、原因与新增项（依赖原因写明阻塞的能力与提供方）。 */
 function warnPending(log: KernelDeps["log"], p: PendingExtension): void {
+  if (p.reason === "conflict") {
+    log.warn(
+      "extension not loaded: it provides a single-provider extension point another extension already provides (disable that one and this one loads, no restart)",
+      { plugin: p.plugin, version: p.version, conflicts: p.conflicts },
+    );
+    return;
+  }
   if (p.reason === "dependency") {
     const missing = (p.blockedBy ?? []).some((b) => b.providers.length === 0);
     log.warn(
@@ -827,7 +864,7 @@ export class ExtensionHost {
         // the first pass unloads nothing; the second skips what the first loaded.
         const inPg = desired.filter((d) => d.blobStore === "pg");
         if (inPg.length > 0 && inPg.length < desired.length) {
-          await this.applyInstalls(p.installs, inPg, true);
+          await this.applyInstalls(p.installs, inPg, true, desired);
         }
         installProviders = await this.applyInstalls(p.installs, desired, true);
       }
@@ -973,10 +1010,23 @@ export class ExtensionHost {
     loader: InstalledExtensionLoader,
     desired: DesiredExtension[],
     startup: boolean,
+    /**
+     * Every install record desired enabled, in {@link ExtensionInstalls.desired} order (the
+     * single-provider election runs over all of them even when `desired` is the startup's first
+     * pass over the packages kept in PG).
+     */
+    electAmong: DesiredExtension[] = desired,
   ): Promise<Map<ExtensionPointRef, string[]>> {
     const declared = this.declared();
     const installProviders = new Map<ExtensionPointRef, string[]>();
     const wanted = new Map<string, DesiredExtension>();
+    // Single-provider election: of the enabled install records providing one single-provider
+    // extension point, only the earliest enabled is loaded (desired() order: enabled_at, install
+    // time, name). Decided from PG alone, never from what loaded here, so every replica and every
+    // restart picks the same one. Two enabled providers only remain from before a second enable
+    // was refused; the others are pending / conflict until the super admin disables one. A loser
+    // provides nothing (left out of `installProviders`, so `blockedBy` never names it).
+    const { losers } = electSingleProviders(electAmong.filter((d) => !declared.has(d.name)));
     for (const d of desired) {
       const taken = declared.get(d.name);
       if (taken) {
@@ -994,6 +1044,7 @@ export class ExtensionHost {
         }
         continue;
       }
+      if (losers.has(d.name)) continue;
       wanted.set(d.name, d);
       // 按审阅过的静态清单（不论随后加载成败）
       for (const cap of d.section.manifest.provides as ExtensionPointRef[]) {
@@ -1011,7 +1062,7 @@ export class ExtensionHost {
       if (gone) changed.push(...gone.manifest.provides);
     }
     for (const [name, row] of [...this.installRows]) {
-      if (wanted.has(name) || this.registry.current(name)) continue;
+      if (wanted.has(name) || losers.has(name) || this.registry.current(name)) continue;
       this.dropPending(name);
       this.prepared.delete(name);
       this.importedManifests.delete(name);
@@ -1070,21 +1121,29 @@ export class ExtensionHost {
     }
     for (const c of remaining) {
       let detail = "cannot resolve the plugin's dependencies";
+      let conflict = false;
       try {
         tryResolve(c);
       } catch (e) {
         detail = errMsg(e);
+        conflict = e instanceof ExtensionResolveError && e.code === PROVIDER_CONFLICT;
       }
+      // A single-provider point another extension already provides: a conflict, not a missing
+      // dependency. Converge tries it again on every pass, so it loads once the other is gone.
+      const reason: PendingReason = conflict ? "conflict" : "dependency";
       this.notePending({
         plugin: c.d.name,
         version: c.d.version,
         added: [],
         removed: [],
-        reason: "dependency",
+        reason,
         blockedBy: (c.manifest.requires ?? []).map((extensionPoint) => ({
           extensionPoint,
           providers: (installProviders.get(extensionPoint) ?? []).filter((n) => n !== c.d.name),
         })),
+        ...(conflict && {
+          conflicts: conflictsOf(c.manifest, [...base(), ...accepted.map((a) => a.manifest)]),
+        }),
       });
       await this.writeStatus({
         plugin: c.d.name,
@@ -1092,11 +1151,12 @@ export class ExtensionHost {
         sha256: c.d.sha256,
         source: "install",
         state: "pending",
-        reason: "dependency",
+        reason,
         detail,
       });
     }
     if (accepted.length === 0) {
+      await this.noteLosers(desired, losers);
       if (!startup && changed.length > 0) await this.cascade(changed, drainMs);
       return installProviders;
     }
@@ -1133,8 +1193,47 @@ export class ExtensionHost {
         changed.push(...inst.manifest.provides, ...(old?.manifest.provides ?? []));
       }
     }
+    await this.noteLosers(desired, losers);
     if (!startup && changed.length > 0) await this.cascade(changed, drainMs, activated);
     return installProviders;
+  }
+
+  /**
+   * Marks the losers of the single-provider election pending / conflict, naming the winner; after
+   * this pass loaded what it could, so a winner not loaded here (failed, pending) is known: the
+   * election stays (replicas must agree), but the loser's detail says the point has no running
+   * provider and the admin view warns about it.
+   */
+  private async noteLosers(
+    desired: DesiredExtension[],
+    losers: Map<string, { extensionPoint: string; winner: string }>,
+  ): Promise<void> {
+    for (const d of desired) {
+      const lost = losers.get(d.name);
+      if (!lost) continue;
+      const unloaded = this.registry.current(lost.winner) === undefined;
+      this.notePending({
+        plugin: d.name,
+        version: d.version,
+        added: [],
+        removed: [],
+        reason: "conflict",
+        conflicts: [{ extensionPoint: lost.extensionPoint, providers: [lost.winner] }],
+      });
+      await this.writeStatus({
+        plugin: d.name,
+        version: d.version,
+        sha256: d.sha256,
+        source: "install",
+        state: "pending",
+        reason: "conflict",
+        detail: providerConflictMessage(
+          lost.extensionPoint,
+          [lost.winner, d.name],
+          unloaded ? lost.winner : undefined,
+        ),
+      });
+    }
   }
 
   /**
@@ -1507,8 +1606,7 @@ export class ExtensionHost {
       ) {
         warnPending(this.log, decision.pending);
       }
-      const reason: PendingReason =
-        decision.pending.reason === "dependency" ? "dependency" : "approval";
+      const reason = pendingReasonOf(decision.pending);
       await this.writeStatus({ ...base, state: "pending", reason, detail: null });
       return undefined;
     }
@@ -1880,7 +1978,7 @@ export class ExtensionHost {
     if (at >= 0) this.pendingPlugins[at] = p;
     else this.pendingPlugins.push(p);
     if (before?.reason === p.reason) return;
-    const reason: PendingReason = p.reason === "dependency" ? "dependency" : "approval";
+    const reason = pendingReasonOf(p);
     await this.writeStatus({
       plugin: p.plugin,
       version: a.manifest.version,

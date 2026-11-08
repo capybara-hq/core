@@ -529,6 +529,305 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     },
   );
 
+  it.each(LOCALES)(
+    "a single-provider conflict reads 冲突 (not 依赖缺失) and the Sheet names the provider to disable (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const docker = plugin({
+        name: "sandbox-docker",
+        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+        permissions: [group("provides", ["sandbox@2"])],
+      });
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "conflict",
+        permissions: [group("provides", ["sandbox@2"])],
+        replicas: [
+          {
+            replicaId: "web-1-111-aaaaaa",
+            version: "1.0.0",
+            state: "pending",
+            reason: "conflict",
+            detail:
+              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b",
+            heartbeatAt: HEARTBEAT,
+          },
+        ],
+        conflict: {
+          extensionPoint: "sandbox@2",
+          providers: [
+            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+          ],
+        },
+      });
+      listRoutes([docker, e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const row = tableRow(locale === "zh" ? "E2B 沙箱" : "E2B sandbox");
+      expect(within(row).getByText(p.status.conflict)).toBeTruthy();
+      expect(within(row).queryByText(p.status.dependency)).toBeNull();
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.conflictLine, {
+        point: msgs[locale].extensions.capability.sandbox,
+        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      if (locale === "zh") {
+        expect(p.status.conflict).toBe("冲突");
+        expect(line).toBe(
+          "沙箱只能启用一个提供方：Docker 沙箱已启用，先停用它，E2B 沙箱就会加载。",
+        );
+      }
+      expect(within(sheet).getAllByText(p.detail.replicaReason.conflict).length).toBeGreaterThan(0);
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it.each(LOCALES)(
+    "a second sandbox while another is enabled: 启用 is off, the line names the one to disable first and links to it (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const docker = plugin({
+        name: "sandbox-docker",
+        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+        permissions: [group("provides", ["sandbox@2"])],
+      });
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "disabled",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        replicas: [],
+        permissions: [group("provides", ["sandbox@2"])],
+        enableBlocked: {
+          extensionPoint: "sandbox@2",
+          enabled: {
+            name: "sandbox-docker",
+            displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+          },
+        },
+      });
+      const calls = listRoutes([docker, e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.enableBlocked, {
+        point: msgs[locale].extensions.capability.sandbox,
+        other: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      if (locale === "zh") {
+        expect(line).toBe("沙箱只能启用一个提供方：请先停用 Docker 沙箱，再启用 E2B 沙箱。");
+      }
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      const enable = within(sheet).getByRole("button", { name: p.detail.actions.enable });
+      expect((enable as HTMLButtonElement).disabled).toBe(true);
+      await user.click(enable);
+      expect(calls.some((c) => c.method === "POST")).toBe(false);
+      const link = within(sheet).getByRole("link", {
+        name: fill(p.detail.openOther, {
+          name: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        }),
+      });
+      expect(link.getAttribute("href")).toBe("/admin/extensions/sandbox-docker");
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("an enable the kernel refuses for a single-provider point shows the actionable line, not a raw error", async () => {
+    const disabled = plugin({
+      status: "disabled",
+      desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      replicas: [],
+      permissions: [group("provides", ["sandbox@2"])],
+    });
+    detailRoutes(disabled, {
+      "POST /api/v1/admin/extensions/demo/enable": () =>
+        json(409, {
+          error: {
+            code: "extension.single_provider_enabled",
+            message:
+              "Only one extension may provide sandbox@2; disable Other sandbox first, then enable demo",
+            details: [
+              {
+                extensionPoint: "sandbox@2",
+                enabled: {
+                  name: "other-sbx",
+                  displayName: { zh: "别的沙箱", en: "Other sandbox" },
+                },
+              },
+            ],
+          },
+        }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const p = en.admin.extensions;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
+    const line = fill(p.detail.enableBlocked, {
+      point: en.extensions.capability.sandbox,
+      other: "Other sandbox",
+      name: "demo",
+    });
+    expect(await screen.findByText(line)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: p.detail.actions.enable }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("link", { name: fill(p.detail.openOther, { name: "Other sandbox" }) })
+        .getAttribute("href"),
+    ).toBe("/admin/extensions/other-sbx");
+  });
+
+  it.each(LOCALES)(
+    "a point a required plugin holds: 启用 is off and the line says it can't be replaced (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const s3Name = { zh: "S3 对象存储", en: "S3 object store" };
+      const s3 = plugin({
+        name: "object-store-s3",
+        displayName: s3Name,
+        required: true,
+        permissions: [group("provides", ["object-store@1"])],
+      });
+      const other = plugin({
+        name: "object-store-other",
+        displayName: { zh: "另一个对象存储", en: "Other object store" },
+        status: "disabled",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        replicas: [],
+        permissions: [group("provides", ["object-store@1"])],
+        enableBlocked: {
+          extensionPoint: "object-store@1",
+          enabled: { name: "object-store-s3", displayName: s3Name },
+          required: true,
+        },
+      });
+      listRoutes([s3, other]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "另一个对象存储" : "Other object store", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.enableBlockedRequired, {
+        point: msgs[locale].extensions.capability.objectStore,
+        other: s3Name[locale],
+      });
+      if (locale === "zh") {
+        expect(line).toBe("对象存储由部署必需的插件「S3 对象存储」提供，不能替换。");
+      }
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      expect(
+        (within(sheet).getByRole("button", { name: p.detail.actions.enable }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    },
+  );
+
+  it("an enable refused because a required plugin holds the point shows the can't-replace line", async () => {
+    const disabled = plugin({
+      status: "disabled",
+      desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      replicas: [],
+      permissions: [group("provides", ["object-store@1"])],
+    });
+    detailRoutes(disabled, {
+      "POST /api/v1/admin/extensions/demo/enable": () =>
+        json(409, {
+          error: {
+            code: "extension.single_provider_required",
+            message:
+              "object-store@1 is provided by the required plugin S3 object store; it can't be replaced",
+            details: [
+              {
+                extensionPoint: "object-store@1",
+                enabled: {
+                  name: "object-store-s3",
+                  displayName: { zh: "S3 对象存储", en: "S3 object store" },
+                },
+                required: true,
+              },
+            ],
+          },
+        }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const p = en.admin.extensions;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
+    const line = fill(p.detail.enableBlockedRequired, {
+      point: en.extensions.capability.objectStore,
+      other: "S3 object store",
+    });
+    expect(await screen.findByText(line)).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "the elected provider is not running: the list callout and the Sheet say the point has no running provider (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "conflict",
+        permissions: [group("provides", ["sandbox@2"])],
+        replicas: [
+          {
+            replicaId: "web-1-111-aaaaaa",
+            version: "1.0.0",
+            state: "pending",
+            reason: "conflict",
+            detail:
+              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so sandbox@2 has no running provider",
+            heartbeatAt: HEARTBEAT,
+          },
+        ],
+        conflict: {
+          extensionPoint: "sandbox@2",
+          providers: [
+            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+          ],
+          unprovided: true,
+        },
+      });
+      listRoutes([e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const sandbox = msgs[locale].extensions.capability.sandbox;
+      const noProvider = fill(p.calloutNoProvider, { point: sandbox });
+      if (locale === "zh") expect(noProvider).toBe("沙箱没有正在运行的提供方。");
+      expect(screen.getByText(noProvider, { exact: false })).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.noProviderLine, {
+        point: sandbox,
+        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      expect(within(sheet).getByText(line)).toBeTruthy();
+    },
+  );
+
   it("in the Sheet the failed replicas are the fail line, not the tinted callout (spec §6.19)", async () => {
     const split = plugin({
       status: "failed",
@@ -708,6 +1007,34 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
     ...extra,
   });
 }
+
+describe("plugin icons on the admin extension pages (maintainer decision 2026-11-08)", () => {
+  const ICON = "/api/v1/admin/catalog/items/i1/icon?v=1.0.0";
+
+  it("a row draws its plugin's icon on the name tile; one without an icon its initial", async () => {
+    listRoutes([plugin({ icon: ICON }), plugin({ name: "quiet", icon: null })]);
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "en" });
+    const demo = tableRow("demo").querySelector(".cb-cell-initial") as HTMLElement;
+    const img = demo.querySelector('img[data-part="mark-image"]');
+    expect(img?.getAttribute("src")).toBe(ICON);
+    expect(img?.getAttribute("alt")).toBe("");
+    const quiet = tableRow("quiet").querySelector(".cb-cell-initial") as HTMLElement;
+    expect(quiet.querySelector("img")).toBeNull();
+    expect(quiet.textContent).toBe("Q");
+    // the Sheet's head carries the same mark
+    await userEvent.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+    const sheet = await screen.findByRole("dialog", { name: "demo" });
+    const head = sheet.querySelector(".cb-sheet-head") as HTMLElement;
+    expect(head.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
+  });
+
+  it("the detail page's head draws the icon", async () => {
+    listRoutes([plugin({ icon: ICON })]);
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const avatar = document.querySelector('[data-part="page-header-avatar"]') as HTMLElement;
+    expect(avatar.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
+  });
+});
 
 describe("/admin/extensions/[name] (DetailPage)", () => {
   it.each(LOCALES)(

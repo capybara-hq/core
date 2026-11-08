@@ -73,6 +73,31 @@ export const keys = {
       channel: (channelId: string): readonly unknown[] => [...all, "channel", channelId],
       /** A channel plugin's connection schema. */
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
+      /** Where a channel plugin's setup guide is. */
+      channelGuideRef: (plugin: string): readonly unknown[] => [...all, "channelGuideRef", plugin],
+      /** Every rendered setup guide (an invalidation prefix). */
+      setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
+      /**
+       * A plugin's setup guide rendered for a connection / mode / name, at the item's version (an
+       * upgrade reads the new guide; "" where the version is unknown, as on 新建渠道).
+       */
+      setupGuide: (
+        itemId: string,
+        guideId: string,
+        version: string,
+        connectionId: string,
+        mode: string,
+        name: string,
+      ): readonly unknown[] => [
+        ...all,
+        "setupGuide",
+        itemId,
+        guideId,
+        version,
+        connectionId,
+        mode,
+        name,
+      ],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
       /** One extension's two-level config in the org: following or a copy, per-field levels. */
@@ -335,6 +360,11 @@ export const keys = {
        * drops the whole cache anyway.
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
+      /**
+       * The machine waiting behind a device user code (`/device`). Like a binding it needs a
+       * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
+       */
+      pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /** The super admin's inbox (its items). */

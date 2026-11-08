@@ -32,9 +32,11 @@ import {
   parsePluginManifest,
   parseThemeFile,
   SDK_VERSION,
+  setupGuideFileProblem,
   staticManifestOf,
   THEME_LIMITS,
   themeIdOf,
+  unknownSetupGuidePlaceholders,
   validatePluginPackageJsonFor,
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
@@ -231,6 +233,8 @@ const SHIPPED_ELSEWHERE = [
   "skills",
   "connectors",
   "agents",
+  // setup guide templates: the listed files are shipped by contentFiles
+  "guides",
   ".capybara-plugin",
   "README.md",
   "LICENSE",
@@ -481,6 +485,33 @@ async function contentFiles(
     );
   }
 
+  // Setup guides (spec 2026-11-08-plugin-setup-guides-design.md §2): the listed template files,
+  // text within the size limit, and only placeholders the place defines (the kernel leaves an
+  // unknown one visible; the toolchain refuses it so a typo never ships)
+  for (const g of m.setupGuides ?? []) {
+    const at = `${label}: setupGuides ${g.id}`;
+    const unknown = (text: string, where: string) => {
+      const names = unknownSetupGuidePlaceholders(text, g.place);
+      if (names.length > 0) {
+        throw new Error(
+          `${at}: ${where} uses ${names.map((n) => `{{${n}}}`).join(", ")}, which place ${g.place} does not define`,
+        );
+      }
+    };
+    g.steps?.forEach((step, i) => {
+      unknown(step.en, `step ${i + 1}`);
+      if (step.zh !== undefined) unknown(step.zh, `step ${i + 1} (zh)`);
+    });
+    for (const f of g.files ?? []) {
+      const rel = stripDot(f.path);
+      await addFile(rel, `setup guide ${g.id} file`);
+      const data = files.get(rel) as Buffer;
+      const problem = setupGuideFileProblem(f.path, new Uint8Array(data));
+      if (problem !== undefined) throw new Error(`${at}: ${problem}`);
+      unknown(data.toString("utf8"), f.path);
+    }
+  }
+
   return {
     files,
     skills: m.skills?.length ?? scannedSkills,
@@ -657,6 +688,11 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     );
   }
   const ext = hasExtension ? await bundleExtension(dir, label, srcPkg.version) : undefined;
+  if (ext === undefined && source.setupGuides?.some((g) => g.place === "channel-connection")) {
+    throw new Error(
+      `${label}: a channel-connection setup guide needs the plugin's extension to provide channel@1 (src/index.ts)`,
+    );
+  }
 
   const files = new Map<string, Buffer>([...(ext?.files ?? []), ...content.files]);
   const extra = await extraFiles(dir, srcPkg.files);

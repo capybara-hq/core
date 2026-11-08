@@ -336,7 +336,8 @@ export class CatalogScopeService {
       // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
       if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
-    if (disabled) await this.ops.enable(item.name, actor, opts.actorTokenId);
+    // An occupied single-provider point leaves it installed disabled (the admin view says why)
+    if (disabled) await this.ops.enableUnlessOccupied(item.name, actor, opts.actorTokenId);
     await this.enqueue(itemId);
     return (await this.catalog.get(itemId)).item;
   }
@@ -500,7 +501,8 @@ export class CatalogScopeService {
       await this.stillPending(itemId, name, version);
       await this.approvePackage(actor, name, sha, reviewHash, opts);
       await this.stillPending(itemId, name, version);
-      await this.ops.enable(name, actor, opts.actorTokenId);
+      // An occupied single-provider point leaves it installed disabled (the admin view says why)
+      await this.ops.enableUnlessOccupied(name, actor, opts.actorTokenId);
       await this.finishFirstVersion(actor, itemId, version, opts);
     } catch (e) {
       // Taken out only when this confirmation did not win: the item gone or still waiting

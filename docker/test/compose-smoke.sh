@@ -13,7 +13,7 @@
 #   5. object storage on the web origin (the bootstrap plugin object-store-s3): an attachment's
 #      presigned upload and download go through web's proxy (the client uses another Host than the
 #      signed one, like behind a front proxy);
-#   6. networks: web reaches only api and the S3 gateway; the sandbox profile's sandbox-proxy publishes no port and
+#   6. networks: web reaches only api, the gateway (device connections) and the S3 gateway; the sandbox profile's sandbox-proxy publishes no port and
 #      only worker reaches it;
 #   7. PostgreSQL 14 on fresh volumes: init fails with a clear error and api never starts.
 # (`pnpm check` keeps the inline haproxy config in sync with docker/sandbox-proxy/haproxy.cfg.)
@@ -96,15 +96,15 @@ const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))
 for (const [n, s] of Object.entries(cfg.services)) if ((s.ports ?? []).length > 0) console.log(n);
 ' "$TMP/config.json")"
 [ "$PUBLISHED" = "web" ] || fail "services publishing ports: $(echo $PUBLISHED) (expected only web)"
-# frontend holds exactly web and api, objectstore exactly web and the S3 gateway; web is on
-# nothing else.
+# frontend holds exactly web and api, objectstore exactly web and the S3 gateway, devices exactly
+# web and the kernel gateway; web is on nothing else.
 NETS="$(node -e '
 const cfg = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
 const nets = (s) => Object.keys(s.networks ?? { default: null }).sort();
 const on = (net) => Object.entries(cfg.services).filter(([, s]) => nets(s).includes(net)).map(([n]) => n).sort().join(" ");
-console.log(`${on("frontend")} | ${on("objectstore")} | ${nets(cfg.services.web).join(",")}`);
+console.log(`${on("frontend")} | ${on("objectstore")} | ${on("devices")} | ${nets(cfg.services.web).join(",")}`);
 ' "$TMP/config.json")"
-[ "$NETS" = "api web | seaweedfs-s3 web | frontend,objectstore" ] || fail "networks: $NETS"
+[ "$NETS" = "api web | seaweedfs-s3 web | gateway web | devices,frontend,objectstore" ] || fail "networks: $NETS"
 
 if [ "${SKIP_BUILD:-}" != "1" ]; then
   echo "==> building the images (compose.build.yaml)"
@@ -329,7 +329,7 @@ init_log_has "already exists; skipped" || fail "init did not skip the admin"
 bootstrap_once
 [ "$(admin_count)" = "1" ] || fail "expected one super admin after the third up, got $(admin_count)"
 
-echo "==> networks: web reaches only api and the S3 gateway; sandbox-proxy on the internal network only"
+echo "==> networks: web reaches only api, the gateway and the S3 gateway; sandbox-proxy on the internal network only"
 dc --profile sandbox up -d --no-deps sandbox-proxy
 PORT_OUT="$(dc --profile sandbox port sandbox-proxy 2375 2>/dev/null || true)"
 echo "$PORT_OUT" | grep -q ':[0-9]' && fail "sandbox-proxy publishes 2375 at $PORT_OUT"
@@ -342,10 +342,12 @@ s.once("connect", () => done("open")).once("error", () => done("closed"));
 setTimeout(() => done("closed"), 5000);' "$2" "$3"
 }
 for target in postgres:5432 valkey:6379 seaweedfs:8888 seaweedfs:9333 seaweedfs:8080 \
-  worker:8080 gateway:8080; do
+  worker:8080; do
   [ "$(tcp_probe web "${target%%:*}" "${target##*:}")" = "closed" ] || fail "web reaches $target"
 done
 [ "$(tcp_probe web api 8080)" = "open" ] || fail "web cannot reach api:8080"
+# web forwards /device/connect upgrades to the gateway (CAPYBARA_WEB_GATEWAY_URL)
+[ "$(tcp_probe web gateway 8080)" = "open" ] || fail "web cannot reach gateway:8080"
 [ "$(tcp_probe web seaweedfs-s3 8333)" = "open" ] || fail "web cannot reach seaweedfs-s3:8333"
 # The S3 gateway's Iceberg (8181) and Lance (9101) servers are off (gRPC 18333 can't be disabled).
 for p in 8181 9101; do

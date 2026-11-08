@@ -31,19 +31,26 @@ export interface PermissionSnapshot {
  * reason: new = no snapshot (first seen); added = more permissions than the snapshot;
  * dependency = needs no approval itself, but an extension point it `requires` is provided only by
  * extensions pending approval (or not loaded because of that); the same when it declares
- * `permissions.storage` and `object-store@1` has no provider that will load (providers may be empty).
+ * `permissions.storage` and `object-store@1` has no provider that will load (providers may be empty);
+ * conflict = see {@link PendingExtension.conflicts}.
  */
 export interface PendingExtension {
   plugin: string;
   version: string;
   added: string[];
   removed: string[];
-  reason: "new" | "added" | "dependency";
+  reason: "new" | "added" | "dependency" | "conflict";
   /**
    * When reason is dependency: the extension points blocking it and their providers (only providers
    * that are not loading; empty when there is no provider at all).
    */
   blockedBy?: { extensionPoint: string; providers: string[] }[];
+  /**
+   * When reason is conflict (an installed extension, not an approval matter): the single-provider
+   * extension points it provides that other extensions already provide, and those providers. It
+   * loads once they are disabled or uninstalled.
+   */
+  conflicts?: { extensionPoint: string; providers: string[] }[];
 }
 
 /** {@link planApprovals} 对单个插件的结论。 */

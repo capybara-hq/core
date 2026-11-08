@@ -37,7 +37,7 @@ describe("the document never scrolls under the App Shell", () => {
     const shell = decls(css("shell.css"), ".cb-shell");
     expect(shell).toMatch(/position:\s*relative/);
     expect(shell).toMatch(/overflow:\s*clip/);
-    expect(shell).toMatch(/height:\s*100vh/);
+    expect(shell).toMatch(/height:\s*100dvh/);
   });
 
   it("the root does not scroll while an App Shell (not one inside a reference block) is shown", () => {

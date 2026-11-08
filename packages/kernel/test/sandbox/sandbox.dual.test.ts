@@ -108,8 +108,8 @@ describe("沙箱（两个副本）", () => {
       startKernel(cfg([SANDBOX_FAKE])),
     ]);
     kernels.push(k1, k2);
-    expect(k1.app.get(SandboxService).available).toBe(true);
-    expect(k2.app.get(SandboxService).available).toBe(true);
+    expect(k1.app.get(SandboxService).cloudAvailable).toBe(true);
+    expect(k2.app.get(SandboxService).cloudAvailable).toBe(true);
     const ctx = await seedConversation();
     await setFakeSandboxDelays(root, { create: 300 });
 
@@ -162,7 +162,7 @@ describe("沙箱（两个副本）", () => {
   it("没有装沙箱插件的内核：available 为 false，使用时 503 sandbox.unavailable", async () => {
     const k = await startKernel(cfg([]));
     kernels.push(k);
-    expect(k.app.get(SandboxService).available).toBe(false);
+    expect(k.app.get(SandboxService).cloudAvailable).toBe(false);
     const ctx = await seedConversation();
     const err = await k.app
       .get(SandboxService)

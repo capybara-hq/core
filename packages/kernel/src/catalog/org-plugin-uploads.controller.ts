@@ -10,11 +10,11 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import type { ActorOpts, CatalogItemView } from "./catalog.service.js";
+import type { ActorOpts } from "./catalog.service.js";
 import { CatalogScopeService } from "./catalog-scope.service.js";
 import {
   OrgPluginUploads,
-  type OrgUploadOutcome,
+  type OrgUploadResult,
   type OrgUploadReview,
 } from "./org-plugin-uploads.js";
 import {
@@ -108,7 +108,7 @@ export class OrgPluginUploadsController {
     @CurrentOrg() org: OrgContext,
     @ZParam(OrgUploadStagingParamsDto) params: z.infer<typeof StagingParams>,
     @ZBody(OrgUploadConfirmBodyDto) body: z.infer<typeof ConfirmBody>,
-  ): Promise<{ item: CatalogItemView; outcome: OrgUploadOutcome }> {
+  ): Promise<OrgUploadResult> {
     const actor = requireUser(principal);
     return this.uploads.confirm(
       actor.account.id,

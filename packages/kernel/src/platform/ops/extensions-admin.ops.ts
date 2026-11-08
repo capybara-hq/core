@@ -5,6 +5,11 @@ import { type CatalogItemView, CatalogService } from "../../catalog/catalog.serv
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
+import {
+  SINGLE_PROVIDER_ENABLED,
+  SINGLE_PROVIDER_REQUIRED,
+  singleProviderMessage,
+} from "../../extensions/single-provider.js";
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -25,10 +30,20 @@ const EXAMPLE = { name: "model-anthropic" };
 const enName = (v: AdminExtensionView): string => localized(v.displayName, v.name).en;
 
 /** Why an extension does not run, and the super admin's next step (absent when it runs). */
-const why = (v: AdminExtensionView) =>
-  v.status === "enabled"
-    ? {}
-    : unavailableFields(unavailableReason(v.status), enName(v), "superAdmin");
+const why = (v: AdminExtensionView) => {
+  if (v.status === "enabled") return {};
+  const fields = unavailableFields(unavailableReason(v.status), enName(v), "superAdmin");
+  if (v.status !== "conflict" || v.conflict === undefined || v.conflict.providers.length === 0)
+    return fields;
+  // A conflict names the extensions in the way: disabling them is the whole fix.
+  const others = v.conflict.providers.map(
+    (p) => `${localized(p.displayName, p.name).en} (${p.name})`,
+  );
+  return {
+    ...fields,
+    next: `Only one extension may provide ${v.conflict.extensionPoint}, and ${others.join(", ")} already does. Disable it (extensions.platform-disable, or the admin console → Extensions) and ${enName(v)} loads by itself, no restart.`,
+  };
+};
 
 /** An extension as `extensions.platform-list` shows it: a compact row. */
 const row = (v: AdminExtensionView) => ({
@@ -124,7 +139,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-list",
         description:
-          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Extensions only other orgs' own plugins bring are counted (otherOrgExtensions), never listed. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
+          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, conflict, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Extensions only other orgs' own plugins bring are counted (otherOrgExtensions), never listed. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -214,10 +229,26 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             code: "extension.config_declared",
             next: "This extension is declared in the startup config (extensions list): the deployment's config changes it, then a restart.",
           },
+          {
+            code: "extension.single_provider_enabled",
+            next: "Only one extension may provide this extension point and another one is enabled: disable that one first (extensions.platform-disable, named in the error's details), then enable this one.",
+          },
+          {
+            code: "extension.single_provider_required",
+            next: "A required plugin of this deployment provides this extension point; it cannot be disabled, so this extension cannot replace it. Tell the user; there is nothing to retry.",
+          },
         ],
         precheck: async (i, ctx) => {
           const r = await this.viewFor(i.name, ctx.orgId);
-          return r.ok ? { ok: true } : r;
+          if (!r.ok) return r;
+          const block = r.view.enableBlocked;
+          return block === undefined
+            ? { ok: true }
+            : {
+                ok: false,
+                code: block.required === true ? SINGLE_PROVIDER_REQUIRED : SINGLE_PROVIDER_ENABLED,
+                message: singleProviderMessage(block, r.view.name, r.view.displayName),
+              };
         },
         summary: async (i) => {
           const v = await this.admin.get(i.name, { allowUnreadable: true });

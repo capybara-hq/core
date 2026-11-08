@@ -24,6 +24,15 @@ export interface FakeOAuthServerOptions {
   scopesSupported?: string[];
   /** 元数据里的 `code_challenge_methods_supported`；null = 不声明。默认 `["S256"]`。 */
   pkceMethods?: string[] | null;
+  /**
+   * How the token endpoint answers. `"oauth"` (default): RFC 6749 (`token_type: "Bearer"`, errors
+   * as 400 / 401 `{ error }`). `"slack"`: like Slack's `oauth.v2.user.access`: success is
+   * `{ ok: true, token_type: "user", ... }`, every error is HTTP 200 `{ ok: false, error }` with
+   * Slack's codes where they differ (`invalid_code`, `invalid_refresh_token`, `invalid_client_id`).
+   */
+  dialect?: "oauth" | "slack";
+  /** The `token_type` of successful token responses (default: `Bearer`; `user` with dialect slack). */
+  tokenType?: string;
 }
 
 /** 令牌端点收到的一次请求（不含任何密钥）。 */
@@ -34,8 +43,10 @@ export interface FakeTokenRequest {
   scope: string | undefined;
   /** 客户端认证方式：Basic 头、表单里的 client_secret、或只有 client_id。 */
   clientAuth: "basic" | "post" | "none";
-  /** 本次响应的 HTTP 状态。 */
+  /** 本次响应的 HTTP 状态（dialect slack: errors are 200 too). */
   status: number;
+  /** The error code answered, if any (as sent: Slack's code with dialect slack). */
+  error?: string;
 }
 
 export interface FakeOAuthServer {
@@ -52,7 +63,10 @@ export interface FakeOAuthServer {
   issuedSecrets(): string[];
   /** 作废全部 access token（refresh token 仍有效）：资源服务随之返回 401。 */
   revokeAccessTokens(): void;
-  /** 作废全部 refresh token：之后的刷新返回 `invalid_grant`。 */
+  /**
+   * 作废全部 refresh token：之后的刷新返回 `invalid_grant`（dialect slack: HTTP 200
+   * `{ ok: false, error: "invalid_refresh_token" }`）。
+   */
   revokeRefreshTokens(): void;
   /** 下一次授权请求以该 OAuth 错误回跳。 */
   denyNext(error: string, description?: string): void;
@@ -103,6 +117,15 @@ export async function startFakeOAuthServer(
   opts: FakeOAuthServerOptions = {},
 ): Promise<FakeOAuthServer> {
   let dcr = opts.dcr ?? true;
+  const slack = opts.dialect === "slack";
+  const tokenType = opts.tokenType ?? (slack ? "user" : "Bearer");
+  /** RFC 6749 error code -> Slack's code for the same failure (dialect slack). */
+  const slackCode = (error: string, grantType: string): string => {
+    if (error === "invalid_grant")
+      return grantType === "refresh_token" ? "invalid_refresh_token" : "invalid_code";
+    if (error === "invalid_client") return "invalid_client_id";
+    return error;
+  };
   const ttl = opts.accessTokenTtl ?? 3600;
   const clients = new Map<string, Client>(
     (opts.clients ?? []).map((c) => [
@@ -141,7 +164,11 @@ export async function startFakeOAuthServer(
     const accessToken = rand("at_");
     access.set(accessToken, { expiresAt: ttl > 0 ? Date.now() + ttl * 1000 : null });
     secrets.add(accessToken);
-    const body: Record<string, unknown> = { access_token: accessToken, token_type: "Bearer" };
+    const body: Record<string, unknown> = {
+      ...(slack && { ok: true }),
+      access_token: accessToken,
+      token_type: tokenType,
+    };
     if (ttl > 0) body.expires_in = ttl;
     if (scope !== undefined) body.scope = scope;
     if (withRefresh) {
@@ -193,7 +220,13 @@ export async function startFakeOAuthServer(
       return json(res, tokenFailures.status, tokenFailures.body ?? { message: "fake failure" });
     }
     const fail = (status: number, error: string) => {
+      if (slack) {
+        entry.status = 200;
+        entry.error = slackCode(error, grantType);
+        return json(res, 200, { ok: false, error: entry.error });
+      }
       entry.status = status;
+      entry.error = error;
       json(res, status, { error, error_description: `fake: ${error}` });
     };
     const client = authenticate(req, form);

@@ -10,7 +10,9 @@ import {
   Grid,
   Icon,
   Input,
+  initialOf,
   type MenuItem,
+  ObjectMark,
   Select,
   SkeletonText,
   Stack,
@@ -115,10 +117,16 @@ export function ModelCatalog<M extends AdminModelInfo>({
   onChange,
   extras,
   picker,
+  image,
 }: {
   /** The provider's name for the tables' accessible names. */
   provider: string;
   title: string;
+  /**
+   * The provider's plugin icon, drawn as the mark before the picker (the select has no pictures);
+   * null: the title's initial (spec §6.17).
+   */
+  image?: string | null;
   /** Under the title: the provider's id, its configuration state. */
   description?: ReactNode;
   models: M[];
@@ -350,6 +358,7 @@ export function ModelCatalog<M extends AdminModelInfo>({
     <Stack gap={16}>
       {picker !== undefined ? (
         <Stack direction="row" gap={12} align="center" wrap>
+          {image !== undefined && <ObjectMark text={title} image={image} size={28} />}
           {picker}
           {description}
         </Stack>
@@ -370,6 +379,8 @@ export interface ProviderRow {
   /** The provider's plugin: the row's key and the `?provider=` value. */
   plugin: string;
   name: string;
+  /** Its plugin's icon (a kernel icon route); null or absent: the name's initial. */
+  icon?: string | null;
   /** Muted under the name when it is not the name. */
   id?: string;
   /** The models it lists; absent when it has no list here. */
@@ -404,6 +415,8 @@ export function ModelProviders({
       cell: (p) => (
         <CellTitle
           title={p.name}
+          initial={initialOf(p.name)}
+          image={p.icon ?? null}
           mono
           {...(p.id !== undefined && p.id !== p.name ? { description: p.id } : {})}
         />

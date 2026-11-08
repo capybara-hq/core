@@ -30,7 +30,7 @@ export interface TaskReport {
  * processes (it left `server &` running) has the session killed in the same exec (so under the
  * caller's lease), and is reported without a process once the session was confirmed empty: the
  * task ends when its command exits, and nothing of it runs on untracked. The tail (base64) is read
- * only for a task that exited or has no process left. Relative to `/workspace`.
+ * only for a task that exited or has no process left. Relative to the workspace root.
  */
 export function pollScript(tasks: { id: string; sid: string }[]): string {
   const lines = tasks.map(({ id, sid }) => {

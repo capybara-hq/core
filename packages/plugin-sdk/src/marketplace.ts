@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   CATALOG_ITEM_NAME_RE,
+  CONNECTOR_TEMPLATE_LIMITS,
   isSafePackagePath,
   NPM_PACKAGE_NAME_RE,
   SEMVER_VERSION_RE,
@@ -38,6 +39,8 @@ export const MARKETPLACE_LIMITS = {
   plugins: 5000,
   permissionKeys: 500,
   urlChars: 2000,
+  /** Bytes of an entry icon (the plugin icon limit, {@link CONNECTOR_TEMPLATE_LIMITS}). */
+  iconBytes: CONNECTOR_TEMPLATE_LIMITS.iconBytes,
 } as const;
 
 /** Where a marketplace entry's plugin comes from. */
@@ -62,6 +65,18 @@ export interface MarketplaceEntry {
   permissions?: { keys: string[]; sensitive: string[] };
   /** https URL. */
   homepage?: string;
+  /**
+   * The plugin's icon for marketplace lists, before the plugin is imported (display only; an
+   * imported plugin shows its own icon). Either an absolute `https://` URL whose path ends in
+   * `.svg` / `.png`, or `./<path>.svg|png` inside the marketplace's repository, read at the commit
+   * the marketplace was refreshed at (git marketplaces only; ignored in a marketplace fetched over
+   * http). The kernel downloads it on refresh (network rules of the marketplace downloads, never
+   * with the marketplace token), keeps it when it really is an svg / png of at most
+   * {@link MARKETPLACE_LIMITS}`.iconBytes`, and treats a URL's content as fixed: a new icon needs a
+   * new URL. A missing or invalid icon never fails the refresh. `capybara-plugin marketplace
+   * --write` fills it with the repository path of the plugin's `plugin.json` `icon`.
+   */
+  icon?: string;
   /**
    * This version is deprecated (`true`, or with a reason shown to admins): browsing lists it under
    * the plugin's other versions, never as the one to import, and the kernel refuses importing it
@@ -95,6 +110,15 @@ const PERMISSION_KEY_RE = /^[a-z][a-z.]{0,62}(?::[^\r\n]{1,256})?$/;
 const SHA256_INTEGRITY_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;
 const COMMIT_RE = /^[0-9a-f]{40}$/;
 const HTTPS_URL_RE = /^https:\/\/\S+$/;
+/** An entry icon's file extension (of the URL's path, or of the repository path). */
+export const MARKETPLACE_ICON_RE = /\.(?:svg|png)$/i;
+// Spelled without the `i` flag so the generated JSON Schema keeps the rule
+const ICON_EXT = "\\.(?:[sS][vV][gG]|[pP][nN][gG])";
+const ICON_URL_RE = new RegExp(`^https://[^\\s?#]+${ICON_EXT}(?:\\?[^\\s#]*)?$`);
+const ICON_URL_OR_LOOPBACK_RE = new RegExp(
+  `^(?:https://[^\\s?#]+|http://(?:127\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}|localhost|\\[::1\\])(?::\\d{1,5})?/[^\\s?#]*)${ICON_EXT}(?:\\?[^\\s#]*)?$`,
+);
+const ICON_PATH_RE = new RegExp(`^\\./[^\\s?#]+${ICON_EXT}$`);
 const HTTPS_OR_LOOPBACK_RE =
   /^(?:https:\/\/\S+|http:\/\/(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost|\[::1\])(?::\d{1,5})?(?:\/\S*)?)$/;
 
@@ -120,6 +144,15 @@ const exactVersion = (what: string) =>
     .string()
     .max(256)
     .regex(SEMVER_VERSION_RE, { message: `${what} must be an exact semver version` });
+
+/** The path of a URL (empty when it does not parse). */
+const urlPathname = (s: string): string => {
+  try {
+    return new URL(s).pathname;
+  } catch {
+    return "";
+  }
+};
 
 /** `./<safe path>` inside the marketplace repo. */
 const repoPath = z
@@ -211,6 +244,15 @@ function buildSchema(opts: MarketplaceParseOptions) {
       })
       .optional(),
     homepage: urlString(HTTPS_URL_RE).optional(),
+    icon: z
+      .union([
+        urlString(opts.allowInsecureLoopback ? ICON_URL_OR_LOOPBACK_RE : ICON_URL_RE).refine(
+          (s) => MARKETPLACE_ICON_RE.test(urlPathname(s)),
+          { message: "an icon URL's path must end in .svg or .png" },
+        ),
+        repoPath.regex(ICON_PATH_RE, { message: "icon must be a .svg or .png file" }),
+      ])
+      .optional(),
     deprecated: z
       .union([
         z.boolean(),
@@ -333,6 +375,15 @@ type Issue = { path: PropertyKey[]; message: string };
  * form the source uses instead, or that it must use exactly one form.
  */
 function explainSource(json: unknown, issue: z.core.$ZodIssue): Issue[] {
+  if (issue.code === "invalid_union" && issue.path[issue.path.length - 1] === "icon") {
+    return [
+      {
+        path: issue.path,
+        message:
+          'icon must be an https URL whose path ends in .svg or .png, or a "./" path inside the repository ending in .svg or .png',
+      },
+    ];
+  }
   if (issue.code !== "invalid_union" || issue.path[issue.path.length - 1] !== "source") {
     return [issue];
   }
@@ -356,6 +407,18 @@ export function marketplaceEntryVersion(e: MarketplaceEntry): string | null {
   if (e.version !== undefined) return e.version;
   if ("npm" in e.source) return e.source.npm.version;
   return null;
+}
+
+/**
+ * The entry's icon (see {@link MarketplaceEntry.icon}): `{ url }` for an absolute URL, `{ path }`
+ * (normalized, without the leading `./`) for a path inside the marketplace's repository, `null`
+ * without one.
+ */
+export function marketplaceEntryIcon(
+  e: Pick<MarketplaceEntry, "icon">,
+): { url: string } | { path: string } | null {
+  if (e.icon === undefined) return null;
+  return e.icon.startsWith("./") ? { path: e.icon.slice(2) } : { url: e.icon };
 }
 
 /**

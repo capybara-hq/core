@@ -38,6 +38,21 @@ describe("component scope predicates", () => {
     );
   });
 
+  it("follow + defaultOff (a template shipped defaultEnabled false): on only once the org switches it on", () => {
+    const off = comp({ defaultOff: true });
+    expect(componentOn(off, plugin(), false, null)).toBe(false);
+    expect(componentOn(off, plugin(), false, false)).toBe(false);
+    expect(componentOn(off, plugin(), false, true)).toBe(true);
+    expect(componentOn(off, plugin({ installed: false }), false, true)).toBe(false);
+    expect(componentOffered(off, plugin({ installed: false }), false)).toBe(true);
+    // a builtin plugin's components are fixed on: defaultOff does not apply
+    expect(componentOn(off, plugin({ builtin: true }), false, null)).toBe(true);
+    // an own scope set by the super admin decides by itself
+    expect(componentOn({ ...off, scopeMode: "own", scope: "all" }, plugin(), false, null)).toBe(
+      true,
+    );
+  });
+
   it("own: its own scope decides, whatever the plugin's install; never with the plugin disabled or deleted", () => {
     const own = (scope: "all" | "optional" | "named") => comp({ scopeMode: "own", scope });
     const off = plugin({ installed: false });

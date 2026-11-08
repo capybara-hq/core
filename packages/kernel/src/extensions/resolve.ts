@@ -8,6 +8,92 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 
+/**
+ * Code of the {@link ExtensionResolveError} for a single-provider extension point that more than
+ * one extension provides: nothing is missing, the extensions conflict (replica reason `conflict`).
+ */
+export const PROVIDER_CONFLICT = "extension.provider_conflict";
+
+const CONFLICT_RE =
+  /^extension point (\S+) is single-provider but provided by: (.+?)(; \S+ is not loaded, so \S+ has no running provider)?$/;
+
+/**
+ * The message (and replica `detail`) of a {@link PROVIDER_CONFLICT}; read back by
+ * {@link parseProviderConflict}. `unloaded`: the provider the single-provider election picked
+ * (named first) is not loaded on this replica, so nothing provides the point here.
+ */
+export function providerConflictMessage(
+  extensionPoint: string,
+  providers: string[],
+  unloaded?: string,
+): string {
+  const base = `extension point ${extensionPoint} is single-provider but provided by: ${providers.join(", ")}`;
+  return unloaded === undefined
+    ? base
+    : `${base}; ${unloaded} is not loaded, so ${extensionPoint} has no running provider`;
+}
+
+/**
+ * The extension point and its providers from a {@link providerConflictMessage}; null for any other
+ * text. `unprovided`: the message says the elected provider is not loaded (no running provider).
+ */
+export function parseProviderConflict(
+  detail: string | null,
+): { extensionPoint: string; providers: string[]; unprovided?: true } | null {
+  const m = detail === null ? null : CONFLICT_RE.exec(detail);
+  if (!m) return null;
+  return {
+    extensionPoint: m[1] as string,
+    providers: (m[2] as string).split(", "),
+    ...(m[3] !== undefined && { unprovided: true as const }),
+  };
+}
+
+/**
+ * The single-provider extension points (`sandbox`, `object-store`, `secret-store`,
+ * `config-source`; `EXTENSION_POINT_CARDINALITY`) among `provides`, sorted (the lock order).
+ */
+export function singlePointsOf(provides: readonly string[]): string[] {
+  return [
+    ...new Set(
+      provides.filter((ref) => {
+        try {
+          return EXTENSION_POINT_CARDINALITY[parseExtensionPoint(ref).name] === "single";
+        } catch {
+          return false;
+        }
+      }),
+    ),
+  ].sort();
+}
+
+/**
+ * The single-provider election over enabled install records in `ExtensionInstalls.desired` order
+ * (the earliest enabled first): for each single-provider extension point the first record
+ * providing it wins (`owners`: point -> winner); every later one is a loser (`losers`: name -> the
+ * point it lost and the winner). A loser claims none of its points. The host loads by it; the
+ * single-provider guard names its winners, so a refusal names the provider actually running.
+ */
+export function electSingleProviders(
+  desired: readonly { name: string; section: { manifest: { provides: readonly string[] } } }[],
+): {
+  owners: Map<string, string>;
+  losers: Map<string, { extensionPoint: string; winner: string }>;
+} {
+  const owners = new Map<string, string>();
+  const losers = new Map<string, { extensionPoint: string; winner: string }>();
+  for (const d of desired) {
+    const points = singlePointsOf(d.section.manifest.provides);
+    const lost = points.find((p) => owners.has(p));
+    if (lost !== undefined) {
+      losers.set(d.name, { extensionPoint: lost, winner: owners.get(lost) as string });
+      continue;
+    }
+    for (const p of points) owners.set(p, d.name);
+  }
+  return { owners, losers };
+}
+
 /** 插件依赖解析失败（信息列出插件名与能力名）。 */
 export class ExtensionResolveError extends Error {
   constructor(
@@ -65,7 +151,11 @@ export function resolveExtensions(
       list.length > 1
     ) {
       throw new ExtensionResolveError(
-        `extension point ${cap} is single-provider but provided by: ${list.map((p) => p.name).join(", ")}`,
+        providerConflictMessage(
+          cap,
+          list.map((p) => p.name),
+        ),
+        PROVIDER_CONFLICT,
       );
     }
   }

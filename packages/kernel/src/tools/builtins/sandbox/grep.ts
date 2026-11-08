@@ -2,14 +2,15 @@ import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
-  isSyncMarkerEntry,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   searchTimeoutMs,
   shellQuote,
+  syncMarkerMatcher,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -33,7 +34,7 @@ const SPEC: ToolSpec = {
   description:
     "Search file contents in this conversation's sandbox with a regular expression (POSIX " +
     "extended, as grep -E). Use it to find where something is defined or mentioned. Searches path " +
-    "(a file, or a directory recursively; default /workspace), skipping binary files; glob limits " +
+    "(a file, or a directory recursively; default: the workspace directory), skipping binary files; glob limits " +
     'the files searched by name, e.g. "*.py". output_mode picks what comes back: ' +
     '"files_with_matches" (default) lists the paths of files that match, "content" returns the ' +
     "matching lines as <path>:<line>:<text> (with -A, -B or -C lines of context around them), " +
@@ -52,7 +53,7 @@ const SPEC: ToolSpec = {
       path: {
         type: "string",
         minLength: 1,
-        description: "Absolute file or directory to search. Default /workspace.",
+        description: "Absolute file or directory to search. Default: the workspace directory.",
       },
       glob: {
         type: "string",
@@ -198,8 +199,10 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
       const { pattern, glob } = g;
       const mode: OutputMode = g.output_mode ?? "files_with_matches";
       const numbered = g["-n"] ?? true;
-      const path = checkPath(g.path ?? "/workspace");
-      const { value, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+      if (g.path !== undefined) checkPathShape(g.path);
+      let path = "";
+      const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
+        path = checkPath(g.path ?? roots.workspace, roots);
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         // 在目标所在目录里搜相对路径，输出再拼回绝对路径（命令里不出现沙箱绝对路径）
@@ -247,7 +250,8 @@ export function sandboxGrepTool(deps: SandboxToolDeps): BuiltinTool {
             : mode === "count"
               ? parseCounts(r.stdout, base)
               : parseGrepNull(r.stdout, base, numbered);
-        const entries = all.filter((l) => !isSyncMarkerEntry(l));
+        const isMarker = syncMarkerMatcher(roots);
+        const entries = all.filter((l) => !isMarker(l));
         // 退出码 2 = 有错误（如个别文件不可读）；有输出时照常返回（可能为空：只匹配到隐藏的标记文件）并附上说明
         if (r.exitCode !== 0 && all.length === 0) throw new ToolError(failed(r.stderr));
         const warning = r.exitCode !== 0 ? clip(r.stderr, 300) : null;

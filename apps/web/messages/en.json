@@ -221,6 +221,8 @@
       "name_mismatch": "The extension name in the package does not match.",
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
       "not_disabled": "Disable the extension before uninstalling it.",
+      "single_provider_enabled": "Only one extension may provide this; disable the enabled one first, then enable this one.",
+      "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
@@ -259,9 +261,11 @@
       "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
+      "extension_enabled": "This plugin's extension is still enabled on the deployment: disable it on the Extensions page first, then delete the plugin.",
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
-      "not_owned": "Only your organization's own skills and agent templates can be shared."
+      "not_owned": "Only your organization's own skills and agent templates can be shared.",
+      "guide_not_found": "The plugin has no such setup guide."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -278,7 +282,8 @@
       "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
       "webhook_unavailable": "Webhooks are not available for this channel: the extension does not support them or the deployment has no webhook address.",
       "webhook_not_found": "No webhook is registered at this address.",
-      "webhook_retry": "The event could not be accepted; retry later."
+      "webhook_retry": "The event could not be accepted; retry later.",
+      "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -314,8 +319,20 @@
       "name_taken": "You already have an environment with this name. Choose another name.",
       "limit_reached": "You have reached the limit of environments. Delete one to create another.",
       "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
-      "files_lost": "The files of this environment were lost. Rebuild its files on the environments page to use it again.",
-      "forbidden": "You can no longer use this environment."
+      "files_lost": "The files of this environment were lost. For a cloud sandbox, rebuild its files on the environments page; for a connected device, run capybara-device logout, then capybara-device login into the same environment on the machine.",
+      "forbidden": "You can no longer use this environment.",
+      "files_on_device": "A connected device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same environment.",
+      "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
+      "program_outdated": "The device program on this computer is out of date. Update it and connect again."
+    },
+    "device": {
+      "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
+      "slow_down": "Too many requests. Try again shortly.",
+      "expired": "The connection code has expired. Start connecting again on the computer.",
+      "denied": "The connection request was denied.",
+      "code_invalid": "The connection code is invalid or already used. Check the code shown on the computer.",
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
+      "unavailable": "The machine could not be connected. Run capybara-device login on it again."
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
@@ -1334,6 +1351,7 @@
     "pickModel": "Switch model",
     "pickEnvironment": "Environment",
     "environmentNote": "Fixed once the first message is sent",
+    "environmentOffline": "No environment is available: your connected devices are offline. Start capybara-device on the machine, then send.",
     "environmentLocked": "A conversation keeps its environment",
     "environmentDeleted": "Environment deleted",
     "pickEffort": "Effort",
@@ -1461,21 +1479,31 @@
     "title": "Environments",
     "listLabel": "Your environments",
     "personal": "Personal",
+    "demotedName": "Personal ({provider})",
     "new": "New environment",
     "none": "None",
-    "source": { "cloud": "Cloud sandbox" },
+    "source": {
+      "cloud": "Cloud sandbox",
+      "device": "Connected device"
+    },
     "state": {
       "running": "Running",
       "suspended": "Suspended",
       "notStarted": "Not started",
       "filesLost": "Files lost",
-      "unavailable": "Unavailable"
+      "unavailable": "Unavailable",
+      "online": "Online",
+      "offline": "Offline"
     },
     "isolation": {
       "isolated": "Processes isolated between sessions",
       "shared": "Processes not isolated between sessions"
     },
-    "egress": { "none": "no network", "allowlist": "allowlisted hosts", "open": "open network" },
+    "egress": {
+      "none": "no network",
+      "allowlist": "allowlisted hosts",
+      "open": "open network"
+    },
     "empty": "You have no environments yet.",
     "noCloud": {
       "text": "The platform has no cloud sandbox.",
@@ -1488,11 +1516,25 @@
       "nameHelp": "Up to 64 characters. Your environment names are unique.",
       "cancel": "Cancel",
       "submit": "Create",
-      "created": "Environment {name} created."
+      "created": "Environment {name} created.",
+      "kindLabel": "Where it runs",
+      "cloud": "Cloud sandbox",
+      "cloudHint": "Runs in the platform's sandbox, ready as soon as it is created.",
+      "device": "Connected device",
+      "deviceHint": "Runs commands on your own computer or server.",
+      "installStep": "1. Install the connector program on the machine",
+      "loginStep": "2. Sign in and confirm on the page it opens",
+      "copy": "Copy",
+      "copied": "Copied.",
+      "waiting": "Waiting for the machine to connect… Once confirmed it shows up in your environments.",
+      "connected": "{name} connected.",
+      "close": "Close"
     },
     "detail": {
       "tabsLabel": "Environment sections",
-      "tabs": { "summary": "Summary" },
+      "tabs": {
+        "summary": "Summary"
+      },
       "source": "Source",
       "provider": "Provider",
       "state": "State",
@@ -1502,7 +1544,9 @@
       "files": "Files",
       "filesNote": "Files are kept until the environment is deleted.",
       "suspendNote": "Suspending ends the processes that are running.",
+      "demotedNote": "This was your personal environment before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default environment again, with its files.",
       "filesLostNote": "The files of this environment are gone at the provider. Rebuild the files to use it again.",
+      "deviceFilesLostNote": "The files directory of this environment is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this environment to recreate the directory.",
       "created": "Created",
       "rename": "Rename",
       "renameTitle": "Rename environment",
@@ -1517,7 +1561,29 @@
       "resetTitle": "Rebuild the files of {name}?",
       "resetHint": "The workspace is wiped and the next use starts with empty files.",
       "resetSubmit": "Rebuild files",
-      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done."
+      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
+      "deviceFilesNote": "Files stay on the machine and are not uploaded to the platform.",
+      "deleteDeviceHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm."
+    },
+    "mode": {
+      "os": "System sandbox",
+      "docker": "Docker"
+    },
+    "machine": {
+      "title": "Machine",
+      "description": "The machine that runs this environment's commands.",
+      "name": "Name",
+      "os": "System",
+      "mode": "Runs in",
+      "programVersion": "Program version",
+      "lastSeen": "Last seen",
+      "never": "Never",
+      "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
+      "revoke": "Disconnect this machine",
+      "revokeTitle": "Disconnect {name}?",
+      "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
+      "revokeSubmit": "Disconnect",
+      "revoked": "{name} disconnected."
     }
   },
   "nav": {
@@ -2306,6 +2372,19 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
+    },
+    "guide": {
+      "title": "Setup guide",
+      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
+      "modeLabel": "Inbound mode",
+      "stepsLabel": "Setup steps",
+      "unresolved": "{names} have no value yet and are shown as written.",
+      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
+      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
+      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
+      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+      "driftAck": "I updated the {plugin} app",
+      "driftAcked": "Recorded: the app matches the plugin's setup."
     }
   },
   "extensions": {
@@ -2324,6 +2403,7 @@
       "pending_migration": "being prepared",
       "loading": "loading",
       "dependency": "a required extension is missing",
+      "conflict": "conflicts with another extension",
       "failed": "failed to load",
       "deployment_disabled": "disabled on the platform"
     },
@@ -2530,6 +2610,34 @@
     "doneHint": "Go back to IM and continue the chat.",
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
+    "goHome": "Go to Capybara"
+  },
+  "device": {
+    "title": "Connect this machine",
+    "subtitle": "Check that this code matches the one in your terminal.",
+    "code": "Code",
+    "codeHelp": "The code capybara-device login shows in the terminal.",
+    "enterTitle": "Connect a machine",
+    "enterSubtitle": "Enter the code shown in your terminal.",
+    "continue": "Continue",
+    "machine": "Machine",
+    "system": "System",
+    "programVersion": "Program version",
+    "org": "Organization",
+    "environment": "Environment",
+    "newEnvironment": "New environment",
+    "name": "New environment name",
+    "noOrg": "You are not in an organization yet, so you cannot connect a machine.",
+    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the environment's page, or run capybara-device stop on this machine.",
+    "confirm": "Connect",
+    "deny": "Deny",
+    "doneTitle": "Connected",
+    "doneHint": "Go back to the terminal; the machine is ready to use.",
+    "openEnvironment": "Open environment",
+    "deniedTitle": "Denied",
+    "deniedHint": "This machine will not be connected.",
+    "invalidTitle": "Code expired",
+    "invalidHint": "Run capybara-device login on the machine again to get a new code.",
     "goHome": "Go to Capybara"
   },
   "trajectories": {
@@ -3418,6 +3526,7 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
+        "conflict": "Conflict",
         "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
@@ -3461,6 +3570,7 @@
           "approval": "Permissions awaiting approval",
           "migration": "Another replica is running the migrations",
           "dependency": "A required extension point has no available provider",
+          "conflict": "Another extension already provides an extension point that allows only one provider",
           "sync_failed": "Could not sync the extension package",
           "sha_mismatch": "Package contents do not match the recorded sha256",
           "import_failed": "Could not import the extension module",
@@ -3480,6 +3590,12 @@
           "uninstall": "Uninstall"
         },
         "uninstallNeedsDisable": "Disable the extension before uninstalling it",
+        "conflictLine": "Only one {point} provider can be enabled: {others} is enabled. Disable it and {name} loads.",
+        "conflictJoin": ", ",
+        "enableBlocked": "Only one {point} provider can be enabled: disable {other} first, then enable {name}.",
+        "enableBlockedRequired": "{point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "noProviderLine": "{point} has no running provider: {others} was chosen but is not loaded, so {name} does not load either. Get {others} running, or disable it and {name} loads.",
+        "openOther": "Open {name}",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
@@ -3547,6 +3663,7 @@
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
+      "calloutNoProvider": "{point} has no running provider.",
       "configure": "Configure",
       "settings": "Settings",
       "upgrade": "Upgrade",
@@ -3694,7 +3811,6 @@
       "bootstrap": "Preinstalled"
     },
     "newer": "New version",
-    "iconAlt": "{name} icon",
     "components": {
       "extension": "Extension",
       "extensionNone": "No extension.",
@@ -3760,8 +3876,11 @@
         "deleteConfirm": {
           "title": "Delete plugin {name}",
           "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
-          "confirm": "Delete"
+          "confirm": "Delete",
+          "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
+          "openExtension": "Disable it on the Extensions page"
         },
+        "deleteExtensionEnabled": "Disable \"{name}\" on the Extensions page first, then delete the plugin.",
         "deletedToast": "Deleted \"{name}\".",
         "versionColumns": {
           "version": "Version",
@@ -3854,6 +3973,9 @@
         "done": "Imported plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
+        "deployLeftDisabled": "{name} {version} is installed but left disabled: only one {point} provider can be enabled. Disable {other} first, then enable it.",
+        "deployLeftDisabledRequired": "{name} {version} is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "openEnabled": "Open {name}",
         "openItem": "Open plugin",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
@@ -4375,6 +4497,8 @@
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
+      "leftDisabled": "The extension of \"{name}\" is installed but left disabled: only one {point} provider can be enabled, and {other} is. Disable it first, then enable this extension.",
+      "leftDisabledRequired": "The extension of \"{name}\" is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
       "stale": "What the update does has changed. Review it again, then confirm.",
       "orgCount": "{count, plural, one {# organization} other {# organizations}}",
       "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
@@ -4391,7 +4515,8 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "needsConfigNote": "Added connector templates need an address and credentials: {ids}"
+      "needsConfigNote": "Connector templates turning on need an address and credentials: {ids}",
+      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {
       "host": "Host: {host}",

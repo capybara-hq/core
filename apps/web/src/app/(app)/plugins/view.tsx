@@ -175,7 +175,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
           return (
             <ObjectRow
               key={i.id}
-              mark={{ text: name }}
+              mark={{ text: name, image: i.icon ?? null }}
               name={name}
               href={`/plugins/${encodeURIComponent(i.id)}`}
               chips={[
@@ -353,7 +353,8 @@ function Market({
         return (
           <ObjectRow
             key={plugin.key}
-            mark={{ text: name }}
+            // the imported plugin's icon (when this org sees it), else the marketplace's
+            mark={{ text: name, image: e.icon ?? null }}
             name={name}
             mono={e.displayName === null}
             description={summaryOf(e)}

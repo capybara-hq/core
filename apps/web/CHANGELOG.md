@@ -1,5 +1,102 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.11
+
+### Patch Changes
+
+- 705be7e: The agent page's 渠道 section draws its connections as the same cards as the org 渠道 page (plugin
+  icon, name, platform, unbound mode, state), on the page ground with 接入渠道 beside the heading.
+- dbea14d: Deleting a platform plugin whose extension is still enabled is refused with 409
+  `catalog.extension_enabled` (disable the extension first, as an uninstall requires); the admin
+  plugin page says so in the delete confirm and links to the extension.
+- cc0bca9: The device confirmation page labels unnamed connected environments with the shared environment
+  name (a former default reads "Personal (<provider>)"), like the rest of the web.
+- cafa6e4: A person's default environment left behind by a sandbox provider switch is now shown as
+  「个人环境（Docker 沙箱）」 / "Personal (Docker sandbox)" (the provider's display name, not its
+  plugin id), and switching back to that provider makes it the default again, with its files,
+  instead of creating another empty default. Renaming such an environment makes it an ordinary one.
+  
+  Rolling deploys: replicas older than migration 0096 still rename a demoted default
+  `Personal (<plugin id>)` instead of marking it; that is accepted before 0.1.0, so don't run old
+  replicas alongside new ones across this upgrade.
+- c3e12b3: A second enabled provider of a single-provider extension point now shows as a conflict (replica
+  reason and status `conflict`, naming the provider in the way) instead of a missing dependency, and
+  loads by itself once the other provider is disabled.
+- ed929cd: The app shell, the pending frame, the login page and dialogs size to the dynamic viewport
+  (`100dvh`), so on iOS the composer is no longer hidden behind Chrome's bottom toolbar and the
+  page no longer scrolls under Safari's address bar.
+- b84a7ce: On iOS the app shell puts the document back at the top once the keyboard closes, so the head is no
+  longer stuck under the status bar after typing.
+- ff9cd78: The workspace 插件 → 市场 tab shows plugin icons too: the org marketplace entries carry `icon`, the
+  item's org icon when the org sees the imported plugin, else the marketplace icon on
+  `GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256` (org admins, gated like the org browse).
+- 2435645: Marketplace rows show icons: an imported plugin its catalog icon, otherwise the icon its
+  marketplace entry names. The kernel downloads entry icons on refresh through the marketplace
+  network rules (or reads them from a git marketplace's commit), keeps real svg / png files of at
+  most 64 KiB in PG (migration 0101) and serves them to super admins on
+  `GET /api/v1/admin/marketplaces/:id/icons/:sha256`; the admin entries carry `icon`. A bad icon never
+  fails the refresh.
+- 0c01fac: The 待确认 tab of the admin plugins page shows each plugin's icon, like the other tabs.
+- f0433e1: A plugin's detail page (admin and workspace) shows its icon as the 40 px mark beside the title instead of
+  a full-width image in the body.
+- 48b244e: Plugin icons wherever the kernel shows something a plugin brings: channel connections
+  (`pluginIcon`, `pluginDisplayName`), org and admin extensions, model providers and the catalog
+  lists carry the URL of their plugin's icon for the reader's scope (org or admin icon route; null
+  without one, or when the org may not see the plugin). The web draws it as the mark, falling back to
+  the initial, and the org channels page is a card list.
+- 4e6e44f: 接入指南 on 新建渠道 (once a plugin with a setup guide is picked) and on the channel detail page:
+  the plugin's steps, each template file filled in for the channel in a code block with 复制, and a
+  mode switch (长连接 / Webhook) when the guide has a file per mode. When a plugin upgrade changed
+  the setup since the connection was set up, the detail page says so (「Slack 插件更新了接入配置」)
+  with 「我已更新 Slack 应用」 to confirm.
+- dbada5c: The properties panel as a sheet (narrow windows and phones) has a head with its title and a close
+  button; on a phone the sheet covers the window and could not be closed.
+- ae26039: A conversation under way offers its agent's quick actions in the composer, as a new conversation
+  does; picking one fills the composer.
+- f035baa: Switching a channel connection's inbound mode no longer clears the setup guide update notice: the
+  mode switch moves the recorded guide on only when it shows no drift, so the notice stays until a
+  person confirms 「我已更新应用」. The 接入指南 says why a variable has no value (saving the
+  channel on 新建渠道, or the public address and webhook address a super admin sets in the
+  deployment settings), and the guide read is keyed by the plugin version so an upgrade shows the
+  new manifest.
+- 0e8592b: A single-provider extension point (sandbox, object store, secret store, config source) takes one
+  enabled provider: enabling a second one is refused with 409 `extension.single_provider_enabled`
+  (disable the current one first), an import or bootstrap preinstall of a second one is installed
+  disabled and says why, and two left enabled from before load the earliest enabled on every replica
+  and after every restart (`extension_installs.enabled_at`, migration 0097). The admin console turns
+  启用 off with a line naming the provider to disable and a link to it.
+- cb6f42d: Single-provider extension points, follow-ups. An upgrade of an enabled extension whose new version
+  newly provides a single-provider point another extension holds installs the new version disabled
+  and says why (`leftDisabled`, the import / update / bootstrap results) instead of silently taking
+  the point over. A required bootstrap entry whose point is held fails the bootstrap ("disable
+  <other> and run the bootstrap again"). A point a required plugin holds cannot be replaced: 409
+  `extension.single_provider_required`, and the admin console says so. Refusals name the provider
+  actually loaded. When the elected provider fails to load, the admin console warns that the point
+  has no running provider.
+  
+  Upgrading: a deployment that already had two enabled providers of one point (from before the
+  one-provider rule) could switch providers on the rolling deploy, because migration 0097 picks the
+  one enabled first by the audit. Migration 0098 prefers the provider replicas are running (a
+  `loaded` replica status row, most recent heartbeat); with no such row the 0097 order stays, and the
+  provider may change: check the admin console after the upgrade and disable the one you don't want.
+- dfd6abc: `/device/connect` upgrades go to `CAPYBARA_KERNEL_URL` when `CAPYBARA_WEB_GATEWAY_URL` is unset, so a single kernel process (every role, as in development) needs no extra setting; only deployments with separate gateway replicas set it (compose does).
+
+## 0.1.0-rc.10
+
+### Patch Changes
+
+- 7ce35ab: Connected environments in the web app: the `/device` page confirms a `capybara-device login`
+  (the code, the machine, the org, a new or existing environment and the disclosure); 新建环境
+  offers 云端沙箱 or 接入设备 (the install and login commands, then waits for the machine); the
+  environment page shows the machine with 断开这台机器; the picker lists connected environments
+  with 在线 / 离线 and an offline one cannot be chosen.
+- cfdf1f0: The web server forwards connected machines' WebSocket upgrades on `/device/connect` to a gateway
+  replica (`CAPYBARA_WEB_GATEWAY_URL`); compose puts web and gateway on a `devices` network.
+
+## 0.1.0-rc.9
+
+No changes in this release.
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

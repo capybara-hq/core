@@ -13,6 +13,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -107,6 +108,7 @@ export class AdminCatalogController {
     @Inject(OrgCatalogService) private readonly orgCatalog: OrgCatalogService,
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PlatformPluginUpdater) private readonly updater: PlatformPluginUpdater,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /**
@@ -242,15 +244,21 @@ export class AdminCatalogController {
    * most 1000) and `offset`; `nextOffset` is the next page's offset, null when there is none.
    */
   @Get("items")
-  list(
+  async list(
     @ZQuery(CatalogItemsQueryDto) q: z.infer<typeof CatalogItemsQuery>,
-  ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
-    return this.catalog.page({
+  ): Promise<{ items: (CatalogItemView & { icon: string | null })[]; nextOffset: number | null }> {
+    const page = await this.catalog.page({
       includeDeleted: q.includeDeleted === "true",
       ...(q.pending === "true" && { pending: true }),
       ...(q.limit !== undefined && { limit: q.limit }),
       ...(q.offset !== undefined && { offset: q.offset }),
     });
+    // Each item's icon (admin route; a deleted item has none)
+    const icons = await this.icons.ofItems(
+      page.items.map((i) => i.id),
+      { kind: "admin" },
+    );
+    return { ...page, items: page.items.map((i) => ({ ...i, icon: icons.get(i.id) ?? null })) };
   }
 
   /**
