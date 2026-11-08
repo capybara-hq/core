@@ -44,7 +44,7 @@ export const environmentOffline = (): ApiError =>
 export const machineRevoked = (): ApiError =>
   new ApiError(
     "environment.forbidden",
-    "The connected machine of this environment was disconnected. Sign it in again with capybara-device login, or pick another environment.",
+    "The connected machine of this environment was disconnected. Run capybara-device logout, then capybara-device login on it, or pick another environment.",
     [{ reason: "machine_revoked" }],
   );
 

@@ -136,7 +136,7 @@ const DEVICE_OFFLINE_TEXT =
 const DEVICE_OUTDATED_TEXT =
   "The connected machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
 const DEVICE_REVOKED_TEXT =
-  "The connected machine of this environment was disconnected. Ask the person to sign it in again with capybara-device login, or to start a new conversation in another environment.";
+  "The connected machine of this environment was disconnected. Ask the person to run capybara-device logout, then capybara-device login on it, or to start a new conversation in another environment.";
 const deviceProtocolText = (detail: string): string =>
   `The connected machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
 const LOCK_LOST_TEXT =

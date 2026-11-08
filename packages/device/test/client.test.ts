@@ -261,7 +261,7 @@ describe("client", () => {
 
   it("401 and close 4003 exit 0 (terminal) with the disconnected message", async () => {
     const msg =
-      "This machine was disconnected from the deployment. Run capybara-device login again.";
+      "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";
     kernel.rejectWith = 401;
     expect(await start().done).toBe(0);
     await new Promise((r) => setTimeout(r, 20));

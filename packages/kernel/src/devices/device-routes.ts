@@ -94,7 +94,7 @@ export async function registerDeviceConnectRoute(
               .send(
                 errorBody(
                   "device.credential_invalid",
-                  "The machine credential is unknown or revoked. Run capybara-device login again.",
+                  "The machine credential is unknown or revoked. Run capybara-device logout, then capybara-device login.",
                 ),
               );
           }

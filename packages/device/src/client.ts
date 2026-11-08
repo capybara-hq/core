@@ -15,7 +15,7 @@ import { PROGRAM_VERSION } from "./version.js";
 export const OUTDATED_MESSAGE =
   "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device";
 export const DISCONNECTED_MESSAGE =
-  "This machine was disconnected from the deployment. Run capybara-device login again.";
+  "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";
 export const REPLACED_MESSAGE =
   "This machine connected elsewhere: a newer connection to this environment replaced this one.";
 export const DELETED_MESSAGE =
