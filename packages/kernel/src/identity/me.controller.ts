@@ -20,10 +20,10 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { IanaTimeZone } from "../time-zone.js";
 import { type Account, AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
+import { PreferencesBody, type PreferencesSchema } from "./me.schemas.js";
 import {
   AllowPendingPasswordChange,
   CurrentPrincipal,
@@ -48,14 +48,6 @@ const TokenSchema = z.object({
   expiresAt: FutureIsoDate.optional(),
 });
 class PersonalTokenBody extends createZodDto(TokenSchema, "PersonalTokenBody") {}
-
-const PreferencesSchema = z
-  .object({
-    /** The person's time zone (IANA); null = follow the browser (run context spec §3.4). */
-    timeZone: IanaTimeZone.nullable(),
-  })
-  .strict();
-class PreferencesBody extends createZodDto(PreferencesSchema, "PreferencesBody") {}
 
 const CurrentOrgSchema = z.object({ orgId: z.string().min(1).nullable() });
 class CurrentOrgBody extends createZodDto(CurrentOrgSchema, "CurrentOrgBody") {}

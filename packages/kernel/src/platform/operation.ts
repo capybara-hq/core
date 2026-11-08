@@ -158,7 +158,8 @@ export const operationDomain = (id: string): string => id.slice(0, id.indexOf(".
 export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = [
   {
     id: "platform",
-    description: "What this platform is, its tool families, and what you and this agent can do.",
+    description:
+      "What this platform is, its tool families, what you and this agent can do, and your own preferences (time zone).",
   },
   { id: "skills", description: "The org's skill library: list, read, create, switch on or off." },
   {

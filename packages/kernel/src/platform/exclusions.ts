@@ -353,17 +353,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Switches the web session's current org",
   },
   {
-    route: "GET /api/v1/me/preferences",
-    category: "internal",
-    reason:
-      "The person's time zone setting the web's preferences page reads; the run context already gives the agent the zone in effect",
-  },
-  {
-    route: "PUT /api/v1/me/preferences",
-    category: "human-only",
-    reason: "A person's own time zone setting, chosen on their preferences page",
-  },
-  {
     route: "PUT /api/v1/me/password",
     category: "human-only",
     reason: "Changes the account password",
