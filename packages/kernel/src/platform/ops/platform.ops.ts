@@ -102,7 +102,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), skills (org and pinned), sub-agents, whether it runs in a sandbox, and the sandbox network mode. Secrets are never shown.",
+          "Show this agent as configured: its description, its profile (avatar, quick actions, and the profile.updatedAt agents.update-profile needs), its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), skills (org and pinned), sub-agents, whether it runs in a sandbox, and the sandbox network mode. Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -124,6 +124,12 @@ export class PlatformOperationsProvider implements OnModuleInit {
           return {
             id: agent.id,
             name: d.name,
+            description: agent.profile.description,
+            profile: {
+              avatar: agent.profile.avatar,
+              quickActions: agent.profile.quickActions,
+              updatedAt: agent.profile.updatedAt,
+            },
             visibility: agent.visibility,
             version: agent.currentVersion,
             model: d.model,

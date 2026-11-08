@@ -33,7 +33,8 @@ export class AgentProfileService {
   /**
    * Applies `patch` (only the given fields) when `expectedUpdatedAt` is still the profile's
    * `updatedAt`, else 409 `agent.profile_conflict` (never a silent overwrite). Audit
-   * `agent.profile_updated` `{ fields, channel }`: `api` for a personal access token, else `web`.
+   * `agent.profile_updated` `{ fields, channel }`: `api` for a personal access token, `agent` for
+   * the `Platform` tool (its `auditDetail` merged in), else `web`.
    * An `upload` avatar must be the actor's own upload that no other agent uses (else 404
    * `attachment.not_found`): it is finalized first (outside the transaction, it reads the object
    * store; 503 `storage.unavailable` without one) and bound to the agent inside it.
@@ -45,6 +46,7 @@ export class AgentProfileService {
     patch: ProfilePatch,
     expectedUpdatedAt: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<AgentProfile> {
     if (patch.avatar?.kind === "upload") {
       await this.attachments.prepareAgentAvatar(
@@ -54,7 +56,15 @@ export class AgentProfileService {
         agentId,
       );
     }
-    return this.updateIn(orgId, agentId, actorAccountId, patch, expectedUpdatedAt, actorTokenId);
+    return this.updateIn(
+      orgId,
+      agentId,
+      actorAccountId,
+      patch,
+      expectedUpdatedAt,
+      actorTokenId,
+      auditDetail,
+    );
   }
 
   @Transactional()
@@ -65,6 +75,7 @@ export class AgentProfileService {
     patch: ProfilePatch,
     expectedUpdatedAt: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<AgentProfile> {
     const t = this.db.db;
     await this.agents.lockForWrite(orgId, agentId, actorAccountId);
@@ -126,7 +137,11 @@ export class AgentProfileService {
       orgId,
       action: "agent.profile_updated",
       target: agentId,
-      detail: { fields, channel: actorTokenId !== undefined ? "api" : "web" },
+      detail: {
+        fields,
+        channel: actorTokenId !== undefined ? "api" : auditDetail !== undefined ? "agent" : "web",
+        ...auditDetail,
+      },
     });
     return (await this.lookup.view(agentId)).profile;
   }

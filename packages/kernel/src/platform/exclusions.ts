@@ -1,16 +1,15 @@
-export type ExclusionCategory = "human-only" | "secret" | "transport" | "internal" | "later";
+export type ExclusionCategory = "human-only" | "secret" | "transport" | "internal";
 
 /**
  * Kernel HTTP routes the `Platform` tool does not mirror, each with a reason (spec §9);
  * `check:platform-ops` fails a route that is neither mirrored by an operation nor listed here.
- * `later` needs an `issue` URL.
+ * Every exclusion is for good: a route the tool should offer is an operation, never a `later` entry.
  */
 
 export const PLATFORM_EXCLUSIONS: readonly {
   route: string;
   category: ExclusionCategory;
   reason: string;
-  issue?: string;
 }[] = [
   // platform-admin: every route is an operation (Task 7)
   // extensions-admin
@@ -64,15 +63,10 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // agents
   {
-    route: "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
-    category: "later",
-    reason: "Agent profile edit an agent could do later",
-    issue: "https://github.com/capybara-hq/core/issues/91",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
     category: "transport",
-    reason: "Creates a presigned avatar upload",
+    reason:
+      "Creates a presigned avatar upload: a custom image is bytes the person uploads on the web; agents.update-profile sets a preset avatar",
   },
   {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/avatar",

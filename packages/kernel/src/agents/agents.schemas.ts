@@ -57,6 +57,22 @@ export const AgentUpdateBody = z
   })
   .strict();
 
+/** A built-in avatar: the only kind the tool and the template form set (an upload is the web's). */
+export const PresetAvatar = z
+  .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
+  .strict();
+
+/**
+ * `PATCH …/profile`: the display data (avatar, quick actions). The description is part of the
+ * agent's definition (run context spec §3.5), saved with `PATCH :agentId`.
+ */
+export const AgentProfileBody = ProfileInputSchema.omit({ description: true })
+  .extend({
+    /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
+    expectedUpdatedAt: z.string().min(1).max(40),
+  })
+  .strict();
+
 const TemplateId = z.string().min(1).max(100);
 export const AgentFromTemplatePreviewBody = z.object({ templateId: TemplateId }).strict();
 export const AgentFromTemplateBody = z
@@ -70,10 +86,7 @@ export const AgentFromTemplateBody = z
     /** The person's choice; absent = the template's model resolution (P4-4). */
     model: ModelRef.strict().optional(),
     /** A preset avatar; absent = a random one. */
-    avatar: z
-      .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
-      .strict()
-      .optional(),
+    avatar: PresetAvatar.optional(),
     /** The preview's `previewHash`; another one → 409 `agent.template_preview_stale`. */
     previewHash: z.string().regex(/^[0-9a-f]{64}\.[0-9a-f]{16}$/),
   })
@@ -99,6 +112,11 @@ export const AGENT_ROUTES: readonly RouteSchemas[] = [
     route: "PATCH /api/v1/orgs/:orgId/agents/:agentId",
     params: AgentPathParams,
     body: AgentUpdateBody,
+  },
+  {
+    route: "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
+    params: AgentPathParams,
+    body: AgentProfileBody,
   },
   {
     route: "POST /api/v1/orgs/:orgId/agents/from-template/preview",

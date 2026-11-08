@@ -138,6 +138,7 @@ describe("registration", () => {
       "agents.request-connector-setup",
       "agents.skills",
       "agents.update",
+      "agents.update-profile",
       "agents.versions",
       "platform.me",
       "platform.overview",
@@ -444,6 +445,103 @@ describe("agent templates", () => {
       template: { name: string };
     };
     expect(got.template.name).toBe("triage");
+  });
+});
+
+describe("agent profile", () => {
+  type Profile = {
+    avatar: unknown;
+    description: string;
+    quickActions: { title: string; body: string }[];
+    updatedAt: string;
+  };
+  const profileOf = async (agentId: string, accountId: string) =>
+    (
+      (await run("agents.get", { agentId }, ctxOf(accountId, agentId))) as {
+        agent: { profile: Profile };
+      }
+    ).agent.profile;
+
+  it("sets quick actions and a preset avatar on my private agent: remembered, audited, read back by platform.me", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const c = ctxOf(env.memId, mine);
+    const before = await profileOf(mine, env.memId);
+    const input = {
+      agentId: mine,
+      updatedAt: before.updatedAt,
+      avatar: { kind: "preset", id: "fox" },
+      quickActions: [
+        { title: "Report", body: "Write the weekly report." },
+        { title: "Triage", body: "Sort these tickets." },
+      ],
+    };
+    expect(await classOf("agents.update-profile", input, c)).toBe("personal");
+    expect(op("agents.update-profile").rememberable).toBeUndefined();
+    expect(await precheck("agents.update-profile", input, c)).toEqual({ ok: true });
+    expect(await summarize("agents.update-profile", input, c)).toEqual({
+      zh: "修改私有智能体「Mine」的资料：头像换成预设「fox」，快捷操作设为 2 个",
+      en: 'Update the profile of private agent "Mine": avatar to preset "fox", 2 quick action(s)',
+    });
+    const out = (await run("agents.update-profile", input, c)) as { profile: Profile };
+    expect(out.profile.avatar).toEqual({ kind: "preset", id: "fox" });
+    expect(out.profile.quickActions).toHaveLength(2);
+    const [row] = await audits("agent.profile_updated");
+    expect(row?.detail).toMatchObject({
+      fields: ["avatar", "quickActions"],
+      channel: "agent",
+      via: "agent",
+      operation: "agents.update-profile",
+    });
+    // "how many quick actions do you have": platform.me answers from the profile
+    const me = (await run("platform.me", {}, c)) as { description: string; profile: Profile };
+    expect(me.profile.quickActions.map((q) => q.title)).toEqual(["Report", "Triage"]);
+    expect(me.profile.avatar).toEqual({ kind: "preset", id: "fox" });
+    expect(me.profile.updatedAt).toBe(out.profile.updatedAt);
+    expect(me.description).toBe("");
+    // the old updatedAt is stale now: refused before the card, and by the write itself
+    expect(await precheck("agents.update-profile", input, c)).toMatchObject({
+      ok: false,
+      code: "agent.profile_conflict",
+    });
+    await expect(run("agents.update-profile", input, c)).rejects.toThrow(/agents\.get/);
+  });
+
+  it("a shared agent is asked every time; a member may not change another person's agent", async () => {
+    const shared = await agentOf(env.bossId, "org", "Team");
+    const p = await profileOf(shared, env.bossId);
+    const input = { agentId: shared, updatedAt: p.updatedAt, quickActions: [] };
+    expect(await classOf("agents.update-profile", input, ctxOf(env.bossId, shared))).toBe("org");
+    expect(await summarize("agents.update-profile", input, ctxOf(env.bossId, shared))).toEqual({
+      zh: "修改共享智能体「Team」的资料：快捷操作设为 0 个",
+      en: 'Update the profile of shared agent "Team": 0 quick action(s)',
+    });
+    expect(await precheck("agents.update-profile", input, ctxOf(env.memId, shared))).toMatchObject({
+      ok: false,
+      code: "forbidden",
+    });
+    const next = nextStepFor(op("agents.update-profile").errors, "forbidden", "member");
+    expect(next).toContain("ask one of them");
+  });
+
+  it("takes presets only, never an upload or the description", () => {
+    const i = op("agents.update-profile").input;
+    const base = { agentId: "a", updatedAt: "2026-11-08T00:00:00.000Z" };
+    expect(i.safeParse({ ...base, avatar: { kind: "upload", uploadId: "u" } }).success).toBe(false);
+    expect(i.safeParse({ ...base, avatar: { kind: "preset", id: "unicorn" } }).success).toBe(false);
+    expect(i.safeParse({ ...base, description: "x" }).success).toBe(false);
+  });
+
+  it("agents.update saves the description into a new version and the profile shows it", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const c = ctxOf(env.memId, mine);
+    await run(
+      "agents.update",
+      { agentId: mine, version: 1, description: "Answers HR questions." },
+      c,
+    );
+    expect((await profileOf(mine, env.memId)).description).toBe("Answers HR questions.");
+    const me = (await run("platform.me", {}, c)) as { description: string; version: number };
+    expect(me).toMatchObject({ description: "Answers HR questions.", version: 2 });
   });
 });
 
