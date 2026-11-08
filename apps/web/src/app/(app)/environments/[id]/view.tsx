@@ -46,11 +46,13 @@ import NotFound from "../../not-found";
  * whether sessions are isolated, the limits, and the two things a person must know (files stay
  * until the environment is deleted; suspending ends running processes). A connected one has no
  * provider, limits or those notes: its machine section (name, system, mode, program version, last
- * seen) with 断开这台机器 instead, and deleting it keeps the files on the machine. 重命名, 重建文件 (only
- * when its files are lost, behind a confirmation; a job, so the page then polls until the files
- * are back) and 删除 (typing its name; the files are deleted with it, a destructive item of the ⋯
- * menu; deleting 个人环境 says a new empty one is created the next time one is needed). From the query cache (the layout prefetched it on
- * a first load); an environment the kernel does not find is the not-found state.
+ * seen) with 断开这台机器 instead, and deleting it keeps the files on the machine. 重命名, 重建文件
+ * (only when its files are lost, behind a confirmation; a job, so the page then polls until the
+ * files are back) and 删除 (typing its name; the files are deleted with it, a destructive item of
+ * the ⋯ menu; deleting 个人环境 says a new empty one is created the next time one is needed). A
+ * connected environment never offers 重建文件 (the kernel refuses it): its files-lost note tells
+ * the person to run `capybara-device login` on the machine again. From the query cache (the layout
+ * prefetched it on a first load); an environment the kernel does not find is the not-found state.
  */
 export default function EnvironmentView({ id }: { id: string }) {
   const ws = useWorkspace();
@@ -194,9 +196,9 @@ function Detail({
               { k: t("detail.created"), v: <DateTime value={e.createdAt} /> },
             ]}
           />
-          {e.filesLost && !device && (
+          {e.filesLost && (
             <Text variant="prose" tone="warn">
-              {t("detail.filesLostNote")}
+              {t(device ? "detail.deviceFilesLostNote" : "detail.filesLostNote")}
             </Text>
           )}
           {device ? (
@@ -285,7 +287,10 @@ function Detail({
   );
 }
 
-/** 重命名: one field, prefilled with the current name (empty for the default); valid as at creation. */
+/**
+ * 重命名: one field, prefilled with the current name (empty for the default); valid as at
+ * creation.
+ */
 function RenameDialog({
   current,
   pending,
@@ -455,7 +460,10 @@ function MachineSection({
   );
 }
 
-/** 断开这台机器: its credential is revoked, so it asks first (a dangerous dialog that starts on Cancel). */
+/**
+ * 断开这台机器: its credential is revoked, so it asks first (a dangerous dialog that starts on
+ * Cancel).
+ */
 function RevokeDialog({
   machine,
   pending,

@@ -150,8 +150,9 @@ export function EnvironmentCreateDialog({
 
 /**
  * The commands that connect a machine, then the wait: the environments are read every few
- * seconds, and the first connected environment that was not there when the steps opened is the
- * new machine.
+ * seconds, and the first device environment that was not there when the steps opened, or whose
+ * machine changed since (a login again into an existing environment replaces its machine), is
+ * the newly connected machine.
  */
 function DeviceSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Environment): void }) {
   const t = useTranslations("environments.create");
@@ -159,17 +160,20 @@ function DeviceSteps({ orgId, onConnected }: { orgId: string; onConnected(e: Env
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
   const list = useQuery({ ...environmentsQuery(orgId), refetchInterval: WAIT_POLL_MS });
-  const known = useRef<Set<string> | null>(null);
+  // device environment id -> its machine id when the steps opened (null: none connected)
+  const known = useRef<Map<string, string | null> | null>(null);
   const done = useRef(false);
   useEffect(() => {
     if (list.data === undefined || done.current) return;
     const devices = list.data.items.filter((e) => e.source === "device");
     if (known.current === null) {
-      known.current = new Set(devices.map((e) => e.id));
+      known.current = new Map(devices.map((e) => [e.id, e.machine?.id ?? null]));
       return;
     }
     const seen = known.current;
-    const fresh = devices.find((e) => !seen.has(e.id));
+    const fresh = devices.find(
+      (e) => !seen.has(e.id) || (e.machine !== null && e.machine.id !== (seen.get(e.id) ?? null)),
+    );
     if (fresh !== undefined) {
       done.current = true;
       onConnected(fresh);

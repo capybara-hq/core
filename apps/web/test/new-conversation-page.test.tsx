@@ -489,6 +489,26 @@ describe("the environment picker (environments design §4.1)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "d1" });
   });
 
+  it("without a cloud sandbox and only offline devices, send waits and says why", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withEnvironments({
+        items: [envView("d1", "Laptop", { source: "device", provider: "@device", online: false })],
+        defaultId: null,
+        lastUsedId: null,
+        cloudAvailable: false,
+      }),
+    );
+    expect(picker()?.textContent).toContain("—");
+    expect(screen.getByText(en.chat.environmentOffline)).toBeTruthy();
+    await send("go");
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
   it("without a sandbox provider there is no picker and the send carries no environment", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });

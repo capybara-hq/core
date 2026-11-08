@@ -464,6 +464,32 @@ describe("connected environments (environments spec §6, §9)", () => {
     });
   });
 
+  it("新建环境 → 接入设备 also stops waiting when a login again replaces a known machine", async () => {
+    let replaced = false;
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([
+            env("e1", null),
+            device("d7", "grant-mbp", replaced ? { machine: { ...MACHINE, id: "m2" } } : {}),
+          ]),
+        ),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.device) }));
+    expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
+    await settle();
+    expect(router.push).not.toHaveBeenCalled();
+    replaced = true;
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/environments/d7"), {
+      timeout: 6000,
+    });
+  });
+
   it("environment page shows the machine and revokes it", async () => {
     let revoked = false;
     const calls = stubApi({
@@ -495,6 +521,18 @@ describe("connected environments (environments spec §6, §9)", () => {
     await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
     expect(await screen.findByText(E.machine.none)).toBeTruthy();
     expect(client.getQueryState(["org", "o1", "environments"])?.isInvalidated).toBe(true);
+  });
+
+  it("a device environment that lost its files says to log in again and offers no 重建文件", async () => {
+    stubApi({
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { environment: device("e1", "Laptop", { filesLost: true }) }),
+    });
+    await renderDetail();
+    expect(await screen.findByText(E.detail.deviceFilesLostNote)).toBeTruthy();
+    expect(E.detail.deviceFilesLostNote).toContain("capybara-device login");
+    expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
+    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
   it("deleting a device environment says the files on the machine stay", async () => {

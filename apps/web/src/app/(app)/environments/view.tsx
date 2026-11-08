@@ -19,8 +19,8 @@ import NotFound from "../not-found";
  * 离线) and whether sessions are isolated; a card opens the environment's page. 新建环境 opens a
  * dialog (a cloud sandbox or a connected device); without a sandbox provider the page says the
  * platform has no cloud sandbox and the dialog only connects a device; the cloud environments it
- * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the layout prefetched it on a
- * first load).
+ * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the
+ * layout prefetched it on a first load).
  */
 export default function EnvironmentsView() {
   const ws = useWorkspace();

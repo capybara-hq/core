@@ -190,8 +190,17 @@ export function useSelection(
 }
 
 export type EnvironmentChoice = {
-  /** The environment the first message binds the conversation to (none: no provider, or none usable). */
+  /**
+   * The environment the first message binds the conversation to (none: no provider, or none
+   * usable).
+   */
   environmentId: string | undefined;
+  /**
+   * Without a cloud sandbox, when none of the connected environments can be used now (their
+   * machines are offline): sending must wait, and this says why. Never set while the platform has
+   * a cloud sandbox (the kernel then makes or uses the personal environment).
+   */
+  unavailable?: string;
   /**
    * Undefined without a sandbox provider and without a connected environment: the composer then
    * has no environment picker.
@@ -205,7 +214,9 @@ export type EnvironmentChoice = {
  * 重建文件 on its page first) or whose machine is offline (hint 离线) shown but not selectable; a
  * connected one that is online says 在线. It starts on the last used environment, else the
  * default, else the first usable one. It shows when the platform has a cloud sandbox or the person
- * has a connected environment.
+ * has a connected environment. Without a cloud sandbox and with every connected environment
+ * offline, nothing is chosen and `unavailable` holds the reason the composer shows instead of
+ * sending with no environment.
  */
 export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
   const t = useTranslations("chat");
@@ -230,6 +241,7 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
   };
   return {
     environmentId: id,
+    ...(id === undefined && !list.cloudAvailable ? { unavailable: t("environmentOffline") } : {}),
     picker: {
       label: t("pickEnvironment"),
       value: current ? nameOf(current) : "—",
