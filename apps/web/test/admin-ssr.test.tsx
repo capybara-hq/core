@@ -267,6 +267,10 @@ const ROUTES: Routes = {
       },
     }),
   "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+  // 外观: the themes and the current org's
+  "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
+  "GET /api/v1/orgs/o1/themes": () =>
+    json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
   "GET /api/v1/admin/models": () => json(200, { providers: [], prices: [], currency: "EUR" }),
   "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
 };
@@ -381,11 +385,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/settings: the loading sections are the page's own (three card radios, the currency)", async () => {
+  it("/admin/settings: the loading sections are the page's own (four card radios, the currency)", async () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
-    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(3);
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(4);
+    // three policies and 外观's theme cards
+    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(4);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(5);
     await release();
   });
 

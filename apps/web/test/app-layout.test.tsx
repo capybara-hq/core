@@ -56,10 +56,12 @@ vi.mock("../src/lib/query/routes", async (original) => {
 const { default: AppLayout } = await import("../src/app/(app)/layout");
 
 const O = "/api/v1/orgs/o1";
+const THEMES = { themes: [], resolved: null, org: { id: null, personal: "allowed" } };
 function shellRoutes(readiness: typeof READY) {
   return serverRoutes({
     "GET /api/v1/me": () => json(200, ME),
     [`GET ${O}/readiness`]: () => json(200, readiness),
+    [`GET ${O}/themes`]: () => json(200, THEMES),
     [`GET ${O}/conversations/groups`]: () =>
       json(200, { groups: [], next: null, archivedCount: 0 }),
     [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
@@ -143,6 +145,7 @@ describe("the (app) layout's first-load prefetch", () => {
     const calls = serverRoutes({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${O}/readiness`]: g.later(200, READY),
+      [`GET ${O}/themes`]: g.later(200, THEMES),
       [`GET ${O}/conversations/groups`]: g.later(200, { groups: [], next: null, archivedCount: 0 }),
       [`GET ${O}/inbox`]: g.later(200, { items: [{}], truncated: false }),
       [`GET ${O}/ui/contributions`]: g.later(200, { items: [] }),
@@ -150,11 +153,12 @@ describe("the (app) layout's first-load prefetch", () => {
     });
     const done = layoutAt("/agents");
     // everything after `/me` starts before any of it answers
-    await vi.waitFor(() => expect(calls).toHaveLength(6));
+    await vi.waitFor(() => expect(calls).toHaveLength(7));
     expect(pathOf(calls[0] as Call)).toBe("/api/v1/me");
     expect(calls.slice(1).map(pathOf).sort()).toEqual(
       [
         `${O}/readiness`,
+        `${O}/themes`,
         `${O}/conversations/groups`,
         `${O}/inbox`,
         `${O}/ui/contributions`,
@@ -167,19 +171,21 @@ describe("the (app) layout's first-load prefetch", () => {
       expect.arrayContaining([
         ["account", "self", "me"],
         ["org", "o1", "readiness"],
+        ["org", "o1", "themes"],
         ["org", "o1", "conversationGroups", "default"],
         ["org", "o1", "inboxCount"],
         ["org", "o1", "extensionPages"],
         ["org", "o1", "agents"],
       ]),
     );
-    expect(calls).toHaveLength(6);
+    expect(calls).toHaveLength(7);
   });
 
   it("a signed-out read during prefetch redirects to login with the path", async () => {
     serverRoutes({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${O}/readiness`]: () => json(200, READY),
+      [`GET ${O}/themes`]: () => json(200, THEMES),
       [`GET ${O}/conversations/groups`]: () =>
         json(200, { groups: [], next: null, archivedCount: 0 }),
       [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),
@@ -194,6 +200,7 @@ describe("the (app) layout's first-load prefetch", () => {
     serverRoutes({
       "GET /api/v1/me": () => json(200, ME),
       [`GET ${O}/readiness`]: () => json(200, READY),
+      [`GET ${O}/themes`]: () => json(200, THEMES),
       [`GET ${O}/conversations/groups`]: () =>
         json(500, { error: { code: "internal", message: "boom" } }),
       [`GET ${O}/inbox`]: () => json(200, { items: [], truncated: false }),

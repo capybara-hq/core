@@ -13,13 +13,16 @@ import {
 import { root } from "../src/cli/report.js";
 
 const FAKES = join(root, "packages/testing/fixtures/extensions");
+const FAKE_PLUGINS = join(root, "packages/testing/fixtures/plugins");
 
 describe("scan scope of the plugin-scoped checks", () => {
   it("covers every plugin and every fake extension of @capybara-hq/testing", () => {
-    const fakes = readdirSync(FAKES, { withFileTypes: true })
-      .filter((e) => e.isDirectory())
-      .map((e) => join(FAKES, e.name))
-      .sort();
+    const list = (base: string) =>
+      readdirSync(base, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => join(base, e.name))
+        .sort();
+    const fakes = [...list(FAKES), ...list(FAKE_PLUGINS)];
     expect(fakes.length).toBeGreaterThan(0);
     expect(fakeExtensionDirs()).toEqual(fakes);
     expect(extensionDirs()).toEqual([...pluginDirs(), ...fakes]);
@@ -47,6 +50,7 @@ describe("scan scope of the plugin-scoped checks", () => {
       "Plugin pack",
       "Config forms",
       "Org override",
+      "Themes",
       "Tool design",
       "Tool key length",
       "Plugin test imports",

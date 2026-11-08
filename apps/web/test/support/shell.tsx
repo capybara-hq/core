@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { AppFrame } from "../../src/components/shell/AppFrame";
+import { ThemeRoot } from "../../src/components/theme-root";
 import type { OrgReadiness } from "../../src/lib/agents";
 import { makeQueryClient, reviveDehydrated } from "../../src/lib/query/client";
 import {
@@ -21,6 +22,7 @@ import {
   meQuery,
   readinessQuery,
 } from "../../src/lib/query/shell";
+import { orgThemesQuery, platformThemeQuery } from "../../src/lib/query/themes";
 import type { ShellData } from "../../src/lib/server/session";
 import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
@@ -43,6 +45,7 @@ export function shellOf(me: Me = ME, o: Partial<ShellData> = {}): ShellData {
     groups: org === null ? null : { groups: [], next: null, archivedCount: 0 },
     pending: org === null ? null : { count: 0, more: false },
     extensions: org === null ? null : [],
+    theme: null,
     ...o,
   };
 }
@@ -89,8 +92,13 @@ export function shellState(initial: ShellData): DehydratedState {
     queries: [
       ok(meQuery().queryKey, initial.me),
       ...(orgId === null
-        ? []
+        ? [ok(platformThemeQuery().queryKey, initial.theme)]
         : [
+            ok(orgThemesQuery(orgId).queryKey, {
+              themes: [],
+              resolved: initial.theme,
+              org: { id: null, personal: "allowed" },
+            }),
             ok(readinessQuery(orgId).queryKey, initial.readiness),
             section(conversationGroupsQuery(orgId).queryKey, initial.groups),
             section(inboxCountQuery(orgId).queryKey, initial.pending),
@@ -122,8 +130,8 @@ export function shellClient(initial: ShellData): QueryClient {
 }
 
 /**
- * The `(app)` layout's output for `initial` around `children`, inside the root providers; the
- * shell data sits in `client` (a fresh one holding `initial` unless given).
+ * The `(app)` layout's output for `initial` around `children` (the frame in its `ThemeRoot`), inside
+ * the root providers; the shell data sits in `client` (a fresh one holding `initial` unless given).
  */
 export function frameElement(
   initial: ShellData,
@@ -136,7 +144,9 @@ export function frameElement(
       <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
         <DesignProvider locale={locale} link={Link as LinkComponent}>
           <ToastProvider>
-            <AppFrame version={version}>{children}</AppFrame>
+            <ThemeRoot orgId={initial.org?.orgId ?? null}>
+              <AppFrame version={version}>{children}</AppFrame>
+            </ThemeRoot>
           </ToastProvider>
         </DesignProvider>
       </NextIntlClientProvider>

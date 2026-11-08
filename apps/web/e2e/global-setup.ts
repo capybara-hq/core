@@ -30,7 +30,8 @@
  * `CAPYBARA_E2E_GREETER_TGZ` for the admin extension page case, which uploads it in the browser. A
  * fake git server holds a git marketplace repository (two versions of the skills plugin `notes`);
  * its URL goes into `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and
- * upgrades the plugin.
+ * upgrades the plugin. The declarative fixture plugin `fake-theme` (themes `night-city` and
+ * `paper`) is packed to `CAPYBARA_E2E_THEME_TGZ` for themes.spec.ts, which imports it.
  * The returned function is the global cleanup: stop web, the kernel, the fakes and the containers,
  * and remove the temp dir.
  */
@@ -103,6 +104,8 @@ const catalogPackagesModule = join(repoRoot, "packages/kernel/test/catalog/packa
 const fakeMarketplaceModule = join(repoRoot, "packages/testing/src/fake-marketplace.ts");
 const fakeNpmModule = join(repoRoot, "packages/testing/src/fake-npm-registry.ts");
 const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
+/** The fixture packer of the test kit (`packFixture`), for the declarative fixture plugins. */
+const testingFixturesModule = join(repoRoot, "packages/testing/src/fixtures.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
 const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
 /**
@@ -718,6 +721,10 @@ export default async function globalSetup(): Promise<Cleanup> {
     const greeterTgz = join(dir, "greeter-1.0.0.tgz");
     await writeFile(greeterTgz, await greeterPkg());
     process.env.CAPYBARA_E2E_GREETER_TGZ = greeterTgz;
+    const { packFixture } = (await import(testingFixturesModule)) as {
+      packFixture: (name: string, outDir: string) => Promise<{ file: string }>;
+    };
+    process.env.CAPYBARA_E2E_THEME_TGZ = (await packFixture("fake-theme", dir)).file;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

@@ -14,7 +14,7 @@
     "cancel": "Cancel",
     "retry": "Retry",
     "language": "Language",
-    "theme": "Theme",
+    "theme": "Color scheme",
     "themeLight": "Light",
     "themeDark": "Dark",
     "back": "Back",
@@ -387,6 +387,14 @@
       "aborted": "The model request was aborted."
     },
     "payload_too_large": "The request is over the size limit.",
+    "theme": {
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "not_available": "This theme is not available here. Choose one of the themes listed for this setting.",
+      "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
+      "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
+      "not_found": "This theme version or file does not exist. Reload the page to load the current theme."
+    },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
@@ -2095,7 +2103,8 @@
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
-      "preferences": "Preferences"
+      "preferences": "Preferences",
+      "appearance": "Appearance"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -3241,6 +3250,7 @@
       "skills": "Skills",
       "connector-templates": "Connector templates",
       "agent-templates": "Agent templates",
+      "themes": "Themes",
       "models": "Models",
       "plugins": "Plugins"
     },
@@ -4222,6 +4232,7 @@
           "skills": "{n, plural, one {# skill} other {# skills}}",
           "connectorTemplates": "{n, plural, one {# connector template} other {# connector templates}}",
           "agentTemplates": "{n, plural, one {# agent template} other {# agent templates}}",
+          "themes": "{n, plural, one {# theme} other {# themes}}",
           "none": "No components"
         }
       },
@@ -4806,12 +4817,14 @@
     "titles": {
       "skill": "Skills",
       "connector_template": "Connector templates",
-      "agent_template": "Agent templates"
+      "agent_template": "Agent templates",
+      "theme": "Themes"
     },
     "descriptions": {
       "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
       "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
-      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here."
+      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here.",
+      "theme": "Every theme on the deployment: the colors, fonts and logo plugins bring. Manage scope, disabling and versions here; choose the platform default theme under Appearance in the deployment settings."
     },
     "tabs": {
       "all": "All",
@@ -4821,7 +4834,8 @@
     "empty": {
       "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
       "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
-      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported."
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported.",
+      "theme": "No themes yet. They appear here once a plugin that brings themes is imported."
     },
     "emptyTab": {
       "agent_template": "No agent templates under this tab."
@@ -4849,7 +4863,8 @@
     "state": {
       "disabled": "Disabled",
       "pluginStopped": "Plugin stopped",
-      "builtin": "Built-in"
+      "builtin": "Built-in",
+      "platformDefault": "Platform default theme"
     },
     "detail": {
       "tabsLabel": "Component",
@@ -4892,7 +4907,8 @@
         "named": "Named organizations: only the organizations below can use it."
       },
       "orgOwnedNote": "It belongs to {org}; new versions come from that organization.",
-      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled."
+      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled.",
+      "platformDefaultNote": "This is the platform default theme: it is on in every organization and cannot be narrowed or disabled; choose another one under Appearance in the deployment settings first."
     },
     "scopeDialog": {
       "title": "Set the scope of {name}",
@@ -4953,7 +4969,8 @@
       "conflict": {
         "skill": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
         "agent_template": "This organization already has an agent template of type {name}; agent template types are unique in an organization.",
-        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on."
+        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on.",
+        "theme": "Another theme with the id {name} is already on in this organization; theme ids must be unique within an organization. Switch that theme off first."
       },
       "locked": "{name} is on for every organization by the platform and cannot be turned off here."
     },
@@ -4962,7 +4979,8 @@
       "hint": {
         "skill": "Once it is off, this organization's agents can no longer load this skill.",
         "agent_template": "Once it is off, this organization's agents can no longer use this template as a sub-agent.",
-        "connector_template": "Once it is off, this organization can no longer create connectors from this template."
+        "connector_template": "Once it is off, this organization can no longer create connectors from this template.",
+        "theme": "Once off, this organization can no longer choose this theme; the organization default and anyone who picked it fall back to the next level."
       },
       "agents": "These agents use it and will lose it:",
       "noAgents": "No agent in this organization uses it.",
@@ -4974,7 +4992,8 @@
     "kind": {
       "skill": "Skill",
       "agent_template": "Agent template",
-      "connector_template": "Connector template"
+      "connector_template": "Connector template",
+      "theme": "Theme"
     },
     "unavailable": "The components' state in this organization could not be read.",
     "inOrg": "In this organization",
@@ -4992,6 +5011,51 @@
       "label": "Time zone",
       "help": "A time zone you choose takes precedence over your browser's.",
       "follow": "Follow the browser"
+    }
+  },
+  "themeImpact": {
+    "title": "Themes",
+    "description": "Organizations and people losing these themes fall back to the next level.",
+    "orgDefaults": "The default theme of these organizations, which will follow the platform: {orgs}",
+    "pickedBy": "{n, plural, one {# person picked it and} other {# people picked it and}} will use their organization's default",
+    "nobody": "No organization or person chose it"
+  },
+  "appearance": {
+    "title": "Appearance",
+    "save": "Save",
+    "saved": "Appearance settings saved.",
+    "builtin": "Built-in theme",
+    "followPlatform": "Follow the platform",
+    "themes": {
+      "title": "Themes",
+      "description": "The themes on in this organization; choose the default among them below. The platform default theme is on in every organization and cannot be switched off.",
+      "label": "Themes of this organization",
+      "empty": "No themes are available yet. They appear here once a super admin imports a plugin that brings themes.",
+      "lockedDefault": "Platform default theme · cannot be switched off"
+    },
+    "org": {
+      "title": "Default theme",
+      "description": "The theme members of this organization see, unless they chose one themselves. Following the platform uses the platform default theme.",
+      "label": "Organization default theme",
+      "unavailable": "The previous default theme \"{name}\" is no longer available in this organization; it follows the platform now.",
+      "personal": "Let members choose",
+      "personalOn": "Allowed",
+      "personalOff": "Set by the organization",
+      "personalHelp": "When off, members no longer see a theme choice in their preferences and everyone uses the organization default. Each person still chooses the color scheme (dark or light)."
+    },
+    "personal": {
+      "title": "Appearance",
+      "description": "The theme you see. The choice applies in every organization you belong to; where it is not on, that organization's default applies.",
+      "label": "My theme",
+      "default": "Default",
+      "locked": "Set by the organization: its admins chose the theme for every member.",
+      "unavailable": "The theme you chose is not available in this organization; its default applies now."
+    },
+    "platform": {
+      "title": "Appearance",
+      "description": "The platform default theme: organizations without a default theme use it, and so do the sign-in pages. Only platform-owned themes whose scope is all organizations and that are not disabled can be chosen.",
+      "label": "Platform default theme",
+      "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
     }
   }
 }

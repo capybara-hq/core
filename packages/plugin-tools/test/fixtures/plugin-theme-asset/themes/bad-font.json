@@ -1,0 +1,10 @@
+{
+  "name": { "en": "Night City", "zh": "夜之城" },
+  "schemes": {
+    "dark": {
+      "color": { "bg": "#05070D", "panel": "#0A0E18", "accent": "#FCE300", "on-accent": "#141200" },
+      "radius": { "sm": 0, "md": 2 }
+    }
+  },
+  "fonts": [{ "family": "Fixture", "file": "./bad.woff2", "weight": 400, "role": "prose" }]
+}

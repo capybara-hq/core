@@ -3,7 +3,7 @@
 // confirmed once by the super admin, per component. The per-org upgrade routes are retired (ruling
 // F2).
 import { createHash } from "node:crypto";
-import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+import type { ConnectorTemplateFile, ParsedTheme, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -30,6 +30,12 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { packagePath } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
+import {
+  assertNotPlatformDefault,
+  pickedByIn,
+  type ThemePreview,
+  themesPreview,
+} from "../themes/theme-usage.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import type { PreparedTemplateUpdate, TemplateUpdateInput } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
@@ -40,9 +46,11 @@ import {
   getPath,
   readCatalogAgentTemplates,
   readCatalogTemplates,
+  readCatalogThemes,
   setPath,
   skillFilesDigest,
   templatePluginProblem,
+  themeAssetsDigest,
 } from "./catalog-content.js";
 import { markVersionApplied, versionUsable } from "./catalog-items.js";
 import {
@@ -54,9 +62,11 @@ import {
   connectorsMadeFrom,
   connectorTemplatesOn,
   listedIn,
+  loadComponents,
   loadScopeState,
   pluginFactsOf,
   switchOf,
+  themeIdClashes,
 } from "./component-state.js";
 import { CatalogItemLock } from "./locks.js";
 import { itemPendingError, itemRemovedError } from "./ownership.js";
@@ -73,7 +83,7 @@ export interface PlatformUpdateComponent {
   kind: ComponentKind;
   /** The platform component (null: added by the target). */
   id: string | null;
-  /** Skill or agent template name; a connector template's id. */
+  /** Skill or agent template name; a connector template's or a theme's id. */
   name: string;
   change: UpdateChange;
   /** The catalog version of the component's current version (null: added, or no catalog version). */
@@ -146,6 +156,11 @@ export interface PlatformUpdatePreview {
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
   /**
+   * The themes the update removes that are on in some org (themes spec §6): the orgs whose default
+   * each is and how many people picked it. Absent when no such theme is removed.
+   */
+  themes?: ThemePreview[];
+  /**
    * An owner's update preview only ({@link PlatformPluginUpdater.previewForOwner}): the name of
    * every org the preview mentions, by id. An org admin cannot read other orgs, and these names
    * are already disclosed to the owner (rulings P3-14, P3-19). Not covered by `diffHash`.
@@ -207,6 +222,7 @@ interface TargetContents {
   skillNames: string[];
   agents: Awaited<ReturnType<typeof readCatalogAgentTemplates>>;
   templates: Awaited<ReturnType<typeof readCatalogTemplates>>;
+  themes: Awaited<ReturnType<typeof readCatalogThemes>>;
 }
 
 /** What the confirm's transaction reuses from the diff computed before it. */
@@ -238,6 +254,8 @@ interface UpdateDiff {
   extension: ExtensionStep | null;
   connectors: ConnectorChange[];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /** See {@link PlatformUpdatePreview.themes}. */
+  themes?: ThemePreview[];
   /** Skills whose content stays and whose pinned suggestion the target sets (by platform id). */
   suggest: Map<string, boolean>;
   contents: TargetContents;
@@ -271,6 +289,7 @@ const KIND_ORDER: Record<ComponentKind, number> = {
   skill: 0,
   agent_template: 1,
   connector_template: 2,
+  theme: 3,
 };
 /** How long one update holds its item (renewed while it runs). */
 const UPDATE_LOCK_TTL_MS = 60_000;
@@ -400,7 +419,20 @@ export class PlatformPluginUpdater {
         ...(staged !== undefined && { target: staged }),
       }),
     );
-    return { ...preview, orgNames: await this.orgNamesOf(preview) };
+    // The owner sees the names of the orgs whose default a removed theme is (named like the other
+    // orgs the preview mentions, P3-14 / P3-19), but people only of its own org: other orgs'
+    // member counts were never disclosed to it. Display only: `diffHash` covers the full preview.
+    const themes =
+      preview.themes === undefined
+        ? undefined
+        : await Promise.all(
+            preview.themes.map(async (t) => ({
+              ...t,
+              pickedBy: await pickedByIn(this.db, t.id, new Set([orgId])),
+            })),
+          );
+    const owned = { ...preview, ...(themes !== undefined && { themes }) };
+    return { ...owned, orgNames: await this.orgNamesOf(owned) };
   }
 
   /**
@@ -448,6 +480,7 @@ export class PlatformPluginUpdater {
       ...(p.extension?.orgs ?? []),
       ...p.connectorOrgs.map((c) => c.orgId),
       ...p.components.flatMap((c) => [...c.pinnedOrgs, ...(c.kept ?? []).map((k) => k.orgId)]),
+      ...(p.themes ?? []).flatMap((t) => t.orgDefaults.map((o) => o.orgId)),
     ]);
     if (ids.size === 0) return {};
     const rows = await this.db
@@ -802,7 +835,9 @@ export class PlatformPluginUpdater {
           ? "platform_skills"
           : c.kind === "agent_template"
             ? "platform_agent_templates"
-            : "platform_connector_templates";
+            : c.kind === "theme"
+              ? "platform_themes"
+              : "platform_connector_templates";
       await t
         .updateTable(table as "platform_skills")
         .set({ deleted_at: now, updated_at: now })
@@ -1283,6 +1318,44 @@ export class PlatformPluginUpdater {
       });
     }
 
+    // Themes (by id, canonical definition and their assets' digest)
+    const toThemes = contents.themes;
+    for (const th of toThemes) {
+      const l = live.themes.find((x) => x.name === th.id);
+      if (!l) {
+        components.push(added("theme", th.id));
+        continue;
+      }
+      const same =
+        canonicalJson(l.definition) === canonicalJson(th.theme) &&
+        l.assetsDigest === th.assetsDigest;
+      components.push({
+        kind: "theme",
+        id: l.id,
+        name: th.id,
+        change: same ? "same" : direction(l.catalogVersion),
+        from: l.catalogVersion,
+        to: to.version,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+    for (const l of live.themes) {
+      if (toThemes.some((x) => x.id === l.name)) continue;
+      components.push({
+        kind: "theme",
+        id: l.id,
+        name: l.name,
+        change: "removed",
+        from: l.catalogVersion,
+        to: null,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+
     // The orgs where the plugin is on (a live install; builtin: every org)
     const onOrgs = await this.pluginOrgs(itemId, item.builtin);
     if (extension) extension = { ...extension, orgs: onOrgs };
@@ -1306,6 +1379,37 @@ export class PlatformPluginUpdater {
         conflicts,
       );
     }
+
+    // Themes spec §7: an update never removes the platform default theme; rule 10 (§6): an added
+    // theme must not take an id already on where the plugin is on
+    const removedThemes = components
+      .filter((c) => c.kind === "theme" && c.change === "removed" && c.id !== null)
+      .map((c) => c.id as string);
+    await assertNotPlatformDefault(db, removedThemes, () => "gone");
+    const themeConflicts: { theme: string; orgId: string; themes: string[]; plugins: string[] }[] =
+      [];
+    for (const c of components) {
+      if (c.kind !== "theme" || c.change !== "added") continue;
+      for (const orgId of onOrgs) {
+        const clash = await themeIdClashes(db, orgId, null, c.name);
+        if (clash.length > 0) {
+          themeConflicts.push({
+            theme: c.name,
+            orgId,
+            themes: clash.map((x) => x.id),
+            plugins: clash.map((x) => x.plugin ?? "platform"),
+          });
+        }
+      }
+    }
+    if (themeConflicts.length > 0) {
+      throw new ApiError(
+        "theme.id_taken",
+        `The update adds themes whose ids are already on in organizations where the plugin is on (${[...new Set(themeConflicts.map((c) => c.theme))].join(", ")}); switch those themes off there first`,
+        themeConflicts,
+      );
+    }
+    const themes = await this.themesLost(removedThemes);
 
     // Pinned copies (in orgs where the component is on) and removed components agents use
     for (const kind of ["skill", "agent_template"] as const) {
@@ -1464,6 +1568,8 @@ export class PlatformPluginUpdater {
           reset: c.credentialsReset,
         })),
         connectorOrgs,
+        // only when present: a diff without themes keeps the hash it had before themes
+        ...(themes !== undefined && { themes }),
       }),
     );
     return {
@@ -1475,6 +1581,7 @@ export class PlatformPluginUpdater {
       extension,
       connectors,
       connectorOrgs,
+      ...(themes !== undefined && { themes }),
       suggest,
       contents,
       dependencies,
@@ -1482,12 +1589,16 @@ export class PlatformPluginUpdater {
     };
   }
 
-  /** The target's skill names, agent templates and connector templates, from object storage. */
+  /**
+   * The target's skill names, agent templates, connector templates and themes, from object storage
+   * (a theme failing its checks -> 400 `theme.invalid`, themes spec §6).
+   */
   private async readContents(to: VersionRow): Promise<TargetContents> {
     return {
       skillNames: await catalogSkillNames(this.storage, to, to.manifest),
       agents: await readCatalogAgentTemplates(this.storage, to),
       templates: await readCatalogTemplates(this.storage, to),
+      themes: await readCatalogThemes(this.storage, to),
     };
   }
 
@@ -1685,7 +1796,52 @@ export class PlatformPluginUpdater {
       file: r.file as ConnectorTemplateFile,
       ownScope: r.scope_mode === "own",
     }));
-    return { skills, agentTemplates, templates };
+    const themes = (
+      await db
+        .selectFrom("platform_themes as p")
+        .innerJoin("platform_theme_versions as v", (j) =>
+          j.onRef("v.theme_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+        )
+        .leftJoin("catalog_item_versions as cv", (j) =>
+          j
+            .onRef("cv.item_id", "=", "p.catalog_item_id")
+            .onRef("cv.version", "=", "v.catalog_version"),
+        )
+        .select(["p.id", "p.name", "p.scope_mode", "v.definition", "v.catalog_version", "cv.files"])
+        .where("p.catalog_item_id", "=", itemId)
+        .where("p.deleted_at", "is", null)
+        .execute()
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      definition: r.definition as ParsedTheme,
+      catalogVersion: r.catalog_version,
+      // no recorded files (should not happen): never equal, the update writes a new version
+      assetsDigest: r.files === null ? null : themeAssetsDigest(r.files, r.definition),
+      ownScope: r.scope_mode === "own",
+    }));
+    return { skills, agentTemplates, templates, themes };
+  }
+
+  /** The `themes` block of the preview: the orgs each of the removed themes `ids` is on in. */
+  private async themesLost(ids: string[]): Promise<ThemePreview[] | undefined> {
+    if (ids.length === 0) return undefined;
+    const comps = await loadComponents(this.db, "theme", { ids });
+    const st = await loadScopeState(this.db, "theme", comps);
+    const orgs = await this.liveOrgs();
+    const lost = new Map<string, Set<string>>();
+    for (const c of comps) {
+      const on = orgs.filter((orgId) =>
+        componentOn(
+          c,
+          pluginFactsOf(st, c.itemId, orgId),
+          listedIn(st, c.id, orgId),
+          switchOf(st, c.id, orgId),
+        ),
+      );
+      lost.set(c.id, new Set(on));
+    }
+    return themesPreview(this.db, lost);
   }
 
   /** The orgs where the plugin is on: a live install (builtin: every live org). */
@@ -1725,6 +1881,7 @@ function previewOf(d: UpdateDiff): PlatformUpdatePreview {
     components: d.components,
     extension: extensionView(d.extension),
     connectorOrgs: d.connectorOrgs,
+    ...(d.themes !== undefined && { themes: d.themes }),
     diffHash: d.diffHash,
   };
 }

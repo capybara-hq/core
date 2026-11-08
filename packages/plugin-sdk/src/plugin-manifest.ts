@@ -22,10 +22,12 @@ import {
   SETUP_GUIDE_MODES,
   SETUP_GUIDE_PLACES,
 } from "./setup-guide.js";
+import { type PluginThemeRef, THEME_LIMITS, themeIdOf } from "./theme.js";
 
 /**
  * The plugin manifest `.capybara-plugin/plugin.json` (package ecosystem spec §4.1). A plugin is a
- * bundle of at most one extension, skills and connector templates, packed as an npm-pack tgz:
+ * bundle of at most one extension, skills, connector templates, agent templates and themes, packed as
+ * an npm-pack tgz:
  *
  * ```
  * package/package.json                  npm metadata; version equals plugin.json version
@@ -33,13 +35,14 @@ import {
  * package/skills/<name>/SKILL.md        skills
  * package/connectors/<id>.json          connector templates ({@link ConnectorTemplateFile})
  * package/agents/<name>.md              agent templates (parsed by `parseAgentTemplate`)
+ * package/themes/<id>.json              themes (parsed by `parseThemeFile`)
  * package/dist/index.mjs                extension entry (only with an extension)
  * package/migrations/*.sql, package/ui/**
  * ```
  *
  * Paths start with `./` and stay inside the plugin root. Omitting `skills` / `connectorTemplates`
- * / `agents` means "scan `skills/*\/SKILL.md` / `connectors/*.json` / `agents/*.md`" (done by the
- * kernel when it reads the package). `extension` is written by the packer, never by hand.
+ * / `agents` / `themes` means "scan `skills/*\/SKILL.md` / `connectors/*.json` / `agents/*.md` /
+ * `themes/*.json`" (done by the kernel when it reads the package). `extension` is written by the packer, never by hand.
  *
  * The committed JSON Schema (`schemas/plugin.v1.schema.json`) is generated from
  * {@link PluginManifestSchema} by `pnpm gen:package-schemas` and drift-checked by
@@ -64,6 +67,8 @@ export const PLUGIN_MANIFEST_LIMITS = {
   connectorTemplates: 20,
   /** Agent templates ({@link AGENT_TEMPLATE_LIMITS}`.perPlugin`). */
   agents: AGENT_TEMPLATE_LIMITS.perPlugin,
+  /** Themes ({@link THEME_LIMITS}`.perPlugin`). */
+  themes: THEME_LIMITS.perPlugin,
   descriptionChars: 1024,
   publisherChars: 100,
   displayNameChars: 100,
@@ -149,6 +154,8 @@ export interface PluginManifest {
   connectorTemplates?: PluginConnectorTemplateRef[];
   /** Agent templates; omitted = scan `agents/*.md`. */
   agents?: PluginAgentRef[];
+  /** Themes; omitted = scan `themes/*.json`. */
+  themes?: PluginThemeRef[];
   /**
    * Setup guides (spec `2026-11-08-plugin-setup-guides-design.md`): steps and template files the
    * kernel renders for a place (`channel-connection`); see {@link PluginSetupGuide}.
@@ -346,6 +353,17 @@ const schema = z
       )
       .max(L.agents)
       .optional(),
+    themes: z
+      .array(
+        z.strictObject({
+          path: dotPath("path").refine(
+            (p) => p.endsWith(".json") && CATALOG_ITEM_NAME_RE.test(themeIdOf(p)),
+            { message: "path must be a <id>.json file with id matching ^[a-z0-9][a-z0-9-]{0,63}$" },
+          ),
+        }),
+      )
+      .max(L.themes)
+      .optional(),
     setupGuides: z.array(setupGuide).max(SETUP_GUIDE_LIMITS.guides).optional(),
     extension: extensionSection.optional(),
   })
@@ -387,6 +405,12 @@ const schema = z
         issue(["agents", i, "path"], `duplicate agent template path ${a.path}`);
       agentPaths.add(a.path);
     });
+    const themeIds = new Set<string>();
+    m.themes?.forEach((t, i) => {
+      const id = themeIdOf(t.path);
+      if (themeIds.has(id)) issue(["themes", i, "path"], `duplicate theme id ${id}`);
+      themeIds.add(id);
+    });
     const guideIds = new Set<string>();
     m.setupGuides?.forEach((g, i) => {
       if (guideIds.has(g.id)) issue(["setupGuides", i, "id"], `duplicate setup guide id ${g.id}`);
@@ -426,11 +450,12 @@ const schema = z
       m.extension === undefined &&
       m.skills?.length === 0 &&
       m.connectorTemplates?.length === 0 &&
-      (m.agents === undefined || m.agents.length === 0)
+      (m.agents === undefined || m.agents.length === 0) &&
+      (m.themes === undefined || m.themes.length === 0)
     ) {
       issue(
         [],
-        "a plugin must contain an extension, a skill, a connector template or an agent template",
+        "a plugin must contain an extension, a skill, a connector template, an agent template or a theme",
       );
     }
     const ext = m.extension;

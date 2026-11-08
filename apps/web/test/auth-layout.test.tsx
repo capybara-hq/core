@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json } from "./support/api";
 import { ME } from "./support/render";
-import { serverRoutes } from "./support/server";
+import { serverRoutes as serverRoutesOnly } from "./support/server";
 
 const { pendingBindingQuery } = await import("../src/lib/query/auth");
 const { serverQueryClient, settledQuery } = await import("../src/lib/server/query");
@@ -21,6 +21,14 @@ vi.mock("next/navigation", () => ({
     throw new Error("NOT_FOUND");
   },
 }));
+
+// the layouts' design context imports the next-intl navigation (Link)
+vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+
+/** The kernel routes, with the auth layout's platform theme read (the built-in theme). */
+const PLATFORM_THEME = "/api/v1/platform/theme";
+const serverRoutes = (routes: Parameters<typeof serverRoutesOnly>[0]) =>
+  serverRoutesOnly({ [`GET ${PLATFORM_THEME}`]: () => json(200, null), ...routes });
 
 const needsSetup = vi.hoisted(() => ({ value: false as boolean | undefined }));
 vi.mock("../src/lib/server-setup", () => ({ serverNeedsSetup: async () => needsSetup.value }));
@@ -59,7 +67,11 @@ describe("the (auth) layout's first-load prefetch", () => {
       "GET /api/v1/auth/sources": () => json(200, { sources: SOURCES }),
     });
     const state = stateOf(await layoutAt("/login?returnTo=%2Fagents"));
-    expect(calls.map((c) => c.url).sort()).toEqual(["/api/v1/auth/sources", "/api/v1/me"]);
+    expect(calls.map((c) => c.url).sort()).toEqual([
+      "/api/v1/auth/sources",
+      "/api/v1/me",
+      PLATFORM_THEME,
+    ]);
     expect(dataOf(state, "maybeMe")).toMatchObject({ status: "success", data: null });
     expect(dataOf(state, "authSources")).toMatchObject({ status: "success", data: SOURCES });
   });
@@ -70,7 +82,11 @@ describe("the (auth) layout's first-load prefetch", () => {
       "GET /api/v1/invitations/t1": () => json(200, INVITE),
     });
     const state = stateOf(await layoutAt("/invite/t1"));
-    expect(calls.map((c) => c.url).sort()).toEqual(["/api/v1/invitations/t1", "/api/v1/me"]);
+    expect(calls.map((c) => c.url).sort()).toEqual([
+      "/api/v1/invitations/t1",
+      "/api/v1/me",
+      PLATFORM_THEME,
+    ]);
     expect(dataOf(state, "maybeMe")).toMatchObject({ status: "success", data: ME });
     expect(dataOf(state, "invitation")).toMatchObject({ status: "success", data: INVITE });
   });
@@ -87,10 +103,25 @@ describe("the (auth) layout's first-load prefetch", () => {
     });
   });
 
-  it("/setup reads nothing", async () => {
+  it("/setup reads nothing but the platform theme", async () => {
     const calls = serverRoutes({});
     await expect(layoutAt("/setup")).resolves.toBeTruthy();
-    expect(calls).toEqual([]);
+    expect(calls.map((c) => c.url)).toEqual([PLATFORM_THEME]);
+  });
+
+  it("the platform theme is dehydrated; a failed read is the built-in theme, not a failure", async () => {
+    const THEME = { id: "t1", cssUrl: "/api/v1/themes/t1/1.0.0/theme.css" };
+    serverRoutes({ [`GET ${PLATFORM_THEME}`]: () => json(200, THEME) });
+    expect(dataOf(stateOf(await layoutAt("/setup")), "platformTheme")).toMatchObject({
+      status: "success",
+      data: THEME,
+    });
+    serverRoutes({
+      [`GET ${PLATFORM_THEME}`]: () => json(500, { error: { code: "internal", message: "x" } }),
+    });
+    expect(dataOf(stateOf(await layoutAt("/setup")), "platformTheme")).toMatchObject({
+      status: "error",
+    });
   });
 
   it("a document render of /bind prefetches the pending binding; signed out, no redirect here", async () => {

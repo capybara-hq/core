@@ -41,6 +41,7 @@ const LABEL: Record<ComponentKind, { en: string; zh: string }> = {
   skill: { en: "platform skill", zh: "平台技能" },
   agent_template: { en: "platform agent template", zh: "平台智能体模板" },
   connector_template: { en: "platform connector template", zh: "平台连接器模板" },
+  theme: { en: "platform theme", zh: "平台主题" },
 };
 const REFUSED: Record<string, string> = {
   "plugin.disabled": "This component is disabled by the super admin and cannot be switched on",

@@ -74,6 +74,7 @@ describe("SettingsService", () => {
       customConnectors: "allow",
       customSkills: "allow",
       orgMarketplaceBrowse: true,
+      uiTheme: { id: null },
     });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
