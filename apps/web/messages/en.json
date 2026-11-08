@@ -2363,20 +2363,27 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
-    },
-    "guide": {
-      "title": "Setup guide",
-      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
-      "modeLabel": "Inbound mode",
-      "stepsLabel": "Setup steps",
-      "unresolved": "{names} have no value yet and are shown as written.",
-      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
-      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
-      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
-      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
-      "driftAck": "I updated the {plugin} app",
-      "driftAcked": "Recorded: the app matches the plugin's setup."
     }
+  },
+  "setupGuide": {
+    "title": "Setup guide",
+    "hint": "Create the app on the platform with the plugin's instructions; the text below is filled in for this channel, ready to copy and paste.",
+    "modeLabel": "Inbound mode",
+    "modes": {
+      "long_connection": "Long connection",
+      "webhook": "Webhook"
+    },
+    "checkAfterSave": "Checked after saving",
+    "unresolved": {
+      "not_saved": "{names} appear once saved and are shown as written for now.",
+      "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",
+      "webhook_base": "{names} are shown as written: a super admin needs to set channels.webhookBaseUrl (the webhook address).",
+      "no_connector": "{names} appear once the connector is created and are shown as written for now.",
+      "no_org": "{names} are filled in per org and are shown as written here."
+    },
+    "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+    "driftAck": "I updated the {plugin} app",
+    "driftAcked": "Recorded: the app matches the plugin's setup."
   },
   "extensions": {
     "title": "Extensions",

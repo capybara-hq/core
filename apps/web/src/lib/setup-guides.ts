@@ -1,15 +1,5 @@
 import { apiFetch } from "./api";
 
-/** Localized plugin text: English, optional Chinese (falls back to English). */
-export interface GuideText {
-  en: string;
-  zh?: string;
-}
-
-/** The text of the UI language. */
-export const guideText = (t: GuideText, locale: "zh" | "en"): string =>
-  locale === "zh" ? (t.zh ?? t.en) : t.en;
-
 /** Where a plugin's setup guide is (the org's catalog route). */
 export interface SetupGuideRef {
   itemId: string;
@@ -18,47 +8,90 @@ export interface SetupGuideRef {
   version?: string;
 }
 
+/** A place a setup guide is shown at (setup guides v2 spec §9.1). */
+export type SetupGuidePlace = "channel-connection" | "connector-template";
+
+/** Who the guide's text is for: the page passes the audience it serves (spec §8). */
+export type SetupGuideAudience = "admin" | "member";
+
 /**
- * A plugin's setup guide rendered by the kernel for the org (spec
- * `2026-11-08-plugin-setup-guides-design.md` §4): steps, template files with the place's variables
- * filled in, the modes and the template hash an ack records.
+ * Why a known variable has no value here (spec §6.3): the connection is not saved yet, the
+ * deployment has no `http.publicUrl` or no `channels.webhookBaseUrl`, the org has no connector made
+ * from the template yet, or the guide is rendered for the platform (no org).
  */
+export type UnresolvedReason =
+  | "not_saved"
+  | "public_url"
+  | "webhook_base"
+  | "no_connector"
+  | "no_org";
+
+/**
+ * One block of a rendered guide (spec §7.2): sanitized Markdown prose (it may hold U+2060 word
+ * joiners that keep text from being auto-linked: rendered as is), a code block with its title, or
+ * a check line.
+ */
+export type SetupGuideBlock =
+  | { kind: "markdown"; text: string }
+  | { kind: "code"; language: string; title: string | null; text: string }
+  | { kind: "check"; id: string; label: string };
+
+/** A plugin's setup guide rendered by the kernel for an org and target (spec §7.2). */
 export interface RenderedSetupGuide {
   itemId: string;
   plugin: string;
   version: string;
   id: string;
-  place: "channel-connection";
-  title: GuideText;
-  /** The modes the guide's steps and files use; empty = no mode switch. */
+  place: SetupGuidePlace;
+  /** The document rendered (zh falls back to en). */
+  locale: "en" | "zh";
+  title: string;
+  /** The modes the document's sections use; empty or one = no mode switch. */
   modes: string[];
   mode: string | null;
-  steps: GuideText[];
-  files: {
-    title: GuideText;
-    language: "yaml" | "json" | "text";
-    fileName: string;
-    content: string;
-  }[];
-  /** Known variables without a value here (left as `{{name}}` in the text). */
-  unresolved: string[];
+  audiences: SetupGuideAudience[];
+  audience: SetupGuideAudience;
+  blocks: SetupGuideBlock[];
+  /** The check lines in document order. */
+  checks: { id: string; label: string; source: "plugin" | "kernel" }[];
+  /** Known variables without a value here (left as `{{name}}`), with the reason. */
+  unresolved: { name: string; reason: UnresolvedReason }[];
+  /** The content hash of this mode and audience: what an ack records (spec §11). */
   hash: string;
+  target: { kind: "channel-connection" | "connector"; id: string } | null;
 }
 
-/** What to render the guide for: a connection, a mode, or the name typed so far. */
+/** What to render the guide for: a target, a mode, an audience, the language. */
 export interface SetupGuideQuery {
-  connectionId?: string;
   mode?: string;
+  audience?: SetupGuideAudience;
+  locale?: "en" | "zh";
+  /** channel-connection: a saved connection, or the name typed so far on 新建渠道. */
+  connectionId?: string;
   name?: string;
+  /** connector-template: the org's connector made from the template. */
+  connectorId?: string;
 }
 
-export const getSetupGuide = (orgId: string, ref: SetupGuideRef, q: SetupGuideQuery = {}) => {
+const guideParams = (q: SetupGuideQuery): string => {
   const params = new URLSearchParams();
   if (q.mode) params.set("mode", q.mode);
+  if (q.audience) params.set("audience", q.audience);
+  if (q.locale) params.set("locale", q.locale);
   if (q.connectionId) params.set("connectionId", q.connectionId);
   if (q.name) params.set("name", q.name);
+  if (q.connectorId) params.set("connectorId", q.connectorId);
   const query = params.toString();
-  return apiFetch<{ guide: RenderedSetupGuide }>(
-    `/api/v1/orgs/${encodeURIComponent(orgId)}/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${query ? `?${query}` : ""}`,
-  );
+  return query ? `?${query}` : "";
 };
+
+export const getSetupGuide = (orgId: string, ref: SetupGuideRef, q: SetupGuideQuery = {}) =>
+  apiFetch<{ guide: RenderedSetupGuide }>(
+    `/api/v1/orgs/${encodeURIComponent(orgId)}/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${guideParams(q)}`,
+  );
+
+/** The super admin's view of a template's guide: no org, no target (spec §9.3). */
+export const getAdminSetupGuide = (ref: SetupGuideRef, q: { locale?: "en" | "zh" } = {}) =>
+  apiFetch<{ guide: RenderedSetupGuide }>(
+    `/api/v1/admin/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${guideParams(q)}`,
+  );
