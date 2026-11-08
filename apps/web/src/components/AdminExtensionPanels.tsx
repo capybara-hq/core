@@ -37,11 +37,13 @@ import {
   uninstallExtension,
 } from "../lib/admin-extensions";
 import { ApiClientError } from "../lib/api";
+import { capabilityOfPoint } from "../lib/extension-capabilities";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { adminExtensionQuery, adminExtensionsQuery, extensionChangeKeys } from "../lib/query/admin";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useCapabilityLabel } from "./ExtensionTabs";
 import { FormError } from "./form-error";
 import { PermissionReview } from "./PermissionReview";
 
@@ -71,12 +73,16 @@ const REPLICA_STATUS: Partial<Record<string, "enabled" | "disabled" | "failed">>
 };
 /** Why a replica waits → the list's status word. */
 const PENDING_STATUS: Partial<
-  Record<string, "pending_config" | "pending_approval" | "pending_migration" | "dependency">
+  Record<
+    string,
+    "pending_config" | "pending_approval" | "pending_migration" | "dependency" | "conflict"
+  >
 > = {
   config: "pending_config",
   approval: "pending_approval",
   migration: "pending_migration",
   dependency: "dependency",
+  conflict: "conflict",
 };
 
 /** 收敛中自动重读的间隔与次数上限（只是浏览器里的轮询）。 */
@@ -183,6 +189,7 @@ export function AdminExtensionOverview({
 } & AdminExtensionChanged) {
   const t = useTranslations("admin.extensions");
   const lang = labelLocale(useLocale());
+  const capabilityLabel = useCapabilityLabel();
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
@@ -203,6 +210,19 @@ export function AdminExtensionOverview({
     fn: uninstallExtension,
     invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
   });
+  // A single-provider conflict: which extension is in the way, and that disabling it is the fix.
+  const conflictLine =
+    plugin.status === "conflict" &&
+    plugin.conflict !== undefined &&
+    plugin.conflict.providers.length > 0
+      ? t("detail.conflictLine", {
+          point: capabilityLabel(capabilityOfPoint(plugin.conflict.extensionPoint)),
+          others: plugin.conflict.providers
+            .map((p) => extensionLabel(p, lang))
+            .join(t("detail.conflictJoin")),
+          name: extensionLabel(plugin, lang),
+        })
+      : null;
   /** 原因码 → 界面文案（没有译文的码原样显示）。 */
   const reasonText = (code: string | null): string | null =>
     code === null || code === ""
@@ -382,6 +402,7 @@ export function AdminExtensionOverview({
         </Stack>
       )}
       {error !== undefined && <FormError message={error} />}
+      {conflictLine !== null && <Callout tone="warn">{conflictLine}</Callout>}
       {moving && (
         <Stack direction="row" gap={8} align="center">
           <Text tone="muted">{t("detail.converging")}</Text>

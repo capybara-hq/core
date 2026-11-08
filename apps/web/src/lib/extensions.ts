@@ -41,6 +41,7 @@ export type ExtensionUnavailableReason =
   | "pending_migration"
   | "loading"
   | "dependency"
+  | "conflict"
   | "failed"
   | "deployment_disabled";
 

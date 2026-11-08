@@ -21,6 +21,7 @@ export const EXTENSION_STATUSES = [
   "converging",
   "failed",
   "dependency",
+  "conflict",
   "legacy_format",
 ] as const;
 export type ExtensionStatus = (typeof EXTENSION_STATUSES)[number];
@@ -110,6 +111,14 @@ export interface AdminExtension {
   removable: boolean;
   /** 包读不到时的说明（此时 status 为 failed、权限为空）。 */
   error?: string;
+  /**
+   * Only with status `conflict`: the single-provider extension point (`sandbox@2`) and the other
+   * extensions providing it; disabling them loads this one, no restart.
+   */
+  conflict?: {
+    extensionPoint: string;
+    providers: { name: string; displayName: LocalizedName | null }[];
+  };
 }
 
 /** 迁移 SQL 的审阅警告（敏感，不拒绝）。 */

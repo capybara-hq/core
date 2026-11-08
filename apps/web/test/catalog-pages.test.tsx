@@ -2194,6 +2194,130 @@ describe("/admin/plugins and marketplace entries", () => {
     ).toBeTruthy();
   });
 
+  describe("item detail: 删除 while the plugin's extension is enabled", () => {
+    const sandboxItem = () =>
+      json(200, {
+        item: {
+          ...item({ name: "sandbox-docker" }),
+          packageName: "@capybara-hq/plugin-sandbox-docker",
+          deletedAt: null,
+        },
+        versions: [
+          version("1.0.0", {
+            name: "sandbox-docker",
+            extension: {
+              entry: "./dist/index.mjs",
+              manifest: {
+                name: "sandbox-docker",
+                version: "1.0.0",
+                sdk: "^0.1.0-rc.0",
+                provides: ["sandbox@2"],
+                requires: [],
+                optional: [],
+                permissions: {},
+                config: { deployment: [], org: [] },
+              },
+            },
+          }),
+        ],
+        hasIcon: false,
+      });
+    const extension = (state: "enabled" | "disabled") => ({
+      name: "sandbox-docker",
+      displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+      version: "1.0.0",
+      source: "install",
+      installSource: "bootstrap",
+      required: false,
+      sha256: "a".repeat(64),
+      status: state,
+      desired: { version: "1.0.0", sha256: "a".repeat(64), state },
+      replicas: [],
+      permissions: [],
+      added: [],
+      addedItems: [],
+      removed: [],
+      warnings: [],
+      reviewHash: "0",
+      sensitive: false,
+      snapshot: null,
+      configurable: false,
+      configValid: true,
+      removable: true,
+    });
+    const openDelete = async (locale: "zh" | "en") => {
+      const user = userEvent.setup();
+      await user.click(await screen.findByRole("button", { name: RAW_MORE[locale] }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: msgs[locale].catalog.admin.detail.delete }),
+      );
+      return { user, dialog: await screen.findByRole("dialog") };
+    };
+
+    it.each(LOCALES)(
+      "enabled: the confirm names the extension, links to it and cannot be confirmed (%s)",
+      async (locale) => {
+        params.current = { itemId: ID };
+        const d = msgs[locale].catalog.admin.detail;
+        stubApi({
+          [`GET /api/v1/admin/catalog/items/${ID}`]: sandboxItem,
+          "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+          "GET /api/v1/admin/extensions/sandbox-docker": () => json(200, extension("enabled")),
+        });
+        await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale });
+        const { user, dialog } = await openDelete(locale);
+        const label = locale === "zh" ? "Docker 沙箱" : "Docker sandbox";
+        expect(
+          await within(dialog).findByText(fill(d.deleteExtensionEnabled, { name: label })),
+        ).toBeTruthy();
+        if (locale === "zh") {
+          expect(fill(d.deleteExtensionEnabled, { name: label })).toBe(
+            "请先在扩展页停用「Docker 沙箱」，再删除插件。",
+          );
+        }
+        const link = within(dialog).getByRole("link", { name: d.deleteConfirm.openExtension });
+        expect(link.getAttribute("href")).toBe("/admin/extensions/sandbox-docker");
+        await user.type(within(dialog).getByRole("textbox"), "sandbox-docker");
+        const confirm = within(dialog).getByRole("button", { name: d.deleteConfirm.confirm });
+        expect((confirm as HTMLButtonElement).disabled).toBe(true);
+        expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+      },
+    );
+
+    it("disabled here but enabled meanwhile: the 409 shows the named message in the dialog", async () => {
+      params.current = { itemId: ID };
+      const d = zh.catalog.admin.detail;
+      const calls = stubApi({
+        [`GET /api/v1/admin/catalog/items/${ID}`]: sandboxItem,
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/extensions/sandbox-docker": () => json(200, extension("disabled")),
+        [`DELETE /api/v1/admin/catalog/items/${ID}`]: () =>
+          json(409, {
+            error: {
+              code: "catalog.extension_enabled",
+              message: "The extension is enabled",
+              details: [
+                {
+                  extension: "sandbox-docker",
+                  displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+                },
+              ],
+            },
+          }),
+      });
+      await renderRouteWithCache(adminItemPath(), lastStubRoutes(), { locale: "zh" });
+      const { user, dialog } = await openDelete("zh");
+      expect(within(dialog).getByText(d.deleteConfirm.extensionNote)).toBeTruthy();
+      await user.type(within(dialog).getByRole("textbox"), "sandbox-docker");
+      await user.click(within(dialog).getByRole("button", { name: d.deleteConfirm.confirm }));
+      expect(
+        await within(dialog).findByText(fill(d.deleteExtensionEnabled, { name: "Docker 沙箱" })),
+      ).toBeTruthy();
+      expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+      expect(router.push).not.toHaveBeenCalledWith("/admin/plugins");
+    });
+  });
+
   it("item detail: the icon is only an <img> pointing at the kernel route, never inline", async () => {
     params.current = { itemId: ID };
     stubApi({

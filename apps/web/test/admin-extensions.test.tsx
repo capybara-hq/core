@@ -529,6 +529,67 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     },
   );
 
+  it.each(LOCALES)(
+    "a single-provider conflict reads 冲突 (not 依赖缺失) and the Sheet names the provider to disable (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const docker = plugin({
+        name: "sandbox-docker",
+        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+        permissions: [group("provides", ["sandbox@2"])],
+      });
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "conflict",
+        permissions: [group("provides", ["sandbox@2"])],
+        replicas: [
+          {
+            replicaId: "web-1-111-aaaaaa",
+            version: "1.0.0",
+            state: "pending",
+            reason: "conflict",
+            detail:
+              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b",
+            heartbeatAt: HEARTBEAT,
+          },
+        ],
+        conflict: {
+          extensionPoint: "sandbox@2",
+          providers: [
+            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+          ],
+        },
+      });
+      listRoutes([docker, e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const row = tableRow(locale === "zh" ? "E2B 沙箱" : "E2B sandbox");
+      expect(within(row).getByText(p.status.conflict)).toBeTruthy();
+      expect(within(row).queryByText(p.status.dependency)).toBeNull();
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.conflictLine, {
+        point: msgs[locale].extensions.capability.sandbox,
+        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      if (locale === "zh") {
+        expect(p.status.conflict).toBe("冲突");
+        expect(line).toBe(
+          "沙箱只能启用一个提供方：Docker 沙箱已启用，先停用它，E2B 沙箱就会加载。",
+        );
+      }
+      expect(within(sheet).getAllByText(p.detail.replicaReason.conflict).length).toBeGreaterThan(0);
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
   it("in the Sheet the failed replicas are the fail line, not the tinted callout (spec §6.19)", async () => {
     const split = plugin({
       status: "failed",

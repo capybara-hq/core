@@ -259,6 +259,7 @@
       "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
+      "extension_enabled": "This plugin's extension is still enabled on the deployment: disable it on the Extensions page first, then delete the plugin.",
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
       "not_owned": "Only your organization's own skills and agent templates can be shared."
@@ -2315,6 +2316,7 @@
       "pending_migration": "being prepared",
       "loading": "loading",
       "dependency": "a required extension is missing",
+      "conflict": "conflicts with another extension",
       "failed": "failed to load",
       "deployment_disabled": "disabled on the platform"
     },
@@ -3408,6 +3410,7 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
+        "conflict": "Conflict",
         "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
@@ -3451,6 +3454,7 @@
           "approval": "Permissions awaiting approval",
           "migration": "Another replica is running the migrations",
           "dependency": "A required extension point has no available provider",
+          "conflict": "Another extension already provides an extension point that allows only one provider",
           "sync_failed": "Could not sync the extension package",
           "sha_mismatch": "Package contents do not match the recorded sha256",
           "import_failed": "Could not import the extension module",
@@ -3470,6 +3474,8 @@
           "uninstall": "Uninstall"
         },
         "uninstallNeedsDisable": "Disable the extension before uninstalling it",
+        "conflictLine": "Only one {point} provider can be enabled: {others} is enabled. Disable it and {name} loads.",
+        "conflictJoin": ", ",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
@@ -3750,8 +3756,11 @@
         "deleteConfirm": {
           "title": "Delete plugin {name}",
           "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
-          "confirm": "Delete"
+          "confirm": "Delete",
+          "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
+          "openExtension": "Disable it on the Extensions page"
         },
+        "deleteExtensionEnabled": "Disable \"{name}\" on the Extensions page first, then delete the plugin.",
         "deletedToast": "Deleted \"{name}\".",
         "versionColumns": {
           "version": "Version",

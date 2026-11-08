@@ -259,6 +259,7 @@
       "not_shareable": "所属组织没有把它设为可共享，不能展示或关联给其他组织。",
       "owner_required": "不能把所属组织从它自己的列表中移除。",
       "item_pending": "这个插件正在等待超级管理员确认，暂时不能修改。",
+      "extension_enabled": "这个插件的扩展仍在部署上启用：请先在扩展页停用它，再删除插件。",
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
       "not_owned": "只能共享本组织自己的技能和智能体模板。"
@@ -2303,6 +2304,7 @@
       "pending_migration": "正在准备",
       "loading": "正在加载",
       "dependency": "缺少依赖的扩展",
+      "conflict": "与其他扩展冲突",
       "failed": "加载失败",
       "deployment_disabled": "平台已停用"
     },
@@ -3396,6 +3398,7 @@
         "converging": "收敛中",
         "failed": "失败",
         "dependency": "依赖缺失",
+        "conflict": "冲突",
         "legacy_format": "需要重新打包",
         "runningOrgsConfigure": "运行中 · 组织需各自配置（{count}）"
       },
@@ -3439,6 +3442,7 @@
           "approval": "权限待批准",
           "migration": "另一个副本正在执行迁移",
           "dependency": "依赖的扩展点没有可用的提供方",
+          "conflict": "它提供的扩展点只能有一个提供方，已由其他扩展提供",
           "sync_failed": "同步扩展包失败",
           "sha_mismatch": "扩展包内容与记录的 sha256 不符",
           "import_failed": "导入扩展模块失败",
@@ -3458,6 +3462,8 @@
           "uninstall": "卸载"
         },
         "uninstallNeedsDisable": "卸载前须先停用",
+        "conflictLine": "{point}只能启用一个提供方：{others}已启用，先停用它，{name}就会加载。",
+        "conflictJoin": "、",
         "drainHint": "进行中的工具调用最多等待 {seconds} 秒后中止。",
         "disableConfirm": {
           "title": "停用「{name}」？",
@@ -3738,8 +3744,11 @@
         "deleteConfirm": {
           "title": "删除插件 {name}",
           "hint": "组织将不再看到这个插件，已安装的组件不受影响。之后可以重新引入。",
-          "confirm": "删除"
+          "confirm": "删除",
+          "extensionNote": "插件的扩展在部署上启用时不能删除：须先在扩展页停用它。删除后扩展仍保留在扩展页，可在那里卸载。",
+          "openExtension": "去扩展页停用"
         },
+        "deleteExtensionEnabled": "请先在扩展页停用「{name}」，再删除插件。",
         "deletedToast": "已删除「{name}」。",
         "versionColumns": {
           "version": "版本",

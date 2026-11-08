@@ -38,6 +38,7 @@ import {
 import { useScopeLabel } from "../../../../../components/PluginsHead";
 import { usePagePath } from "../../../../../components/shell/path";
 import { Link, useRouter } from "../../../../../i18n/navigation";
+import { ApiClientError } from "../../../../../lib/api";
 import {
   adminIconUrl,
   agentTemplateNameOf,
@@ -63,8 +64,10 @@ import {
   type PlatformComponent,
   type PlatformComponentKind,
 } from "../../../../../lib/components";
+import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import { lockWhileRunning } from "../../../../../lib/header-actions";
 import {
+  adminExtensionQuery,
   adminOrgsQuery,
   catalogItemQuery,
   catalogItemsQuery,
@@ -194,6 +197,36 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
     invalidates: () => pluginScopeChangeKeys(orgId),
     forgetsOnLeave: () => [catalogItemQuery(item.id).queryKey],
   });
+  // The plugin's extension on the deployment: while it is enabled the delete is refused (409
+  // catalog.extension_enabled), so the confirm says so up front. Not installed: a 404, no data.
+  const extName = ext?.name ?? null;
+  const eq = adminExtensionQuery(extName ?? item.name);
+  const deployed = useQuery({
+    ...eq,
+    enabled: extName !== null && !deleted,
+    retry: false,
+    retryOnMount: retryOnMountOf(eq.queryKey),
+  }).data;
+  const enabledExtension =
+    deployed !== undefined && deployed.desired?.state === "enabled" ? deployed : null;
+  const lang = labelLocale(locale);
+  /** The delete's error: an enabled extension named, anything else by its code. */
+  const deleteError = (e: unknown): string => {
+    if (e instanceof ApiClientError && e.code === "catalog.extension_enabled") {
+      const d = e.rawDetails[0] as
+        | { extension?: string; displayName?: { zh: string; en: string } | null }
+        | undefined;
+      const label =
+        enabledExtension !== null
+          ? extensionLabel(enabledExtension, lang)
+          : extensionLabel(
+              { name: d?.extension ?? item.name, displayName: d?.displayName ?? null },
+              lang,
+            );
+      return t("detail.deleteExtensionEnabled", { name: label });
+    }
+    return errorMessage(e);
+  };
   // The release the platform runs (its license is the page's last section)
   const platformRelease =
     detail.versions.find((v) => v.version === platformVersion) ??
@@ -417,12 +450,39 @@ function PluginDetail({ detail, orgId }: { detail: CatalogItemDetail; orgId: str
         open={confirm}
         onOpenChange={setConfirm}
         title={t("detail.deleteConfirm.title", { name: item.name })}
-        description={t("detail.deleteConfirm.hint")}
+        description={
+          <Stack gap={8}>
+            <Text>{t("detail.deleteConfirm.hint")}</Text>
+            {enabledExtension !== null ? (
+              <Callout tone="warn">
+                <Stack gap={4}>
+                  <Text>
+                    {t("detail.deleteExtensionEnabled", {
+                      name: extensionLabel(enabledExtension, lang),
+                    })}
+                  </Text>
+                  <Text>
+                    <Link href={`/admin/extensions/${encodeURIComponent(enabledExtension.name)}`}>
+                      {t("detail.deleteConfirm.openExtension")}
+                    </Link>
+                  </Text>
+                </Stack>
+              </Callout>
+            ) : (
+              ext !== undefined && (
+                <Text variant="small" tone="muted">
+                  {t("detail.deleteConfirm.extensionNote")}
+                </Text>
+              )
+            )}
+          </Stack>
+        }
         confirmName={item.name}
         confirmLabel={t("detail.deleteConfirm.confirm")}
+        confirmDisabled={enabledExtension !== null}
         onConfirm={async () => {
           await remove.mutateAsync(undefined).catch((e: unknown) => {
-            throw new Error(errorMessage(e));
+            throw new Error(deleteError(e));
           });
           toast.success(t("detail.deletedToast", { name: item.name }));
           router.push("/admin/plugins");
