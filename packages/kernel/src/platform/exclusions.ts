@@ -29,6 +29,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Writes deployment config that can include secret fields",
   },
   {
+    route: "DELETE /api/v1/admin/extensions/:name/config",
+    category: "secret",
+    reason: "Clears deployment config including secret values; done on the web",
+  },
+  {
     route: "POST /api/v1/admin/extensions/:name/approve",
     category: "human-only",
     reason: "Approves an extension's permission manifest, a trust decision",

@@ -16,6 +16,7 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -110,7 +111,7 @@ export interface SecretEntry {
   renameFrom?: string | undefined;
 }
 
-/** The response of `GET / PUT /api/v1/admin/extensions/:name/config`. */
+/** The response of `GET / PUT / DELETE /api/v1/admin/extensions/:name/config`. */
 export interface DeploymentConfigView {
   plugin: string;
   /** The plugin's display name (`ExtensionDisplayNames`); null when it has none. */
@@ -328,6 +329,97 @@ export class ExtensionDeploymentConfigService {
       }
     }
     return this.render(plugin, info, stored, await this.displayNames.get(plugin));
+  }
+
+  /**
+   * Clears the deployment config stored in PG: the `extension_deployment_configs` row and every
+   * secret stored for the extension (any path, also ones an older version declared). Fields from
+   * the startup config (file / Nacos / env) are untouched and stay in effect (they stay
+   * `readonly` in the view; only the startup config changes them). Unknown to the deployment ->
+   * `extension.not_found`.
+   * In a transaction: `lockAndAuthorize` (re-checks the super admin under the lock), the advisory
+   * lock per extension, audit `extension.config_cleared` (detail `clearedPaths`: the stored field
+   * paths, never values; nothing stored -> no audit, no publish). After the commit publishes
+   * {@link PLUGIN_DEPLOYMENT_CONFIG_TOPIC} and applies it on this replica: every replica re-reads,
+   * and the extension loads from what remains, or is unloaded and becomes pending configuration
+   * when that is missing or invalid (`ExtensionHost.applyDeploymentConfig`), without a restart.
+   */
+  async clear(plugin: string, actor: string, actorTokenId?: string): Promise<DeploymentConfigView> {
+    const info = await this.info(plugin);
+    await this.clearStored(
+      plugin,
+      info.fields.map((f) => f.path),
+      actor,
+      actorTokenId,
+    );
+    return this.render(plugin, info, {}, await this.displayNames.get(plugin));
+  }
+
+  @Transactional()
+  private async clearStored(
+    plugin: string,
+    fieldPaths: readonly string[],
+    actor: string,
+    actorTokenId: string | undefined,
+  ): Promise<void> {
+    const t = this.db;
+    await this.adminLock.lockAndAuthorize(actor);
+    await this.configLock.lock(plugin);
+    const row = await t
+      .selectFrom("extension_deployment_configs")
+      .select("config")
+      .where("plugin", "=", plugin)
+      .forUpdate()
+      .executeTakeFirst();
+    const prefix = secretKey(plugin, "");
+    const secretKeys = (
+      await t
+        .selectFrom("secrets")
+        .select("key")
+        .where("namespace", "=", SECRETS_NAMESPACE)
+        .where("org_id", "=", DEPLOYMENT_SECRETS_ORG)
+        .execute()
+    )
+      .map((r) => r.key)
+      .filter((k) => k.startsWith(prefix));
+    if (row === undefined && secretKeys.length === 0) return;
+    if (secretKeys.length > 0) {
+      await t
+        .deleteFrom("secrets")
+        .where("namespace", "=", SECRETS_NAMESPACE)
+        .where("org_id", "=", DEPLOYMENT_SECRETS_ORG)
+        .where("key", "in", secretKeys)
+        .execute();
+    }
+    await t.deleteFrom("extension_deployment_configs").where("plugin", "=", plugin).execute();
+    const clearedPaths = [
+      ...new Set([
+        ...fieldPaths.filter((p) => getPath(row?.config ?? {}, p) !== undefined),
+        ...secretKeys.map((k) => k.slice(prefix.length)),
+      ]),
+    ].sort();
+    await audit(t, {
+      actorAccountId: actor,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "extension.config_cleared",
+      target: plugin,
+      detail: { clearedPaths },
+    });
+    afterCommit(async () => {
+      try {
+        await this.bus.publish(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, { plugin });
+      } catch (err) {
+        this.log.warn("cannot publish plugin-deployment-config after clearing", { plugin, err });
+      }
+      try {
+        await this.lifecycle.applyConfig(plugin);
+      } catch (err) {
+        this.log.error("applying the cleared plugin deployment config on this replica failed", {
+          plugin,
+          err,
+        });
+      }
+    });
   }
 
   /**

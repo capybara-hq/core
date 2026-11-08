@@ -161,6 +161,24 @@ export class AdminExtensionsController {
   }
 
   /**
+   * Clears the deployment config saved here: the stored fields and every stored secret value of
+   * the extension; audits `extension.config_cleared`. Fields from the startup config (file / Nacos
+   * / env) cannot be removed here: they stay in effect and the returned view still shows them
+   * (`readonly`, with their `source`). Every replica re-reads, the same way as after a PUT: the
+   * extension loads from what remains, or becomes pending configuration when that is missing or
+   * invalid (no restart). Nothing stored -> no change (no audit). Unknown -> 404
+   * `extension.not_found`.
+   */
+  @Delete(":name/config")
+  clearConfig(
+    @CurrentPrincipal() principal: Principal,
+    @Param("name") name: string,
+  ): Promise<DeploymentConfigView> {
+    const actor = requireUser(principal);
+    return this.deploymentConfigs.clear(name, actor.account.id, patTokenId(actor));
+  }
+
+  /**
    * Web approval: writes the snapshot (source web), audits `extension.permissions_approved` and
    * publishes `kernel.plugins.changed`. Package or
    * permissions changed after the review -> 409 `extension.approval_stale`; nothing to approve ->

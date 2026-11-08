@@ -55,7 +55,7 @@ import {
 } from "./approvals.js";
 import { ExtensionBlobIntegrityError } from "./blobs.js";
 import { deploymentConfigHash } from "./config-hash.js";
-import { toIssues } from "./config-issues.js";
+import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configFormSchema, describeConfigUiProblems } from "./config-json-schema.js";
 import { EffectiveConfigs } from "./effective-config.js";
 import { HookRegistry } from "./hooks.js";
@@ -538,6 +538,11 @@ export class ExtensionHost {
    * 安装记录不在这里：每次 converge 都按 PG 期望状态重新判定。
    */
   private readonly pendingActivations = new Map<string, Activation>();
+  /**
+   * The load parameters of each config-declared extension that loaded: when its deployment config
+   * is cleared and the rest is invalid it goes back to {@link pendingActivations} (pending config).
+   */
+  private readonly declaredActivations = new Map<string, Activation>();
   /** 安装记录准备好的候选（按插件名；sha 变了就作废）。 */
   private readonly prepared = new Map<string, InstallCandidate>();
   /** 闸门放行后导入过的安装记录真实清单（按插件名；部署配置 schema 用，含待配置而未加载的）。 */
@@ -1608,6 +1613,7 @@ export class ExtensionHost {
     }
     // 升级：替换加载参数（之后的依赖方连锁与 reload 用新版本），先登记新实例、再撤销旧实例
     this.specs.set(name, spec);
+    if (a.source !== "install") this.declaredActivations.set(name, a);
     this.unloadedForDependency.delete(name);
     const old = this.registry.activate(inst);
     this.loggedFailures.delete(name);
@@ -2065,14 +2071,18 @@ export class ExtensionHost {
   /**
    * 部署配置保存后（`kernel.plugin-deployment-config`）本副本重读并校验（C10；与 unload / reload 串行）：
    * - 插件没在本副本生效 → `not_loaded`（配置声明的刷新后台的合法性判定；待配置的由 reconcile 加载）；
-   * - 不合法 → `invalid`：保持当前值，告警；
+   * - 不合法 → `invalid`：保持当前值，告警；但 PG 里已没有保存的配置（超级管理员清空了，`DELETE
+   *   /api/v1/admin/extensions/:name/config`）、剩下的来源（启动配置、默认值）又不够时 → `unloaded`：卸下实例、
+   *   记为待配置（pending / config），依赖方连锁；重新配好后由 reconcile 加载；
    * - 没变 → `unchanged`；只改了 hot 字段 → `hot`：就地替换，插件经 `ctx.config` 读到新值，不重新 setup；
    * - 改了非 hot 字段 → `reload`：用新配置重新加载实例（先新后旧，排空在途调用），依赖方连锁；
    *   重新加载失败旧实例保留（`reload_failed`，记 error）。
    */
   applyDeploymentConfig(
     plugin: string,
-  ): Promise<"not_loaded" | "invalid" | "unchanged" | "hot" | "reload" | "reload_failed"> {
+  ): Promise<
+    "not_loaded" | "invalid" | "unloaded" | "unchanged" | "hot" | "reload" | "reload_failed"
+  > {
     return this.serial(async () => {
       const inst = this.registry.current(plugin);
       const spec = this.specs.get(plugin);
@@ -2106,6 +2116,10 @@ export class ExtensionHost {
       }
       const r = parseLoadGate(schema, raw);
       if (!r.success) {
+        if (await this.clearedInPg(plugin)) {
+          await this.unloadForMissingConfig(inst, toIssues(r.error));
+          return "unloaded";
+        }
         this.log.warn(
           "plugin deployment config changed but is invalid on this replica; keeping the current config",
           {
@@ -2157,6 +2171,56 @@ export class ExtensionHost {
       this.log.info("plugin reloaded after a deployment config change", { plugin, changed });
       return "reload";
     });
+  }
+
+  /** PG holds no deployment config for the plugin (it was cleared); a read error counts as no. */
+  private async clearedInPg(plugin: string): Promise<boolean> {
+    try {
+      return !(await this.installs.hasStoredDeploymentConfig(plugin));
+    } catch (err) {
+      this.log.warn("cannot read whether the plugin has a stored deployment config", {
+        plugin,
+        err,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Unloads an extension whose deployment config was cleared and is now missing or invalid (in
+   * the host's serial queue): drains it, records pending / config (a config-declared one goes back
+   * to {@link pendingActivations}; an install record is decided again on every converge) and
+   * cascades to its dependents. It loads again without a restart once it is configured.
+   */
+  private async unloadForMissingConfig(
+    inst: ExtensionInstance,
+    issues: ConfigIssue[],
+  ): Promise<void> {
+    const plugin = inst.name;
+    const drainMs = this.drainMs();
+    const gone = await this.doUnload(plugin, drainMs, null);
+    if (!gone) return;
+    const detail = issues.map((i) => `${i.path || "<root>"}: ${i.message}`).join("; ");
+    const declared = this.declaredActivations.get(plugin);
+    if (gone.source !== "install") {
+      this.configValidity.set(plugin, false);
+      if (declared) this.pendingActivations.set(plugin, { ...declared, fatal: false });
+    }
+    this.configWarned.set(plugin, detail);
+    this.log.warn(
+      "extension unloaded: its deployment config was cleared and what remains is missing or invalid (set it in the admin console or the startup config; it loads without a restart)",
+      { plugin, source: gone.source, detail },
+    );
+    await this.writeStatus({
+      plugin,
+      version: gone.version,
+      sha256: gone.sha256,
+      source: gone.source,
+      state: "pending",
+      reason: "config",
+      detail,
+    });
+    await this.cascade(gone.manifest.provides, drainMs);
   }
 
   /** 本次未加载、等待批准权限的插件（含因 `requires` 只能由它们满足而未加载的插件），按依赖拓扑序。 */

@@ -163,6 +163,19 @@ export class ExtensionInstalls {
     return mergeDeploymentConfig(stored, fileValue, fields);
   }
 
+  /**
+   * Whether PG holds a deployment config row for the extension (a super admin saved one and has
+   * not cleared it since; `DELETE /api/v1/admin/extensions/:name/config` removes it).
+   */
+  async hasStoredDeploymentConfig(plugin: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("extension_deployment_configs")
+      .select("plugin")
+      .where("plugin", "=", plugin)
+      .executeTakeFirst();
+    return row !== undefined;
+  }
+
   /** Every install record's extension name (any desired state). */
   async installedNames(): Promise<string[]> {
     const rows = await this.db.selectFrom("extension_installs").select("name").execute();
