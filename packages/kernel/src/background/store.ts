@@ -27,10 +27,10 @@ export interface BackgroundTaskRow {
    */
   sandboxConversationId: string;
   /**
-   * The environment the task runs in (the root conversation's when it was launched): its instance
-   * is where the task's processes are. Null only for tasks from before environments (all finished).
+   * The device the task runs in (the root conversation's when it was launched): its instance
+   * is where the task's processes are. Null only for tasks from before devices (all finished).
    */
-  environmentId: string | null;
+  deviceId: string | null;
   runId: string;
   callId: string;
   triggerAccountId: string;
@@ -76,7 +76,7 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   orgId: r.org_id,
   conversationId: r.conversation_id,
   sandboxConversationId: r.sandbox_conversation_id,
-  environmentId: r.environment_id,
+  deviceId: r.device_id,
   runId: r.run_id,
   callId: r.call_id,
   triggerAccountId: r.trigger_account_id,
@@ -266,7 +266,7 @@ export class BackgroundTaskStore {
         org_id: row.orgId,
         conversation_id: row.conversationId,
         sandbox_conversation_id: row.sandboxConversationId,
-        environment_id: row.environmentId,
+        device_id: row.deviceId,
         run_id: row.runId,
         call_id: row.callId,
         trigger_account_id: row.triggerAccountId,
@@ -402,14 +402,14 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Finished tasks of an environment whose process may still exist (any conversation's: they
+   * Finished tasks of a device whose process may still exist (any conversation's: they
    * share the instance).
    */
-  async pendingKills(environmentId: string): Promise<BackgroundTaskRow[]> {
+  async pendingKills(deviceId: string): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
       .selectFrom("background_tasks")
       .selectAll()
-      .where("environment_id", "=", environmentId)
+      .where("device_id", "=", deviceId)
       .where("kill_pending", "=", true)
       .orderBy("started_at", "asc")
       .execute();

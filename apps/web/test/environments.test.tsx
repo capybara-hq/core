@@ -188,8 +188,7 @@ describe("environments list", () => {
   it("a refused create keeps the dialog open with the error copy", async () => {
     stubApi({
       ...routes,
-      [`POST ${BASE}`]: () =>
-        json(409, { error: { code: "environment.name_taken", message: "taken" } }),
+      [`POST ${BASE}`]: () => json(409, { error: { code: "device.name_taken", message: "taken" } }),
     });
     await renderList();
     const user = userEvent.setup();
@@ -197,7 +196,7 @@ describe("environments list", () => {
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByRole("textbox"), "Build box");
     await user.click(within(dialog).getByRole("button", { name: E.create.submit }));
-    expect(await within(dialog).findByText(en.errors.environment.name_taken)).toBeTruthy();
+    expect(await within(dialog).findByText(en.errors.device.name_taken)).toBeTruthy();
     expect(router.push).not.toHaveBeenCalled();
   });
 });
@@ -263,8 +262,7 @@ describe("environment detail", () => {
 
   it("a missing environment is the not-found state", async () => {
     stubApi({
-      [`GET ${BASE}/e1`]: () =>
-        json(404, { error: { code: "environment.not_found", message: "no" } }),
+      [`GET ${BASE}/e1`]: () => json(404, { error: { code: "device.not_found", message: "no" } }),
     });
     await renderDetail();
     expect(await screen.findByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();

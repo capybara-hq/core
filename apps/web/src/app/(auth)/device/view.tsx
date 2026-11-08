@@ -51,9 +51,9 @@ const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 4
  */
 const startOver = (e: unknown) =>
   e instanceof ApiClientError &&
-  (e.code === "device.code_invalid" ||
-    e.code === "device.expired" ||
-    e.code === "device.unavailable");
+  (e.code === "device_sign_in.code_invalid" ||
+    e.code === "device_sign_in.expired" ||
+    e.code === "device_sign_in.unavailable");
 
 /** The `新建环境` choice of the environment select (an environment id is a uuid, never this). */
 const NEW = "new";

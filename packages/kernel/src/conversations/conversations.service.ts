@@ -7,9 +7,9 @@ import { BackgroundTaskStopper } from "../background/stop.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
 import {
-  ConversationEnvironments,
-  type NewConversationEnvironment,
-} from "../environments/conversation-environments.js";
+  ConversationDevices,
+  type NewConversationDevice,
+} from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -53,11 +53,11 @@ export interface ConversationView {
   /** When the owner archived it; null = not archived (hidden from the default lists). */
   archivedAt: Date | null;
   /**
-   * The environment it works in (environments spec §4.1 item 1); null while unbound (no sandbox
-   * provider when it was created, an anonymous IM sender's, or created before environments). A
+   * The device it works in (environments spec §4.1 item 1); null while unbound (no sandbox
+   * provider when it was created, an anonymous IM sender's, or created before devices). A
    * sub-agent's is null: it works in its root conversation's.
    */
-  environmentId: string | null;
+  deviceId: string | null;
   /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
@@ -187,7 +187,7 @@ const COLUMNS = [
   "parent_conversation_id",
   "subagent_type",
   "archived_at",
-  "environment_id",
+  "device_id",
 ] as const;
 
 function toView(r: {
@@ -204,7 +204,7 @@ function toView(r: {
   parent_conversation_id: string | null;
   subagent_type: string | null;
   archived_at: Date | null;
-  environment_id: string | null;
+  device_id: string | null;
   activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
@@ -221,7 +221,7 @@ function toView(r: {
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
-    environmentId: r.environment_id,
+    deviceId: r.device_id,
     activity: r.activity ?? null,
   };
 }
@@ -311,9 +311,9 @@ export class ConversationsService {
     /** Stops a deleted conversation's background tasks. */
     @Inject(BackgroundTaskStopper)
     private readonly background: Pick<BackgroundTaskStopper, "stopForDeletedConversation">,
-    /** The environment a new conversation is bound to (environments spec §4.1 item 1). */
-    @Inject(ConversationEnvironments)
-    private readonly environments: Pick<ConversationEnvironments, "forNew">,
+    /** The device a new conversation is bound to (environments spec §4.1 item 1). */
+    @Inject(ConversationDevices)
+    private readonly devices: Pick<ConversationDevices, "forNew">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -330,19 +330,19 @@ export class ConversationsService {
   }
 
   /**
-   * Creates an empty conversation bound to its environment (`pick`, see
-   * {@link ConversationEnvironments.forNew}); an agent the account cannot use →
-   * `agent.not_found`, an environment it may not use → `environment.not_found` /
-   * `environment.unavailable`, and nothing is created.
+   * Creates an empty conversation bound to its device (`pick`, see
+   * {@link ConversationDevices.forNew}); an agent the account cannot use →
+   * `agent.not_found`, a device it may not use → `device.not_found` /
+   * `device.unavailable`, and nothing is created.
    */
   async create(
     orgId: string,
     accountId: string,
     agentId: string,
-    pick: NewConversationEnvironment = {},
+    pick: NewConversationDevice = {},
   ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
-    const environmentId = await this.environments.forNew(orgId, accountId, pick);
+    const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const row = await this.db
       .insertInto("conversations")
       .values({
@@ -350,7 +350,7 @@ export class ConversationsService {
         org_id: orgId,
         agent_id: agentId,
         account_id: accountId,
-        environment_id: environmentId,
+        device_id: deviceId,
       })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
@@ -371,7 +371,7 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
-    pick: NewConversationEnvironment = {},
+    pick: NewConversationDevice = {},
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -381,13 +381,13 @@ export class ConversationsService {
     const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
-    const environmentId = await this.environments.forNew(orgId, accountId, pick);
+    const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
     const all = await this.createIn(
-      { id, orgId, accountId, agentId, environmentId },
+      { id, orgId, accountId, agentId, deviceId },
       input,
       next,
       extra,
@@ -413,7 +413,7 @@ export class ConversationsService {
       orgId: string;
       accountId: string;
       agentId: string;
-      environmentId: string | null;
+      deviceId: string | null;
     },
     input: UserMessageInput & { clientMessageId: string },
     next: Selection | null,
@@ -428,7 +428,7 @@ export class ConversationsService {
         org_id: orgId,
         agent_id: conv.agentId,
         account_id: accountId,
-        environment_id: conv.environmentId,
+        device_id: conv.deviceId,
         create_request_id: input.clientMessageId,
       })
       .onConflict((oc) =>
@@ -752,7 +752,7 @@ export class ConversationsService {
       parent_conversation_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
-      environment_id: string | null;
+      device_id: string | null;
       activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
@@ -771,14 +771,14 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.environment_id, cs.activity
+        cs.archived_at, cs.device_id, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, c.environment_id, ${activitySql("c")} AS activity
+          c.archived_at, c.device_id, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}

@@ -23,7 +23,7 @@ import {
   readFakeSandboxOps,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxLeasesFor, sandboxServiceFor, seedEnvironment } from "../helpers/sandbox.js";
+import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -66,26 +66,26 @@ function spied(impl: SandboxProvider): SandboxProvider {
 }
 
 let provider: SandboxProvider;
-/** Environment ids the service asked for pending kills. */
+/** Device ids the service asked for pending kills. */
 let killsAskedFor: string[];
 
 /**
- * The background store with `pendingKills` read by environment id. Task 9 moves the store query
- * itself to `environment_id`; until then this stand-in reads that column.
+ * The background store with `pendingKills` read by device id. Task 9 moves the store query
+ * itself to `device_id`; until then this stand-in reads that column.
  */
-function backgroundByEnvironment(): Pick<BackgroundTaskStore, "pendingKills" | "clearKill"> {
+function backgroundByDevice(): Pick<BackgroundTaskStore, "pendingKills" | "clearKill"> {
   const store = new BackgroundTaskStore(
     Object.create(KernelDb.prototype, { db: { value: db } }) as KernelDb,
     {} as TransactionHost,
     {} as BackgroundLaunchLock,
   );
   return {
-    pendingKills: async (environmentId) => {
-      killsAskedFor.push(environmentId);
+    pendingKills: async (deviceId) => {
+      killsAskedFor.push(deviceId);
       const ids = await db
         .selectFrom("background_tasks")
         .select("id")
-        .where("environment_id", "=", environmentId)
+        .where("device_id", "=", deviceId)
         .where("kill_pending", "=", true)
         .orderBy("started_at", "asc")
         .execute();
@@ -104,7 +104,7 @@ const service = (): SandboxService =>
     config: () => config,
     log: {},
     lockPollMs: 20,
-    background: backgroundByEnvironment(),
+    background: backgroundByDevice(),
   });
 
 beforeAll(async () => {
@@ -129,7 +129,7 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-if-running-"));
@@ -143,31 +143,27 @@ beforeEach(async () => {
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
   seed = await seedConversation(raw);
-  envId = await seedEnvironment(raw, seed.orgId, seed.accountId);
+  envId = await seedDevice(raw, seed.orgId, seed.accountId);
 });
 
-/** The environment of the sandbox (the lease key). */
+/** The device of the sandbox (the lease key). */
 const env = () => envId;
 const conv = () => seed.conversationId;
 const actor = () => ({ accountId: seed.accountId, conversationId: conv() });
 const use = (s: SandboxService) =>
   s.withSandbox(
-    { orgId: seed.orgId, environmentId: env(), holderConversationId: conv(), actor: actor() },
+    { orgId: seed.orgId, deviceId: env(), holderConversationId: conv(), actor: actor() },
     async (h) => h,
     signal(),
   );
 const row = () =>
-  db
-    .selectFrom("environment_instances")
-    .selectAll()
-    .where("environment_id", "=", env())
-    .executeTakeFirst();
+  db.selectFrom("device_instances").selectAll().where("device_id", "=", env()).executeTakeFirst();
 
-/** A finished task of the environment's instance marked `kill_pending`. */
+/** A finished task of the device's instance marked `kill_pending`. */
 async function lostTask(sid: string, sandboxCreatedAt: Date): Promise<string> {
   const id = `bt_${randomUUID().slice(0, 6)}`;
   await sql`INSERT INTO capybara.background_tasks (id, org_id, conversation_id,
-      sandbox_conversation_id, environment_id, run_id, call_id, trigger_account_id, description, command, sid,
+      sandbox_conversation_id, device_id, run_id, call_id, trigger_account_id, description, command, sid,
       output_path, status, lost_reason, finished_at, deadline_at, sandbox_created_at, kill_pending)
     VALUES (${id}, ${seed.orgId}, ${conv()}, ${conv()}, ${env()}, 'run-1', 'call-1', ${seed.accountId},
       'd', 'sleep 600', ${sid}, ${`.capybara/tasks/${id}.out`}, 'lost', 'sandbox_suspended', now(),
@@ -259,9 +255,9 @@ describe("ifRunning", () => {
     const instance = await s.currentInstance(env());
     const old = new Date(Date.now() - DAY);
     await db
-      .updateTable("environment_instances")
+      .updateTable("device_instances")
       .set({ last_used_at: old })
-      .where("environment_id", "=", env())
+      .where("device_id", "=", env())
       .execute();
     const leases = sandboxLeasesFor({ redis, log: {} });
     calls = [];
@@ -373,9 +369,9 @@ describe("kills of lost tasks after a resume", () => {
     expect((await alive()).exitCode).toBe(0);
     // the next resume: mark the row suspended without the fake killing anything
     await db
-      .updateTable("environment_instances")
+      .updateTable("device_instances")
       .set({ status: "suspended" })
-      .where("environment_id", "=", env())
+      .where("device_id", "=", env())
       .execute();
     await use(s);
     expect((await alive()).exitCode).toBe(1);

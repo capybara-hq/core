@@ -35,14 +35,14 @@ import {
   type SandboxServiceDeps,
   sandboxLeasesFor,
   sandboxServiceFor,
-  seedEnvironment,
+  seedDevice,
 } from "../helpers/sandbox.js";
 
 /**
- * The kernel sandbox service keyed by environment (spec 2026-11-07-environments-design §4.2, §5.1):
- * a lazily created file system plus instance per environment, leases, idle suspension, forced
+ * The kernel sandbox service keyed by device (spec 2026-11-07-environments-design §4.2, §5.1):
+ * a lazily created file system plus instance per device, leases, idle suspension, forced
  * suspension, destruction of the instance after inactivity (files kept), rebuild on `gone`, lost
- * files, file reset and environment deletion.
+ * files, file reset and device deletion.
  */
 
 let pgc: TestContainer;
@@ -97,7 +97,7 @@ afterAll(async () => {
 });
 
 let orgId: string;
-/** The org creator: owner of the environments and of the holder conversation. */
+/** The org creator: owner of the devices and of the holder conversation. */
 let accountId: string;
 let envId: string;
 /** The agent conversation holding the sandbox (the actor of its commands). */
@@ -111,7 +111,7 @@ async function newConversation(org = orgId): Promise<string> {
   return id;
 }
 
-const newEnvironment = (org = orgId) => seedEnvironment(raw, org);
+const newDevice = (org = orgId) => seedDevice(raw, org);
 
 async function newOrg(): Promise<string> {
   const owner = randomUUID();
@@ -129,7 +129,7 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
   );
   if (root) await rm(root, { recursive: true, force: true });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-"));
@@ -145,24 +145,20 @@ beforeEach(async () => {
       created_by: string;
     }>`SELECT created_by FROM capybara.orgs WHERE id = ${orgId}`.execute(raw)
   ).rows[0]?.created_by as string;
-  envId = await newEnvironment();
+  envId = await newDevice();
   conversationId = await newConversation();
 });
 
-/** The `withSandbox` context of the holder conversation in an environment. */
+/** The `withSandbox` context of the holder conversation in a device. */
 const at = (env = envId, org = orgId, holder = conversationId) => ({
   orgId: org,
-  environmentId: env,
+  deviceId: env,
   holderConversationId: holder,
   actor: { accountId, conversationId: holder },
 });
 
 const row = (id = envId) =>
-  db
-    .selectFrom("environment_instances")
-    .selectAll()
-    .where("environment_id", "=", id)
-    .executeTakeFirst();
+  db.selectFrom("device_instances").selectAll().where("device_id", "=", id).executeTakeFirst();
 /** Waits until the fake records a running command (`instances/<id>/procs/<pid>`), instead of a fixed wait. */
 async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
   const dir = join(root, "instances", id, "procs");
@@ -231,13 +227,13 @@ describe("组织出站设置（Ruling M19）", () => {
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
 
     await setEgress({ mode: "allowlist", allowHosts: ["example.com", "*.corp.example.org"] });
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com", "*.corp.example.org"],
     });
 
     await setEgress({ mode: "allowlist" });
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "allowlist",
       allowHosts: config.sandbox.limits.allowHosts,
     });
@@ -249,12 +245,12 @@ describe("组织出站设置（Ruling M19）", () => {
     config.sandbox.limits.egress = "none";
     expect(await limitsOf(s)).toMatchObject({ egress: "none", allowHosts: [] });
     config.sandbox.limits.egress = "open";
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "allowlist",
       allowHosts: ["example.com"],
     });
     await setEgress({ mode: "open" });
-    expect(await limitsOf(s, await newEnvironment())).toMatchObject({
+    expect(await limitsOf(s, await newDevice())).toMatchObject({
       egress: "none",
       allowHosts: [],
     });
@@ -271,7 +267,7 @@ describe("组织出站设置（Ruling M19）", () => {
 });
 
 describe("lazy creation", () => {
-  it("the first use creates the file system, then the instance on it (name cap-env-<environment>, no image by default, limits from config); later uses reuse them", async () => {
+  it("the first use creates the file system, then the instance on it (name cap-device-<device>, no image by default, limits from config); later uses reuse them", async () => {
     const s = service();
     expect(s.cloudAvailable).toBe(true);
     expect(await ops()).toEqual([]);
@@ -286,12 +282,14 @@ describe("lazy creation", () => {
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
     expect(meta).toEqual({
-      name: `cap-env-${envId}`,
+      name: `cap-device-${envId}`,
       image: null,
       fileSystem: expect.any(String),
       limits,
     });
-    expect(await ops("create-fs")).toEqual([["create-fs", meta?.fileSystem, `cap-env-${envId}`]]);
+    expect(await ops("create-fs")).toEqual([
+      ["create-fs", meta?.fileSystem, `cap-device-${envId}`],
+    ]);
     const r = await row();
     expect(r).toMatchObject({
       org_id: orgId,
@@ -315,9 +313,9 @@ describe("lazy creation", () => {
     expect((await fakeSandboxMeta(root, a.h.id))?.image).toBe("custom:1");
   });
 
-  it("environments are separate: each gets its own file system and instance", async () => {
+  it("devices are separate: each gets its own file system and instance", async () => {
     const s = service();
-    const other = await newEnvironment();
+    const other = await newDevice();
     const a = await use(s);
     const b = await use(s, other);
     expect(b.h).not.toEqual(a.h);
@@ -354,7 +352,7 @@ describe("lazy creation", () => {
   it("执行完更新 last_used_at（fn 抛错也更新），fn 的错误原样抛出", async () => {
     const s = service();
     await use(s);
-    await sql`UPDATE capybara.environment_instances SET last_used_at = now() - interval '1 hour'`.execute(
+    await sql`UPDATE capybara.device_instances SET last_used_at = now() - interval '1 hour'`.execute(
       raw,
     );
     const err = await s
@@ -460,7 +458,7 @@ describe("空闲休眠（审查重点 3）", () => {
     const s = service();
     await use(s);
     // 一直在用（last_used_at 刚更新），但已连续运行 3 小时
-    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours'`.execute(
+    await sql`UPDATE capybara.device_instances SET running_since = now() - interval '3 hours'`.execute(
       raw,
     );
     expect(await s.suspendIdle(new Date())).toBe(1);
@@ -486,7 +484,7 @@ describe("空闲休眠（审查重点 3）", () => {
       signal(),
     );
     await inside;
-    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours',
+    await sql`UPDATE capybara.device_instances SET running_since = now() - interval '3 hours',
       last_used_at = now() - interval '1 hour'`.execute(raw);
     expect(await s.suspendIdle(new Date())).toBe(0);
     expect(await s.destroyInactive(later(30 * DAY))).toBe(0);
@@ -514,12 +512,12 @@ describe("the provider reports the instance gone", () => {
     expect(await row()).toMatchObject({ status: "running", handle: b.h, fs_status: "ready" });
   });
 
-  it("files kept by another provider than the current one: environment.unavailable, nothing changes", async () => {
+  it("files kept by another provider than the current one: device.unavailable, nothing changes", async () => {
     await use(service(() => provider, "sandbox-old"));
     const before = await row();
     const err = await use(service()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("environment.unavailable");
+    expect((err as ApiError).code).toBe("device.unavailable");
     expect((err as ApiError).message).toContain("sandbox-old");
     expect(await row()).toMatchObject({
       provider: "sandbox-old",
@@ -550,7 +548,7 @@ describe("destruction after inactivity", () => {
     expect(await s.destroyInactive(later(30 * DAY))).toBe(0);
   });
 
-  it("inactive environment keeps files across rebuild", async () => {
+  it("inactive device keeps files across rebuild", async () => {
     const s = service();
     await writeIn(s, "notes.txt", "kept");
     const first = (await use(s)).h;
@@ -563,16 +561,16 @@ describe("destruction after inactivity", () => {
     expect(await ops("create-fs")).toHaveLength(1);
   });
 
-  it("an environment that was deleted, or whose org was deleted, is destroyed with its files whenever it was last used; its row is deleted", async () => {
+  it("a device that was deleted, or whose org was deleted, is destroyed with its files whenever it was last used; its row is deleted", async () => {
     const s = service();
     const deletedOrg = await newOrg();
-    const e1 = await newEnvironment(deletedOrg);
-    const e2 = await newEnvironment();
+    const e1 = await newDevice(deletedOrg);
+    const e2 = await newDevice();
     const a = await use(s, e1, deletedOrg);
     const b = await use(s, e2);
     const keep = await use(s);
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${deletedOrg}`.execute(raw);
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${e2}`.execute(raw);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${e2}`.execute(raw);
     const fsOf = async (h: { id: string }) => (await fakeSandboxMeta(root, h.id))?.fileSystem;
     const doomedFs = [await fsOf(a.h), await fsOf(b.h)];
     const keptFs = await fsOf(keep.h);
@@ -587,31 +585,31 @@ describe("destruction after inactivity", () => {
     expect(await fakeSandboxState(root, keep.h.id)).toBe("running");
   });
 
-  it("a deleted environment whose instance was already destroyed still loses its files", async () => {
+  it("a deleted device whose instance was already destroyed still loses its files", async () => {
     const s = service();
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
     expect(await s.destroyInactive(new Date())).toBe(1);
     expect(await row()).toBeUndefined();
     expect(await fakeFileSystems(root)).toEqual([]);
   });
 
-  it("destroyEnvironment removes instance and file system; without a row it does nothing", async () => {
+  it("destroyDevice removes instance and file system; without a row it does nothing", async () => {
     const s = service();
     await writeIn(s, "a.txt", "x");
     const a = await use(s);
-    await s.destroyEnvironment(envId);
+    await s.destroyDevice(envId);
     expect(await row()).toBeUndefined();
     expect(await fakeSandboxState(root, a.h.id)).toBeNull();
     expect(await fakeFileSystems(root)).toEqual([]);
     expect(await ops("destroy")).toHaveLength(1);
     expect(await ops("destroy-fs")).toHaveLength(1);
-    await s.destroyEnvironment(randomUUID());
+    await s.destroyDevice(randomUUID());
     expect(await ops("destroy")).toHaveLength(1);
   });
 
-  it("a use waiting behind destroyEnvironment does not resurrect the environment", async () => {
+  it("a use waiting behind destroyDevice does not resurrect the device", async () => {
     const s = service();
     await use(s);
     const g = gates();
@@ -624,9 +622,9 @@ describe("destruction after inactivity", () => {
       signal(),
     );
     await g.inside;
-    // the environments service soft-deletes, then the job destroys
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
-    const destroying = s.destroyEnvironment(envId);
+    // the devices service soft-deletes, then the job destroys
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+    const destroying = s.destroyDevice(envId);
     await new Promise((r) => setTimeout(r, 100));
     // a late use waits behind the destroyer's intent
     const late = use(s).catch((e: unknown) => e);
@@ -635,14 +633,14 @@ describe("destruction after inactivity", () => {
     await holder;
     await destroying;
     const err = await late;
-    expect((err as ApiError).code).toBe("environment.not_found");
+    expect((err as ApiError).code).toBe("device.not_found");
     expect(await row()).toBeUndefined();
     expect(await fakeFileSystems(root)).toEqual([]);
     expect(await ops("create-fs")).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);
   });
 
-  it("destroyEnvironment waits for a running command to finish", async () => {
+  it("destroyDevice waits for a running command to finish", async () => {
     const s = service();
     await use(s);
     const g = gates();
@@ -657,7 +655,7 @@ describe("destruction after inactivity", () => {
       signal(),
     );
     await g.inside;
-    const destroying = s.destroyEnvironment(envId);
+    const destroying = s.destroyDevice(envId);
     await new Promise((r) => setTimeout(r, 150));
     expect(await ops("destroy")).toHaveLength(0);
     g.release();
@@ -670,7 +668,7 @@ describe("destruction after inactivity", () => {
   it("two replicas sweeping at once suspend / destroy each instance once", async () => {
     const s1 = service();
     const s2 = service();
-    const ids = [envId, await newEnvironment(), await newEnvironment()];
+    const ids = [envId, await newDevice(), await newDevice()];
     for (const id of ids) await use(s1, id);
     await setFakeSandboxDelays(root, { suspend: 50, destroy: 50 });
     const [x, y] = await Promise.all([
@@ -696,7 +694,7 @@ describe("lost files", () => {
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
     const err = await use(s).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("environment.files_lost");
+    expect((err as ApiError).code).toBe("device.files_lost");
     expect((err as ApiError).status).toBe(409);
     expect((await row())?.fs_status).toBe("lost");
     // no silent empty workspace: no new file system was made
@@ -704,7 +702,7 @@ describe("lost files", () => {
     // later uses fail the same way without calling the provider
     const before = (await ops()).length;
     const again = await use(s).catch((e: unknown) => e);
-    expect((again as ApiError).code).toBe("environment.files_lost");
+    expect((again as ApiError).code).toBe("device.files_lost");
     expect(await ops()).toHaveLength(before);
   });
 
@@ -731,12 +729,12 @@ describe("lost files", () => {
     expect((await row())?.fs_status).toBe("ready");
   });
 
-  it("resetFileSystem after files_lost makes the environment usable again", async () => {
+  it("resetFileSystem after files_lost makes the device usable again", async () => {
     const s = service();
     const a = await use(s);
     await removeFakeFileSystem(root, (await fakeSandboxMeta(root, a.h.id))?.fileSystem as string);
     await s.destroyInactive(later(8 * DAY));
-    await expect(use(s)).rejects.toMatchObject({ code: "environment.files_lost" });
+    await expect(use(s)).rejects.toMatchObject({ code: "device.files_lost" });
     await s.resetFileSystem(envId);
     const next = await use(s);
     expect(next.info.fresh).toBe(true);
@@ -760,7 +758,7 @@ describe("actor", () => {
 });
 
 describe("锁", () => {
-  it("the lock key is capk:sandbox:<environment>, held while running and released after", async () => {
+  it("the lock key is capk:sandbox:<device>, held while running and released after", async () => {
     const s = service();
     let seen: string | null = null;
     await s.withSandbox(
@@ -822,7 +820,7 @@ describe("锁的防护（fix round 1）", () => {
     const pending = use(s);
     await new Promise((r) => setTimeout(r, 100));
     // 恢复进行中，另一个持有者（锁丢失后）已经改了记录
-    await sql`UPDATE capybara.environment_instances SET status = 'destroyed', generation = generation + 1`.execute(
+    await sql`UPDATE capybara.device_instances SET status = 'destroyed', generation = generation + 1`.execute(
       raw,
     );
     await expect(pending).rejects.toThrow(/changed|lost/);
@@ -852,7 +850,7 @@ describe("锁的防护（fix round 1）", () => {
       signal(),
     );
     await b.inside;
-    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours',
+    await sql`UPDATE capybara.device_instances SET running_since = now() - interval '3 hours',
       last_used_at = now() - interval '1 hour'`.execute(raw);
     expect(await s.suspendIdle(new Date())).toBe(0);
     expect((await row())?.status).toBe("running");
@@ -884,31 +882,31 @@ describe("锁的防护（fix round 1）", () => {
     await holder;
   });
 
-  it("an environment of another org: environment.not_found", async () => {
+  it("a device of another org: device.not_found", async () => {
     const s = service();
     await use(s);
     const err = await use(s, envId, await newOrg()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("environment.not_found");
+    expect((err as ApiError).code).toBe("device.not_found");
   });
 
   it("a mismatched org cannot create an instance row", async () => {
     const s = service();
     const other = await newOrg();
     const err = await use(s, envId, other).catch((e: unknown) => e);
-    expect((err as ApiError).code).toBe("environment.not_found");
+    expect((err as ApiError).code).toBe("device.not_found");
     expect((err as ApiError).status).toBe(404);
     expect(await row()).toBeUndefined();
     expect(await ops()).toEqual([]);
-    // the owner's org still gets its environment
+    // the owner's org still gets its device
     expect((await use(s)).info.fresh).toBe(true);
     expect((await row())?.org_id).toBe(orgId);
   });
 
-  it("a deleted environment is not created", async () => {
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
+  it("a deleted device is not created", async () => {
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${envId}`.execute(raw);
     const err = await use(service()).catch((e: unknown) => e);
-    expect((err as ApiError).code).toBe("environment.not_found");
+    expect((err as ApiError).code).toBe("device.not_found");
     expect(await row()).toBeUndefined();
     expect(await ops()).toEqual([]);
   });
@@ -1039,7 +1037,7 @@ describe("another holder rebuilt the sandbox (final review m5)", () => {
 
 describe("leftovers of interrupted creates and of other providers (fix round 1)", () => {
   const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
-  const name = () => `cap-env-${envId}`;
+  const name = () => `cap-device-${envId}`;
 
   it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
     const s = service();
@@ -1056,7 +1054,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
       fileSystem: fs,
       signal: signal(),
     });
-    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status,
+    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status,
         fs_handle, fs_status, last_used_at)
       VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating', ${JSON.stringify(fs)}::jsonb, 'ready',
         now() - interval '30 days')`.execute(raw);
@@ -1066,7 +1064,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     expect(await fakeFileSystems(root)).toEqual([fs.id]);
   });
 
-  it("a file system whose handle was never recorded is destroyed by name when the environment is deleted", async () => {
+  it("a file system whose handle was never recorded is destroyed by name when the device is deleted", async () => {
     const s = service();
     const p = provider as SandboxProvider;
     await p.createFileSystem({
@@ -1074,34 +1072,34 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
       limits: { ...tiny, allowHosts: [] },
       signal: signal(),
     });
-    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
       VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating')`.execute(raw);
-    await s.destroyEnvironment(envId);
+    await s.destroyDevice(envId);
     expect((await ops("destroy-fs-by-name")).map((o) => o[1])).toEqual([name()]);
     expect(await fakeFileSystems(root)).toEqual([]);
     expect(await row()).toBeUndefined();
   });
 
-  it("an environment of another provider is destroyed with that provider while it is loaded; otherwise the deletion fails and the row stays for a retry", async () => {
+  it("a device of another provider is destroyed with that provider while it is loaded; otherwise the deletion fails and the row stays for a retry", async () => {
     const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
     const old = createFakeSandbox(oldRoot);
     const a = await use(service(() => old, "sandbox-old"));
     const s = service(undefined, undefined, {
       lookup: (n) => (n === "sandbox-old" ? old : undefined),
     });
-    await s.destroyEnvironment(envId);
+    await s.destroyDevice(envId);
     expect(await fakeSandboxState(oldRoot, a.h.id)).toBeNull();
     expect(await fakeFileSystems(oldRoot)).toEqual([]);
     expect(await row()).toBeUndefined();
 
     // the old provider is gone: its instance is recorded as leaked, the files cannot be deleted
-    const e2 = await newEnvironment();
+    const e2 = await newDevice();
     const b = await use(
       service(() => old, "sandbox-old"),
       e2,
     );
     warned.length = 0;
-    await expect(service().destroyEnvironment(e2)).rejects.toThrow(/sandbox-old/);
+    await expect(service().destroyDevice(e2)).rejects.toThrow(/sandbox-old/);
     expect(await row(e2)).toMatchObject({ provider: "sandbox-old" });
     expect(warned.some((w) => /another provider/.test(w))).toBe(true);
     expect(await fakeSandboxState(oldRoot, b.h.id)).toBe("running");
@@ -1111,9 +1109,9 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
 
 describe("provider switch during a create", () => {
   const tiny = { cpu: 1, memoryMb: 1, diskMb: 1, egress: "none", allowHosts: [] } as const;
-  const name = () => `cap-env-${envId}`;
+  const name = () => `cap-device-${envId}`;
 
-  it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the environment over", async () => {
+  it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the device over", async () => {
     const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
     const old = createFakeSandbox(oldRoot);
     // the previous provider's create ended after createFileSystem, before the handle was written
@@ -1122,7 +1120,7 @@ describe("provider switch during a create", () => {
       limits: { ...tiny, allowHosts: [] },
       signal: signal(),
     });
-    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
       VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
     const s = service(undefined, undefined, {
       lookup: (n) => (n === "sandbox-old" ? old : undefined),
@@ -1136,7 +1134,7 @@ describe("provider switch during a create", () => {
   });
 
   it("with the previous provider not loaded the takeover only warns that its file system may leak", async () => {
-    await sql`INSERT INTO capybara.environment_instances (environment_id, org_id, provider, status)
+    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
       VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
     const { info } = await use(service());
     expect(info.fresh).toBe(true);
@@ -1309,7 +1307,7 @@ describe("锁的防护（fix round 2）", () => {
     await use(s);
     const other = await newOrg();
     const err = (await use(s, envId, other).catch((e: unknown) => e)) as ApiError;
-    expect(err.code).toBe("environment.not_found");
+    expect(err.code).toBe("device.not_found");
     expect(err.message).not.toContain(orgId);
   });
 });

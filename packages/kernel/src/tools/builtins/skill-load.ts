@@ -42,7 +42,7 @@ import {
  * Builtin tool `Skill` (M5 T14, ruling M17): resolves the name against the latest skills catalog
  * snapshot in the log to an id and version, and returns that version's SKILL.md body and file list
  * (the result names the version). A skill with other files is copied whole into the conversation's
- * environment at `<skills root>/<name>@<digest>/` (the instance's skills root, `/skills` by default; the provider writes as root, commands read only; the
+ * device at `<skills root>/<name>@<digest>/` (the instance's skills root, `/skills` by default; the provider writes as root, commands read only; the
  * digest is {@link skillDigest} of the version's file manifest, so versions of one skill coexist in
  * the shared file system). Without a sandbox provider only the body is given, with a note that
  * scripts are unavailable.

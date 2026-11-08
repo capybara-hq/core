@@ -97,7 +97,7 @@ beforeEach(async () => {
   await redis.flushdb();
   await truncateTables(
     raw,
-    "capybara.environment_instances, capybara.environments, capybara.accounts, capybara.orgs",
+    "capybara.device_instances, capybara.devices, capybara.accounts, capybara.orgs",
   );
   if (root) await rm(root, { recursive: true, force: true, maxRetries: 5 });
   root = await mkdtemp(join(tmpdir(), "cap-sandbox-cc-"));
@@ -121,13 +121,13 @@ beforeEach(async () => {
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
   envId = randomUUID();
-  await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
     VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
 });
 
 const ctx = () => ({
   orgId,
-  environmentId: envId,
+  deviceId: envId,
   holderConversationId: conversationId,
   actor: { accountId, conversationId },
 });
@@ -372,7 +372,7 @@ describe("concurrent commands (fake sandbox)", () => {
     expect(await redis.ttl(seen)).toBeGreaterThan(0);
   });
 
-  it("the environment's keys carry TTLs while held", async () => {
+  it("the device's keys carry TTLs while held", async () => {
     const s = service();
     const keys = await s.withSandbox(
       ctx(),
@@ -498,7 +498,7 @@ describe("concurrent commands (fake sandbox)", () => {
     withCap(3);
     const s = service();
     await run(s, "true");
-    await sql`UPDATE capybara.environment_instances SET running_since = now() - interval '3 hours'`.execute(
+    await sql`UPDATE capybara.device_instances SET running_since = now() - interval '3 hours'`.execute(
       raw,
     );
     const busy = run(s, "sleep 0.1");
@@ -510,9 +510,9 @@ describe("concurrent commands (fake sandbox)", () => {
 });
 
 describe("path leases in the sandbox tools", () => {
-  /** The root conversations the tools asked for an environment; all are bound to `envId`. */
+  /** The root conversations the tools asked for a device; all are bound to `envId`. */
   let asked: string[] = [];
-  const environments = {
+  const devices = {
     forTool: async (_orgId: string, root: string) => {
       asked.push(root);
       return envId;
@@ -534,7 +534,7 @@ describe("path leases in the sandbox tools", () => {
   const tools = (s: SandboxService) =>
     sandboxTools({
       sandbox: s,
-      environments,
+      devices,
       // biome-ignore lint/suspicious/noExplicitAny: only lists attachments
       attachments: { listForConversation: async () => [] } as any,
       // biome-ignore lint/suspicious/noExplicitAny: not called
@@ -595,7 +595,7 @@ describe("path leases in the sandbox tools", () => {
     };
     const t = sandboxTools({
       sandbox: s,
-      environments,
+      devices,
       attachments: {
         listForConversation: async () => [{ id: "a1", name: "data.csv" }],
         openForConversation: async () => ({
@@ -638,7 +638,7 @@ describe("path leases in the sandbox tools", () => {
     expect(st).toBeNull();
   });
 
-  it("the path lease is taken on the root conversation's environment", async () => {
+  it("the path lease is taken on the root conversation's device", async () => {
     withCap(3);
     const s = service();
     const leasedOn: string[] = [];
@@ -653,7 +653,7 @@ describe("path leases in the sandbox tools", () => {
       sandboxConversationId: conversationId,
     };
     await tool(s, "Write").run({ file_path: "/workspace/g.txt", content: "x" }, child);
-    // the child's call asked for the root's environment and used it: one instance, the file is there
+    // the child's call asked for the root's device and used it: one instance, the file is there
     expect(asked).toEqual([conversationId]);
     expect(leasedOn).toEqual([envId]);
     const out = await run(s, "cat /workspace/g.txt");

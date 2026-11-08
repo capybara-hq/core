@@ -10,7 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import { EnvironmentsService } from "../environments/environments.service.js";
+import { DevicesService } from "../devices/devices.service.js";
 import { ApiError } from "../errors.js";
 import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
@@ -102,8 +102,8 @@ export class ChannelInbound {
     @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "decide">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "answer">,
     @Inject(AnonymousGuests) private readonly guests: Pick<AnonymousGuests, "ensure">,
-    @Inject(EnvironmentsService)
-    private readonly environments: Pick<EnvironmentsService, "list" | "imDefault" | "setImDefault">,
+    @Inject(DevicesService)
+    private readonly devices: Pick<DevicesService, "list" | "imDefault" | "setImDefault">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "info">,
   ) {
     this.actions = new ChannelCardActions({
@@ -237,9 +237,9 @@ export class ChannelInbound {
       return;
     }
 
-    const envCommand = !isGroup && threadAccount !== null ? parseEnvCommand(e.text) : null;
-    if (envCommand !== null) {
-      await this.envCommand(row.orgId, accountId, envCommand.name, locale, replyText);
+    const deviceCommand = !isGroup && threadAccount !== null ? parseDeviceCommand(e.text) : null;
+    if (deviceCommand !== null) {
+      await this.deviceCommand(row.orgId, accountId, deviceCommand.name, locale, replyText);
       return;
     }
 
@@ -247,7 +247,7 @@ export class ChannelInbound {
     if (conversationId === undefined) {
       let created: string;
       try {
-        // bound to the person's IM default environment, else their default (environments spec
+        // bound to the person's IM default device, else their default (environments spec
         // §4.2 item 8); an anonymous sender's stays unbound (no sandbox)
         created = (await this.conversations.create(row.orgId, accountId, row.agentId, { im: true }))
           .id;
@@ -318,52 +318,52 @@ export class ChannelInbound {
   }
 
   /**
-   * Direct-message `/env` (environments spec §4.2 item 8): lists the person's usable environments,
+   * Direct-message `/device` (environments spec §4.2 item 8): lists the person's usable devices,
    * or with a name sets the IM default their next new conversation is bound to. The name matches
-   * case-insensitively; the default environment (no name) answers to 个人环境 / Personal.
+   * case-insensitively; the default device (no name) answers to 个人设备 / Personal.
    */
-  private async envCommand(
+  private async deviceCommand(
     orgId: string,
     accountId: string,
     name: string | null,
     locale: ChannelLocale,
     replyText: (text: string) => Promise<void>,
   ): Promise<void> {
-    const { items, defaultId } = await this.environments.list(orgId, accountId);
+    const { items, defaultId } = await this.devices.list(orgId, accountId);
     const usable = items.filter((v) => v.available);
-    const labelOf = (v: { name: string | null }) => v.name ?? phrase("envPersonal", locale);
-    const current = (await this.environments.imDefault(orgId, accountId)) ?? defaultId;
+    const labelOf = (v: { name: string | null }) => v.name ?? phrase("devicePersonal", locale);
+    const current = (await this.devices.imDefault(orgId, accountId)) ?? defaultId;
     const list = usable
-      .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("envCurrent", locale) : ""}`)
+      .map((v) => `- ${labelOf(v)}${v.id === current ? phrase("deviceCurrent", locale) : ""}`)
       .join("\n");
     const fill = (key: ChannelPhrase, vars: Record<string, string>) =>
       phrase(key, locale).replace(/\{(\w+)\}/g, (m, k: string) => vars[k] ?? m);
-    if (usable.length === 0) return replyText(phrase("envNone", locale));
-    if (name === null) return replyText(fill("envList", { list }));
+    if (usable.length === 0) return replyText(phrase("deviceNone", locale));
+    if (name === null) return replyText(fill("deviceList", { list }));
     const wanted = name.toLowerCase();
-    // an environment the person named "Personal" wins over the default's alias
+    // a device the person named "Personal" wins over the default's alias
     const hit =
       usable.find((v) => v.name !== null && v.name.toLowerCase() === wanted) ??
-      usable.find((v) => v.name === null && (wanted === "personal" || wanted === "个人环境"));
+      usable.find((v) => v.name === null && (wanted === "personal" || wanted === "个人设备"));
     if (hit === undefined) {
       const unavailable = items.find(
         (v) => !v.available && v.name !== null && v.name.toLowerCase() === wanted,
       );
       if (unavailable !== undefined) {
-        return replyText(fill("envUnavailable", { name: unavailable.name as string, list }));
+        return replyText(fill("deviceUnavailable", { name: unavailable.name as string, list }));
       }
-      return replyText(fill("envUnknown", { name, list }));
+      return replyText(fill("deviceUnknown", { name, list }));
     }
     try {
-      await this.environments.setImDefault(orgId, accountId, hit.id);
+      await this.devices.setImDefault(orgId, accountId, hit.id);
     } catch (err) {
       // deleted or made unusable since the list was read
-      if (err instanceof ApiError && err.code.startsWith("environment.")) {
-        return replyText(fill("envUnknown", { name, list }));
+      if (err instanceof ApiError && err.code.startsWith("device.")) {
+        return replyText(fill("deviceUnknown", { name, list }));
       }
       throw err;
     }
-    return replyText(fill("envSwitched", { name: labelOf(hit) }));
+    return replyText(fill("deviceSwitched", { name: labelOf(hit) }));
   }
 
   /**
@@ -494,9 +494,9 @@ export class ChannelInbound {
   }
 }
 
-/** `/env` or `/env <name>` (the exact command word, case-insensitive); anything else is null. */
-function parseEnvCommand(text: string): { name: string | null } | null {
-  const m = /^\/env(?:\s+([\s\S]*))?$/i.exec(text.trim());
+/** `/device` or `/device <name>` (the exact command word, case-insensitive); anything else is null. */
+function parseDeviceCommand(text: string): { name: string | null } | null {
+  const m = /^\/device(?:\s+([\s\S]*))?$/i.exec(text.trim());
   if (m === null) return null;
   const name = m[1]?.trim();
   return { name: name ? name : null };

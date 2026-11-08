@@ -145,11 +145,11 @@ describe("/device", () => {
     stubApi({
       ...ROUTES,
       [`GET ${PENDING}`]: () =>
-        json(404, { error: { code: "device.code_invalid", message: "unknown" } }),
+        json(404, { error: { code: "device_sign_in.code_invalid", message: "unknown" } }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     expect(await screen.findByText(D.invalidTitle)).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toBe(en.errors.device.code_invalid);
+    expect(screen.getByRole("alert").textContent).toBe(en.errors.device_sign_in.code_invalid);
     expect(screen.getByText(D.invalidHint)).toBeTruthy();
     expect(screen.queryByRole("button", { name: D.confirm })).toBeNull();
   });
@@ -158,25 +158,25 @@ describe("/device", () => {
     stubApi({
       ...ROUTES,
       "POST /api/v1/device/confirm": () =>
-        json(503, { error: { code: "device.unavailable", message: "x" } }),
+        json(503, { error: { code: "device_sign_in.unavailable", message: "x" } }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: D.confirm }));
     expect(await screen.findByText(D.invalidTitle)).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toBe(en.errors.device.unavailable);
+    expect(screen.getByRole("alert").textContent).toBe(en.errors.device_sign_in.unavailable);
   });
 
   it("a refused confirm (limit reached) stays on the page with the error copy", async () => {
     stubApi({
       ...ROUTES,
       "POST /api/v1/device/confirm": () =>
-        json(409, { error: { code: "environment.limit_reached", message: "x" } }),
+        json(409, { error: { code: "device.limit_reached", message: "x" } }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     await userEvent.setup().click(await screen.findByRole("button", { name: D.confirm }));
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      en.errors.environment.limit_reached,
+      en.errors.device.limit_reached,
     );
     expect(screen.getByRole("button", { name: D.confirm })).toBeTruthy();
   });

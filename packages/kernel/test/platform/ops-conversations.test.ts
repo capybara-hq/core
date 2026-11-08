@@ -107,7 +107,7 @@ describe("registration", () => {
       "conversations.archive",
       "conversations.background-tasks",
       "conversations.delete",
-      "conversations.environment",
+      "conversations.device",
       "conversations.events",
       "conversations.files",
       "conversations.get",
@@ -299,7 +299,7 @@ describe("delete", () => {
 });
 
 describe("conversation detail reads and abort", () => {
-  it("reads usage, sub-agents, the agent tree, files and the environment of my conversation", async () => {
+  it("reads usage, sub-agents, the agent tree, files and the device of my conversation", async () => {
     const agent = await agentOf(env.memId);
     const conv = await conversations.create(env.orgId, env.memId, agent, {});
     const c = ctxOf(env.memId, agent);
@@ -314,7 +314,7 @@ describe("conversation detail reads and abort", () => {
     ).toMatchObject({
       root: { id: conv.id },
     });
-    expect(await run("conversations.environment", input, c)).toHaveProperty("environment");
+    expect(await run("conversations.device", input, c)).toHaveProperty("device");
   });
 
   it("someone else's conversation is not found for each detail read", async () => {
@@ -326,7 +326,7 @@ describe("conversation detail reads and abort", () => {
       "conversations.subagents",
       "conversations.files",
       "conversations.agent-tree",
-      "conversations.environment",
+      "conversations.device",
     ]) {
       await expect(run(id, { conversationId: theirs.id }, c)).rejects.toThrow(
         /conversations\.list/,

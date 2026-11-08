@@ -26,8 +26,8 @@ import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
 
-/** Every call's conversation is bound to one environment. */
-const environments = { forTool: async () => "env-1" };
+/** Every call's conversation is bound to one device. */
+const devices = { forTool: async () => "env-1" };
 
 describe("compileGlob", () => {
   it("** crosses directories, * does not", () => {
@@ -156,7 +156,7 @@ describe("Bash time limit", () => {
       masterKey: Buffer.alloc(32, 7).toString("base64"),
     });
     const bash = sandboxTools({
-      environments,
+      devices,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到配置
       sandbox: { cloudAvailable: true } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -221,7 +221,7 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
         },
       };
       const tool = sandboxTools({
-        environments,
+        devices,
         sandbox: {
           cloudAvailable: true,
           availableFor: async () => true,
@@ -290,7 +290,7 @@ describe("registry without a sandbox provider", () => {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
     }
     const tools = sandboxTools({
-      environments,
+      devices,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到 cloudAvailable
       sandbox: { cloudAvailable: false } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -377,7 +377,7 @@ describe("attachment sync", () => {
       },
     };
     const read = sandboxTools({
-      environments,
+      devices,
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
       sandbox: mem.sandbox as any,
       // biome-ignore lint/suspicious/noExplicitAny: 测试替身
@@ -474,7 +474,7 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
       exec: async () => ({ ...opts.exec, truncated: false, timedOut: false }),
     };
     const tools = sandboxTools({
-      environments,
+      devices,
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
@@ -655,7 +655,7 @@ describe("read before write over Read's byte limit", () => {
         ),
     } as unknown as SandboxToolDeps["sandbox"];
     const tools = sandboxTools({
-      environments,
+      devices,
       sandbox,
       // biome-ignore lint/suspicious/noExplicitAny: test stub
       attachments: { listForConversation: async () => [] } as any,
@@ -754,7 +754,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     };
     const body = (t: string) => new Response(t).body as ReadableStream<Uint8Array>;
     const tools = sandboxTools({
-      environments,
+      devices,
       background: {
         reserve: async () => true,
         markStarted: async (_id: string, to: { outputPath?: string }) => {
@@ -831,7 +831,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
   it("default roots keep the old path error, byte for byte", async () => {
     const d = device();
     const tools = sandboxTools({
-      environments,
+      devices,
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
@@ -879,7 +879,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     expect(isSyncMarkerEntry("/workspace/attachments/c/.capybara-sync.json")).toBe(false);
   });
 
-  it("a malformed path is refused before the call enters its environment", async () => {
+  it("a malformed path is refused before the call enters its device", async () => {
     const d = device();
     for (const [name, input] of [
       ["Read", { file_path: "relative.txt" }],
@@ -940,7 +940,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
   });
 });
 
-describe("sandbox tools listed by the conversation's environment (ruling R8)", () => {
+describe("sandbox tools listed by the conversation's device (ruling R8)", () => {
   const cfg = KernelConfigSchema.parse({
     db: { url: "postgres://x/y" },
     redis: { url: "redis://x" },
@@ -948,7 +948,7 @@ describe("sandbox tools listed by the conversation's environment (ruling R8)", (
   });
   const bash = (usable: (orgId: string, conversationId: string) => Promise<boolean>) =>
     sandboxTools({
-      environments: { forTool: async () => "env-1", usableNow: usable },
+      devices: { forTool: async () => "env-1", usableNow: usable },
       sandbox: {
         cloudAvailable: false,
         availableFor: async () => true,
@@ -965,7 +965,7 @@ describe("sandbox tools listed by the conversation's environment (ruling R8)", (
       config: { get: () => cfg },
     }).find((t) => t.spec.name === "Bash") as BuiltinTool;
 
-  it("a conversation in a connected machine's environment gets the tools without a cloud provider", async () => {
+  it("a conversation on a local device gets the tools without a cloud provider", async () => {
     const seen: string[] = [];
     const tool = bash(async (_o, c) => {
       seen.push(c);

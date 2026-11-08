@@ -7,7 +7,7 @@ import { RecordedToolPipeline, recordedCalls } from "../../src/evals/recorded-to
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { compactionPlan } from "../../src/runtime/context/compaction.js";
-import { environmentPathsText } from "../../src/runtime/context/environment-paths.js";
+import { devicePathsText } from "../../src/runtime/context/device-paths.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../src/tools/registry.js";
@@ -15,7 +15,7 @@ import { AGENT, Log, MODEL } from "./context/fixtures.js";
 
 /**
  * Environments phase 2 (spec §13.1, ruling R22): the first sandbox call of every conversation
- * records the instance's roots in an `environment_paths` event (rendered as a system line), and a
+ * records the instance's roots in an `device_paths` event (rendered as a system line), and a
  * later call records them again whenever they changed.
  */
 
@@ -83,7 +83,7 @@ function memTools(initial: SandboxRoots | undefined) {
     },
   };
   const deps: SandboxToolDeps = {
-    environments: { forTool: async () => "env-1" },
+    devices: { forTool: async () => "env-1" },
     sandbox: {
       cloudAvailable: true,
       availableFor: async () => true,
@@ -122,12 +122,12 @@ function memTools(initial: SandboxRoots | undefined) {
   return { files, log, tool, ctx, setRoots };
 }
 
-describe("environment_paths: recorded by the sandbox tools", () => {
-  it("environment_paths is recorded on the first call, not again for the same roots, and rendered as a system line", async () => {
+describe("device_paths: recorded by the sandbox tools", () => {
+  it("device_paths is recorded on the first call, not again for the same roots, and rendered as a system line", async () => {
     const t = memTools(ROOTS);
     await t.tool("Write").run({ file_path: `${ROOTS.workspace}/a.txt`, content: "a" }, t.ctx);
     await t.tool("Write").run({ file_path: `${ROOTS.tmp}/b.txt`, content: "b" }, t.ctx);
-    const paths = t.log.appended.filter((e) => e.type === "environment_paths");
+    const paths = t.log.appended.filter((e) => e.type === "device_paths");
     expect(paths).toHaveLength(1);
     expect(paths[0]).toMatchObject({ conversationId: "c", runId: "r", payload: { roots: ROOTS } });
 
@@ -140,7 +140,7 @@ describe("environment_paths: recorded by the sandbox tools", () => {
       "tool_use",
       1,
     );
-    log.add({ type: "environment_paths", payload: { roots: ROOTS } });
+    log.add({ type: "device_paths", payload: { roots: ROOTS } });
     log.add({
       type: "tool_result",
       payload: { step: 1, callId: "call-1", toolKey: "Write", content: "ok", isError: false },
@@ -154,7 +154,7 @@ describe("environment_paths: recorded by the sandbox tools", () => {
     });
     expect(request.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "system"]);
     expect(request.messages[3]).toEqual({ role: "system", content: LINE });
-    expect(environmentPathsText(ROOTS)).toBe(LINE);
+    expect(devicePathsText(ROOTS)).toBe(LINE);
   });
 
   it("a cloud conversation's first call records the default roots (ruling R22)", async () => {
@@ -162,10 +162,10 @@ describe("environment_paths: recorded by the sandbox tools", () => {
       const t = memTools(roots);
       await t.tool("Write").run({ file_path: "/workspace/a.txt", content: "a" }, t.ctx);
       await t.tool("Write").run({ file_path: "/workspace/b.txt", content: "b" }, t.ctx);
-      const paths = t.log.appended.filter((e) => e.type === "environment_paths");
+      const paths = t.log.appended.filter((e) => e.type === "device_paths");
       expect(paths.map((e) => e.payload)).toEqual([{ roots: DEFAULT_SANDBOX_ROOTS }]);
     }
-    expect(environmentPathsText(DEFAULT_SANDBOX_ROOTS)).toBe(
+    expect(devicePathsText(DEFAULT_SANDBOX_ROOTS)).toBe(
       "This environment's directories: workspace /workspace, skills /skills (read only), temporary files /tmp. Use these paths in commands and tool calls.",
     );
   });
@@ -182,7 +182,7 @@ describe("environment_paths: recorded by the sandbox tools", () => {
     await write("/workspace");
     t.setRoots(ROOTS);
     await write(ROOTS.workspace);
-    const paths = t.log.appended.filter((e) => e.type === "environment_paths");
+    const paths = t.log.appended.filter((e) => e.type === "device_paths");
     expect(paths.map((e) => (e.payload as { roots: SandboxRoots }).roots)).toEqual([
       DEFAULT_SANDBOX_ROOTS,
       ROOTS,
@@ -195,7 +195,7 @@ describe("environment_paths: recorded by the sandbox tools", () => {
   it("a summary covering the event restores the line right after the summary", () => {
     const log = new Log();
     log.user("hi");
-    log.add({ type: "environment_paths", payload: { roots: ROOTS } });
+    log.add({ type: "device_paths", payload: { roots: ROOTS } });
     log.assistant("done");
     const covered = log.events.at(-1)?.seq as number;
     log.summary(covered, "earlier work");
@@ -214,7 +214,7 @@ describe("environment_paths: recorded by the sandbox tools", () => {
   it("is left out of the compaction transcript (the summary is followed by the line anyway)", () => {
     const log = new Log();
     log.user("hi");
-    log.add({ type: "environment_paths", payload: { roots: ROOTS } });
+    log.add({ type: "device_paths", payload: { roots: ROOTS } });
     log.assistant("done");
     log.user("more");
     log.assistant("ok");
@@ -224,8 +224,8 @@ describe("environment_paths: recorded by the sandbox tools", () => {
   });
 });
 
-describe("environment_paths: full-run replay", () => {
-  /** A one-run snapshot: one `Write` call whose result follows an `environment_paths` event. */
+describe("device_paths: full-run replay", () => {
+  /** A one-run snapshot: one `Write` call whose result follows an `device_paths` event. */
   function snap(): CaseSnapshot {
     const events: CaseSnapshot["events"] = [];
     let seq = 1;
@@ -237,7 +237,7 @@ describe("environment_paths: full-run replay", () => {
       content: [{ type: "tool_call", id: "c0", name: "Write", input: { file_path: "f" } }],
     });
     ev("tool_call_started", { step: 1, callId: "c0", toolKey: "Write", specHash: "h" });
-    ev("environment_paths", { roots: ROOTS });
+    ev("device_paths", { roots: ROOTS });
     ev("tool_result", { step: 1, callId: "c0", toolKey: "Write", content: "ok", isError: false });
     return {
       version: 1,
@@ -289,9 +289,9 @@ describe("environment_paths: full-run replay", () => {
     });
   }
 
-  it("a replayed call that matched copies the recorded environment_paths event, never twice", async () => {
+  it("a replayed call that matched copies the recorded device_paths event, never twice", async () => {
     const recordings = recordedCalls(snap());
-    expect(recordings[0]?.environmentPaths).toEqual(ROOTS);
+    expect(recordings[0]?.devicePaths).toEqual(ROOTS);
     const log = memLog();
     // the candidate makes the recorded call twice in one step: one line
     await pipelineFor(recordings, log, { 1: ["f", "f"] }).runStep({
@@ -301,7 +301,7 @@ describe("environment_paths: full-run replay", () => {
     } as never);
     const types = log.appended.map((e) => e.type);
     expect(types).toEqual([
-      "environment_paths",
+      "device_paths",
       "tool_call_started",
       "tool_result",
       "tool_call_started",
@@ -323,7 +323,7 @@ describe("environment_paths: full-run replay", () => {
     ev("tool_call_started", { step: 2, callId: "c1", toolKey: "Write", specHash: "h" });
     ev("tool_result", { step: 2, callId: "c1", toolKey: "Write", content: "ok", isError: false });
     const recordings = recordedCalls(s);
-    expect(recordings.map((r) => r.environmentPaths)).toEqual([ROOTS, ROOTS]);
+    expect(recordings.map((r) => r.devicePaths)).toEqual([ROOTS, ROOTS]);
     const log = memLog();
     // the candidate skips the first call and makes the second in its own step 1
     await pipelineFor(recordings, log, { 1: ["g"] }).runStep({
@@ -332,7 +332,7 @@ describe("environment_paths: full-run replay", () => {
       step: 1,
     } as never);
     expect(log.appended.map((e) => e.type)).toEqual([
-      "environment_paths",
+      "device_paths",
       "tool_call_started",
       "tool_result",
     ]);

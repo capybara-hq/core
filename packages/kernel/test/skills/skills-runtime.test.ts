@@ -105,7 +105,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.environment_instances, capybara.environments, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.agent_template_versions, capybara.agent_templates, capybara.skill_versions, capybara.skills, capybara.catalog_items, capybara.device_instances, capybara.devices, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
@@ -279,19 +279,15 @@ const catalogs = async (convId: string) =>
 
 async function sandboxId(convId: string): Promise<string> {
   const row = await db
-    .selectFrom("environment_instances")
-    .innerJoin(
-      "conversations",
-      "conversations.environment_id",
-      "environment_instances.environment_id",
-    )
-    .select("environment_instances.handle")
+    .selectFrom("device_instances")
+    .innerJoin("conversations", "conversations.device_id", "device_instances.device_id")
+    .select("device_instances.handle")
     .where("conversations.id", "=", convId)
     .executeTakeFirstOrThrow();
   return (row.handle as { id: string }).id;
 }
 
-/** Where the fake provider keeps a file of the conversation's environment (`skills/…`, `workspace/…`). */
+/** Where the fake provider keeps a file of the conversation's device (`skills/…`, `workspace/…`). */
 async function sandboxFilePath(convId: string, path: string): Promise<string> {
   const meta = JSON.parse(
     await readFile(join(root, "instances", await sandboxId(convId), "meta.json"), "utf8"),
@@ -329,7 +325,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     expect(r.display?.summary.en).toContain("alpha");
     expect(r.display?.summary.zh).toContain("alpha");
     // 只有 SKILL.md：不创建沙箱
-    const boxes = await db.selectFrom("environment_instances").select("environment_id").execute();
+    const boxes = await db.selectFrom("device_instances").select("device_id").execute();
     expect(boxes).toHaveLength(0);
 
     const snaps = await catalogs(conv);
@@ -452,7 +448,7 @@ describe("skills at runtime", { timeout: 90_000 }, () => {
     const snaps = await catalogs(conv);
     expect(snaps.map((s) => s.payload.skills[0]?.version)).toEqual([1, 2]);
 
-    // the instance is destroyed: the environment's files are kept, so the copies and markers are
+    // the instance is destroyed: the device's files are kept, so the copies and markers are
     // still there and nothing is copied again
     await removeFakeSandbox(root, await sandboxId(conv));
     const re = await call(conv, "Skill", { skill: "delta" }, 5);
@@ -517,7 +513,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
           throw new Error("sandbox must not be used");
         },
       },
-      environments: { forTool: async () => randomUUID() },
+      devices: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,
@@ -618,7 +614,7 @@ describe("Skill handler", { timeout: 60_000 }, () => {
         withSandbox: async (_c, fn, sig) =>
           fn({ id: "e1", roots }, p as never, { fresh: false, restarted: false, roots }, sig),
       },
-      environments: { forTool: async () => randomUUID() },
+      devices: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,

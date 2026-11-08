@@ -44,8 +44,8 @@ export interface OffboardResult {
   runs: InFlightRun[];
   /** 负责的 agent 转交给的所有者；没有转交时为 null。 */
   newOwnerId: string | null;
-  /** The person's environments in the org, soft-deleted here; destroyed by a job after commit. */
-  environments: string[];
+  /** The person's devices in the org, soft-deleted here; destroyed by a job after commit. */
+  devices: string[];
   /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
   queueConversations: string[];
 }
@@ -93,7 +93,7 @@ export class Offboarding {
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
-    /** The departed member's environments: one-off maintenance jobs, destroyed by a worker. */
+    /** The departed member's devices: one-off maintenance jobs, destroyed by a worker. */
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
     /** Stops the departed member's runs (`by: null`, a system action). */
     @Inject(RunControl) private readonly runs: OffboardingRunControl,
@@ -121,7 +121,7 @@ export class Offboarding {
    *    以及成员关系自身的 `directory:<插件>` 来源，不论此人当初是不是由通讯录加入（手动重新加入后再被移出也不会被同步加回）；
    *    同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
    * 8. 审计 `org.member.offboarded`；
-   * 9. Soft-deletes the person's environments in the org and clears their default row (the
+   * 9. Soft-deletes the person's devices in the org and clears their default row (the
    *    instances and files are destroyed after the commit, best effort; the hourly sweep finishes
    *    any left).
    */
@@ -309,8 +309,8 @@ export class Offboarding {
         .execute();
     }
 
-    const environments = await this.db
-      .updateTable("environments")
+    const devices = await this.db
+      .updateTable("devices")
       .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
@@ -319,7 +319,7 @@ export class Offboarding {
       .returning("id")
       .execute();
     await this.db
-      .deleteFrom("environment_defaults")
+      .deleteFrom("device_defaults")
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .execute();
@@ -344,7 +344,7 @@ export class Offboarding {
         channelThreadsArchived: Number(threads.numUpdatedRows),
         toolGrantsDeleted: Number(grants.numDeletedRows),
         ...(excluded.length > 0 && { directoryExcluded: excluded }),
-        ...(environments.length > 0 && { environmentsDeleted: environments.length }),
+        ...(devices.length > 0 && { devicesDeleted: devices.length }),
         ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
       },
     });
@@ -358,7 +358,7 @@ export class Offboarding {
         status: r.status as InFlightRun["status"],
       })),
       newOwnerId: agents.length > 0 ? owner.account_id : null,
-      environments: environments.map((r) => r.id),
+      devices: devices.map((r) => r.id),
       queueConversations,
     };
   }
@@ -388,7 +388,7 @@ export class Offboarding {
   /**
    * After the commit (callers register it with the infra `afterCommit` inside their transaction):
    * writes the session revocation markers, publishes the cancelled events, stops the person's
-   * runs in the org and schedules destroying their environments. A failing step only logs a
+   * runs in the org and schedules destroying their devices. A failing step only logs a
    * warning.
    */
   async afterOffboard(r: OffboardResult): Promise<void> {
@@ -413,12 +413,12 @@ export class Offboarding {
       }
     }
     for (const run of r.runs) await this.stopRun(run);
-    if (r.environments.length > 0) {
+    if (r.devices.length > 0) {
       try {
-        await this.sandboxJobs.destroy(r.environments);
+        await this.sandboxJobs.destroy(r.devices);
       } catch (err) {
-        log.warn("offboarding: cannot schedule environment destruction", {
-          count: r.environments.length,
+        log.warn("offboarding: cannot schedule device destruction", {
+          count: r.devices.length,
           err,
         });
       }

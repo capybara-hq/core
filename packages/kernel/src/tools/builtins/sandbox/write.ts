@@ -76,40 +76,36 @@ export function sandboxWriteTool(deps: SandboxToolDeps): BuiltinTool {
       const data = new TextEncoder().encode((input as WriteInput).content);
       checkPathShape((input as WriteInput).file_path, "file_path");
       let path = "";
-      const { value, notices } = await inSandbox(
-        deps,
-        ctx,
-        ({ environmentId, h, roots, p, signal }) => {
-          path = checkWritable((input as WriteInput).file_path, roots);
-          // stat, read the previous content, write: one holder at a time per file
-          return withPathLease(deps, { environmentId }, path, signal, async (signal) => {
-            const st = await p.stat(h, path, signal);
-            if (st?.isDir) throw new ToolError(isDirectory(path));
-            // the previous content: for the read-before-write check, and the diff on the row (display
-            // only: a file too large or binary to diff just leaves the view without hunks)
-            let previous: string | null = "";
-            if (st !== null) {
-              const got = await p.readFile(h, path, { maxBytes: READ_MAX_BYTES, signal });
-              if (got === null) throw new ToolError(vanished(path));
-              await assertReadAndUnchanged(
-                deps,
-                ctx.conversationId,
-                path,
-                fileStateOf(got.data, st.size),
-              );
-              previous =
-                st.size > PREVIOUS_MAX_BYTES ||
-                got.truncated ||
-                looksBinary(got.data) ||
-                got.data.includes(0)
-                  ? null
-                  : new TextDecoder().decode(got.data);
-            }
-            await p.writeFile(h, path, data, signal);
-            return { existed: st !== null, previous };
-          });
-        },
-      );
+      const { value, notices } = await inSandbox(deps, ctx, ({ deviceId, h, roots, p, signal }) => {
+        path = checkWritable((input as WriteInput).file_path, roots);
+        // stat, read the previous content, write: one holder at a time per file
+        return withPathLease(deps, { deviceId }, path, signal, async (signal) => {
+          const st = await p.stat(h, path, signal);
+          if (st?.isDir) throw new ToolError(isDirectory(path));
+          // the previous content: for the read-before-write check, and the diff on the row (display
+          // only: a file too large or binary to diff just leaves the view without hunks)
+          let previous: string | null = "";
+          if (st !== null) {
+            const got = await p.readFile(h, path, { maxBytes: READ_MAX_BYTES, signal });
+            if (got === null) throw new ToolError(vanished(path));
+            await assertReadAndUnchanged(
+              deps,
+              ctx.conversationId,
+              path,
+              fileStateOf(got.data, st.size),
+            );
+            previous =
+              st.size > PREVIOUS_MAX_BYTES ||
+              got.truncated ||
+              looksBinary(got.data) ||
+              got.data.includes(0)
+                ? null
+                : new TextDecoder().decode(got.data);
+          }
+          await p.writeFile(h, path, data, signal);
+          return { existed: st !== null, previous };
+        });
+      });
       const { existed, previous } = value;
       const text = `${existed ? "Overwrote" : "Created"} ${path} (${data.byteLength} bytes).`;
       return {

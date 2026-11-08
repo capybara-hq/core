@@ -44,7 +44,7 @@ test("connect a machine: authorize → confirm on /device → token → the envi
       data: { deviceCode },
     });
     expect(((await early.json()) as { error: { code: string } }).error.code).toBe(
-      "device.authorization_pending",
+      "device_sign_in.authorization_pending",
     );
 
     await page.goto(`/device?code=${userCode}`);
@@ -68,9 +68,9 @@ test("connect a machine: authorize → confirm on /device → token → the envi
         error?: { code: string; details?: { interval?: number }[] };
       };
       if (r.status() === 200) granted = body;
-      else if (body.error?.code === "device.slow_down") {
+      else if (body.error?.code === "device_sign_in.slow_down") {
         interval = body.error.details?.[0]?.interval ?? interval + 5;
-      } else expect(body.error?.code).toBe("device.authorization_pending");
+      } else expect(body.error?.code).toBe("device_sign_in.authorization_pending");
     }
     expect(granted.credential).toMatch(/^cap_dev_/);
 

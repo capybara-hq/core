@@ -13,7 +13,7 @@ import {
 import {
   onTaskInstance,
   ownedTask,
-  recheckEnvironment,
+  recheckDevice,
   statusLine,
   type TaskEnv,
   taskEnv,
@@ -127,7 +127,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       const { task_id } = input as TaskStopInput;
       const env = await taskEnv(deps, ctx);
       const task = await ownedTask(env, ctx, task_id);
-      await recheckEnvironment(env, ctx);
+      await recheckDevice(env, ctx);
       if (task.status !== "running") {
         return ended(env, task, "had already finished", ctx.signal);
       }

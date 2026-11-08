@@ -43,10 +43,8 @@ import { ChannelConnectionsController } from "../channels/connections.controller
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
-import { DeviceAuthController } from "../devices/device-auth.controller.js";
-import { DeviceAuthModule } from "../devices/device-auth.module.js";
-import { EnvironmentsController } from "../environments/environments.controller.js";
-import { EnvironmentsModule } from "../environments/environments.module.js";
+import { DevicesController } from "../devices/devices.controller.js";
+import { DevicesModule } from "../devices/devices.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -67,6 +65,8 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
+import { DeviceAuthController } from "../local-devices/device-auth.controller.js";
+import { DeviceAuthModule } from "../local-devices/device-auth.module.js";
 import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
@@ -126,7 +126,7 @@ const CONTROLLERS: Type[] = [
   ReadinessController,
   ConversationsController,
   BackgroundController,
-  EnvironmentsController,
+  DevicesController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,
@@ -183,7 +183,7 @@ const CONTROLLERS: Type[] = [
     AgentsModule,
     ConversationsModule,
     BackgroundModule,
-    EnvironmentsModule,
+    DevicesModule,
     DeviceAuthModule,
     RuntimeModule,
     ChannelsModule,

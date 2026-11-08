@@ -97,12 +97,12 @@ export interface TaskEnv {
   store: NonNullable<SandboxToolDeps["background"]>;
   tasks: NonNullable<SandboxToolDeps["tasks"]>;
   ifRunning: SandboxService["ifRunning"];
-  environments: SandboxToolDeps["environments"];
+  devices: SandboxToolDeps["devices"];
 }
 
 /**
  * The task tools' dependencies; throws the tool's error when they are missing, or when the
- * conversation's environment cannot run (no cloud provider, and not a registered `@device` one:
+ * conversation's device cannot run (no cloud provider, and not a registered `@local` one:
  * ruling R8).
  */
 export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): Promise<TaskEnv> {
@@ -117,7 +117,7 @@ export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): P
     store: background,
     tasks,
     ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
-    environments: deps.environments,
+    devices: deps.devices,
   };
 }
 
@@ -142,21 +142,21 @@ export async function ownedTask(
 }
 
 /**
- * The per-call access re-check of every sandbox tool (`inSandbox`): the conversation's environment
+ * The per-call access re-check of every sandbox tool (`inSandbox`): the conversation's device
  * may still be used by its owner. The task tools read a task's own instance without `inSandbox`,
  * so they check here first; errors become the tools' errors.
  */
-export async function recheckEnvironment(env: TaskEnv, ctx: BuiltinCallContext): Promise<void> {
+export async function recheckDevice(env: TaskEnv, ctx: BuiltinCallContext): Promise<void> {
   try {
-    await env.environments.forTool(ctx.orgId, sandboxConversationOf(ctx));
+    await env.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
   } catch (e) {
     throw mapSandboxError(e);
   }
 }
 
 /**
- * `ifRunning` on the task's own environment instance (its execs act for the task's trigger in its
- * conversation); sandbox errors become the tools' errors. A task from before environments has no
+ * `ifRunning` on the task's own device instance (its execs act for the task's trigger in its
+ * conversation); sandbox errors become the tools' errors. A task from before devices has no
  * instance (`not_running`).
  */
 export async function onTaskInstance<T>(
@@ -165,10 +165,10 @@ export async function onTaskInstance<T>(
   fn: (p: HeldProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
 ): Promise<IfRunningResult<T>> {
-  if (task.environmentId === null) return { kind: "not_running", status: "gone" };
+  if (task.deviceId === null) return { kind: "not_running", status: "gone" };
   try {
     return await env.ifRunning(
-      task.environmentId,
+      task.deviceId,
       { createdAt: task.sandboxCreatedAt as Date },
       (p, h, sig) => fn(actingAs(p, taskActor(task)), h, sig),
       signal,
@@ -387,7 +387,7 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
       const env = await taskEnv(deps, ctx);
       let task = await ownedTask(env, ctx, task_id);
-      await recheckEnvironment(env, ctx);
+      await recheckDevice(env, ctx);
       if (block && task.status === "running") {
         const wait = Math.max(
           0,

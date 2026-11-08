@@ -232,28 +232,28 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       () => false,
     );
 
-  /** The environment the conversation is bound to (its owner's default). */
+  /** The device the conversation is bound to (its owner's default). */
   const envOf = async (convId: string): Promise<string> =>
     (
       await db
         .selectFrom("conversations")
-        .select("environment_id")
+        .select("device_id")
         .where("id", "=", convId)
         .executeTakeFirstOrThrow()
-    ).environment_id as string;
+    ).device_id as string;
 
   const sandboxRow = async (convId: string) =>
     db
-      .selectFrom("environment_instances")
+      .selectFrom("device_instances")
       .select(["status", "handle", "generation"])
-      .where("environment_id", "=", await envOf(convId))
+      .where("device_id", "=", await envOf(convId))
       .executeTakeFirstOrThrow();
 
-  /** The instance state the conversation's environment route shows (null: no instance). */
+  /** The instance state the conversation's device route shows (null: no instance). */
   const shownState = async (replica: 0 | 1, convPath: string): Promise<string | null> => {
-    const r = await at(replica, "GET", `${convPath}/environment`);
+    const r = await at(replica, "GET", `${convPath}/device`);
     expect(r.status, JSON.stringify(r.json)).toBe(200);
-    const env = r.json.environment as { instance: { status: string } | null } | null;
+    const env = r.json.device as { instance: { status: string } | null } | null;
     return env?.instance?.status ?? null;
   };
 
@@ -284,7 +284,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(m1.status, JSON.stringify(m1.json)).toBe(202);
     const [t1] = await waitForTerminal(db, convId, 1, 30_000);
     expect(t1?.type).toBe("run_finished");
-    // only the attachment is recorded: the environment has no instance yet
+    // only the attachment is recorded: the device has no instance yet
     expect(await shownState(0, convPath)).toBeNull();
     const envId = await envOf(convId);
 
@@ -388,8 +388,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // dead lease is gone, a replica's minute idle sweep could suspend the sandbox first (killing
     // every command) and the next call would resume it with killAll instead. Keep it in use until
     // step 5 moves last_used_at back (leave keeps the later of last_used_at and now()).
-    await sql`UPDATE capybara.environment_instances SET last_used_at = now() + interval '10 minutes'
-      WHERE environment_id = ${envId}`.execute(raw);
+    await sql`UPDATE capybara.device_instances SET last_used_at = now() + interval '10 minutes'
+      WHERE device_id = ${envId}`.execute(raw);
     await new Promise((r) =>
       setTimeout(r, Math.max(0, killedAt + SANDBOX_LOCK_TTL_MS + 2000 - Date.now())),
     );
@@ -414,8 +414,8 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     // suspendAfterIdleMinutes 最小 1 分钟：把 last_used_at 拨回 2 分钟前（PG 时钟），再立即执行一次扫描
     // (the sweep is a @LockedCron on the replicas; the test runs the same sweep at once
     // over the shared PG, Redis and fake-sandbox root; a replica's own tick may get there first)
-    await sql`UPDATE capybara.environment_instances SET last_used_at = now() - interval '2 minutes'
-      WHERE environment_id = ${envId}`.execute(raw);
+    await sql`UPDATE capybara.device_instances SET last_used_at = now() - interval '2 minutes'
+      WHERE device_id = ${envId}`.execute(raw);
     await sandboxServiceFor({
       db,
       redis,

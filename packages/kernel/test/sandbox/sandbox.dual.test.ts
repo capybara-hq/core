@@ -70,10 +70,10 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-/** An org, an account, a conversation and the account's environment: a `withSandbox` context. */
+/** An org, an account, a conversation and the account's device: a `withSandbox` context. */
 async function seedConversation(): Promise<{
   orgId: string;
-  environmentId: string;
+  deviceId: string;
   holderConversationId: string;
   actor: { accountId: string; conversationId: string };
 }> {
@@ -90,19 +90,19 @@ async function seedConversation(): Promise<{
     VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
-  const environmentId = randomUUID();
-  await sql`INSERT INTO capybara.environments (id, org_id, owner_kind, owner_account_id, source)
-    VALUES (${environmentId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+  const deviceId = randomUUID();
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
+    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
   return {
     orgId,
-    environmentId,
+    deviceId,
     holderConversationId: conversationId,
     actor: { accountId, conversationId },
   };
 }
 
 describe("沙箱（两个副本）", () => {
-  it("two replicas using one environment for the first time at once: one file system and one instance, both get the same handle", async () => {
+  it("two replicas using one device for the first time at once: one file system and one instance, both get the same handle", async () => {
     const [k1, k2] = await Promise.all([
       startKernel(cfg([SANDBOX_FAKE], ["api", "worker"])),
       startKernel(cfg([SANDBOX_FAKE])),
@@ -125,7 +125,7 @@ describe("沙箱（两个副本）", () => {
     expect(ops.filter((o) => o[0] === "create-fs")).toHaveLength(1);
     const rows = await sql<{
       n: number;
-    }>`SELECT count(*)::int AS n FROM capybara.environment_instances`.execute(raw);
+    }>`SELECT count(*)::int AS n FROM capybara.device_instances`.execute(raw);
     expect(rows.rows[0]?.n).toBe(1);
     // the test boots both kernels itself: under a loaded parallel run that alone can pass 5 s
   }, 30_000);

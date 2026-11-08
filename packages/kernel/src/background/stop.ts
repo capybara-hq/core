@@ -154,16 +154,16 @@ export class BackgroundTaskStopper {
 
   /**
    * SIGTERM, the grace period, SIGKILL until the session is empty, then the last lines: in the
-   * task's own instance only (`ifRunning`); a task from before environments has none.
+   * task's own instance only (`ifRunning`); a task from before devices has none.
    */
   private async signalTask(
     cur: BackgroundTaskRow & { sandboxCreatedAt: Date },
     sid: string,
     signal: AbortSignal | undefined,
   ): Promise<IfRunningResult<{ to: BackgroundFinish; lastLines: string }>> {
-    if (cur.environmentId === null) return { kind: "not_running", status: "gone" };
+    if (cur.deviceId === null) return { kind: "not_running", status: "gone" };
     return this.sandbox.ifRunning(
-      cur.environmentId,
+      cur.deviceId,
       { createdAt: cur.sandboxCreatedAt },
       async (tp, h, sig) => {
         const p = actingAs(tp, taskActor(cur));

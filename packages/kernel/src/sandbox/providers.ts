@@ -2,8 +2,8 @@ import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plug
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
 
-/** The kernel-internal provider of connected machines (`device` environments). */
-export const DEVICE_PROVIDER = "@device";
+/** The kernel-internal provider of connected machines (local devices). */
+export const LOCAL_PROVIDER = "@local";
 
 /**
  * A kernel-internal provider name: it starts with `@`, which no extension name can
@@ -20,7 +20,7 @@ export interface SandboxProviderEntry {
 /**
  * The sandbox providers of this process. The cloud provider is the loaded `sandbox@2` extension,
  * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
- * extension load, and change with installs). Kernel-internal providers (`@device`) are registered
+ * extension load, and change with installs). Kernel-internal providers (`@local`) are registered
  * by their module on init, in every replica: they are code, not shared state.
  */
 @Injectable()
@@ -60,12 +60,12 @@ export class SandboxProviders {
 }
 
 /**
- * The provider an environment works with, from its `environments.provider`: an internal one
- * (`@device`) by that name only, never falling back to the cloud provider; any other environment
- * is a cloud environment and uses the current cloud provider (files kept by another provider are
- * refused by the sandbox service, `environment.unavailable`).
+ * The provider a device works with, from its `devices.provider`: an internal one
+ * (`@local`) by that name only, never falling back to the cloud provider; any other device
+ * is a cloud device and uses the current cloud provider (files kept by another provider are
+ * refused by the sandbox service, `device.unavailable`).
  */
-export function providerForEnvironment(
+export function providerForDevice(
   providers: Pick<SandboxProviders, "cloud" | "forName">,
   provider: string | null,
 ): SandboxProviderEntry | undefined {

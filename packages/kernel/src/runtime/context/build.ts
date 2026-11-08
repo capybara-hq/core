@@ -19,7 +19,7 @@ import {
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
-import { environmentPathsAt, environmentPathsText } from "./environment-paths.js";
+import { devicePathsAt, devicePathsText } from "./device-paths.js";
 import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import {
   currentRunContext,
@@ -545,7 +545,7 @@ export function summaryText(summary: string): string {
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）/ `tools_changed` (`role: "system"`, the text of {@link toolsChangedText}, at its position) /
- *   `environment_paths` (`role: "system"` at its position, `environmentPathsText`; covered by the
+ *   `device_paths` (`role: "system"` at its position, `devicePathsText`; covered by the
  *   summary: the latest one follows the summary) /
  *   `run_context` (`role: "system"` at its position, `runContextText`; covered by the summary: the
  *   current context follows the summary whole; a user message's sender line by `senderLines`) /
@@ -755,9 +755,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }
     // environments spec §13.1: the instance's directories told before the boundary follow the
     // summary again (the model keeps using the real paths)
-    const paths = environmentPathsAt(events, after);
+    const paths = devicePathsAt(events, after);
     if (paths) {
-      messages.push({ role: "system", content: environmentPathsText(paths.payload.roots) });
+      messages.push({ role: "system", content: devicePathsText(paths.payload.roots) });
     }
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
@@ -828,8 +828,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       // the instance's directories (environments spec §13.1): logged during a step's tool call,
       // so rendered after that step's tool results
-      case "environment_paths":
-        messages.push({ role: "system", content: environmentPathsText(e.payload.roots) });
+      case "device_paths":
+        messages.push({ role: "system", content: devicePathsText(e.payload.roots) });
         break;
       // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
       // (and nothing for a denied model request), so request building skips it

@@ -535,11 +535,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * The directories of the instance a sandbox tool call entered, when they differ from the
    * defaults (environments spec §13.1: a connected machine's real paths). Written once per
    * conversation and roots, before that call's result. **Model-visible**: rendered at its position
-   * as a system message (`environmentPathsText`); a summary covering it is followed by the latest
+   * as a system message (`devicePathsText`); a summary covering it is followed by the latest
    * one again.
    */
   ev(
-    "environment_paths",
+    "device_paths",
     z.object({
       roots: z.object({
         workspace: z.string().min(1).max(4096),

@@ -7,9 +7,9 @@ import type { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 
 /**
- * The poll skips an instance group whose environment's provider is not there (environments spec
- * §6): a device environment is polled with no cloud provider, a cloud one (or a task with no
- * environment) waits until a cloud provider is back.
+ * The poll skips an instance group whose device's provider is not there (environments spec
+ * §6): a local device is polled with no cloud provider, a cloud one (or a task with no
+ * device) waits until a cloud provider is back.
  */
 
 const config = KernelConfigSchema.parse({
@@ -18,17 +18,17 @@ const config = KernelConfigSchema.parse({
   masterKey: Buffer.alloc(32, 7).toString("base64"),
 });
 
-const task = (id: string, environmentId: string | null): BackgroundTaskRow =>
+const task = (id: string, deviceId: string | null): BackgroundTaskRow =>
   ({
     id,
-    environmentId,
+    deviceId,
     sid: "123",
     sandboxCreatedAt: new Date(0),
     conversationId: `c-${id}`,
   }) as unknown as BackgroundTaskRow;
 
-describe("background poll per environment provider", () => {
-  it("a device-only poll group with no cloud provider is polled; cloud and environment-less groups are skipped", async () => {
+describe("background poll per device provider", () => {
+  it("a device-only poll group with no cloud provider is polled; cloud and device-less groups are skipped", async () => {
     const polled: string[] = [];
     const finisherCalls: string[] = [];
     const job = new BackgroundTaskPollJob(
@@ -57,7 +57,7 @@ describe("background poll per environment provider", () => {
     );
     expect(await job.pollOnce()).toBe(0);
     expect(polled).toEqual(["env-device"]);
-    // the environment-less task would be marked gone by the finisher if its group were polled
+    // the device-less task would be marked gone by the finisher if its group were polled
     expect(finisherCalls).toEqual([]);
   });
 });

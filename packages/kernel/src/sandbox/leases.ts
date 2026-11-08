@@ -17,11 +17,11 @@ import type { KernelLogger } from "../log.js";
 
 /**
  * Shared and exclusive sandbox leases (sub-agents spec §10.3; environments spec §4.2): the Redis
- * protocol that lets several holders (every conversation bound to the environment, and their
- * sub-agents) use one environment's running instance concurrently (shared leases: commands, file
+ * protocol that lets several holders (every conversation bound to the device, and their
+ * sub-agents) use one device's running instance concurrently (shared leases: commands, file
  * reads and writes) while lifecycle changes (create, resume, rebuild, suspend, destroy, reset) stay
  * alone (exclusive leases). Every `sandbox@2` provider runs commands concurrently and kills by tag,
- * so there is no single-holder mode. Keys, env = the environment id:
+ * so there is no single-holder mode. Keys, env = the device id:
  *
  * - `capk:sandbox:<env>`: the lock key: an exclusive holder's token, or `shared` while shared
  *   leases exist.
@@ -42,7 +42,7 @@ import type { KernelLogger } from "../log.js";
  * with {@link SandboxLockLostError}.
  */
 
-/** Prefix of the lock key `capk:sandbox:<environmentId>`. */
+/** Prefix of the lock key `capk:sandbox:<deviceId>`. */
 export const SANDBOX_LOCK_PREFIX = "capk:sandbox:";
 /** TTL of a lease (ms): renewed every TTL / 3 while held. */
 export const SANDBOX_LOCK_TTL_MS = 60_000;
@@ -55,11 +55,11 @@ const PATH_LEASE_TTL_MS = 30_000;
 /** Shortest life of an exclusive waiter's intent (ms): outlasts event-loop lag between polls. */
 const INTENT_TTL_FLOOR_MS = 2000;
 
-/** The environment's sandbox is busy: waited longer than `sandbox.lockWaitSeconds` (409). */
+/** The device's sandbox is busy: waited longer than `sandbox.lockWaitSeconds` (409). */
 export const sandboxBusy = (): ApiError =>
   new ApiError(
     "sandbox.busy",
-    "The sandbox of this environment is busy with other commands; wait for them to finish and try again",
+    "The sandbox of this device is busy with other commands; wait for them to finish and try again",
   );
 
 /** A lease was lost while held, or the record changed under it (generation mismatch). */
@@ -67,11 +67,11 @@ export class SandboxLockLostError extends Error {
   /** `lock`: the lease was lost (renewal failed or none succeeded in time); `generation`: the record's fence changed. */
   readonly reason: "lock" | "generation";
 
-  constructor(environmentId: string, reason: "lock" | "generation" = "lock") {
+  constructor(deviceId: string, reason: "lock" | "generation" = "lock") {
     super(
       reason === "lock"
-        ? `sandbox lock lost for environment ${environmentId}`
-        : `sandbox state of environment ${environmentId} changed concurrently (generation mismatch)`,
+        ? `sandbox lock lost for device ${deviceId}`
+        : `sandbox state of device ${deviceId} changed concurrently (generation mismatch)`,
     );
     this.name = "SandboxLockLostError";
     this.reason = reason;
@@ -92,7 +92,7 @@ export type LeaseKind = "shared" | "exclusive";
 export interface SandboxLease {
   readonly kind: LeaseKind;
   readonly token: string;
-  readonly environmentId: string;
+  readonly deviceId: string;
   /** Aborts with {@link SandboxLockLostError} when the lease is lost. */
   readonly signal: AbortSignal;
   /** Renews once now; false when the lease is lost (the signal then aborts). */
@@ -270,7 +270,7 @@ export class SandboxLeases {
     } catch (e) {
       if (o.intent) {
         await this.clearIntent(env, token).catch((err: unknown) =>
-          this.log.warn("cannot clear sandbox intent", { environmentId: env, err }),
+          this.log.warn("cannot clear sandbox intent", { deviceId: env, err }),
         );
       }
       throw e;
@@ -309,12 +309,12 @@ export class SandboxLeases {
     return h ? this.held(env, h) : null;
   }
 
-  /** Deletes the environment's intent when it is `token`'s. */
+  /** Deletes the device's intent when it is `token`'s. */
   async clearIntent(env: string, token: string): Promise<void> {
     await this.locks.releaseIf(this.keys(env).intent, token);
   }
 
-  /** Live shared leases of the environment. */
+  /** Live shared leases of the device. */
   sharedCount(env: string): Promise<number> {
     return this.locks.sharedCount(this.keys(env));
   }
@@ -383,7 +383,7 @@ export class SandboxLeases {
     return {
       kind,
       token: h.token,
-      environmentId: env,
+      deviceId: env,
       signal,
       // a Redis error is warned, not thrown: the deadline decides whether the lease is lost
       renew: async () => {
@@ -391,7 +391,7 @@ export class SandboxLeases {
         try {
           return await h.renew();
         } catch (err) {
-          this.log.warn("sandbox lease renew failed", { environmentId: env, err });
+          this.log.warn("sandbox lease renew failed", { deviceId: env, err });
           return !signal.aborted;
         }
       },
