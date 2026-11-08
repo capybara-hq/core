@@ -1,4 +1,4 @@
-import type { PackageWarning, SingleProviderBlock } from "./admin-extensions";
+import type { PackageWarning, SingleProviderBlock, SingleProviderNote } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { Owner } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
@@ -972,6 +972,11 @@ export interface PlatformUpdateResult {
   components: PlatformUpdateComponent[];
   extension: PlatformUpdatePreview["extension"];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The update installed the extension but left it disabled: a single-provider extension point it
+   * provides is held by another enabled extension (`required`: by a required plugin).
+   */
+  extensionLeftDisabled?: SingleProviderNote;
 }
 
 export const KEPT_REASONS = [
@@ -1226,10 +1231,12 @@ export const confirmOrgUpload = (
   stagingId: string,
   body: { reviewHash: string; shareable?: boolean },
 ) =>
-  apiFetch<{ item: OrgCatalogItem; outcome: OrgUploadOutcome }>(
-    `${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`,
-    post(body),
-  );
+  apiFetch<{
+    item: OrgCatalogItem;
+    outcome: OrgUploadOutcome;
+    /** An update left the plugin's extension disabled (see `PlatformUpdateResult`). */
+    extensionLeftDisabled?: SingleProviderNote;
+  }>(`${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`, post(body));
 
 /** Sets 可共享 on the org's own plugin (P3-17). */
 export const setOwnedShareable = (orgId: string, itemId: string, shareable: boolean) =>

@@ -34,6 +34,7 @@ import {
   enableExtension,
   replicaSummary,
   reviewSensitive,
+  SINGLE_PROVIDER_CODES,
   type SingleProviderBlock,
   singleProviderBlockOf,
   uninstallExtension,
@@ -205,10 +206,11 @@ export function AdminExtensionOverview({
   // A single-provider point another enabled extension provides: 启用 is off, the line says which
   // one to disable first and links to it.
   const blocked = desiredState === "disabled" ? (plugin.enableBlocked ?? refused) : undefined;
+  // A required plugin holds it: it cannot be disabled, so this one cannot replace it
   const blockedLine =
     blocked === undefined
       ? null
-      : t("detail.enableBlocked", {
+      : t(blocked.required === true ? "detail.enableBlockedRequired" : "detail.enableBlocked", {
           point: capabilityLabel(capabilityOfPoint(blocked.extensionPoint)),
           other: extensionLabel(blocked.enabled, lang),
           name: extensionLabel(plugin, lang),
@@ -226,11 +228,12 @@ export function AdminExtensionOverview({
     invalidates: () => [keys.deployment().extensions(), ...extensionChangeKeys(orgId)],
   });
   // A single-provider conflict: which extension is in the way, and that disabling it is the fix.
+  // When the provider chosen is not running either, the point has none: that comes first.
   const conflictLine =
     plugin.status === "conflict" &&
     plugin.conflict !== undefined &&
     plugin.conflict.providers.length > 0
-      ? t("detail.conflictLine", {
+      ? t(plugin.conflict.unprovided === true ? "detail.noProviderLine" : "detail.conflictLine", {
           point: capabilityLabel(capabilityOfPoint(plugin.conflict.extensionPoint)),
           others: plugin.conflict.providers
             .map((p) => extensionLabel(p, lang))
@@ -256,7 +259,7 @@ export function AdminExtensionOverview({
       setConfirm(null);
     } catch (e) {
       const block =
-        e instanceof ApiClientError && e.code === "extension.single_provider_enabled"
+        e instanceof ApiClientError && SINGLE_PROVIDER_CODES.includes(e.code)
           ? singleProviderBlockOf(e.rawDetails)
           : undefined;
       if (block !== undefined) setRefused(block);

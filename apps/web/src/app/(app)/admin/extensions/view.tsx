@@ -37,6 +37,7 @@ import {
 } from "../../../../lib/admin-extensions";
 import {
   capabilitiesIn,
+  capabilityOfPoint,
   type ExtensionTab,
   inTab,
   matchesSearch,
@@ -242,6 +243,7 @@ function AdminExtensions({
   const te = useTranslations("extensions");
   const locale = useLocale();
   const lang = labelLocale(locale);
+  const capabilityLabel = useCapabilityLabel();
   const [open, setOpen] = useState<string | null>(null);
   const columns = useColumns(tab);
   const sorted = sortExtensions(all, rankOf, (p) => extensionLabel(p, lang), locale);
@@ -249,14 +251,25 @@ function AdminExtensions({
     matchesSearch(search, extensionLabel(p, lang), p.name),
   );
   const attention = sorted.filter(needsAttention);
+  // A single-provider point whose elected provider is not running has no provider at all
+  const unprovided = [
+    ...new Set(
+      attention.flatMap((p) =>
+        p.conflict?.unprovided === true ? [capabilityOfPoint(p.conflict.extensionPoint)] : [],
+      ),
+    ),
+  ];
   const callout =
     attention.length > 0
       ? {
           tone: "warn" as const,
-          children: t("callout", {
-            n: attention.length,
-            names: attention.map((p) => extensionLabel(p, lang)).join(", "),
-          }),
+          children: [
+            t("callout", {
+              n: attention.length,
+              names: attention.map((p) => extensionLabel(p, lang)).join(", "),
+            }),
+            ...unprovided.map((c) => t("calloutNoProvider", { point: capabilityLabel(c) })),
+          ].join(" "),
           // One: open it; several sort first in the list.
           ...(attention.length === 1
             ? {

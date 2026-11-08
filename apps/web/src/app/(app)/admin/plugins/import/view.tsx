@@ -548,14 +548,19 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             <Card title={t("deployResult")}>
               <Stack gap={4}>
                 <Text tone="warn">
-                  {t("deployLeftDisabled", {
-                    name: result.deploy.name,
-                    version: versionLabel(result.deploy.version),
-                    point: capabilityLabel(
-                      capabilityOfPoint(result.deploy.singleProvider.extensionPoint),
-                    ),
-                    other: extensionLabel(result.deploy.singleProvider.enabled, lang),
-                  })}
+                  {t(
+                    result.deploy.singleProvider.required === true
+                      ? "deployLeftDisabledRequired"
+                      : "deployLeftDisabled",
+                    {
+                      name: result.deploy.name,
+                      version: versionLabel(result.deploy.version),
+                      point: capabilityLabel(
+                        capabilityOfPoint(result.deploy.singleProvider.extensionPoint),
+                      ),
+                      other: extensionLabel(result.deploy.singleProvider.enabled, lang),
+                    },
+                  )}
                 </Text>
                 <Text>
                   <Link

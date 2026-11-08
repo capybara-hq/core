@@ -118,6 +118,8 @@ export interface AdminExtension {
   conflict?: {
     extensionPoint: string;
     providers: { name: string; displayName: LocalizedName | null }[];
+    /** The provider elected for the point (the first of `providers`) is not loaded: none runs. */
+    unprovided?: true;
   };
   /**
    * Only on a disabled install: another enabled extension provides a single-provider extension
@@ -127,21 +129,39 @@ export interface AdminExtension {
   enableBlocked?: SingleProviderBlock;
 }
 
-/** The single-provider point and the enabled extension providing it. */
+/**
+ * The single-provider point and the enabled extension providing it; `required`: a required plugin
+ * of the deployment, which cannot be disabled, so it cannot be replaced.
+ */
 export interface SingleProviderBlock {
   extensionPoint: string;
   enabled: { name: string; displayName: LocalizedName | null };
+  required?: true;
 }
 
-/** The block of an `extension.single_provider_enabled` refusal (its first detail), if well formed. */
+/** The kernel's single-provider refusal codes (another provider enabled / a required one). */
+export const SINGLE_PROVIDER_CODES: readonly string[] = [
+  "extension.single_provider_enabled",
+  "extension.single_provider_required",
+];
+
+/** The block of a single-provider refusal (its first detail), if well formed. */
 export function singleProviderBlockOf(details: unknown[]): SingleProviderBlock | undefined {
   const d = details[0] as Partial<SingleProviderBlock> | undefined;
   return typeof d?.extensionPoint === "string" && typeof d.enabled?.name === "string"
     ? {
         extensionPoint: d.extensionPoint,
         enabled: { name: d.enabled.name, displayName: d.enabled.displayName ?? null },
+        ...(d.required === true && { required: true as const }),
       }
     : undefined;
+}
+
+/** A plugin's extension installed but left disabled by an update (kernel `SingleProviderNote`). */
+export interface SingleProviderNote {
+  code: string;
+  message: string;
+  singleProvider: SingleProviderBlock;
 }
 
 /** 迁移 SQL 的审阅警告（敏感，不拒绝）。 */

@@ -692,6 +692,142 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     ).toBe("/admin/extensions/other-sbx");
   });
 
+  it.each(LOCALES)(
+    "a point a required plugin holds: 启用 is off and the line says it can't be replaced (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const s3Name = { zh: "S3 对象存储", en: "S3 object store" };
+      const s3 = plugin({
+        name: "object-store-s3",
+        displayName: s3Name,
+        required: true,
+        permissions: [group("provides", ["object-store@1"])],
+      });
+      const other = plugin({
+        name: "object-store-other",
+        displayName: { zh: "另一个对象存储", en: "Other object store" },
+        status: "disabled",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        replicas: [],
+        permissions: [group("provides", ["object-store@1"])],
+        enableBlocked: {
+          extensionPoint: "object-store@1",
+          enabled: { name: "object-store-s3", displayName: s3Name },
+          required: true,
+        },
+      });
+      listRoutes([s3, other]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "另一个对象存储" : "Other object store", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.enableBlockedRequired, {
+        point: msgs[locale].extensions.capability.objectStore,
+        other: s3Name[locale],
+      });
+      if (locale === "zh") {
+        expect(line).toBe("对象存储由部署必需的插件「S3 对象存储」提供，不能替换。");
+      }
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      expect(
+        (within(sheet).getByRole("button", { name: p.detail.actions.enable }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+    },
+  );
+
+  it("an enable refused because a required plugin holds the point shows the can't-replace line", async () => {
+    const disabled = plugin({
+      status: "disabled",
+      desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      replicas: [],
+      permissions: [group("provides", ["object-store@1"])],
+    });
+    detailRoutes(disabled, {
+      "POST /api/v1/admin/extensions/demo/enable": () =>
+        json(409, {
+          error: {
+            code: "extension.single_provider_required",
+            message:
+              "object-store@1 is provided by the required plugin S3 object store; it can't be replaced",
+            details: [
+              {
+                extensionPoint: "object-store@1",
+                enabled: {
+                  name: "object-store-s3",
+                  displayName: { zh: "S3 对象存储", en: "S3 object store" },
+                },
+                required: true,
+              },
+            ],
+          },
+        }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const p = en.admin.extensions;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
+    const line = fill(p.detail.enableBlockedRequired, {
+      point: en.extensions.capability.objectStore,
+      other: "S3 object store",
+    });
+    expect(await screen.findByText(line)).toBeTruthy();
+  });
+
+  it.each(LOCALES)(
+    "the elected provider is not running: the list callout and the Sheet say the point has no running provider (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "conflict",
+        permissions: [group("provides", ["sandbox@2"])],
+        replicas: [
+          {
+            replicaId: "web-1-111-aaaaaa",
+            version: "1.0.0",
+            state: "pending",
+            reason: "conflict",
+            detail:
+              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so sandbox@2 has no running provider",
+            heartbeatAt: HEARTBEAT,
+          },
+        ],
+        conflict: {
+          extensionPoint: "sandbox@2",
+          providers: [
+            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+          ],
+          unprovided: true,
+        },
+      });
+      listRoutes([e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const sandbox = msgs[locale].extensions.capability.sandbox;
+      const noProvider = fill(p.calloutNoProvider, { point: sandbox });
+      if (locale === "zh") expect(noProvider).toBe("沙箱没有正在运行的提供方。");
+      expect(screen.getByText(noProvider, { exact: false })).toBeTruthy();
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.noProviderLine, {
+        point: sandbox,
+        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      expect(within(sheet).getByText(line)).toBeTruthy();
+    },
+  );
+
   it("in the Sheet the failed replicas are the fail line, not the tinted callout (spec §6.19)", async () => {
     const split = plugin({
       status: "failed",
