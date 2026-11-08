@@ -30,6 +30,31 @@ export function environmentProvider(f: ProviderFacts, current: string | undefine
 export const holdsResources = (f: ProviderFacts): boolean =>
   f.fsStatus !== null && (f.fsStatus !== "none" || f.hasInstance);
 
+/** `environment_instances.status`. */
+export type InstanceStatus = "none" | "creating" | "running" | "suspended" | "destroyed";
+
+/**
+ * For replacing a default (which one is the person's default): it holds healthy files or an
+ * instance, or an instance row is under way (`creating`, `running`, `suspended`: a first use may
+ * be creating the instance before any file system or handle is recorded). Lost files count as
+ * none here, unlike {@link holdsResources}, which decides the provider.
+ */
+export const inUseForDefault = (f: ProviderFacts & { status: InstanceStatus | null }): boolean =>
+  f.fsStatus === "ready" ||
+  f.hasInstance ||
+  (f.status !== null && f.status !== "none" && f.status !== "destroyed");
+
+/**
+ * The provider a former default belongs to (its label and the provider whose switch back restores
+ * it): the one holding its resources once it holds any, else the one it was demoted from (the
+ * marker). A former default demoted while empty and used afterwards keeps a stale marker; its
+ * resources decide. null for an environment that is not a former default.
+ */
+export function demotedProvider(marker: string | null, f: ProviderFacts): string | null {
+  if (marker === null) return null;
+  return (holdsResources(f) ? f.instanceProvider : null) ?? marker;
+}
+
 /** The environment's provider is not the current one, or there is no provider (503). */
 export const environmentUnavailable = (provider: string | null): ApiError =>
   new ApiError(

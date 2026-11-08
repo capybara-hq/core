@@ -16,10 +16,12 @@ import { SandboxJobs } from "../sandbox/jobs.js";
 import { SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
+  demotedProvider,
   EnvironmentAccess,
   environmentProvider,
   environmentUnavailable,
-  holdsResources,
+  type InstanceStatus,
+  inUseForDefault,
   type ProviderFacts,
 } from "./access.js";
 
@@ -399,8 +401,12 @@ export class EnvironmentsService {
    * names it 「个人环境（<provider display name>）」) and stays listed as unavailable and deletable.
    * Its replacement is the person's former default demoted from the current provider when there
    * is one (switching back restores it, with its files), else a fresh default. A live default
-   * that holds no files yet is likewise swapped for a former default holding files at the current
-   * provider; it is demoted (from the provider it was made under) so it can come back in turn.
+   * not in use yet (no healthy files, no instance, none being created: {@link inUseForDefault})
+   * is likewise swapped for a former default holding healthy files at the current provider; it is
+   * demoted (from the provider it was made under) so it can come back in turn. A former default
+   * belongs to the provider holding its resources once it holds any, else to the one it was
+   * demoted from ({@link demotedProvider}), so one swapped out empty and used afterwards is
+   * labelled and restored by where its files are.
    * All of it in one transaction: switching back and forth never adds environments.
    *
    * Replacing one first takes the person's membership row (`FOR SHARE`, after the org row), so an
@@ -416,7 +422,7 @@ export class EnvironmentsService {
     const live = await this.defaultOf(orgId, accountId);
     if (live && !this.stranded(live)) {
       const current = this.providers.current()?.plugin;
-      if (holdsResources(live) || current === undefined) return live.id;
+      if (inUseForDefault(live) || current === undefined) return live.id;
       const former = await this.formerDefaults(orgId, accountId, current);
       if (!former.some((f) => f.holdsFiles)) return live.id;
     }
@@ -435,7 +441,7 @@ export class EnvironmentsService {
     if (live && live !== locked) return live.id;
     const stranded = live !== undefined && this.stranded(live);
     const withFiles = former.find((f) => f.holdsFiles);
-    if (live && !stranded && (holdsResources(live) || withFiles === undefined)) return live.id;
+    if (live && !stranded && (inUseForDefault(live) || withFiles === undefined)) return live.id;
     // a default is needed (none, or a stranded one): any former default will do, files first
     const restore = withFiles ?? (live === undefined || stranded ? former[0] : undefined);
     if (live) {
@@ -490,10 +496,11 @@ export class EnvironmentsService {
   }
 
   /**
-   * The person's live former defaults demoted from `provider` that the current provider can use
-   * (no files, or files kept by `provider`), the ones holding files first, then the most recently
-   * used, then the most recently demoted. `lock` takes their rows (`FOR NO KEY UPDATE`, in id
-   * order, so racing replacements queue on the same rows).
+   * The person's live former defaults of `provider` ({@link demotedProvider}: files or an instance
+   * kept by `provider`, or none and demoted from it), the ones holding healthy files first (lost
+   * files count as none), then the most recently used, then the most recently demoted. `lock`
+   * takes their rows (`FOR NO KEY UPDATE`, in id order, so racing replacements queue on the same
+   * rows).
    */
   private async formerDefaults(
     orgId: string,
@@ -510,14 +517,19 @@ export class EnvironmentsService {
         "e.updated_at",
         "i.provider as instance_provider",
         "i.fs_status",
+        "e.demoted_from_provider",
         "i.handle",
+        "i.status",
         "i.last_used_at",
       ])
       .where("e.org_id", "=", orgId)
       .where("e.owner_kind", "=", "personal")
       .where("e.owner_account_id", "=", accountId)
       .where("e.is_default", "=", false)
-      .where("e.demoted_from_provider", "=", provider)
+      .where("e.demoted_from_provider", "is not", null)
+      .where((eb) =>
+        eb.or([eb("e.demoted_from_provider", "=", provider), eb("i.provider", "=", provider)]),
+      )
       .where("e.deleted_at", "is", null)
       .orderBy("e.id")
       .$if(lock, (q) => q.forNoKeyUpdate("e"))
@@ -531,9 +543,13 @@ export class EnvironmentsService {
           fsStatus: r.fs_status,
           hasInstance: r.handle !== null,
         };
-        return { r, holdsFiles: holdsResources(facts), facts };
+        return {
+          r,
+          holdsFiles: inUseForDefault({ ...facts, status: r.status }),
+          belongs: demotedProvider(r.demoted_from_provider, facts) === provider,
+        };
       })
-      .filter(({ facts }) => environmentProvider(facts, provider) === provider)
+      .filter(({ belongs }) => belongs)
       .sort(
         (a, b) =>
           Number(b.holdsFiles) - Number(a.holdsFiles) ||
@@ -605,11 +621,18 @@ export class EnvironmentsService {
     orgId: string,
     accountId: string,
     lock = false,
-  ): Promise<(ProviderFacts & { id: string }) | undefined> {
+  ): Promise<(ProviderFacts & { id: string; status: InstanceStatus | null }) | undefined> {
     const row = await this.db
       .selectFrom("environments as e")
       .leftJoin("environment_instances as i", "i.environment_id", "e.id")
-      .select(["e.id", "e.provider", "i.provider as instance_provider", "i.fs_status", "i.handle"])
+      .select([
+        "e.id",
+        "e.provider",
+        "i.provider as instance_provider",
+        "i.fs_status",
+        "i.handle",
+        "i.status",
+      ])
       .where("e.org_id", "=", orgId)
       .where("e.owner_kind", "=", "personal")
       .where("e.owner_account_id", "=", accountId)
@@ -624,6 +647,7 @@ export class EnvironmentsService {
         instanceProvider: row.instance_provider,
         fsStatus: row.fs_status,
         hasInstance: row.handle !== null,
+        status: row.status,
       }
     );
   }
@@ -663,20 +687,29 @@ export class EnvironmentsService {
       .execute();
     const rows = id === undefined ? all : all.filter((r) => r.id === id);
     if (rows.length === 0) return [];
+    const factsOf = (r: (typeof all)[number]): ProviderFacts => ({
+      provider: r.provider,
+      instanceProvider: r.instance_provider,
+      fsStatus: r.fs_status,
+      hasInstance: r.handle !== null,
+    });
+    // a former default is labelled after the provider holding its resources, else its marker
+    const demoted = new Map(
+      all.map((r) => [r.id, demotedProvider(r.demoted_from_provider, factsOf(r))]),
+    );
     const ordinals = new Map<string, number>();
     const seen = new Map<string, number>();
     for (const r of [...all].sort(
       (a, b) => a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id),
     )) {
-      if (r.demoted_from_provider === null || r.name !== null) continue;
-      const n = (seen.get(r.demoted_from_provider) ?? 0) + 1;
-      seen.set(r.demoted_from_provider, n);
+      const from = demoted.get(r.id) ?? null;
+      if (from === null || r.name !== null) continue;
+      const n = (seen.get(from) ?? 0) + 1;
+      seen.set(from, n);
       ordinals.set(r.id, n);
     }
     const demotedProviders = [
-      ...new Set(
-        rows.flatMap((r) => (r.demoted_from_provider === null ? [] : [r.demoted_from_provider])),
-      ),
+      ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
     ];
     const [limits, names] = await Promise.all([
       this.sandbox.orgLimits(orgId),
@@ -684,17 +717,9 @@ export class EnvironmentsService {
     ]);
     const current = this.providers.current()?.plugin;
     return rows.map((r) => {
-      const provider = environmentProvider(
-        {
-          provider: r.provider,
-          instanceProvider: r.instance_provider,
-          fsStatus: r.fs_status,
-          hasInstance: r.handle !== null,
-        },
-        current,
-      );
+      const provider = environmentProvider(factsOf(r), current);
       const live = (r.status === "running" || r.status === "suspended") && r.last_used_at;
-      const from = r.demoted_from_provider;
+      const from = demoted.get(r.id) ?? null;
       return {
         id: r.id,
         name: r.name,

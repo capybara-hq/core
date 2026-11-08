@@ -342,4 +342,118 @@ describe("environment access", () => {
       vi.restoreAllMocks();
     }
   });
+
+  describe("which former default replaces the live one", () => {
+    const member = async (prefix: string) => {
+      const login = `${prefix}-${randomUUID().slice(0, 8)}`;
+      const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
+        .id;
+      await testMembers(db).add(orgId, me, "member", ownerId);
+      return me;
+    };
+    const switcher = () => {
+      const providers = k.app.get(SandboxProviders);
+      const realCurrent = providers.current.bind(providers);
+      return (plugin: string | null) => {
+        vi.restoreAllMocks();
+        if (plugin === null) return;
+        const impl = realCurrent()?.impl;
+        if (!impl) throw new Error("no current provider");
+        vi.spyOn(providers, "current").mockReturnValue({ plugin, impl });
+      };
+    };
+    /** An instance row; `usedDaysAgo` sets last_used_at. */
+    const instance = async (
+      id: string,
+      provider: string,
+      fs: "none" | "ready" | "lost",
+      opts: { status?: string; usedDaysAgo?: number } = {},
+    ) => {
+      const handle = fs === "none" ? null : JSON.stringify({ id: `fs-${id.slice(0, 8)}` });
+      await sql`INSERT INTO capybara.environment_instances
+          (environment_id, org_id, provider, fs_handle, fs_status, status, last_used_at)
+        VALUES (${id}, ${orgId}, ${provider}, ${handle}::jsonb, ${fs}, ${opts.status ?? "none"},
+          now() - make_interval(days => ${opts.usedDaysAgo ?? 0}))`.execute(raw);
+    };
+    /** A former default of `me` demoted from `from`. */
+    const former = async (me: string, from: string) => {
+      const id = randomUUID();
+      await sql`INSERT INTO capybara.environments
+          (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider,
+           demoted_from_provider)
+        VALUES (${id}, ${orgId}, 'personal', ${me}, NULL, false, 'cloud', ${from}, ${from})`.execute(
+        raw,
+      );
+      return id;
+    };
+    const liveCount = async (me: string) =>
+      (
+        await db
+          .selectFrom("environments")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("owner_account_id", "=", me)
+          .where("deleted_at", "is", null)
+          .execute()
+      ).length;
+
+    it("a former default swapped out while empty and used later belongs to the provider holding its files", async () => {
+      const service = k.app.get(EnvironmentsService);
+      const me = await member("ru");
+      const switchTo = switcher();
+      try {
+        // P (sandbox-fake): L holds files at P
+        const l = await service.ensureDefault(orgId, me);
+        await instance(l, "sandbox-fake", "ready", { usedDaysAgo: 2 });
+        // P -> Q: L demoted (marker P), D made under Q; D gets no files
+        switchTo("sandbox-other");
+        const d = await service.ensureDefault(orgId, me);
+        expect(d).not.toBe(l);
+        // Q -> P: the empty swap restores L and demotes D (marker Q)
+        switchTo(null);
+        expect(await service.ensureDefault(orgId, me)).toBe(l);
+        // a conversation bound to D then makes D's files at P
+        await instance(d, "sandbox-fake", "ready");
+        expect((await service.get(orgId, me, d)).demotedFrom).toMatchObject({
+          provider: "sandbox-fake",
+          ordinal: 1,
+        });
+        // P -> Q: L is stranded; D's files are at P, so it is not Q's former default
+        switchTo("sandbox-other");
+        const e = await service.ensureDefault(orgId, me);
+        expect([l, d]).not.toContain(e);
+        // Q -> P: D (files at P, the most recently used) is restored, nothing is added
+        switchTo(null);
+        expect(await service.ensureDefault(orgId, me)).toBe(d);
+        expect(await liveCount(me)).toBe(3);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("never swaps away a live default whose first instance is being created", async () => {
+      const service = k.app.get(EnvironmentsService);
+      const me = await member("rc");
+      const d = await service.ensureDefault(orgId, me);
+      // SandboxService's first use: status creating, no file system, no handle yet
+      await instance(d, "sandbox-fake", "none", { status: "creating" });
+      const l = await former(me, "sandbox-fake");
+      await instance(l, "sandbox-fake", "ready");
+      expect(await service.ensureDefault(orgId, me)).toBe(d);
+    });
+
+    it("lost files count as none when picking the default", async () => {
+      const service = k.app.get(EnvironmentsService);
+      const me = await member("rl");
+      const d = await service.ensureDefault(orgId, me);
+      const lost = await former(me, "sandbox-fake");
+      await instance(lost, "sandbox-fake", "lost");
+      // a lost former default does not win over the healthy empty live default
+      expect(await service.ensureDefault(orgId, me)).toBe(d);
+      // nor over a former default with healthy files, even when used more recently
+      const healthy = await former(me, "sandbox-fake");
+      await instance(healthy, "sandbox-fake", "ready", { usedDaysAgo: 3 });
+      expect(await service.ensureDefault(orgId, me)).toBe(healthy);
+    });
+  });
 });
