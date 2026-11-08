@@ -290,10 +290,15 @@ export async function runPluginsImport(
         return 0;
       }
       if (deploy.result === "installed" && deploy.singleProvider !== undefined) {
-        // Another enabled extension provides the same single-provider extension point
+        // Another enabled extension provides the same single-provider extension point; a required
+        // one cannot be disabled, so there is no switch to suggest
         await cli.publishChanged(deploy.name);
+        const next =
+          deploy.singleProvider.required === true
+            ? ""
+            : ` (capybara extensions disable ${deploy.singleProvider.enabled.name}, then capybara extensions enable ${deploy.name})`;
         io.stdout.write(
-          `Extension ${deploy.name} ${deploy.version} installed but left disabled: ${deploy.message} (capybara extensions disable ${deploy.singleProvider.enabled.name}, then capybara extensions enable ${deploy.name}).\n`,
+          `Extension ${deploy.name} ${deploy.version} installed but left disabled: ${deploy.message}${next}.\n`,
         );
         return 0;
       }

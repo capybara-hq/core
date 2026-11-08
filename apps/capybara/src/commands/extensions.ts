@@ -419,7 +419,10 @@ export async function runExtensionsInstall(
       if (view.status === "pending_approval") {
         lines.push(`Approve with: capybara extensions approve ${review.name}`);
       }
-      if (view.desired?.state === "disabled") {
+      if (view.leftDisabled !== undefined) {
+        // The new version newly provides a single-provider point another extension holds
+        lines.push(`Left disabled: ${view.leftDisabled.message}.`);
+      } else if (view.desired?.state === "disabled") {
         lines.push(`Enable with: capybara extensions enable ${review.name}`);
       }
       io.stdout.write(`${lines.join("\n")}\n`);
