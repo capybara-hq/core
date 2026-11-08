@@ -981,11 +981,16 @@ Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not
   network rules (https, public addresses or `allowPrivateHosts`, `net.httpsProxy`, no redirects,
   10 s, at most 64 KiB) and `marketplaces.allowedHosts`, never with the marketplace token, and only
   when it is not stored yet: a URL's content counts as fixed, a new icon needs a new URL. At most
-  100 downloads per refresh, 4 at a time. A repository path is read again at every new commit. The
-  content must really be an svg / png of at most 64 KiB (the plugin icon check). A missing, refused,
+  100 downloads per refresh, 4 at a time. A failed download is remembered
+  (`marketplace_icon_failures`) and retried only after 6 hours, after the URLs never tried, so
+  broken URLs never starve the cap. A repository path is read again at every new commit; a commit
+  counts as read only once its icons are stored (`marketplaces.icons_commit`), so a failed icon
+  write (or a refresh from before icons) reads the same commit again next time. The
+  content must really be an svg / png of at most 64 KiB (the plugin icon check), checked again
+  with its sha256 when served. A missing, refused,
   oversized or invalid icon is logged and skipped; it never fails the refresh, and the row falls
-  back to the initial. Icons no entry names any more are deleted; deleting the marketplace deletes
-  its icons.
+  back to the initial. Icons (and failures) no entry names any more are deleted; deleting the
+  marketplace deletes its icons.
 - **API:** `GET /api/v1/admin/marketplaces/entries` gives each entry `icon` (the imported item's
   icon URL, else `/api/v1/admin/marketplaces/:id/icons/:sha256`, else null). The icon route serves
   the stored bytes from PG with the plugin icon headers (`sendCatalogIcon`: content type, nosniff,

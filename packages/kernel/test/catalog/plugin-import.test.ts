@@ -1199,6 +1199,53 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     await db.deleteFrom("plugin_import_staging").where("id", "=", kept.stagingId).execute();
   });
 
+  it("a display file inside a skill directory is stored in both places: the skill syncs, the icon reads from PG", async () => {
+    const r = await imported(
+      await skillPlugin("inner-icon", {
+        manifest: { icon: "./skills/inner-icon/icon.svg" },
+        files: { "skills/inner-icon/icon.svg": SVG_ICON },
+      }),
+    );
+    const itemId = r.item.id as string;
+    const item = await db
+      .selectFrom("catalog_items")
+      .select("platform_synced_version")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    // the platform sync read every skill file from object storage
+    expect(item.platform_synced_version).toBe("1.0.0");
+    expect(
+      await db
+        .selectFrom("platform_skills")
+        .select("name")
+        .where("plugin_name", "=", "inner-icon")
+        .where("deleted_at", "is", null)
+        .execute(),
+    ).toEqual([{ name: "inner-icon" }]);
+    const v = await db
+      .selectFrom("catalog_item_versions")
+      .select("object_prefix")
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const keys = (
+      await k.app
+        .get(StorageService)
+        .deployment()
+        .list(v.object_prefix as string)
+    ).items.map((i) => i.key);
+    expect(keys.some((key) => key.endsWith("skills/inner-icon/icon.svg"))).toBe(true);
+    expect(
+      await db
+        .selectFrom("catalog_files")
+        .select("sha256")
+        .where("sha256", "=", sha256(new TextEncoder().encode(SVG_ICON)))
+        .execute(),
+    ).toHaveLength(1);
+    const icon = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${itemId}/icon` });
+    expect(icon.statusCode, icon.body).toBe(200);
+    expect(icon.body).toBe(SVG_ICON);
+  });
+
   it("the job name and scheduler id contain no colon", () => {
     expect(PLUGIN_STAGING_CLEANUP_JOB).toBe("app-staging-cleanup");
     expect(PLUGIN_STAGING_CLEANUP_SCHEDULER_ID).not.toContain(":");

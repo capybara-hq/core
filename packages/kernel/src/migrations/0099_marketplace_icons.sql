@@ -14,3 +14,19 @@ CREATE TABLE IF NOT EXISTS marketplace_icons (
   fetched_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (source_id, ref)
 );
+
+-- Icon URLs whose last download failed (HTTP error, invalid content, refused by the network rules,
+-- timeout): retried only after a backoff, and after the URLs never tried, so a few broken URLs never
+-- starve the rest of a refresh's download cap. Removed when the URL is stored or no entry names it.
+CREATE TABLE IF NOT EXISTS marketplace_icon_failures (
+  source_id text NOT NULL REFERENCES marketplaces(id) ON DELETE CASCADE,
+  ref text NOT NULL,
+  failed_at timestamptz NOT NULL DEFAULT now(),
+  attempts integer NOT NULL DEFAULT 1,
+  PRIMARY KEY (source_id, ref)
+);
+
+-- The git commit whose repository-path icons were last stored completely (null: none yet, or a
+-- refresh that predates icons). A refresh at last_commit is not_modified only when this equals it;
+-- otherwise the commit is read again, so a failed icon write recovers at the same commit.
+ALTER TABLE marketplaces ADD COLUMN IF NOT EXISTS icons_commit text;

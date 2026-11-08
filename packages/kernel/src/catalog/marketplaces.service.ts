@@ -65,6 +65,7 @@ import {
   MARKETPLACE_ICON_CONCURRENCY,
   MARKETPLACE_ICON_FETCHES_MAX,
   MARKETPLACE_ICON_MAX_BYTES,
+  MARKETPLACE_ICON_RETRY_MS,
   marketplaceIconUrl,
   wantedIcons,
 } from "./marketplace-icons.js";
@@ -214,6 +215,8 @@ interface SourceRow {
   form: MarketplaceForm;
   ref: string | null;
   last_commit: string | null;
+  /** The commit whose repository-path icons were last stored completely (0099). */
+  icons_commit: string | null;
   owner_name: string | null;
   mirrors: string[];
   builtin: boolean;
@@ -1133,6 +1136,15 @@ export class MarketplacesService {
       // a failed icon never fails the refresh: the entry shows its initial
       try {
         await this.syncIcons(row, outcome === "not_modified" ? undefined : outcome.icons, signal);
+        // only now is the commit fully synced: a refresh at it may be not_modified from here on
+        if (outcome !== "not_modified" && outcome.commit !== undefined) {
+          await this.db
+            .updateTable("marketplaces")
+            .set({ icons_commit: outcome.commit })
+            .where("id", "=", id)
+            .where("last_commit", "=", outcome.commit)
+            .execute();
+        }
       } catch (err) {
         this.log.warn("marketplace icons not updated", { marketplace: id, err });
       }
@@ -1160,8 +1172,9 @@ export class MarketplacesService {
 
   /**
    * Reads a git marketplace (spec §5.1): resolves `ref` (default the remote HEAD); the same commit
-   * as the last refresh -> `not_modified` (nothing else is fetched). Otherwise only what the root
-   * needs is read, in this order: `.capybara-plugin/marketplace.json` (at most
+   * as the last refresh, whose path icons were stored too (`icons_commit`) -> `not_modified`
+   * (nothing else is fetched; a commit whose icons were not stored is read again). Otherwise only
+   * what the root needs is read, in this order: `.capybara-plugin/marketplace.json` (at most
    * `marketplaces.maxIndexBytes`, validated like an http manifest); `.claude-plugin/marketplace.json`
    * (a Claude Code marketplace: each entry's component fields and `strict` become its overlay, and
    * entries Capybara cannot store are `skipped`); else a single-plugin repo (the root has
@@ -1194,7 +1207,7 @@ export class MarketplacesService {
     };
     const loc = { url: row.url, ...(row.ref !== null && { ref: row.ref }) };
     const commit = await resolveGitCommit(loc, options);
-    if (commit === row.last_commit) return "not_modified";
+    if (commit === row.last_commit && commit === row.icons_commit) return "not_modified";
     const MANIFEST = ".capybara-plugin/marketplace.json";
     let hasSkills = false;
     const dec = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -1430,8 +1443,10 @@ export class MarketplacesService {
    * stored when the commit did not change (`fresh` undefined). A URL is downloaded only when it is
    * not stored yet (its content is treated as fixed), at most {@link MARKETPLACE_ICON_FETCHES_MAX}
    * per refresh, under the marketplace network rules and `marketplaces.allowedHosts`, never with
-   * the token. An icon that is missing, too large or not a real svg / png is skipped and logged;
-   * icons no entry names any more are deleted.
+   * the token. A failed download is remembered (`marketplace_icon_failures`) and retried only after
+   * {@link MARKETPLACE_ICON_RETRY_MS}, URLs never tried first, so broken URLs never starve the
+   * cap. An icon that is missing, too large or not a real svg / png is skipped and logged; icons
+   * (and failures) no entry names any more are deleted.
    */
   private async syncIcons(
     row: SourceRow,
@@ -1457,6 +1472,20 @@ export class MarketplacesService {
           .execute()
       ).map((r) => r.ref),
     );
+    // the URLs that failed before, oldest failure first, and whether their backoff is over
+    const failures = await this.db
+      .selectFrom("marketplace_icon_failures")
+      .select([
+        "ref",
+        sql<boolean>`failed_at <= now() - make_interval(secs => ${MARKETPLACE_ICON_RETRY_MS / 1000})`.as(
+          "due",
+        ),
+      ])
+      .where("source_id", "=", row.id)
+      .orderBy("failed_at")
+      .orderBy("ref")
+      .execute();
+    const failedBefore = new Map(failures.map((f) => [f.ref, f.due]));
     const put: { ref: string; icon: CheckedIcon }[] = [];
     const keep = new Set<string>();
     const problems: { icon: string; problem: string }[] = [];
@@ -1473,28 +1502,40 @@ export class MarketplacesService {
       if (typeof r === "string") problems.push({ icon: ref, problem: r });
       else put.push({ ref, icon: r });
     }
-    const toFetch: string[] = [];
+    // IPv6 hostnames come bracketed from URL; allowedHosts entries are written without brackets
+    const hostOf = (url: string) => new URL(url).hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+    const neverTried: string[] = [];
     for (const url of urls) {
       if (have.has(url)) {
         keep.add(url);
         continue;
       }
-      const host = new URL(url).hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+      const host = hostOf(url);
       if (!hostAllowed(host, config)) {
         problems.push({ icon: url, problem: `${host} is not in marketplaces.allowedHosts` });
-      } else if (toFetch.length < MARKETPLACE_ICON_FETCHES_MAX) {
-        toFetch.push(url);
+      } else if (!failedBefore.has(url)) {
+        neverTried.push(url);
       }
     }
+    // retries after the never-tried URLs, oldest failure first, within the cap
+    const retries = failures
+      .filter((f) => f.due && urls.has(f.ref) && !have.has(f.ref))
+      .map((f) => f.ref)
+      .filter((url) => hostAllowed(hostOf(url), config));
+    const toFetch = [...neverTried, ...retries].slice(0, MARKETPLACE_ICON_FETCHES_MAX);
     const net = marketplaceNetPolicy(config);
     const queue = [...toFetch];
+    const failed: string[] = [];
     await Promise.all(
       Array.from({ length: Math.min(MARKETPLACE_ICON_CONCURRENCY, queue.length) }, async () => {
         for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
           if (signal.aborted) return;
           const r = await fetchMarketplaceIcon(url, { net, signal });
-          if (typeof r === "string") problems.push({ icon: url, problem: r });
-          else put.push({ ref: url, icon: r });
+          if (typeof r === "string") {
+            problems.push({ icon: url, problem: r });
+            // an aborted refresh says nothing about the URL
+            if (!signal.aborted) failed.push(url);
+          } else put.push({ ref: url, icon: r });
         }
       }),
     );
@@ -1506,25 +1547,38 @@ export class MarketplacesService {
       });
     }
     const gone = [...have].filter((ref) => !keep.has(ref) && !put.some((p) => p.ref === ref));
-    if (put.length > 0 || gone.length > 0) await this.writeIcons(row.id, put, gone);
+    // failures of URLs now stored or named by no entry
+    const cleared = [...failedBefore.keys()].filter(
+      (ref) => !urls.has(ref) || put.some((p) => p.ref === ref),
+    );
+    if (put.length > 0 || gone.length > 0 || failed.length > 0 || cleared.length > 0) {
+      await this.writeIcons(row.id, { put, gone, failed, cleared });
+    }
   }
 
-  /** Writes a refresh's icons: upserts `put`, deletes `gone` (see {@link syncIcons}). */
+  /**
+   * Writes a refresh's icons: upserts `put`, deletes `gone`, records the `failed` downloads and
+   * forgets the `cleared` failures (see {@link syncIcons}).
+   */
   @Transactional()
   private async writeIcons(
     id: string,
-    put: { ref: string; icon: CheckedIcon }[],
-    gone: string[],
+    w: {
+      put: { ref: string; icon: CheckedIcon }[];
+      gone: string[];
+      failed: string[];
+      cleared: string[];
+    },
   ): Promise<void> {
     const t = this.db;
-    if (gone.length > 0) {
+    if (w.gone.length > 0) {
       await t
         .deleteFrom("marketplace_icons")
         .where("source_id", "=", id)
-        .where("ref", "in", gone)
+        .where("ref", "in", w.gone)
         .execute();
     }
-    for (const { ref, icon } of put) {
+    for (const { ref, icon } of w.put) {
       const values = {
         sha256: icon.sha256,
         content_type: icon.contentType,
@@ -1535,6 +1589,26 @@ export class MarketplacesService {
         .insertInto("marketplace_icons")
         .values({ source_id: id, ref, ...values })
         .onConflict((oc) => oc.columns(["source_id", "ref"]).doUpdateSet(values))
+        .execute();
+    }
+    if (w.cleared.length > 0) {
+      await t
+        .deleteFrom("marketplace_icon_failures")
+        .where("source_id", "=", id)
+        .where("ref", "in", w.cleared)
+        .execute();
+    }
+    // sorted: two replicas refreshing at once lock the rows in the same order
+    for (const ref of [...w.failed].sort()) {
+      await t
+        .insertInto("marketplace_icon_failures")
+        .values({ source_id: id, ref })
+        .onConflict((oc) =>
+          oc.columns(["source_id", "ref"]).doUpdateSet({
+            failed_at: sql<Date>`now()` as unknown as Date,
+            attempts: sql<number>`marketplace_icon_failures.attempts + 1`,
+          }),
+        )
         .execute();
     }
   }
@@ -1570,7 +1644,19 @@ export class MarketplacesService {
           .executeTakeFirst()
       : undefined;
     if (!row) throw new ApiError("catalog.icon_not_found", "This marketplace has no such icon");
-    return { contentType: row.content_type, data: new Uint8Array(row.data) };
+    // checked again on read, like a catalog icon (`readCatalogIcon`): PG may have been changed
+    const data = new Uint8Array(row.data);
+    const checked = checkMarketplaceIcon(
+      row.content_type === "image/svg+xml" ? "icon.svg" : "icon.png",
+      data,
+    );
+    if (typeof checked === "string") {
+      throw new ApiError("internal", `Stored marketplace icon is invalid: ${checked}`);
+    }
+    if (checked.sha256 !== sha256) {
+      throw new ApiError("internal", "Stored marketplace icon does not match its recorded hash");
+    }
+    return { contentType: checked.contentType, data };
   }
 
   /** The token of a custom marketplace (undefined without one; official never has one). */

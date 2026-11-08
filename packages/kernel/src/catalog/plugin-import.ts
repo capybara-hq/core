@@ -144,8 +144,10 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  * catalog name / version conflicts and the actor still a super admin. Dependencies are only
  * resolved against the imported catalog versions for the review (an unresolved one does not block
  * the import, spec §4.1); they are never fetched. Only then is the extension handed to
- * `ExtensionInstalls.ingest` (source `catalog`), the skill / template / icon files written to object
- * storage, a staging row written (24 hours) and `catalog.plugin_staged` audited.
+ * `ExtensionInstalls.ingest` (source `catalog`), the skill / template files written to object
+ * storage, the display files (icons, setup guide files; `catalog-files.ts`) written to PG with a
+ * staging row (24 hours), and `catalog.plugin_staged` audited. A display file inside a skill
+ * directory or at a template's path goes to both places: each reader finds it where it looks.
  *
  * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row
  * (confirm works once), locks the extension name and recomputes its deployment state (installed /
@@ -160,8 +162,9 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
  * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix, then the
- * display files (`catalog_files`) nothing lists any more; a stored extension package stays in the content-addressed `extension_packages` (the same as importing the
- * same tgz again; without an install record referencing it it is never loaded).
+ * display files (`catalog_files`) nothing lists any more; a stored extension package stays in the
+ * content-addressed `extension_packages` (the same as importing the same tgz again; without an
+ * install record referencing it it is never loaded).
  */
 
 /** How long a staged import is kept. */
@@ -830,10 +833,11 @@ export class PluginImport {
       );
       await assertDowngradable(this.db, extension, ext.migrationSql);
     }
-    // Display files go to PG with the staging row; the rest needs object storage, which a bootstrap
-    // import never has (the object store may be a bootstrap plugin itself)
+    // Display files go to PG with the staging row; skills and templates need object storage, which a
+    // bootstrap import never has (the object store may be a bootstrap plugin itself). A file that is
+    // both (an icon inside a skill directory) goes to both: the readers of each look only there
     const displayFiles = content.files.filter((f) => content.displayPaths.has(f.path));
-    const objectFiles = content.files.filter((f) => !content.displayPaths.has(f.path));
+    const objectFiles = content.files.filter((f) => content.objectPaths.has(f.path));
     if (objectFiles.length > 0 && retry === undefined) {
       if (source.kind === "bootstrap" && !this.files.available) {
         throw new ApiError(
@@ -1985,6 +1989,11 @@ export class PluginImport {
     files: SkillPackageFile[];
     /** The paths of `files` kept in PG (`catalog_files`): icons and setup guide files. */
     displayPaths: Set<string>;
+    /**
+     * The paths of `files` kept under the version's object prefix: skill files, connector and agent
+     * templates (a display path may be one too: then it is kept in both places).
+     */
+    objectPaths: Set<string>;
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
     agentTemplates: PluginReviewAgentTemplate[];
@@ -2002,6 +2011,11 @@ export class PluginImport {
     const keep = (path: string) => {
       const data = pkg.files.get(path);
       if (data !== undefined && !stored.has(path)) stored.set(path, fileOf(path, data));
+    };
+    const objectPaths = new Set<string>();
+    const keepObject = (path: string) => {
+      keep(path);
+      if (stored.has(path)) objectPaths.add(path);
     };
     // The plugin icon and the setup guide templates (rendered by PluginGuides): display files
     const displayPaths = displayFilePaths(
@@ -2030,7 +2044,7 @@ export class PluginImport {
           files: files.length,
           suggestPinned: pinned.get(s.dir) === true,
         });
-        for (const f of s.files) keep(`${s.dir}/${f}`);
+        for (const f of s.files) keepObject(`${s.dir}/${f}`);
       } catch (e) {
         if (!(e instanceof SkillArchiveError)) throw e;
         for (const p of e.problems) problems.push(`${s.dir}: ${p}`);
@@ -2077,7 +2091,7 @@ export class PluginImport {
           `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment and is neither this plugin's extension nor a dependency`,
         );
       }
-      keep(c.path);
+      keepObject(c.path);
       templatePaths.set(c.id, c.path);
       return {
         id: c.id,
@@ -2092,7 +2106,7 @@ export class PluginImport {
       };
     });
     const agentTemplates: PluginReviewAgentTemplate[] = pkg.agentTemplates.map((a) => {
-      keep(a.path);
+      keepObject(a.path);
       const { name, description, instructions, model, ...rest } = a.template;
       return { name, path: a.path, description, instructions, model: model ?? "inherit", ...rest };
     });
@@ -2100,6 +2114,7 @@ export class PluginImport {
     return {
       files: [...stored.values()],
       displayPaths,
+      objectPaths,
       templates,
       skills,
       agentTemplates,

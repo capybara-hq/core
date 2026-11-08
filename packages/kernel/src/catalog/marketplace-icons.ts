@@ -27,6 +27,8 @@ import { iconProblem } from "./plugin-package.js";
 export const MARKETPLACE_ICON_TIMEOUT_MS = 10_000;
 /** At most this many icon URLs are downloaded per refresh (the rest wait for the next one). */
 export const MARKETPLACE_ICON_FETCHES_MAX = 100;
+/** How long after a failed download an icon URL is tried again (by a later refresh). */
+export const MARKETPLACE_ICON_RETRY_MS = 6 * 3600_000;
 /** Parallel icon downloads of one refresh. */
 export const MARKETPLACE_ICON_CONCURRENCY = 4;
 /** The largest icon (the plugin icon limit). */

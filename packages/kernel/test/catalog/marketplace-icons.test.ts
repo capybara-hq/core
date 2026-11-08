@@ -7,13 +7,17 @@ import {
   startFakeGitServer,
   startFakeMarketplace,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sql } from "kysely";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkMarketplaceIcon,
   gitIconPaths,
+  MARKETPLACE_ICON_FETCHES_MAX,
   MARKETPLACE_ICON_MAX_BYTES,
   wantedIcons,
 } from "../../src/catalog/marketplace-icons.js";
+import { MarketplacesService } from "../../src/catalog/marketplaces.service.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { createOrg } from "../helpers/runs.js";
 import { type OrgEnv, setDeployment, startOrgEnv } from "./org-env.js";
 
@@ -60,6 +64,10 @@ beforeAll(async () => {
   icons = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0] as string;
     iconHits.push(path);
+    if (path === "/redirect.svg") {
+      res.writeHead(302, { location: "/icon.svg" }).end();
+      return;
+    }
     const f = ICON_FILES[path];
     if (!f) {
       res.writeHead(404).end();
@@ -83,6 +91,10 @@ afterAll(async () => {
 beforeEach(async () => {
   await env.db.deleteFrom("marketplaces").where("id", "<>", "official").execute();
   iconHits.length = 0;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 async function addMarketplace(url: string): Promise<string> {
@@ -442,5 +454,163 @@ describe("marketplace entry icons", { timeout: 60_000 }, () => {
         await env.db.deleteFrom("catalog_items").where("id", "=", itemId).execute();
       }
     }
+  });
+
+  it("an icon URL on a host outside marketplaces.allowedHosts is never fetched; a redirect is refused", async () => {
+    const config = env.k.app.get(KernelConfigService);
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      marketplaces: { ...real.marketplaces, allowedHosts: ["127.0.0.1"] },
+    });
+    const port = new URL(iconBase).port;
+    market.setManifest({
+      schemaVersion: 1,
+      name: "Hosts",
+      plugins: [
+        // same server, another host name: refused before any request
+        entry("other-host", `http://localhost:${port}/icon.svg`),
+        // the server answers 302 to a valid icon: never followed
+        entry("redirect", `${iconBase}/redirect.svg`),
+      ],
+    });
+    const id = await addMarketplace(market.url);
+    await refresh(id);
+    const got = await iconsOf(id);
+    expect(got.get("other-host")).toBeNull();
+    expect(got.get("redirect")).toBeNull();
+    expect(iconHits).toEqual(["/redirect.svg"]);
+    expect(
+      await env.db
+        .selectFrom("marketplace_icons")
+        .select("ref")
+        .where("source_id", "=", id)
+        .execute(),
+    ).toEqual([]);
+    // the redirect is a failed download (remembered); the refused host is not (no request made)
+    expect(
+      await env.db
+        .selectFrom("marketplace_icon_failures")
+        .select("ref")
+        .where("source_id", "=", id)
+        .execute(),
+    ).toEqual([{ ref: `${iconBase}/redirect.svg` }]);
+  });
+
+  it("failed icon URLs back off; URLs never tried go first within the per-refresh cap", async () => {
+    const broken = Array.from(
+      { length: MARKETPLACE_ICON_FETCHES_MAX + 1 },
+      (_, i) => `${iconBase}/broken/${String(i).padStart(3, "0")}.svg`,
+    );
+    const plugins = broken.map((url, i) => entry(`b${i}`, url));
+    market.setManifest({ schemaVersion: 1, name: "Backoff", plugins });
+    const id = await addMarketplace(market.url);
+    await refresh(id);
+    // the cap: one URL waits for the next refresh
+    expect(iconHits).toHaveLength(MARKETPLACE_ICON_FETCHES_MAX);
+    const failures = () =>
+      env.db
+        .selectFrom("marketplace_icon_failures")
+        .select(["ref", "attempts"])
+        .where("source_id", "=", id)
+        .execute();
+    expect(await failures()).toHaveLength(MARKETPLACE_ICON_FETCHES_MAX);
+    const [left] = broken.filter((u) => !iconHits.includes(new URL(u).pathname));
+
+    // the next refresh tries only the URL never tried; the failed ones are backing off
+    iconHits.length = 0;
+    await refresh(id);
+    expect(iconHits).toEqual([new URL(left as string).pathname]);
+    expect(await failures()).toHaveLength(MARKETPLACE_ICON_FETCHES_MAX + 1);
+
+    // the backoff is over and a new icon appears: the new one first, then the oldest failures
+    await env.db
+      .updateTable("marketplace_icon_failures")
+      .set({ failed_at: sql<Date>`now() - interval '7 hours'` as unknown as Date })
+      .where("source_id", "=", id)
+      .where("ref", "<>", left as string)
+      .execute();
+    market.setManifest({
+      schemaVersion: 1,
+      name: "Backoff",
+      plugins: [...plugins, entry("fresh", `${iconBase}/icon.svg`)],
+    });
+    iconHits.length = 0;
+    await refresh(id);
+    expect(iconHits).toHaveLength(MARKETPLACE_ICON_FETCHES_MAX);
+    expect(iconHits).toContain("/icon.svg");
+    // the failure of the last refresh is not due yet
+    expect(iconHits).not.toContain(new URL(left as string).pathname);
+    expect((await iconsOf(id)).get("fresh")).toMatch(/\/icons\/[0-9a-f]{64}$/);
+    const after = await failures();
+    expect(after.filter((f) => f.attempts === 2)).toHaveLength(MARKETPLACE_ICON_FETCHES_MAX - 1);
+
+    // an entry dropping its icon drops its failure too
+    market.setManifest({ schemaVersion: 1, name: "Backoff", plugins: [entry("b0")] });
+    await refresh(id);
+    expect(await failures()).toEqual([]);
+  });
+
+  it("a failed icon write is recovered by the next refresh at the same commit", async () => {
+    await git.commit("mkt-icons-retry", {
+      ".capybara-plugin/marketplace.json": JSON.stringify({
+        schemaVersion: 1,
+        name: "Retry icons",
+        plugins: [{ ...entry("rp"), icon: "./plugins/rp/icon.svg" }],
+      }),
+      "plugins/rp/icon.svg": SVG,
+    });
+    const id = await addMarketplace(git.url("mkt-icons-retry"));
+    const svc = env.k.app.get(MarketplacesService) as unknown as {
+      writeIcons: (...args: unknown[]) => Promise<void>;
+    };
+    vi.spyOn(svc, "writeIcons").mockRejectedValueOnce(new Error("pg went away"));
+    await refresh(id);
+    expect((await iconsOf(id)).get("rp")).toBeNull();
+    const row = () =>
+      env.db
+        .selectFrom("marketplaces")
+        .select(["last_commit", "icons_commit"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    const first = await row();
+    expect(first.last_commit).not.toBeNull();
+    expect(first.icons_commit).toBeNull();
+
+    // same commit: read again since its icons were never stored
+    await refresh(id);
+    const url = (await iconsOf(id)).get("rp") as string;
+    expect(url).toMatch(/\/icons\/[0-9a-f]{64}$/);
+    expect((await env.root({ method: "GET", url })).body).toBe(SVG);
+    expect(await row()).toEqual({
+      last_commit: first.last_commit,
+      icons_commit: first.last_commit,
+    });
+  });
+
+  it("a stored marketplace icon is checked again on read", async () => {
+    market.setManifest({
+      schemaVersion: 1,
+      name: "Tamper",
+      plugins: [entry("t", `${iconBase}/icon.svg`)],
+    });
+    const id = await addMarketplace(market.url);
+    await refresh(id);
+    const url = (await iconsOf(id)).get("t") as string;
+    expect((await env.root({ method: "GET", url })).statusCode).toBe(200);
+    // other bytes under the recorded sha256: refused
+    await env.db
+      .updateTable("marketplace_icons")
+      .set({ data: Buffer.from(SVG2) })
+      .where("source_id", "=", id)
+      .execute();
+    expect((await env.root({ method: "GET", url })).statusCode).toBe(500);
+    // not an svg at all
+    await env.db
+      .updateTable("marketplace_icons")
+      .set({ data: Buffer.from("<html><script>1</script></html>") })
+      .where("source_id", "=", id)
+      .execute();
+    expect((await env.root({ method: "GET", url })).statusCode).toBe(500);
   });
 });

@@ -1109,7 +1109,9 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
   object store first were rejected: both still leave the object store's own icon and every
   storage-less deployment without icons, and add a state where a version lists files it does not
   have. Skills, connector templates and agent templates stay in object storage (they are large or
-  copied into platform components there); a bootstrap entry shipping them fails while no object
+  copied into platform components there). A display file that is also inside one of those (an
+  icon inside a skill directory, a guide file at a template's path) is stored in both places, so
+  each reader finds it where it looks. A bootstrap entry shipping them fails while no object
   store runs (optional entries are retried after the extensions load). The staging cleanup job
   removes `catalog_files` rows that no version or staging lists, once older than the staging TTL
   (an import renews `touched_at`, so a concurrent import never loses its bytes).

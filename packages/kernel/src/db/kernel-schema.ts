@@ -1269,6 +1269,7 @@ export interface KernelDatabase {
   marketplaces: MarketplacesTable;
   marketplace_entries: MarketplaceEntriesTable;
   marketplace_icons: MarketplaceIconsTable;
+  marketplace_icon_failures: MarketplaceIconFailuresTable;
   plugin_import_staging: PluginImportStagingTable;
   catalog_requests: CatalogRequestsTable;
   catalog_org_grants: CatalogOrgGrantsTable;
@@ -1619,6 +1620,8 @@ export interface MarketplacesTable {
   owner_name: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0051: entries the last successful refresh could not store (`{ name, reason }[]`). */
   skipped: ColumnType<{ name: string; reason: string }[], string | undefined, string>;
+  /** 0099: the git commit whose repository-path icons were last stored completely. */
+  icons_commit: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -1652,6 +1655,14 @@ export interface MarketplaceIconsTable {
   content_type: "image/svg+xml" | "image/png";
   data: Buffer;
   fetched_at: Ts;
+}
+
+/** 0099: icon URLs whose last download failed, retried after a backoff. */
+export interface MarketplaceIconFailuresTable {
+  source_id: string;
+  ref: string;
+  failed_at: Ts;
+  attempts: ColumnType<number, number | undefined, number>;
 }
 
 /**
