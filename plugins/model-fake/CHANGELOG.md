@@ -1,5 +1,33 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.5
+
+### Minor Changes
+
+- 40c8ee0: Tools are on by default: an agent has every builtin, every tool of the extensions enabled in the
+  org and every tool of the org's connectors, and its definition stores only what it turns off
+  (`disabledTools`, replacing the enabled `tools` list; migration 0092 rewrites stored agents and
+  org-made templates to "nothing turned off"). A newly added builtin reaches existing agents; a
+  connector the org sets up is on for every agent; tools that cannot run now are left out quietly.
+  The Platform tool's agent operations and `platform.me` use the new shape. `createAgent` in
+  `@capybara-hq/testing` takes `disabledTools`; model-fake calls a tool on its own only when a
+  request offers exactly one.
+
+### Patch Changes
+
+- ca3c570: Agents know who they are and who they talk to (run context): run start writes a `run_context`
+  event (the agent version's name and description, the org, today's date, the time zone and language
+  of the person whose message started the run; a sub-agent's own name and who dispatched it), first
+  in full, then only what changed; the model sees it as a system message at its position and in full
+  again after a compaction summary. Every message records its sender (display name and org role; an
+  anonymous IM guest by IM name) and a sender line names it when the sender changes. Messages take
+  the browser's `timeZone` and `locale`; `GET` / `PUT /api/v1/me/preferences` sets a person's time
+  zone, the org settings an org default (`timeZone`). The agent definition gains `description`
+  (saved as a version; the profile PATCH no longer takes it). model-fake reads a message's script
+  without the sender line.
+- Updated dependencies [f31ec88]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.5
+
 ## 0.1.0-rc.4
 
 ### Minor Changes
