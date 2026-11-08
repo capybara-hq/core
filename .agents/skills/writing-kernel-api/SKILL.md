@@ -311,9 +311,10 @@ imports no domain module). `defineOperation({...})` fields:
 - `mirrors`: the routes it corresponds to (`"POST /api/v1/orgs/:orgId/skills"`), `[]` for a synthetic read.
 - `confirm`: `read` runs without asking; `personal` asks and may be remembered; `org` and `platform`
   ask every time and are never remembered. `rememberable: false` makes a `personal` write asked every
-  time too (destructive personal writes: `conversations.delete` / `abort`, `agents.delete`,
-  `agents.delete-skill`, `environments.delete` / `reset-files`). `confirmFor(input, ctx)` picks the class per call when it depends on the
-  target (`agents.update`: `personal` only on the actor's own private agent; a throw counts as not
+  time too (destructive personal writes: `conversations.delete` / `abort` /
+  `stop-background-task`, `agents.delete`, `agents.delete-skill`, `environments.delete` /
+  `reset-files`). `confirmFor(input, ctx)` picks the class per call when it depends on the target
+  (`agents.update`: `personal` only on the actor's own private agent; a throw counts as not
   remembered). A route marked `HUMAN_ONLY` is not an operation (exclusion `human-only`).
 - `summary(input, ctx)`: for every write, the bilingual card line rendered from the validated input and
   kernel reads (target names, preview counts), never from model text (zh says 平台 / 超级管理员 / 智能体).
@@ -333,22 +334,31 @@ imports no domain module). `defineOperation({...})` fields:
   actionable `ToolError` (`toToolError`), never a 500.
 - `run(input, ctx)`: call the controller's service, never new logic, as `ctx.actorAccountId`; writes stay
   in the service's `@Transactional()` methods and pass `auditDetail: viaAgent("<id>", ctx)` so the audit
-  event carries `{ via: "agent", conversationId, runId, operation }`. Results hold no secrets, tokens,
+  event carries `{ via: "agent", operation, agentConversationId, agentRunId }` (distinct keys, so a
+  write's own `conversationId` / `runId` survive the merge). Results hold no secrets, tokens,
   credential fields or secret config.
 
 **Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3 domain
 fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows, startOf(cursor), 50)`
-(`params.cursor`, result `{ items, total, next }`). Super admin operations run only through the super
-admin's own private agent and return the admin console's data in full: platform items and the
-conversation org's own items are named (orgs included: previews, scope lists, the orgs a component is
-on in). An item another org owns is only counted (`otherOrg…` fields) and get / update on it is refused
+(`params.cursor`, result `{ items, total, next }`). A route that pages by keyset (the service takes
+`after`, so no total is known) keeps that: input `after` from the route's schema, result
+`{ <items>, next }` where `next` is the last row's id (or the service's own `next`) and the
+description says "pass the returned next as params.after" (`accounts.list`, `conversations.list` /
+`subagents` / `files`, `evals.list-results`); never an offset over a keyset route. Super admin
+operations run only through the super admin's own private agent and return the admin console's data
+in full: platform items and the conversation org's own items are named (orgs included: previews,
+scope lists, the orgs a component is on in). An item another org owns is only counted (`otherOrg…` fields) and get / update on it is refused
 (`assertNotOtherOrgs` / `assertExtensionNotOtherOrgs` in `platform/ops/other-orgs.ts`), also on a race
 past the precheck (a service error naming that org's items is rethrown without them).
 
 **Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category and a reason: `human-only` (deciding
 approvals and requests, confirming extension permissions, roles, the super-admin flag, sign-in and
 setup), `secret` (tokens, credentials, secret config values, cross-org config state), `transport`
-(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). `later` is closed:
+(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). A `@SessionOnly()`
+route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
+switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
+parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry
+would need cross-file resolution the source scan does not do. `later` is closed:
 `platform-op-later` fails it, except the routes in `LATER_ALLOWED` of the check (today the agent profile
 route, until its operation lands). An operation that would touch a secret refuses with a pointer to the
 web page.

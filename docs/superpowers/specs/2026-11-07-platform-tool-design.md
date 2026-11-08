@@ -201,7 +201,9 @@ An operation is defined in kernel code next to its domain **(designer's call)**:
   principal; writes stay `@Transactional()` service methods as today.
 
 Audit rows of writes made through `Platform` record `via: "agent"` with the conversation, run and
-operation **(designer's call)**.
+operation **(designer's call)**, as `{ via, operation, agentConversationId, agentRunId }`: keys
+distinct from the business fields, so a write about another conversation or run (an eval case, a
+background task) keeps its own `conversationId` / `runId` in the row.
 
 Errors are the existing `ApiError` codes, turned into actionable tool errors (the tool error check
 applies). An operation that is unavailable says why and who can do it.
@@ -529,16 +531,17 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 
 - 178 operations in 20 domains; every other kernel route is excluded for good
   with a reason (`human-only` / `secret` / `transport` / `internal`). One `later` route remains: the
-  agent profile `PATCH`, until the run-context work is on `main` (Task 12); `check:platform-ops` rule
+  agent profile `PATCH`, until the run-context work is on `main` (#91); `check:platform-ops` rule
   `platform-op-later` rejects every other `later` entry (the route sits in the check's
-  `LATER_ALLOWED`), and the allow-list empties when Task 12 lands.
+  `LATER_ALLOWED`), and the allow-list empties when #91 lands.
 - Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
   `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
   parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
   patterns / formats and required-ness, recursively, with `omits` / `extras` / `renames` / `loosens`
   declared on the operation and checked for staleness. New check rules: `platform-op-errors`,
   `platform-op-orphan` (a mirror or exclusion of a removed route), `platform-op-double` (a route both
-  mirrored and excluded), `platform-op-later`.
+  mirrored and excluded), `platform-op-later`, `platform-op-session-only` (a `@SessionOnly()` route
+  mirrored, or excluded other than `human-only` / `secret`).
 - `precheck` on writes (read only, 2 s bound, skipped on a throw or timeout), run before the card and
   again when an approved call resumes; role-keyed `next` in `errors[]` (`superAdmin` / `orgAdmin` /
   `member`); compact list rows paged by 50.
@@ -576,8 +579,8 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 - Admin component scope / preview / disable / visibility are `platform` writes, not human-only —
   they are ordinary admin-console writes (§14.1 item 3).
 - `PlatformOperation.rememberable?: false` (static) makes a write never remembered whatever its
-  class; used by `conversations.delete` / `abort`, `agents.delete`, `agents.delete-skill`,
-  `environments.delete` / `reset-files` — replaces routing destructive personal writes through
+  class; used by `conversations.delete` / `abort` / `stop-background-task`, `agents.delete`,
+  `agents.delete-skill`, `environments.delete` / `reset-files` — replaces routing destructive personal writes through
   `confirmFor` → `org`, which mislabelled their rights.
 - `conversations.abort` is offered (`personal`, never remembered, refuses the run's own root
   conversation) — parity with the web's stop button.
@@ -591,7 +594,7 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 - A route both mirrored and excluded is a check finding (`platform-op-double`) — a mirrored
   human-only or secret route is a hole in the fence.
 - Personal preference operations wait for the run-context work, which adds the preferences /
-  timezone routes; folded into Task 12 — no such kernel route exists on `main` yet.
+  timezone routes; folded into #91 — no such kernel route exists on `main` yet.
 - `evals.get-case` / `get-result` return metadata and scores, never conversation content — replay
   privacy (trajectories 404 to others, no export); copying a case into another log would be an
   export.
@@ -599,7 +602,26 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   use neutral labels — same privacy rule.
 - `environments.delete` and `environments.reset-files` are offered (`personal`, never remembered,
   the card warns that files are destroyed and names the conversations that lose their sandbox) —
-  parity, like `conversations.delete`.
+  parity, like `conversations.delete`. Both refuse in the precheck (`environment.current`) the
+  environment the run's root conversation is bound to (sub-agents use the root's) — like
+  `conversations.delete` refusing the root; a root still unbound binds at its first sandbox call, so
+  nothing is refused for it.
+- Audit detail of a tool write is `{ via: "agent", operation, agentConversationId, agentRunId }` —
+  `conversationId` / `runId` in the same row stay the write's own business fields (an eval case's
+  source run, a background task's conversation), which the old keys overwrote.
+- A `@SessionOnly()` route is excluded as `human-only` or `secret`, never mirrored
+  (`platform-op-session-only`) — a web-session-only route is a person's own act or carries a
+  secret. A controller switching a mirrored route to a schema outside its `ROUTE_SCHEMAS` entry is
+  caught by review only — tying a `@ZBody` / `@ZQuery` DTO back to the entry needs cross-file
+  resolution the source scan does not do, and the parity test reads only the registered schemas.
+- Two list shapes stay: offset pages (`pageOf`, `params.cursor`, `{ items, total, next }`) for
+  lists read whole, and the route's keyset (`params.after`, `{ <items>, next }`, no total) for
+  `accounts.list`, `conversations.list` / `subagents` / `files` and `evals.list-results` — the
+  keyset routes cannot give a total cheaply, and unifying would change model-visible results for
+  no gain; the skill documents both.
+- The `Platform` tool description names the current families (fixed text; `browse` lists every
+  domain) — tool definitions are read by spec hash from the log, so old requests replay unchanged
+  and the zero-drift fixtures pin no description.
 - `platformTool` `off` / `read-only` takes effect on the next call — the setting is re-read per call
   like the actor's facts.
 - `inbox.platform-list` reports the console's `total` (everything waiting, other orgs' items
@@ -615,5 +637,5 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 - Notice dismissals write no audit row (service behaviour, unchanged); whether every Platform write
   must audit is for the maintainer.
 - A webhook-capable test plugin would cover the channels webhook success path.
-- Task 12 (agent profile and personal preferences) lands after the run-context work; then
+- #91 (agent profile and personal preferences) lands after the run-context work; then
   `LATER_ALLOWED` empties and the `later` category can be removed from `ExclusionCategory`.

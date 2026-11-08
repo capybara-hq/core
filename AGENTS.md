@@ -121,7 +121,8 @@ Each line is the rule you must not miss; the skill has the rest.
   to the org admins), org admins save agents as org templates; spec §15 of
   `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
 - **Platform tool:** add a route = a Platform operation built from the route's exported schemas, or
-  an exclusion with a reason (never `later`); change a route's input = change the shared schema (the
+  an exclusion with a reason (never `later`; the one exception is the agent profile route in
+  `LATER_ALLOWED`, tracked in #91); change a route's input = change the shared schema (the
   parity test fails on drift); remove a route = its operation and exclusion go with it. Operations
   call the controllers' services, never new logic (`pnpm check:platform-ops`, `platform-parity.test.ts`).
   [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
