@@ -42,13 +42,22 @@ const brandRow = () =>
   within(sidebar()).getByText((_, e) => e?.getAttribute("data-part") === "brand-row");
 const schemeToggle = () => within(sidebar()).queryByRole("radiogroup", { name: zh.common.theme });
 /**
- * The theme stylesheets React hoisted into `<head>` (`precedence="theme"`). React keeps a hoisted
- * stylesheet for the document's life, so each case names its own theme version.
+ * The enabled theme stylesheets in `<head>` (`precedence="theme"`). React keeps a hoisted
+ * stylesheet for the document's life (a superseded one too), so the cases assert the exact set of
+ * enabled links: ThemeRoot disables every theme link but the current one.
  */
 const themeLinks = () =>
-  [...document.querySelectorAll('link[rel="stylesheet"][data-precedence="theme"]')].map((l) =>
-    l.getAttribute("href"),
-  );
+  [...document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"][data-precedence="theme"]')]
+    .filter((l) => !l.disabled)
+    .map((l) => l.getAttribute("href"));
+/** A theme at its own version (a case-unique stylesheet: earlier cases' links stay in `<head>`). */
+const at = (theme: ThemeRef, version: string): ThemeRef => ({
+  ...theme,
+  version,
+  cssUrl: `/api/v1/themes/${theme.id}/${version}/theme.css`,
+});
+const linksTo = (href: string) =>
+  document.querySelectorAll(`link[rel="stylesheet"][href="${href}"]`).length;
 
 beforeEach(() => resetNavigation("/agents"));
 afterEach(() => {
@@ -72,14 +81,14 @@ describe("ThemeRoot in the workspace frame", () => {
 
   it("a two-scheme theme: its stylesheet in the theme precedence, the scheme toggle stays", () => {
     renderFrame(shellOf(ME, { theme: PAPER }));
-    expect(themeLinks()).toContain(PAPER.cssUrl);
+    expect(themeLinks()).toEqual([PAPER.cssUrl]);
     expect(within(brandRow()).getByText("CAPYBARA")).toBeTruthy();
     expect(schemeToggle()).not.toBeNull();
   });
 
   it("a single-scheme theme with a logo: its brand in the sidebar, no scheme toggle", () => {
     renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
-    expect(themeLinks()).toContain(NIGHT_CITY.cssUrl);
+    expect(themeLinks()).toEqual([NIGHT_CITY.cssUrl]);
     expect(within(brandRow()).getByText("NIGHT CITY")).toBeTruthy();
     expect(within(brandRow()).queryByText("CAPYBARA")).toBeNull();
     const mark = brandRow().querySelector('[data-part="logo-mark"]');
@@ -91,10 +100,35 @@ describe("ThemeRoot in the workspace frame", () => {
     const next = { ...PAPER, version: "2.1.0", cssUrl: "/api/v1/themes/t-paper/2.1.0/theme.css" };
     const view = renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
     view.update(shellOf(ME, { theme: next }));
-    expect(themeLinks()).toContain(next.cssUrl);
+    expect(themeLinks()).toEqual([next.cssUrl]);
     expect(within(brandRow()).queryByText("NIGHT CITY")).toBeNull();
     expect(within(brandRow()).getByText("CAPYBARA")).toBeTruthy();
     expect(schemeToggle()).not.toBeNull();
+  });
+});
+
+describe("switching themes leaves only the current stylesheet enabled", () => {
+  it("a theme, then the built-in theme: no theme stylesheet stays enabled", () => {
+    const paper = at(PAPER, "3.0.0");
+    const view = renderFrame(shellOf(ME, { theme: paper }));
+    expect(themeLinks()).toEqual([paper.cssUrl]);
+    view.update(shellOf(ME, { theme: null }));
+    expect(themeLinks()).toEqual([]);
+    // React keeps the node; it is disabled, not removed
+    expect(linksTo(paper.cssUrl)).toBe(1);
+  });
+
+  it("A, then B, then A: only the current theme's stylesheet is enabled each time", () => {
+    const a = at(NIGHT_CITY, "4.0.0");
+    const b = at(PAPER, "4.0.0");
+    const view = renderFrame(shellOf(ME, { theme: a }));
+    expect(themeLinks()).toEqual([a.cssUrl]);
+    view.update(shellOf(ME, { theme: b }));
+    expect(themeLinks()).toEqual([b.cssUrl]);
+    // React reuses A's node (it sits before B's, so only disabling B lets A win)
+    view.update(shellOf(ME, { theme: a }));
+    expect(themeLinks()).toEqual([a.cssUrl]);
+    expect([linksTo(a.cssUrl), linksTo(b.cssUrl)]).toEqual([1, 1]);
   });
 });
 

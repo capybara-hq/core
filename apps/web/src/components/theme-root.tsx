@@ -2,7 +2,7 @@
 
 import type { Brand } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { createContext, type ReactNode, useContext, useMemo } from "react";
+import { createContext, type ReactNode, useContext, useLayoutEffect, useMemo } from "react";
 import { retryOnMountOf } from "../lib/query/client";
 import { orgThemesQuery, platformThemeQuery } from "../lib/query/themes";
 import type { ThemeRef } from "../lib/themes";
@@ -42,7 +42,27 @@ function PlatformTheme({ children }: { children: ReactNode }) {
   return <Themed theme={theme}>{children}</Themed>;
 }
 
+/** The theme stylesheets React hoisted into `<head>` (`ThemeLink`). */
+const THEME_SHEETS = 'link[rel="stylesheet"][data-precedence="theme"]';
+
+/**
+ * Leaves only the current theme's stylesheet active. A `precedence` link is a React 19 resource:
+ * React never removes a superseded one from `<head>` (an href change or an unmount only drops its
+ * count), so after a switch the old sheets would still apply, and on A → B → A the reused node of A
+ * would sit before B's and lose to it. Each commit disables every theme stylesheet but the current
+ * one (none for the built-in theme), so the order of the nodes no longer matters. The server render
+ * holds only the current link, so the first paint is unchanged.
+ */
+function useOnlyThemeSheet(cssUrl: string | null): void {
+  useLayoutEffect(() => {
+    for (const link of document.querySelectorAll<HTMLLinkElement>(THEME_SHEETS)) {
+      link.disabled = link.getAttribute("href") !== cssUrl;
+    }
+  }, [cssUrl]);
+}
+
 function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNode }) {
+  useOnlyThemeSheet(theme?.cssUrl ?? null);
   const markUrl = theme?.logo?.markUrl ?? null;
   const wordmark = theme?.logo?.wordmark ?? null;
   const brand = useMemo<Brand | null>(

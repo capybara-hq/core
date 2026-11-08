@@ -27,6 +27,8 @@ interface Listed {
 /** Night City's dark `bg` and Paper's dark `accent` (fixture `fake-theme`, its theme files). */
 const NIGHT_CITY_BG = "#05070d";
 const PAPER_DARK_ACCENT = "#e0a070";
+/** Night City's dark accent. */
+const NIGHT_CITY_ACCENT = "#fce300";
 
 /** Imports `fake-theme` once (scope `all`); returns the `platform_themes` ids by English name. */
 async function themeIds(page: Page): Promise<{ nightCity: Listed; paper: Listed }> {
@@ -264,6 +266,67 @@ test.describe("appearance pages", () => {
       );
     } finally {
       await member.context().close();
+    }
+  });
+
+  test("switching the org default in one page: theme → built-in and A → B → A apply only the current theme's tokens", async ({
+    page,
+  }) => {
+    await signIn(page);
+    await themeIds(page);
+    const prefs = await page.request.put("/api/v1/me/preferences", {
+      headers: CSRF,
+      data: { theme: null },
+    });
+    expect(prefs.ok(), await prefs.text()).toBe(true);
+    await setPlatformTheme(page, null);
+    await setOrgSetting(page, { id: null, personal: "allowed" });
+    try {
+      await page.goto("/settings/appearance");
+      await hydrated(page);
+      // the built-in theme's values (no cb-theme cookie: dark)
+      const builtin = {
+        bg: await rootToken(page, "--cb-bg"),
+        accent: await rootToken(page, "--cb-accent"),
+      };
+      expect(builtin.bg).not.toBe(NIGHT_CITY_BG);
+      expect(builtin.accent).not.toBe(PAPER_DARK_ACCENT);
+      // a marker on the window: a reload would drop it
+      await page.evaluate(() => {
+        (window as unknown as { __kept: boolean }).__kept = true;
+      });
+      const picker = page.getByRole("radiogroup", { name: AP.org.label });
+      const pick = async (name: RegExp) => {
+        await picker.getByRole("radio", { name }).click();
+        await page.getByRole("button", { name: AP.save }).click();
+      };
+      const tokens = async () => ({
+        bg: await rootToken(page, "--cb-bg"),
+        accent: await rootToken(page, "--cb-accent"),
+      });
+      const nightCity = { bg: NIGHT_CITY_BG, accent: NIGHT_CITY_ACCENT };
+      // Paper overrides the dark accent only, so the bg stays the built-in one
+      const paper = { bg: builtin.bg, accent: PAPER_DARK_ACCENT };
+
+      // a theme, then the built-in theme: nothing of the theme stays applied
+      await pick(/夜之城/);
+      await expect.poll(tokens).toEqual(nightCity);
+      await pick(new RegExp(AP.followPlatform));
+      await expect.poll(tokens).toEqual(builtin);
+
+      // A → B → A: B leaves no A token behind, and A wins again on the way back
+      await pick(/夜之城/);
+      await expect.poll(tokens).toEqual(nightCity);
+      await pick(/纸张/);
+      await expect.poll(tokens).toEqual(paper);
+      await pick(/夜之城/);
+      await expect.poll(tokens).toEqual(nightCity);
+
+      expect(await page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept)).toBe(
+        true,
+      );
+    } finally {
+      await setOrgSetting(page, { id: null, personal: "allowed" });
     }
   });
 
