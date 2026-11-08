@@ -151,14 +151,13 @@ describe("插件视图接口", () => {
     await enable(owner, orgId, "ui-probe");
     const after = await owner({ method: "GET", url: `${ui}/contributions` });
     const items = (after.json() as { items: { plugin: string; id: string }[] }).items;
-    // the old place "conversation" is listed as "panel" with legacyPlace; an alias is not listed
+    // each item lists the place its slot stands for; an alias is not listed
     expect(items).toEqual([
       {
         plugin: "ui-probe",
         id: "panel",
         title: { zh: "面板", en: "Panel" },
         place: "panel",
-        legacyPlace: "conversation",
         kind: "view",
         icon: "puzzle",
       },
@@ -167,7 +166,6 @@ describe("插件视图接口", () => {
         id: "boom",
         title: { zh: "出错", en: "Boom" },
         place: "panel",
-        legacyPlace: "conversation",
         kind: "view",
         icon: "puzzle",
       },
@@ -176,7 +174,6 @@ describe("插件视图接口", () => {
         id: "slow",
         title: { zh: "很慢", en: "Slow" },
         place: "panel",
-        legacyPlace: "conversation",
         kind: "view",
         icon: "puzzle",
       },
@@ -185,7 +182,6 @@ describe("插件视图接口", () => {
         id: "bad",
         title: { zh: "非法", en: "Bad" },
         place: "panel",
-        legacyPlace: "conversation",
         kind: "view",
         icon: "puzzle",
       },

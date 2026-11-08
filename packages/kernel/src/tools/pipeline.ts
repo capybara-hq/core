@@ -46,7 +46,6 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
-import { placeOf } from "../ui/registry.js";
 import { type ApprovalRecord, type ApprovalScope, ApprovalsService } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
@@ -485,9 +484,13 @@ export class ToolPipeline {
       switches,
       inlineViews: (plugin) =>
         new Set(
-          (host?.current(plugin)?.manifest.ui ?? [])
-            .filter((c) => placeOf(c) === "inline" && c.aliasOf === undefined)
-            .map((c) => c.id),
+          (host?.current(plugin)?.ui ?? [])
+            .filter(
+              (r) =>
+                r.slot.id === "conversation.tool-result.card" &&
+                r.contribution.aliasOf === undefined,
+            )
+            .map((r) => r.contribution.id),
         ),
       onToolsChanged: (orgId, connectorId) => {
         void drift?.onToolsChanged(orgId, connectorId);

@@ -202,7 +202,6 @@ describe("界面刷新（双副本）", () => {
       id: "tasks",
       title: { zh: "条目", en: "Items" },
       place: "panel",
-      legacyPlace: "conversation",
       kind: "view",
       icon: "puzzle",
     });

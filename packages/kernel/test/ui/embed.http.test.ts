@@ -145,7 +145,6 @@ describe("嵌入令牌", () => {
         id: "panel-conv",
         title: { zh: "面板", en: "Panel" },
         place: "panel",
-        legacyPlace: "conversation",
         kind: "embed",
         path: "/ui/panel-conv",
         icon: "puzzle",

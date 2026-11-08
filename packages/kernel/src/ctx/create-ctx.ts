@@ -15,8 +15,10 @@ import {
   OBJECT_STORE_EXTENSION_POINT,
   type ObjectStore,
   parseExtensionPoint,
+  resolveUiSlots,
   type ToolHandler,
   type ToolSpec,
+  type UiSlotSpec,
   validateFilePreviewProvider,
   validateToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -41,10 +43,9 @@ import type { HookRunner } from "../runtime/hook-calls.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
 import {
-  canUsePlace,
+  canUseLoadedSlot,
   orgUiTopic,
   PluginUiRegistration,
-  placeOf,
   type UiActionHandler,
   type UiBusMessage,
   type UiRender,
@@ -405,7 +406,9 @@ export function createExtensionContext(
 
   const uiReg = new PluginUiRegistration(manifest, deny);
   const embedTokens = deps.embedTokens;
-  const uiPlaces = new Map((manifest.ui ?? []).map((c) => [c.id, placeOf(c)]));
+  const uiSlots = new Map<string, UiSlotSpec>(
+    resolveUiSlots(manifest.ui).resolved.map((r) => [r.contribution.id, r.slot]),
+  );
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -672,7 +675,8 @@ export function createExtensionContext(
         if (claims === null) return null;
         const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
         if (role === undefined) return null;
-        if (!canUsePlace(uiPlaces.get(claims.contribution) ?? "page", role)) return null;
+        const slot = uiSlots.get(claims.contribution);
+        if (slot === undefined || !canUseLoadedSlot(slot, role)) return null;
         return { ...claims, role };
       },
     },
@@ -766,20 +770,21 @@ export function createExtensionContext(
 /**
  * A `file-preview@1` provider must be valid when it is provided (setup fails otherwise): the shape
  * ({@link validateFilePreviewProvider}), and every `embed` names a ui contribution of this extension
- * with `kind: "embed"` and `place: "file-preview"`.
+ * with `kind: "embed"` that resolved to the slot `file.preview` (from `slot` or the deprecated
+ * `place`).
  */
 function checkFilePreviewProvider(manifest: ExtensionManifest, impl: unknown): void {
   const problems = validateFilePreviewProvider(impl);
   if (problems.length === 0) {
     const embeds = new Set(
-      (manifest.ui ?? [])
-        .filter((c) => c.kind === "embed" && placeOf(c) === "file-preview")
-        .map((c) => c.id),
+      resolveUiSlots(manifest.ui)
+        .resolved.filter((r) => r.contribution.kind === "embed" && r.slot.id === "file.preview")
+        .map((r) => r.contribution.id),
     );
     (impl as FilePreviewProvider).previewers.forEach((p, i) => {
       if (p.embed !== undefined && !embeds.has(p.embed)) {
         problems.push(
-          `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", place: "file-preview" }`,
+          `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", slot: "file.preview" }`,
         );
       }
     });

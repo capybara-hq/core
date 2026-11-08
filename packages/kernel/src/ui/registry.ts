@@ -8,6 +8,7 @@ import {
   type UiContribution,
   type UiPlace,
   type UiRenderArgs,
+  type UiSlotSpec,
   type UiView,
 } from "@capybara-hq/plugin-sdk";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
@@ -18,12 +19,17 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 /** 组织页面（`place: "page"`）所需的最低角色（A38）：guest 只用对话位置的贡献。 */
 export const PAGE_MIN_ROLE: OrgRole = "member";
 
-/** Places on the conversation page (everything but an org page): they need a `conversationId`. */
-export const isConversationPlace = (place: UiPlace): boolean => place !== "page";
+/** Slots on the conversation page (conversation and file scope): they need a `conversationId`. */
+export const isConversationSlot = (slot: UiSlotSpec): boolean =>
+  slot.scope === "conversation" || slot.scope === "file";
 
-/** Whether the role may use a contribution in this place. */
-export const canUsePlace = (place: UiPlace, role: OrgRole): boolean =>
-  place !== "page" || roleAtLeast(role, PAGE_MIN_ROLE);
+/**
+ * Whether the role may use a contribution in this slot, until the slot rules land (UI slots plan
+ * Task 5): conversation-page slots for any member, `org.page` for member and above, and no other
+ * slot (agent, org settings, platform) is served through the org routes yet.
+ */
+export const canUseLoadedSlot = (slot: UiSlotSpec, role: OrgRole): boolean =>
+  isConversationSlot(slot) || (slot.id === "org.page" && roleAtLeast(role, PAGE_MIN_ROLE));
 
 /** The slot of each place, inverted (`conversation.panel` → `panel`, never the old `conversation`). */
 const SLOT_PLACES: ReadonlyMap<string, Exclude<UiPlace, "conversation">> = new Map(

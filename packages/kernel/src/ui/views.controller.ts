@@ -83,9 +83,9 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
 
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用），会话鉴权、`ui.use`（只给人用，服务令牌 403）：
- * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, legacyPlace?, kind, path?, icon }[] }`
- *   (place normalized: the old `conversation` is `panel` with `legacyPlace`; aliases and file-preview
- *   embeds are not listed)
+ * - `GET  /api/v1/orgs/:orgId/ui/contributions` → `{ items: { plugin, id, title, place, kind, path?, icon }[] }`
+ *   (place: what the contribution's resolved slot stands for; aliases, file.preview embeds and
+ *   slots without a place are not listed)
  *   （`path` 仅 embed）；
  * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&locale=&item=&callId=&key=` → `{ view }`
  *   （`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；

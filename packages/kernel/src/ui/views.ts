@@ -7,6 +7,7 @@ import {
   type UiIcon,
   type UiOpen,
   type UiPlace,
+  type UiSlotId,
   type UiView,
   validateUiView,
 } from "@capybara-hq/plugin-sdk";
@@ -22,7 +23,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { callExtension } from "./call-extension.js";
-import { canUsePlace, isConversationPlace, placeOf, UUID_RE } from "./registry.js";
+import { canUseLoadedSlot, isConversationSlot, UUID_RE } from "./registry.js";
 
 export { callExtension } from "./call-extension.js";
 
@@ -34,16 +35,25 @@ export interface UiContributionItem {
   plugin: string;
   id: string;
   title: UiContribution["title"];
-  /** Normalized: the old `conversation` is listed as `panel`. */
+  /** The place the contribution's slot stands for (until the listing names slots). */
   place: Exclude<UiPlace, "conversation" | "file-preview">;
-  /** `"conversation"` when the manifest still says the old place. */
-  legacyPlace?: "conversation";
   kind: UiContribution["kind"];
   /** 仅 embed：插件路由下 `/ui/` 开头的路径（网页经 `/plugin-ui/<plugin>/...` 代理访问）。 */
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
 }
+
+/**
+ * The place each listed slot is shown as, until the listing names slots (UI slots plan Task 5).
+ * Contributions to the other slots are not listed.
+ */
+const LISTED_PLACE: Partial<Record<UiSlotId, UiContributionItem["place"]>> = {
+  "conversation.panel": "panel",
+  "conversation.properties.section": "section",
+  "conversation.tool-result.card": "inline",
+  "org.page": "page",
+};
 
 /** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
 export interface UiEmbedTarget {
@@ -52,7 +62,7 @@ export interface UiEmbedTarget {
   /** 清单里的 `path`（`/ui/` 开头）。 */
   path: string;
   conversationId?: string;
-  /** Only a `file-preview` embed: the one file the token is for. */
+  /** Only a `file.preview` embed: the one file the token is for. */
   fileId?: string;
 }
 
@@ -74,7 +84,7 @@ interface UiViewsDeps {
    */
   checkWritable?(orgId: string, conversationId: string, accountId: string): Promise<void>;
   /**
-   * A `file-preview` embed token: whether that extension's previewer with `embed: contribution`
+   * A `file.preview` embed token: whether that extension's previewer with `embed: contribution`
    * takes this file of the conversation (the viewer must read it; not found throws 404).
    */
   previewEmbedAllowed?(t: {
@@ -187,7 +197,7 @@ function actionResultProblems(r: unknown): string[] {
  * 插件视图（第一档：渲染 schema）：列出贡献、调用插件 `render` / `action`。
  * - 只认在该组织已启用、且已在本副本加载的插件（启用状态每次查库）；
  * - 对话视图要求调用者能访问这个对话（与 SSE 流一致），访问不了与不存在一样返回 404 `ui.not_found`；
- * - 组织页面（`place: "page"`，视图与嵌入）只给 member 以上：guest 列表里看不到、取视图 / 动作 / 令牌一律 404；
+ * - 组织页面（`slot: "org.page"`，视图与嵌入）只给 member 以上：guest 列表里看不到、取视图 / 动作 / 令牌一律 404；
  * - 组织页面视图不接受 `conversationId`（带了 400，与对话视图缺它一致）；
  * - 调用带 5 秒时限与中止信号：render 抛错 502 `ui.render_failed`、action 抛错 502 `ui.action_failed`、
  *   超时 504 `ui.timeout`、返回非法视图 502
@@ -232,16 +242,15 @@ export class UiViews {
         (c) =>
           enabled.has(c.plugin) &&
           c.contribution.aliasOf === undefined &&
-          placeOf(c.contribution) !== "file-preview" &&
+          LISTED_PLACE[c.slot.id] !== undefined &&
           (c.contribution.kind === "embed" || c.render) &&
-          canUsePlace(placeOf(c.contribution), role),
+          canUseLoadedSlot(c.slot, role),
       )
-      .map(({ plugin, contribution: c }) => ({
+      .map(({ plugin, contribution: c, slot }) => ({
         plugin,
         id: c.id,
         title: c.title,
-        place: placeOf(c) as UiContributionItem["place"],
-        ...(c.place === "conversation" && { legacyPlace: "conversation" as const }),
+        place: LISTED_PLACE[slot.id] as UiContributionItem["place"],
         kind: c.kind,
         ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
         icon: c.icon ?? "puzzle",
@@ -257,7 +266,7 @@ export class UiViews {
     const { entry, args } = await this.resolve({ ...target, locale: "en" }, "embed");
     const path = entry.contribution.path;
     if (path === undefined) throw notFound();
-    const preview = placeOf(entry.contribution) === "file-preview";
+    const preview = entry.slot.id === "file.preview";
     if (preview !== (fileId !== undefined)) {
       throw new ApiError(
         "validation_failed",
@@ -324,7 +333,7 @@ export class UiViews {
     return new Set(
       this.d.host
         .uiContributions()
-        .filter((c) => c.plugin === plugin && placeOf(c.contribution) === "panel")
+        .filter((c) => c.plugin === plugin && c.slot.id === "conversation.panel")
         .map((c) => c.contribution.id),
     );
   }
@@ -360,7 +369,7 @@ export class UiViews {
           ? c.contribution.kind === "embed"
           : c.contribution.kind === "view" && c[need] !== undefined),
     );
-    if (!entry || !canUsePlace(placeOf(entry.contribution), t.role)) throw notFound();
+    if (!entry || !canUseLoadedSlot(entry.slot, t.role)) throw notFound();
     if (!(await this.d.enabledPlugins(t.orgId)).has(t.plugin)) throw notFound();
     // spec A §6: the extension is not called for an org whose effective config is not valid
     const effective = await this.d.effective.get(t.orgId, t.plugin);
@@ -374,7 +383,7 @@ export class UiViews {
       locale: t.locale,
       config: effective.config,
     };
-    if (!isConversationPlace(placeOf(entry.contribution))) {
+    if (!isConversationSlot(entry.slot)) {
       if (t.item !== undefined || t.card !== undefined) {
         throw new ApiError("validation_failed", "item and callId are for conversation views");
       }
@@ -405,7 +414,7 @@ export class UiViews {
       // args.card is attested: an inline view, and a tool_result of this conversation recorded this
       // very card (plugin, the requested id or its alias target, key); else it is not found
       const recorded =
-        placeOf(entry.contribution) === "inline" && this.d.recordedCard !== undefined
+        entry.slot.id === "conversation.tool-result.card" && this.d.recordedCard !== undefined
           ? await this.d.recordedCard(conversationId, t.card.callId)
           : null;
       if (
