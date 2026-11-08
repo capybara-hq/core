@@ -25,6 +25,8 @@ export * from "./secret.js";
 export * from "./skill.js";
 export * from "./skill-invocation.js";
 export * from "./storage.js";
+export * from "./theme-readability.js";
+export * from "./theme-tokens.generated.js";
 export * from "./tool.js";
 export * from "./tool-key.js";
 export * from "./ui.js";
