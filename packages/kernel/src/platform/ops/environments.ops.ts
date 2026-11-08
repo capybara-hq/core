@@ -42,7 +42,14 @@ const row = (e: EnvironmentView) => ({
   name: labelOf(e),
   ...stateOf(e),
   isDefault: e.isDefault,
+  source: e.source,
   provider: e.provider,
+  online: e.online,
+  machine: e.machine && {
+    name: e.machine.name,
+    os: e.machine.os,
+    lastSeenAt: e.machine.lastSeenAt,
+  },
   lastUsedAt: e.instance?.lastUsedAt ?? null,
 });
 
@@ -105,7 +112,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.list",
         description:
-          "List your own cloud environments in this org: one compact row each (name, state, whether it is the default, provider, last use), plus the default and last used ids and whether new cloud environments can be made. The default environment is shown as Personal.",
+          "List your own environments in this org: one compact row each (name, state, whether it is the default, source: cloud or device for a connected machine, provider, whether a device one is online and its machine, last use), plus the default and last used ids and whether new cloud environments can be made. The default environment is shown as Personal.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -124,7 +131,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.get",
         description:
-          "Read one of your environments with its provider, state, instance, limits and creation time. Takes the id from environments.list.",
+          "Read one of your environments with its source (cloud or device), provider, state, instance, connected machine and whether it is online, limits and creation time. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },

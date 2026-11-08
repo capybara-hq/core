@@ -263,6 +263,40 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // environments (personal cloud environments, environments design phase 1)
   {
+    route: "DELETE /api/v1/orgs/:orgId/environments/:id/machine",
+    category: "human-only",
+    reason:
+      "Disconnects a person's own machine (revokes its credential); a trust decision taken on the environment's page",
+  },
+  // device sign-in (environments design phase 2): the program and the confirmation page
+  {
+    route: "POST /api/v1/device/authorize",
+    category: "transport",
+    reason:
+      "Issues a sign-in code pair to the capybara-device program, which has no credential yet",
+  },
+  {
+    route: "POST /api/v1/device/token",
+    category: "transport",
+    reason: "The capybara-device program polls for its machine credential",
+  },
+  {
+    route: "GET /api/v1/device/pending/:userCode",
+    category: "human-only",
+    reason: "Shows the machine behind a code the person read off their own machine",
+  },
+  {
+    route: "POST /api/v1/device/confirm",
+    category: "human-only",
+    reason:
+      "Lets a machine run commands for the person; only the person, signed in on the web, confirms it",
+  },
+  {
+    route: "POST /api/v1/device/deny",
+    category: "human-only",
+    reason: "Refuses a machine's sign-in code on the confirmation page",
+  },
+  {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/tools",
     category: "internal",
     reason:

@@ -52,6 +52,10 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * | `PUT /api/v1/me/password` | `change-password`, `change-password-ip` |
  * | `POST /api/v1/setup` | `setup-token`, `setup-ip` |
  * | `POST /api/v1/invitations/:token/accept` | `invitation`, `invitation-ip` |
+ * | `GET /api/v1/device/pending/:userCode`, `POST /api/v1/device/confirm`, `POST /api/v1/device/deny` | `device-code-account` |
+ *
+ * `POST /api/v1/device/authorize` opts in to `device-authorize-ip` with `@Throttled` (every
+ * attempt counts: it issues codes, it checks no credential).
  */
 export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // (login, IP): 10; an attacker filling one login from one IP leaves the owner's other IPs alone (R25)
@@ -137,6 +141,26 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many invitation attempts; try again later",
     getTracker: ip,
+  },
+  // device sign-in codes issued per client address (each one holds Redis state for its TTL): 20
+  {
+    name: "device-authorize-ip",
+    group: "device-authorize",
+    onSuccess: "refund",
+    limit: 20,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many device sign-in attempts; try again later",
+    getTracker: ip,
+  },
+  // user codes tried per signed-in person (guessing another machine's code): 10, refunded on success
+  {
+    name: "device-code-account",
+    group: "device-code",
+    onSuccess: "refund",
+    limit: 10,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many device code attempts; try again later",
+    getTracker: (req) => sha256(principalAccountId(req)),
   },
 ];
 

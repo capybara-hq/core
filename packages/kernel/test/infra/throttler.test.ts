@@ -299,6 +299,8 @@ describe("named throttler table", () => {
       ["setup-ip", 10, 900_000],
       ["invitation", 10, 900_000],
       ["invitation-ip", 20, 900_000],
+      ["device-authorize-ip", 20, 900_000],
+      ["device-code-account", 10, 900_000],
     ]);
   });
 });

@@ -3,6 +3,7 @@ import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { deviceLeaseKey } from "../devices/keys.js";
+import { MachinesService } from "../devices/machines.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -100,6 +101,8 @@ export class EnvironmentsService {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** Reads the device relay's lease (`online`). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
+    @Inject(MachinesService)
+    private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
   ) {}
 
   /**
@@ -360,7 +363,9 @@ export class EnvironmentsService {
    * Deletes one of the person's live environments: soft delete, its IM default row cleared, and
    * after the commit a `sandbox-destroy-for` job (the worker waits for running commands, then
    * destroys the instance and the files). Conversations bound to it keep pointing at it; their
-   * sandbox tools then fail with `environment.not_found`.
+   * sandbox tools then fail with `environment.not_found`. A device environment's machine is
+   * revoked in the same transaction; after the commit it is told `stop { reason: "deleted" }`
+   * (while connected) and its connection is closed.
    */
   @Transactional()
   async remove(
@@ -382,6 +387,7 @@ export class EnvironmentsService {
       .where("account_id", "=", accountId)
       .where("environment_id", "=", id)
       .execute();
+    await this.machines.revokeActive(id, "deleted");
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -398,6 +404,19 @@ export class EnvironmentsService {
         this.log.warn("cannot schedule environment destruction", { environmentId: id, err });
       }
     });
+  }
+
+  /**
+   * Disconnects the machine of one of the person's own device environments (it must sign in
+   * again); see {@link MachinesService.revoke}.
+   */
+  async revokeMachine(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId?: string,
+  ): Promise<void> {
+    await this.machines.revoke(orgId, accountId, id, actorTokenId);
   }
 
   /**
