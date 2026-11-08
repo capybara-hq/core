@@ -42,6 +42,7 @@ import {
   type ScopeState,
   skillNameClashes,
   switchOf,
+  themeNotImplemented,
 } from "./component-state.js";
 import {
   assertOwnerListed,
@@ -225,6 +226,7 @@ const ACTION: Record<ComponentKind, OrgAction> = {
   skill: "skills.manage",
   agent_template: "agents.manage",
   connector_template: "connectors.manage",
+  theme: "org.update",
 };
 
 /**
@@ -348,7 +350,7 @@ export class ComponentScopeService {
   /**
    * What the admin routes act on (ruling P3-23): the platform component `id`, an org row the org
    * promoted already (its platform row), or an org's own row not promoted yet. A connector
-   * template has no org rows; anything else -> 404 `component.not_found`.
+   * template or a theme has no org rows; anything else -> 404 `component.not_found`.
    */
   private async resolve(
     kind: ComponentKind,
@@ -356,7 +358,7 @@ export class ComponentScopeService {
   ): Promise<{ c: ComponentRow } | { org: OrgRow }> {
     const [c] = await loadComponents(this.db, kind, { ids: [id] });
     if (c) return { c };
-    if (kind === "connector_template") throw notFound();
+    if (kind === "connector_template" || kind === "theme") throw notFound();
     const org = await this.promotion.orgRow(kind, id);
     if (!org) throw notFound();
     if (org.link === null) return { org };
@@ -501,11 +503,11 @@ export class ComponentScopeService {
   /**
    * The org's copies of platform skills or agent templates linked without a pin (ruling B2), by
    * platform id: they resolve to it, so agents that select them use it (none for connector
-   * templates).
+   * templates and themes).
    */
   private async linkedCopies(orgId: string, kind: ComponentKind): Promise<Map<string, string[]>> {
     const out = new Map<string, string[]>();
-    if (kind === "connector_template") return out;
+    if (kind === "connector_template" || kind === "theme") return out;
     const rows =
       kind === "skill"
         ? await this.db
@@ -536,13 +538,14 @@ export class ComponentScopeService {
 
   /**
    * The orgs' own skills (org scope) and agent templates, not linked to a platform component
-   * (ruling P2-11): listed read-only, on in their org only. Connector templates have none.
+   * (ruling P2-11): listed read-only, on in their org only. Connector templates have none; an
+   * org's own theme is a platform_themes row with its org as owner, listed with the platform ones.
    */
   private async orgOwned(
     kind: ComponentKind,
     orgs: { id: string; name: string }[],
   ): Promise<ComponentView[]> {
-    if (kind === "connector_template") return [];
+    if (kind === "connector_template" || kind === "theme") return [];
     const live = new Set(orgs.map((o) => o.id));
     const rows =
       kind === "skill"
@@ -757,6 +760,7 @@ export class ComponentScopeService {
       );
     }
     if (body.enabled) {
+      if (kind === "theme") throw themeNotImplemented();
       if (kind !== "connector_template" && !on) {
         const clash =
           kind === "skill"
@@ -906,6 +910,8 @@ export class ComponentScopeService {
     x: { hashId: string; promote?: PreparedPromotion },
   ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
+    // the owner notice of a newly shared theme (P3-22) lands with the theme scope flows
+    if (kind === "theme") throw themeNotImplemented();
     if (x.promote) id = await this.promotion.promote(x.promote, actor);
     const c = await this.component(kind, id, true);
     const t = await this.targetOf(c, target);
@@ -1078,12 +1084,19 @@ export class ComponentScopeService {
             .where("skill_id", "=", id)
             .orderBy("version", "desc")
             .execute()
-        : await this.db
-            .selectFrom("platform_agent_template_versions")
-            .select(["version", "catalog_version", "updated_on_own", "created_at"])
-            .where("template_id", "=", id)
-            .orderBy("version", "desc")
-            .execute();
+        : kind === "theme"
+          ? await this.db
+              .selectFrom("platform_theme_versions")
+              .select(["version", "catalog_version", "updated_on_own", "created_at"])
+              .where("theme_id", "=", id)
+              .orderBy("version", "desc")
+              .execute()
+          : await this.db
+              .selectFrom("platform_agent_template_versions")
+              .select(["version", "catalog_version", "updated_on_own", "created_at"])
+              .where("template_id", "=", id)
+              .orderBy("version", "desc")
+              .execute();
     return rows.map((r) => ({
       version: String(r.version),
       catalogVersion: r.catalog_version,
@@ -1268,6 +1281,7 @@ export class ComponentScopeService {
             c.kind === "connector_template" ? await connectorsMadeFrom(this.db, org.id, c.id) : 0,
         });
       }
+      if (c.kind === "theme") throw themeNotImplemented();
       if (
         c.kind !== "connector_template" &&
         componentOffered(after, p, listedAfter.has(org.id)) &&
@@ -1334,4 +1348,5 @@ const TABLE: Record<ComponentKind, string> = {
   skill: "platform_skills",
   agent_template: "platform_agent_templates",
   connector_template: "platform_connector_templates",
+  theme: "platform_themes",
 };

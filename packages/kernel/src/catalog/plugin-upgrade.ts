@@ -251,6 +251,7 @@ const KIND_ORDER: Record<ComponentKind, number> = {
   skill: 0,
   agent_template: 1,
   connector_template: 2,
+  theme: 3,
 };
 /** How long one update holds its item (renewed while it runs). */
 const UPDATE_LOCK_TTL_MS = 60_000;

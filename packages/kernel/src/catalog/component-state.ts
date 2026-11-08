@@ -7,13 +7,25 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
 
 /** The kinds of platform components. */
-export type ComponentKind = "skill" | "agent_template" | "connector_template";
+export type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
 
+/**
+ * The kinds the scope, switch, ownership and preview flows (and the HTTP routes over components)
+ * walk. `theme` is not in it yet: its scope flows land with the themes plan's Task 7, which adds
+ * it here.
+ */
 export const COMPONENT_KINDS: readonly ComponentKind[] = [
   "skill",
   "agent_template",
   "connector_template",
 ];
+
+/**
+ * Thrown by the `theme` branches whose behavior later tasks of the themes plan fill in (import and
+ * sync, scope and switches, resolution); none is reachable while `COMPONENT_KINDS` leaves `theme`
+ * out.
+ */
+export const themeNotImplemented = (): Error => new Error("theme components: not implemented yet");
 
 /** A component's own scope settings (ruling C2). */
 export interface ComponentScopeFacts {
@@ -113,7 +125,7 @@ export interface ComponentRow extends ComponentScopeFacts {
   shownToOthers: boolean;
   /** The owning org (null: the platform; ruling P3-1). */
   ownerOrgId: string | null;
-  /** The org it was created in (skills, agent templates; null: the platform, F27). */
+  /** The org it was created in (skills, agent templates, themes; null: the platform, F27). */
   originOrgId: string | null;
   /** Its owner shares it with other orgs (the share gate, P3-1). */
   shareable: boolean;
@@ -177,7 +189,12 @@ export async function loadComponents(
       originOrgId: null,
     }));
   }
-  const table = kind === "skill" ? "platform_skills" : "platform_agent_templates";
+  const table =
+    kind === "skill"
+      ? "platform_skills"
+      : kind === "theme"
+        ? "platform_themes"
+        : "platform_agent_templates";
   let q = db
     .selectFrom(`${table as "platform_skills"} as p`)
     .select([
@@ -424,7 +441,8 @@ export async function agentDefinitionRefs(
 /**
  * The ids an org's agents may reference a platform component by: its own id and the org's copies
  * linked to it (ruling B2: unpinned ones resolve to it; ruling P2-18: pinned ones follow its
- * availability). Connector templates: none (connectors made from one stay the org's own).
+ * availability). Connector templates: none (connectors made from one stay the org's own); themes:
+ * none (no agent references a theme, and a theme has no org copies).
  */
 export async function referenceIds(
   db: KernelSchemaDb,
@@ -433,7 +451,7 @@ export async function referenceIds(
   ids: readonly string[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  if (kind === "connector_template" || ids.length === 0) return out;
+  if (kind === "connector_template" || kind === "theme" || ids.length === 0) return out;
   for (const id of ids) out.set(id, id);
   const copies =
     kind === "skill"

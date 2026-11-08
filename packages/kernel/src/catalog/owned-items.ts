@@ -85,12 +85,14 @@ const COMPONENT_TABLES = [
   "platform_skills",
   "platform_agent_templates",
   "platform_connector_templates",
+  "platform_themes",
 ] as const;
 
 const TABLE_OF: Record<ComponentKind, (typeof COMPONENT_TABLES)[number]> = {
   skill: "platform_skills",
   agent_template: "platform_agent_templates",
   connector_template: "platform_connector_templates",
+  theme: "platform_themes",
 };
 
 interface OwnedRow {

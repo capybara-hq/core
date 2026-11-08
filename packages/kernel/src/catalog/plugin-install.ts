@@ -113,7 +113,13 @@ export interface PluginInstallInput {
  * agent template (ref = its agent_templates id; like a skill, `skill_version` records the version
  * an install or upgrade added to an existing template).
  */
-export type ComponentKind = "extension" | "connector" | "skill" | "plugin" | "agent_template";
+export type ComponentKind =
+  | "extension"
+  | "connector"
+  | "skill"
+  | "plugin"
+  | "agent_template"
+  | "theme";
 
 export interface UninstallReport {
   removed: { kind: ComponentKind; ref: string }[];
