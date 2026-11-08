@@ -25,16 +25,15 @@ import {
   updateDeploymentSettings,
 } from "../../../../lib/admin";
 import { ApiClientError } from "../../../../lib/api";
-import type { PlatformComponent } from "../../../../lib/components";
+import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { deploymentSettingsQuery, settingsChangeKeys } from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { adminComponentsQuery } from "../../../../lib/query/components";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import { invalidatePlatformTheme, orgThemesQuery } from "../../../../lib/query/themes";
+import { invalidatePlatformTheme } from "../../../../lib/query/themes";
 import { useAdmin } from "../../../../lib/query/workspace";
 import { useSecureCookiesBlocked } from "../../../../lib/secure-origin";
-import { themeName } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
@@ -58,7 +57,7 @@ export default function AdminSettingsView() {
   const gate = useAdmin();
   if (gate.kind === "pending") return null;
   if (gate.kind === "noAccess") return <NoAccess need={gate.need} />;
-  return <AdminSettingsRead orgId={gate.me.currentOrgId} />;
+  return <AdminSettingsRead />;
 }
 
 /** The picker's value for 内置主题 (never a theme id). */
@@ -74,7 +73,7 @@ const defaultEligible = (c: PlatformComponent): boolean =>
 /** A card radio group of two options (each section but the currency's). */
 const RADIOS = [{ control: "radio-cards" as const, options: 2 }];
 
-function AdminSettingsRead({ orgId }: { orgId: string | null }) {
+function AdminSettingsRead() {
   const scope = usePagePath("admin");
   const t = useTranslations("admin.settings");
   const tc = useTranslations("common");
@@ -114,18 +113,15 @@ function AdminSettingsRead({ orgId }: { orgId: string | null }) {
       </FormPage>
     );
   }
-  return <AdminSettings header={header} saved={read.data} orgId={orgId} />;
+  return <AdminSettings header={header} saved={read.data} />;
 }
 
 function AdminSettings({
   header,
   saved,
-  orgId,
 }: {
   header: { path: { label: string; href?: string }[]; title: string };
   saved: DeploymentSettings;
-  /** The super admin's current org: its themes give the names and swatches. */
-  orgId: string | null;
 }) {
   const t = useTranslations("admin.settings");
   const ta = useTranslations("appearance");
@@ -151,21 +147,15 @@ function AdminSettings({
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
   ).filter(defaultEligible);
-  const tq = orgThemesQuery(orgId ?? "");
-  const listed =
-    useQuery({ ...tq, enabled: orgId !== null, retryOnMount: retryOnMountOf(tq.queryKey) }).data
-      ?.themes ?? [];
   const savedTheme = saved.uiTheme?.id ?? null;
   const uiTheme = themeDraft !== undefined ? themeDraft : savedTheme;
   const themeChoices: ThemeChoice[] = [
     builtinChoice(BUILTIN, ta("builtin")),
-    ...eligible.map((c) => {
-      const l = listed.find((x) => x.id === c.id);
-      // a theme off in the current org has no swatches here: the built-in ones stand in
-      return l === undefined
+    ...eligible.map((c) =>
+      c.theme === undefined
         ? builtinChoice(c.id, c.name)
-        : { value: c.id, name: themeName(l, locale), swatches: l.swatches };
-    }),
+        : { value: c.id, name: componentName(c, locale), swatches: c.theme.swatches },
+    ),
   ];
   const [pending, setPending] = useState(false);
   const httpBlocked = useSecureCookiesBlocked();

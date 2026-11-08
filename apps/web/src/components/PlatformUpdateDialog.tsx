@@ -34,6 +34,7 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
+import { useAdminThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
 const optVersion = (v: string | null) => (v === null ? "—" : versionLabel(v));
 
@@ -57,6 +58,7 @@ export function PlatformUpdateDialog({
   orgId: string | null;
   onClose(): void;
 }) {
+  const adminThemeName = useAdminThemeName();
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const toast = useToast();
@@ -146,7 +148,11 @@ export function PlatformUpdateDialog({
             </Text>
           )
         ) : (
-          <PlatformUpdatePreviewBody preview={preview} orgName={orgName} />
+          <PlatformUpdatePreviewBody
+            preview={preview}
+            orgName={orgName}
+            themeName={adminThemeName}
+          />
         )}
         {error !== undefined && <FormError message={error.message} extra={error.extra} />}
       </Stack>
@@ -166,17 +172,21 @@ export function PlatformUpdateDialog({
 export function PlatformUpdatePreviewBody({
   preview,
   orgName,
+  themeName = (id) => id,
   hideUnknown = false,
 }: {
   preview: PlatformUpdatePreview;
   /** The org's name, or undefined when unknown (then its id, or a count with `hideUnknown`). */
   orgName(id: string): string | undefined;
+  /** A theme's name by its `platform_themes` id (the 主题 group). */
+  themeName?: (id: string) => string;
   hideUnknown?: boolean;
 }) {
   const t = useTranslations("catalog.update");
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
   const nameOf = (id: string) => preview.orgNames?.[id] ?? orgName(id);
+  const themeGroup = useThemeImpactGroup(preview.themes, themeName);
   const one = (id: string) => nameOf(id) ?? (hideUnknown ? t("otherOrg") : id);
   const names = (ids: string[]) => {
     if (!hideUnknown) return ids.map(one).join(sep);
@@ -309,6 +319,7 @@ export function PlatformUpdatePreviewBody({
         return { id: o.orgId, title: one(o.orgId), notes };
       }),
     },
+    ...(themeGroup === null ? [] : [themeGroup]),
   ];
   return (
     <>

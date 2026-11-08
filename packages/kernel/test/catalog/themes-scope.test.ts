@@ -156,15 +156,40 @@ describe("themes: scope, switches, previews and the platform default", () => {
         plugin: "neon",
         itemId,
         scopeMode: "follow",
+        // its name and swatches from the current definition (the admin pickers)
+        theme: {
+          name: expect.objectContaining({ en: expect.any(String) }),
+          swatches: expect.objectContaining({
+            dark: expect.objectContaining({ bg: expect.any(String) }),
+          }),
+        },
       }),
     ]);
   });
 
   it("an org admin switches a theme off for the org", async () => {
     const { theme } = await allTheme("neon");
+    // the org's default, and one member picked it: the preview says so (themes spec §6)
+    const set = await env.boss({
+      method: "PATCH",
+      url: `/api/v1/orgs/${env.orgId}/settings`,
+      payload: { theme: { id: theme.id, personal: "allowed" } },
+    });
+    expect(set.statusCode, set.body).toBe(200);
+    await env.db
+      .updateTable("accounts")
+      .set({ theme: theme.id })
+      .where("id", "=", env.memId)
+      .execute();
     const first = await switchTheme(theme.id, { enabled: false });
     expect(first.statusCode, first.body).toBe(200);
-    const { confirm } = first.json() as { confirm: string };
+    const { confirm, preview } = first.json() as {
+      confirm: string;
+      preview: { themes?: { id: string; orgDefaults: { orgId: string }[]; pickedBy: number }[] };
+    };
+    expect(preview.themes).toEqual([
+      { id: theme.id, orgDefaults: [expect.objectContaining({ orgId: env.orgId })], pickedBy: 1 },
+    ]);
     const r = await switchTheme(theme.id, { enabled: false, confirm });
     expect(r.statusCode, r.body).toBe(200);
     expect(r.json().component).toMatchObject({ kind: "theme", id: theme.id, on: false });

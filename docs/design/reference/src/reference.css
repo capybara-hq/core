@@ -5407,3 +5407,10 @@ textarea {
   line-height: var(--cb-type-body-line);
   color: var(--cb-ink);
 }
+
+/* ThemeSwatchGroup (spec §6.38) */
+.r-theme-swatch-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-swatch-min)), 1fr));
+  gap: var(--cb-space-3);
+}

@@ -147,6 +147,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
 | Layout, tool policies (§6.36) | `policy-select` | 160 (a ToolPolicyList row's policy select: fits 需审批 / Ask for approval at `dense`) | `--cb-layout-<name>` |
+| Layout, theme pickers (§6.38) | `swatch-min` | 160 (a ThemeSwatchGroup column's least width) | `--cb-layout-<name>` |
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
 
@@ -3023,7 +3024,7 @@ States: `default`, `select-all`
 
 ### 6.37 ThemeSwatch
 
-`ThemeSwatch({ name, swatches: { bg, panel, ink, accent }, scheme: "dark" | "light", selected?, onSelect?, disabled? })`: one choice of a theme picker (the 外观 settings of a person, an org or the platform). A `button` with `role="radio"` and `aria-checked`; the caller wraps the cards in a `role="radiogroup"` named by its label (a `Grid` of swatches), and Space or Enter selects.
+`ThemeSwatch({ name, swatches: { bg, panel, ink, accent }, scheme: "dark" | "light", selected?, onSelect?, disabled? })`: one choice of a theme picker (the 外观 settings of a person, an org or the platform). A `button` with `role="radio"` and `aria-checked`; pages put the cards in a `ThemeSwatchGroup` (§6.38), the radio group with its keyboard; Space or Enter selects.
 
 - **Card**: `space.2` padding, a 1px `line` border, `radius.md`; the preview over a foot row, `space.2` apart. Hover takes `line-strong`.
 - **Preview**: 48 high, `radius.sm`, a 1px `line` hairline (so a ground close to the page's own still reads), filled with the theme's `bg`; on it a rounded block in the theme's `panel` (the left 40%), a 4 px bar in `ink` and a 16 × 8 block in `accent` (the right half). The four colors are the theme's data, applied as `--cb-swatch-*` custom properties by the component; this is the only place a theme's color values reach the DOM, and pages pass them as props, never as literals (`web-ui-color`).
@@ -3045,6 +3046,24 @@ States: `default`, `selected`
 | theme-swatch-name | default | color | color.ink |
 | theme-swatch | selected | border-top-color | color.line-strong |
 | theme-swatch | selected | background-color | color.selected |
+
+### 6.38 ThemeSwatchGroup
+
+`ThemeSwatchGroup({ label, value, items: { value, name, swatches }[], onChange, scheme, disabled? })`: a theme picker, the `ThemeSwatch` cards (§6.37) of the 外观 settings (a person's, an org's, the platform's) in one `role="radiogroup"` named by `label`. Pages use it, never a hand-made group of swatches.
+
+- **Grid**: as many columns as fit, each at least `layout.swatch-min` (160) wide, `space.3` apart both ways; one column below that width.
+- **Scheme**: each card is drawn in `scheme` (the page's) when its item defines swatches for it, else in the scheme it has (a single-scheme theme), with that scheme's icon; an item without swatches draws `BUILTIN_THEME_SWATCHES`.
+- **Keyboard** (a radio group): one tab stop, the selected card (else the first); ←/↑ and →/↓ move to the previous / next card and select it, wrapping; Home / End to the first / last. Click or Space / Enter on a card selects it.
+- **Disabled** (a reader of a setting): every card disabled, the selected one still marked; the arrows do nothing.
+
+<!-- states: theme-swatch-group -->
+States: `default`
+
+<!-- size-table: theme-swatch-group -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| theme-swatch-group | default | column-gap | space.3 |
+| theme-swatch-group | default | row-gap | space.3 |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

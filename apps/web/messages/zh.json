@@ -4876,6 +4876,13 @@
       "follow": "跟随浏览器"
     }
   },
+  "themeImpact": {
+    "title": "主题",
+    "description": "失去这些主题的组织和成员改用下一级的主题。",
+    "orgDefaults": "这些组织以它为默认主题，将改为跟随平台：{orgs}",
+    "pickedBy": "{n} 人选了它，将改用所在组织的默认主题",
+    "nobody": "没有组织或成员选用它"
+  },
   "appearance": {
     "title": "外观",
     "save": "保存",

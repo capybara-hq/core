@@ -32,7 +32,7 @@ import { orgComponentsQuery } from "../../../../lib/query/components";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import { orgThemesQuery } from "../../../../lib/query/themes";
+import { orgThemesQuery, platformThemeQuery } from "../../../../lib/query/themes";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { type ListedTheme, type OrgThemes, themeName } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
@@ -109,16 +109,6 @@ function AppearanceSettings({ orgId }: { orgId: string }) {
   );
 }
 
-/**
- * The platform default theme as the org sees it: the one theme row locked on in the org (the
- * kernel locks the platform default in every org); null when none or more than one is (a builtin
- * plugin's theme is locked too), and 跟随平台 then draws the built-in swatches.
- */
-function platformDefaultOf(components: readonly OrgComponent[] | undefined): string | null {
-  const locked = (components ?? []).filter((c) => c.kind === "theme" && c.locked);
-  return locked.length === 1 ? (locked[0] as OrgComponent).id : null;
-}
-
 function Appearance({
   orgId,
   admin,
@@ -160,8 +150,11 @@ function Appearance({
   const id = draft.id !== undefined ? draft.id : saved.id;
   const personal = draft.personal ?? saved.personal;
   const dirty = id !== saved.id || personal !== saved.personal;
-  const platformDefault = platformDefaultOf(components);
-  const followSwatches = platformDefault === null ? undefined : byId.get(platformDefault)?.swatches;
+  // 跟随平台 draws the platform default (on in every org, so it is listed), else the built-in
+  const pq = platformThemeQuery();
+  const platformDefault = useQuery({ ...pq, retryOnMount: retryOnMountOf(pq.queryKey) }).data;
+  const followSwatches =
+    platformDefault == null ? undefined : byId.get(platformDefault.id)?.swatches;
   const choices: ThemeChoice[] = [
     followSwatches === undefined
       ? builtinChoice(FOLLOW, t("followPlatform"))
@@ -182,9 +175,10 @@ function Appearance({
   }
 
   const rows = (components ?? []).filter((c) => c.kind === "theme");
+  // the dialog and the toasts name the theme as the list does
   const toggle = (c: OrgComponent, next: boolean) =>
     sw
-      .actionsOf(c)
+      .actionsOf({ ...c, name: c.on ? nameOf(c.id) : c.name })
       .find((a) => a.id === (next ? "enable" : "disable"))
       ?.onSelect?.();
 

@@ -1378,6 +1378,13 @@ a.cb-attachment:hover {
   line-height: var(--cb-type-small-line);
 }
 
+/* ThemeSwatchGroup (spec §6.38): the theme cards in a grid, as many columns as fit. */
+.cb-theme-swatch-group {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cb-layout-swatch-min)), 1fr));
+  gap: var(--cb-space-3);
+}
+
 /* ThemeSwatch (spec §6.37): a radio card, the preview drawn from the theme's own four colors. */
 .cb-theme-swatch {
   display: flex;

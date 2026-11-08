@@ -129,6 +129,8 @@ export const REFERENCE_COMPONENTS = [
   "tool-policy-list",
   // theme picker card (themes spec §10)
   "theme-swatch",
+  // the theme picker: the cards in one radio group (themes spec §10)
+  "theme-swatch-group",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

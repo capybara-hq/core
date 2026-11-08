@@ -22,6 +22,7 @@ const api = (routes: Parameters<typeof stubApi>[0]) =>
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     [`GET ${BASE}/themes`]: () =>
       json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
+    "GET /api/v1/platform/theme": () => json(200, null),
     ...routes,
   });
 

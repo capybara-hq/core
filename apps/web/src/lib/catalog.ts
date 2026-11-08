@@ -831,6 +831,18 @@ export interface UninstallPreview {
   components: { kind: ComponentKind; ref: string; created: boolean }[];
   kept: { kind: ComponentKind; ref: string; reason: KeptReason }[];
   agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+  /** The plugin's themes that go off in the org: its default? who picked them (themes spec §6). */
+  themes?: ThemePreview[];
+}
+
+/**
+ * One theme a change takes away (kernel `ThemePreview`, themes spec §6): the orgs losing it whose
+ * default it is, and how many of their members picked it. `id` is the `platform_themes` id.
+ */
+export interface ThemePreview {
+  id: string;
+  orgDefaults: { orgId: string; orgName: string }[];
+  pickedBy: number;
 }
 
 /** The switch-off preview and the hash that confirms it (`PUT …/switch`, org extension `PUT`). */
@@ -858,6 +870,8 @@ export interface ScopePreview {
   replaced?: { kind: string; id: string; name: string }[];
   /** Orgs that would newly be offered a skill whose name their own skills use: refused. */
   conflicts?: ScopeConflict[];
+  /** The plugin's themes the change takes away from some orgs. */
+  themes?: ThemePreview[];
   scopeHash: string;
 }
 
@@ -956,6 +970,8 @@ export interface PlatformUpdatePreview {
    * admin cannot read other orgs' names); absent from kernels that do not send it.
    */
   orgNames?: Record<string, string>;
+  /** The themes the update removes that are on in some org. */
+  themes?: ThemePreview[];
   /** Confirm with it; 409 `plugin.upgrade_stale` once what the update does changed. */
   diffHash: string;
 }

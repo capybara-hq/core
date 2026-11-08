@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { CSRF, currentOrg } from "./support/chat";
+import { hydrated } from "./support/nav";
 import { signIn } from "./support/sign-in";
 
 /**
@@ -244,20 +245,23 @@ test.describe("appearance pages", () => {
     const member = await newMember(page, browser);
     try {
       await member.goto("/account/preferences");
+      await hydrated(member);
       const picker = member.getByRole("radiogroup", { name: AP.personal.label });
       await expect(picker.getByRole("radio", { name: /纸张/ })).toBeVisible();
       // the built-in dark accent first (no cb-theme cookie: dark)
       const before = await rootToken(member, "--cb-accent");
       expect(before).not.toBe(PAPER_DARK_ACCENT);
-      const navigations: string[] = [];
-      member.on("framenavigated", (f) => {
-        if (f === member.mainFrame()) navigations.push(f.url());
+      // a marker on the window: a reload would drop it
+      await member.evaluate(() => {
+        (window as unknown as { __kept: boolean }).__kept = true;
       });
       await picker.getByRole("radio", { name: /纸张/ }).click();
       await member.getByRole("button", { name: zh.preferences.save }).click();
       // Paper overrides the dark accent only (its bg stays the built-in one)
       await expect.poll(() => rootToken(member, "--cb-accent")).toBe(PAPER_DARK_ACCENT);
-      expect(navigations).toEqual([]);
+      expect(await member.evaluate(() => (window as unknown as { __kept?: boolean }).__kept)).toBe(
+        true,
+      );
     } finally {
       await member.context().close();
     }
@@ -311,7 +315,7 @@ test.describe("appearance pages", () => {
     }
   });
 
-  test("the super admin: 主题 in the admin nav, the fixture's themes on /admin/themes, only `all` themes as 平台默认主题", async ({
+  test("the super admin: 主题 in the admin nav, the fixture's themes on /admin/themes by their names, only `all` themes as 平台默认主题", async ({
     page,
   }) => {
     await signIn(page);
@@ -321,8 +325,8 @@ test.describe("appearance pages", () => {
     await page.getByRole("link", { name: zh.admin.nav.themes, exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/themes$/);
     const table = page.getByRole("table", { name: zh.adminComponents.titles.theme });
-    await expect(table.getByRole("link", { name: "night-city", exact: true })).toBeVisible();
-    await expect(table.getByRole("link", { name: "paper", exact: true })).toBeVisible();
+    await expect(table.getByRole("link", { name: "夜之城", exact: true })).toBeVisible();
+    await expect(table.getByRole("link", { name: "纸张", exact: true })).toBeVisible();
 
     // Paper gets its own `optional` scope: no longer offered as the platform default
     const scope = async (target: object) => {

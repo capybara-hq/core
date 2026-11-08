@@ -31,6 +31,7 @@ import {
   setScope,
   setShownToOthers,
   shareGated,
+  type ThemePreview,
 } from "../lib/catalog";
 import { adminOrgsQuery } from "../lib/query/admin";
 import { pluginScopeChangeKeys } from "../lib/query/catalog";
@@ -38,6 +39,7 @@ import { retryOnMountOf } from "../lib/query/client";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
+import { useAdminThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
 /** The deployment's orgs for the scope pickers (a section: empty while it loads or failed). */
 function useOrgs(): AdminOrg[] {
@@ -172,6 +174,8 @@ export interface ScopeImpactPreview {
   needsConfig?: string[];
   replaced?: { kind: string; id: string; name: string }[];
   conflicts?: ScopeConflict[];
+  /** The themes the change takes away (themes spec §6). */
+  themes?: ThemePreview[];
 }
 
 /** The change is refused while an org would be offered a skill whose name it already uses. */
@@ -193,6 +197,7 @@ export function ScopeImpact({ preview }: { preview: ScopeImpactPreview }) {
   const needsConfig = preview.needsConfig ?? [];
   const replaced = preview.replaced ?? [];
   const conflicts = preview.conflicts ?? [];
+  const themeGroup = useThemeImpactGroup(preview.themes, useAdminThemeName());
   return (
     <Stack gap={16}>
       {conflicts.length > 0 && <Callout tone="fail">{t("conflicts")}</Callout>}
@@ -239,6 +244,7 @@ export function ScopeImpact({ preview }: { preview: ScopeImpactPreview }) {
               notes: [{ text: t("conflictNote", { name: c.name }), tone: "fail" as const }],
             })),
           },
+          ...(themeGroup === null ? [] : [themeGroup]),
         ]}
       />
     </Stack>

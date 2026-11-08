@@ -2,7 +2,7 @@
 
 import { DetailPage, Stack, Text, versionLabel } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   ComponentFacts,
@@ -16,7 +16,7 @@ import {
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { usePagePath } from "../../../../../components/shell/path";
-import type { PlatformComponent } from "../../../../../lib/components";
+import { componentName, type PlatformComponent } from "../../../../../lib/components";
 import { retryOnMountOf } from "../../../../../lib/query/client";
 import { adminComponentsQuery, componentVersionsQuery } from "../../../../../lib/query/components";
 import { usePageQuery } from "../../../../../lib/query/page-query";
@@ -74,14 +74,19 @@ function AdminTheme({ c, orgId }: { c: PlatformComponent; orgId: string | null }
   const [tab, setTab] = useState<Tab>("versions");
   const vq = componentVersionsQuery("theme", c.id);
   const versions = useQuery({ ...vq, retryOnMount: retryOnMountOf(vq.queryKey) }).data?.versions;
+  const locale = useLocale();
+  const name = componentName(c, locale);
   const isDefault = usePlatformDefaultTheme() === c.id;
-  const { actions, dialog } = useComponentActions(c, orgId);
+  // the dialogs and toasts name the theme as the page does
+  const { actions, dialog } = useComponentActions({ ...c, name }, orgId, {
+    platformDefault: isDefault,
+  });
   return (
     <>
       <DetailPage
         header={{
-          path: [...scope, { label: "themes", href: "/admin/themes" }, { label: c.name }],
-          title: c.name,
+          path: [...scope, { label: "themes", href: "/admin/themes" }, { label: name }],
+          title: name,
           count: versionLabel(c.version),
           status: <StateBadges c={c} platformDefault={isDefault} />,
           actions,

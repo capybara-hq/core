@@ -1,6 +1,14 @@
 "use client";
 
-import { Button, Dialog, LinkButton, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Dialog,
+  ImpactPreview,
+  LinkButton,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError, issueLines } from "../lib/api";
@@ -15,6 +23,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
 import type { PluginAction, PluginStateLabel } from "./PluginSwitch";
+import { useThemeImpactGroup } from "./ThemeImpact";
 
 /** One action on a component: 启用, 停用 (`danger`, a row's menu) or 查看插件 (a link). */
 export interface ComponentAction extends Omit<PluginAction, "id"> {
@@ -239,6 +248,8 @@ function ComponentSwitchOffDialog({
   onCancel(): void;
 }) {
   const t = useTranslations("orgComponents.switchOff");
+  // a theme: the org's default? who picked it (themes spec §6); it is this component
+  const themeGroup = useThemeImpactGroup(preview.themes, () => name);
   return (
     <Dialog
       open
@@ -281,6 +292,7 @@ function ComponentSwitchOffDialog({
             {t("connectorsKept", { n: preview.connectorsKept })}
           </Text>
         )}
+        {themeGroup !== null && <ImpactPreview groups={[themeGroup]} empty="" />}
       </Stack>
     </Dialog>
   );

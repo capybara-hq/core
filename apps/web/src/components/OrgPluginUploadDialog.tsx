@@ -34,6 +34,7 @@ import { useCatalogErrorLines } from "./CatalogParts";
 import { FormError } from "./form-error";
 import { PlatformUpdatePreviewBody } from "./PlatformUpdateDialog";
 import { PluginReviewBody } from "./PluginReviewBody";
+import { useOrgThemeName } from "./ThemeImpact";
 
 const isZip = (f: File) => /\.zip$/i.test(f.name);
 
@@ -65,6 +66,7 @@ export function OrgPluginUploadDialog({
   const [staged, setStaged] = useState<OrgUploadReview | null>(null);
   const [shareable, setShareable] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
+  const orgThemeName = useOrgThemeName(orgId);
   const cq = orgCatalogQuery(orgId);
   const items = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.items;
   // Preparing only stages the upload: nothing cached changes until it is confirmed
@@ -229,6 +231,7 @@ export function OrgPluginUploadDialog({
                   <PlatformUpdatePreviewBody
                     preview={staged.update}
                     orgName={nameOrg}
+                    themeName={orgThemeName}
                     hideUnknown
                   />
                 </ContentSection>

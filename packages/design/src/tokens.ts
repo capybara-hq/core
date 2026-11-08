@@ -115,5 +115,6 @@ export const SIZES = {
     "head-content": 24,
     "card-min": 280,
     "policy-select": 160,
+    "swatch-min": 160,
   },
 } as const;

@@ -27,7 +27,7 @@ import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { meQuery } from "../../../../lib/query/shell";
-import { orgThemesQuery } from "../../../../lib/query/themes";
+import { orgThemesQuery, platformThemeQuery } from "../../../../lib/query/themes";
 import { type OrgThemes, themeName } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 
@@ -185,6 +185,8 @@ function ThemeSection({
 }) {
   const t = useTranslations("appearance.personal");
   const locale = useLocale();
+  const pq = platformThemeQuery();
+  const platformDefault = useQuery({ ...pq, retryOnMount: retryOnMountOf(pq.queryKey) }).data;
   if (themes === undefined) {
     return (
       <FormSection
@@ -197,7 +199,10 @@ function ThemeSection({
   }
   const locked = themes.org.personal === "locked";
   const listed = value === null || themes.themes.some((x) => x.id === value);
-  const orgDefault = themes.themes.find((x) => x.id === themes.org.id);
+  // 默认 is what the org gives: its default when on, else the platform default, else the built-in
+  const orgDefault =
+    themes.themes.find((x) => x.id === themes.org.id) ??
+    (platformDefault == null ? undefined : themes.themes.find((x) => x.id === platformDefault.id));
   const choices: ThemeChoice[] = [
     orgDefault === undefined
       ? builtinChoice(DEFAULT_THEME, t("default"))

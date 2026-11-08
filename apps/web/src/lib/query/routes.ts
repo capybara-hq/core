@@ -85,7 +85,7 @@ import {
 } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
-import { orgThemesQuery } from "./themes";
+import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
 import { uiViewQuery } from "./ui";
 
@@ -178,7 +178,7 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [
             q(preferencesQuery(me.account.id)),
-            ...(orgId === null ? [] : [q(orgThemesQuery(orgId))]),
+            ...(orgId === null ? [] : [q(orgThemesQuery(orgId)), q(platformThemeQuery())]),
           ],
   },
   {
@@ -354,15 +354,9 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings, the themes (外观's eligible ones) and the current org's (their names and swatches).
-    queries: ({ me, orgId }) =>
-      superAdmin(me)
-        ? [
-            q(deploymentSettingsQuery()),
-            q(adminComponentsQuery("theme")),
-            ...(orgId === null ? [] : [q(orgThemesQuery(orgId))]),
-          ]
-        : [],
+    // The settings and the themes (外观's eligible ones, with their names and swatches).
+    queries: ({ me }) =>
+      superAdmin(me) ? [q(deploymentSettingsQuery()), q(adminComponentsQuery("theme"))] : [],
   },
   {
     pattern: "/agents",
@@ -804,7 +798,12 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
-        : [q(orgThemesQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "theme" }))],
+        : [
+            q(orgThemesQuery(orgId)),
+            q(orgComponentsQuery(orgId, { kind: "theme" })),
+            // 跟随平台's swatches
+            q(platformThemeQuery()),
+          ],
   },
   {
     pattern: "/settings/sandbox",

@@ -4888,6 +4888,13 @@
       "follow": "Follow the browser"
     }
   },
+  "themeImpact": {
+    "title": "Themes",
+    "description": "Organizations and people losing these themes fall back to the next level.",
+    "orgDefaults": "The default theme of these organizations, which will follow the platform: {orgs}",
+    "pickedBy": "{n, plural, one {# person picked it and} other {# people picked it and}} will use their organization's default",
+    "nobody": "No organization or person chose it"
+  },
   "appearance": {
     "title": "Appearance",
     "save": "Save",

@@ -110,6 +110,9 @@ export {
   type ThemeScheme,
   ThemeSwatch,
   type ThemeSwatchColors,
+  ThemeSwatchGroup,
+  type ThemeSwatchGroupItem,
+  type ThemeSwatchGroupProps,
   type ThemeSwatchProps,
 } from "./theme-swatch";
 export { Tooltip } from "./tooltip";

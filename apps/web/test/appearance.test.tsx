@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { orgThemesQuery, platformThemeQuery } from "../src/lib/query/themes";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -83,9 +84,13 @@ const ORG_COMPONENTS = {
 
 const orgRoutes = (
   org: { id: string | null; personal: "allowed" | "locked" } = { id: null, personal: "allowed" },
+  // the platform default (public read); the fixture's is Night City, locked on in the org
+  platformDefault: unknown = NIGHT,
+  components: unknown = ORG_COMPONENTS,
 ): Routes => ({
   [`GET ${O}/themes`]: () => json(200, themesOf(org)),
-  [`GET ${O}/components?kind=theme`]: () => json(200, ORG_COMPONENTS),
+  [`GET ${O}/components?kind=theme`]: () => json(200, components),
+  "GET /api/v1/platform/theme": () => json(200, platformDefault),
   [`GET ${O}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "zh" } }),
 });
 
@@ -266,12 +271,14 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     shownToOthers: true,
     version: "1",
     onIn: ["o1"],
+    theme: { name: { en: "Night City", zh: "夜之城" }, swatches: { dark: sw("#05070d") } },
     ...over,
   });
+  const PAPER_THEME = { name: { en: "Paper", zh: "纸" }, swatches: PAPER.swatches };
   const THEMES = {
     components: [
       comp({}),
-      comp({ id: "t-paper", name: "paper" }),
+      comp({ id: "t-paper", name: "paper", theme: PAPER_THEME }),
       comp({ id: "t-opt", name: "optional-one", scope: "optional" }),
       comp({ id: "t-off", name: "disabled-one", disabled: true }),
       comp({ id: "t-org", name: "org-one", owner: { kind: "org", orgId: "o1", name: "Acme" } }),
@@ -294,7 +301,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     "GET /api/v1/platform/theme": () => json(200, null),
   });
 
-  it("offers 内置主题 and only platform-owned, `all`, enabled themes; a save sends { uiTheme } and reads the org's themes again", async () => {
+  it("offers 内置主题 and only platform-owned, `all`, enabled themes, by their own names; a save sends { uiTheme } and invalidates the org themes and the platform default", async () => {
     const r = routes((c) =>
       json(200, {
         ...SETTINGS,
@@ -302,7 +309,10 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
       }),
     );
     const calls = stubApi(r);
-    await renderRouteWithCache("/admin/settings", r, { locale: "zh" });
+    const { client } = await renderRouteWithCache("/admin/settings", r, { locale: "zh" });
+    // what the workspace frame holds: the org's themes and the platform default
+    client.setQueryData(orgThemesQuery("o1").queryKey, themesOf({ id: null, personal: "allowed" }));
+    client.setQueryData(platformThemeQuery().queryKey, null);
     const picker = await screen.findByRole("radiogroup", { name: A.platform.label });
     expect(
       within(picker)
@@ -314,9 +324,11 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     await user.click(screen.getByRole("button", { name: zh.admin.settings.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ uiTheme: { id: "t-night" } });
+    // every org's themes and the platform default are stale now (each org falls back to it)
     await vi.waitFor(() =>
-      expect(calls.some((c) => c.method === "GET" && c.url.endsWith(`${O}/themes`))).toBe(true),
+      expect(client.getQueryState(orgThemesQuery("o1").queryKey)?.isInvalidated).toBe(true),
     );
+    expect(client.getQueryState(platformThemeQuery().queryKey)?.isInvalidated).toBe(true);
   });
 
   it("a theme off in some org: the refusal names those orgs", async () => {
@@ -358,44 +370,172 @@ describe("/admin/themes", () => {
     shownToOthers: true,
     version: "1",
     onIn: ["o1"],
+    theme: { name: { en: "Night City", zh: "夜之城" }, swatches: { dark: sw("#05070d") } },
     ...over,
   });
+  const versions = () =>
+    json(200, {
+      versions: [{ version: "1", catalogVersion: "0.1.0", updatedOnOwn: false, createdAt: T }],
+    });
   const routes: Routes = {
     "GET /api/v1/admin/components?kind=theme": () =>
-      json(200, { components: [comp({}), comp({ id: "t-paper", name: "paper" })] }),
+      json(200, {
+        components: [
+          comp({}),
+          comp({
+            id: "t-paper",
+            name: "paper",
+            theme: { name: { en: "Paper", zh: "纸" }, swatches: PAPER.swatches },
+          }),
+        ],
+      }),
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [], limitDefaults: {} }),
     "GET /api/v1/admin/settings": () => json(200, { uiTheme: { id: "t-night" } }),
-    "GET /api/v1/admin/components/theme/t-night/versions": () =>
-      json(200, {
-        versions: [{ version: "1", catalogVersion: "0.1.0", updatedOnOwn: false, createdAt: T }],
-      }),
+    "GET /api/v1/admin/components/theme/t-night/versions": versions,
+    "GET /api/v1/admin/components/theme/t-paper/versions": versions,
   };
+  const D = en.adminComponents.detail;
 
-  it("lists the themes with the platform default marked; a first render makes no browser read", async () => {
+  it("lists the themes by their own names with the platform default marked; a first render makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/themes", routes);
     const table = await screen.findByRole("table", { name: en.adminComponents.titles.theme });
-    const night = within(table).getByText("night-city").closest("tr") as HTMLElement;
-    expect(within(night).getByText(en.adminComponents.state.platformDefault)).toBeTruthy();
-    expect(within(night).getByRole("link", { name: "night-city" }).getAttribute("href")).toBe(
-      "/admin/themes/t-night",
-    );
-    const paper = within(table).getByText("paper").closest("tr") as HTMLElement;
+    const night = within(table).getByRole("link", { name: "Night City" });
+    expect(night.getAttribute("href")).toBe("/admin/themes/t-night");
+    expect(
+      within(night.closest("tr") as HTMLElement).getByText(
+        en.adminComponents.state.platformDefault,
+      ),
+    ).toBeTruthy();
+    const paper = within(table).getByRole("link", { name: "Paper" }).closest("tr") as HTMLElement;
     expect(within(paper).queryByText(en.adminComponents.state.platformDefault)).toBeNull();
+    expect(within(table).queryByText("night-city")).toBeNull();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it("the detail: 版本 / 组织, the default's note, 设置范围 and 停用 but no upload", async () => {
+  it("the platform default's detail: its name, the note why, and neither 设置范围 nor 停用 (nor an upload)", async () => {
     stubApi(routes);
     await renderRouteWithCache("/admin/themes/t-night", routes);
-    expect(await screen.findByRole("heading", { name: "night-city" })).toBeTruthy();
-    expect(screen.getByText(en.adminComponents.detail.platformDefaultNote)).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Night City" })).toBeTruthy();
+    expect(screen.getByText(D.platformDefaultNote)).toBeTruthy();
+    for (const label of [D.actions.scope, D.actions.disable, D.actions.upload]) {
+      expect(screen.queryByRole("button", { name: label })).toBeNull();
+    }
+  });
+
+  it("another theme: 停用's preview lists the orgs whose default it is and how many people picked it", async () => {
+    const all: Routes = {
+      ...routes,
+      "POST /api/v1/admin/components/theme/t-paper/scope/preview": () =>
+        json(200, {
+          affected: [],
+          conflicts: [],
+          themes: [{ id: "t-paper", orgDefaults: [{ orgId: "o2", orgName: "Beta" }], pickedBy: 3 }],
+          scopeHash: "h",
+        }),
+    };
+    stubApi(all);
+    await renderRouteWithCache("/admin/themes/t-paper", all);
+    expect(await screen.findByRole("heading", { name: "Paper" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: D.actions.scope })).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: D.actions.disable }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(en.themeImpact.title)).toBeTruthy();
+    expect(within(dialog).getByText("Paper")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: en.adminComponents.detail.actions.scope }),
+      within(dialog).getByText(en.themeImpact.orgDefaults.replace("{orgs}", "Beta")),
     ).toBeTruthy();
+    expect(within(dialog).getByText(/3 people picked it/)).toBeTruthy();
+  });
+});
+
+describe("the 跟随平台 / 默认 cards draw the platform default (themes spec §7)", () => {
+  /** The `--cb-swatch-bg` of a picker card. */
+  const bgOf = (radio: HTMLElement) =>
+    (
+      radio.querySelector('[data-part="theme-swatch-preview"]') as HTMLElement
+    ).style.getPropertyValue("--cb-swatch-bg");
+  // Paper comes from a builtin plugin: locked on in the org although it is not the default
+  const builtinPaper = {
+    components: [
+      orgComp({ platformDefault: false }),
+      orgComp({ id: "t-paper", name: "paper", locked: true, switchable: false }),
+    ],
+  };
+
+  it("no platform default and a builtin plugin's locked theme: 跟随平台 is the built-in theme", async () => {
+    await renderRouteWithCache(
+      "/settings/appearance",
+      orgRoutes({ id: null, personal: "allowed" }, null, builtinPaper),
+      { locale: "zh" },
+    );
+    const picker = await screen.findByRole("radiogroup", { name: A.org.label });
+    expect(bgOf(within(picker).getAllByRole("radio")[0] as HTMLElement)).toMatch(/--cb-builtin-/);
+  });
+
+  it("a platform default beside a builtin plugin's locked theme: 跟随平台 is the default's swatches", async () => {
+    await renderRouteWithCache(
+      "/settings/appearance",
+      orgRoutes({ id: null, personal: "allowed" }, NIGHT, {
+        components: [orgComp({ locked: true }), builtinPaper.components[1]],
+      }),
+      { locale: "zh" },
+    );
+    const picker = await screen.findByRole("radiogroup", { name: A.org.label });
+    expect(bgOf(within(picker).getAllByRole("radio")[0] as HTMLElement)).toBe("#05070d");
+  });
+
+  it("偏好设置's 默认 with an org that follows the platform: the platform default's swatches, else built-in", async () => {
+    const prefs = {
+      "GET /api/v1/me/preferences": () => json(200, { timeZone: null, theme: null }),
+    };
+    await renderRouteWithCache(
+      "/account/preferences",
+      { ...orgRoutes({ id: null, personal: "allowed" }, NIGHT), ...prefs },
+      { locale: "zh" },
+    );
+    let picker = await screen.findByRole("radiogroup", { name: A.personal.label });
+    expect(bgOf(within(picker).getAllByRole("radio")[0] as HTMLElement)).toBe("#05070d");
+    cleanup();
+    await renderRouteWithCache(
+      "/account/preferences",
+      { ...orgRoutes({ id: null, personal: "allowed" }, null, builtinPaper), ...prefs },
+      { locale: "zh" },
+    );
+    picker = await screen.findByRole("radiogroup", { name: A.personal.label });
+    expect(bgOf(within(picker).getAllByRole("radio")[0] as HTMLElement)).toMatch(/--cb-builtin-/);
+  });
+});
+
+describe("组织设置 › 外观: switching a theme off previews who uses it", () => {
+  it("the dialog lists the org as using it as its default and the people who picked it", async () => {
+    const routes: Routes = {
+      ...orgRoutes({ id: "t-paper", personal: "allowed" }),
+      [`PUT ${O}/components/theme/t-paper/switch`]: () =>
+        json(200, {
+          preview: {
+            agents: [],
+            connectorsKept: 0,
+            themes: [
+              { id: "t-paper", orgDefaults: [{ orgId: "o1", orgName: "Acme" }], pickedBy: 2 },
+            ],
+          },
+          confirm: "c",
+        }),
+    };
+    stubApi(routes);
+    await renderRouteWithCache("/settings/appearance", routes, { locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("switch", { name: "纸" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(zh.themeImpact.title)).toBeTruthy();
     expect(
-      screen.queryByRole("button", { name: en.adminComponents.detail.actions.upload }),
-    ).toBeNull();
+      within(dialog).getByText(zh.themeImpact.orgDefaults.replace("{orgs}", "Acme")),
+    ).toBeTruthy();
+    expect(within(dialog).getByText(zh.themeImpact.pickedBy.replace("{n}", "2"))).toBeTruthy();
+    // the dialog names the theme as the list does
+    expect(within(dialog).getAllByText(/纸/).length).toBeGreaterThan(0);
   });
 });

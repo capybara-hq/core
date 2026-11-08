@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { LocalizedName, ThemeScheme } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { templateTypeClashes, templateTypeOf } from "../agents/templates.js";
@@ -12,6 +13,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
+import { type ThemeSwatch, themeDefinitions, themeSwatches } from "../themes/theme-state.js";
 import {
   assertNotPlatformDefault,
   platformDefaultThemeId,
@@ -147,6 +149,8 @@ export interface ComponentView {
    * other scopes, builtin plugins and orgs' own rows.
    */
   offCount: number;
+  /** A theme: its name and swatches from its current version (absent for other kinds). */
+  theme?: { name: LocalizedName; swatches: Partial<Record<ThemeScheme, ThemeSwatch>> };
 }
 
 /** One version of a platform component (`GET admin/components/:kind/:id/versions`). */
@@ -212,7 +216,15 @@ export type ComponentSwitchResult =
   | { kind: "done"; component: OrgComponentView }
   | {
       kind: "preview";
-      preview: { agents: { id: string; name: string; refs: string[] }[]; connectorsKept: number };
+      preview: {
+        agents: { id: string; name: string; refs: string[] }[];
+        connectorsKept: number;
+        /**
+         * A theme: whether it is the org's default and how many of its members picked it (themes
+         * spec §6). Absent for other kinds and for a theme nobody there chose.
+         */
+        themes?: ThemePreview[];
+      };
       confirm: string;
     };
 
@@ -347,7 +359,7 @@ function previewHash(
 function switchHash(
   orgId: string,
   c: { kind: ComponentKind; id: string },
-  preview: { agents: { id: string; refs: string[] }[]; connectorsKept: number },
+  preview: { agents: { id: string; refs: string[] }[]; connectorsKept: number; themes?: unknown },
 ): string {
   return createHash("sha256")
     .update(JSON.stringify({ orgId, kind: c.kind, id: c.id, ...preview }))
@@ -436,7 +448,16 @@ export class ComponentScopeService {
       this.db,
       comps.flatMap((c) => (c.ownerOrgId === null ? [] : [c.ownerOrgId])),
     );
+    // a theme's name and swatches come from its current definition (the admin pickers, §10)
+    const defs =
+      kind === "theme"
+        ? await themeDefinitions(
+            this.db,
+            comps.map((c) => c.id),
+          )
+        : null;
     const platform = comps.map((c): ComponentView => {
+      const def = defs?.get(c.id)?.definition;
       const plugin = c.itemId === null ? undefined : st.plugins.get(c.itemId);
       const follow = c.scopeMode === "follow" && c.itemId !== null;
       const scope: PluginScope = follow
@@ -473,6 +494,7 @@ export class ComponentScopeService {
           scope === "all" && plugin?.builtin !== true
             ? orgs.filter((o) => switchOf(st, c.id, o.id) === false).length
             : 0,
+        ...(def !== undefined && { theme: { name: def.name, swatches: themeSwatches(def) } }),
       };
     });
     const owned = await this.orgOwned(kind, orgs);
@@ -845,10 +867,16 @@ export class ComponentScopeService {
         );
       }
       if (on) {
+        const themes =
+          kind === "theme"
+            ? await themesPreview(this.db, new Map([[c.id, new Set([orgId])]]))
+            : undefined;
         const preview = {
           agents: await agentsUsing(this.db, orgId, kind, [c.id]),
           connectorsKept:
             kind === "connector_template" ? await connectorsMadeFrom(this.db, orgId, c.id) : 0,
+          // a theme only: other kinds keep the preview (and the hash) they had before themes
+          ...(themes !== undefined && { themes }),
         };
         const confirm = switchHash(orgId, c, preview);
         if (body.confirm === undefined) return { kind: "preview", preview, confirm };

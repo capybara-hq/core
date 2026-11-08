@@ -21,6 +21,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import {
   COMPONENT_ROUTES,
   type ComponentVersion,
+  componentName,
   isOrgRow,
   moveTo,
   type PlatformComponent,
@@ -133,6 +134,7 @@ export function ComponentsTable({
   platformDefault?: string | null;
 }) {
   const t = useTranslations("adminComponents");
+  const locale = useLocale();
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();
   const blockText = useShareBlockText();
@@ -142,7 +144,9 @@ export function ComponentsTable({
       header: t("columns.name"),
       cell: (c) => (
         <Stack direction="row" gap={8} align="center">
-          <Link href={`${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`}>{c.name}</Link>
+          <Link href={`${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`}>
+            {componentName(c, locale)}
+          </Link>
           <StateBadges c={c} platformDefault={c.id === platformDefault} />
         </Stack>
       ),
@@ -315,7 +319,7 @@ export function ComponentOrgs({ c }: { c: PlatformComponent }) {
 export function useComponentActions(
   c: PlatformComponent,
   orgId: string | null,
-  opts: { inList?: boolean } = {},
+  opts: { inList?: boolean; platformDefault?: boolean } = {},
 ): { actions: HeaderAction[]; menu: MenuItem[]; dialog: ReactNode } {
   // From a list (`inList`, the admin cards) a promotion moves nowhere: the list is read again
   const t = useTranslations("adminComponents.detail");
@@ -377,8 +381,11 @@ export function useComponentActions(
   const shared = !platform && shareBlockOf(c) === null;
   // A builtin plugin's component keeps its scope and stays on (the kernel refuses both with 409
   // plugin.builtin), though it takes a new version; an org row has no deployment disable
-  const scope = !c.builtin && (platform || shared || !isOrgRow(c));
-  const disable = !c.builtin && !isOrgRow(c);
+  // The platform default theme stays `all` and on (409 theme.platform_default): neither is offered,
+  // the detail says why (roles everywhere: no refused actions)
+  const pinned = c.builtin || opts.platformDefault === true;
+  const scope = !pinned && (platform || shared || !isOrgRow(c));
+  const disable = !pinned && !isOrgRow(c);
   const actions: HeaderAction[] = [
     ...(shared && c.scope === "named" && !c.shownToOthers ? [showAction] : []),
     ...(scope ? [scopeAction] : []),
