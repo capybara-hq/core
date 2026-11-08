@@ -29,6 +29,8 @@ Wording: **must** / **must not** are mandatory; **should** is the default practi
 
 All colors, sizes and shadows may only be used through tokens. Color literals are allowed only in the generated `tokens.css`. Tailwind is not used.
 
+A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-themes-design.md`) replaces values of these tokens for a scope; the names, the contrast pairs and the dark / light split stay. Components never know a theme is on: they read `var(--cb-<token>)`, and the one color a theme adds to the DOM is the `ThemeSwatch` preview (§6.37), applied as data.
+
 ### 2.1 Colors
 
 | Token | Dark | Light | Purpose |
@@ -208,6 +210,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 ```
 
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
+- **Brand from a theme**: a theme may replace the logo mark and the wordmark. The web passes the resolved theme's brand to `DesignProvider` (`brand: { markUrl, wordmark }`, either part null), and `Logo` draws it where it draws the pixel capybara: `markUrl` as an `img` as high as the bitmap would be (10 × the pixel unit, so 20 / 30 / 60; its width follows the file; `alt` is the wordmark, or "Logo") instead of the bitmap, `wordmark` as the wordmark text instead of `CAPYBARA` (only where the wordmark is drawn: the rail has none). A null part keeps the built-in one. The sidebar, `AuthPage` and `StatusPage` draw `Logo` and take no props for it.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
 - Apart from agent avatars: no illustrations, gradients, frosted glass or emoji.
@@ -3017,6 +3020,30 @@ States: `default`, `select-all`
 | tool-policy-count | select-all | font-size | type.small |
 | tool-policy-count | select-all | color | color.muted |
 | tool-policy-search input | select-all | height | control.dense |
+
+### 6.37 ThemeSwatch
+
+`ThemeSwatch({ name, swatches: { bg, panel, ink, accent }, scheme: "dark" | "light", selected?, onSelect?, disabled? })`: one choice of a theme picker (the 外观 settings of a person, an org or the platform). A `button` with `role="radio"` and `aria-checked`; the caller wraps the cards in a `role="radiogroup"` named by its label (a `Grid` of swatches), and Space or Enter selects.
+
+- **Card**: `space.2` padding, a 1px `line` border, `radius.md`; the preview over a foot row, `space.2` apart. Hover takes `line-strong`.
+- **Preview**: 48 high, `radius.sm`, a 1px `line` hairline (so a ground close to the page's own still reads), filled with the theme's `bg`; on it a rounded block in the theme's `panel` (the left 40%), a 4 px bar in `ink` and a 16 × 8 block in `accent` (the right half). The four colors are the theme's data, applied as `--cb-swatch-*` custom properties by the component; this is the only place a theme's color values reach the DOM, and pages pass them as props, never as literals (`web-ui-color`).
+- **Foot**: the theme's name (`body`, `ink`, one line with an ellipsis, its full text as the title) and a 12 px `moon` or `sun` icon in `muted` for the scheme (`data-scheme`).
+- **Selected** (`data-state="selected"`): the `selected` ground and a `line-strong` border; selection is neutral (§2.3), the focus ring (2 px `accent`, offset 2) carries the accent. `disabled` greys the card and the pointer shows not-allowed.
+
+<!-- states: theme-swatch -->
+States: `default`, `selected`
+
+<!-- size-table: theme-swatch -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| theme-swatch | default | padding-left | space.2 |
+| theme-swatch | default | row-gap | space.2 |
+| theme-swatch | default | border-top-color | color.line |
+| theme-swatch-preview | default | height | 48 |
+| theme-swatch-name | default | font-size | type.body |
+| theme-swatch-name | default | color | color.ink |
+| theme-swatch | selected | border-top-color | color.line-strong |
+| theme-swatch | selected | background-color | color.selected |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

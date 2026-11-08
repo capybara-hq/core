@@ -105,5 +105,11 @@ export { StatCards } from "./stat-cards";
 export { type Step, StepList } from "./step-list";
 export { LoadingSubsection, Subsection, type SubsectionProps } from "./subsection";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
+export {
+  type ThemeScheme,
+  ThemeSwatch,
+  type ThemeSwatchColors,
+  type ThemeSwatchProps,
+} from "./theme-swatch";
 export { Tooltip } from "./tooltip";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

@@ -1,3 +1,5 @@
+import { useBrand } from "../provider";
+
 // spec §3：14×10 位图，X 实心，O 眼睛镂空。原样复制。
 export const CAPYBARA_BITMAP: readonly string[] = [
   "..........X...",
@@ -39,19 +41,32 @@ export function Logo({
   tone?: "accent" | "muted";
   wordmark?: boolean;
 }) {
+  const brand = useBrand();
   return (
     <span className="cb-logo" data-tone={tone}>
-      <svg
-        width={COLS * scale}
-        height={ROWS * scale}
-        viewBox={`0 0 ${COLS * scale} ${ROWS * scale}`}
-        shapeRendering="crispEdges"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d={bitmapCells(CAPYBARA_BITMAP, scale)} />
-      </svg>
-      {wordmark ? <span className="cb-logo-word">CAPYBARA</span> : null}
+      {brand?.markUrl ? (
+        // A theme's mark: an image as high as the pixel capybara, its width follows the file.
+        // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
+        <img
+          className="cb-logo-mark"
+          data-part="logo-mark"
+          src={brand.markUrl}
+          height={ROWS * scale}
+          alt={brand.wordmark ?? "Logo"}
+        />
+      ) : (
+        <svg
+          width={COLS * scale}
+          height={ROWS * scale}
+          viewBox={`0 0 ${COLS * scale} ${ROWS * scale}`}
+          shapeRendering="crispEdges"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d={bitmapCells(CAPYBARA_BITMAP, scale)} />
+        </svg>
+      )}
+      {wordmark ? <span className="cb-logo-word">{brand?.wordmark ?? "CAPYBARA"}</span> : null}
     </span>
   );
 }

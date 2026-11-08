@@ -127,6 +127,8 @@ export const REFERENCE_COMPONENTS = [
   "card-grid",
   // tools with their policy next to them (the agent page's 工具 section, 2026-11-08)
   "tool-policy-list",
+  // theme picker card (themes spec §10)
+  "theme-swatch",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];
