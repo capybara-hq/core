@@ -3,7 +3,7 @@
 // confirmed once by the super admin, per component. The per-org upgrade routes are retired (ruling
 // F2).
 import { createHash } from "node:crypto";
-import type { ConnectorTemplateFile, PluginManifest } from "@capybara-hq/plugin-sdk";
+import type { ConnectorTemplateFile, ParsedTheme, PluginManifest } from "@capybara-hq/plugin-sdk";
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -39,9 +39,11 @@ import {
   getPath,
   readCatalogAgentTemplates,
   readCatalogTemplates,
+  readCatalogThemes,
   setPath,
   skillFilesDigest,
   templatePluginProblem,
+  themeAssetsDigest,
 } from "./catalog-content.js";
 import { markVersionApplied, versionUsable } from "./catalog-items.js";
 import {
@@ -71,7 +73,7 @@ export interface PlatformUpdateComponent {
   kind: ComponentKind;
   /** The platform component (null: added by the target). */
   id: string | null;
-  /** Skill or agent template name; a connector template's id. */
+  /** Skill or agent template name; a connector template's or a theme's id. */
   name: string;
   change: UpdateChange;
   /** The catalog version of the component's current version (null: added, or no catalog version). */
@@ -187,6 +189,7 @@ interface TargetContents {
   skillNames: string[];
   agents: Awaited<ReturnType<typeof readCatalogAgentTemplates>>;
   templates: Awaited<ReturnType<typeof readCatalogTemplates>>;
+  themes: Awaited<ReturnType<typeof readCatalogThemes>>;
 }
 
 /** What the confirm's transaction reuses from the diff computed before it. */
@@ -763,7 +766,9 @@ export class PlatformPluginUpdater {
           ? "platform_skills"
           : c.kind === "agent_template"
             ? "platform_agent_templates"
-            : "platform_connector_templates";
+            : c.kind === "theme"
+              ? "platform_themes"
+              : "platform_connector_templates";
       await t
         .updateTable(table as "platform_skills")
         .set({ deleted_at: now, updated_at: now })
@@ -1236,6 +1241,44 @@ export class PlatformPluginUpdater {
       });
     }
 
+    // Themes (by id, canonical definition and their assets' digest)
+    const toThemes = contents.themes;
+    for (const th of toThemes) {
+      const l = live.themes.find((x) => x.name === th.id);
+      if (!l) {
+        components.push(added("theme", th.id));
+        continue;
+      }
+      const same =
+        canonicalJson(l.definition) === canonicalJson(th.theme) &&
+        l.assetsDigest === th.assetsDigest;
+      components.push({
+        kind: "theme",
+        id: l.id,
+        name: th.id,
+        change: same ? "same" : direction(l.catalogVersion),
+        from: l.catalogVersion,
+        to: to.version,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+    for (const l of live.themes) {
+      if (toThemes.some((x) => x.id === l.name)) continue;
+      components.push({
+        kind: "theme",
+        id: l.id,
+        name: l.name,
+        change: "removed",
+        from: l.catalogVersion,
+        to: null,
+        updatedOnOwn: false,
+        ownScope: l.ownScope,
+        pinnedOrgs: [],
+      });
+    }
+
     // The orgs where the plugin is on (a live install; builtin: every org)
     const onOrgs = await this.pluginOrgs(itemId, item.builtin);
     if (extension) extension = { ...extension, orgs: onOrgs };
@@ -1402,12 +1445,16 @@ export class PlatformPluginUpdater {
     };
   }
 
-  /** The target's skill names, agent templates and connector templates, from object storage. */
+  /**
+   * The target's skill names, agent templates, connector templates and themes, from object storage
+   * (a theme failing its checks -> 400 `theme.invalid` / `theme.unreadable`, themes spec §6).
+   */
   private async readContents(to: VersionRow): Promise<TargetContents> {
     return {
       skillNames: await catalogSkillNames(this.storage, to, to.manifest),
       agents: await readCatalogAgentTemplates(this.storage, to),
       templates: await readCatalogTemplates(this.storage, to),
+      themes: await readCatalogThemes(this.storage, to),
     };
   }
 
@@ -1605,7 +1652,31 @@ export class PlatformPluginUpdater {
       file: r.file as ConnectorTemplateFile,
       ownScope: r.scope_mode === "own",
     }));
-    return { skills, agentTemplates, templates };
+    const themes = (
+      await db
+        .selectFrom("platform_themes as p")
+        .innerJoin("platform_theme_versions as v", (j) =>
+          j.onRef("v.theme_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
+        )
+        .leftJoin("catalog_item_versions as cv", (j) =>
+          j
+            .onRef("cv.item_id", "=", "p.catalog_item_id")
+            .onRef("cv.version", "=", "v.catalog_version"),
+        )
+        .select(["p.id", "p.name", "p.scope_mode", "v.definition", "v.catalog_version", "cv.files"])
+        .where("p.catalog_item_id", "=", itemId)
+        .where("p.deleted_at", "is", null)
+        .execute()
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      definition: r.definition as ParsedTheme,
+      catalogVersion: r.catalog_version,
+      // no recorded files (should not happen): never equal, the update writes a new version
+      assetsDigest: r.files === null ? null : themeAssetsDigest(r.files, r.definition),
+      ownScope: r.scope_mode === "own",
+    }));
+    return { skills, agentTemplates, templates, themes };
   }
 
   /** The orgs where the plugin is on: a live install (builtin: every live org). */

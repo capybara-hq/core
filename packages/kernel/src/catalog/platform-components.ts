@@ -1,11 +1,12 @@
-// Platform components (plugin scope phase 2, rulings A2 and C2): the skills, agent templates and
-// connector templates of a catalog item, stored once for the deployment. Files live under
-// `deployment/platform/{skills,agent-templates}/<id>/<version>/`, never under an org prefix (orgs
-// are purged by prefix).
+// Platform components (plugin scope phase 2, rulings A2 and C2): the skills, agent templates,
+// connector templates and themes of a catalog item, stored once for the deployment. Files live
+// under `deployment/platform/{skills,agent-templates,themes}/<id>/<version>…/`, never under an org
+// prefix (orgs are purged by prefix).
 import { createHash, randomUUID } from "node:crypto";
 import {
   type AgentTemplate,
   type ConnectorTemplateFile,
+  type ParsedTheme,
   type PluginManifest,
   parseAgentTemplate,
 } from "@capybara-hq/plugin-sdk";
@@ -27,16 +28,18 @@ import {
   readCatalogAgentTemplates,
   readCatalogFiles,
   readCatalogTemplates,
+  readCatalogThemes,
   skillFilesDigest,
   skillOf,
+  themeAssetsDigest,
 } from "./catalog-content.js";
 import { putCatalogFiles } from "./catalog-items.js";
 import { CatalogItemLock } from "./locks.js";
 import { assertNotAwaiting } from "./ownership.js";
 
-/** A skill or agent template version a sync wrote (`from` null: the component was created). */
+/** A skill, agent template or theme version a sync wrote (`from` null: the component was created). */
 export interface ChangedRef {
-  kind: "skill" | "agent_template";
+  kind: "skill" | "agent_template" | "theme";
   id: string;
   name: string;
   from: number | null;
@@ -61,6 +64,7 @@ export interface PlatformSyncResult {
   skills: ChangedRef[];
   agentTemplates: ChangedRef[];
   connectorTemplates: ChangedConnectorTemplateRef[];
+  themes: ChangedRef[];
 }
 
 /** The prefix (in `deployment/`) of a platform skill version's files. */
@@ -70,6 +74,12 @@ export const platformSkillPrefix = (id: string, version: number): string =>
 /** The prefix (in `deployment/`) of a platform agent template version's file. */
 export const platformAgentTemplatePrefix = (id: string, version: number): string =>
   `platform/agent-templates/${id}/${version}/`;
+
+/**
+ * The prefix (in `deployment/`) of a platform theme's files (themes spec §6); a version's fonts
+ * and logo are under `<prefix><version>-<catalog version>/` ({@link syncVersionPrefix}).
+ */
+export const platformThemePrefix = (id: string): string => `platform/themes/${id}/`;
 
 /**
  * A fresh prefix (in `deployment/`) for a version written before its transaction (ruling P3-45):
@@ -122,6 +132,20 @@ interface TemplateStep {
   template: AgentTemplate;
 }
 
+interface ThemeStep {
+  /** The theme id. */
+  name: string;
+  base: Base<number> | undefined;
+  /** The platform row id. */
+  id: string;
+  to: number;
+  /** null: the theme has no assets. */
+  prefix: string | null;
+  /** Fonts and logo, sanitized (paths relative to the plugin root). */
+  files: SkillPackageFile[];
+  theme: ParsedTheme;
+}
+
 interface ConnectorTemplateStep {
   name: string;
   base: Base<string> | undefined;
@@ -138,6 +162,7 @@ export interface SyncPlan {
   skills: SkillStep[];
   agentTemplates: TemplateStep[];
   connectorTemplates: ConnectorTemplateStep[];
+  themes: ThemeStep[];
 }
 
 /** A component changed between the plan and its write (a concurrent sync): plan again. */
@@ -233,10 +258,11 @@ export class PlatformComponents {
       if (
         plan.skills.length === 0 &&
         plan.agentTemplates.length === 0 &&
-        plan.connectorTemplates.length === 0
+        plan.connectorTemplates.length === 0 &&
+        plan.themes.length === 0
       ) {
         await this.markSynced(itemId, version);
-        return { skills: [], agentTemplates: [], connectorTemplates: [] };
+        return { skills: [], agentTemplates: [], connectorTemplates: [], themes: [] };
       }
       await this.writeFiles(plan);
       try {
@@ -249,6 +275,7 @@ export class PlatformComponents {
           skills: r.skills.length,
           agentTemplates: r.agentTemplates.length,
           connectorTemplates: r.connectorTemplates.length,
+          themes: r.themes.length,
         });
         return r;
       } catch (e) {
@@ -616,6 +643,7 @@ export class PlatformComponents {
       skills: [],
       agentTemplates: [],
       connectorTemplates: [],
+      themes: [],
     };
 
     for (const s of manifest.skills ?? []) {
@@ -705,15 +733,58 @@ export class PlatformComponents {
         file: t.file,
       });
     }
+
+    // Themes (by plugin and id): changed when the definition or an asset changed
+    for (const t of await readCatalogThemes(this.files, v)) {
+      const live = await this.db
+        .selectFrom("platform_themes as p")
+        .innerJoin("platform_theme_versions as pv", (j) =>
+          j.onRef("pv.theme_id", "=", "p.id").onRef("pv.version", "=", "p.current_version"),
+        )
+        .leftJoin("catalog_item_versions as cv", (j) =>
+          j
+            .onRef("cv.item_id", "=", "p.catalog_item_id")
+            .onRef("cv.version", "=", "pv.catalog_version"),
+        )
+        .select(["p.id", "p.current_version", "pv.definition", "cv.files"])
+        .where("p.plugin_name", "=", plugin)
+        .where("p.name", "=", t.id)
+        .where("p.deleted_at", "is", null)
+        .executeTakeFirst();
+      if (
+        live &&
+        canonicalJson(live.definition) === canonicalJson(t.theme) &&
+        live.files !== null &&
+        themeAssetsDigest(live.files, live.definition) === t.assetsDigest
+      ) {
+        continue;
+      }
+      const id = live?.id ?? randomUUID();
+      const to = (live?.current_version ?? 0) + 1;
+      plan.themes.push({
+        name: t.id,
+        base: live && { id: live.id, version: live.current_version },
+        id,
+        to,
+        prefix:
+          t.assets.length > 0
+            ? syncVersionPrefix(`${platformThemePrefix(id)}${to}/`, version)
+            : null,
+        files: t.assets,
+        theme: t.theme,
+      });
+    }
     return plan;
   }
 
   /** Copies the planned versions' files to their platform prefixes. */
   private async writeFiles(plan: SyncPlan): Promise<void> {
-    if (plan.skills.length === 0 && plan.agentTemplates.length === 0) return;
+    const themes = plan.themes.filter((t) => t.prefix !== null);
+    if (plan.skills.length === 0 && plan.agentTemplates.length === 0 && themes.length === 0) return;
     this.files.assertAvailable();
     for (const s of plan.skills) await putCatalogFiles(this.files, s.prefix, s.files);
     for (const a of plan.agentTemplates) await putCatalogFiles(this.files, a.prefix, [a.file]);
+    for (const t of themes) await putCatalogFiles(this.files, t.prefix as string, t.files);
   }
 
   /**
@@ -724,7 +795,12 @@ export class PlatformComponents {
   private async apply(plan: SyncPlan): Promise<PlatformSyncResult> {
     await this.itemLock.lock(plan.plugin);
     const t = this.db;
-    const out: PlatformSyncResult = { skills: [], agentTemplates: [], connectorTemplates: [] };
+    const out: PlatformSyncResult = {
+      skills: [],
+      agentTemplates: [],
+      connectorTemplates: [],
+      themes: [],
+    };
     // New component rows carry the plugin's owner and 可共享 flag (ruling P3-2); an org plugin's
     // skills and agent templates were created in its owner org (`origin_org_id`, immutable, F27),
     // and like the plugin they are not shown to other orgs until the super admin shows them
@@ -907,6 +983,66 @@ export class PlatformComponents {
         name: c.name,
         from: c.base?.version ?? null,
         to: plan.version,
+      });
+    }
+
+    for (const th of plan.themes) {
+      const live = await t
+        .selectFrom("platform_themes")
+        .select(["id", "current_version"])
+        .where("plugin_name", "=", plan.plugin)
+        .where("name", "=", th.name)
+        .where("deleted_at", "is", null)
+        .forUpdate()
+        .executeTakeFirst();
+      assertBase(live && { id: live.id, version: live.current_version }, th.base);
+      const description = th.theme.description?.en ?? null;
+      const descriptionZh = th.theme.description?.zh ?? null;
+      if (live) {
+        await t
+          .updateTable("platform_themes")
+          .set({
+            current_version: th.to,
+            description,
+            description_zh: descriptionZh,
+            catalog_item_id: plan.itemId,
+            updated_at: new Date(),
+          })
+          .where("id", "=", th.id)
+          .execute();
+      } else {
+        await t
+          .insertInto("platform_themes")
+          .values({
+            id: th.id,
+            catalog_item_id: plan.itemId,
+            plugin_name: plan.plugin,
+            name: th.name,
+            description,
+            description_zh: descriptionZh,
+            current_version: th.to,
+            scope_mode: "follow",
+            ...owned,
+            ...origin,
+          })
+          .execute();
+      }
+      await t
+        .insertInto("platform_theme_versions")
+        .values({
+          theme_id: th.id,
+          version: th.to,
+          definition: JSON.stringify(th.theme),
+          object_prefix: th.prefix,
+          catalog_version: plan.version,
+        })
+        .execute();
+      out.themes.push({
+        kind: "theme",
+        id: th.id,
+        name: th.name,
+        from: th.base?.version ?? null,
+        to: th.to,
       });
     }
     return out;

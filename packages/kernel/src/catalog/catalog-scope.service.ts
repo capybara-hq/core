@@ -976,6 +976,7 @@ export class CatalogScopeService {
       "platform_skills",
       "platform_agent_templates",
       "platform_connector_templates",
+      "platform_themes",
     ] as const) {
       await this.db
         .updateTable(table as "platform_skills")

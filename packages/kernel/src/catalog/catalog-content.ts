@@ -9,9 +9,13 @@ import {
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
   type LocalizedName,
+  type ParsedTheme,
   type PluginManifest,
   parseAgentTemplate,
   parseConnectorTemplateFile,
+  parseThemeFile,
+  themeIdOf,
+  validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { normalizeToolKeys } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -31,7 +35,7 @@ import type {
   PluginInstallInput,
   PluginInstallView,
 } from "./plugin-install.js";
-import { iconProblem } from "./plugin-package.js";
+import { iconProblem, pluginThemeError, themeApiError } from "./plugin-package.js";
 import type { OrgPluginState, PluginScope } from "./scope.js";
 import { satisfiesRange } from "./versions.js";
 
@@ -560,4 +564,88 @@ export async function readCatalogAgentTemplates(
     // spec §8.3); rc `<x>__<tool>` keys are read with the org's scope by `loadTemplates`
     return { path, template: normalizeToolKeys(parsed.template) as AgentTemplate };
   });
+}
+
+/** A theme of a catalog version ({@link readCatalogThemes}). */
+export interface CatalogTheme {
+  /** The theme id (the file's base name). */
+  id: string;
+  /** Relative to the plugin root. */
+  path: string;
+  theme: ParsedTheme;
+  /** The theme's fonts and logo files (paths relative to the plugin root), sanitized. */
+  assets: SkillPackageFile[];
+  /** {@link themeAssetsDigest} of the version's records of those files. */
+  assetsDigest: string;
+}
+
+/** The asset paths a parsed theme references (fonts, logo mark and favicon), without `./`. */
+export function themeAssetPaths(theme: ParsedTheme): string[] {
+  const refs = (theme.fonts ?? []).map((f) => f.file);
+  for (const ref of [theme.logo?.mark, theme.logo?.favicon]) if (ref !== undefined) refs.push(ref);
+  return [...new Set(refs.map((r) => packagePath(r)))];
+}
+
+/**
+ * The digest of a theme's assets as recorded on a catalog version (`files`): equal digests = the
+ * same fonts and logo. With the canonical definition it decides whether a theme changed.
+ */
+export function themeAssetsDigest(
+  files: { path: string; sha256: string }[],
+  theme: ParsedTheme,
+): string {
+  const paths = new Set(themeAssetPaths(theme));
+  return skillFilesDigest(files.filter((f) => paths.has(f.path)));
+}
+
+/**
+ * The themes of a catalog version (`manifest.themes`, listed explicitly since import), parsed from
+ * storage and their assets checked again (checked at import; again in case storage was changed,
+ * or the built-in tokens the readability checks merge onto changed since). A theme that fails ->
+ * 400 `theme.invalid` / `theme.unreadable` as at import (themes spec §6: a failing new version
+ * blocks the plugin update with the same refusal).
+ */
+export async function readCatalogThemes(
+  storage: StorageService,
+  v: CatalogVersionFiles,
+): Promise<CatalogTheme[]> {
+  const refs = (v.manifest as PluginManifest).themes ?? [];
+  if (refs.length === 0) return [];
+  const read = async (paths: string[]) =>
+    (
+      await readCatalogFiles(
+        storage,
+        v.object_prefix,
+        v.files.filter((f) => paths.includes(f.path)),
+      )
+    ).map((f) => [f.path, f.data] as const);
+  const paths = refs.map((r) => packagePath(r.path));
+  const texts = new Map(await read(paths));
+  const parsed = paths.map((path) => {
+    const id = themeIdOf(path);
+    const data = texts.get(path);
+    if (data === undefined) throw new ApiError("internal", `Stored theme ${path} is missing`);
+    const r = parseThemeFile(id, new TextDecoder().decode(data));
+    if ("errors" in r) throw themeApiError(pluginThemeError([{ theme: id, problems: r.errors }]));
+    return { id, path, theme: r };
+  });
+  const files = new Map(await read([...new Set(parsed.flatMap((t) => themeAssetPaths(t.theme)))]));
+  const out: CatalogTheme[] = [];
+  for (const { id, path, theme } of parsed) {
+    const { assets, errors } = validateThemeAssets(theme, files);
+    if (errors.length > 0) throw themeApiError(pluginThemeError([{ theme: id, problems: errors }]));
+    out.push({
+      id,
+      path,
+      theme,
+      assets: [...assets].map(([p, bytes]) => ({
+        path: p,
+        size: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        data: bytes,
+      })),
+      assetsDigest: themeAssetsDigest(v.files, theme),
+    });
+  }
+  return out;
 }

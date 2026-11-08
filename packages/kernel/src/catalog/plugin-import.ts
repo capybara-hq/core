@@ -10,6 +10,7 @@ import {
   pluginDescription,
   SDK_VERSION,
   SKILL_ENTRY_FILE,
+  type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
@@ -118,6 +119,7 @@ import {
   packagePath,
   readPluginFiles,
   readPluginPackage,
+  themeApiError,
 } from "./plugin-package.js";
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
@@ -240,6 +242,19 @@ export interface PluginReviewAgentTemplate {
   skills?: string[];
 }
 
+/** One theme in a review (themes spec §6): what the super admin sees before confirming. */
+export interface PluginReviewTheme {
+  /** The theme id (the file's base name). */
+  id: string;
+  name: LocalizedName;
+  /** The schemes it defines. */
+  schemes: ThemeScheme[];
+  /** Number of fonts. */
+  fonts: number;
+  /** It replaces the logo mark, the wordmark or the favicon. */
+  logo: boolean;
+}
+
 /** The source of a staged import. */
 export interface PluginImportSource {
   /**
@@ -327,6 +342,11 @@ export interface PluginReview {
    * {@link pluginReviewHash} when empty, so their digests are unchanged.
    */
   agentTemplates?: PluginReviewAgentTemplate[];
+  /**
+   * Themes (themes spec §6). Absent without any; left out of {@link pluginReviewHash} when empty,
+   * so the digests of plugins without themes are unchanged.
+   */
+  themes?: PluginReviewTheme[];
   /**
    * Each dependency with the highest imported catalog version satisfying its range (null when
    * nothing does yet: the import still completes, an org install is refused until it is imported).
@@ -492,11 +512,16 @@ const mismatch = (what: string) =>
 
 /**
  * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
- * `catalog.legacy_format`, anything else -> `catalog.invalid_manifest` (issues as details).
+ * `catalog.legacy_format`; a failing theme (themes spec §5) -> `theme.invalid` (details
+ * `[{ theme, errors }]`) or `theme.unreadable` (details `[{ theme, issues }]`, the failing pairs);
+ * anything else -> `catalog.invalid_manifest` (issues as details).
  */
 export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
   const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
   if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
+  if (e.code === "theme.invalid" || e.code === "theme.unreadable") {
+    return themeApiError(e as PluginPackageError);
+  }
   return invalid(e.issues);
 }
 
@@ -869,6 +894,7 @@ export class PluginImport {
       skills: content.skills,
       connectorTemplates: content.templates,
       ...(content.agentTemplates.length > 0 && { agentTemplates: content.agentTemplates }),
+      ...(content.themes.length > 0 && { themes: content.themes }),
       dependencies,
       source: src,
       provenance: (opts.provenance ?? NOT_NPM).provenance,
@@ -1926,6 +1952,7 @@ export class PluginImport {
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
     agentTemplates: PluginReviewAgentTemplate[];
+    themes: PluginReviewTheme[];
     /** Translated templates whose connector is not loaded (static checks only, Decisions 2). */
     notLoaded: string[];
     /** Template id -> path. */
@@ -2030,12 +2057,27 @@ export class PluginImport {
       const { name, description, instructions, model, ...rest } = a.template;
       return { name, path: a.path, description, instructions, model: model ?? "inherit", ...rest };
     });
+    // Themes: the file as written, the assets as sanitized by the reader (never the uploaded
+    // originals: a shared path, e.g. the plugin icon, is stored sanitized too)
+    const themes: PluginReviewTheme[] = pkg.themes.map((t) => {
+      keep(t.path);
+      for (const [path, data] of t.assets) stored.set(path, fileOf(path, data));
+      const logo = t.theme.logo;
+      return {
+        id: t.id,
+        name: t.theme.name,
+        schemes: (["dark", "light"] as const).filter((k) => t.theme.schemes[k] !== undefined),
+        fonts: t.theme.fonts?.length ?? 0,
+        logo: logo !== undefined && Object.keys(logo).length > 0,
+      };
+    });
     if (problems.length > 0) throw invalid(problems);
     return {
       files: [...stored.values()],
       templates,
       skills,
       agentTemplates,
+      themes,
       notLoaded,
       templatePaths,
     };
@@ -2201,7 +2243,7 @@ function normalizedManifest(pkg: PluginContents): PluginManifest {
   const pinned = new Map(
     (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
   );
-  const { agents: _, ...manifest } = pkg.manifest;
+  const { agents: _, themes: __, ...manifest } = pkg.manifest;
   return {
     ...manifest,
     skills: pkg.skills.map((s) => {
@@ -2213,6 +2255,7 @@ function normalizedManifest(pkg: PluginContents): PluginManifest {
     ...(pkg.agentTemplates.length > 0 && {
       agents: pkg.agentTemplates.map((a) => ({ path: `./${a.path}` })),
     }),
+    ...(pkg.themes.length > 0 && { themes: pkg.themes.map((t) => ({ path: `./${t.path}` })) }),
   };
 }
 
@@ -2255,7 +2298,8 @@ function actionOf(
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, the sha256 of every stored file, the format, the
  * translation report's items, the sha256 of the license text and the two review flags
- * (`claudeManifestIgnored`, `licenseTruncated`), and the agent templates when there are any.
+ * (`claudeManifestIgnored`, `licenseTruncated`), the agent templates when there are any and the
+ * themes when there are any.
  * Exported for tests. `repository` is display only.
  */
 export function pluginReviewHash(
@@ -2267,6 +2311,7 @@ export function pluginReviewHash(
     | "extension"
     | "connectorTemplates"
     | "agentTemplates"
+    | "themes"
     | "skills"
     | "dependencies"
     | "format"
@@ -2305,6 +2350,10 @@ export function pluginReviewHash(
     // phase C: agent templates, only when there are any (earlier digests stay the same)
     ...((r.agentTemplates ?? []).length > 0
       ? [(r.agentTemplates ?? []).map((a) => [a.path, canonicalJson(a)])]
+      : []),
+    // themes, only when there are any, tagged (never read as agent templates)
+    ...((r.themes ?? []).length > 0
+      ? [{ themes: (r.themes ?? []).map((t) => [t.id, canonicalJson(t)]) }]
       : []),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
@@ -2394,7 +2443,8 @@ function ownStaging(owner: ImportOwner | undefined) {
 /**
  * An org upload's custom deny, by content (ruling P3-15'): skills or agent templates ->
  * `customSkills`, connector templates -> `customConnectors`; each `deny` -> 403
- * `catalog.custom_disabled`. A package carrying neither passes.
+ * `catalog.custom_disabled`. A package carrying neither passes; themes are covered by neither
+ * switch (themes spec §6), so a themes-only upload passes.
  */
 async function assertCustomContent(
   db: KernelSchemaDb,

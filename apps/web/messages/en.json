@@ -370,6 +370,10 @@
       "aborted": "The model request was aborted."
     },
     "payload_too_large": "The request is over the size limit.",
+    "theme": {
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again."
+    },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",

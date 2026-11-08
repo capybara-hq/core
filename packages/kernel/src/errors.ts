@@ -74,6 +74,10 @@ export const ERROR_CODES = {
   "bootstrap.missing_file": 500,
   "catalog.invalid_manifest": 422,
   "catalog.legacy_format": 422,
+  /** A theme of an imported plugin fails its file or asset checks (themes spec §4, §5). */
+  "theme.invalid": 400,
+  /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
+  "theme.unreadable": 400,
   "catalog.no_extension": 409,
   "catalog.dependency_unresolved": 409,
   "catalog.dependency_disabled": 409,
