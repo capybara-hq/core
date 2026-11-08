@@ -235,7 +235,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
       WHERE org_id = ${orgId} AND detail->>'operation' = 'skills.create'`.execute(db);
     expect(audit.rows[0]?.detail).toMatchObject({
       via: "agent",
-      conversationId: conv.id,
+      agentConversationId: conv.id,
       operation: "skills.create",
     });
 

@@ -191,8 +191,8 @@ describe("skills", () => {
     expect(row?.detail).toMatchObject({
       name: "triage",
       via: "agent",
-      conversationId: c.conversationId,
-      runId: c.runId,
+      agentConversationId: c.conversationId,
+      agentRunId: c.runId,
       operation: "skills.create",
     });
     const got = (await run("skills.get", { skillId: out.skill.id }, c)) as { body: string };

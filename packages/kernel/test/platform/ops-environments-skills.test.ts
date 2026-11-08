@@ -212,7 +212,7 @@ describe("environments", () => {
       name: "Analysis",
       via: "agent",
       operation: "environments.create",
-      conversationId: ctx.conversationId,
+      agentConversationId: ctx.conversationId,
     });
 
     const list = (await run("environments.list", {}, ctx)) as {
@@ -320,6 +320,50 @@ describe("environments: delete and reset files", () => {
       ok: false,
       code: "environment.not_found",
     });
+  });
+});
+
+describe("environments: the run's own environment", () => {
+  it("refuses to delete or wipe the environment of the run's root conversation, before the card", async () => {
+    const ctx0 = ctxOf(ownerId);
+    const listed = (await run("environments.list", {}, ctx0)) as {
+      items: { id: string; isDefault: boolean }[];
+    };
+    const made = (await run("environments.create", { name: "Mine" }, ctx0)) as {
+      environment: { id: string };
+    };
+    const other = { environment: { id: listed.items.find((e) => e.isDefault)?.id as string } };
+    const agentId = await agentOf(ownerId, "private");
+    const rootConv = await createConv(owner, orgId, agentId);
+    const childConv = await createConv(owner, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ environment_id: made.environment.id })
+      .where("id", "=", rootConv)
+      .execute();
+    await db
+      .updateTable("conversations")
+      .set({ parent_conversation_id: rootConv })
+      .where("id", "=", childConv)
+      .execute();
+    const input = { environmentId: made.environment.id };
+    // the root itself, and a sub-agent below it, both run on the root's environment
+    for (const conversationId of [rootConv, childConv]) {
+      const ctx = { ...ctxOf(ownerId), conversationId };
+      for (const id of ["environments.delete", "environments.reset-files"]) {
+        expect(await precheck(id, input, ctx), `${id} from ${conversationId}`).toMatchObject({
+          ok: false,
+          code: "environment.current",
+          message: expect.stringContaining("you are running in"),
+        });
+      }
+      // another environment of the person's is fine
+      expect(
+        await precheck("environments.delete", { environmentId: other.environment.id }, ctx),
+      ).toEqual({ ok: true });
+    }
+    // from an unrelated conversation the same environment can go
+    expect(await precheck("environments.delete", input, ctx0)).toEqual({ ok: true });
   });
 });
 

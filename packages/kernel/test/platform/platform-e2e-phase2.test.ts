@@ -210,18 +210,11 @@ describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
     expect((await reveal()).statusCode).toBe(404);
   });
 
-  it("(c) + (d) a member's delete asks every time, once only; the member reads it as waiting", async () => {
-    const victim1 = await createConv(env.mem, env.orgId, orgAgent);
-    const victim2 = await createConv(env.mem, env.orgId, orgAgent);
+  it("(c) a member reads, in another conversation, the call waiting for their approval", async () => {
+    const victim = await createConv(env.mem, env.orgId, orgAgent);
     const conv = await conversation(env.mem, orgAgent);
+    const asked = await conv.ask(call("conversations.delete", { conversationId: victim }));
 
-    const first = await conv.ask(call("conversations.delete", { conversationId: victim1 }));
-    expect(first.payload.toolKey).toBe("Platform:conversations.delete");
-    const view = await approvalOf(env.mem, first.payload.approvalId);
-    // personal, but destructive: never remembered
-    expect(view.scopes).toEqual(["once"]);
-
-    // (c) in another conversation, the member reads what waits for their approval
     const reader = await conversation(env.mem, orgAgent);
     const evs = await reader.turn(call("approvals.waiting"));
     expect(ofType(evs, "approval_requested")).toEqual([]);
@@ -230,7 +223,7 @@ describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
     };
     expect(waiting.items).toContainEqual(
       expect.objectContaining({
-        id: first.payload.approvalId,
+        id: asked.payload.approvalId,
         name: "Platform:conversations.delete",
         state: "pending",
       }),
@@ -238,6 +231,19 @@ describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
     // the summary the inbox shows, never the call's input
     expect(lastResult(evs).content).not.toMatch(/"(input|params)"/);
 
+    await decide(env.mem, asked.payload.approvalId, { decision: "deny" });
+    expect(lastResult(await conv.finish()).isError).toBe(true);
+  });
+
+  it("(d) a member's delete asks every time, once only", async () => {
+    const victim1 = await createConv(env.mem, env.orgId, orgAgent);
+    const victim2 = await createConv(env.mem, env.orgId, orgAgent);
+    const conv = await conversation(env.mem, orgAgent);
+
+    const first = await conv.ask(call("conversations.delete", { conversationId: victim1 }));
+    expect(first.payload.toolKey).toBe("Platform:conversations.delete");
+    // personal, but destructive: never remembered
+    expect((await approvalOf(env.mem, first.payload.approvalId)).scopes).toEqual(["once"]);
     expect(
       await decide(env.mem, first.payload.approvalId, { decision: "approve", scope: "once" }),
     ).toMatchObject({ statusCode: 200 });
@@ -248,7 +254,7 @@ describe("Platform tool end to end, phase 2", { timeout: 180_000 }, () => {
     });
     expect(gone.statusCode).toBe(404);
 
-    // (d) the next delete asks again, still once only
+    // the next delete asks again, still once only
     const second = await conv.ask(call("conversations.delete", { conversationId: victim2 }));
     expect(second.payload.approvalId).not.toBe(first.payload.approvalId);
     expect((await approvalOf(env.mem, second.payload.approvalId)).scopes).toEqual(["once"]);

@@ -69,7 +69,7 @@ export class BackgroundOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.stop-background-task",
         description:
-          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is.",
+          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is. The person confirms every stop; it is never remembered.",
         input: z.object({ conversationId: ConversationId, taskId: TaskId }).strict(),
         example: {
           conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10",
@@ -79,6 +79,8 @@ export class BackgroundOperations implements OnModuleInit {
         mirrors: ["POST /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/stop"],
         renames: { conversationId: "id" },
         confirm: "personal",
+        // a stop kills the command: asked every time and never remembered, like conversations.abort
+        rememberable: false,
         errors: [
           {
             code: "conversation.not_found",

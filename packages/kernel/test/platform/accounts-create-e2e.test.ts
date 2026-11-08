@@ -221,7 +221,7 @@ describe("accounts.create through the super admin's private agent", { timeout: 1
     const created = audits.find((a) => a.action === "account.created" && a.target === accountId);
     expect(created?.detail).toMatchObject({
       via: "agent",
-      conversationId: convId,
+      agentConversationId: convId,
       operation: "accounts.create",
       mustChangePassword: true,
     });
