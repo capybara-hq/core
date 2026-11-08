@@ -17,7 +17,12 @@ import {
   deviceResKey,
   deviceResTopic,
 } from "../../src/devices/keys.js";
-import { DeviceRelay, HOLDER_POLL_MS, LIST_TTL_MARGIN_MS } from "../../src/devices/relay.js";
+import {
+  DeviceRelay,
+  HOLDER_POLL_MS,
+  LEASE_CHECK_TIMEOUT_MS,
+  LIST_TTL_MARGIN_MS,
+} from "../../src/devices/relay.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -281,26 +286,55 @@ describe("DeviceRelay", () => {
   }, 15_000);
 
   it("a reconnect within the grace restores the full wait: a long command still delivers", async () => {
-    graceSeconds = 1;
+    graceSeconds = 3;
     const h = holder();
     await h.connect();
     const t0 = Date.now();
     const call = relay.call(h.environmentId, "exec", execArgs, {
-      deadlineMs: 10_000,
+      deadlineMs: 15_000,
       signal: signal(),
     });
     const req = await h.next();
-    // the lease is gone across the first lease check (at HOLDER_POLL_MS) and back within the grace
-    await sleep(HOLDER_POLL_MS - 500 - (Date.now() - t0));
+    const at = (ms: number) => sleep(Math.max(0, ms - (Date.now() - t0)));
+    // the lease is gone across the first lease check (~5 s), which caps the wait at ~8 s, and back
+    // well before the capped time; each step leaves 1.5 s or more of slack
+    await at(HOLDER_POLL_MS - 1500);
     await h.disconnect();
-    await sleep(HOLDER_POLL_MS + 500 - (Date.now() - t0));
+    await at(HOLDER_POLL_MS + 1500);
     await h.connect();
-    // answered well after the capped give-up time (loss + 1 s grace)
-    await sleep(HOLDER_POLL_MS + 2500 - (Date.now() - t0));
+    // answered well after the capped give-up time, well before the full one (~18 s)
+    await at(HOLDER_POLL_MS + 3000 + 2500);
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
     await h.disconnect();
-  }, 20_000);
+  }, 30_000);
+
+  it("a stalled lease check does not hold the give-up back", async () => {
+    graceSeconds = 1;
+    const env = randomUUID();
+    await holdLeaseOnly(env);
+    let stall = false;
+    const stalling = new DeviceRelay(
+      redis,
+      bus,
+      {
+        holderOf: (key: string) => (stall ? new Promise<string | null>(() => {}) : redis.get(key)),
+      } as unknown as LockService,
+      {
+        get: () => ({ environments: { device: { reconnectGraceSeconds: graceSeconds } } }),
+      } as unknown as KernelConfigService,
+      log,
+    );
+    const t0 = Date.now();
+    const call = rejection(
+      stalling.call(env, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
+    );
+    await sleep(100);
+    stall = true;
+    expect(isOffline(await call)).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(1500 + LEASE_CHECK_TIMEOUT_MS + 1000);
+    await redis.del(deviceLeaseKey(env), deviceReqKey(env));
+  }, 10_000);
 
   it("abort of a taken request queues a cancel and rejects with the abort reason", async () => {
     const h = holder();

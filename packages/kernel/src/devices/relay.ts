@@ -35,6 +35,9 @@ export const environmentOffline = (): ApiError =>
     "The connected machine of this environment is offline. Start capybara-device on that machine, or pick another environment.",
   );
 
+/** The longest one lease check of a waiting caller may take before it counts as "unknown". */
+export const LEASE_CHECK_TIMEOUT_MS = 2000;
+
 /** How often a waiting caller checks that a replica still holds the machine's connection. */
 export const HOLDER_POLL_MS = 5000;
 
@@ -202,11 +205,12 @@ export class DeviceRelay {
       const tick = async () => {
         if (stopped) return;
         try {
-          const live = await this.holderLive(environmentId);
-          if (live && capped) {
+          // a stalled Redis must not hold the give-up back: no answer in time means "unknown"
+          const live = await this.leaseCheck(environmentId);
+          if (live === true && capped) {
             capped = false;
             giveUpAt = fullGiveUpAt;
-          } else if (!live && !capped) {
+          } else if (live === false && !capped) {
             capped = true;
             giveUpAt = Math.min(giveUpAt, Date.now() + graceMs);
           }
@@ -255,6 +259,23 @@ export class DeviceRelay {
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
       await this.quietly("unsubscribe", environmentId, unsubscribe);
+    }
+  }
+
+  /** {@link holderLive}, or undefined when it takes longer than {@link LEASE_CHECK_TIMEOUT_MS}. */
+  private async leaseCheck(environmentId: string): Promise<boolean | undefined> {
+    let timer: NodeJS.Timeout | undefined;
+    const check = this.holderLive(environmentId);
+    check.catch(() => {}); // a late failure after the timeout is not unhandled
+    try {
+      return await Promise.race([
+        check,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), LEASE_CHECK_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
