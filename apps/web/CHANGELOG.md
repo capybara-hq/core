@@ -1,5 +1,87 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.8
+
+### Minor Changes
+
+- e53c2be: The agent's Tools section and the agent template editor start with every tool checked: unticking a
+  tool turns it off for the agent (or template), and an extension or connector row reads 全部开启 /
+  已关闭 N 个 / 已关闭全部. The sandbox builtins are listed too; the sub-agent panel names the tools
+  the child's first model call offered.
+
+### Patch Changes
+
+- 911f33c: The agent and agent template pages' skills section reads as titled regions (org skills, pinned,
+  and skills the agent wrote): empty states with a way to the skills page, the pinned count at the
+  heading, the write confirmation next to the agent's own skills, and shorter copy.
+- 7c38183: The admin extension Sheet offers 清空配置 / Clear config while a config is saved there, after a
+  confirm. A list's remove button at its minimum now looks disabled and its tooltip says why
+  (「至少保留 1 项」).
+- 6b4b451: Credentials never travel in a URL: every form posts, and when the client JS does not load the
+  proxy completes sign-in and setup server side (a GET with credential fields is redirected without
+  them). `CAPYBARA_WEB_DEV_ORIGINS` lets the dev server serve its scripts to LAN addresses.
+- fac6134: The agent page's Tools section lists the `CurrentTime` builtin as 获取当前时间 / Current time.
+- 68db6e8: Empty states now follow the space they fill: an empty settings page (my connections) shows the page empty state, an empty list or region inside a card, Sheet, Dialog, right panel or properties section (an agent's channels with 接入渠道, a tool group, an extension view such as the task list with no tasks) shows the small centered capybara, and an extension view with nothing in it is no longer a blank body.
+- b189ebb: The login page's http notice is one sentence for people; the operator details (the cookie and public
+  URL settings) moved to a warning on the deployment settings page, a kernel startup warning and the
+  deployment docs.
+- b79752e: `/settings/models` picks the provider with a select instead of a providers column; the model tables keep every column on screen (names wrap, descriptions clamp to one line, publishers show in full), and 全部开启 / 全部关闭 share one button style.
+- 7585e69: The models pages (`/admin/models`, `/settings/models`) have two tabs, 模型 and 用途默认 (`?tab=`): the providers sit beside the open one's models (`?provider=`), grouped by kind with each kind's own columns.
+- 6f07ade: The skills an agent wrote are an item list: a long description wraps inside the card and the delete
+  button stays in it.
+- 1302477: The composer's model picker heads each group with the provider's display name, not its plugin id.
+- 56cfd99: After an agent changes something through the Platform tool, the pages show the change without a
+  reload: the conversation stream marks the cached reads stale.
+- 8a016b4: Platform tool phase 2, workspace and admin operations: about 95 new operations.
+  
+  - **Conversations** (your own): list, read, events, usage, files, sub-agents, the agent tree, the
+    environment, rename, archive and unarchive. Delete and stopping another run of yours are never
+    remembered. The new static `rememberable: false` marks an operation that always asks.
+  - **Skills and components**:
+    - switch a skill, agent template or connector template on or off in the org;
+    - share and delete skills;
+    - for the super admin, component scope, deployment disable and "shown to other orgs" (all with
+      previews), and updating an agent template.
+  - **Admin console** (super admin, own private agent only):
+    - accounts: list, read, create, disable and enable;
+    - orgs and their limits, deployment settings, models, prices and the default model per purpose;
+    - plugins, extensions and marketplaces: deployment state, enable, disable, upgrade, scope, and
+      import prepare.
+  
+    Admin data is shown in full. Items owned by other orgs are counted and refused.
+  - **Creating a user** takes no password:
+    - the kernel generates a one-time initial password;
+    - it is shown once, on the web, only to the super admin who approved;
+    - it expires after 24 hours, and an hourly job removes unread ones;
+    - the account must change it at first login.
+  - **Fence**: `check:platform-ops` gains `platform-op-double`, which reports a route that is both
+    mirrored and excluded.
+- 89b1439: Platform tool phase 2, foundations:
+  
+  - **Shared schemas.** Operations build their input from their route's exported schema. A parity
+    test fails when they drift apart: a type, bound, pattern or required field, a nested or renamed
+    field, or an undeclared omission or extra. Deliberate differences are declared with `omits`,
+    `extras`, `renames` and `loosens`.
+  - **Checks before the card.** Writes run a read-only `precheck` before the confirmation card. When
+    the write is known to fail, the tool returns the reason and no card appears. The precheck runs
+    again on resume after approval.
+  - **Errors with a next step.** Errors name the next step for the actor's role (super admin, org
+    admin or member). `check:platform-ops` gains `platform-op-errors`.
+  - **Why an extension is unavailable.** An installed extension that is not loaded now says why. The
+    org extensions API gives its deployment `status` and a `reason`, such as
+    `needs_deployment_config`, `pending_approval` or `failed`. A plugin not on in the org whose
+    extension cannot run is `unavailable` with the same reason.
+    - The 扩展 and 插件 pages show it (不可用 · 缺少部署配置) with the next step for the viewer's
+      role. The super admin also gets the admin console link.
+    - `plugins.set-enabled` refuses such a plugin before the card.
+    - `plugins.list` and `extensions.list` return compact rows with `state`, `reason` and `next`.
+- 1a2bcf6: Every message send carries the browser's time zone and UI language; a new personal 偏好设置 page
+  sets a time zone (default: follow the browser) and the org settings page an org default time zone.
+  The agent page saves its description into the agent's version, so the agent knows it.
+- 7ad02b6: On a settings page, a section's tabs sit in the content column beside the settings navigation, not
+  across the whole page.
+- 4ba4249: Text fields are 16px on touch screens, so iOS Safari no longer zooms the page into a focused field.
+
 ## 0.1.0-rc.7
 
 ### Minor Changes

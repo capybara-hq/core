@@ -1,5 +1,127 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.7
+
+### Minor Changes
+
+- fac6134: A builtin `CurrentTime` tool: the current local date-time with its UTC offset, the weekday, the time
+  zone and the UTC instant. Without `timeZone` it uses the conversation's run context zone (else the
+  org default, else UTC); an unknown zone is an actionable tool error. Read-only, allowed by default,
+  and on for new agents with the other default builtins.
+- 489ef01: Platform tool phase 2: the rest of the UI.
+  
+  - **Inbox and pending reads.** These cover:
+    - your inbox and the platform inbox;
+    - approvals waiting for you (summaries, never the call's input);
+    - pending requests;
+    - extensions waiting for permission confirmation (permissions, never config);
+    - dismissing notices.
+  
+    Decisions stay on the web.
+  - **Channels and org settings.** Channel connections are read without credentials (the webhook URL
+    is included). An agent can change a channel's binding or remove it. Org settings can be read and
+    changed, including the Platform tool switch, which applies from the next call.
+  - **Evals.** Sets, cases, runs, labels and estimates are available as metadata and scores only.
+    Case content and outputs stay on the web, and cases are labelled "case <n>".
+  - **Connectors, agents and the rest.** Connectors can be refreshed and deleted. Agents can be
+    deleted (never remembered) and have their versions read. A pending connector can be bound to an
+    agent, and connector setup can be requested and its status read. Agent templates can be updated,
+    shared and deleted. Background tasks can be listed and stopped (each stop is asked, never
+    remembered). File previewers and model reads
+    are covered too.
+  - **Environments** (personal): list, read, create and rename. Delete and files reset are never
+    remembered, and their cards warn that files are destroyed and that bound conversations lose their
+    sandbox. The environment the conversation itself works in is refused.
+  - **Agent skills and skill changes**: list and remove an agent's skills (shared agents are always
+    asked) and list invocable skills. Skill changes can be read as a summary; deciding stays on the web.
+  - **Prechecks** deny known failures before the card.
+  - **Admin results.** Platform component writes name the orgs a component is on in and is named for.
+    The platform inbox keeps the admin console's total when more than 100 items wait, and says how
+    many of the newest it listed.
+  - **Audit detail.** A write made through the Platform tool records
+    `{ via: "agent", operation, agentConversationId, agentRunId }`, so the row's own `conversationId` /
+    `runId` (an eval case's source run, for example) are no longer overwritten.
+  - **Tool description.** The `Platform` tool's description names the current operation families.
+    Its spec hash changes once, so remembered `Platform` grants and approvals pending at deploy are
+    asked again (never wrongly allowed).
+- 8a016b4: Platform tool phase 2, workspace and admin operations: about 95 new operations.
+  
+  - **Conversations** (your own): list, read, events, usage, files, sub-agents, the agent tree, the
+    environment, rename, archive and unarchive. Delete and stopping another run of yours are never
+    remembered. The new static `rememberable: false` marks an operation that always asks.
+  - **Skills and components**:
+    - switch a skill, agent template or connector template on or off in the org;
+    - share and delete skills;
+    - for the super admin, component scope, deployment disable and "shown to other orgs" (all with
+      previews), and updating an agent template.
+  - **Admin console** (super admin, own private agent only):
+    - accounts: list, read, create, disable and enable;
+    - orgs and their limits, deployment settings, models, prices and the default model per purpose;
+    - plugins, extensions and marketplaces: deployment state, enable, disable, upgrade, scope, and
+      import prepare.
+  
+    Admin data is shown in full. Items owned by other orgs are counted and refused.
+  - **Creating a user** takes no password:
+    - the kernel generates a one-time initial password;
+    - it is shown once, on the web, only to the super admin who approved;
+    - it expires after 24 hours, and an hourly job removes unread ones;
+    - the account must change it at first login.
+  - **Fence**: `check:platform-ops` gains `platform-op-double`, which reports a route that is both
+    mirrored and excluded.
+- 89b1439: Platform tool phase 2, foundations:
+  
+  - **Shared schemas.** Operations build their input from their route's exported schema. A parity
+    test fails when they drift apart: a type, bound, pattern or required field, a nested or renamed
+    field, or an undeclared omission or extra. Deliberate differences are declared with `omits`,
+    `extras`, `renames` and `loosens`.
+  - **Checks before the card.** Writes run a read-only `precheck` before the confirmation card. When
+    the write is known to fail, the tool returns the reason and no card appears. The precheck runs
+    again on resume after approval.
+  - **Errors with a next step.** Errors name the next step for the actor's role (super admin, org
+    admin or member). `check:platform-ops` gains `platform-op-errors`.
+  - **Why an extension is unavailable.** An installed extension that is not loaded now says why. The
+    org extensions API gives its deployment `status` and a `reason`, such as
+    `needs_deployment_config`, `pending_approval` or `failed`. A plugin not on in the org whose
+    extension cannot run is `unavailable` with the same reason.
+    - The 扩展 and 插件 pages show it (不可用 · 缺少部署配置) with the next step for the viewer's
+      role. The super admin also gets the admin console link.
+    - `plugins.set-enabled` refuses such a plugin before the card.
+    - `plugins.list` and `extensions.list` return compact rows with `state`, `reason` and `next`.
+- ca3c570: Agents know who they are and who they talk to (run context): run start writes a `run_context`
+  event (the agent version's name and description, the org, today's date, the time zone and language
+  of the person whose message started the run; a sub-agent's own name and who dispatched it), first
+  in full, then only what changed; the model sees it as a system message at its position and in full
+  again after a compaction summary. Every message records its sender (display name and org role; an
+  anonymous IM guest by IM name) and a sender line names it when the sender changes. Messages take
+  the browser's `timeZone` and `locale`; `GET` / `PUT /api/v1/me/preferences` sets a person's time
+  zone, the org settings an org default (`timeZone`). The agent definition gains `description`
+  (saved as a version; the profile PATCH no longer takes it). model-fake reads a message's script
+  without the sender line.
+- 40c8ee0: Tools are on by default: an agent has every builtin, every tool of the extensions enabled in the
+  org and every tool of the org's connectors, and its definition stores only what it turns off
+  (`disabledTools`, replacing the enabled `tools` list; migration 0089 rewrites stored agents and
+  org-made templates to "nothing turned off"). A newly added builtin reaches existing agents; a
+  connector the org sets up is on for every agent; tools that cannot run now are left out quietly.
+  The Platform tool's agent operations and `platform.me` use the new shape. `createAgent` in
+  `@capybara-hq/testing` takes `disabledTools`; model-fake calls a tool on its own only when a
+  request offers exactly one.
+
+### Patch Changes
+
+- 58dc1ae: Bootstrap preinstalls the native model platform providers `deepseek`, `bailian` (Alibaba Cloud Model
+  Studio) and `ark` (Volcengine Ark) at 0.1.0-rc.0, off in every org until switched on; the official
+  marketplace pin moves to capybara-hq/plugins d0cd2d17.
+- e0f22ae: Platform tool: `agents.update-profile` sets an agent's preset avatar (or none) and its quick
+  actions, confirmed like `agents.update` (rememberable only on your own private agent).
+  `agents.update` takes the agent's description (saved with the definition), and `platform.me`
+  returns the agent's profile. The last `later` exclusion is gone: the category is removed and
+  `check:platform-ops` fails any `later` entry.
+- 71858cf: An extension unloaded because a required extension point lost its provider re-reads its deployment
+  config when the provider returns: it comes back on the config saved meanwhile, and stays pending
+  configuration when its config was cleared, instead of returning on the old values and secrets.
+- Updated dependencies [f31ec88]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.5
+
 ## 0.1.0-rc.6
 
 ### Minor Changes

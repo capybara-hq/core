@@ -1,5 +1,11 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.5
+
+### Patch Changes
+
+- f31ec88: Agent docs topics are titled "Authoring: ..." and the docs check catches both "in the code, not in the docs" and "in the docs, gone from the code".
+
 ## 0.1.0-rc.4
 
 ### Minor Changes

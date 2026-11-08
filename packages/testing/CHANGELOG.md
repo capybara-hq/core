@@ -1,5 +1,34 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.8
+
+### Minor Changes
+
+- 40c8ee0: Tools are on by default: an agent has every builtin, every tool of the extensions enabled in the
+  org and every tool of the org's connectors, and its definition stores only what it turns off
+  (`disabledTools`, replacing the enabled `tools` list; migration 0089 rewrites stored agents and
+  org-made templates to "nothing turned off"). A newly added builtin reaches existing agents; a
+  connector the org sets up is on for every agent; tools that cannot run now are left out quietly.
+  The Platform tool's agent operations and `platform.me` use the new shape. `createAgent` in
+  `@capybara-hq/testing` takes `disabledTools`; model-fake calls a tool on its own only when a
+  request offers exactly one.
+
+### Patch Changes
+
+- Updated dependencies [f31ec88]
+- Updated dependencies [fac6134]
+- Updated dependencies [58dc1ae]
+- Updated dependencies [e0f22ae]
+- Updated dependencies [489ef01]
+- Updated dependencies [8a016b4]
+- Updated dependencies [89b1439]
+- Updated dependencies [71858cf]
+- Updated dependencies [ca3c570]
+- Updated dependencies [40c8ee0]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.5
+  - @capybara-hq/kernel@0.1.0-rc.7
+  - @capybara-hq/plugin-tools@0.1.0-rc.6
+
 ## 0.1.0-rc.7
 
 ### Minor Changes
