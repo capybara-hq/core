@@ -2,7 +2,9 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { conflictsError } from "../../src/catalog/catalog-scope.service.js";
+import { PlatformPluginUpdater } from "../../src/catalog/plugin-upgrade.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
+import { createOrg } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   importPlugin,
@@ -307,6 +309,53 @@ describe("themes: scope, switches, previews and the platform default", () => {
       });
       expect(r.statusCode, r.body).toBe(200);
       expect(r.json().themes).toEqual([{ id: theme.id, orgDefaults: [], pickedBy: 0 }]);
+    });
+
+    it("an owner's update preview names the orgs whose default a removed theme is, and counts only its own people", async () => {
+      const { itemId, theme } = await allTheme("neon");
+      // version 2 drops the theme (imported before org B owns the name)
+      await importPlugin(
+        env,
+        await themePlugin("neon", { version: "2.0.0", noTheme: true, skill: "notes" }),
+      );
+      // org B owns the shared plugin; org A has the theme as its default and its member picked it
+      const orgB = await createOrg(env.root, "Theme owner");
+      await env.db
+        .updateTable("catalog_items")
+        .set({ owner_org_id: orgB, shareable: true })
+        .where("id", "=", itemId)
+        .execute();
+      await env.db
+        .updateTable("orgs")
+        .set({
+          settings:
+            sql`jsonb_set(settings, '{theme}', ${JSON.stringify({ id: theme.id, personal: "allowed" })}::jsonb)` as unknown as string,
+        })
+        .where("id", "=", env.orgId)
+        .execute();
+      await env.db
+        .updateTable("accounts")
+        .set({ theme: theme.id })
+        .where("id", "=", env.memId)
+        .execute();
+      const org = await env.db
+        .selectFrom("orgs")
+        .select("name")
+        .where("id", "=", env.orgId)
+        .executeTakeFirstOrThrow();
+      const updater = env.k.app.get(PlatformPluginUpdater);
+      const owner = await updater.previewForOwner(orgB, itemId, "2.0.0");
+      // the member of A is no member of B: B is told of nobody's pick
+      expect(owner.themes).toEqual([
+        { id: theme.id, orgDefaults: [{ orgId: env.orgId, orgName: org.name }], pickedBy: 0 },
+      ]);
+      expect(owner.orgNames?.[env.orgId]).toBe(org.name);
+      // the super admin's preview counts everyone, and both hash alike (display-only narrowing)
+      const admin = await updater.preview(itemId, "2.0.0");
+      expect(admin.themes).toEqual([
+        { id: theme.id, orgDefaults: [{ orgId: env.orgId, orgName: org.name }], pickedBy: 1 },
+      ]);
+      expect(owner.diffHash).toBe(admin.diffHash);
     });
 
     it("an org's plugin switch-off preview lists the themes it takes away there", async () => {

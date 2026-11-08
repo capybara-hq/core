@@ -186,7 +186,6 @@ export function PlatformUpdatePreviewBody({
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
   const nameOf = (id: string) => preview.orgNames?.[id] ?? orgName(id);
-  const themeGroup = useThemeImpactGroup(preview.themes, themeName);
   const one = (id: string) => nameOf(id) ?? (hideUnknown ? t("otherOrg") : id);
   const names = (ids: string[]) => {
     if (!hideUnknown) return ids.map(one).join(sep);
@@ -199,6 +198,10 @@ export function PlatformUpdatePreviewBody({
     if (known.length === 0) return t("orgCount", { count: unknown });
     return [...known, t("otherOrgs", { count: unknown })].join(sep);
   };
+  // the orgs whose default a removed theme is: named by the same rules as the other orgs here
+  const themeGroup = useThemeImpactGroup(preview.themes, themeName, (orgs) =>
+    names(orgs.map((o) => o.orgId)),
+  );
   const columns: Column<PlatformUpdateComponent>[] = [
     { key: "name", header: t("columns.name"), cell: (c) => c.name },
     { key: "kind", header: t("columns.kind"), tone: "muted", cell: (c) => t(`kind.${c.kind}`) },

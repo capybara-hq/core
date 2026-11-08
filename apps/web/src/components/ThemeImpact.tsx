@@ -13,11 +13,14 @@ import { themeName } from "../lib/themes";
 /**
  * The 主题 group of an impact preview (themes spec §6 "Losing access"): each theme a change takes
  * away, with the orgs whose default it is (they follow the platform then) and how many people
- * picked it (they get their org's default). null when the preview names no theme.
+ * picked it (they get their org's default). null when the preview names no theme. `orgsText` writes
+ * the org list (an owner's preview names the orgs through its `orgNames` / `hideUnknown` rules);
+ * the default joins the names the kernel sent.
  */
 export function useThemeImpactGroup(
   themes: readonly ThemePreview[] | undefined,
   nameOf: (id: string) => string,
+  orgsText?: (orgs: readonly { orgId: string; orgName: string }[]) => string,
 ): ImpactPreviewGroup | null {
   const t = useTranslations("themeImpact");
   const locale = useLocale();
@@ -32,7 +35,12 @@ export function useThemeImpactGroup(
         ...(x.orgDefaults.length > 0
           ? [
               {
-                text: t("orgDefaults", { orgs: x.orgDefaults.map((o) => o.orgName).join(sep) }),
+                text: t("orgDefaults", {
+                  orgs:
+                    orgsText !== undefined
+                      ? orgsText(x.orgDefaults)
+                      : x.orgDefaults.map((o) => o.orgName).join(sep),
+                }),
                 tone: "warn" as const,
               },
             ]

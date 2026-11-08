@@ -89,27 +89,37 @@ export async function themesPreview(
     const orgs = lost.get(id);
     if (!orgs || orgs.size === 0) continue;
     const u = await themeUsage(db, id);
-    const picked = await db
-      .selectFrom("accounts as a")
-      .select((eb) => eb.fn.count<string>("a.id").distinct().as("n"))
-      .where("a.theme", "=", id)
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom("memberships as m")
-            .select("m.account_id")
-            .whereRef("m.account_id", "=", "a.id")
-            .where("m.org_id", "in", [...orgs]),
-        ),
-      )
-      .executeTakeFirstOrThrow();
     out.push({
       id,
       orgDefaults: u.orgDefaults.filter((o) => orgs.has(o.orgId)),
-      pickedBy: Number(picked.n),
+      pickedBy: await pickedByIn(db, id, orgs),
     });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/** How many members of `orgs` (each counted once) picked theme `id`. */
+export async function pickedByIn(
+  db: KernelSchemaDb,
+  id: string,
+  orgs: ReadonlySet<string>,
+): Promise<number> {
+  if (orgs.size === 0) return 0;
+  const picked = await db
+    .selectFrom("accounts as a")
+    .select((eb) => eb.fn.count<string>("a.id").distinct().as("n"))
+    .where("a.theme", "=", id)
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom("memberships as m")
+          .select("m.account_id")
+          .whereRef("m.account_id", "=", "a.id")
+          .where("m.org_id", "in", [...orgs]),
+      ),
+    )
+    .executeTakeFirstOrThrow();
+  return Number(picked.n);
 }
 
 /** 409 `theme.platform_default`: theme `theme` is the platform default (spec §7). */

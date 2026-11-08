@@ -5,11 +5,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { PlatformUpdatePreviewBody } from "../src/components/PlatformUpdateDialog";
 import { orgThemesQuery, platformThemeQuery } from "../src/lib/query/themes";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
-import { ME } from "./support/render";
+import { ME, renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
@@ -537,5 +538,42 @@ describe("组织设置 › 外观: switching a theme off previews who uses it", 
     expect(within(dialog).getByText(zh.themeImpact.pickedBy.replace("{n}", "2"))).toBeTruthy();
     // the dialog names the theme as the list does
     expect(within(dialog).getAllByText(/纸/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("an owner's update preview: the theme group follows the owner naming rules (P3-14, P3-19)", () => {
+  it("names only the orgs the kernel named, counts the others, never shows a name it did not disclose", () => {
+    renderPage(
+      <PlatformUpdatePreviewBody
+        hideUnknown
+        orgName={() => undefined}
+        themeName={() => "Paper"}
+        preview={{
+          itemId: "i1",
+          name: "neon",
+          from: "1.0.0",
+          to: "2.0.0",
+          components: [],
+          extension: null,
+          connectorOrgs: [],
+          orgNames: { o3: "Named" },
+          themes: [
+            {
+              id: "t-paper",
+              orgDefaults: [
+                { orgId: "o2", orgName: "Undisclosed" },
+                { orgId: "o3", orgName: "Named" },
+              ],
+              pickedBy: 1,
+            },
+          ],
+          diffHash: "h",
+        }}
+      />,
+    );
+    const orgs = "Named, 1 other organization";
+    expect(screen.getByText(en.themeImpact.orgDefaults.replace("{orgs}", orgs))).toBeTruthy();
+    expect(screen.queryByText(/Undisclosed/)).toBeNull();
+    expect(screen.getByText("Paper")).toBeTruthy();
   });
 });

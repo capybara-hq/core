@@ -31,6 +31,7 @@ import { packagePath } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
 import {
   assertNotPlatformDefault,
+  pickedByIn,
   type ThemePreview,
   themesPreview,
 } from "../themes/theme-usage.js";
@@ -397,7 +398,20 @@ export class PlatformPluginUpdater {
         ...(staged !== undefined && { target: staged }),
       }),
     );
-    return { ...preview, orgNames: await this.orgNamesOf(preview) };
+    // The owner sees the names of the orgs whose default a removed theme is (named like the other
+    // orgs the preview mentions, P3-14 / P3-19), but people only of its own org: other orgs'
+    // member counts were never disclosed to it. Display only: `diffHash` covers the full preview.
+    const themes =
+      preview.themes === undefined
+        ? undefined
+        : await Promise.all(
+            preview.themes.map(async (t) => ({
+              ...t,
+              pickedBy: await pickedByIn(this.db, t.id, new Set([orgId])),
+            })),
+          );
+    const owned = { ...preview, ...(themes !== undefined && { themes }) };
+    return { ...owned, orgNames: await this.orgNamesOf(owned) };
   }
 
   /**
@@ -445,6 +459,7 @@ export class PlatformPluginUpdater {
       ...(p.extension?.orgs ?? []),
       ...p.connectorOrgs.map((c) => c.orgId),
       ...p.components.flatMap((c) => [...c.pinnedOrgs, ...(c.kept ?? []).map((k) => k.orgId)]),
+      ...(p.themes ?? []).flatMap((t) => t.orgDefaults.map((o) => o.orgId)),
     ]);
     if (ids.size === 0) return {};
     const rows = await this.db
