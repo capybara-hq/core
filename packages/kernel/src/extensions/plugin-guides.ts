@@ -20,7 +20,6 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { can, type OrgAction, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
-import { StorageService } from "../storage/storage.service.js";
 import { orgVisibleItems } from "./plugin-icons.js";
 
 /** The setup guide a channel connection was set up with (`channel_connections.guide_ack`). */
@@ -121,7 +120,6 @@ const guideOf = (manifest: unknown, place: SetupGuidePlace): PluginSetupGuide | 
 export class PluginGuides {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(StorageService) private readonly storage: StorageService,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
@@ -145,7 +143,6 @@ export class PluginGuides {
         "i.latest_version",
         "v.manifest",
         "v.files",
-        "v.object_prefix",
       ])
       .where(by === "name" ? "i.name" : "i.id", "in", [...new Set(keys)])
       .where("i.deleted_at", "is", null)
@@ -319,7 +316,7 @@ export class PluginGuides {
       if (!meta) throw new ApiError("internal", `Setup guide file ${path} is not stored`);
       return meta;
     });
-    const stored = await readCatalogDisplayFiles(this.db, this.storage, row.object_prefix, metas);
+    const stored = await readCatalogDisplayFiles(this.db, metas);
     const files = selected.map((f) => {
       const path = packagePath(f.path);
       const data = stored.find((x) => x.path === path)?.data;

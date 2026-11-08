@@ -1100,7 +1100,9 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
   **Amended 2026-11-08 (bootstrap catalog files):** display files (the plugin icon, connector
   template icons, setup guide files; each at most 64 KiB by the format) live in PG instead, in the
   content-addressed `catalog_files` (sha256 -> bytes, migration 0098), written with the staging row
-  and read by the sha256 the version row records (re-checked on read). Reason: bootstrap imports
+  and read by the sha256 the version row records (re-checked on read), from PG only: no fallback to
+  object storage for versions stored earlier (pre-0.1.0, and no official plugin shipped an icon
+  before this change; maintainer decision 2026-11-08). Reason: bootstrap imports
   run before any object-store extension (object-store-s3 is a bootstrap plugin; its own icon could
   never wait for itself), and the releases that added icons made every bootstrap import fail with
   `storage.unavailable`. Deferring the bytes until storage appears (a queue job) or ordering the

@@ -244,7 +244,6 @@ export async function catalogHasIcon(db: KernelSchemaDb, itemId: string): Promis
  */
 export async function readCatalogIcon(
   db: KernelSchemaDb,
-  storage: StorageService,
   itemId: string,
   includeDisabled: boolean,
 ): Promise<CatalogIcon> {
@@ -252,7 +251,7 @@ export async function readCatalogIcon(
   const path = iconPath(v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
-  const [file] = await readCatalogDisplayFiles(db, storage, v.object_prefix, [f]);
+  const [file] = await readCatalogDisplayFiles(db, [f]);
   if (!file) throw iconNotFound();
   const problem = iconProblem(path, file.data);
   if (problem !== undefined) throw new ApiError("internal", `Stored icon is invalid: ${problem}`);
@@ -495,27 +494,19 @@ export async function readCatalogFiles(
 
 /**
  * Reads a version's display files (icons, setup guide files; `catalog-files.ts`) from PG, sha256
- * checked, in the order given. No object storage is needed for them; a file not in PG (a version
- * stored before migration 0098) is read from the version's object prefix instead.
+ * checked, in the order given; no object storage is involved. A listed file missing from PG is lost
+ * or tampered data (`internal`).
  */
 export async function readCatalogDisplayFiles(
   db: Parameters<typeof readDisplayFiles>[0],
-  storage: StorageService,
-  objectPrefix: string | null,
   files: { path: string; size: number; sha256: string }[],
 ): Promise<SkillPackageFile[]> {
-  const inPg = await readDisplayFiles(db, files);
-  const rest = files.filter((f) => !inPg.has(f.path));
-  const fromStore =
-    rest.length === 0 || objectPrefix === null
-      ? []
-      : await readCatalogFiles(storage, objectPrefix, rest);
-  const out: SkillPackageFile[] = [];
-  for (const f of files) {
-    const got = inPg.get(f.path) ?? fromStore.find((x) => x.path === f.path);
-    if (got) out.push(got);
-  }
-  return out;
+  const stored = await readDisplayFiles(db, files);
+  return files.map((f) => {
+    const got = stored.get(f.path);
+    if (!got) throw new ApiError("internal", `Catalog file ${f.path} is not stored`);
+    return got;
+  });
 }
 
 /** 校验技能文件并取名字与描述（导入时已校验过；这里防存储被改）。 */
