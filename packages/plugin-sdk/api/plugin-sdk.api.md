@@ -1814,6 +1814,13 @@ export interface ParsedSkillMd {
 }
 
 // @public
+export interface ParsedTheme extends ThemeFile {
+    id: string;
+    merged: Partial<Record<ThemeScheme, MergedScheme>>;
+    singleScheme: ThemeScheme | null;
+}
+
+// @public
 export type ParsedToolKey = {
     kind: "builtin";
     name: string;
@@ -1860,6 +1867,11 @@ export interface ParseSkillMdOptions {
 }
 
 // @public
+export function parseThemeFile(id: string, json: unknown): ParsedTheme | {
+    errors: string[];
+};
+
+// @public
 export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public
@@ -1872,6 +1884,7 @@ export const PLUGIN_MANIFEST_LIMITS: {
     readonly skills: 50;
     readonly connectorTemplates: 20;
     readonly agents: 64;
+    readonly themes: 10;
     readonly descriptionChars: 1024;
     readonly publisherChars: 100;
     readonly displayNameChars: 100;
@@ -1937,6 +1950,7 @@ export interface PluginManifest {
     publisher: string;
     schemaVersion: 1;
     skills?: PluginSkillRef[];
+    themes?: PluginThemeRef[];
     version: string;
 }
 
@@ -1947,6 +1961,11 @@ export const PluginManifestSchema: z.ZodType<PluginManifest>;
 export interface PluginSkillRef {
     path: string;
     pinned?: boolean;
+}
+
+// @public
+export interface PluginThemeRef {
+    path: string;
 }
 
 // @public
@@ -2241,6 +2260,19 @@ export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "o
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];
 
 // @public
+export const THEME_LIMITS: {
+    readonly fileBytes: number;
+    readonly perPlugin: 10;
+    readonly assetsBytes: number;
+    readonly fonts: 8;
+    readonly fontBytes: number;
+    readonly svgBytes: number;
+    readonly pngBytes: number;
+    readonly pngMinHeight: 64;
+    readonly wordmark: 24;
+};
+
+// @public
 export const THEME_OVERRIDABLE: {
     readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "diff-add", "diff-del"];
     readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
@@ -2512,7 +2544,48 @@ export const THEME_TOKENS: {
 };
 
 // @public
+export interface ThemeFile {
+    description?: {
+        en: string;
+        zh?: string;
+    };
+    fonts?: ThemeFont[];
+    logo?: ThemeLogo;
+    name: LocalizedName;
+    schemes: Partial<Record<ThemeScheme, ThemeSchemeOverride>>;
+}
+
+// @public
+export const ThemeFileSchema: z.ZodType<ThemeFile>;
+
+// @public
+export interface ThemeFont {
+    family: string;
+    file: string;
+    role: "prose" | "mono";
+    style?: "normal" | "italic";
+    weight: number;
+}
+
+// @public
+export function themeIdOf(path: string): string;
+
+// @public
+export interface ThemeLogo {
+    favicon?: string;
+    mark?: string;
+    wordmark?: string;
+}
+
+// @public
 export type ThemeScheme = "dark" | "light";
+
+// @public
+export interface ThemeSchemeOverride {
+    color?: Record<string, string>;
+    radius?: Partial<Record<"sm" | "md" | "bubble", number>>;
+    shadow?: Record<string, string>;
+}
 
 // @public
 export const THINKING_VALUES: readonly string[];
