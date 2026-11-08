@@ -1,15 +1,19 @@
 # UI slots: one versioned registry for where extensions put UI
 
-- Date: 2026-11-08, written against `main` at `180e4bd4`.
-- Status: draft for review.
+- Date: 2026-11-08, written against `main` at `180e4bd4`; adjusted on 2026-11-09 against
+  `feat/themes` at `eff38b42` (latest kernel migration 0103).
+- Status: reviewed by the maintainer (2026-11-08); adjusted to the code on 2026-11-09.
+- Plan: `docs/superpowers/plans/2026-11-09-ui-slots.md`.
 - Related: themes (`2026-11-08-themes-design.md`, layer L0 of the same direction), the extension UI
   contract (`.agents/skills/writing-extension-ui/SKILL.md`, `packages/plugin-sdk/src/ui.ts`), the UI
   refresh spec (conversation places), the design spec (§5.4 conversation template, §6.16.17
   properties panel, §6.16.18 right panel), roles everywhere, the `Platform` tool
   (`check:platform-ops`), co-build.
 - Markers: **(decided, 2026-11-08)** is the maintainer's answer in the 2026-11-08 discussion;
-  **(designer's call)** is decided here and may be overturned in review. Items without a marker
-  restate current code or AGENTS.md rules.
+  **(decided by Claude under the 2026-11-09 grant)** is a ruling taken on 2026-11-09 under the
+  maintainer's autonomy grant while fitting the spec to the code (R1-R12 of the plan's research
+  pass); **(designer's call)** is decided here and may be overturned in review. Items without a
+  marker restate current code or AGENTS.md rules.
 
 ## 1. Why
 
@@ -22,13 +26,13 @@ Today an extension says where its UI goes with `place`, a closed enum: `panel`, 
 `inline` on the conversation page, `page` (an org page under 扩展), `file-preview`, plus the old
 `conversation`. That has four limits:
 
-1. **Closed and conversation-centred**: no position on the agent page, the settings pages, the
-   admin console or the sidebar; each new position is a change to the enum, the kernel and the web.
+1. **Closed and conversation-centred**: no position on the agent page, the settings pages or the
+   admin console; each new position is a change to the enum, the kernel and the web.
 2. **No contract per position**: what a `section` receives (`conversationId`, `role`, dense
    rendering, its limits) lives in prose in a skill, not in a catalog a tool or an agent can read.
 3. **No versions**: changing what a position passes or how it renders silently changes every
    plugin using it.
-4. **No placement among built-ins**: an extension section always sits between Context and Files.
+4. **No placement among built-ins**: an extension section always sits right after Context.
 
 DSH's lesson points the same way: its slot tree is generated from the code into a catalog
 (`slot-catalog.ts`, queryable at runtime with `cordis_inspect`), and its restyles broke where
@@ -38,15 +42,15 @@ there was no contract.
 
 Goals:
 
-1. **A slot** is a named, versioned position in the web, owned by exactly one page template, with
+1. **A slot** is a named, versioned position in the web, rendered by exactly one web file, with
    a typed contract: where it is, what it passes to the extension, which kinds it accepts, who may
    see it, how it renders, its limits.
-2. **One catalog** of slots in the SDK, read by the kernel (validation), the web (rendering), the
-   docs, `capybara-plugin check` and agents (through the `Platform` tool).
+2. **One catalog** of slots in the SDK, read by the kernel (validation, access), the web (through a
+   generated copy), the docs, `capybara-plugin check` and agents (through the `Platform` tool).
 3. Extensions contribute to a slot by id; today's five places become slots with the same behavior.
-4. New slots outside the conversation page, starting with the ones listed in §6.
-5. A contribution can be placed among the built-in parts of its slot, and org admins can hide
-   and reorder what extensions put in a slot of their org.
+4. New slots outside the conversation page, the ones listed in §6.
+5. A contribution can be placed among the built-in parts of its slot, and org admins (and the
+   super admin, for the platform default) can hide and reorder what extensions put in a slot.
 
 Non-goals (later layers):
 
@@ -66,39 +70,71 @@ Anti-goals:
 ### 3.1 Shape
 
 The SDK exports `UI_SLOTS`, a literal catalog (designer's call: data in the SDK, so the kernel,
-the web through its own copy of the types, `plugin-tools` and the docs read one source):
+`plugin-tools` and the docs read one source; the web, which imports no SDK, reads a copy generated
+by `pnpm gen:ui-slots` and drift-checked by `check:ui-slots`):
 
 ```ts
 interface UiSlotSpec {
-  id: string;                    // "conversation.properties.section"
+  id: UiSlotId;                  // "conversation.properties.section"
   version: number;               // 1; bumped on an incompatible contract change
-  owner: string;                 // the page template that renders it ("ConversationPage")
+  owner: string;                 // the apps/web/src file that renders it (§7)
   scope: "conversation" | "agent" | "org" | "platform" | "file";
-  accepts: ("view" | "embed")[]; // L2 adds "component"
+  accepts: readonly ("view" | "embed")[]; // L2 adds "component"
   cardinality: "list";           // L1 has only list slots; "single" is reserved (§3.3)
   minRole: "guest" | "member" | "admin" | "superAdmin";
-  args: string[];                // context ids passed to render: "conversationId", "agentId", …
+  args: readonly string[];       // context ids passed to render: "conversationId", "agentId", …
   density: "dense" | "regular";
   icon: "required" | "optional" | "none";
-  anchors?: string[];            // built-in parts a contribution may be placed after (§5)
+  anchors?: readonly string[];   // built-in parts a contribution may be placed after (§5); the first is the default
   limits?: { maxShown?: number };
   description: { en: string; zh: string };
 }
 ```
 
+`owner` is the apps/web file, not a design template **(decided by Claude under the 2026-11-09
+grant, R3)**: `packages/design` has no data layer, and every renderer of extension UI (the view
+renderer, embed tabs, extension blocks) lives in apps/web; the design package keeps the
+presentational parts (`PropertySection`, `EmbedFrame`, …).
+
+`minRole` maps onto the kernel's roles **(decided by Claude under the 2026-11-09 grant, R9)**:
+`guest` / `member` / `admin` are org roles (`admin` = org admin or owner, `roleAtLeast`), and
+`superAdmin` is the separate `@SuperAdmin` check of the admin console. The org UI routes keep
+`@OrgAction("ui.use")` (guest) as their base; the slot's `minRole` tightens it.
+
 ### 3.2 Versions
 
 - A slot's `version` changes only for an incompatible change of its contract (args removed or
   renamed, a kind dropped, a role tightened, the rendering changed in a way a view must adapt to).
-  Adding an optional arg is compatible.
-- A contribution names a slot as `"<id>"` (= version 1) or `"<id>@<n>"`. The host supports a set of
-  versions per slot; while a slot moves from `@1` to `@2`, the web renders both forms for one
-  minor release after 0.1.0 (before 0.1.0 there are no compatibility layers, AGENTS.md).
+  Adding an optional arg or an anchor is compatible.
+- A contribution names a slot as `"<id>"` (= version 1) or `"<id>@<n>"` (`parseSlotRef`). In L1
+  every slot is at version 1 and the host accepts only the catalog's `version`; a supported-version
+  list per slot arrives with the first `@2`. While a slot moves from `@1` to `@2`, the web renders
+  both forms for one minor release after 0.1.0 (before 0.1.0 there are no compatibility layers,
+  AGENTS.md).
 - A contribution to an unknown slot or an unsupported version **does not fail the extension**
   **(decided, 2026-11-08)**: the contribution is dropped, the kernel logs one warning per extension
-  version, and the admin extension detail lists it under 未生效的界面 with the reason. The rest of
-  the extension loads. `capybara-plugin check` reports it as an error (`ui-slot-unknown`) so it
-  is caught before release.
+  version and replica, and the admin extension detail lists it under 未生效的界面 with the reason.
+  The rest of the extension loads. `capybara-plugin check` reports it as an error
+  (`ui-slot-unknown`) so it is caught before release.
+- **Split validation (decided by Claude under the 2026-11-09 grant, R1)**: today `defineExtension`
+  throws on any ui problem and the kernel turns the throw into a load failure
+  (`ExtensionManifestError`). The validation splits in two:
+  - **Structural** problems still throw (and fail the load): not an object, a bad `id` / `title` /
+    `kind` / `icon` / `path`, both `slot` and `place` or neither, an unknown `place` value, a
+    duplicate id, the permission cross-check, an `aliasOf` that names no other contribution of the
+    same kind, and, for a slot the catalog knows, a kind it does not accept or a missing required
+    icon.
+  - **Slot resolution** (`resolveUiSlots`) never throws: an unknown slot id or an unsupported
+    version makes the contribution *dropped* with reason `unknown-slot` / `unsupported-version`
+    (an alias whose target is dropped is dropped with the target's reason). An `after` that is not
+    one of the slot's anchors keeps the contribution at the slot's default position, with a load
+    warning (`capybara-plugin check`: error `ui-slot-anchor`), because anchors can be added
+    compatibly.
+  - `defineExtension` returns the manifest unchanged (its `ui` exactly as written): the static
+    manifest recorded at import (`staticManifestOf`, compared at load) keeps matching. The kernel
+    resolves slots when it loads the instance, keeps the resolved contributions and the dropped list
+    on the instance, and exposes the dropped list on `GET /api/v1/admin/extensions/:name`
+    (`uiDropped: { id, ref, reason }[]`).
 
 ### 3.3 Reserved for later layers
 
@@ -109,7 +145,8 @@ interface UiSlotSpec {
 
 ## 4. Contributions
 
-The manifest's `place` becomes `slot`, with no alias for `place` **(decided, 2026-11-08)**:
+The manifest's `place` becomes `slot`, with no alias for `place` as the end state **(decided,
+2026-11-08)**:
 
 ```ts
 ui: [
@@ -122,81 +159,163 @@ ui: [
 - `id`, `title`, `kind`, `icon`, `path` (embeds), `aliasOf` and the permission rules
   (`permissions.ui.views` / `embeds`, `ui.view:<id>` never blocks loading, `ui.embed:<id>` is
   sensitive, the `perm-ui` check) are unchanged.
-- `after`: one of the slot's `anchors` (§5); omitted = the slot's default position for extensions.
-- Validation (`validateUiContributions`, kernel load, `capybara-plugin check`): the slot exists,
-  accepts the kind, the icon rule holds, `after` is one of its anchors.
-- The old `place: "conversation"` alias and `legacyPlace` in API output are removed with `place`
-  (the official `todo` and `example-board` plugins move to `slot` in a `capybara-hq/plugins` PR
-  merged together with core's; their old alias ids `tasks` / `board-conv` keep working through
-  `aliasOf`).
+- `after`: one of the slot's `anchors` (§5); omitted = the slot's first anchor.
+- Kernel output and the web use `slot` only: the contributions list carries `slot` (the id, no
+  version) and, for a slot with anchors, the resolved `after`; `place` and `legacyPlace` leave the
+  API.
+- **Moving off `place` takes three steps (decided by Claude under the 2026-11-09 grant, R2)**:
+  the official `todo` plugin is a bootstrap plugin pinned at `0.1.0-rc.2`
+  (`packages/kernel/bootstrap.json`), its published manifest says `place`, and plugins use the
+  host's SDK (peer dependency); refusing `place` at once would make it fail to load wherever it is
+  switched on.
+  - **Step A (this spec's implementation)**: the SDK and the host accept `slot` (canonical) and still
+    accept `place` as a deprecated input, mapped to its slot: `panel` and `conversation` →
+    `conversation.panel`, `section` → `conversation.properties.section`, `inline` →
+    `conversation.tool-result.card`, `page` → `org.page`, `file-preview` → `file.preview`.
+    `capybara-plugin check` warns `ui-place-deprecated`.
+  - **Step B** (a `capybara-hq/plugins` PR after an SDK / testing release): `todo` and
+    `example-board` move to `slot` and are released; their old alias ids `tasks` / `board-conv` keep
+    working through `aliasOf`.
+  - **Step C** (a core PR): the bootstrap pin moves to the new `todo`, then `place` is removed from
+    the SDK, the host and the check, making "no alias" true.
 
-## 5. Placement and per-org arrangement
+## 5. Placement and arrangement
 
-- **Anchors**: a slot lists the built-in parts a contribution may follow. For
-  `conversation.properties.section`: `context`, `files`, `background` (the order of the
-  properties panel, §6.16.17; with the properties panel regions planned on 2026-11-03,
-  环境 / 上下文 / 输出内容 / 后台任务, the anchors follow those regions). Contributions after the same
-  anchor keep their contribution order, then the extension's name.
-- **Org arrangement (designer's call)**: an org admin can, per slot, hide an extension's
-  contribution and reorder contributions within an anchor (组织设置 › 扩展 › 界面位置), stored as an
-  org setting `ui.arrangement: { [slotId]: { hidden: string[]; order: string[] } }` keyed by
-  `<extension>/<contribution>`. A platform arrangement (super admin) sets the default the org
-  starts from, following the platform / org layering precedent. The person cannot rearrange
-  **(decided, 2026-11-08)**: one layout per org keeps support simple; the conversation page keeps its own
-  per-person state (which panel is open, sections collapsed) as today.
-- Hiding is not disabling: the extension, its tools and its other contributions stay on.
+- **Anchors**: a slot lists the built-in parts a contribution may follow; the first is the default.
+  For `conversation.properties.section` the anchors are `context`, `files`, `background`, the
+  panel's real order (`PropertiesSections.tsx`: Context → extension sections → Files, shown only
+  with files → Background, shown only with background tasks or sub-agents); the default stays
+  after `context`, today's position **(decided by Claude under the 2026-11-09 grant, R4)**.
+  Contributions after an anchor whose built-in part is not shown render where it would be.
+- **Base order** (designer's call): within a slot and anchor, contributions are ordered by
+  extension name, then manifest order. It does not depend on load order, so every replica lists
+  the same order.
+- **Arrangement**: per slot, a list of hidden contributions and an order, keyed
+  `<extension>/<contribution>`: `{ [slotId]: { hidden: string[]; order: string[] } }`. Listed keys
+  come first in `order`'s order within their anchor, the rest follow in base order; unknown keys are
+  kept and ignored (the extension may be off now). Reordering across anchors is not possible.
+  Every slot except `file.preview` (ordered by the file previewer setting) can be arranged.
+- **Who arranges (decided, 2026-11-08)**: org admins for their org, the super admin for the
+  platform default; a person cannot rearrange (one layout per org keeps support simple).
+- **Storage (decided by Claude under the 2026-11-09 grant, R10)**: the org's arrangement is
+  `orgs.settings.uiArrangement` (in `OrgSettingsSchema`, parsed leniently like `theme`: an invalid
+  stored value reads as absent), the platform's is the `deployment_settings` key `uiArrangement`
+  (in `DEPLOYMENT_SETTINGS`). Writes go through the existing `PATCH /api/v1/orgs/:orgId/settings`
+  and `PUT /api/v1/admin/settings` (Platform operations `org-settings.update` /
+  `admin.update-settings` gain the field), merged per slot: an entry replaces that slot's
+  arrangement, `null` removes it. No migration. The org's entry for a slot replaces the platform's
+  entry for that slot; a slot the org has not arranged follows the platform. The org arrangement
+  takes no `platform.page` entry (400 `validation_failed`); an unknown slot id is 400.
+- **Where it is set (decided by Claude under the 2026-11-09 grant, R7)**: a section 界面位置 on
+  the workspace 扩展 page (`/extensions`, next to the file previewer section), editable by org
+  admins and read only for members; the platform default is a section 界面位置 in 平台设置
+  (`/admin/settings`).
+- **The sidebar follows `org.page` (decided by Claude under the 2026-11-09 grant, R5)**: org pages
+  are already listed in the sidebar's 更多 group, so hiding or reordering `org.page` contributions
+  hides or reorders them there; no separate sidebar slot.
+- **Hidden means not listed, not "not served"** (designer's call): the kernel applies the
+  arrangement to the contributions lists, so the web never renders a hidden contribution; the
+  views, actions, embed-token and stream routes keep checking only enablement, the slot's role and
+  its scope. A direct URL to a hidden `org.page` still renders for whoever the slot admits. Hiding
+  is layout, not governance: to stop an extension serving UI, switch it off in the org.
+- Hiding is not disabling: the extension, its tools and its other contributions stay on. The
+  conversation page keeps its per-person state as today (which right panel is open, in the URL
+  hash; the panel width). There is no per-person collapsed state of sections **(decided by Claude
+  under the 2026-11-09 grant, R4)**.
 
 ## 6. The first catalog
 
 Today's places as slots, with their behavior unchanged:
 
-| Slot | Was | Scope / args | Accepts | Notes |
-|---|---|---|---|---|
-| `conversation.panel` | `panel` (`conversation`) | conversation / `conversationId`, `item` | view, embed | title-bar icon required; one right panel at a time |
-| `conversation.properties.section` | `section` | conversation / `conversationId` | view, embed | dense; anchors `context`, `files`, `background` |
-| `conversation.tool-result.card` | `inline` | conversation / `conversationId`, `card` | view, embed | only through `ToolResult.card`, as today |
-| `org.page` | `page` | org / — | view, embed | member and above; `/p/<plugin>/<id>`; under 扩展 |
-| `file.preview` | `file-preview` | file / read grant | embed | only through `file-preview@1`, as today |
+| Slot | Was | Scope / args | Accepts | Min role | Owner (apps/web/src) | Notes |
+|---|---|---|---|---|---|---|
+| `conversation.panel` | `panel` (`conversation`) | conversation / `conversationId`, `item` | view, embed | guest | `components/conversation/RightArea.tsx` | title-bar icon required; one right panel at a time |
+| `conversation.properties.section` | `section` | conversation / `conversationId` | view, embed | guest | `components/conversation/PropertiesSections.tsx` | dense; anchors `context`, `files`, `background` |
+| `conversation.tool-result.card` | `inline` | conversation / `conversationId`, `card` | view, embed | guest | `components/conversation/RightArea.tsx` | only through `ToolResult.card`, as today |
+| `org.page` | `page` | org / — | view, embed | member | `app/(app)/p/[plugin]/[id]/view.tsx` | `/p/<plugin>/<id>`; listed in the sidebar's 更多 group |
+| `file.preview` | `file-preview` | file / `conversationId`, `fileId` | embed | guest | `components/conversation/FilePanel.tsx` | only through `file-preview@1`, as today |
 
-New slots in this spec **(decided, 2026-11-08)**; each one an existing template region, so no new layout:
+New slots **(decided, 2026-11-08; the sidebar slot replaced per R5)**; each one an existing page
+region, so no new layout:
 
-| Slot | Where | Scope / args | Accepts | Min role |
-|---|---|---|---|---|
-| `agent.detail.section` | a section on the agent's page, after its built-in sections | agent / `agentId` | view, embed | whoever can read the agent |
-| `org.settings.section` | a section on 组织设置 (an extension's org-level screen beyond its config form) | org / — | view, embed | admin |
-| `platform.page` | a page in the admin console under 扩展 (`/admin/p/<plugin>/<id>`) | platform / — | view, embed | super admin |
-| `workspace.sidebar.item` | an entry in the sidebar's 更多 group that opens one of the extension's `org.page` contributions | org / — | link to an `org.page` | member |
+| Slot | Where | Scope / args | Accepts | Min role | Owner (apps/web/src) |
+|---|---|---|---|---|---|
+| `agent.detail.section` | an extra nav item of the agent page after its built-in sections | agent / `agentId` | view, embed | guest (and the agent must be readable) | `components/agent/AgentPage.tsx` |
+| `org.settings.section` | a section appended to 组织设置 › 通用 | org / — | view, embed | admin | `app/(app)/settings/organization/view.tsx` |
+| `platform.page` | a page in the admin console, listed in its 扩展 group (`/admin/p/<plugin>/<id>`) | platform / — | view, embed | superAdmin | `app/(app)/admin/p/[plugin]/[id]/view.tsx` |
 
-`workspace.sidebar.item` carries no view of its own: it names one of the same extension's
-`org.page` contributions (`opens: "<id>"`), so the sidebar stays links only.
+- **`agent.detail.section` (decided by Claude under the 2026-11-09 grant, R6)**: the agent page is a
+  SettingsPage that shows one section at a time (`?s=`); each contribution becomes a nav item after
+  the built-in ones (`?s=ext.<plugin>.<id>`) and renders as that section's body. It is shown to
+  whoever can read the agent (`isAgentVisibleTo`, in the agent's org), read-only viewers included;
+  the extension tightens on `role` if it must. Render args gain `agentId`.
+- **`org.settings.section` (R7)**: sections appended to the 组织设置 › 通用 page (a SettingsPage of
+  FormSections), after the built-in sections; only org admins see them.
+- **`platform.page` (decided by Claude under the 2026-11-09 grant, R8)**: rendered for super admins
+  with `role: "superAdmin"` and no `orgId`; it needs the org-less routes of §7.
+- **`workspace.sidebar.item` is dropped (decided by Claude under the 2026-11-09 grant, R5)**: org
+  pages are already auto-listed in the sidebar's 更多 group (`components/shell/nav.tsx`), so the
+  slot would only duplicate `org.page`; the arrangement of `org.page` is the sidebar's (§5).
 
 Candidates left for later specs: the composer's action row, the conversation title-bar menu, the
 inbox, the overview of an org, connector and skill detail pages.
 
 ## 7. Where the catalog is enforced
 
-- **SDK**: `UI_SLOTS`, `UiSlotSpec`, `parseSlotRef("<id>@<n>")`, validation used by
-  `defineExtension`, the kernel and `plugin-tools`.
-- **Web**: a design component `ExtensionSlot({ slot, args })` is the only way to render
-  contributions; it reads the contributions for its slot, applies the org arrangement, renders
-  each view or embed with today's isolation (10 s timeout on the conversation page, a failing
-  block shows the load-failure line in that block only), and draws nothing when the slot is
-  empty. Templates place it; pages do not render extension UI otherwise (`check:web-ui` gains
-  `web-ui-extension-slot`).
-- **`check:ui-slots`** (new, full on PRs: cheap, reads the SDK catalog and scans `apps/web/src` and
-  `packages/design/src` for `ExtensionSlot` literals): every catalog slot is rendered by exactly one
-  template, every `ExtensionSlot` names a catalog slot as a literal, and the template matches the
-  slot's `owner`. Rules `ui-slot-unrendered`, `ui-slot-unknown`, `ui-slot-owner`; proven red first.
-- **Kernel**: the contributions route takes `?slot=` and the slot's args, filters by enablement
-  (`enabled.ts`), the slot's `minRole` and its scope's access rule (conversation: whoever can read
-  the conversation; agent: whoever can read the agent; org: member and above; platform: super
-  admin), then the arrangement. The views, actions, embed tokens and refresh stream routes check
-  the same slot rule, so a view is never served outside the slot that admits it. Render args gain
-  `slot` and the slot's context ids (`agentId`).
-- **Catalog for tools and agents**: `GET /api/v1/ui/slots` returns the catalog (any signed-in
-  person); it is mirrored as a `Platform` operation, so an agent helping someone build a plugin
-  (co-build) can see where UI can go. The docs page of the slot catalog is generated from the SDK
-  (`pnpm gen:ui-slots`, drift-checked by `check:ui-slots`).
+- **SDK**: `UI_SLOTS`, `UiSlotSpec`, `UiSlotId`, `parseSlotRef("<id>@<n>")`, the deprecated
+  `PLACE_SLOTS` map (step A only), structural validation in `validateUiContributions` (used by
+  `defineExtension`) and `resolveUiSlots` (used by the kernel and `plugin-tools`). Render and action
+  args gain `slot` and `scope` (the slot's), `agentId` (agent scope), and `orgId` becomes optional
+  (absent only for the platform scope, where `role` is `"superAdmin"`). `EmbedClaims` gain `scope:
+  "org" | "platform"` and `agentId?`, and `orgId` is absent exactly when `scope` is `"platform"`.
+  `ctx.ui.invalidate` takes no `orgId` only for a `platform.page` contribution.
+- **Web (decided by Claude under the 2026-11-09 grant, R3)**: `ExtensionSlot({ slot, args, select?,
+  anchor? })` in `apps/web/src/components/extension-ui/` is the only way to render contributions:
+  it reads its slot's (already arranged) contributions, renders each view or embed with today's
+  isolation (10 s timeout on the conversation page, a failing block shows the load-failure line in
+  that block only) and draws nothing when the slot is empty. `select` renders one contribution (a
+  panel, a page, a card, an agent section, a file preview); `anchor` renders a list slot's
+  contributions placed after that anchor. Nav entries that only list contributions (title-bar
+  icons, the sidebar, the agent nav, the admin nav) read them through `useSlotContributions`.
+  `check:web-ui` gains `web-ui-extension-slot`: the extension renderers (`ExtensionPanel`,
+  `ExtensionSection`, `ExtensionCard`, `ExtensionViewTab`, `EmbedTab`) are used only inside
+  `components/extension-ui/`.
+- **`check:ui-slots`** (new, full on PRs: cheap, reads the SDK catalog and scans `apps/web/src`):
+  every catalog slot is rendered by exactly one `<ExtensionSlot slot="…">` with a literal slot, in
+  the file the catalog names as its `owner`; every `ExtensionSlot` names a catalog slot as a
+  literal; the generated web copy and docs page are current. Rules `ui-slot-unrendered`,
+  `ui-slot-undeclared` (renamed from `ui-slot-unknown`, which is `capybara-plugin check`'s),
+  `ui-slot-owner`, `ui-slot-literal`, `ui-slots-stale`; proven red first.
+- **Kernel, org scope**: `GET /api/v1/orgs/:orgId/ui/contributions?slot=` lists the contributions
+  of every org-reachable slot (all but `platform.page`) or of one slot, filtered by enablement
+  (`enabled.ts`), the slot's `minRole`, then the arrangement (§5). The views, actions, embed-token
+  and refresh-stream routes check the slot rule of the contribution they name: the slot's
+  `minRole`, then its scope's access rule (conversation: whoever can read the conversation; agent:
+  whoever can read the agent, and the agent is in this org; org: the role alone; file: the
+  previewer's read grant, as today), so a view is never served outside the slot that admits it. A
+  `platform.page` contribution through an org route is 404 `ui.not_found`, super admins included.
+  The org refresh stream stays member and above (an `agent.detail.section` viewed by a guest
+  refreshes on navigation only).
+- **Kernel, platform scope (decided by Claude under the 2026-11-09 grant, R8)**: org-less routes
+  under `/api/v1/admin/ui/` (`@SuperAdmin`, human only): `GET contributions` (`platform.page`
+  only, the platform arrangement applied), `GET views/:plugin/:id`, `POST actions/:plugin/:id`,
+  `POST embeds/:plugin/:id/token`, `GET stream` (topic `platform-ui`). A platform contribution
+  needs its extension running (no org enablement applies) and gets the platform's deployment
+  config. `ctx.ui.verifyEmbedToken` accepts a platform-scope token only when the contribution is a
+  `platform.page` and the account is still an active super admin, and an org-scope token only when
+  the contribution's slot is not `platform.page`, the org checks of today pass and the current role
+  still meets the slot's `minRole`.
+- **Arrangement routes**: `GET /api/v1/orgs/:orgId/ui/arrangement` (`ui.use`, member and above)
+  and `GET /api/v1/admin/ui/arrangement` (`@SuperAdmin`) list, per arrangeable slot, every
+  contribution with its hidden flag and effective order and whether the slot follows the platform,
+  for the 界面位置 sections.
+- **Catalog for tools and agents (decided by Claude under the 2026-11-09 grant, R11)**: `GET
+  /api/v1/ui/slots` returns the catalog (any signed-in person); it is mirrored as the `Platform`
+  operation `ui.slots`, so an agent helping someone build a plugin (co-build) can see where UI can
+  go. The UI route DTOs move to `ui/ui.schemas.ts` so `ROUTE_SCHEMAS` can reference them; the new
+  UI routes get Platform exclusions (transport or internal, human only) like the existing ones. The
+  docs page `docs/guide/ui-slots.md` and the web copy `apps/web/src/lib/ui-slots.generated.ts` are
+  generated from the SDK (`pnpm gen:ui-slots`, drift-checked by `check:ui-slots`).
 
 ## 8. What does not change
 
@@ -205,32 +324,58 @@ inbox, the overview of an org, connector and skill detail pages.
 - Inline cards stay display-only, recorded as `tool_result.card`, never model-visible; replays are
   unaffected. No `DriftReason`.
 - Extensions stay in-process and full trust; approving `ui.embed:*` stays the sensitive step.
+- No migration: both arrangements live in existing JSON settings.
 
 ## 9. Tests
 
-- SDK: catalog shape (ids unique, anchors known, versions positive), slot refs, validation of
-  contributions (unknown slot, unsupported version, kind not accepted, missing required icon,
-  unknown anchor).
-- Kernel: an unknown-slot contribution is dropped and the extension still loads; the per-scope
-  access rules on every route (a guest gets 404 `ui.not_found` for `org.page`, a member for
-  `platform.page`); `agentId` passed to `agent.detail.section`; arrangement applied and limited to
-  the org.
+- SDK: catalog shape (ids unique, anchors unique, versions positive, owner paths under apps/web/src,
+  minRole and scope consistent: `platform` ⇔ `superAdmin`), slot refs, structural validation
+  (both `slot` and `place`, kind not accepted, missing required icon), resolution (unknown slot,
+  unsupported version, alias of a dropped target, unknown anchor at the default position), every
+  `place` mapping.
+- plugin-tools: `ui-slot-unknown`, `ui-slot-anchor` errors and the `ui-place-deprecated` warning on
+  red fixtures.
+- Kernel: an unknown-slot contribution is dropped, the extension still loads and the admin detail
+  lists it; a fixture shaped like `todo@0.1.0-rc.2` (all `place`, an alias) loads with all its UI;
+  the per-scope access rules on every route (a guest gets 404 `ui.not_found` for `org.page` and
+  `org.settings.section`, a member for `org.settings.section` and through any org route for
+  `platform.page`; a reader of another org's agent gets 404); `agentId` passed to
+  `agent.detail.section`; platform routes refuse non-super-admins; embed tokens of one scope are
+  null in the other; arrangement applied, limited to the org, platform default followed; a hidden
+  `org.page` still renders by direct URL.
 - `check:ui-slots` and `web-ui-extension-slot`: red fixtures.
-- Testing package: `fake-tools-ui` moves to `slot` and gains contributions for the new slots.
+- Testing package: `fake-tools-ui` and `fake-embed` move to `slot` and gain contributions for the
+  new slots.
 - Web: an e2e test per new slot (contribution shown in the right place, hidden after an org admin
-  hides it); the visual and fidelity suites cover `ExtensionSlot`'s empty / failed states where
-  they are new.
+  or the super admin hides it); the visual and fidelity suites cover `ExtensionSlot`'s empty /
+  failed states where they are new.
 
 ## 10. Phases
 
-1. SDK catalog and `slot` in the manifest; kernel validation and routes; today's places moved;
-   `ExtensionSlot` in the conversation template; `check:ui-slots`; the plugins repository PR.
-2. The new slots of §6 and the slot catalog route and `Platform` mirror.
-3. Org and platform arrangement (hide, reorder) and its page.
+All in one implementation plan (`2026-11-09-ui-slots.md`), in waves:
+
+1. SDK catalog, `slot` in the manifest with `place` still accepted (step A), split validation;
+   `capybara-plugin check` rules; the kernel resolving slots at load with the dropped list.
+2. Kernel routes by slot (org scope, agent scope, platform scope), embed tokens by scope, the
+   arrangement settings and routes, the catalog route and `Platform` operation.
+3. The web: `ExtensionSlot`, today's places moved, the three new slots, the arrangement sections,
+   the admin 未生效的界面; then `check:ui-slots` and `web-ui-extension-slot`; docs and skills.
+4. Follow-ups outside this plan: step B (the plugins repository PR and releases) and step C (the
+   bootstrap pin moves, `place` is removed).
 
 ## 11. Review decisions
 
-Answered on 2026-11-08, no open questions left: the four new slots of §6 are the first set, the
-composer action row goes to a later spec; `slot` replaces `place` with no alias, the plugins repository moving in
-step (§4); people cannot rearrange slots, only org admins and the platform (§5); a contribution to
-an unknown slot is dropped with a warning, the extension still loads (§3.2).
+Answered on 2026-11-08: the new slots of §6 are the first set, the composer action row goes to a
+later spec; `slot` replaces `place` with no alias as the end state (§4); people cannot rearrange
+slots, only org admins and the platform (§5); a contribution to an unknown slot is dropped with a
+warning, the extension still loads (§3.2).
+
+Adjusted on 2026-11-09 under the maintainer's autonomy grant (R1-R12): the split validation and the
+dropped list (§3.2); `place` leaves in three steps because of the pinned `todo` (§4); `owner` is an
+apps/web file and `ExtensionSlot` lives in apps/web (§3.1, §7); the real properties panel order and
+no per-person collapsed state (§5); `workspace.sidebar.item` dropped, the `org.page` arrangement
+is the sidebar's (§5, §6); `agent.detail.section` as extra nav items (§6); `org.settings.section`
+on 组织设置 › 通用 and the arrangement on the workspace 扩展 page (§5, §6); org-less platform routes
+and embed scopes (§7); `minRole` onto kernel roles (§3.1); arrangement storage in existing settings
+(§5); the catalog route, Platform operation and `ui.schemas.ts` (§7); new web tests are named
+`ui-slot-*.test.tsx` because `apps/web/test/extension-slots.test.tsx` is taken (R12).
