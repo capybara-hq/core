@@ -130,10 +130,25 @@ describe("200 with ok:false (G2)", () => {
     expect((e as OAuthGrantError).error).toBe("invalid_grant");
   });
 
+  it("ok:false wins over an access_token in the same 200 body", async () => {
+    const as = await server();
+    as.failTokenRequests(1, 200, { ok: false, error: "invalid_code", access_token: "xoxp-1" });
+    const e = await rejection(
+      tokenRequest(clientOf(as), { grant_type: "refresh_token", refresh_token: "x" }, HTTP),
+    );
+    expect(e).toBeInstanceOf(OAuthGrantError);
+    expect((e as OAuthGrantError).error).toBe("invalid_code");
+  });
+
   it("a transient or unparsable ok:false code is unavailable, not a refusal", async () => {
     const as = await server();
     for (const body of [
       { ok: false, error: "ratelimited" },
+      // RFC 6749's transient codes, from servers that answer them with 200
+      { error: "temporarily_unavailable" },
+      { error: "server_error" },
+      { ok: false, error: "temporarily_unavailable" },
+      { ok: false, error: "server_error" },
       { ok: false, error: "Something <odd>" },
       { ok: false },
     ]) {
@@ -226,5 +241,28 @@ describe("refresh against a Slack-like token endpoint (G2)", () => {
     expect(e).toBeInstanceOf(OAuthUnavailable);
     expect((e as Error).message).toContain("invalid_arguments");
     expect(current()).not.toBeNull();
+  });
+
+  it("a refresh answered ok:false with an access_token stores nothing", async () => {
+    const as = await server({ dialect: "slack" });
+    const { oauth, current } = await connected(as);
+    const before = current();
+    as.failTokenRequests(1, 200, {
+      ok: false,
+      error: "invalid_arguments",
+      access_token: "xoxp-new",
+      refresh_token: "xoxe-new",
+    });
+    const e = await rejection(oauth.accessToken("org", "conn", auth, owner));
+    expect(e).toBeInstanceOf(OAuthUnavailable);
+    expect(current()).toEqual(before);
+    as.failTokenRequests(1, 200, {
+      ok: false,
+      error: "invalid_refresh_token",
+      access_token: "xoxp-new",
+    });
+    const gone = await rejection(oauth.accessToken("org", "conn", auth, owner));
+    expect(gone).toBeInstanceOf(OAuthReconnectRequired);
+    expect(current()).toBeNull();
   });
 });

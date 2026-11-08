@@ -30,7 +30,7 @@ const Scopes = z
 /**
  * More `token_type` values the token endpoint may return for a bearer token (case-insensitive;
  * `Bearer` and Slack's `user` are always accepted). The token is still sent as
- * `Authorization: Bearer`.
+ * `Authorization: Bearer`. Never `DPoP`: such a token is bound to a key the kernel does not hold.
  */
 const TokenTypes = z
   .array(
@@ -38,7 +38,8 @@ const TokenTypes = z
       .string()
       .min(1)
       .max(32)
-      .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/, "Invalid token type"),
+      .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/, "Invalid token type")
+      .refine((t) => t.toLowerCase() !== "dpop", "DPoP tokens are not bearer tokens"),
   )
   .max(5);
 

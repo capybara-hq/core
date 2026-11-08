@@ -63,10 +63,13 @@ export const INVALIDATING_ERRORS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Error codes of a 200 `ok: false` body that mean "try again later" (Slack's Web API codes), not a
- * refusal: they count as unavailable like a 429 / 5xx.
+ * Error codes of a 200 error body that mean "try again later", not a refusal: they count as
+ * unavailable like a 429 / 5xx. RFC 6749's `temporarily_unavailable` / `server_error` and Slack's
+ * Web API codes.
  */
 const TRANSIENT_ERRORS: ReadonlySet<string> = new Set([
+  "temporarily_unavailable",
+  "server_error",
   "ratelimited",
   "service_unavailable",
   "internal_error",
@@ -120,8 +123,9 @@ export interface TokenRequestOptions {
  * (Basic form-encodes them first, §2.3.1).
  * - 400 / 401 with a parsable RFC 6749 `error` code -> OAuthGrantError.
  * - 200 with `ok: false` (Slack reports every error this way), or with an `error` code and no
- *   `access_token` -> OAuthGrantError with that code; a transient Slack code (`ratelimited`, ...)
- *   or no parsable code -> OAuthUnavailable.
+ *   `access_token` -> OAuthGrantError with that code (`ok: false` wins over an `access_token`); a
+ *   transient code (`temporarily_unavailable`, `server_error`, Slack's `ratelimited`, ...) or no
+ *   parsable code -> OAuthUnavailable.
  * - Everything else (network error, timeout, 429, 408, 403 and other 4xx, a 4xx without a code,
  *   5xx, 3xx, a malformed body) -> OAuthUnavailable: a gateway's rate limit or a WAF block is not a
  *   dead credential.

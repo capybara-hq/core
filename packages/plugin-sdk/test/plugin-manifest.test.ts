@@ -347,7 +347,16 @@ describe("parseConnectorTemplateFile", () => {
       });
     const ok = parseConnectorTemplateFile(oauth(["user", "N_A.v2"]));
     expect("errors" in ok ? ok.errors : []).toEqual([]);
-    for (const bad of [["bad type"], [""], Array(6).fill("x"), "user"]) {
+    // DPoP binds the token to a key the kernel does not hold: never a bearer token
+    for (const bad of [
+      ["bad type"],
+      [""],
+      Array(6).fill("x"),
+      "user",
+      ["DPoP"],
+      ["dpop"],
+      ["DPOP"],
+    ]) {
       const r = parseConnectorTemplateFile(oauth(bad));
       expect("errors" in r ? r.errors : [], JSON.stringify(bad)).not.toEqual([]);
     }
