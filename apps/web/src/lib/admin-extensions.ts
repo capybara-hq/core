@@ -67,6 +67,8 @@ export interface AdminExtension {
   name: string;
   /** The extension's display name; null when it has none (show the id). */
   displayName?: LocalizedName | null;
+  /** The URL of its plugin's icon (an admin catalog icon route); null without one: the initial. */
+  icon?: string | null;
   version: string;
   source: ExtensionLoadSource;
   /** An install record's package source; null for a config-declared extension. */

@@ -175,7 +175,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
           return (
             <ObjectRow
               key={i.id}
-              mark={{ text: name }}
+              mark={{ text: name, image: i.icon ?? null }}
               name={name}
               href={`/plugins/${encodeURIComponent(i.id)}`}
               chips={[

@@ -1,12 +1,14 @@
 "use client";
 
-import { ListPage, ObjectRow } from "@capybara-hq/design";
+import { ListPage, ObjectCard } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
+import { channelPluginLabel } from "../../../lib/channels";
+import { labelLocale } from "../../../lib/extension-label";
 import { agentsQuery } from "../../../lib/query/agents";
 import { channelsQuery } from "../../../lib/query/channels";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -15,10 +17,12 @@ import { useWorkspace } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
 
 /**
- * `/channels`: the org's channel connections as object rows (admins); a name opens the detail.
- * From the query cache (the layout prefetched it on a first load): the connections, and the
- * agents' names by id (a section, display only: a connection shows its agent id when the name is
- * unknown).
+ * `/channels`: the org's channel connections as cards (admins; maintainer decision 2026-11-08,
+ * design spec §6.34): each card draws its plugin's icon (the initial without one), the connection
+ * name as the link to its detail, the platform's display name (while it fails, the last error, and
+ * the platform leads the meta), the bound agent and the unbound-person mode, and the running state. From the query cache
+ * (the layout prefetched it on a first load): the connections, and the agents' names by id (a
+ * section, display only: a connection shows its agent id when the name is unknown).
  */
 export default function ChannelsView() {
   const ws = useWorkspace({ min: "admin", setup: "step" });
@@ -30,6 +34,7 @@ export default function ChannelsView() {
 function Channels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
+  const lang = labelLocale(useLocale());
   const [tab, setTab] = useState<"all" | "error">("all");
   const list = usePageQuery(channelsQuery(orgId));
   const agentsQ = agentsQuery(orgId);
@@ -70,21 +75,29 @@ function Channels({ orgId }: { orgId: string }) {
           action: { label: t("new"), variant: "primary" as const, href: "/channels/new" },
         }
       : undefined;
-  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  if (list.kind === "loading") return <ListPage header={header} variant="cards" loading />;
   return (
-    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+    <ListPage header={header} variant="cards" listLabel={t("title")} {...(empty ? { empty } : {})}>
       {rows.map((c) => (
-        <ObjectRow
+        <ObjectCard
           key={c.id}
-          mark={{
-            text: c.name,
-            ...(c.status === "error" ? { tone: "warn" as const } : {}),
-          }}
-          name={c.name}
+          avatar={{ image: c.pluginIcon ?? null }}
+          title={c.name}
           href={`/channels/${c.id}`}
-          chips={[{ label: c.plugin }]}
-          {...(c.status === "error" && c.lastError !== null ? { description: c.lastError } : {})}
-          meta={`${agentNames[c.agentId] ?? c.agentId} · ${t(`policy.${c.unboundPolicy}`)}`}
+          // While it fails the last error is the description and the platform leads the meta
+          {...(c.status === "error" && c.lastError !== null
+            ? {
+                description: c.lastError,
+                meta: [
+                  channelPluginLabel(c, lang),
+                  agentNames[c.agentId] ?? c.agentId,
+                  t(`policy.${c.unboundPolicy}`),
+                ],
+              }
+            : {
+                description: channelPluginLabel(c, lang),
+                meta: [agentNames[c.agentId] ?? c.agentId, t(`policy.${c.unboundPolicy}`)],
+              })}
           state={
             c.status === "active"
               ? { label: t("status.active"), tone: "ok" }

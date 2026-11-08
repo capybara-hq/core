@@ -36,6 +36,11 @@ export interface CatalogItem {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /**
+   * The URL of its icon on this viewer's catalog icon route (the lists only); null or absent when
+   * the latest version has none: draw the initial.
+   */
+  icon?: string | null;
   /** The English description. */
   description: string;
   /** The latest version's Chinese description; null without one (see {@link descriptionOf}). */

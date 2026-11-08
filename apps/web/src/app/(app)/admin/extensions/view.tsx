@@ -5,6 +5,7 @@ import {
   CellTitle,
   type Column,
   DataTable,
+  initialOf,
   ListPage,
   Sheet,
   Stack,
@@ -149,6 +150,9 @@ function useColumns(tab: ExtensionTab = "all"): Column<AdminExtension>[] {
       cell: (p) => (
         <CellTitle
           title={extensionLabel(p, lang)}
+          // the plugin's icon, the initial without one (spec §6.17)
+          initial={initialOf(extensionLabel(p, lang))}
+          image={p.icon ?? null}
           description={[p.displayName ? p.name : null, `v${p.version}`]
             .filter((x): x is string => x !== null)
             .join(" · ")}
@@ -384,6 +388,7 @@ function AdminExtensionSheet({
         if (!o) onClose();
       }}
       title={extensionLabel(plugin, lang)}
+      mark={{ text: extensionLabel(plugin, lang), image: plugin.icon ?? null }}
       meta={[plugin.displayName ? plugin.name : null, `v${plugin.version}`]
         .filter((x): x is string => x !== null)
         .join(" · ")}

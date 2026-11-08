@@ -1008,6 +1008,34 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
   });
 }
 
+describe("plugin icons on the admin extension pages (maintainer decision 2026-11-08)", () => {
+  const ICON = "/api/v1/admin/catalog/items/i1/icon?v=1.0.0";
+
+  it("a row draws its plugin's icon on the name tile; one without an icon its initial", async () => {
+    listRoutes([plugin({ icon: ICON }), plugin({ name: "quiet", icon: null })]);
+    await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale: "en" });
+    const demo = tableRow("demo").querySelector(".cb-cell-initial") as HTMLElement;
+    const img = demo.querySelector('img[data-part="mark-image"]');
+    expect(img?.getAttribute("src")).toBe(ICON);
+    expect(img?.getAttribute("alt")).toBe("");
+    const quiet = tableRow("quiet").querySelector(".cb-cell-initial") as HTMLElement;
+    expect(quiet.querySelector("img")).toBeNull();
+    expect(quiet.textContent).toBe("Q");
+    // the Sheet's head carries the same mark
+    await userEvent.click(screen.getByText("demo", { selector: ".cb-cell-title-name" }));
+    const sheet = await screen.findByRole("dialog", { name: "demo" });
+    const head = sheet.querySelector(".cb-sheet-head") as HTMLElement;
+    expect(head.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
+  });
+
+  it("the detail page's head draws the icon", async () => {
+    listRoutes([plugin({ icon: ICON })]);
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const avatar = document.querySelector('[data-part="page-header-avatar"]') as HTMLElement;
+    expect(avatar.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(ICON);
+  });
+});
+
 describe("/admin/extensions/[name] (DetailPage)", () => {
   it.each(LOCALES)(
     "a required bootstrap plugin: no disable or uninstall, says why; upgradable; approved via bootstrap (%s)",

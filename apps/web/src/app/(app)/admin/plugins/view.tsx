@@ -124,7 +124,11 @@ function AdminPlugins({ all }: { all: CatalogItem[] }) {
         return (
           <ObjectRow
             key={i.id}
-            mark={{ text: name, ...(i.pending ? { tone: "warn" as const } : {}) }}
+            mark={{
+              text: name,
+              image: i.icon ?? null,
+              ...(i.pending ? { tone: "warn" as const } : {}),
+            }}
             name={name}
             href={`/admin/plugins/${encodeURIComponent(i.id)}`}
             chips={[

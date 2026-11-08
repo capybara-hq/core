@@ -284,6 +284,7 @@ function ModelsBody({
             providers={data.providers.map((p) => ({
               plugin: p.plugin,
               name: nameOf(p),
+              icon: p.icon ?? null,
               id: p.displayName ? p.provider : p.plugin,
               ...(p.status === "ok" ? { count: p.models.length } : {}),
               failed: p.status === "error",

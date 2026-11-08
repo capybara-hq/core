@@ -1,4 +1,6 @@
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
+import { extensionLabel } from "./extension-label";
 import type { JsonSchema } from "./json-schema";
 
 /** 渠道连接的状态（`error`：长连接最近一次失败，见 `lastError`）。 */
@@ -13,6 +15,13 @@ export interface ChannelConnection {
   id: string;
   orgId: string;
   plugin: string;
+  /** The plugin's display name; null when it has none (show the id). */
+  pluginDisplayName?: LocalizedName | null;
+  /**
+   * The URL of its plugin's icon (the org's catalog icon route); null when the plugin has none or
+   * the org may not see it: draw the initial.
+   */
+  pluginIcon?: string | null;
   name: string;
   agentId: string;
   unboundPolicy: UnboundPolicy;
@@ -31,6 +40,12 @@ export interface ChannelConnection {
   createdAt: string;
   updatedAt: string;
 }
+
+/** The platform a connection reaches, for people: its plugin's display name, else the plugin id. */
+export const channelPluginLabel = (
+  c: Pick<ChannelConnection, "plugin" | "pluginDisplayName">,
+  locale: "zh" | "en",
+): string => extensionLabel({ name: c.plugin, displayName: c.pluginDisplayName ?? null }, locale);
 
 export interface CreateChannelInput {
   plugin: string;

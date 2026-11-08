@@ -96,3 +96,36 @@ describe("/extensions: an unavailable extension shows its reason", () => {
     expect(within(sheet).queryByRole("link", { name: m.openAdmin })).toBeNull();
   });
 });
+
+describe("/extensions: plugin icons (maintainer decision 2026-11-08)", () => {
+  it.each(["admin", "member"] as const)(
+    "a row and its Sheet draw the plugin's icon; a row without one its initial (%s)",
+    async (role) => {
+      const icon = `${BASE}/catalog/i1/icon?v=1.0.0`;
+      stubApi({
+        [`GET ${BASE}/extensions`]: () =>
+          json(200, {
+            extensions: [
+              { ...KEYED, icon },
+              { ...KEYED, plugin: "plain-ext", icon: null },
+            ],
+          }),
+        [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+        [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
+        "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
+      });
+      await renderRouteWithCache("/extensions", lastStubRoutes(), {
+        locale: "en",
+        me: as(role, false),
+      });
+      const row = await screen.findByRole("row", { name: /keyed-ai/ });
+      const img = row.querySelector('img[data-part="mark-image"]');
+      expect(img?.getAttribute("src")).toBe(icon);
+      expect(img?.getAttribute("alt")).toBe("");
+      const plain = screen.getByRole("row", { name: /plain-ext/ });
+      expect(plain.querySelector(".cb-cell-initial")?.textContent).toBe("P");
+      const sheet = await openSheet();
+      expect(sheet.querySelector('.cb-sheet-head img[data-part="mark-image"]')).not.toBeNull();
+    },
+  );
+});

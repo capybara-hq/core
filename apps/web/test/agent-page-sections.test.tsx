@@ -606,6 +606,38 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     expect(router.push).toHaveBeenCalledWith("/channels/new?agentId=ag1&returnTo=%2Fagents%2Fag1");
   });
 
+  it("each row draws its plugin's icon (the name's initial without one) and the platform's name, no id chip", async () => {
+    const icon = `${ORG}/catalog/i1/icon?v=1.0.0`;
+    stubApi({
+      ...channelRoutes(),
+      [`GET ${ORG}/channels`]: ok({
+        channels: [
+          {
+            ...channel("c1", "Team Slack", "ag1"),
+            pluginIcon: icon,
+            pluginDisplayName: { zh: "Slack", en: "Slack" },
+          },
+          channel("c3", "Broken bot", "ag1"),
+        ],
+      }),
+    });
+    await renderEditAgent({ locale: "zh", section: "channels" });
+    const section = await screen.findByRole("region", { name: zh.agents.channels.title });
+    const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
+    const [slack, bare] = within(list).getAllByRole("listitem") as HTMLElement[];
+    expect(slack?.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(icon);
+    expect(
+      within(slack as HTMLElement).getByText(`Slack · ${zh.channels.policy.bind}`),
+    ).toBeTruthy();
+    expect(bare?.querySelector('[data-part="object-mark"]')?.textContent).toBe("B");
+    // the plugin id is no longer a chip
+    expect(
+      within(bare as HTMLElement).getByText(`slack · ${zh.channels.policy.bind}`),
+    ).toBeTruthy();
+    expect(list.querySelector(".cb-item-list-tag")).toBeNull();
+    expect(findNestedBoxes(section)).toEqual([]);
+  });
+
   it("members see the list read-only: no connect button, no links", async () => {
     stubApi(channelRoutes());
     await renderEditAgent({ me: as("member"), section: "channels" });

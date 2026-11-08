@@ -9,6 +9,7 @@ import {
   Field,
   Input,
   KeyValue,
+  ObjectMark,
   RadioGroup,
   Skeleton,
   Stack,
@@ -16,7 +17,7 @@ import {
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AgentSelect, ChannelStatusMark, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
@@ -30,12 +31,14 @@ import type { Agent } from "../../../../lib/agents";
 import { configIssues, issueLines } from "../../../../lib/api";
 import {
   type ChannelConnection,
+  channelPluginLabel,
   deleteChannel,
   type InboundMode,
   type UnboundPolicy,
   type UpdateChannelInput,
   updateChannel,
 } from "../../../../lib/channels";
+import { labelLocale } from "../../../../lib/extension-label";
 import type { ConfigIssue, JsonSchema } from "../../../../lib/json-schema";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { channelQuery, channelSchemaQuery } from "../../../../lib/query/channels";
@@ -81,6 +84,7 @@ export default function ChannelView({ channelId }: { channelId: string }) {
 function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
+  const lang = labelLocale(useLocale());
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("overview");
   const read = usePageQuery(channelQuery(orgId, channelId));
@@ -113,7 +117,12 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "channels", href: "/channels" }], title: "" }}
+        header={{
+          path: [...scope, { label: "channels", href: "/channels" }],
+          title: "",
+          // the plugin's mark keeps its place
+          loading: { title: true, avatar: true },
+        }}
         tabs={tabs}
         // the facts block's five rows (tenant, bot, agent, policy, created)
         loading={{ facts: { rows: 5, keyWidth: "10ch" } }}
@@ -130,7 +139,11 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
       header={{
         path: [...scope, { label: "channels", href: "/channels" }, { label: data.channel.name }],
         title: data.channel.name,
-        count: data.channel.plugin,
+        // the plugin's icon (the name's initial without one) and the platform's display name
+        avatar: (
+          <ObjectMark text={data.channel.name} image={data.channel.pluginIcon ?? null} size={40} />
+        ),
+        count: channelPluginLabel(data.channel, lang),
         status: <ChannelStatusMark status={data.channel.status} />,
       }}
       tabs={tabs}
