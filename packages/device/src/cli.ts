@@ -1,9 +1,13 @@
 import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
+import { drain } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
+import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
-import { stateDir } from "./state.js";
+import { stop } from "./commands/stop.js";
+import type { Executor } from "./exec/types.js";
+import { type Credential, type Policy, stateDir } from "./state.js";
 
 export interface CliEnv {
   env?: Record<string, string | undefined>;
@@ -14,6 +18,8 @@ export interface CliEnv {
   openBrowser?: (url: string) => void;
   out?: (line: string) => void;
   err?: (line: string) => void;
+  createExecutor?: (cred: Credential, policy: Policy) => Promise<Executor> | Executor;
+  kill?: typeof process.kill;
 }
 
 /** Runs one command line and returns the exit code. */
@@ -54,8 +60,20 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       return logout(dir, out);
     case "status":
       return status(dir, cmd.json, out, err);
+    case "start":
+      return start({
+        stateDir: dir,
+        out,
+        err,
+        ...(io.createExecutor && { createExecutor: io.createExecutor }),
+        ...(io.kill && { kill: io.kill }),
+      });
+    case "stop":
+      return stop(dir, out, err, io.kill);
+    case "drain":
+      return drain(dir, out, err, io.kill);
     default:
-      // start, stop, drain, policy and service arrive with the later tasks of the plan.
+      // policy and service arrive with a later task of the plan.
       err(`capybara-device ${cmd.command}: not implemented yet`);
       return 2;
   }

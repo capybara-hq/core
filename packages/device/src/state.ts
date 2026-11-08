@@ -64,7 +64,7 @@ export function defaultWorkDir(environmentId: string, home: string = homedir()):
   return join(home, "capybara-device", environmentId);
 }
 
-function writePrivate(file: string, text: string): void {
+export function writePrivate(file: string, text: string): void {
   mkdirSync(join(file, ".."), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
   rmSync(tmp, { force: true });

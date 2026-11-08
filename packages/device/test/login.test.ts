@@ -239,7 +239,7 @@ describe("platform", () => {
     }
   });
 
-  it("start is not implemented yet and exits 2", async () => {
-    expect(await run(["start"])).toBe(2);
+  it("policy is not implemented yet and exits 2", async () => {
+    expect(await run(["policy"])).toBe(2);
   });
 });
