@@ -150,7 +150,8 @@ the "carries nothing" check counts them.
   attribute, event-handler attribute, or `href` / `xlink:href` outside the document (`#id`
   only). The kernel re-serializes the parsed tree; it never serves the uploaded bytes.
 - `logo.wordmark`: optional text (≤ 24 characters, no control or format characters) replacing
-  `CAPYBARA`. Omitted keeps `CAPYBARA`.
+  `CAPYBARA`. Omitted keeps `CAPYBARA`. A theme may replace both the mark and the wordmark
+  **(decided, 2026-11-08: everything is customizable)**.
 - `logo.favicon`: optional square SVG or PNG for the browser tab icon; omitted keeps today's.
 
 ### 4.4 Limits
@@ -217,9 +218,9 @@ Three levels, most specific first:
 - **Lock (designer's call)**: `personal: "locked"` hides the personal picker in that org (a
   company that mandates its brand). The scheme toggle stays unless the resolved theme is
   single-scheme.
-- The person's pick is one value for all their orgs (designer's call: a person who likes a theme
-  likes it everywhere; in an org where it is not on, the org's default applies). Per-org picks can
-  come later without breaking this.
+- The person's pick is one value for the person, across all their orgs, not one per org
+  **(decided, 2026-11-08)**; in an org where it is not on (or that locks), the org's default
+  applies.
 - **Before sign-in** (auth pages, `/invite`, errors outside the workspace): the platform default.
   Only platform-owned `all` themes can be the platform default, so nothing org-specific leaks to
   an anonymous page.
@@ -234,9 +235,9 @@ Three levels, most specific first:
   Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve the re-serialized logo and the
   fonts. Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
   and identical on every replica (rendered from PG / object storage; no process state).
-- **Access**: the platform default's CSS and assets are public (the auth pages need them); any
-  other theme's require a session of a member of an org where it is on (designer's call: an
-  org's brand is not public by default).
+- **Access**: every theme's CSS and assets are public, without a session **(decided,
+  2026-11-08: styles are not sensitive)**. The URLs carry the theme id and version, so they reveal
+  only that such a theme exists; the listing of an org's themes (§9) stays members-only.
 - **SSR**: the workspace layout's existing session / org read gains `theme: { id, version,
   schemes, logo } | null` (the resolved theme). The layout renders
   `<link rel="stylesheet" href=… precedence="theme">` after the design stylesheet (React hoists
@@ -259,7 +260,7 @@ Three levels, most specific first:
 | `GET` / `PUT /api/v1/admin/settings/theme` | `@SuperAdmin` | the platform default |
 | `PUT /api/v1/me/preferences` | signed in | gains `theme: string \| null` beside `timeZone` |
 | `GET /api/v1/platform/theme` | public | the resolved platform default for anonymous pages |
-| `GET /api/v1/themes/:id/:version/theme.css`, `…/assets/:file` | §8 | delivery |
+| `GET /api/v1/themes/:id/:version/theme.css`, `…/assets/:file` | public | delivery |
 
 - The listing and the three settings are mirrored as `Platform` operations, so an agent can
   switch a person's or an org's theme on request ("change my theme to Night City"):
@@ -307,7 +308,7 @@ component (`ThemeSwatch`), whose colors come from the theme's data, not from lit
 - `capybara-plugin check`: red fixtures for `theme-invalid`, `theme-readability`, `theme-asset`.
 - `check:tokens`: red fixture for a stale generated SDK copy of the pair lists and the allowlist.
 - Kernel: import review refusals; resolution order (person / org / platform / built-in, lock,
-  unavailable choices); access rules of the delivery routes; CSS rendering from parsed values
+  unavailable choices); CSS rendering from parsed values
   (a value with `;}` or `</style>` never reaches the output); org deletion keeps shared themes.
 - Testing package: a `fake-theme` fixture plugin (themes only) packed with `packFixture`.
 - Web: an e2e test sets an org theme and reads a token's computed value on the first document
@@ -324,7 +325,6 @@ component (`ThemeSwatch`), whose colors come from the theme's data, not from lit
 
 1. Should the platform default be allowed to be an `optional` / `named` theme (falling back per
    org), or stay `all`-only as proposed (§7)?
-2. Is one personal pick across orgs right, or should the pick be per org from the start (§7)?
-3. Should a theme be able to replace the wordmark (`CAPYBARA`) at all, or only the mark (§4.3)?
-4. Should org themes' assets be public like the platform default's, to keep the routes simple
-   (§8)?
+
+Answered on 2026-11-08: the personal pick is per person, not per org (§7); a theme may replace
+the wordmark as well as the mark (§4.3); every theme's CSS and assets are public (§8).
