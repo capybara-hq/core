@@ -34,18 +34,20 @@ export function pluginDirs(): string[] {
 }
 
 /**
- * The fake extensions of `@capybara-hq/testing` (packages/testing/fixtures/extensions/*): core tests
+ * The fake extensions of `@capybara-hq/testing` (packages/testing/fixtures/{extensions,plugins}/*): core tests
  * load them instead of the official plugins and the plugins repo will reuse them, so they follow
  * the same rules as plugins (dependency boundary, extension state, permissions, pack, tool design,
  * migrations). Other fixtures are out of scope.
  */
 export function fakeExtensionDirs(): string[] {
-  const base = join(root, "packages/testing/fixtures/extensions");
-  if (!existsSync(base)) return [];
-  return readdirSync(base, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== "node_modules")
-    .map((e) => join(base, e.name))
-    .sort();
+  return ["extensions", "plugins"].flatMap((sub) => {
+    const base = join(root, "packages/testing/fixtures", sub);
+    if (!existsSync(base)) return [];
+    return readdirSync(base, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== "node_modules")
+      .map((e) => join(base, e.name))
+      .sort();
+  });
 }
 
 /** Every directory the plugin-scoped checks scan: {@link pluginDirs} plus {@link fakeExtensionDirs}. */
