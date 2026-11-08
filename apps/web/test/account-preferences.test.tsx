@@ -1,4 +1,4 @@
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -7,7 +7,7 @@ import { timeZoneOptions } from "../src/lib/account-preferences";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
-import { optionLabels, pickOption } from "./support/select";
+import { openSelect, optionOf, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -26,6 +26,27 @@ const api = (routes: Parameters<typeof stubApi>[0]) =>
     ...routes,
   });
 
+/**
+ * The time-zone section, once rendered. The cases query inside it (and find the save button by its
+ * text): page-wide role queries walk the 外观 cards and the field's ~420 option labels, and their
+ * cost made these cases slow under load.
+ */
+async function timeZoneSection(title: string): Promise<HTMLElement> {
+  const heading = await screen.findByText(title, { selector: "h1, h2, h3, h4" });
+  const section = heading.closest("section");
+  if (section === null) throw new Error("the time zone heading is outside a section");
+  return section;
+}
+
+/** The page's save button (the action row), by its text. */
+function saveButton(label: string): HTMLElement {
+  const button = [...document.querySelectorAll("button")].find(
+    (b) => b.textContent?.trim() === label,
+  );
+  if (button === undefined) throw new Error(`no button ${label}`);
+  return button;
+}
+
 describe("/account/preferences: the time zone (run context spec §3.4)", () => {
   beforeEach(() => resetNavigation("/account/preferences"));
   afterEach(() => cleanup());
@@ -43,15 +64,17 @@ describe("/account/preferences: the time zone (run context spec §3.4)", () => {
         },
       });
       await renderRouteWithCache("/account/preferences", lastStubRoutes(), { locale });
-      expect(await screen.findByRole("heading", { name: m.timeZone.title })).toBeTruthy();
-      const select = screen.getByRole("combobox", { name: m.timeZone.label });
+      const section = await timeZoneSection(m.timeZone.title);
+      const select = within(section).getByRole("combobox", { name: m.timeZone.label });
       expect(select.textContent).toContain(m.timeZone.follow);
       const user = userEvent.setup();
-      const labels = await optionLabels(select, user);
+      // one opening of the ~420 options: read the labels, then pick from the same list
+      const listbox = await openSelect(select, user);
+      const labels = [...listbox.querySelectorAll('[role="option"]')].map((o) => o.textContent);
       expect(labels[0]).toBe(m.timeZone.follow);
       expect(labels).toContain("UTC");
-      await pickOption(select, "UTC", user);
-      await user.click(screen.getByRole("button", { name: m.save }));
+      await user.click(optionOf(listbox, "UTC"));
+      await user.click(saveButton(m.save));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
       expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ timeZone: "UTC" });
     },
@@ -63,11 +86,12 @@ describe("/account/preferences: the time zone (run context spec §3.4)", () => {
       [`PUT ${PREFS}`]: () => json(200, { timeZone: null }),
     });
     await renderRouteWithCache("/account/preferences", lastStubRoutes(), { locale: "zh" });
-    const select = await screen.findByRole("combobox", { name: zh.preferences.timeZone.label });
+    const section = await timeZoneSection(zh.preferences.timeZone.title);
+    const select = within(section).getByRole("combobox", { name: zh.preferences.timeZone.label });
     expect(select.textContent).toContain("Asia/Shanghai");
     const user = userEvent.setup();
     await pickOption(select, zh.preferences.timeZone.follow, user);
-    await user.click(screen.getByRole("button", { name: zh.preferences.save }));
+    await user.click(saveButton(zh.preferences.save));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({ timeZone: null });
   });
