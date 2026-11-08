@@ -21,7 +21,9 @@ import {
   conversationQuery,
   type EventWindow,
   eventsQuery,
+  invalidateAfterPlatformCall,
   isFreshlySeeded,
+  isPlatformCallDone,
   loadEarlierEvents,
 } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
@@ -285,6 +287,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           flush();
           delivered.set(scope, Math.max(delivered.get(scope) ?? 0, e.seq));
           const { added } = appendEvents(qc, orgId, conversationId, [e]);
+          // The agent changed something for the person: what the pages show may be stale.
+          if (added > 0 && isPlatformCallDone(e)) void invalidateAfterPlatformCall(qc);
           // The catch-up delivered something: what lives outside the log may have changed too.
           if (catchingUp.current && added > 0) {
             catchingUp.current = false;

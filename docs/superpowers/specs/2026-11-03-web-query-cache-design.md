@@ -215,6 +215,12 @@ would re-read every mounted query); `refetchOnMount` on (stale data refreshes on
 - **Persistent components** (the sidebar's conversation groups, the inbox count) stay mounted across
   navigations, so `refetchOnMount` never fires for them: they refetch their stale queries on each
   path change explicitly (`invalidate` only when stale).
+- **An agent's `Platform` call is the person's write** (decided 2026-11-08): when the conversation
+  stream delivers a `Platform` tool result that is not an error, every cached read except event
+  logs is invalidated (`invalidateAfterPlatformCall`), so the page the person turns to shows what
+  the agent changed (a tool switched off in the org, a renamed conversation, its own profile).
+  The web cannot tell which reads one operation touched, and the invalidation refetches only what
+  is shown. Another open tab still follows its freshness class.
 
 ## 7. What changes in the web tier
 
