@@ -26,6 +26,7 @@ export * from "./skill.js";
 export * from "./skill-invocation.js";
 export * from "./storage.js";
 export * from "./theme.js";
+export * from "./theme-assets.js";
 export * from "./theme-readability.js";
 export * from "./theme-tokens.generated.js";
 export * from "./tool.js";

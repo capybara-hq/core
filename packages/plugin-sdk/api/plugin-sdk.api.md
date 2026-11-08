@@ -349,10 +349,16 @@ export function checkEntryImports(specifiers: EntryImport[]): string[];
 export function checkParamValue(schema: ParamSchema, v: unknown): string | undefined;
 
 // @public
+export function checkPng(bytes: Uint8Array): string | undefined;
+
+// @public
 export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme, rules?: {
     contrast: readonly (readonly [string, string, number, string?])[];
     separation: readonly (readonly [string, string, number])[];
 }): ReadabilityIssue[];
+
+// @public
+export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
 export function clipMediaName(name: string, max?: number): string;
@@ -2157,6 +2163,13 @@ export function sanitizeParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
+export function sanitizeThemeSvg(bytes: Uint8Array): {
+    svg: string;
+} | {
+    error: string;
+};
+
+// @public
 export const SDK_VERSION = "0.1.0-rc.5";
 
 // @public
@@ -2924,6 +2937,12 @@ export function validateSkillPackage(files: {
     path: string;
     size: number;
 }[]): string[];
+
+// @public
+export function validateThemeAssets(theme: ParsedTheme, files: Map<string, Uint8Array>): {
+    assets: Map<string, Uint8Array>;
+    errors: string[];
+};
 
 // @public
 export function validateToolDisplay(d: unknown): string[];
