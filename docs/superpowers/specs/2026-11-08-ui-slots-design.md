@@ -84,7 +84,7 @@ interface UiSlotSpec {
   minRole: "guest" | "member" | "admin" | "superAdmin";
   args: readonly string[];       // context ids passed to render: "conversationId", "agentId", …
   density: "dense" | "regular";
-  icon: "required" | "optional" | "none";
+  icon: "required" | "optional" | "none"; // every L1 slot: "optional" (today's default `puzzle`)
   anchors?: readonly string[];   // built-in parts a contribution may be placed after (§5); the first is the default
   limits?: { maxShown?: number };
   description: { en: string; zh: string };
@@ -229,7 +229,7 @@ Today's places as slots, with their behavior unchanged:
 
 | Slot | Was | Scope / args | Accepts | Min role | Owner (apps/web/src) | Notes |
 |---|---|---|---|---|---|---|
-| `conversation.panel` | `panel` (`conversation`) | conversation / `conversationId`, `item` | view, embed | guest | `components/conversation/RightArea.tsx` | title-bar icon required; one right panel at a time |
+| `conversation.panel` | `panel` (`conversation`) | conversation / `conversationId`, `item` | view, embed | guest | `components/conversation/RightArea.tsx` | title-bar icon (`puzzle` by default, as today); one right panel at a time |
 | `conversation.properties.section` | `section` | conversation / `conversationId` | view, embed | guest | `components/conversation/PropertiesSections.tsx` | dense; anchors `context`, `files`, `background` |
 | `conversation.tool-result.card` | `inline` | conversation / `conversationId`, `card` | view, embed | guest | `components/conversation/RightArea.tsx` | only through `ToolResult.card`, as today |
 | `org.page` | `page` | org / — | view, embed | member | `app/(app)/p/[plugin]/[id]/view.tsx` | `/p/<plugin>/<id>`; listed in the sidebar's 更多 group |
@@ -285,7 +285,7 @@ inbox, the overview of an org, connector and skill detail pages.
   the file the catalog names as its `owner`; every `ExtensionSlot` names a catalog slot as a
   literal; the generated web copy and docs page are current. Rules `ui-slot-unrendered`,
   `ui-slot-undeclared` (renamed from `ui-slot-unknown`, which is `capybara-plugin check`'s),
-  `ui-slot-owner`, `ui-slot-literal`, `ui-slots-stale`; proven red first.
+  `ui-slot-owner`, `ui-slot-twice`, `ui-slot-literal`, `ui-slots-stale`; proven red first.
 - **Kernel, org scope**: `GET /api/v1/orgs/:orgId/ui/contributions?slot=` lists the contributions
   of every org-reachable slot (all but `platform.page`) or of one slot, filtered by enablement
   (`enabled.ts`), the slot's `minRole`, then the arrangement (§5). The views, actions, embed-token
