@@ -65,6 +65,14 @@ export const CatalogDisabledBody = z
   .strict();
 export const CatalogShownBody = z.object({ shownToOthers: z.boolean() }).strict();
 
+/**
+ * `GET :itemId/guides/:guideId`, the super admin's preview of a setup guide (spec
+ * 2026-11-09-setup-guides-v2-design.md §9.3): only the document language; no org, no target.
+ */
+export const AdminCatalogGuideQuery = z
+  .object({ locale: z.enum(["en", "zh"]).optional() })
+  .strict();
+
 export const ADMIN_CATALOG_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/admin/catalog/items", query: CatalogItemsQuery },
   { route: "GET /api/v1/admin/catalog/items/:id", params: CatalogIdPathParams },

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { PluginSetupGuide } from "@capybara-hq/plugin-sdk";
+import { setupGuideHash } from "@capybara-hq/plugin-sdk";
 import {
   type FakeChannelServer,
   startFakeChannelServer,
@@ -12,7 +12,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ChannelConnections } from "../../src/channels/connections.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { setupGuideHash } from "../../src/extensions/plugin-guides.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -27,6 +26,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { channelGuideDoc, seedGuideFiles } from "../helpers/setup-guides.js";
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const SECRET = "app-secret-9f3c2a7e51d4";
@@ -370,29 +370,22 @@ describe("渠道连接 HTTP", () => {
   });
 });
 
-// Plugin setup guides (spec 2026-11-08-plugin-setup-guides-design.md §6): a connection records the
-// guide it was set up with; a plugin upgrade that changes the templates of its mode is drift.
+// Plugin setup guides (spec 2026-11-09-setup-guides-v2-design.md §11): a connection records the
+// guide it was set up with; a plugin upgrade that changes the code blocks or checks of its mode is
+// drift.
 describe("channel setup guide drift", () => {
-  const GUIDE: PluginSetupGuide = {
-    id: "app",
-    place: "channel-connection",
-    title: { en: "Create the app" },
-    files: [
-      {
-        path: "./guides/socket.yaml.tmpl",
-        title: { en: "M" },
-        language: "yaml",
-        mode: "long_connection",
-      },
-      { path: "./guides/webhook.yaml.tmpl", title: { en: "M" }, language: "yaml", mode: "webhook" },
-    ],
-  };
-  const files = (socket: string, webhook: string) => [
-    { path: "guides/socket.yaml.tmpl", size: 10, sha256: socket.repeat(64) },
-    { path: "guides/webhook.yaml.tmpl", size: 10, sha256: webhook.repeat(64) },
-  ];
+  const GUIDE = { id: "app", place: "channel-connection" as const };
+  /** The admin drift hash of {@link channelGuideDoc}`(socket, webhook)` for a mode. */
+  const hashOf = (socket: string, webhook: string, mode: string) =>
+    setupGuideHash(channelGuideDoc(socket, webhook), {
+      place: "channel-connection",
+      guideId: "app",
+      mode,
+      audience: "admin",
+    });
   /** The chan-mini catalog item (the extension itself comes from the startup config). */
-  const seedVersion = async (itemId: string, version: string, f: ReturnType<typeof files>) => {
+  const seedVersion = async (itemId: string, version: string, socket: string, webhook: string) => {
+    const files = await seedGuideFiles(db, { "guides/app.md": channelGuideDoc(socket, webhook) });
     await db
       .insertInto("catalog_item_versions")
       .values({
@@ -409,7 +402,7 @@ describe("channel setup guide drift", () => {
         source: "file",
         source_ref: "upload",
         object_prefix: null,
-        files: JSON.stringify(f),
+        files: JSON.stringify(files),
         size: 1000,
       })
       .execute();
@@ -421,7 +414,7 @@ describe("channel setup guide drift", () => {
   };
   type Page = {
     id: string;
-    guideAck: { guideId: string; version: string; hash: string; mode: string } | null;
+    guideAck: { guideId: string; version: string; hash: string; mode: string | null } | null;
     setupGuide: { itemId: string; guideId: string; version: string } | null;
     guideDrift: { from: string; to: string } | null;
   };
@@ -431,7 +424,7 @@ describe("channel setup guide drift", () => {
     return (r.json() as { channel: Page }).channel;
   };
 
-  it("records the guide on create, flags a changed template of its mode, clears on ack", async () => {
+  it("records the guide on create, flags a changed code block of its mode, clears on ack", async () => {
     await enable(true);
     const itemId = randomUUID();
     await db
@@ -447,7 +440,7 @@ describe("channel setup guide drift", () => {
         disabled: false,
       })
       .execute();
-    await seedVersion(itemId, "1.0.0", files("a", "b"));
+    await seedVersion(itemId, "1.0.0", "a", "b");
     // 新建渠道 finds the guide through the schema route
     const schema = await owner({ method: "GET", url: `${base()}/schema/chan-mini` });
     expect(schema.json().guide).toEqual({ itemId, guideId: "app" });
@@ -459,7 +452,7 @@ describe("channel setup guide drift", () => {
     });
     expect(created.statusCode, created.body).toBe(201);
     const id = (created.json() as { channel: Page }).channel.id;
-    const v1 = setupGuideHash(GUIDE, files("a", "b"), "long_connection");
+    const v1 = hashOf("a", "b", "long_connection");
     let page = await get(id);
     expect(page.guideAck).toEqual({
       guideId: "app",
@@ -470,11 +463,11 @@ describe("channel setup guide drift", () => {
     expect(page.setupGuide).toEqual({ itemId, guideId: "app", version: "1.0.0" });
     expect(page.guideDrift).toBeNull();
 
-    // 1.1.0 changes only the webhook template: not drift for a long-connection connection
-    await seedVersion(itemId, "1.1.0", files("a", "c"));
+    // 1.1.0 changes only the webhook manifest: not drift for a long-connection connection
+    await seedVersion(itemId, "1.1.0", "a", "c");
     expect((await get(id)).guideDrift).toBeNull();
-    // 1.2.0 changes the socket template: drift, with the versions
-    await seedVersion(itemId, "1.2.0", files("d", "c"));
+    // 1.2.0 changes the socket manifest: drift, with the versions
+    await seedVersion(itemId, "1.2.0", "d", "c");
     page = await get(id);
     expect(page.guideDrift).toEqual({ from: "1.0.0", to: "1.2.0" });
     const listed = (await owner({ method: "GET", url: base() })).json() as { channels: Page[] };
@@ -497,7 +490,7 @@ describe("channel setup guide drift", () => {
       payload: { hash: v1 },
     });
     expect(denied.statusCode).toBe(403);
-    const v3 = setupGuideHash(GUIDE, files("d", "c"), "long_connection");
+    const v3 = hashOf("d", "c", "long_connection");
     const ack = await owner({
       method: "POST",
       url: `${base()}/${id}/guide-ack`,
@@ -519,7 +512,7 @@ describe("channel setup guide drift", () => {
       .set({ guide_ack: null })
       .where("id", "=", id)
       .execute();
-    await seedVersion(itemId, "1.3.0", files("e", "c"));
+    await seedVersion(itemId, "1.3.0", "e", "c");
     expect((await get(id)).guideDrift).toBeNull();
     // the item hidden from the org: no guide, no notice
     await db

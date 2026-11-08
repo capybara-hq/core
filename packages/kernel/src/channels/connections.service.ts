@@ -218,7 +218,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     /** Secret values handled here (written or decrypted) are redacted from the logs (`addOrgSecrets`). */
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "addOrgSecrets">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The setup guide acks (spec 2026-11-08-plugin-setup-guides-design.md §6). */
+    /** The setup guide acks (spec 2026-11-09-setup-guides-v2-design.md §11). */
     @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "currentAck" | "ackDrifted">,
   ) {
     this.unsubscribe = [
@@ -482,7 +482,9 @@ export class ChannelConnections implements OnApplicationShutdown {
     const id = randomUUID();
     const { plain, secrets } = split(schema, full);
     // the guide the 新建渠道 page showed: the plugin's current one, for the default mode
-    const guideAck = await this.guides.currentAck(input.plugin, "long_connection");
+    const guideAck = await this.guides.currentAck(input.plugin, "channel-connection", {
+      mode: "long_connection",
+    });
     const row = await this.insertIn({
       orgId,
       id,
@@ -602,12 +604,18 @@ export class ChannelConnections implements OnApplicationShutdown {
     // A mode switch sets the platform app up for the new mode: the guide of that mode is the one
     // on the page. Only an ack without drift moves on: a drifted one stays until the person
     // confirms through guide-ack, so switching modes never clears the update notice (spec
-    // 2026-11-08-plugin-setup-guides-design.md §6)
+    // 2026-11-09-setup-guides-v2-design.md §11)
     const guideAck =
       modeChanged &&
       patch.inboundMode !== undefined &&
-      !(await this.guides.ackDrifted(current.plugin, current.guide_ack ?? null))
-        ? await this.guides.currentAck(current.plugin, patch.inboundMode)
+      !(await this.guides.ackDrifted(
+        current.plugin,
+        "channel-connection",
+        current.guide_ack ?? null,
+      ))
+        ? await this.guides.currentAck(current.plugin, "channel-connection", {
+            mode: patch.inboundMode,
+          })
         : undefined;
     const row = await this.updateIn({
       orgId,
@@ -710,7 +718,7 @@ export class ChannelConnections implements OnApplicationShutdown {
 
   /**
    * 「我已更新应用」: records the plugin's current channel-connection guide for the connection's
-   * mode as the one it is set up with. `hash` is the template hash of the guide the person was
+   * mode as the one it is set up with. `hash` is the drift hash of the guide the person was
    * shown; when the plugin has moved on since, 409 `channel.guide_changed` (show the new guide
    * first). A plugin without a guide -> 404 `catalog.guide_not_found`.
    */
@@ -723,7 +731,9 @@ export class ChannelConnections implements OnApplicationShutdown {
   ): Promise<ChannelConnectionView> {
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
-    const ack = await this.guides.currentAck(current.plugin, current.inbound_mode);
+    const ack = await this.guides.currentAck(current.plugin, "channel-connection", {
+      mode: current.inbound_mode,
+    });
     if (ack === null) {
       throw new ApiError("catalog.guide_not_found", "The plugin has no channel setup guide");
     }

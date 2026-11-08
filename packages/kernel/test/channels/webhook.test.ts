@@ -6,8 +6,8 @@ import type {
   ChannelWebhookResult,
   ExtensionContext,
   InboundEvent,
-  PluginSetupGuide,
 } from "@capybara-hq/plugin-sdk";
+import { setupGuideHash } from "@capybara-hq/plugin-sdk";
 import {
   FAKE_WEBHOOK_SIGNATURE_HEADER,
   type FakeChannelServer,
@@ -30,7 +30,6 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { InflightTracker } from "../../src/extensions/inflight.js";
-import { setupGuideHash } from "../../src/extensions/plugin-guides.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { channelWebhooksFor } from "../helpers/channels.js";
@@ -47,6 +46,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { channelGuideDoc, seedGuideFiles } from "../helpers/setup-guides.js";
 
 /**
  * Webhook inbound (F8 / F9) on one api+gateway kernel (no worker, so inbound jobs stay in the
@@ -395,30 +395,21 @@ describe("channel webhook route (single replica, api + gateway)", () => {
   });
 });
 
-// Plugin setup guides (spec 2026-11-08-plugin-setup-guides-design.md §6): a PATCH that switches
-// the inbound mode re-baselines the guide ack only when it shows no drift, so switching modes there
-// and back never clears the update notice; only the human guide-ack route does.
+// Plugin setup guides (spec 2026-11-09-setup-guides-v2-design.md §11): a PATCH that switches the
+// inbound mode re-baselines the guide ack only when it shows no drift, so switching modes there and
+// back never clears the update notice; only the human guide-ack route does.
 describe("setup guide ack across mode switches", () => {
-  const GUIDE: PluginSetupGuide = {
-    id: "app",
-    place: "channel-connection",
-    title: { en: "Create the app" },
-    files: [
-      {
-        path: "./guides/s.yaml.tmpl",
-        title: { en: "M" },
-        language: "yaml",
-        mode: "long_connection",
-      },
-      { path: "./guides/w.yaml.tmpl", title: { en: "M" }, language: "yaml", mode: "webhook" },
-    ],
-  };
-  const files = (socket: string, webhook: string) => [
-    { path: "guides/s.yaml.tmpl", size: 10, sha256: socket.repeat(64) },
-    { path: "guides/w.yaml.tmpl", size: 10, sha256: webhook.repeat(64) },
-  ];
+  const GUIDE = { id: "app", place: "channel-connection" as const };
+  /** The admin drift hash of {@link channelGuideDoc}`(socket, webhook)` for a mode. */
+  const hashOf = (socket: string, webhook: string, mode: string) =>
+    setupGuideHash(channelGuideDoc(socket, webhook), {
+      place: "channel-connection",
+      guideId: "app",
+      mode,
+      audience: "admin",
+    });
   type Page = {
-    guideAck: { guideId: string; version: string; hash: string; mode: string } | null;
+    guideAck: { guideId: string; version: string; hash: string; mode: string | null } | null;
     guideDrift: { from: string; to: string } | null;
   };
   const db = () => kernelDb(raw);
@@ -428,7 +419,8 @@ describe("setup guide ack across mode switches", () => {
     return (r.json() as { channel: Page }).channel;
   };
   /** A fake-im catalog item at `version` (the extension itself comes from the startup config). */
-  const seedVersion = async (itemId: string, version: string, f: ReturnType<typeof files>) => {
+  const seedVersion = async (itemId: string, version: string, socket: string, webhook: string) => {
+    const f = await seedGuideFiles(db(), { "guides/app.md": channelGuideDoc(socket, webhook) });
     await db()
       .insertInto("catalog_item_versions")
       .values({
@@ -483,7 +475,7 @@ describe("setup guide ack across mode switches", () => {
     owner({ method: "POST", url: `${channels()}/${id}/guide-ack`, payload: { hash } });
 
   it("a switch without drift re-baselines; with drift the notice survives there and back", async () => {
-    await seedVersion(itemId, "1.0.0", files("a", "b"));
+    await seedVersion(itemId, "1.0.0", "a", "b");
     const id = await createChannel("fake-im", "cli_guide", TOKEN);
     expect((await get(id)).guideAck).toMatchObject({ version: "1.0.0", mode: "long_connection" });
 
@@ -493,13 +485,13 @@ describe("setup guide ack across mode switches", () => {
     expect(page.guideAck).toEqual({
       guideId: "app",
       version: "1.0.0",
-      hash: setupGuideHash(GUIDE, files("a", "b"), "webhook"),
+      hash: hashOf("a", "b", "webhook"),
       mode: "webhook",
     });
     expect(page.guideDrift).toBeNull();
 
-    // 1.1.0 changes the webhook template: drift; switching away and back keeps the old ack
-    await seedVersion(itemId, "1.1.0", files("a", "c"));
+    // 1.1.0 changes the webhook manifest: drift; switching away and back keeps the old ack
+    await seedVersion(itemId, "1.1.0", "a", "c");
     const drifted = await get(id);
     expect(drifted.guideDrift).toEqual({ from: "1.0.0", to: "1.1.0" });
     expect((await patch(id, { inboundMode: "long_connection" })).statusCode).toBe(200);
@@ -515,7 +507,7 @@ describe("setup guide ack across mode switches", () => {
     // shown for the current mode, which is accepted and clears the notice
     expect((await patch(id, { inboundMode: "long_connection" })).statusCode).toBe(200);
     expect((await get(id)).guideAck?.mode).toBe("webhook");
-    const shown = setupGuideHash(GUIDE, files("a", "c"), "long_connection");
+    const shown = hashOf("a", "c", "long_connection");
     const confirmed = await ack(id, shown);
     expect(confirmed.statusCode, confirmed.body).toBe(200);
     page = await get(id);
@@ -530,9 +522,9 @@ describe("setup guide ack across mode switches", () => {
   });
 
   it("the Platform tool's channels.update keeps a drifted ack too", async () => {
-    await seedVersion(itemId, "2.0.0", files("e", "f"));
+    await seedVersion(itemId, "2.0.0", "e", "f");
     const id = await createChannel("fake-im", "cli_guide_op", TOKEN);
-    await seedVersion(itemId, "2.1.0", files("g", "f"));
+    await seedVersion(itemId, "2.1.0", "g", "f");
     const before = await get(id);
     expect(before.guideDrift).toEqual({ from: "2.0.0", to: "2.1.0" });
     const update = k.app.get(PlatformOperations).get("channels.update");
@@ -551,9 +543,7 @@ describe("setup guide ack across mode switches", () => {
       expect(page.guideAck).toEqual(before.guideAck);
       expect(page.guideDrift).toEqual({ from: "2.0.0", to: "2.1.0" });
     }
-    expect(
-      (await ack(id, setupGuideHash(GUIDE, files("g", "f"), "long_connection"))).statusCode,
-    ).toBe(200);
+    expect((await ack(id, hashOf("g", "f", "long_connection"))).statusCode).toBe(200);
     expect((await get(id)).guideDrift).toBeNull();
     expect((await owner({ method: "DELETE", url: `${channels()}/${id}` })).statusCode).toBe(204);
   });

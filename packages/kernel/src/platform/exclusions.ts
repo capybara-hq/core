@@ -105,6 +105,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
+    route: "GET /api/v1/admin/catalog/:itemId/guides/:guideId",
+    category: "internal",
+    reason:
+      "The super admin's preview of a plugin's setup guide for the admin console, with no org and no target; agents assist with the org guides an org member sees",
+  },
+  {
     route: "POST /api/v1/admin/catalog/items/:id/confirm",
     category: "human-only",
     reason: "Confirms a catalog item's reviewed changes, an approval decision",

@@ -1,11 +1,11 @@
 // Catalog display files in PG (`catalog_files`, migration 0100): a plugin's icon, its connector
-// templates' icons and its setup guide files. They are small (64 KiB each at most, by the plugin
+// templates' icons and its setup guide documents. They are small (64 KiB each at most, by the plugin
 // format) and must be readable without object storage: a bootstrap plugin is imported before any
 // object-store extension runs, and the object-store plugin's own icon can never wait for itself.
 // Skills, connector templates and agent templates stay in object storage under the version's
 // `object_prefix` (they are copied into platform components there).
 import { createHash } from "node:crypto";
-import type { PluginManifest } from "@capybara-hq/plugin-sdk";
+import { type PluginManifest, setupGuideDocPath } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -22,13 +22,17 @@ interface FileMeta {
 
 /**
  * The display file paths of a plugin (package paths): the plugin icon, the connector templates'
- * icons (given by the caller, which parsed the templates) and the setup guide files.
+ * icons (given by the caller, which parsed the templates) and the setup guide documents (both
+ * languages; the caller keeps the ones the package has).
  */
 export function displayFilePaths(m: PluginManifest, templateIcons: string[] = []): Set<string> {
   const out = new Set<string>();
   if (m.icon !== undefined) out.add(packagePath(m.icon));
   for (const icon of templateIcons) out.add(packagePath(icon));
-  for (const g of m.setupGuides ?? []) for (const f of g.files ?? []) out.add(packagePath(f.path));
+  for (const g of m.setupGuides ?? []) {
+    out.add(setupGuideDocPath(g.id, "en"));
+    out.add(setupGuideDocPath(g.id, "zh"));
+  }
   return out;
 }
 
