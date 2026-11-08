@@ -81,8 +81,8 @@ In another terminal:
 ```bash
 pnpm dev:web          # i.e. pnpm --filter @capybara-hq/web dev, started through apps/web/server.mjs, listens on :3000; output also in /tmp/capybara-dev-web.log
 # set CAPYBARA_KERNEL_URL when the kernel isn't at http://localhost:8080; change the web port with PORT
-# connected machines (capybara-device) reach the kernel through the web origin: also set
-# CAPYBARA_WEB_GATEWAY_URL=http://127.0.0.1:8080 (the dev kernel runs the gateway role too)
+# connected machines (capybara-device) reach the kernel through the web origin; web forwards
+# /device/connect to CAPYBARA_KERNEL_URL (the dev kernel runs the gateway role too), nothing to set
 ```
 
 Open <http://localhost:3000> in a browser: the setup wizard creates the admin and org → create an agent (pick the model `model-fake/fake-1`) → chat. `model-fake` decides its reply from the message prefix: `echo:<text>` replies with the text unchanged, `slow:<milliseconds>:<text>` streams chunk by chunk slowly (handy for trying "Stop" and mid-run messages), and any other text gets `You said: …`.
