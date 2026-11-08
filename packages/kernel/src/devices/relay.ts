@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type DeviceOp,
   type DeviceOpResults,
+  DeviceProtocolError,
   type DeviceRes,
   type ExtensionContext,
   FileSystemGoneError,
@@ -17,7 +18,8 @@ import type { Redis } from "ioredis";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
-import { KERNEL_BUS, REDIS } from "../infra/tokens.js";
+import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import {
   deviceLeaseKey,
   deviceReqKey,
@@ -33,6 +35,15 @@ export const environmentOffline = (): ApiError =>
     "The connected machine of this environment is offline. Start capybara-device on that machine, or pick another environment.",
   );
 
+/** How often a waiting caller checks that a replica still holds the machine's connection. */
+export const HOLDER_POLL_MS = 5000;
+
+/**
+ * How much longer than the caller's wait a queued request lives: giving up must still find an
+ * untaken request on the list (an expired one would look taken and get a needless cancel).
+ */
+export const LIST_TTL_MARGIN_MS = 30_000;
+
 /**
  * Appends one frame to the request list and makes sure the list lives at least `ARGV[2]` ms
  * (never shortens the TTL a request with a longer deadline set). Atomic, so the list never exists
@@ -46,16 +57,36 @@ end
 return 1
 `;
 
+/**
+ * Gives up on a request (ruling R15): removes the exact request frame `ARGV[1]` from the list; only
+ * when it is no longer queued (the machine already took it) appends the cancel `ARGV[2]`, with the
+ * TTL rule of {@link PUSH_WITH_TTL}. Returns 1 when a cancel was queued.
+ */
+const GIVE_UP = `
+if redis.call('LREM', KEYS[1], 1, ARGV[1]) > 0 then
+  return 0
+end
+redis.call('RPUSH', KEYS[1], ARGV[2])
+if redis.call('PTTL', KEYS[1]) < tonumber(ARGV[3]) then
+  redis.call('PEXPIRE', KEYS[1], ARGV[3])
+end
+return 1
+`;
+
 /** Why a call stopped waiting without a result. */
 const ABORTED = Symbol("aborted");
 const GRACE_EXPIRED = Symbol("grace expired");
 
+type Outcome = { res: DeviceRes } | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
+
 export interface DeviceCallOptions {
   /** How long the machine may take for the operation (sent to it as `deadlineMs`). */
   deadlineMs: number;
-  /** The caller's signal: aborting queues a `cancel` for the request and rejects. */
+  /** The caller's signal: aborting gives the request up and rejects. */
   signal: AbortSignal;
 }
+
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * The caller side of the device relay (environments spec §13.4). A request goes onto the
@@ -64,16 +95,20 @@ export interface DeviceCallOptions {
  * list and forwards the frames to the machine.
  *
  * **The holder's half of the wire** (Task 6 follows it): items on the list are `KernelReq` or
- * `KernelCancel` frames as JSON text, to be parsed with `parseDeviceFrame(item, "kernel")`. For
- * each `res` frame the machine sends, the holder writes the frame (the JSON text as validated by
- * `parseDeviceFrame(…, "device")`) under `capk:device-res:<requestId>` with a TTL and publishes
- * the same frame object on `device.res.<requestId>`.
+ * `KernelCancel` frames as JSON text, to be parsed with `parseDeviceFrame(item, "kernel")`; the
+ * nudge's payload is `{ id }`. For each `res` frame the machine sends, the holder writes the frame
+ * (the JSON text as validated by `parseDeviceFrame(…, "device")`) under
+ * `capk:device-res:<requestId>` with a TTL and publishes the same frame object on
+ * `device.res.<requestId>`.
  *
  * The caller subscribes to its result topic before pushing and reads the result key once after,
  * and once more before giving up (the run-abort pattern; a publish lost while the subscriber
  * reconnects is still found). It waits within its own call for at most `deadlineMs` plus
- * `environments.device.reconnectGraceSeconds`: a result produced while the machine was
- * disconnected arrives after it reconnects. Nothing is kept in process memory beyond the call.
+ * `environments.device.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
+ * {@link HOLDER_POLL_MS}) the wait ends at most one grace later. A result produced while the
+ * machine was disconnected arrives after it reconnects. Giving up (grace, abort, a bad result)
+ * removes the request from the list, or queues a `cancel` when the machine already took it
+ * (ruling R15). Nothing is kept in process memory beyond the call.
  */
 @Injectable()
 export class DeviceRelay {
@@ -82,6 +117,7 @@ export class DeviceRelay {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
   /** Whether a gateway replica holds the machine's connection now. */
@@ -90,11 +126,28 @@ export class DeviceRelay {
   }
 
   /**
+   * Queues `op` for the machine without waiting for an answer (ruling R14: `stop`). The caller
+   * checks {@link holderLive} first; the frame waits on the list for the grace like any request.
+   */
+  async send(
+    environmentId: string,
+    op: DeviceOp,
+    args: unknown,
+    deadlineMs: number,
+  ): Promise<void> {
+    const id = randomUUID();
+    const d = Math.max(1, Math.ceil(deadlineMs));
+    const req: KernelReq = { type: "req", id, op, args, deadlineMs: d };
+    await this.push(environmentId, JSON.stringify(req), this.graceMs() + d + LIST_TTL_MARGIN_MS);
+    await this.bus.publish(deviceReqTopic(environmentId), { id });
+  }
+
+  /**
    * Runs `op` on the environment's machine and returns its validated result. Throws
-   * `environment.offline` when no replica holds the machine at send time or when the grace ran
+   * `environment.offline` when no replica holds the machine at send time or when the wait ran
    * out; the machine's failures map to `SandboxGoneError` (`gone`), `FileSystemGoneError`
-   * (`fs_gone`), a `ToolError` (`policy`) or an `Error` (`error`). On abort or grace expiry a
-   * `cancel` for the request is queued (delivered on the machine's next connect).
+   * (`fs_gone`), a `ToolError` (`policy`) or an `Error` (`error`); an invalid answer throws a
+   * `DeviceProtocolError`. On abort the abort reason is thrown.
    */
   async call<Op extends DeviceOp>(
     environmentId: string,
@@ -109,12 +162,12 @@ export class DeviceRelay {
 
     const id = randomUUID();
     const deadlineMs = Math.max(1, Math.ceil(opts.deadlineMs));
-    const graceMs = this.config.get().environments.device.reconnectGraceSeconds * 1000;
-    const listTtlMs = graceMs + deadlineMs;
-    const req: KernelReq = { type: "req", id, op, args, deadlineMs };
+    const graceMs = this.graceMs();
+    const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
+    const reqJson = JSON.stringify({ type: "req", id, op, args, deadlineMs } satisfies KernelReq);
 
-    let settle!: (r: { res: DeviceRes } | { error: unknown }) => void;
-    const outcome = new Promise<{ res: DeviceRes } | { error: unknown }>((resolve) => {
+    let settle!: (r: Outcome) => void;
+    const outcome = new Promise<Outcome>((resolve) => {
       let done = false;
       settle = (r) => {
         if (done) return;
@@ -123,73 +176,140 @@ export class DeviceRelay {
       };
     });
     const onStored = (raw: string | null) => {
-      if (raw === null) return;
-      settle(this.parseRes(raw, id));
+      if (raw !== null) settle(this.parseRes(raw, id));
     };
+    const onAbort = () => settle({ error: ABORTED });
 
     const unsubscribe = await this.bus.subscribe(deviceResTopic(id), (payload) => {
       onStored(JSON.stringify(payload));
     });
     let timer: NodeJS.Timeout | undefined;
-    const onAbort = () => settle({ error: ABORTED });
+    let stopped = false;
     try {
       signal.addEventListener("abort", onAbort, { once: true });
       // aborted while subscribing: nothing was sent yet
       signal.throwIfAborted();
-      await this.push(environmentId, req, listTtlMs);
-      await this.bus.publish(deviceReqTopic(environmentId), { id });
+      await this.push(environmentId, reqJson, listTtlMs);
+      this.nudge(environmentId, id);
       onStored(await this.redis.get(deviceResKey(id)));
-      timer = setTimeout(() => {
-        // a last look at the key: the publish may have been lost while the subscriber reconnected
-        this.redis.get(deviceResKey(id)).then(
-          (raw) => (raw !== null ? onStored(raw) : settle({ error: GRACE_EXPIRED })),
-          () => settle({ error: GRACE_EXPIRED }),
-        );
-      }, deadlineMs + graceMs);
+
+      // wait until the result, the abort, or `giveUpAt`; the lease is checked every poll, and its
+      // loss caps `giveUpAt` at one grace from then (never extends it)
+      let giveUpAt = Date.now() + deadlineMs + graceMs;
+      let capped = false;
+      const tick = async () => {
+        if (stopped) return;
+        try {
+          if (Date.now() >= giveUpAt) {
+            // a last look at the key: the publish may have been lost while the subscriber reconnected
+            const raw = await this.redis.get(deviceResKey(id));
+            if (raw !== null) onStored(raw);
+            else settle({ error: GRACE_EXPIRED });
+            return;
+          }
+          if (!capped && !(await this.holderLive(environmentId))) {
+            capped = true;
+            giveUpAt = Math.min(giveUpAt, Date.now() + graceMs);
+          }
+        } catch (e) {
+          this.log.warn("device relay wait check failed", { environmentId, error: errMsg(e) });
+        }
+        schedule();
+      };
+      const schedule = () => {
+        if (stopped) return;
+        const wait = Math.max(0, Math.min(HOLDER_POLL_MS, giveUpAt - Date.now()));
+        timer = setTimeout(() => void tick(), wait);
+      };
+      schedule();
 
       const r = await outcome;
+      stopped = true;
+      clearTimeout(timer);
       if ("res" in r) {
-        await this.redis.del(deviceResKey(id)).catch(() => {});
+        await this.quietly("delete the result", environmentId, () =>
+          this.redis.del(deviceResKey(id)),
+        );
         return this.resultOf(op, r.res);
       }
-      if (r.error === ABORTED || r.error === GRACE_EXPIRED) {
-        await this.push(environmentId, { type: "cancel", id } satisfies KernelCancel, listTtlMs);
-        await this.bus.publish(deviceReqTopic(environmentId), { id });
-        if (r.error === ABORTED) throw signal.reason;
-        throw environmentOffline();
+      if (r.error instanceof Error) {
+        // a bad answer: drop it, give the request up, report the protocol error
+        await this.quietly("delete the result", environmentId, () =>
+          this.redis.del(deviceResKey(id)),
+        );
       }
+      await this.giveUp(environmentId, id, reqJson, listTtlMs);
+      if (r.error === ABORTED) throw signal.reason;
+      if (r.error === GRACE_EXPIRED) throw environmentOffline();
       throw r.error;
     } finally {
+      stopped = true;
       clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
-      await unsubscribe();
+      await this.quietly("unsubscribe", environmentId, unsubscribe);
     }
   }
 
-  private async push(
+  private graceMs(): number {
+    return this.config.get().environments.device.reconnectGraceSeconds * 1000;
+  }
+
+  private async push(environmentId: string, frame: string, ttlMs: number): Promise<void> {
+    await this.redis.eval(PUSH_WITH_TTL, 1, deviceReqKey(environmentId), frame, String(ttlMs));
+  }
+
+  /** Announces new frames to the holder; a lost nudge is picked up on the holder's next drain. */
+  private nudge(environmentId: string, id: string): void {
+    this.bus.publish(deviceReqTopic(environmentId), { id }).catch((e: unknown) => {
+      this.log.warn("device relay nudge failed", { environmentId, error: errMsg(e) });
+    });
+  }
+
+  /** Removes the request from the list, or queues a cancel when the machine took it (R15). */
+  private async giveUp(
     environmentId: string,
-    frame: KernelReq | KernelCancel,
+    id: string,
+    reqJson: string,
     ttlMs: number,
   ): Promise<void> {
-    await this.redis.eval(
-      PUSH_WITH_TTL,
-      1,
-      deviceReqKey(environmentId),
-      JSON.stringify(frame),
-      String(ttlMs),
-    );
+    const cancel = JSON.stringify({ type: "cancel", id } satisfies KernelCancel);
+    await this.quietly("give the request up", environmentId, async () => {
+      const queued = await this.redis.eval(
+        GIVE_UP,
+        1,
+        deviceReqKey(environmentId),
+        reqJson,
+        cancel,
+        String(ttlMs),
+      );
+      if (queued === 1) this.nudge(environmentId, id);
+    });
+  }
+
+  /** Runs a side step whose failure must not replace the call's outcome: logged, swallowed. */
+  private async quietly(what: string, environmentId: string, fn: () => Promise<unknown>) {
+    try {
+      await fn();
+    } catch (e) {
+      this.log.warn(`device relay could not ${what}`, { environmentId, error: errMsg(e) });
+    }
   }
 
   /** A stored / published `res` frame for request `id`, or the protocol error it carries. */
-  private parseRes(raw: string, id: string): { res: DeviceRes } | { error: unknown } {
+  private parseRes(raw: string, id: string): Outcome {
     try {
       const f = parseDeviceFrame(raw, "device");
       if (f.type !== "res" || f.id !== id) {
-        return { error: new Error(`the connected machine answered with an unexpected frame`) };
+        return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }
       return { res: f };
     } catch (e) {
-      return { error: e };
+      return {
+        error:
+          e instanceof DeviceProtocolError
+            ? e
+            : new DeviceProtocolError(`the connected machine sent an invalid frame: ${errMsg(e)}`),
+      };
     }
   }
 
@@ -198,8 +318,8 @@ export class DeviceRelay {
       try {
         return parseOpResult(op, res.result);
       } catch (e) {
-        throw new Error(
-          `The connected machine sent an invalid ${op} result: ${e instanceof Error ? e.message : String(e)}`,
+        throw new DeviceProtocolError(
+          `The connected machine sent an invalid ${op} result: ${errMsg(e)}`,
         );
       }
     }

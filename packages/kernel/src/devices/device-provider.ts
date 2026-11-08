@@ -8,6 +8,8 @@ import {
   type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
+import type { KernelLogger } from "../log.js";
 import { DeviceRelay, environmentOffline } from "./relay.js";
 
 /** Extra time the machine gets beyond a command's own timeout (spawn, output, the trip back). */
@@ -56,7 +58,10 @@ export class DeviceSandboxProvider implements SandboxProvider {
   readonly concurrentExec = true as const;
   readonly sessionIsolation = false;
 
-  constructor(@Inject(DeviceRelay) private readonly relay: DeviceRelay) {}
+  constructor(
+    @Inject(DeviceRelay) private readonly relay: DeviceRelay,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+  ) {}
 
   async createFileSystem(args: {
     name: string;
@@ -182,20 +187,19 @@ export class DeviceSandboxProvider implements SandboxProvider {
 
   /**
    * Tells a connected machine its environment was deleted (it stops serving it; its files stay).
-   * Offline, or the machine failing to answer, is not an error: deletion must go through.
+   * Fire-and-forget (ruling R14): queued only while a replica holds the machine, never awaited;
+   * any failure is logged and swallowed, so deletion always goes through.
    */
   private async stop(environmentId: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    if (!(await this.relay.holderLive(environmentId))) return;
     try {
-      await this.relay.call(
-        environmentId,
-        "stop",
-        { reason: "deleted" },
-        { deadlineMs: OP_DEADLINE_MS, signal },
-      );
+      if (!(await this.relay.holderLive(environmentId))) return;
+      await this.relay.send(environmentId, "stop", { reason: "deleted" }, OP_DEADLINE_MS);
     } catch (e) {
-      if (signal.aborted) throw e;
+      this.log.warn("could not tell the connected machine its environment was deleted", {
+        environmentId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   }
 }

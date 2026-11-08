@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionContext, KernelReq, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
@@ -26,6 +26,7 @@ let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let bus: ExtensionContext["bus"];
 let provider: DeviceSandboxProvider;
+const log = createLogger("error", { write: () => {} });
 
 const LIMITS: SandboxLimits = {
   cpu: 2,
@@ -83,11 +84,16 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
-  const log = createLogger("error", { write: () => {} });
-  const relay = new DeviceRelay(redis, bus, new LockService(redis, log), {
-    get: () => ({ environments: { device: { reconnectGraceSeconds: 2 } } }),
-  } as unknown as KernelConfigService);
-  provider = new DeviceSandboxProvider(relay);
+  const relay = new DeviceRelay(
+    redis,
+    bus,
+    new LockService(redis, log),
+    {
+      get: () => ({ environments: { device: { reconnectGraceSeconds: 2 } } }),
+    } as unknown as KernelConfigService,
+    log,
+  );
+  provider = new DeviceSandboxProvider(relay, log);
 }, 120_000);
 afterAll(async () => {
   await sub?.close();
@@ -262,22 +268,45 @@ describe("DeviceSandboxProvider", () => {
     expect(h.frames).toEqual([]);
     await provider.destroyFileSystem({ id: h.environmentId }, signal());
     await provider.destroyFileSystemByName(`cap-env-${h.environmentId}`, signal());
-    expect(h.frames).toMatchObject([
-      { op: "stop", args: { reason: "deleted" } },
-      { op: "stop", args: { reason: "deleted" } },
-    ]);
+    await vi.waitFor(() =>
+      expect(h.frames).toMatchObject([
+        { op: "stop", args: { reason: "deleted" } },
+        { op: "stop", args: { reason: "deleted" } },
+      ]),
+    );
     await h.disconnect();
   });
 
-  it("a machine that fails the stop does not fail the deletion", async () => {
-    const h = new TestHolder(redis, bus, randomUUID(), () => ({
-      ok: false,
-      error: { kind: "error", message: "busy" },
-    }));
+  it("stop is fire-and-forget: a live machine that never answers does not delay deletion", async () => {
+    const h = new TestHolder(redis, bus, randomUUID());
     await h.connect();
+    const t0 = Date.now();
     await provider.destroyFileSystem({ id: h.environmentId }, signal());
-    expect(h.frames).toHaveLength(1);
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(await h.next()).toMatchObject({ op: "stop", args: { reason: "deleted" } });
     await h.disconnect();
+  });
+
+  it("a Redis failure while telling the machine does not fail the deletion", async () => {
+    const broken = new DeviceSandboxProvider(
+      {
+        holderLive: async () => true,
+        send: async () => {
+          throw new Error("redis down");
+        },
+      } as unknown as DeviceRelay,
+      log,
+    );
+    await broken.destroyFileSystem({ id: randomUUID() }, signal());
+    const offlineCheckFails = new DeviceSandboxProvider(
+      {
+        holderLive: async () => {
+          throw new Error("redis down");
+        },
+      } as unknown as DeviceRelay,
+      log,
+    );
+    await offlineCheckFails.destroyFileSystemByName(`cap-env-${randomUUID()}`, signal());
   });
 });
 

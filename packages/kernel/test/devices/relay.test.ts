@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  DeviceProtocolError,
   type ExtensionContext,
   isFileSystemGoneError,
   isSandboxGoneError,
@@ -10,8 +11,13 @@ import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { deviceReqKey, deviceResKey } from "../../src/devices/keys.js";
-import { DeviceRelay } from "../../src/devices/relay.js";
+import {
+  deviceLeaseKey,
+  deviceReqKey,
+  deviceResKey,
+  deviceResTopic,
+} from "../../src/devices/keys.js";
+import { DeviceRelay, HOLDER_POLL_MS, LIST_TTL_MARGIN_MS } from "../../src/devices/relay.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -30,6 +36,7 @@ let sub: ReturnType<typeof createBusSubscriber>;
 let bus: ExtensionContext["bus"];
 let relay: DeviceRelay;
 let graceSeconds = 5;
+const log = createLogger("error", { write: () => {} });
 
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
 const LIMITS = { cpu: 1, memoryMb: 512, diskMb: 1024, egress: "none", allowHosts: [] };
@@ -48,16 +55,54 @@ const rejection = (p: Promise<unknown>) =>
     () => undefined,
     (e: unknown) => e,
   );
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** A relay over `r` (the test's connection unless given). */
+const relayOver = (r: Redis) =>
+  new DeviceRelay(
+    r,
+    bus,
+    new LockService(r, log),
+    {
+      get: () => ({ environments: { device: { reconnectGraceSeconds: graceSeconds } } }),
+    } as unknown as KernelConfigService,
+    log,
+  );
+
+/**
+ * A relay whose request push is followed, before the push returns, by `onPush` (a holder that
+ * answers within the push itself): the caller's ordering around the push decides what it sees.
+ */
+const relayAnsweringInPush = (onPush: (req: KernelReq) => Promise<void>) => {
+  const proxied = new Proxy(redis, {
+    get(target, prop) {
+      if (prop === "eval") {
+        return async (...a: unknown[]) => {
+          const out = await (target.eval as (...x: unknown[]) => Promise<unknown>)(...a);
+          // the push script has 5 arguments (script, 1, key, frame, ttl); giving up has 6
+          if (a.length === 5) {
+            const f = JSON.parse(a[3] as string) as KernelReq;
+            if (f.type === "req") await onPush(f);
+          }
+          return out;
+        };
+      }
+      const v = Reflect.get(target, prop, target) as unknown;
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  return relayOver(proxied);
+};
+
+/** Holds the lease without draining: requests stay queued (a machine that has not taken them). */
+const holdLeaseOnly = (env: string) => redis.set(deviceLeaseKey(env), "x", "PX", 60_000);
 
 beforeAll(async () => {
   rd = await startTestRedis();
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
-  const log = createLogger("error", { write: () => {} });
-  relay = new DeviceRelay(redis, bus, new LockService(redis, log), {
-    get: () => ({ environments: { device: { reconnectGraceSeconds: graceSeconds } } }),
-  } as unknown as KernelConfigService);
+  relay = relayOver(redis);
 }, 120_000);
 afterAll(async () => {
   await sub?.close();
@@ -100,6 +145,42 @@ describe("DeviceRelay", () => {
     await h.disconnect();
   });
 
+  it("a result stored before the publish could reach anyone is found by the read after pushing", async () => {
+    const env = randomUUID();
+    await holdLeaseOnly(env);
+    const r = relayAnsweringInPush(async (req) => {
+      await redis.set(
+        deviceResKey(req.id),
+        JSON.stringify({ type: "res", id: req.id, ok: true, result: EXEC_RESULT }),
+        "PX",
+        60_000,
+      );
+    });
+    const t0 = Date.now();
+    expect(await r.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: signal() })).toEqual(
+      EXEC_RESULT,
+    );
+    expect(Date.now() - t0).toBeLessThan(2000);
+    await redis.del(deviceLeaseKey(env), deviceReqKey(env));
+  });
+
+  it("a result published as soon as the request is queued reaches the caller (it subscribed first)", async () => {
+    const env = randomUUID();
+    await holdLeaseOnly(env);
+    const r = relayAnsweringInPush(async (req) => {
+      await bus.publish(deviceResTopic(req.id), {
+        type: "res",
+        id: req.id,
+        ok: true,
+        result: EXEC_RESULT,
+      });
+    });
+    const call = r.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: signal() });
+    const late = sleep(2000).then(() => "too late");
+    expect(await Promise.race([call, late])).toEqual(EXEC_RESULT);
+    await redis.del(deviceLeaseKey(env), deviceReqKey(env));
+  });
+
   it("result produced during a disconnect is delivered after reconnect", async () => {
     graceSeconds = 5;
     const h = holder();
@@ -110,7 +191,7 @@ describe("DeviceRelay", () => {
     });
     const req = await h.next();
     await h.disconnect();
-    await new Promise((r) => setTimeout(r, 2000));
+    await sleep(2000);
     await h.connect();
     await h.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
@@ -131,7 +212,7 @@ describe("DeviceRelay", () => {
     await h.disconnect();
   }, 10_000);
 
-  it("grace exceeded queues a cancel and throws environment.offline", async () => {
+  it("grace exceeded on a taken request queues a cancel and throws environment.offline", async () => {
     graceSeconds = 1;
     const h = holder();
     await h.connect();
@@ -140,19 +221,66 @@ describe("DeviceRelay", () => {
       relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
     );
     const req = await h.next();
+    // the lease stays (a holder that took the request and never answers)
     await h.disconnect();
+    await holdLeaseOnly(h.environmentId);
     const e = await call;
     expect(isOffline(e)).toBe(true);
     expect(Date.now() - t0).toBeGreaterThanOrEqual(1400);
-    // the cancel waits on the list for the next connect
-    const queued = await redis.lrange(deviceReqKey(h.environmentId), 0, -1);
+    // the cancel waits on the list for the next connect, under a TTL
+    const listKey = deviceReqKey(h.environmentId);
+    const queued = await redis.lrange(listKey, 0, -1);
     expect(queued.map((x) => JSON.parse(x))).toEqual([{ type: "cancel", id: req.id }]);
+    expect(await redis.pttl(listKey)).toBeGreaterThan(0);
     await h.connect();
     expect(await h.next((f) => f.type === "cancel")).toEqual({ type: "cancel", id: req.id });
     await h.disconnect();
   }, 10_000);
 
-  it("abort queues a cancel and rejects with the abort reason", async () => {
+  it("a request given up on before the machine took it is removed: nothing reaches the machine", async () => {
+    graceSeconds = 1;
+    const env = randomUUID();
+    await holdLeaseOnly(env);
+    const e = await rejection(
+      relay.call(env, "exec", execArgs, { deadlineMs: 500, signal: signal() }),
+    );
+    expect(isOffline(e)).toBe(true);
+    const ac = new AbortController();
+    const aborted = rejection(
+      relay.call(env, "stat", { path: "/w" }, { deadlineMs: 5000, signal: ac.signal }),
+    );
+    await sleep(100);
+    ac.abort(new Error("stop"));
+    expect(((await aborted) as Error).message).toBe("stop");
+    expect(await redis.exists(deviceReqKey(env))).toBe(0);
+    const h = new TestHolder(redis, bus, env);
+    await h.connect();
+    await sleep(200);
+    expect(h.frames).toEqual([]);
+    await h.disconnect();
+  }, 10_000);
+
+  it("a holder lost mid-call ends the wait one grace after the loss, not at the deadline", async () => {
+    graceSeconds = 1;
+    const h = holder();
+    await h.connect();
+    const t0 = Date.now();
+    const call = rejection(
+      relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 30_000, signal: signal() }),
+    );
+    const req = await h.next();
+    await h.disconnect();
+    const e = await call;
+    expect(isOffline(e)).toBe(true);
+    const took = Date.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(1000);
+    expect(took).toBeLessThan(HOLDER_POLL_MS + 1000 + 2000);
+    const queued = await redis.lrange(deviceReqKey(h.environmentId), 0, -1);
+    expect(queued.map((x) => JSON.parse(x))).toEqual([{ type: "cancel", id: req.id }]);
+    await redis.del(deviceReqKey(h.environmentId));
+  }, 15_000);
+
+  it("abort of a taken request queues a cancel and rejects with the abort reason", async () => {
     const h = holder();
     await h.connect();
     const ac = new AbortController();
@@ -219,40 +347,79 @@ describe("DeviceRelay", () => {
     const e = await rejection(
       relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 5000, signal: signal() }),
     );
+    expect(e).toBeInstanceOf(DeviceProtocolError);
     expect((e as Error).message).toMatch(/invalid exec result/);
     await h.disconnect();
   });
 
-  it("every key written has a TTL; a short request never shortens the list's TTL", async () => {
-    graceSeconds = 5;
+  it("a malformed result frame: the key is deleted, the request cancelled, a protocol error thrown", async () => {
     const h = holder();
     await h.connect();
-    // the holder stops draining but keeps the lease: requests stay on the list
+    const call = rejection(
+      relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 5000, signal: signal() }),
+    );
+    const req = await h.next();
+    await redis.set(deviceResKey(req.id), '{"type":"res","ok":"maybe"}', "PX", 60_000);
+    await bus.publish(deviceResTopic(req.id), { type: "res", id: req.id, ok: "maybe" });
+    const e = await call;
+    expect(e).toBeInstanceOf(DeviceProtocolError);
+    expect(await redis.exists(deviceResKey(req.id))).toBe(0);
+    expect(await h.next((f) => f.type === "cancel")).toEqual({ type: "cancel", id: req.id });
     await h.disconnect();
-    await redis.set(`capk:device-lease:${h.environmentId}`, "x", "PX", 60_000);
+  });
+
+  it("a failing cancel push does not replace the outcome", async () => {
+    const h = holder();
+    await h.connect();
+    let failGiveUp = true;
+    const proxied = new Proxy(redis, {
+      get(target, prop) {
+        if (prop === "eval") {
+          return async (...a: unknown[]) => {
+            if (a.length === 6 && failGiveUp) throw new Error("redis down");
+            return (target.eval as (...x: unknown[]) => Promise<unknown>)(...a);
+          };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const r = relayOver(proxied);
+    const ac = new AbortController();
+    const call = rejection(
+      r.call(h.environmentId, "exec", execArgs, { deadlineMs: 5000, signal: ac.signal }),
+    );
+    await h.next();
+    const reason = new Error("aborted by the run");
+    ac.abort(reason);
+    expect(await call).toBe(reason);
+    failGiveUp = false;
+    await h.disconnect();
+  });
+
+  it("the request list always has a TTL; a short request never shortens it", async () => {
+    graceSeconds = 5;
+    const env = randomUUID();
+    await holdLeaseOnly(env);
     const ac = new AbortController();
     const long = rejection(
-      relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 20_000, signal: ac.signal }),
+      relay.call(env, "exec", execArgs, { deadlineMs: 20_000, signal: ac.signal }),
     );
-    await new Promise((r) => setTimeout(r, 200));
-    const listKey = deviceReqKey(h.environmentId);
+    await sleep(200);
+    const listKey = deviceReqKey(env);
     const first = await redis.pttl(listKey);
-    expect(first).toBeGreaterThan(20_000);
-    expect(first).toBeLessThanOrEqual(25_000);
+    expect(first).toBeGreaterThan(20_000 + 5000);
+    expect(first).toBeLessThanOrEqual(20_000 + 5000 + LIST_TTL_MARGIN_MS);
     const short = rejection(
-      relay.call(h.environmentId, "stat", { path: "/w" }, { deadlineMs: 100, signal: ac.signal }),
+      relay.call(env, "stat", { path: "/w" }, { deadlineMs: 100, signal: ac.signal }),
     );
-    await new Promise((r) => setTimeout(r, 200));
-    expect(await redis.pttl(listKey)).toBeGreaterThan(20_000);
+    await sleep(200);
+    expect(await redis.llen(listKey)).toBe(2);
+    expect(await redis.pttl(listKey)).toBeGreaterThan(20_000 + 5000);
     ac.abort(new Error("done"));
     await Promise.all([long, short]);
-    // the cancels went onto the list too, which still has a TTL
-    expect(await redis.llen(listKey)).toBe(4);
-    expect(await redis.pttl(listKey)).toBeGreaterThan(0);
-    // the holder's result keys carry a TTL as well
-    const req = JSON.parse((await redis.lindex(listKey, 0)) as string) as KernelReq;
-    await h.respond(req.id, { ok: true, result: EXEC_RESULT }, { publish: false });
-    expect(await redis.pttl(deviceResKey(req.id))).toBeGreaterThan(0);
-    await redis.del(listKey, `capk:device-lease:${h.environmentId}`, deviceResKey(req.id));
+    // neither request was taken: both were removed, no cancel queued
+    expect(await redis.exists(listKey)).toBe(0);
+    await redis.del(deviceLeaseKey(env));
   }, 10_000);
 });
