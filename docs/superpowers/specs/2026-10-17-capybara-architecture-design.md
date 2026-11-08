@@ -577,7 +577,7 @@ CAPYBARA_NACOS_DATA_ID=capybara.yaml
 
 ### 8.3 Sandbox
 
-- **Environments**: work happens in environments, not per-conversation sandboxes (`docs/superpowers/specs/2026-11-07-environments-design.md`). A cloud environment is one instance plus a file system; the instance is created on the first sandbox-type tool call, suspended when idle and destroyed after long disuse, and the files are kept until the environment is deleted. The provider contract is `sandbox@2` (§5.1 of that spec).
+- **Devices**: work happens on devices, not per-conversation sandboxes (`docs/superpowers/specs/2026-11-07-environments-design.md`, §15 for the name). A cloud device is one instance plus a file system; the instance is created on the first sandbox-type tool call, suspended when idle and destroyed after long disuse, and the files are kept until the device is deleted; a local device is a machine connected with `capybara-device`. The provider contract is `sandbox@2` (§5.1 of that spec).
 - The implementation is chosen by deployment config (one kind per deployment):
 
 | Form | Implementation | Isolation |

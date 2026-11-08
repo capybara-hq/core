@@ -444,7 +444,7 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/devices/link",
-    // The session (the device layout sends a signed-out visitor to sign-in first) and the machine
+    // The session (the device-link layout sends a signed-out visitor to sign-in first) and the machine
     // behind `?code=`; then the org's devices (its connected ones can take the machine).
     queries: ({ search }) => {
       const code = codeParam(search.get("code"));
