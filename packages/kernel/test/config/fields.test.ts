@@ -34,6 +34,7 @@ describe("configFields", () => {
       "web.fetch.timeoutMs",
       "sandbox.maxConcurrentCommands",
       "environments.maxPersonal",
+      "environments.device.reconnectGraceSeconds",
       "evals.orgConcurrency",
       "models.listTimeoutMs",
       "models.embedTimeoutMs",

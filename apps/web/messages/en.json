@@ -315,7 +315,17 @@
       "limit_reached": "You have reached the limit of environments. Delete one to create another.",
       "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
       "files_lost": "The files of this environment were lost. Rebuild its files on the environments page to use it again.",
-      "forbidden": "You can no longer use this environment."
+      "forbidden": "You can no longer use this environment.",
+      "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
+      "program_outdated": "The device program on this computer is out of date. Update it and connect again."
+    },
+    "device": {
+      "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
+      "slow_down": "Too many requests. Try again shortly.",
+      "expired": "The connection code has expired. Start connecting again on the computer.",
+      "denied": "The connection request was denied.",
+      "code_invalid": "The connection code is invalid or already used. Check the code shown on the computer.",
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer."
     },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
