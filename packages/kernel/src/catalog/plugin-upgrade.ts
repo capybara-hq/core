@@ -1510,7 +1510,7 @@ export class PlatformPluginUpdater {
 
   /**
    * The target's skill names, agent templates, connector templates and themes, from object storage
-   * (a theme failing its checks -> 400 `theme.invalid` / `theme.unreadable`, themes spec §6).
+   * (a theme failing its checks -> 400 `theme.invalid`, themes spec §6).
    */
   private async readContents(to: VersionRow): Promise<TargetContents> {
     return {

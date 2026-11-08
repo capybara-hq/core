@@ -5,6 +5,7 @@ import {
   canonicalThemeValue,
   isThemeAssetPath,
   isThemeFontFamily,
+  mergeThemeSchemes,
   type ParsedTheme,
   parseThemeFile,
   THEME_LIMITS,
@@ -50,8 +51,12 @@ describe("parseThemeFile", () => {
     const t = parsed(nightCity());
     expect(t.id).toBe("night-city");
     expect(t.singleScheme).toBe("dark");
-    expect(Object.keys(t.merged)).toEqual(["dark"]);
-    const m = t.merged.dark;
+    // the parsed theme holds the file's own values only; the built-ins are merged at use time
+    expect(t).not.toHaveProperty("merged");
+    expect(t.schemes.dark?.color?.ink).toBeUndefined();
+    const merged = mergeThemeSchemes(t);
+    expect(Object.keys(merged)).toEqual(["dark"]);
+    const m = merged.dark;
     expect(m?.color.bg).toBe("#05070D");
     // Tokens the theme leaves out keep the built-in value of that scheme.
     expect(m?.color.ink).toBe(THEME_TOKENS.color.ink.dark);
@@ -67,7 +72,7 @@ describe("parseThemeFile", () => {
   it("both schemes: not single-scheme", () => {
     const t = parsed({ name: { en: "T", zh: "T" }, schemes: { dark: {}, light: {} } });
     expect(t.singleScheme).toBeNull();
-    expect(t.merged.light?.color.bg).toBe(THEME_TOKENS.color.bg.light);
+    expect(mergeThemeSchemes(t).light?.color.bg).toBe(THEME_TOKENS.color.bg.light);
   });
 
   it("accepts the file text, rejects invalid JSON and an oversized file", () => {
@@ -211,12 +216,12 @@ describe("parseThemeFile", () => {
     const t = parsed(
       dark({ color: { accent: "#fce300", "focus-ring": "rgba( 252, 227, 0, 0.250 )" } }),
     );
-    expect(t.merged.dark?.color.accent).toBe("#FCE300");
-    expect(t.merged.dark?.color["focus-ring"]).toBe("rgba(252,227,0,0.25)");
+    expect(mergeThemeSchemes(t).dark?.color.accent).toBe("#FCE300");
+    expect(mergeThemeSchemes(t).dark?.color["focus-ring"]).toBe("rgba(252,227,0,0.25)");
     expect(t.schemes.dark?.color?.["focus-ring"]).toBe("rgba(252,227,0,0.25)");
-    expect(parsed(dark({ color: { scrim: "rgba(0,0,0,1)" } })).merged.dark?.color.scrim).toBe(
-      "rgba(0,0,0,1)",
-    );
+    expect(
+      mergeThemeSchemes(parsed(dark({ color: { scrim: "rgba(0,0,0,1)" } }))).dark?.color.scrim,
+    ).toBe("rgba(0,0,0,1)");
   });
 
   it("parses shadows into parts and re-renders them", () => {
@@ -228,8 +233,8 @@ describe("parseThemeFile", () => {
         },
       }),
     );
-    expect(t.merged.dark?.shadow["shadow-1"]).toBe("-16px 0 40px rgba(0,0,0,0.4)");
-    expect(t.merged.dark?.shadow["shadow-2"]).toBe("0 2px 8px 1px #0A0A0A");
+    expect(mergeThemeSchemes(t).dark?.shadow["shadow-1"]).toBe("-16px 0 40px rgba(0,0,0,0.4)");
+    expect(mergeThemeSchemes(t).dark?.shadow["shadow-2"]).toBe("0 2px 8px 1px #0A0A0A");
   });
 
   it.each([
@@ -256,7 +261,9 @@ describe("parseThemeFile", () => {
     expect(errorsOf(dark({ radius: { md: 1.5 } })).join("\n")).toMatch(/schemes\.dark\.radius\.md/);
     expect(errorsOf(dark({ radius: { md: -1 } })).join("\n")).toMatch(/schemes\.dark\.radius\.md/);
     expect(errorsOf(dark({ radius: { lg: 2 } })).join("\n")).toMatch(/lg/);
-    expect(parsed(dark({ radius: { bubble: 16 } })).merged.dark?.radius.bubble).toBe(16);
+    expect(mergeThemeSchemes(parsed(dark({ radius: { bubble: 16 } }))).dark?.radius.bubble).toBe(
+      16,
+    );
   });
 
   it("font family grammar", () => {
@@ -309,6 +316,17 @@ describe("parseThemeFile", () => {
   it("an unreadable merged scheme is reported with the failing pair", () => {
     const e = errorsOf(dark({ color: { bg: "#8E8E89" } }));
     expect(e.some((x) => x.startsWith("unreadable:") && x.includes("muted on bg"))).toBe(true);
+  });
+
+  it("readability: false (a version already in a catalog) checks grammar and names, not readability", () => {
+    const unreadable = dark({ color: { bg: "#8E8E89" } });
+    const r = parseThemeFile("t", unreadable, { readability: false });
+    expect("errors" in r).toBe(false);
+    const bad = parseThemeFile("t", dark({ color: { nope: "#000000", bg: "red" } }), {
+      readability: false,
+    });
+    expect("errors" in bad ? bad.errors.join("\n") : "").toMatch(/unknown token color\.nope/);
+    expect("errors" in bad ? bad.errors.join("\n") : "").toMatch(/schemes\.dark\.color\.bg/);
   });
 
   it("schemes must name dark or light", () => {
@@ -390,5 +408,31 @@ describe("stored value re-validation (themes spec §8)", () => {
     for (const p of ["../x.woff2", "/abs.woff2", "fonts/a b.woff2", 'a").woff2', "a/./b.png"]) {
       expect(isThemeAssetPath(p)).toBe(false);
     }
+  });
+});
+
+describe("mergeThemeSchemes", () => {
+  it("merges only the schemes the theme defines onto the current built-in values", () => {
+    const m = mergeThemeSchemes({ schemes: { light: { color: { accent: "#8A3B12" } } } });
+    expect(Object.keys(m)).toEqual(["light"]);
+    expect(m.light?.color.accent).toBe("#8A3B12");
+    expect(m.light?.color.bg).toBe(THEME_TOKENS.color.bg.light);
+  });
+
+  it("a stored override the built-in tokens no longer know, or an invalid value, is skipped", () => {
+    // as a definition stored before a core release renamed a token reads after it
+    const stored = {
+      schemes: {
+        dark: {
+          color: { "renamed-away": "#FFFFFF", accent: "#FCE300", bg: "x;}*{" },
+          radius: { md: 99, sm: 3 },
+        },
+      },
+    } as unknown as Parameters<typeof mergeThemeSchemes>[0];
+    const m = mergeThemeSchemes(stored).dark;
+    expect(m?.color).not.toHaveProperty("renamed-away");
+    expect(m?.color.accent).toBe("#FCE300");
+    expect(m?.color.bg).toBe(THEME_TOKENS.color.bg.dark);
+    expect(m?.radius).toEqual({ ...THEME_TOKENS.radius, sm: 3 });
   });
 });

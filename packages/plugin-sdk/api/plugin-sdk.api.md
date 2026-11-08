@@ -1520,6 +1520,9 @@ export type MergedScheme = {
 };
 
 // @public
+export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Record<ThemeScheme, MergedScheme>>;
+
+// @public
 export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 
 // @public
@@ -1831,7 +1834,6 @@ export interface ParsedSkillMd {
 // @public
 export interface ParsedTheme extends ThemeFile {
     id: string;
-    merged: Partial<Record<ThemeScheme, MergedScheme>>;
     singleScheme: ThemeScheme | null;
 }
 
@@ -1882,9 +1884,14 @@ export interface ParseSkillMdOptions {
 }
 
 // @public
-export function parseThemeFile(id: string, json: unknown): ParsedTheme | {
+export function parseThemeFile(id: string, json: unknown, options?: ParseThemeOptions): ParsedTheme | {
     errors: string[];
 };
+
+// @public
+export interface ParseThemeOptions {
+    readability?: boolean;
+}
 
 // @public
 export function parseToolKey(key: string): ParsedToolKey | null;

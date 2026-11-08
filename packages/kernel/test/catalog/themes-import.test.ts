@@ -1,4 +1,10 @@
-import { PLUGIN_MANIFEST_FILE, SDK_VERSION, sanitizeThemeSvg } from "@capybara-hq/plugin-sdk";
+import { createHash } from "node:crypto";
+import {
+  type ParsedTheme,
+  PLUGIN_MANIFEST_FILE,
+  SDK_VERSION,
+  sanitizeThemeSvg,
+} from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { PluginPackageError, readPluginFiles } from "../../src/catalog/plugin-package.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
@@ -108,7 +114,7 @@ describe("readPluginFiles reads themes", () => {
     const t = c.themes[0];
     expect(t?.id).toBe("night-city");
     expect(t?.path).toBe("themes/night-city.json");
-    expect(t?.theme.merged.dark?.color.accent).toBe("#FCE300");
+    expect(t?.theme.schemes.dark?.color?.accent).toBe("#FCE300");
     expect([...(t?.assets.keys() ?? [])].sort()).toEqual([
       "fonts/Fixture-Regular.woff2",
       "logo.svg",
@@ -419,6 +425,80 @@ describe("themes as platform components", () => {
     expect(r.json().error.code).toBe("theme.unreadable");
     expect((await themeRow()).current_version).toBe(1);
     expect(itemId).toBeTruthy();
+  });
+
+  /**
+   * Replaces a stored file of catalog version `version` of `itemId` (and its recorded hash), as a
+   * version accepted by an older core reads after a release changed the built-in tokens.
+   */
+  async function rewriteCatalogFile(itemId: string, version: string, path: string, text: string) {
+    const v = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["object_prefix", "files"])
+      .where("item_id", "=", itemId)
+      .where("version", "=", version)
+      .executeTakeFirstOrThrow();
+    const data = enc(text);
+    await env.k.app.get(StorageService).deployment().put(`${v.object_prefix}${path}`, data, {
+      contentType: "application/octet-stream",
+      size: data.byteLength,
+    });
+    const sha256 = createHash("sha256").update(data).digest("hex");
+    await env.db
+      .updateTable("catalog_item_versions")
+      .set({
+        files: JSON.stringify(
+          v.files.map((f) => (f.path === path ? { path, size: data.byteLength, sha256 } : f)),
+        ),
+      })
+      .where("item_id", "=", itemId)
+      .where("version", "=", version)
+      .execute();
+  }
+
+  it("a stored version holds only the theme file's own values (no built-in values)", async () => {
+    await importPlugin(env, await themePlugin("neon"));
+    const v = await versionRow((await themeRow()).id, 1);
+    const def = v.definition as ParsedTheme;
+    expect(def).not.toHaveProperty("merged");
+    expect(def.schemes).toEqual({
+      dark: {
+        color: { bg: "#05070D", panel: "#0A0E18", accent: "#FCE300", "on-accent": "#141200" },
+        radius: { sm: 0, md: 2 },
+      },
+    });
+  });
+
+  it("a catalog version is not judged for readability again: its import verdict holds", async () => {
+    const itemId = await importPlugin(env, await themePlugin("neon"));
+    await importPlugin(
+      env,
+      await themePlugin("neon", { version: "2.0.0", themeJson: theme({}, { accent: "#FFD000" }) }),
+    );
+    // after import, the current built-ins would find 2.0.0's theme unreadable (a tightened floor)
+    await rewriteCatalogFile(
+      itemId,
+      "2.0.0",
+      "themes/night-city.json",
+      theme({}, { accent: "#FFD000", bg: "#8E8E89" }),
+    );
+    await updateTo(itemId, "2.0.0");
+    expect((await themeRow()).current_version).toBe(2);
+    // grammar and token names are still checked on read
+    await importPlugin(env, await themePlugin("neon", { version: "3.0.0" }));
+    await rewriteCatalogFile(
+      itemId,
+      "3.0.0",
+      "themes/night-city.json",
+      theme({}, { "renamed-away": "#000000" }),
+    );
+    const r = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/catalog/items/${itemId}/update/preview`,
+      payload: { version: "3.0.0" },
+    });
+    expect(r.statusCode, r.body).toBe(400);
+    expect(r.json().error.code).toBe("theme.invalid");
   });
 
   it("removing the plugin removes its theme", async () => {

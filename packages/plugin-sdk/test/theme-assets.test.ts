@@ -47,7 +47,6 @@ const theme = (over: Partial<ParsedTheme>): ParsedTheme => ({
   id: "t",
   name: { en: "T", zh: "T" },
   schemes: { dark: {} },
-  merged: {},
   singleScheme: "dark",
   ...over,
 });

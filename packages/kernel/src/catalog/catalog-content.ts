@@ -600,10 +600,12 @@ export function themeAssetsDigest(
 
 /**
  * The themes of a catalog version (`manifest.themes`, listed explicitly since import), parsed from
- * storage and their assets checked again (checked at import; again in case storage was changed,
- * or the built-in tokens the readability checks merge onto changed since). A theme that fails ->
- * 400 `theme.invalid` / `theme.unreadable` as at import (themes spec §6: a failing new version
- * blocks the plugin update with the same refusal).
+ * storage and their assets checked again (checked at import; again in case storage was changed).
+ * Grammar and token names are checked again (a token renamed in core stays loud, themes spec
+ * §4.1), but not readability: the version passed it at import, and a later change of the built-in
+ * tokens must not block an update or a rollback to it. A theme that fails -> 400 `theme.invalid`
+ * as at import (themes spec §6: a failing new version blocks the plugin update with the same
+ * refusal).
  */
 export async function readCatalogThemes(
   storage: StorageService,
@@ -625,7 +627,7 @@ export async function readCatalogThemes(
     const id = themeIdOf(path);
     const data = texts.get(path);
     if (data === undefined) throw new ApiError("internal", `Stored theme ${path} is missing`);
-    const r = parseThemeFile(id, new TextDecoder().decode(data));
+    const r = parseThemeFile(id, new TextDecoder().decode(data), { readability: false });
     if ("errors" in r) throw themeApiError(pluginThemeError([{ theme: id, problems: r.errors }]));
     return { id, path, theme: r };
   });

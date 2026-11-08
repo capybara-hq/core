@@ -2,7 +2,12 @@
 // references the web reads, and the delivery URLs (§8). Plain functions in the caller's context (a
 // transaction's connection when there is one): the settings writers (deployment, org, person) and
 // `ThemesService` decide with the same predicates.
-import type { LocalizedName, ParsedTheme, ThemeScheme } from "@capybara-hq/plugin-sdk";
+import {
+  type LocalizedName,
+  mergeThemeSchemes,
+  type ParsedTheme,
+  type ThemeScheme,
+} from "@capybara-hq/plugin-sdk";
 import {
   type ComponentRow,
   componentOn,
@@ -82,11 +87,15 @@ export function themeRefOf(id: string, version: string, def: ParsedTheme): Theme
   };
 }
 
-/** The swatches of each scheme the theme defines, from its merged values. */
+/**
+ * The swatches of each scheme the theme defines: its overrides merged onto the current built-in
+ * values (a stored definition holds only the theme file's own values, themes spec §6).
+ */
 export function themeSwatches(def: ParsedTheme): Partial<Record<ThemeScheme, ThemeSwatch>> {
   const out: Partial<Record<ThemeScheme, ThemeSwatch>> = {};
+  const merged = mergeThemeSchemes(def);
   for (const s of SCHEMES) {
-    const c = def.merged[s]?.color;
+    const c = merged[s]?.color;
     if (def.schemes[s] === undefined || c === undefined) continue;
     out[s] = { bg: c.bg ?? "", panel: c.panel ?? "", ink: c.ink ?? "", accent: c.accent ?? "" };
   }

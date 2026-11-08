@@ -93,13 +93,27 @@ export interface ThemeFile {
   logo?: ThemeLogo;
 }
 
-/** A theme file after {@link parseThemeFile}: values canonical, schemes merged. */
+/**
+ * A theme file after {@link parseThemeFile}: values canonical. It holds only the file's own
+ * content (no built-in values), so it is what a catalog stores and compares: a change of the
+ * built-in tokens in core changes no stored theme. {@link mergeThemeSchemes} merges it onto the
+ * current built-in values where they are needed.
+ */
 export interface ParsedTheme extends ThemeFile {
   id: string;
-  /** Each scheme the theme defines, merged onto the built-in values. */
-  merged: Partial<Record<ThemeScheme, MergedScheme>>;
   /** The only scheme of a single-scheme theme, else null. */
   singleScheme: ThemeScheme | null;
+}
+
+/** Options of {@link parseThemeFile}. */
+export interface ParseThemeOptions {
+  /**
+   * Check readability on the schemes merged onto the current built-in values (default true).
+   * False for a theme version already accepted into a catalog: its readability verdict was given
+   * when it was imported, so a later change of the built-in tokens does not block it. Grammar and
+   * token names are always checked.
+   */
+  readability?: boolean;
 }
 
 /** `themes/night-city.json` → `night-city`. */
@@ -284,6 +298,45 @@ export function isThemeAssetPath(v: unknown): v is string {
   return typeof v === "string" && v.length <= 512 && isPlainAssetPath(v);
 }
 
+/**
+ * Each scheme the theme defines, merged onto the current built-in values (for swatches, the
+ * readability check and anything else that needs full values). A stored theme is read leniently:
+ * an override whose token name the built-in tokens no longer know (renamed in core), that is not
+ * overridable, or whose value falls outside the grammar is skipped, as the stylesheet skips it.
+ */
+export function mergeThemeSchemes(
+  theme: Pick<ThemeFile, "schemes">,
+): Partial<Record<ThemeScheme, MergedScheme>> {
+  const out: Partial<Record<ThemeScheme, MergedScheme>> = {};
+  const schemes: unknown = theme?.schemes;
+  if (schemes === null || typeof schemes !== "object") return out;
+  for (const scheme of SCHEMES) {
+    const over: unknown = (schemes as Record<string, unknown>)[scheme];
+    if (over === null || typeof over !== "object") continue;
+    const m = builtIn(scheme);
+    for (const group of ["color", "shadow"] as const) {
+      const values: unknown = (over as Record<string, unknown>)[group];
+      if (values === null || typeof values !== "object") continue;
+      for (const [name, raw] of Object.entries(values)) {
+        if (!OVERRIDABLE[group].has(name)) continue;
+        const v = canonicalThemeValue(group, raw);
+        if (v !== undefined) m[group][name] = v;
+      }
+    }
+    const radii: unknown = (over as Record<string, unknown>).radius;
+    if (radii !== null && typeof radii === "object") {
+      for (const key of ["sm", "md", "bubble"] as const) {
+        const v: unknown = (radii as Record<string, unknown>)[key];
+        if (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 16) {
+          m.radius[key] = v as number;
+        }
+      }
+    }
+    out[scheme] = m;
+  }
+  return out;
+}
+
 /** The built-in values of one scheme. */
 function builtIn(scheme: ThemeScheme): MergedScheme {
   const pick = (group: Record<string, { dark: string; light: string }>) =>
@@ -323,12 +376,17 @@ function readJson(json: unknown): { value: unknown } | { errors: string[] } {
  * Parses and validates a theme file: the parsed JSON value or the file text (larger than
  * {@link THEME_LIMITS}`.fileBytes`, measured as text or as the value's JSON, is refused). Checks the id, the shape, token names against
  * the generated allowlist (an unknown or non-overridable name is an error), the value grammar,
- * fonts and logo; then merges every defined scheme onto the built-in tokens and reports each
- * readability issue as an error starting `unreadable:`. Returned values are canonical (uppercase
+ * fonts and logo; then (unless `options.readability` is false) merges every defined scheme onto
+ * the built-in tokens ({@link mergeThemeSchemes}) and reports each readability issue as an error
+ * starting `unreadable:`. Returned values are canonical (uppercase
  * hex, rgba and shadows re-rendered from their parts). Invalid input returns `{ errors }`
  * (`<path>: <reason>`, English, at most 50); never throws.
  */
-export function parseThemeFile(id: string, json: unknown): ParsedTheme | { errors: string[] } {
+export function parseThemeFile(
+  id: string,
+  json: unknown,
+  options: ParseThemeOptions = {},
+): ParsedTheme | { errors: string[] } {
   if (!CATALOG_ITEM_NAME_RE.test(id)) {
     return { errors: [`theme id "${id}" must match ^[a-z0-9][a-z0-9-]{0,63}$`] };
   }
@@ -362,12 +420,10 @@ export function parseThemeFile(id: string, json: unknown): ParsedTheme | { error
   });
 
   const schemes: Partial<Record<ThemeScheme, ThemeSchemeOverride>> = {};
-  const merged: Partial<Record<ThemeScheme, MergedScheme>> = {};
   for (const scheme of SCHEMES) {
     const over = file.schemes[scheme];
     if (over === undefined) continue;
     const out: ThemeSchemeOverride = {};
-    const m = builtIn(scheme);
     // Token names come from the raw object's own keys: the zod record drops `__proto__`.
     const rawScheme = (data as { schemes: Record<string, Record<string, unknown>> }).schemes[
       scheme
@@ -395,19 +451,15 @@ export function parseThemeFile(id: string, json: unknown): ParsedTheme | { error
           continue;
         }
         canonical[name] = v;
-        m[group][name] = v;
       }
       out[group] = canonical;
     }
-    if (over.radius !== undefined) {
-      out.radius = { ...over.radius };
-      Object.assign(m.radius, over.radius);
-    }
+    if (over.radius !== undefined) out.radius = { ...over.radius };
     schemes[scheme] = out;
-    merged[scheme] = m;
   }
   if (errors.length > 0) return { errors: errors.slice(0, MAX_ERRORS) };
 
+  const merged = options.readability === false ? {} : mergeThemeSchemes({ schemes });
   for (const scheme of SCHEMES) {
     const m = merged[scheme];
     if (m === undefined) continue;
@@ -423,13 +475,12 @@ export function parseThemeFile(id: string, json: unknown): ParsedTheme | { error
   }
   if (errors.length > 0) return { errors: errors.slice(0, MAX_ERRORS) };
 
-  const defined = SCHEMES.filter((s) => merged[s] !== undefined);
+  const defined = SCHEMES.filter((s) => schemes[s] !== undefined);
   const { $schema: _schema, ...rest } = file;
   return {
     ...rest,
     schemes,
     id,
-    merged,
     singleScheme: defined.length === 1 ? (defined[0] as ThemeScheme) : null,
   };
 }
