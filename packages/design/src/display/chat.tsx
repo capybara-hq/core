@@ -1,4 +1,5 @@
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { Button } from "../controls/button";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { useInBox } from "../layout/box";
@@ -251,19 +252,80 @@ export type CodeBlockProps = {
    * tint with no line, as a DataTable is unframed there (spec §6.9, §1 "One box is enough").
    */
   framed?: boolean;
+  /**
+   * A title over the code (a file's name or role, "App manifest"); the language label then sits
+   * at its right in the same head.
+   */
+  title?: string;
+  /**
+   * A 复制 button at the right of the head: copies `text`, reads 已复制 for two seconds; without a
+   * usable clipboard the code is selected for a manual copy.
+   */
+  copyable?: boolean;
 };
 
 /** 代码块：等宽、保留空白、横向滚动；不做语法高亮。 */
-export function CodeBlock({ language, text, framed }: CodeBlockProps) {
+export function CodeBlock({ language, text, framed, title, copyable }: CodeBlockProps) {
   const inBox = useInBox() !== null;
+  const t = useDesignT();
+  const pre = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState<"no" | "yes" | "manual">("no");
+  useEffect(() => {
+    if (copied !== "yes") return;
+    const timer = setTimeout(() => setCopied("no"), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const copy = async () => {
+    try {
+      if (typeof navigator === "undefined" || navigator.clipboard === undefined) {
+        throw new Error("no clipboard");
+      }
+      await navigator.clipboard.writeText(text);
+      setCopied("yes");
+    } catch {
+      const node = pre.current;
+      const selection = typeof window === "undefined" ? null : window.getSelection();
+      if (node && selection) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      setCopied("manual");
+    }
+  };
+  const head = title !== undefined || copyable === true;
   return (
     <figure
       className="cb-code"
       data-part="code-block"
       data-framed={(framed ?? !inBox) ? "true" : "false"}
+      data-state={copied === "yes" ? "copied" : undefined}
     >
-      {language ? <figcaption className="cb-code-lang">{language}</figcaption> : null}
-      <pre className="cb-code-pre">
+      {head ? (
+        <figcaption className="cb-code-head" data-part="code-block-head">
+          <span className="cb-code-title">{title}</span>
+          {language ? <span className="cb-code-head-lang">{language}</span> : null}
+          {copyable ? (
+            <Button
+              variant="ghost"
+              density="dense"
+              part="code-block-copy"
+              onClick={() => void copy()}
+            >
+              <Icon name={copied === "yes" ? "check" : "copy"} size={14} />
+              {copied === "yes"
+                ? t("code.copied")
+                : copied === "manual"
+                  ? t("code.copyManual")
+                  : t("code.copy")}
+            </Button>
+          ) : null}
+        </figcaption>
+      ) : language ? (
+        <figcaption className="cb-code-lang">{language}</figcaption>
+      ) : null}
+      <pre className="cb-code-pre" ref={pre}>
         <code data-language={language}>{text}</code>
       </pre>
     </figure>
