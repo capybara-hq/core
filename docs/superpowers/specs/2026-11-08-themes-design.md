@@ -1,7 +1,8 @@
 # Themes: plugins restyle the web through design tokens
 
 - Date: 2026-11-08, written against `main` at `180e4bd4`.
-- Status: draft for review.
+- Status: reviewed by the maintainer (2026-11-08); §6-§10 adjusted to the code on 2026-11-08
+  while writing the plan.
 - Related: plugin component management (`2026-11-05-plugin-component-management-design.md`: owner,
   scope, components at deployment level, org uploads), platform / org layering
   (`2026-11-07-platform-org-layering-design.md`: platform values an org may override), the
@@ -183,11 +184,17 @@ A theme file ≤ 64 KB; ≤ 10 themes per plugin; a plugin's theme assets ≤ 16
 Themes join skills, connector templates and agent templates as a component kind under the plugin
 component model (`2026-11-05-plugin-component-management-design.md`):
 
-- **Rows**: platform-owned themes are deployment-level rows with versions and plugin provenance;
-  org-owned ones live in their org with an owner and a scope, like org skills (§6 there).
-- **Assets**: a theme version's fonts and logo are stored once in object storage under
-  `deployment/themes/<id>/<version>/` (platform-owned) or `kernel/<orgId>/themes/…` (org-owned,
-  removed with the org unless shared, §6 there), next to the parsed theme.
+- **Rows**: themes come only from plugins, so every theme is a deployment-level row
+  (`platform_themes` / `platform_theme_versions`, like `platform_agent_templates`) with versions,
+  plugin provenance and the owner columns of org-owned items (`owner_org_id`, `origin_org_id`,
+  `shareable`): an org-uploaded theme is such a row with its org as owner, as org-uploaded skills
+  and agent templates already are.
+- **Assets**: a theme version's parsed definition is stored in its version row; its fonts and
+  logo in object storage under `deployment/platform/themes/<id>/<version>-<catalogVersion>/`
+  (the `platform/<kind>/` + `syncVersionPrefix` convention of the other components). Org deletion
+  follows the existing ownership rules (shared items pass to the platform, the rest go).
+- **No custom-content gate**: themes are not covered by `customSkills` / `customConnectors`; an
+  org upload carrying only themes passes `assertCustomContent`.
 - **Scope**: `all` / `optional` / `named` and the org switch apply as for any component. "On in an
   org" means the theme is offered in that org's pickers (rule 11 of §5 there: content components
   are offered, not forced).
@@ -209,8 +216,8 @@ Three levels, most specific first:
 | Level | Who sets it | Stored in | Choices |
 |---|---|---|---|
 | Person | the person, in 个人设置 › 偏好设置 › 外观 | `accounts.theme` (new column; null = follow the org) | themes on in the current org, or 默认 |
-| Org | org admins, in 组织设置 › 外观 | org setting `theme` (`{ id: string \| null, personal: "allowed" \| "locked" }`) | themes on in the org, or 跟随平台 |
-| Platform | the super admin, in 平台设置 › 外观 | `deployment_settings` key `ui.theme` (`{ id: string \| null }`) | platform-owned themes with scope `all`, or the built-in theme |
+| Org | org admins, in 组织设置 › 外观 | `orgs.settings.theme` (`{ id: string \| null, personal: "allowed" \| "locked" }`; `OrgSettingsSchema`) | themes on in the org, or 跟随平台 |
+| Platform | the super admin, in 平台设置 › 外观 | `deployment_settings` key `uiTheme` (`{ id: string \| null }`; `DEPLOYMENT_SETTINGS`) | platform-owned themes with scope `all`, or the built-in theme |
 
 - Resolution for a signed-in page: the person's pick if it is on in the current org and the org
   does not lock; else the org's default if on; else the platform's default if on in the org;
@@ -226,49 +233,58 @@ Three levels, most specific first:
   an anonymous page.
 - The platform default can only be a platform-owned theme whose scope is `all` **(decided,
   2026-11-08)**: a default that is off in some org would make that org's fallback differ from the
-  auth pages. Narrowing the scope of the theme that is the platform default is refused until
-  another default is chosen (`theme.platform_default`, 409, naming the setting).
+  auth pages. Narrowing the scope of the theme that is the platform default, disabling it, or
+  uninstalling or deleting its plugin is refused until another default is chosen
+  (`theme.platform_default`, 409, naming the setting), whether the theme follows its plugin's scope
+  or has its own.
 
 ## 8. Delivering a theme to the web
 
 - **CSS from the kernel**: `GET /api/v1/themes/:id/:version/theme.css` renders, from the stored,
-  parsed theme, the overrides under `:root[data-theme="dark"]` / `:root[data-theme="light"]`
-  (single-scheme themes also pin `color-scheme`), the `@font-face` rules and the font stacks.
+  parsed theme, the overrides under `:root[data-theme="dark"]` / `:root[data-theme="light"]`, the
+  `@font-face` rules and the font stacks. A single-scheme theme writes its one scheme under both
+  selectors and pins `color-scheme`, so it needs nothing from the root layout (which owns
+  `<html data-theme>` from the `cb-theme` cookie and cannot see the workspace's data).
   Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve the re-serialized logo and the
   fonts. Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
   and identical on every replica (rendered from PG / object storage; no process state).
 - **Access**: every theme's CSS and assets are public, without a session **(decided,
   2026-11-08: styles are not sensitive)**. The URLs carry the theme id and version, so they reveal
   only that such a theme exists; the listing of an org's themes (§9) stays members-only.
-- **SSR**: the workspace layout's existing session / org read gains `theme: { id, version,
-  schemes, logo } | null` (the resolved theme). The layout renders
+- **SSR**: the workspace layout's shell read (`getShell`) gains, in parallel with its other org
+  reads, `GET /api/v1/orgs/:orgId/themes` (§9), whose `resolved` is the viewer's theme
+  (`{ id, version, schemes, logo } | null`). The layout renders
   `<link rel="stylesheet" href=… precedence="theme">` after the design stylesheet (React hoists
   it into `<head>` and the streamed document waits for it; the builder confirms this holds with
   the layout's streaming and the query cache's dehydration), so the first paint is themed. The
-  auth layout reads the public `GET /api/v1/platform/theme` the same way. A single-scheme theme
-  also overrides `data-theme` on `<html>`.
-- **Changes**: setting a theme at any level invalidates the session read (`useAppMutation`), the
+  auth layout reads the public `GET /api/v1/platform/theme` the same way.
+- **Changes**: setting a theme at any level invalidates the themes read (`useAppMutation`), the
   link swaps, and the browser loads the new immutable stylesheet. Another tab follows its
   freshness class; an org switch re-reads as today.
-- **Logo**: the design system's `Logo` takes an optional `{ mark, wordmark }` from the resolved
-  theme; without it, the pixel capybara and `CAPYBARA` as today.
+- **Logo**: the design system draws the logo inside its own components (the sidebar, `AuthPage`,
+  `StatusPage`), so the resolved theme's `{ markUrl, wordmark }` reaches them through the design
+  context (`DesignProvider`, a new `brand` value set by the web's `design-root`); `Logo` keeps its
+  props (`wordmark` stays the boolean "draw the wordmark") and reads the brand from the context.
+  Without a brand, the pixel capybara and `CAPYBARA` as today.
 
 ## 9. APIs and the `Platform` tool
 
 | Route | Guard | Purpose |
 |---|---|---|
-| `GET /api/v1/orgs/:orgId/themes` | member | themes on in the org (id, version, name, preview swatches) |
-| `GET` / `PUT /api/v1/orgs/:orgId/settings/theme` | read: member; write: `@OrgAction` org admin | the org default and lock |
-| `GET` / `PUT /api/v1/admin/settings/theme` | `@SuperAdmin` | the platform default |
-| `PUT /api/v1/me/preferences` | signed in | gains `theme: string \| null` beside `timeZone` |
+| `GET /api/v1/orgs/:orgId/themes` | member (`org.read`) | `{ themes, resolved }`: themes on in the org (id, version, name, swatches) and the viewer's resolved theme |
+| `PATCH /api/v1/orgs/:orgId/settings` | existing (`org.update`) | gains `theme` (the org default and lock) |
+| `PUT /api/v1/admin/settings` | existing (`@SuperAdmin`) | gains `uiTheme` (the platform default) |
+| `PUT /api/v1/me/preferences` | signed in | gains `theme: string \| null`; becomes a partial update: each field is optional and an omitted field keeps its value |
 | `GET /api/v1/platform/theme` | public | the resolved platform default for anonymous pages |
 | `GET /api/v1/themes/:id/:version/theme.css`, `…/assets/:file` | public | delivery |
 
-- The listing and the three settings are mirrored as `Platform` operations, so an agent can
-  switch a person's or an org's theme on request ("change my theme to Night City"):
-  `platform.set-preferences` gains the field; the org and platform settings are org / platform
-  writes, confirmed and never rememberable (Platform tool rules). The delivery routes are excluded
-  as `transport`. `check:platform-ops` enforces this.
+- The settings already have `Platform` operations (`platform.set-preferences`,
+  `org-settings.update`, `admin.update-settings`); they gain the fields, so an agent can switch a
+  person's or an org's theme on request ("change my theme to Night City"); the org and platform
+  writes stay confirmed and never rememberable. The listing gets a new operation (`themes.list`).
+  The delivery routes and `GET /api/v1/platform/theme` are excluded as `transport`.
+  `check:platform-ops` enforces this. The public routes join `PUBLIC_ROUTES`
+  (`packages/kernel/test/identity/public-routes.test.ts`).
 - Error codes: `theme.invalid`, `theme.unreadable` (import), `theme.not_available` (a `PUT` naming
   a theme that is not on where it is set; 400), `theme.platform_default` (§7; 409).
 
@@ -280,8 +296,10 @@ Three levels, most specific first:
   允许成员自选 (the lock).
 - **个人设置 › 偏好设置 › 外观**: the person's theme cards (hidden when locked, with one line
   saying the org sets it) above today's time zone.
-- **Component lists**: themes get a 主题 tab in the admin and org component lists, with the usual
-  detail (provenance, scope, versions, where it is a default).
+- **Admin component page**: 主题 at `/admin/themes` (+ `/admin/themes/<id>`), beside the existing
+  per-kind pages (技能, 连接器模板, 智能体模板), with their owner tabs, scope, versions, and where it
+  is a default.
+- **Org**: the org's themes and their switches are listed in 组织设置 › 外观 above the default.
 - **Account row**: the scheme toggle as today, hidden under a single-scheme theme.
 
 All pages are templates + design components (`check:web-ui`); the swatches are a new design
@@ -312,7 +330,8 @@ component (`ThemeSwatch`), whose colors come from the theme's data, not from lit
 - Kernel: import review refusals; resolution order (person / org / platform / built-in, lock,
   unavailable choices); CSS rendering from parsed values
   (a value with `;}` or `</style>` never reaches the output); org deletion keeps shared themes.
-- Testing package: a `fake-theme` fixture plugin (themes only) packed with `packFixture`.
+- Testing package: a declarative `fake-theme` fixture plugin (themes only); `packFixture` accepts
+  it beside the fake extensions.
 - Web: an e2e test sets an org theme and reads a token's computed value on the first document
   (no client-side swap); the visual suite gets one page rendered under the fixture theme.
 
@@ -321,7 +340,7 @@ component (`ThemeSwatch`), whose colors come from the theme's data, not from lit
 1. SDK format, readability check, `capybara-plugin check` rules, `gen:tokens` outputs.
 2. Kernel: component rows, import, storage, delivery routes, resolution, settings routes,
    `Platform` mirrors.
-3. Web: SSR link, `Logo` input, the three 外观 sections, the component tab.
+3. Web: SSR link, the brand in the design context, the three 外观 sections, `/admin/themes`.
 
 ## 15. Review decisions
 
