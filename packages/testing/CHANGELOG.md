@@ -1,5 +1,29 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- e1f6143: Add the `fake-theme` fixture plugin (two themes, a font and a logo, no extension): `FAKE_PLUGINS`,
+  `FakePluginName`, and `packFixture` / `fakeExtensionDir` accept it.
+
+### Patch Changes
+
+- Updated dependencies [bbd508e]
+- Updated dependencies [00e742e]
+- Updated dependencies [b2b3faa]
+- Updated dependencies [f120273]
+- Updated dependencies [2191e44]
+- Updated dependencies [c489ee6]
+- Updated dependencies [c1c7b0f]
+- Updated dependencies [6d9a256]
+- Updated dependencies [ff5e3bf]
+- Updated dependencies [00e742e]
+- Updated dependencies [0158d0c]
+  - @capybara-hq/kernel@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.8
+  - @capybara-hq/plugin-tools@0.1.0-rc.9
+
 ## 0.1.0-rc.10
 
 ### Patch Changes
