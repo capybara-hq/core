@@ -1,4 +1,4 @@
-# Extension point: channel
+# Authoring: extension point channel
 
 <!-- generated:extension-point -->
 - Name: `channel` (a ref is `channel@<major>`)

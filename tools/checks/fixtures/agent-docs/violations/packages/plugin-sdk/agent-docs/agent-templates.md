@@ -1,4 +1,4 @@
-# agent-templates
+# Authoring: agent-templates
 
 <!-- generated:agent-template -->
 | Field | Type | Required | Meaning |

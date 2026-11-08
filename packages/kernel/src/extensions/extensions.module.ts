@@ -18,6 +18,7 @@ import { ExtensionPointDefaults } from "./point-defaults.js";
 import { ExtensionRegistryModule } from "./registry.js";
 import { ReplicaStatusStore } from "./sources.js";
 import { ExtensionStateModule } from "./state.module.js";
+import { ExtensionAvailability } from "./unavailable.js";
 
 /**
  * The extensions domain: the extension host (it builds each `ctx` from the injected kernel
@@ -52,6 +53,7 @@ import { ExtensionStateModule } from "./state.module.js";
     OrgOverrides,
     ExtensionPointDefaults,
     BootstrapService,
+    ExtensionAvailability,
   ],
   exports: [
     ExtensionRegistryModule,
@@ -69,6 +71,7 @@ import { ExtensionStateModule } from "./state.module.js";
     OrgOverrides,
     ExtensionPointDefaults,
     BootstrapService,
+    ExtensionAvailability,
   ],
 })
 export class ExtensionsModule {}

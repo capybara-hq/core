@@ -1,4 +1,4 @@
-# Extension point: identity-source
+# Authoring: extension point identity-source
 
 <!-- generated:extension-point -->
 - Name: `identity-source` (a ref is `identity-source@<major>`)

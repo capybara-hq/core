@@ -1,4 +1,4 @@
-# Writing an extension
+# Authoring: writing an extension
 
 An extension is TypeScript code a plugin ships. It runs in the platform's process with full
 trust: approval by the super admin is governance, not a sandbox. It sees only the SDK's `ctx`

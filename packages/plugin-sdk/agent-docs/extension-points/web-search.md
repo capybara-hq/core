@@ -1,4 +1,4 @@
-# Extension point: web-search
+# Authoring: extension point web-search
 
 <!-- generated:extension-point -->
 - Name: `web-search` (a ref is `web-search@<major>`)

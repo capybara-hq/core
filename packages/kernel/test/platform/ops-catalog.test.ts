@@ -1,14 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { ToolError } from "@capybara-hq/plugin-sdk";
+import { defineExtension, secret, staticManifestOf, ToolError } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { AgentsService } from "../../src/agents/agents.service.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
+import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { NEEDS_INPUT, OTHER_ORG } from "../../src/platform/ops/plugins.ops.js";
 import { redactOrgs } from "../../src/platform/redact-orgs.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { platformTool } from "../../src/tools/builtins/platform.js";
 import {
+  importPlugin,
   importSkill,
   importTemplate,
   MCP_TOKEN,
@@ -18,7 +22,8 @@ import {
   setScope,
   startOrgEnv,
 } from "../catalog/org-env.js";
-import { createOrg, enableExtensions } from "../helpers/runs.js";
+import { pluginTgz } from "../helpers/plugin-packages.js";
+import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
 
 /**
  * Task 6 of the Platform tool: the plugins, marketplaces, requests, connectors and extensions
@@ -69,10 +74,19 @@ const ctxOf = (accountId: string): OperationContext => ({
   signal: new AbortController().signal,
 });
 
-/** Parses like the tool does, then runs. */
+/** Parses like the tool does, then runs; a service refusal becomes the tool's error. */
 const run = (id: string, input: unknown, ctx: OperationContext) => {
   const o = op(id);
-  return o.run(o.input.parse(input), ctx);
+  return o.run(o.input.parse(input), ctx).catch((e: unknown) => {
+    throw toToolError(e, (code) => nextStepFor(o.errors, code, "orgAdmin"));
+  });
+};
+
+/** The operation's precheck, as the tool's callPolicy runs it before the card. */
+const precheck = (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  if (o.precheck === undefined) throw new Error(`${id} has no precheck`);
+  return o.precheck(o.input.parse(input), ctx);
 };
 
 /** The card summary of a write, as the tool's callPolicy reads it. */
@@ -283,6 +297,22 @@ describe("marketplaces", () => {
     });
     await env.db.deleteFrom("marketplaces").where("id", "=", out.marketplace.id).execute();
   });
+
+  it("the precheck refuses a URL that is already a source and an invalid URL, before the card", async () => {
+    const c = ctxOf(env.rootId);
+    const input = { name: "Team plugins", url: "https://dup.example.com/marketplace.json" };
+    expect(await precheck("marketplaces.add", input, c)).toEqual({ ok: true });
+    const out = (await run("marketplaces.add", input, c)) as { marketplace: { id: string } };
+    expect(await precheck("marketplaces.add", { ...input, name: "Again" }, c)).toMatchObject({
+      ok: false,
+      code: "marketplace.already_added",
+      message: expect.stringContaining(out.marketplace.id),
+    });
+    expect(
+      await precheck("marketplaces.add", { name: "Plain", url: "http://x.example.com/m.json" }, c),
+    ).toMatchObject({ ok: false, code: "validation_failed" });
+    await env.db.deleteFrom("marketplaces").where("id", "=", out.marketplace.id).execute();
+  });
 });
 
 describe("plugins in the org", () => {
@@ -293,6 +323,17 @@ describe("plugins in the org", () => {
     );
     expect(e.message).toBe(NEEDS_INPUT);
     expect(e.message).toContain("插件 page");
+    // known before the card
+    expect(
+      await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
+    ).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
+    expect(
+      await precheck(
+        "plugins.set-enabled",
+        { itemId: randomUUID(), enabled: true },
+        ctxOf(env.bossId),
+      ),
+    ).toMatchObject({ ok: false, code: "catalog.item_not_found" });
     const [got] = await env.db
       .selectFrom("plugin_installs")
       .select("id")
@@ -493,8 +534,9 @@ describe("connectors and extensions", () => {
         expect(e).not.toHaveProperty(k);
       }
     }
-    expect(ext.items.find((e) => e.plugin === "fake-connector")).toMatchObject({
-      enabled: true,
+    expect(ext.items.find((e) => e.id === "fake-connector")).toMatchObject({
+      state: "on",
+      available: true,
       provides: ["connector@1"],
     });
     type Points = {
@@ -514,5 +556,147 @@ describe("connectors and extensions", () => {
     expect(asAdmin.points.find((p) => p.name === "connector")?.providers).toContain(
       "fake-connector",
     );
+  });
+});
+
+/**
+ * The acceptance case (session c9a4e7bf, spec §14.2 problems 1-4): an extension installed on the
+ * platform but not loaded because its deployment API key is missing. One call tells why and what
+ * the person does next, for their role; members never get the admin console path or a field name.
+ */
+describe("an extension waiting for its deployment config", () => {
+  const NAME = "keyed-ai";
+  const config = { deployment: z.object({ apiKey: secret(z.string().min(1)) }) };
+  const real = defineExtension({
+    name: NAME,
+    version: "1.0.0",
+    sdk: "^0.1.0-rc.0",
+    provides: [],
+    permissions: {},
+    config,
+    setup() {},
+  });
+  const entry = [
+    'import { defineExtension, secret } from "@capybara-hq/plugin-sdk";',
+    'import { z } from "zod";',
+    `export default defineExtension({ name: ${JSON.stringify(NAME)}, version: "1.0.0", sdk: "^0.1.0-rc.0", provides: [], permissions: {}, config: { deployment: z.object({ apiKey: secret(z.string().min(1)) }) }, setup() {} });`,
+  ].join("\n");
+  const ADMIN_PATH = `admin console → Extensions → ${NAME} → fill in the deployment config`;
+  let itemId: string;
+
+  /** The Platform tool on the real operations, with the actor facts given. */
+  const toolAs = (f: ActorFacts) =>
+    platformTool({
+      ops,
+      actor: { facts: async () => f },
+      docs: { topics: () => [], read: () => null },
+      setting: async () => "on",
+    });
+  const enableCall = () => ({
+    action: "call",
+    operation: "plugins.set-enabled",
+    params: { itemId, enabled: true },
+  });
+  const policyCtx = (accountId: string) => ({
+    orgId: env.orgId,
+    accountId,
+    agentId: randomUUID(),
+    conversationId: randomUUID(),
+    runId: randomUUID(),
+  });
+
+  beforeEach(async () => {
+    const bytes = await pluginTgz({
+      manifest: { name: NAME },
+      extension: { manifest: { ...staticManifestOf(real) }, entry },
+    });
+    itemId = await importPlugin(env, bytes);
+    // installed and enabled on the platform, but the host keeps it pending: no API key
+    await waitFor(
+      async () =>
+        (
+          await env.db
+            .selectFrom("extension_replica_status")
+            .select(["state", "reason"])
+            .where("plugin", "=", NAME)
+            .executeTakeFirst()
+        )?.reason === "config",
+      15_000,
+      "pending config",
+    );
+  });
+
+  type Row = { id: string; state: string; reason?: string; next?: string; available?: boolean };
+
+  it("extensions.list and plugins.list say unavailable with the reason, and the org page's API too", async () => {
+    const ext = (await run("extensions.list", {}, ctxOf(env.bossId))) as { items: Row[] };
+    expect(ext.items.find((e) => e.id === NAME)).toMatchObject({
+      available: false,
+      state: "unavailable",
+      reason: "needs_deployment_config",
+    });
+    const plugins = (await run("plugins.list", {}, ctxOf(env.bossId))) as { items: Row[] };
+    expect(plugins.items.find((p) => p.id === itemId)).toMatchObject({
+      state: "unavailable",
+      reason: "needs_deployment_config",
+    });
+    // compact rows: no long fields; details come from plugins.get
+    for (const p of plugins.items) {
+      for (const k of ["description", "componentCounts", "latestVersion", "owner"]) {
+        expect(p).not.toHaveProperty(k);
+      }
+    }
+    // the org 扩展 page reads the same state and reason, never a config value or field
+    const http = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/extensions` });
+    expect(http.statusCode, http.body).toBe(200);
+    const view = (http.json() as { extensions: Record<string, unknown>[] }).extensions.find(
+      (e) => e.plugin === NAME,
+    );
+    expect(view).toMatchObject({
+      available: false,
+      status: "pending_config",
+      reason: "needs_deployment_config",
+    });
+    expect(JSON.stringify(view)).not.toContain("apiKey");
+  });
+
+  it("plugins.set-enabled as the super admin is denied before the card, naming the admin console path", async () => {
+    const p = await toolAs(facts("owner", { isSuperAdmin: true })).callPolicy?.(
+      enableCall(),
+      policyCtx(env.rootId),
+    );
+    expect(p?.policy).toBe("deny");
+    expect(p?.denyReason).toContain("needs_deployment_config");
+    expect(p?.denyReason).toContain(ADMIN_PATH);
+    expect(p?.denyReason).not.toContain("install and enable");
+  });
+
+  it("as an org admin the next step goes to the super admin, without the admin console path", async () => {
+    const p = await toolAs(facts("admin")).callPolicy?.(enableCall(), policyCtx(env.bossId));
+    expect(p?.policy).toBe("deny");
+    expect(p?.denyReason).toContain("needs_deployment_config");
+    expect(p?.denyReason).toContain("super admin");
+    expect(p?.denyReason).not.toContain("admin console");
+    expect(p?.denyReason).not.toContain("apiKey");
+  });
+
+  it("a member reads the reason and asks an org admin: no admin console path, no field names", async () => {
+    for (const id of ["extensions.list", "plugins.list"]) {
+      const out = (await run(id, {}, ctxOf(env.memId))) as { items: Row[] };
+      const row = out.items.find((r) => r.id === NAME || r.id === itemId);
+      expect(row).toMatchObject({ state: "unavailable", reason: "needs_deployment_config" });
+      expect(row?.next).toContain("org admin");
+      expect(JSON.stringify(row)).not.toContain("admin console");
+      expect(JSON.stringify(row)).not.toContain("apiKey");
+    }
+  });
+
+  it("one call decides it: plugins.get carries the state, the reason and the role's next step", async () => {
+    const asRoot = (await run("plugins.get", { itemId }, ctxOf(env.rootId))) as { item: Row };
+    expect(asRoot.item).toMatchObject({ state: "unavailable", reason: "needs_deployment_config" });
+    expect(asRoot.item.next).toContain(ADMIN_PATH);
+    const asMember = (await run("plugins.get", { itemId }, ctxOf(env.memId))) as { item: Row };
+    expect(asMember.item.next).toContain("org admin");
+    expect(asMember.item.next).not.toContain("admin console");
   });
 });

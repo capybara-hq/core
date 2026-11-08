@@ -258,6 +258,28 @@ export interface UploadedSkill {
 }
 
 const notFound = () => new ApiError("skill.not_found", "Skill not found");
+const nameExists = (name: string) =>
+  new ApiError(
+    "skill.name_exists",
+    `A skill named "${name}" already exists in this organization. Choose another name.`,
+  );
+
+/** The checked files of a skill written as text (a built `SKILL.md`); `validation_failed` if not. */
+function textSkillFiles(input: { name: string; description: string; body: string }) {
+  const built = buildSkillWrite({
+    name: input.name,
+    description: input.description,
+    files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
+  });
+  if ("errors" in built) {
+    throw new ApiError(
+      "validation_failed",
+      `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
+      built.errors.map((message) => ({ path: "body", message })),
+    );
+  }
+  return checkBuiltSkillFiles(built.files);
+}
 
 /**
  * 在调用方事务里核对 agent 定义引用的组织技能：每个 id 都必须是该组织未删除的 `scope=org` 技能
@@ -671,6 +693,28 @@ export class SkillsService {
   }
 
   /**
+   * The read-only checks of {@link createFromText}, for the `Platform` tool's precheck (before the
+   * card): custom skills allowed, a valid `SKILL.md`, and no live org skill of the name. Throws the
+   * same `ApiError` the create would; the create checks the name again under its lock.
+   */
+  async checkCreateFromText(
+    orgId: string,
+    input: { name: string; description: string; body: string },
+  ): Promise<void> {
+    await assertCustomAllowed(this.db.db, "customSkills");
+    const pkg = textSkillFiles(input);
+    const existing = await this.db
+      .selectFrom("skills")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("scope", "=", "org")
+      .where("name", "=", pkg.name)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (existing) throw nameExists(pkg.name);
+  }
+
+  /**
    * Creates an org skill from text (spec §14, P3-24): `SKILL.md` is built from the name,
    * description and body ({@link buildSkillWrite}, the description a YAML string) and checked like
    * an uploaded package. The same policy and name rules as an upload, except that a live org skill
@@ -691,19 +735,7 @@ export class SkillsService {
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     await assertCustomAllowed(this.db.db, "customSkills");
-    const built = buildSkillWrite({
-      name: input.name,
-      description: input.description,
-      files: [{ path: SKILL_ENTRY_FILE, content: input.body }],
-    });
-    if ("errors" in built) {
-      throw new ApiError(
-        "validation_failed",
-        `Invalid skill: ${built.errors[0] ?? "unknown problem"}`,
-        built.errors.map((message) => ({ path: "body", message })),
-      );
-    }
-    const pkg = checkBuiltSkillFiles(built.files);
+    const pkg = textSkillFiles(input);
     const prefix = skillFilesPrefix(randomUUID());
     await this.putFiles(orgId, prefix, pkg.files);
     return this.createVersionIn(orgId, actorAccountId, pkg, skillManifest(pkg), prefix, {
@@ -807,12 +839,7 @@ export class SkillsService {
       .where("deleted_at", "is", null)
       .forUpdate()
       .executeTakeFirst();
-    if (existing && opts.failIfExists) {
-      throw new ApiError(
-        "skill.name_exists",
-        `A skill named "${pkg.name}" already exists in this organization. Choose another name.`,
-      );
-    }
+    if (existing && opts.failIfExists) throw nameExists(pkg.name);
     // The org's own skill it promoted (ruling P3-3): its new version goes to the platform row and
     // reaches every org using it (ruling P3-4); the files were written there before this
     // transaction, for the platform version current then

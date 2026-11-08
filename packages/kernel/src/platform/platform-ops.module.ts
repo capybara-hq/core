@@ -17,6 +17,22 @@ import { SkillsOperations } from "./ops/skills.ops.js";
 import { PlatformModule } from "./platform.module.js";
 
 /**
+ * One provider per domain, each taking `PlatformOperations` as its first constructor argument:
+ * the parity test in `tools/checks` builds the operations from it without a Nest app.
+ */
+export const PLATFORM_OPERATION_PROVIDERS = [
+  PlatformOperationsProvider,
+  SkillsOperations,
+  AgentsOperations,
+  AgentTemplatesOperations,
+  PluginsOperations,
+  MarketplacesOperations,
+  RequestsOperations,
+  ConnectorsOperations,
+  ExtensionsOperations,
+] as const;
+
+/**
  * The `Platform` tool's operations (ruling P2): one provider per domain, each registering its
  * operations into `PlatformOperations` from `onModuleInit`. It imports the domain modules, which
  * `PlatformModule` itself must not.
@@ -31,16 +47,6 @@ import { PlatformModule } from "./platform.module.js";
     ExtensionsModule,
     ToolsModule,
   ],
-  providers: [
-    PlatformOperationsProvider,
-    SkillsOperations,
-    AgentsOperations,
-    AgentTemplatesOperations,
-    PluginsOperations,
-    MarketplacesOperations,
-    RequestsOperations,
-    ConnectorsOperations,
-    ExtensionsOperations,
-  ],
+  providers: [...PLATFORM_OPERATION_PROVIDERS],
 })
 export class PlatformOpsModule {}

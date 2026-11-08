@@ -12,13 +12,16 @@ import type { Finding } from "./source.js";
  * Agent docs guard (Platform tool spec §8, §9): `packages/plugin-sdk/agent-docs/` holds the
  * Markdown topics the `Platform` tool's `read` action serves to agents. The prose is hand-written;
  * the sections between `<!-- generated:<name> -->` and `<!-- /generated -->` are rendered from the
- * SDK's JSON Schemas and the `EXTENSION_POINTS` table by `pnpm gen:agent-docs`. Three rules:
+ * SDK's JSON Schemas and the `EXTENSION_POINTS` table by `pnpm gen:agent-docs`. Rules:
  *
  * - agent-docs-stale: a generated section differs from what the generator renders (edited by
  *   hand, or the source changed);
- * - agent-docs-missing: an extension point without its topic, a fixed topic without its file, a
- *   generated section a topic must carry, or a schema field absent from a field table;
- * - agent-docs-orphan: a topic for an extension point that no longer exists.
+ * - agent-docs-missing: an extension point without its topic or table row, a fixed topic without
+ *   its file, a generated section a topic must carry, a field of plugin.v1 / connector-template.v1 /
+ *   the agent template absent from its table, or a title not starting with 'Authoring:' (`concepts`
+ *   aside; using the platform is covered by operations);
+ * - agent-docs-orphan: a topic, or a row (generated or in a hand-written table), for an extension
+ *   point or plugin-format field that no longer exists in the code.
  */
 
 export const AGENT_DOCS_DIR = "packages/plugin-sdk/agent-docs";
@@ -152,6 +155,35 @@ function topicFiles(dir: string): string[] {
   return out.sort();
 }
 
+/** What a generated table's rows are, by section name (for messages). */
+const KEY_KIND: Record<string, string> = {
+  "plugin-manifest": "plugin.v1 field",
+  "connector-template": "connector-template.v1 field",
+  "agent-template": "agent template field",
+  "extension-points": "extension point",
+};
+
+/** The first-cell names of the table rows in `text`, in order. */
+function rowKeys(text: string): string[] {
+  return [...text.matchAll(/^\| `([^`|]+)` \|/gm)].map((m) => m[1] as string);
+}
+
+/** Hand-written tables outside generated sections: the rows of tables whose header starts `header`. */
+function handRows(text: string, header: string): { key: string; line: number }[] {
+  const masked = text.replace(SECTION_RE, (all) => all.replace(/[^\n]/g, " "));
+  const out: { key: string; line: number }[] = [];
+  let inTable = false;
+  masked.split("\n").forEach((l, i) => {
+    if (l.startsWith(`| ${header} |`)) inTable = true;
+    else if (!l.startsWith("|")) inTable = false;
+    else if (inTable) {
+      const m = /^\| `([^`|]+)` \|/.exec(l);
+      if (m) out.push({ key: m[1] as string, line: i + 1 });
+    }
+  });
+  return out;
+}
+
 const topicId = (file: string) => file.replace(/\.md$/, "");
 const lineAt = (text: string, index: number) => text.slice(0, index).split("\n").length;
 
@@ -206,43 +238,77 @@ export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Findi
         continue;
       }
       if (body === expected) continue;
-      let missing = false;
-      if (name === "agent-template") {
-        for (const f of templateFields) {
-          if (!body.includes(`| \`${f.name}\` |`)) {
-            missing = true;
-            add(
-              "agent-docs-missing",
-              path,
-              line,
-              `agent template field "${f.name}" is absent from the table; run pnpm gen:agent-docs`,
-            );
-          }
+      const wanted = rowKeys(expected);
+      const have = rowKeys(body);
+      const what = KEY_KIND[name] ?? "row";
+      let explained = false;
+      for (const k of wanted) {
+        if (!have.includes(k)) {
+          explained = true;
+          add(
+            "agent-docs-missing",
+            path,
+            line,
+            `${what} "${k}" is in the code but absent from the "${name}" table; run pnpm gen:agent-docs`,
+          );
         }
       }
-      if (name === "plugin-manifest" || name === "connector-template") {
-        const schema =
-          name === "plugin-manifest"
-            ? "plugin.v1.schema.json"
-            : "connector-template.v1.schema.json";
-        for (const f of schemaFields(root, schema)) {
-          if (!body.includes(`| \`${f.name}\` |`)) {
-            missing = true;
-            add(
-              "agent-docs-missing",
-              path,
-              line,
-              `field "${f.name}" of ${schema} is absent from the table; run pnpm gen:agent-docs`,
-            );
-          }
+      for (const k of have) {
+        if (!wanted.includes(k)) {
+          explained = true;
+          add(
+            "agent-docs-orphan",
+            path,
+            line,
+            `${what} "${k}" is in the "${name}" table but gone from the code; run pnpm gen:agent-docs`,
+          );
         }
       }
-      if (!missing) {
+      if (!explained) {
         add(
           "agent-docs-stale",
           path,
           line,
           `generated section "${name}" is not what the generator renders; run pnpm gen:agent-docs (never edit it by hand)`,
+        );
+      }
+    }
+    const title = /^#\s+(.+)$/m.exec(text)?.[1] ?? "";
+    if (id !== "concepts" && !title.startsWith("Authoring:")) {
+      add(
+        "agent-docs-missing",
+        path,
+        1,
+        `topic "${id}" title "${title}" must start with "Authoring:" (using the platform is covered by operations)`,
+      );
+    }
+    const fieldSet: Record<string, string[]> = {
+      "plugin-format": schemaFields(root, "plugin.v1.schema.json").map((f) => f.name),
+      "connector-templates": schemaFields(root, "connector-template.v1.schema.json").map(
+        (f) => f.name,
+      ),
+      "agent-templates": templateFields.map((f) => f.name),
+    };
+    const known = fieldSet[id];
+    if (known) {
+      for (const r of handRows(text, "Field")) {
+        if (!known.includes(r.key)) {
+          add(
+            "agent-docs-orphan",
+            path,
+            r.line,
+            `field "${r.key}" has a row in a hand-written table but is gone from the code; delete the row`,
+          );
+        }
+      }
+    }
+    for (const r of handRows(text, "Extension point")) {
+      if (!points[r.key]) {
+        add(
+          "agent-docs-orphan",
+          path,
+          r.line,
+          `extension point "${r.key}" has a row in a hand-written table but no longer exists; delete the row`,
         );
       }
     }
@@ -290,7 +356,7 @@ export function scaffoldPointTopics(root: string, opts: AgentDocsOptions = {}): 
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
-      `# Extension point: ${name}\n\n<!-- generated:extension-point -->\n<!-- /generated -->\n`,
+      `# Authoring: extension point ${name}\n\n<!-- generated:extension-point -->\n<!-- /generated -->\n`,
     );
     created.push(path);
   }

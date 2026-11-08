@@ -1,17 +1,29 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import type { KernelLogger } from "../../log.js";
 import type { OrgSettings } from "../../orgs/settings.service.js";
 import type { ActorFacts } from "../../platform/actor.js";
 import type { AgentDocTopic } from "../../platform/agent-docs.js";
 import { type Availability, availability } from "../../platform/availability.js";
-import { toToolError } from "../../platform/errors.js";
+import {
+  type ErrorRole,
+  errorRoleOf,
+  errorsFor,
+  nextStepFor,
+  OPERATION_ERROR_NEXT,
+  resolveNext,
+  sentence,
+  toToolError,
+} from "../../platform/errors.js";
 import { PLATFORM_METHOD } from "../../platform/method.js";
 import {
   type ConfirmClass,
   OPERATION_ID,
   type OperationContext,
+  type OperationErrorNext,
   operationDomain,
   type PlatformOperation,
+  PRECHECK_TIMEOUT_MS,
 } from "../../platform/operation.js";
 import type { PlatformOperations } from "../../platform/registry.js";
 import { BUILTIN } from "../builtin-names.js";
@@ -29,8 +41,12 @@ import type {
  * - `browse` / `search` / `describe` / `read` only read; their policy is the tool's `allow`.
  * - `call` gets a per-call policy key `Platform:<operation>` ({@link BuiltinTool.callPolicy}): a
  *   read runs, a write asks (remembered only for `personal`), an operation that cannot run now is
- *   denied with its reason. Right before `op.run` the availability is checked again on fresh facts
- *   (the actor may have lost the role while the confirmation waited).
+ *   denied with its reason, and so is a write whose `precheck` knows it would fail (spec §14.2
+ *   item 2: no card). The policy is derived again when an approved call resumes, so a precheck
+ *   that fails by then returns its error and nothing runs. Right before `op.run` the availability
+ *   is checked again on fresh facts (the actor may have lost the role while the confirmation
+ *   waited).
+ * - An `ApiError` gets the next step the operation declares for its code and the actor's role.
  * - The actor, the agent and the conversation come from the runtime context, never from input.
  * - Results are JSON text; a list an operation returns is capped at {@link LIST_MAX} entries.
  */
@@ -116,6 +132,10 @@ export interface PlatformToolDeps {
   docs: { topics(): AgentDocTopic[]; read(id: string): string | null };
   /** The org setting `platformTool`. */
   setting(orgId: string): Promise<OrgSettings["platformTool"]>;
+  /** How long a precheck may take; default {@link PRECHECK_TIMEOUT_MS} (a test seam). */
+  precheckTimeoutMs?: number;
+  /** A precheck that throws is logged (warn) and one that times out (debug), with the op id. */
+  log?: Pick<KernelLogger, "warn"> & Partial<Pick<KernelLogger, "debug">>;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -173,6 +193,8 @@ const invalidParamsText = (id: string, problems: string) =>
   `Invalid params for ${id}: ${problems}. Call describe with operation "${id}" for its input schema and an example, then call again.`;
 const unavailableOpText = (id: string, reason: string) =>
   `Operation ${id} is unavailable, so do not call it again as is: ${reason}`;
+const precheckText = (id: string, code: string, message: string, next: string | undefined) =>
+  `Operation ${id} cannot run now: ${code}: ${sentence(message)} ${next ?? OPERATION_ERROR_NEXT}`;
 const outputRefText = (id: string) =>
   `Operation ${id} writes, and its params hold a {"$output": ...} reference, which the person confirming would see instead of the content. Pass the content inline in params and call again.`;
 
@@ -260,12 +282,25 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       if (e instanceof ToolError) return deny(e.message);
       throw e;
     }
-    const verdict = availability(op, await facts(ctx));
+    const f = await facts(ctx);
+    const verdict = availability(op, f);
     if (!verdict.ok) return deny(unavailableOpText(op.id, verdict.reason));
     if (op.confirm === "read") return { key, policy: "allow", remember: false };
     // the card shows the raw input: a write must carry what it writes, not a reference to it
     if (hasOutputRef((ctx.rawInput as PlatformInput | undefined)?.params)) {
       return deny(outputRefText(op.id));
+    }
+    const failed = await precheckOf(
+      op,
+      params,
+      ctx,
+      deps.precheckTimeoutMs ?? PRECHECK_TIMEOUT_MS,
+      deps.log,
+    );
+    if (failed !== null) {
+      const role = errorRoleOf(f);
+      const next = resolveNext(failed.next, role) ?? nextStepFor(op.errors, failed.code, role);
+      return deny(precheckText(op.id, failed.code, failed.message, next));
     }
     const octx = confirmCtx(ctx);
     const [cls, summary] = await Promise.all([
@@ -357,7 +392,8 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
         confirm: op.confirm,
         inputSchema: z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }),
         example: op.example,
-        ...(op.errors !== undefined && op.errors.length > 0 && { errors: op.errors }),
+        ...(op.errors !== undefined &&
+          op.errors.length > 0 && { errors: errorsFor(op.errors, errorRoleOf(f)) }),
         ...availabilityFields(availability(op, f)),
         related: deps.ops
           .inDomain(operationDomain(op.id))
@@ -372,8 +408,10 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     const op = operationOf(deps, "call", input.operation);
     const params = paramsOf(op, input.params);
     // fresh facts right before running: the role may be gone since the confirmation (Review Focus 3)
-    const verdict = availability(op, await facts(factsCtx(ctx)));
+    const f = await facts(factsCtx(ctx));
+    const verdict = availability(op, f);
     if (!verdict.ok) throw new ToolError(unavailableOpText(op.id, verdict.reason));
+    const role: ErrorRole = errorRoleOf(f);
     let result: unknown;
     try {
       result = await op.run(params, {
@@ -385,7 +423,9 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
         signal: ctx.signal,
       });
     } catch (e) {
-      throw toToolError(e);
+      // a service refusal after the approval (a race the precheck could not see) still names the
+      // next step for this actor (Review Focus 2)
+      throw toToolError(e, (code) => nextStepFor(op.errors, code, role));
     }
     return json(asResult(result), { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` });
   }
@@ -434,6 +474,41 @@ async function classOf(
     return await op.confirmFor(params, ctx);
   } catch {
     return "org";
+  }
+}
+
+/**
+ * The operation's precheck, bounded by `ms`: the failure it found, or null (none, passed, timed
+ * out, or threw: the write's own errors speak then; a throw is logged as a warning, a timeout at
+ * debug). Its signal aborts at the timeout or when the run's signal aborts.
+ */
+async function precheckOf(
+  op: PlatformOperation,
+  params: unknown,
+  ctx: CallPolicyContext,
+  ms: number,
+  log: PlatformToolDeps["log"],
+): Promise<{ code: string; message: string; next?: OperationErrorNext } | null> {
+  if (op.precheck === undefined) return null;
+  const ac = new AbortController();
+  const signal = ctx.signal === undefined ? ac.signal : AbortSignal.any([ac.signal, ctx.signal]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      log?.debug?.("platform precheck timed out; the card is shown", { operation: op.id, ms });
+      resolve(null);
+    }, ms);
+  });
+  try {
+    const r = await Promise.race([op.precheck(params, { ...confirmCtx(ctx), signal }), timeout]);
+    if (r === null || r.ok) return null;
+    return { code: r.code, message: r.message, ...(r.next !== undefined && { next: r.next }) };
+  } catch (err) {
+    log?.warn("platform precheck failed; the card is shown", { operation: op.id, err });
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

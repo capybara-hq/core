@@ -127,6 +127,7 @@ export class BuiltinTools {
         actor: platformActor,
         docs: agentDocs,
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
+        log,
       }),
     ];
   }

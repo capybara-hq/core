@@ -1,4 +1,4 @@
-# Extension point: web-fetch
+# Authoring: extension point web-fetch
 
 <!-- generated:extension-point -->
 - Name: `web-fetch` (a ref is `web-fetch@<major>`)

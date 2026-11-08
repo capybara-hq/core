@@ -1,4 +1,4 @@
-# Skills
+# Authoring: skills
 
 A skill is a folder with a `SKILL.md` (the Agent Skills format) and any files it needs. The agent
 sees only the skill's `name` and `description` until it loads the skill, so the description is

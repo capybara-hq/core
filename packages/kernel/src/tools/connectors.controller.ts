@@ -11,6 +11,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { can } from "../orgs/roles.js";
+import { CredentialValue } from "./connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorPreview,
@@ -38,11 +39,6 @@ function forViewer<T extends ConnectorSummary>(org: OrgContext, c: T): T {
   }
   return view;
 }
-
-/** 凭据值：形状由 `Credentials.validate` 按认证方式校验（不回显值）；这里只限大小。 */
-export const CredentialValue = z
-  .record(z.string().max(100), z.unknown())
-  .refine((v) => JSON.stringify(v).length <= 16_384, { message: "Credential is too large" });
 
 const CreateBody = z
   .object({

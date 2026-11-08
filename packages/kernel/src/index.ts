@@ -270,6 +270,17 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+// Test seam: the Platform input-parity test in tools/checks (no runtime caller).
+export {
+  checkInputParity,
+  inputParity,
+  type ParityFinding,
+  type ParityOperation,
+} from "./platform/parity.js";
+// Test seam (the parity test builds every operation from these without a Nest app).
+export { PLATFORM_OPERATION_PROVIDERS } from "./platform/platform-ops.module.js";
+export { PlatformOperations } from "./platform/registry.js";
+export { ROUTE_SCHEMAS, type RouteSchemas } from "./platform/route-schemas.js";
 export { UNKNOWN_RESULT_TEXT } from "./runtime/context/pairing.js";
 export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance-queue.js";

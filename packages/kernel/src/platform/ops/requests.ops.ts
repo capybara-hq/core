@@ -1,12 +1,15 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import {
+  CatalogItemPathParams,
+  CatalogMarketplaceRequestBody,
+  CatalogRequestBody,
+} from "../../catalog/org-catalog.schemas.js";
 import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/requests.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-
-const Note = z.string().max(1000);
 
 /** A request as the requester reads it (no org name: it is this org's). */
 const view = (r: CatalogRequestView) => ({
@@ -55,11 +58,8 @@ export class RequestsOperations implements OnModuleInit {
         description:
           'Ask for a plugin: kind "enable" asks the org admins to switch on a plugin that is off in this org (members and up); kind "access" asks the super admin to offer this org a plugin it sees as not_offered (org admins). Take the plugin id and state from plugins.list. An optional note says why.',
         input: z
-          .object({
-            itemId: z.string().min(1).max(100),
-            kind: z.enum(["enable", "access"]),
-            note: Note.optional(),
-          })
+          .object({ itemId: CatalogItemPathParams.shape.itemId.max(100) })
+          .extend(CatalogRequestBody.shape)
           .strict(),
         example: {
           itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c",
@@ -93,31 +93,23 @@ export class RequestsOperations implements OnModuleInit {
                 zh: `向超级管理员申请插件 ${i.itemId} 的使用权`,
                 en: `Request access to plugin ${i.itemId} from the super admin`,
               },
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            request: view(
-              await this.requests.requestItem(
-                ctx.orgId,
-                ctx.actorAccountId,
-                input.itemId,
-                { kind: input.kind, ...(input.note !== undefined && { note: input.note }) },
-                { auditDetail: viaAgent("requests.create", ctx) },
-              ),
+        run: async (input, ctx) => ({
+          request: view(
+            await this.requests.requestItem(
+              ctx.orgId,
+              ctx.actorAccountId,
+              input.itemId,
+              { kind: input.kind, ...(input.note !== undefined && { note: input.note }) },
+              { auditDetail: viaAgent("requests.create", ctx) },
             ),
-          })),
+          ),
+        }),
       }),
       defineOperation({
         id: "requests.create-import",
         description:
           "Ask the super admin to import a plugin from a marketplace into the platform catalog (org admins, when the platform lets orgs browse): the marketplaceId, name and version from marketplaces.entries, and an optional note.",
-        input: z
-          .object({
-            marketplaceId: z.string().min(1).max(100),
-            name: z.string().min(1).max(214),
-            version: z.string().min(1).max(100),
-            note: Note.optional(),
-          })
-          .strict(),
+        input: CatalogMarketplaceRequestBody,
         example: { marketplaceId: "official", name: "github", version: "1.4.0" },
         authz: { orgAction: "catalog.decide" },
         mirrors: ["POST /api/v1/orgs/:orgId/marketplace-requests"],
@@ -140,22 +132,21 @@ export class RequestsOperations implements OnModuleInit {
           zh: `申请从市场导入插件 ${i.name} ${i.version}`,
           en: `Request the import of plugin ${i.name} ${i.version} from a marketplace`,
         }),
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            request: view(
-              await this.requests.requestImport(
-                ctx.orgId,
-                ctx.actorAccountId,
-                {
-                  marketplaceId: input.marketplaceId,
-                  name: input.name,
-                  version: input.version,
-                  ...(input.note !== undefined && { note: input.note }),
-                },
-                { auditDetail: viaAgent("requests.create-import", ctx) },
-              ),
+        run: async (input, ctx) => ({
+          request: view(
+            await this.requests.requestImport(
+              ctx.orgId,
+              ctx.actorAccountId,
+              {
+                marketplaceId: input.marketplaceId,
+                name: input.name,
+                version: input.version,
+                ...(input.note !== undefined && { note: input.note }),
+              },
+              { auditDetail: viaAgent("requests.create-import", ctx) },
             ),
-          })),
+          ),
+        }),
       }),
     ]);
   }

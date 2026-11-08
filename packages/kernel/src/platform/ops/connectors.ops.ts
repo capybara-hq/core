@@ -1,6 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { ComponentScopeService } from "../../catalog/component-scope.service.js";
+import { ConnectorPathParams } from "../../tools/connectors.schemas.js";
 import {
   type ConnectorDetail,
   type ConnectorSummary,
@@ -9,7 +10,6 @@ import {
 import { publicEndpoint } from "../../tools/endpoint.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 const PAGE = 50;
@@ -71,6 +71,7 @@ export class ConnectorsOperations implements OnModuleInit {
         example: {},
         authz: { orgAction: "connectors.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/connectors"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input, ctx) =>
           pageOf((await this.connectors.list(ctx.orgId)).map(summary), startOf(input.cursor), PAGE),
@@ -79,7 +80,7 @@ export class ConnectorsOperations implements OnModuleInit {
         id: "connectors.get",
         description:
           "Read one connector: its tools with their state and default policy, and whether your credential for it is connected. Credentials are never returned; a person enters them on the connector's web page.",
-        input: z.object({ connectorId: z.string().min(1).max(100) }).strict(),
+        input: z.object({ connectorId: ConnectorPathParams.shape.connectorId.max(100) }).strict(),
         example: { connectorId: "5d2e8f1a-0b3c-4d5e-8f9a-1b2c3d4e5f60" },
         authz: { orgAction: "connectors.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/connectors/:connectorId"],
@@ -87,12 +88,11 @@ export class ConnectorsOperations implements OnModuleInit {
         errors: [
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },
         ],
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            connector: detail(
-              await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId),
-            ),
-          })),
+        run: async (input, ctx) => ({
+          connector: detail(
+            await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId),
+          ),
+        }),
       }),
       defineOperation({
         id: "connectors.templates",
@@ -102,6 +102,9 @@ export class ConnectorsOperations implements OnModuleInit {
         example: {},
         authz: { orgAction: "catalog.read" },
         mirrors: ["GET /api/v1/orgs/:orgId/components"],
+        // connector templates only, every plugin's
+        omits: ["kind", "itemId"],
+        extras: ["cursor"],
         confirm: "read",
         run: async (input, ctx) => {
           const all = await this.components.orgList(ctx.orgId, { kind: "connector_template" });

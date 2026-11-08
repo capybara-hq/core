@@ -1349,7 +1349,7 @@ export class PluginInstaller {
     if (!this.registry.manifests().some((m) => m.name === name)) {
       throw new ApiError(
         "catalog.not_deployed",
-        `The extension of plugin ${name} is not deployed; ask the super admin to install and enable it`,
+        `The extension of plugin ${name} is not running on the platform (not installed, waiting for its deployment config or permission approval, disabled, or failed to load); the org cannot switch it on until it runs`,
       );
     }
     const enabled = await isExtensionEnabled(this.db, orgId, name);

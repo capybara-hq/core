@@ -1,7 +1,8 @@
 # The `Platform` tool: agents that understand and operate the platform
 
 - Date: 2026-11-07, written against `main` at `76b32e10`.
-- Status: draft for review.
+- Status: phase 1 implemented (#94, merged 2026-11-08; §13 As built). Phase 2 (§14) decided
+  2026-11-08, in implementation.
 - Amends: the co-build design (`2026-10-29-co-build-design.md`): its `PlatformInfo` builtin (§8.1)
   is replaced by this tool, and its agent docs and `check:agent-docs` gate (§8.2, §8.3) move here.
   The co-build design is rewritten separately on top of this one.
@@ -376,3 +377,145 @@ Decisions made while building, one per bullet (what, and why).
 - A second `Platform` call with different params while another call's approval is pending or
   approved never runs on that approval: approvals bind the exact input and each call has its own
   (`platform-e2e.test.ts`, case g).
+
+## 14. Phase 2: parity with the UI (decided, 2026-11-08)
+
+Source: the maintainer's acceptance of #94 in the running acceptance session (`fix/acceptance`, session
+c9a4e7bf) and the decisions taken there on 2026-11-08. Everything in this section is **(decided,
+2026-11-08)** unless marked **(designer's call)**. Where it changes §1–§13, this section wins.
+
+### 14.1 Principles
+
+1. **Parity with the UI.** What I can do in the UI, my agent can help me do, as me: the identity and
+   rights are the person in the conversation, no more and no less. Reads run; writes use the three
+   classes (`personal` / `org` / `platform`) as in §6.2.
+2. **Sensitive writes stay off; their reads come on.** The §6.4 exclusions stay for writes: deciding
+   approvals and requests, confirming extension permissions, tokens, the values of secrets and
+   credentials, changing roles. Their reads are offered: "what is waiting for my approval", "which
+   requests are pending", "which extensions wait for permission confirmation" — state and summaries
+   only, never a secret or credential value.
+3. **The super admin's agent sees the admin console and does its ordinary writes**: creating
+   accounts, managing orgs, limits, and the like. Only the class of item 2 stays off. Every exclusion
+   states its reason. The §6.1 rule stands: platform-scope operations run only through the super
+   admin's own private agent, and other orgs' private items appear as counts.
+4. **Always in sync.** When a route is added, changed or removed, its Platform capability follows:
+   - **Add**: a new route gets an operation or an exclusion with a reason (the phase-1 fence).
+   - **Change**: an operation's input (and, where it mirrors a route's response, its output) is not
+     written a second time: it uses the route's schema or one derived from it, so a changed route
+     field changes the operation. Where sharing is not possible, the check finds the difference.
+   - **Remove**: when a route is removed, the operations that mirror it and its exclusion entry go
+     too; the check reports "an operation mirrors a route that does not exist" and "an exclusion names
+     a route that does not exist".
+   AGENTS.md and `writing-kernel-api` state the three rules.
+
+### 14.2 Scope
+
+#### Every `later` route
+
+The 138 `later` routes of core#91 are all done in batches by how often they are used, or turned into
+exclusions with a reason. At least:
+
+- **Conversations**: list mine, get, rename, archive / unarchive (`personal`, rememberable); delete is
+  offered and confirmed every time (the maintainer's preference: a destructive personal write, never
+  remembered) **(designer's call** on the class name: `personal` with `remember: false`).
+- **Agent profile**: quick actions and the preset avatar (`personal`; on a shared agent confirmed every
+  time, through `confirmFor` as `agents.update`). Uploading a custom avatar image stays off (byte
+  upload, `transport`). `platform.me` and `agents.get` return the profile (description, quick
+  actions, avatar). The run-context work (`docs/superpowers/specs/2026-11-08-run-context-design.md`,
+  §3.5) moves the description into the versioned agent definition, edited by `agents.update`; the
+  profile operations cover quick actions and the avatar only. This part is built on `main` after the
+  run-context work merges.
+- **Skills**: switch a skill on / off in the org. #94's description named it but the code has only
+  list / get / create; add `skills.set-enabled` (the component switch, `org`).
+- **Admin console (super admin)**: accounts (list, get, create a user, disable), orgs (list, get,
+  limits read and write), extension deployment state, plugins and marketplaces, the platform inbox
+  (read), models and the default model per purpose.
+- **The other pages**: channels, members (read; role changes stay off), org settings, personal
+  settings, evals, connectors (without credentials), and the rest of what core#91 lists.
+
+#### Problems found in the acceptance
+
+1. **State.** An installed extension that is not loaded (e.g. Anthropic without its deployment API
+   key) shows as `off` in `plugins.list`, and `extensions.list` says `available: false` with no reason;
+   the model concluded that switching it on in the org would do. A not-loaded extension is
+   **unavailable with a reason** (e.g. `needs_deployment_config`), the same state and reason the web
+   shows.
+2. **Check before the card.** `plugins.set-enabled` showed the confirmation card and only after the
+   approval failed with `catalog.not_deployed`. Every write runs its preconditions **before** the card:
+   when it is known to fail, the tool returns the reason and no card appears. **(designer's call:** an
+   optional `precheck(input, ctx)` on the operation, run in `callPolicy` after availability; it reads
+   only, and a failure becomes `deny` with the precheck's reason.)
+3. **Errors that are wrong or not actionable.** The error said "extension is not deployed; ask the
+   super admin to install and enable it" while it was installed, only missing deployment config, and
+   the person was the super admin. Errors say what is missing and give the next step for the actor's
+   role (super admin: admin console → Extensions → Anthropic → fill in the API key; org admin: send a
+   request). Every Platform error is checked against this standard.
+4. **Exploration cost.** "How do I enable it" took 8 Platform calls, and `plugins.list` /
+   `plugins.platform-list` returned long results. With accurate state one call should decide it;
+   list results carry a compact row (id, name, state, reason, next step) and details come from `get`.
+5. **Docs that look alike.** After the error the model read the "writing extensions" doc, which was
+   unrelated. Topic titles make "writing an extension / building a plugin" (authoring) clearly
+   different from using the platform; using the platform is covered by operations and errors.
+
+### 14.3 Agent docs
+
+- Their role does not change: how to implement extensions and build plugin packages (plugin format,
+  extension points, skills, templates, tool naming). They do not describe how to use UI features;
+  operations' descriptions and errors cover that.
+- In step with the platform: `check:agent-docs` already reports extension points and fields that are
+  missing or stale. Phase 2 makes sure both directions are caught — "in the code, not in the docs" and
+  "in the docs, gone from the code" — for extension points and every plugin-format field, with a
+  failing fixture for each.
+- Retrieval: 21 topics, about 3,600 words; a table of contents plus reading by topic is enough, so no
+  vector search. When the topics grow markedly, `read` gains keyword search returning matching
+  paragraphs with their source.
+
+### 14.4 Acceptance
+
+In the acceptance session, by a checklist:
+
+- For each domain of §14.2 at least one read and one write, including the card's class.
+- The five problems of §14.2 reproduced and confirmed fixed.
+- The super admin's agent creates a user and reads "waiting for my approval".
+- The sync check has a test that turns it red for each of the three failures: a missing operation; an
+  operation whose fields differ from its route's; a removed route whose operation is still there.
+
+### 14.5 Answers to the builder check (2026-11-08)
+
+1. **Admin console data in full** **(decided, 2026-11-08)**. Admin-console operations return the same
+   data the admin console shows (accounts with login, name and email; orgs with name and member count;
+   the platform inbox), and run only through the super admin's own private agent (§6.1). The org admins
+   of the org that conversation lives in can read it in the trajectory viewer; that is accepted. Other
+   orgs' private **plugins** keep the phase-1 rule (counts only, refused for get / update).
+2. **Creating a user** **(decided, 2026-11-08)**. The agent passes no password. The kernel generates a
+   one-time initial password, the account must change it at first login, and the password is shown
+   only to the person, on the web, after they approve the card; the tool result the model receives
+   carries no password. The super-admin flag on create or update counts as a role change and stays off
+   **(designer's call)**.
+3. **What the sync check compares** **(designer's call)**. Inputs only; outputs come from the same
+   service methods the routes call, so they are not compared. Route body and query schemas move out of
+   the controllers into exported schema modules, and an operation builds its input from them
+   (`pick` / `omit` / `extend`). A runtime test in the checks suite compares each operation's input
+   JSON Schema with its mirrored route's body + query + path params: a field present in both must have
+   the same type; a route field the operation leaves out must be listed in the operation's `omits`; an
+   operation field the route lacks (e.g. `cursor`, a preview hash) must be listed in its `extras`.
+   Bounds may be stricter in the operation, never looser. The red fixtures cover a type mismatch, an
+   undeclared omission and an undeclared extra.
+4. **Not-loaded reasons in the org view** **(designer's call)**. `OrgExtensionView` gains the
+   deployment status and a reason (`needs_deployment_config`, `failed`, `dependency`,
+   `pending_approval`, `pending_migration`), derived like the admin view's; the org extensions API and
+   page show it (state and reason only, never config). Members and org admins see the reason and a
+   next step for their role; only super admins get the admin-console path.
+5. **Every `later` route is done in phase 2**, as an operation or a permanent exclusion
+   (`human-only` / `secret` / `transport` / `internal`) with a reason **(decided** in §14.2; the
+   end state is the **designer's call)**: afterwards the fence rejects the `later` category, so a new
+   route ships with its operation or a permanent exclusion. Delivered as a series of PRs by domain
+   from one plan **(designer's call)**.
+6. **Agent profile operations** are the last wave of this plan and start once the run-context work is
+   on `main` **(designer's call)**.
+7. **Error standard** **(designer's call)**. Enforced by a rule plus review: every operation's
+   `errors[]` entry has a `next` step, role-specific where the next step differs by role (keys
+   `superAdmin` / `orgAdmin` / `member`), and the tool maps an `ApiError` through the operation's
+   entry when one exists. `check:platform-ops` gains `platform-op-errors` for entries without `next`;
+   the acceptance and the final review check the wording.
+

@@ -21,6 +21,37 @@ export interface OperationContext {
   signal: AbortSignal;
 }
 
+/**
+ * The next step after an error: one text, or one per role where the step differs (spec §14.5
+ * item 7). Only the super admin gets the `superAdmin` text (the admin console path); see
+ * `nextStepFor` in ./errors.ts for the fallbacks.
+ */
+export type OperationErrorNext =
+  | string
+  | { readonly superAdmin?: string; readonly orgAdmin?: string; readonly member?: string };
+
+/** A notable error code of an operation and what to do next (model-visible English). */
+export interface OperationError {
+  code: string;
+  next: OperationErrorNext;
+}
+
+/**
+ * What {@link PlatformOperation.precheck} found: nothing known against the write, or why it fails.
+ * `next` replaces the operation's `errors[]` entry for the code when the step depends on the target
+ * (e.g. the admin console path naming the extension).
+ *
+ * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
+ * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
+ * `plugin.needs_input` (input only a person enters on the web) and `agent.visibility_web_only`.
+ */
+export type PrecheckResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string; next?: OperationErrorNext };
+
+/** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
+export const PRECHECK_TIMEOUT_MS = 2000;
+
 /** One operation of the `Platform` tool (spec §7), defined next to its domain. */
 export interface PlatformOperation<I = unknown> {
   /** `<domain>.<verb>`, matching {@link OPERATION_ID}; the domain is one of {@link PLATFORM_DOMAINS}. */
@@ -40,6 +71,23 @@ export interface PlatformOperation<I = unknown> {
   authzNote?: "service-enforced";
   /** The HTTP routes it corresponds to, e.g. `POST /api/v1/orgs/:orgId/skills`; [] when synthetic. */
   mirrors: readonly string[];
+  /**
+   * Fields of the mirrored route (body, query, path params but `:orgId`) the input leaves out, e.g.
+   * `uploadId` of `skills.create` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
+   */
+  omits?: readonly string[];
+  /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list. */
+  extras?: readonly string[];
+  /**
+   * Input fields compared with a route field of another name or path: `{ skillId: "id" }`, a
+   * flattened `{ name: "definition.name" }`. The route field counts as present.
+   */
+  renames?: Readonly<Record<string, string>>;
+  /**
+   * Input fields allowed to accept more than the route (bounds, pattern, required-ness, never the
+   * type), each with its reason, e.g. a confirm value that also takes `nothing-installed`.
+   */
+  loosens?: Readonly<Record<string, string>>;
   confirm: ConfirmClass;
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
@@ -50,9 +98,18 @@ export interface PlatformOperation<I = unknown> {
   confirmFor?(input: I, ctx: OperationContext): Promise<ConfirmClass>;
   /**
    * The notable error codes of the operation and what to do next (model-visible English), shown
-   * by `describe` (spec §3).
+   * by `describe` (spec §3) and appended to an `ApiError` of that code (spec §14.5 item 7). `next`
+   * is keyed by role where the step differs (`check:platform-ops` rule `platform-op-errors`).
    */
-  errors?: readonly { code: string; next: string }[];
+  errors?: readonly OperationError[];
+  /**
+   * Preconditions read before the card (spec §14.2 item 2): a write known to fail (a taken name, a
+   * stale preview) is denied with this reason and the person is never asked. Reads only; runs
+   * again when an approved call resumes (a failure then returns the error, nothing runs). Bounded
+   * by the tool ({@link PRECHECK_TIMEOUT_MS}); a timeout or a throw skips it, and the write's own
+   * errors speak.
+   */
+  precheck?(input: I, ctx: OperationContext): Promise<PrecheckResult>;
   /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.

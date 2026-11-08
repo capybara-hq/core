@@ -17,26 +17,19 @@ import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
 import {
+  MarketplaceForm as Form,
+  MarketplaceAddBody,
+  MarketplaceEntriesQuery,
+  MarketplaceRef as Ref,
+  MarketplaceUrl as Url,
+} from "./marketplaces.schemas.js";
+import {
   type ActorOpts,
   type MarketplaceEntryView,
   MarketplacesService,
   type MarketplaceView,
 } from "./marketplaces.service.js";
 import { itemsSeenBy } from "./scope-state.js";
-
-const Url = z.string().min(1).max(2000);
-
-const Form = z.enum(["http", "git"]);
-const Ref = z.string().min(1).max(256);
-
-const AddBody = z.object({
-  name: z.string().min(1).max(100),
-  url: Url,
-  form: Form.optional(),
-  ref: Ref.optional(),
-  mirrors: z.array(Url).max(MARKETPLACE_MAX_MIRRORS).optional(),
-  token: z.string().min(1).max(4096).optional(),
-});
 
 const PatchBody = z
   .object({
@@ -50,11 +43,6 @@ const PatchBody = z
   })
   .strict();
 
-const EntriesQuery = z.object({
-  sourceId: z.string().min(1).max(100).optional(),
-  q: z.string().max(200).optional(),
-});
-
 const ImportBody = z.object({ version: z.string().min(1).max(256).optional() });
 
 /** 手动刷新的总时限（每个地址另有 30 秒超时）。 */
@@ -65,8 +53,11 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   return tokenId !== undefined ? { actorTokenId: tokenId } : {};
 };
 
-class MarketplaceAddBody extends createZodDto(AddBody, "MarketplaceAddBody") {}
-class MarketplaceEntriesQuery extends createZodDto(EntriesQuery, "MarketplaceEntriesQuery") {}
+class MarketplaceAddBodyDto extends createZodDto(MarketplaceAddBody, "MarketplaceAddBody") {}
+class MarketplaceEntriesQueryDto extends createZodDto(
+  MarketplaceEntriesQuery,
+  "MarketplaceEntriesQuery",
+) {}
 class MarketplaceImportBody extends createZodDto(ImportBody, "MarketplaceImportBody") {}
 class MarketplacePatchBody extends createZodDto(PatchBody, "MarketplacePatchBody") {}
 
@@ -102,7 +93,7 @@ export class MarketplacesController {
   @HttpCode(201)
   add(
     @CurrentPrincipal() principal: Principal,
-    @ZBody(MarketplaceAddBody) body: z.infer<typeof AddBody>,
+    @ZBody(MarketplaceAddBodyDto) body: z.infer<typeof MarketplaceAddBody>,
   ): Promise<MarketplaceView> {
     const actor = requireUser(principal);
     return this.marketplaces.add(
@@ -128,7 +119,7 @@ export class MarketplacesController {
    */
   @Get("entries")
   entries(
-    @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
+    @ZQuery(MarketplaceEntriesQueryDto) q: z.infer<typeof MarketplaceEntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     return this.marketplaces.entries({
       ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
@@ -242,7 +233,7 @@ export class OrgMarketplacesController {
   @OrgAction("catalog.decide")
   async entries(
     @CurrentOrg() org: OrgContext,
-    @ZQuery(MarketplaceEntriesQuery) q: z.infer<typeof EntriesQuery>,
+    @ZQuery(MarketplaceEntriesQueryDto) q: z.infer<typeof MarketplaceEntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
     if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
       throw new ApiError("not_found", "Marketplace browsing is off for organizations");

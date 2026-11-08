@@ -1,4 +1,4 @@
-# Agent templates
+# Authoring: agent templates
 
 An agent template describes a whole agent: instructions, tools, skills, connectors and the
 sub-agents it may dispatch. A member creates a private agent from a template; org admins can also

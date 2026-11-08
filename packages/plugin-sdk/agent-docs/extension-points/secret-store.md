@@ -1,4 +1,4 @@
-# Extension point: secret-store
+# Authoring: extension point secret-store
 
 <!-- generated:extension-point -->
 - Name: `secret-store` (a ref is `secret-store@<major>`)

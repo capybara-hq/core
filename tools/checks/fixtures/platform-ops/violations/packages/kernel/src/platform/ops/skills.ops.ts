@@ -59,6 +59,21 @@ export const ops = [
     confirm: "read",
     run: async () => ({}),
   }),
+  // platform-op-errors: an entry without next, and a role-keyed next only the super admin gets
+  defineOperation({
+    id: "skills.errors",
+    description: "Errors.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.read" },
+    mirrors: [],
+    confirm: "read",
+    errors: [
+      { code: "skill.no_next" },
+      { code: "skill.super_only", next: { superAdmin: "Use the admin console." } },
+    ],
+    run: async () => ({}),
+  }),
   // platform-op-literal: not an object literal
   defineOperation(someOperation),
   // platform-op-literal: authz is not a literal

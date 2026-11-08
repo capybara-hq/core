@@ -12,6 +12,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { ActorOpts } from "./catalog.service.js";
+import { ComponentKindSchema as Kind, OrgComponentListQuery } from "./component-scope.schemas.js";
 import {
   type ComponentScopePreview,
   ComponentScopeService,
@@ -20,19 +21,14 @@ import {
   type OrgComponentView,
   type OrgOfferedComponentView,
 } from "./component-scope.service.js";
-import { COMPONENT_KINDS, type ComponentKind } from "./component-state.js";
 import { PlatformComponents, type UploadedComponentVersion } from "./platform-components.js";
 
-const Kind = z.enum(COMPONENT_KINDS as [ComponentKind, ...ComponentKind[]]);
 const Scope = z.enum(["all", "optional", "named"]);
 const Orgs = z.array(z.string().min(1).max(128)).max(1000);
 const Hash = z.string().min(1).max(128);
 
 const ComponentParams = z.object({ kind: Kind, id: z.string().min(1).max(128) });
 const ListQuery = z.object({ kind: Kind }).strict();
-const OrgListQuery = z
-  .object({ kind: Kind.optional(), itemId: z.string().uuid().optional() })
-  .strict();
 
 /** `{ scope, orgs? }`, `{ disabled: true }` or `{ follow: true }`: exactly one. */
 const PreviewBody = z
@@ -89,7 +85,10 @@ class TemplateVersionDto extends createZodDto(TemplateVersionBody, "TemplateVers
 
 class ComponentParamsDto extends createZodDto(ComponentParams, "ComponentParams") {}
 class ComponentListQuery extends createZodDto(ListQuery, "ComponentListQuery") {}
-class OrgComponentListQuery extends createZodDto(OrgListQuery, "OrgComponentListQuery") {}
+class OrgComponentListQueryDto extends createZodDto(
+  OrgComponentListQuery,
+  "OrgComponentListQuery",
+) {}
 class ComponentScopePreviewBody extends createZodDto(PreviewBody, "ComponentScopePreviewBody") {}
 class ComponentScopeBody extends createZodDto(ScopeBody, "ComponentScopeBody") {}
 class ComponentDisabledBody extends createZodDto(DisabledBody, "ComponentDisabledBody") {}
@@ -288,7 +287,7 @@ export class OrgComponentsController {
   @OrgAction("catalog.read")
   async list(
     @CurrentOrg() org: OrgContext,
-    @ZQuery(OrgComponentListQuery) q: z.infer<typeof OrgListQuery>,
+    @ZQuery(OrgComponentListQueryDto) q: z.infer<typeof OrgComponentListQuery>,
   ): Promise<{ components: OrgOfferedComponentView[] }> {
     return {
       components: await this.scope.orgList(org.orgId, {

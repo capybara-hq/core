@@ -22,9 +22,14 @@ import {
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
- * - platform-op-orphan: a mirror or exclusion naming no route;
+ * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
+ *   operations and exclusion entries with it, spec §14.1 item 4);
  * - platform-op-describe: an operation without `description`, `example`, or (not `read`) `summary`;
- * - platform-op-literal: `mirrors` / `authz` that are not literals (the check cannot read them).
+ * - platform-op-literal: `mirrors` / `authz` that are not literals (the check cannot read them);
+ * - platform-op-errors: an `errors` entry without a `next` step (spec §14.5 item 7): `errors` is an
+ *   array literal of `{ code, next }` object literals, `code` a string, `next` a non-empty string
+ *   or an object literal keyed `superAdmin` / `orgAdmin` / `member` (non-empty strings) with an
+ *   `orgAdmin` or `member` step, so every role of the org gets one.
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
@@ -33,6 +38,7 @@ export const PLATFORM_OP_RULES = [
   "platform-op-orphan",
   "platform-op-describe",
   "platform-op-literal",
+  "platform-op-errors",
 ] as const;
 
 const KERNEL_SRC = "packages/kernel/src";
@@ -230,6 +236,11 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
         `${id}: a write (confirm \`${confirm ?? "?"}\`) needs a \`summary\``,
       );
     }
+    const errors = prop(obj, "errors");
+    if (errors) {
+      for (const problem of errorProblems(errors.value as Node))
+        add("platform-op-errors", `${id}: ${problem}`);
+    }
     ops.push({
       id,
       file: p.file,
@@ -240,6 +251,48 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
     });
   });
   return ops;
+}
+
+const ROLE_KEYS = new Set(["superAdmin", "orgAdmin", "member"]);
+const nonEmpty = (n: Node | undefined): boolean => (stringValue(n)?.trim() ?? "") !== "";
+
+/** What is wrong with an operation's `errors` literal (rule `platform-op-errors`). */
+function errorProblems(n: Node): string[] {
+  if (n.type !== "ArrayExpression") {
+    return ["`errors` must be an array literal of { code, next } objects"];
+  }
+  const out: string[] = [];
+  for (const e of n.elements as Node[]) {
+    if (e?.type !== "ObjectExpression") {
+      out.push("each `errors` entry must be an object literal { code, next }");
+      continue;
+    }
+    const code = stringValue(prop(e, "code")?.value);
+    const label = code === undefined ? "an `errors` entry" : `error \`${code}\``;
+    if (code === undefined) out.push("an `errors` entry needs a string literal `code`");
+    const next = prop(e, "next")?.value as Node | undefined;
+    if (next === undefined) {
+      out.push(`${label} has no \`next\`: say what to do next`);
+    } else if (next.type === "ObjectExpression") {
+      const keys: string[] = [];
+      for (const q of next.properties as Node[]) {
+        const k = q.type === "Property" ? (nameOf(q.key) ?? stringValue(q.key)) : undefined;
+        if (k === undefined || !ROLE_KEYS.has(k) || !nonEmpty(q.value as Node)) {
+          out.push(
+            `${label}: a role-keyed \`next\` takes only superAdmin / orgAdmin / member, each a non-empty string literal`,
+          );
+          continue;
+        }
+        keys.push(k);
+      }
+      if (!keys.includes("orgAdmin") && !keys.includes("member")) {
+        out.push(`${label}: a role-keyed \`next\` needs an orgAdmin or member step`);
+      }
+    } else if (!nonEmpty(next)) {
+      out.push(`${label}: \`next\` must be a non-empty string literal or a role-keyed object`);
+    }
+  }
+  return out;
 }
 
 interface Exclusion {
@@ -305,6 +358,18 @@ function readRoles(file: string): Map<string, string> {
   return roles;
 }
 
+/** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
+export function kernelRoutes(root: string): Set<string> {
+  const keys = new Set<string>();
+  for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
+    if (isTest || !file.endsWith(".ts")) continue;
+    const p = parseFile(file);
+    if (isParseError(p)) continue;
+    for (const r of readRoutes(p, [])) keys.add(r.key);
+  }
+  return keys;
+}
+
 export function checkPlatformOps(root: string): Finding[] {
   const out: Finding[] = [];
   const src = join(root, KERNEL_SRC);
@@ -346,7 +411,7 @@ export function checkPlatformOps(root: string): Finding[] {
           file: op.file,
           line: op.line,
           rule: "platform-op-orphan",
-          message: `${op.id} mirrors \`${m}\`, which is no kernel route`,
+          message: `${op.id}: operation mirrors a route that does not exist: \`${m}\``,
         });
         continue;
       }
@@ -382,7 +447,7 @@ export function checkPlatformOps(root: string): Finding[] {
       out.push({
         ...at,
         rule: "platform-op-orphan",
-        message: `exclusion \`${e.route}\` is no kernel route`,
+        message: `exclusion names a route that does not exist: \`${e.route}\``,
       });
     }
     if (e.reason === undefined || e.reason.trim() === "") {

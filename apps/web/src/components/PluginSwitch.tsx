@@ -40,16 +40,25 @@ export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
 /**
  * The state copy of a plugin from the org's view: a pending request first (已申请，等待处理),
  * then the state; `on` for an `all` or builtin plugin reads 已启用 · 平台统一. An extension the
- * deployment lacks is said instead of 未启用 / 需要配置 (it cannot be switched on).
+ * deployment lacks is said instead of 未启用 / 需要配置 (it cannot be switched on); one that cannot
+ * run reads 不可用 with the kernel's reason (不可用 · 缺少部署配置).
  */
 export function usePluginState(): (item: OrgCatalogItem) => PluginStateLabel {
   const t = useTranslations("plugins.state");
+  const tx = useTranslations("extensions");
   return (i) => {
     // The org's own upload waiting for the super admin (P3-9): nothing of it is usable yet
     if (i.awaitingConfirmation === true) return { label: t("awaiting"), tone: "warn" };
     if (i.request !== null) return { label: t("requested"), tone: "muted" };
     switch (i.state) {
       case "unavailable":
+        // its extension cannot run on the platform: the same reason the 扩展 page shows
+        if (i.reason !== undefined && i.reason !== "plugin_disabled") {
+          return {
+            label: tx("unavailableWith", { reason: tx(`reasons.${i.reason}`) }),
+            tone: "warn",
+          };
+        }
         return { label: t("unavailable"), tone: "muted" };
       case "not_offered":
         return { label: t("not_offered"), tone: "muted" };

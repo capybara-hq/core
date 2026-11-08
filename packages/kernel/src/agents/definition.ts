@@ -34,23 +34,22 @@ export function normalizeToolRef(v: unknown): unknown {
 /**
  * agent 定义里对工具的引用：内置工具按名字；插件工具按插件名 + 工具名；连接器工具按连接器 id，
  * `tools: "all"` = 该连接器当前所有启用的工具。旧形 `{ kind: "app", appId }` 仍可解析（见 {@link normalizeToolRef}）。
+ * `AgentToolRefCurrent` is the current form alone (what the Platform tool's operations tighten).
  */
-export const AgentToolRef = z.preprocess(
-  normalizeToolRef,
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("builtin"), name: z.string().min(1) }).strict(),
-    z
-      .object({ kind: z.literal("plugin"), plugin: z.string().min(1), name: z.string().min(1) })
-      .strict(),
-    z
-      .object({
-        kind: z.literal("connector"),
-        connectorId: z.string().min(1),
-        tools: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
-      })
-      .strict(),
-  ]),
-);
+export const AgentToolRefCurrent = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("builtin"), name: z.string().min(1) }).strict(),
+  z
+    .object({ kind: z.literal("plugin"), plugin: z.string().min(1), name: z.string().min(1) })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("connector"),
+      connectorId: z.string().min(1),
+      tools: z.union([z.literal("all"), z.array(z.string().min(1)).min(1)]),
+    })
+    .strict(),
+]);
+export const AgentToolRef = z.preprocess(normalizeToolRef, AgentToolRefCurrent);
 export type AgentToolRef = z.output<typeof AgentToolRef>;
 
 export { DEFAULT_AGENT_TOOLS } from "../tools/builtin-names.js";

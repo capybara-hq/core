@@ -2274,6 +2274,24 @@
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "Unavailable on this deployment · the organization setting is kept",
+    "unavailableWith": "Unavailable · {reason}",
+    "reasons": {
+      "not_deployed": "not installed on the platform",
+      "needs_deployment_config": "deployment config missing",
+      "pending_approval": "permissions awaiting approval",
+      "pending_migration": "being prepared",
+      "loading": "loading",
+      "dependency": "a required extension is missing",
+      "failed": "failed to load",
+      "deployment_disabled": "disabled on the platform"
+    },
+    "unavailableNext": {
+      "superAdmin": "Fix it on the admin console's Extensions page and it becomes usable.",
+      "orgAdmin": "Only the super admin can fix this; contact them.",
+      "member": "Contact an org admin; the super admin fixes it on the platform.",
+      "wait": "The platform is loading it; check again in a moment."
+    },
+    "openAdmin": "Open in the admin console",
     "enabledToast": "\"{plugin}\" enabled.",
     "disabledToast": "\"{plugin}\" disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",

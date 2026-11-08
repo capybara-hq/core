@@ -2,51 +2,59 @@ import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
+import {
+  AgentCreateBody,
+  AgentCreateDefinition,
+  AgentFromTemplateBody,
+  AgentFromTemplatePreviewBody,
+  AgentPathParams,
+  AgentUpdateBody,
+} from "../../agents/agents.schemas.js";
 import { AgentsService } from "../../agents/agents.service.js";
 import {
   AgentDefinitionSchema,
+  AgentToolRefCurrent,
   DEFAULT_AGENT_TOOLS,
   type ModelRef,
-  SubagentsSchema,
 } from "../../agents/definition.js";
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { type ConfirmClass, defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { asToolError, viaAgent } from "./errors.js";
+import { precheckBy, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
-const Id = z.string().min(1).max(100);
+const AgentId = AgentPathParams.shape.agentId.max(100);
+/** The request's definition (create form): the operations tighten its fields, never redeclare them. */
+const Def = AgentCreateDefinition.shape;
+/** Every string the model sends is bounded (the route's tool refs and model strings are not). */
 const Short = z.string().min(1).max(200);
 
-const Model = z.object({ provider: Short, model: Short }).strict();
+const Model = Def.model.extend({ provider: Short, model: Short }).strict();
+const [BuiltinRef, PluginRef, ConnectorRef] = AgentToolRefCurrent.options;
 const ToolRef = z.union([
-  z.object({ kind: z.literal("builtin"), name: Short }).strict(),
-  z.object({ kind: z.literal("plugin"), plugin: Short, name: Short }).strict(),
-  z
-    .object({
-      kind: z.literal("connector"),
-      connectorId: Short,
-      tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
-    })
-    .strict(),
+  BuiltinRef.extend({ name: Short }).strict(),
+  PluginRef.extend({ plugin: Short, name: Short }).strict(),
+  ConnectorRef.extend({
+    connectorId: Short,
+    tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
+  }).strict(),
 ]);
-const ToolPolicies = z.record(Short, z.enum(["ask", "deny"]));
-const Skills = z
-  .object({
-    orgSkills: z.array(Id).max(100),
-    pinned: z.array(Id).max(100).optional(),
-  })
+const RouteSkills = Def.skills.unwrap();
+/** `writePolicy` stays the web's; `orgSkills` is required here (the route defaults it to []). */
+const Skills = RouteSkills.pick({ pinned: true })
+  .extend({ orgSkills: RouteSkills.shape.orgSkills.unwrap() })
   .strict();
 
 /** The definition fields an agent can set through the tool; the rest keep the web's defaults. */
 const Fields = {
-  instructions: z.string().max(100_000),
+  name: Def.name,
+  instructions: Def.instructions.unwrap(),
   model: Model,
   tools: z.array(ToolRef).max(200),
-  toolPolicies: ToolPolicies,
+  toolPolicies: z.record(Short, Def.toolPolicies.unwrap().valueType),
   skills: Skills,
-  subagents: SubagentsSchema,
+  subagents: Def.subagents.unwrap(),
 };
 
 const WEB_ONLY =
@@ -104,15 +112,14 @@ export class AgentsOperations implements OnModuleInit {
         id: "agents.get",
         description:
           "Read one agent you can see with its full definition: instructions, model, tools, skills and sub-agents. Takes the agent id from agents.list.",
-        input: z.object({ agentId: Id }).strict(),
+        input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
         mirrors: ["GET /api/v1/orgs/:orgId/agents/:agentId"],
         confirm: "read",
-        run: async (input, ctx) =>
-          asToolError(async () => ({
-            agent: await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId),
-          })),
+        run: async (input, ctx) => ({
+          agent: await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId),
+        }),
       }),
       defineOperation({
         id: "agents.create",
@@ -122,7 +129,7 @@ export class AgentsOperations implements OnModuleInit {
           .object({
             definition: z
               .object({
-                name: z.string().min(1).max(80),
+                name: Fields.name,
                 instructions: Fields.instructions.optional(),
                 model: Fields.model,
                 tools: Fields.tools.optional(),
@@ -131,7 +138,8 @@ export class AgentsOperations implements OnModuleInit {
                 subagents: Fields.subagents.optional(),
               })
               .strict(),
-            visibility: z.string().max(40).optional(),
+            // only "private" passes; any other is refused with where to share it (WEB_ONLY)
+            visibility: AgentCreateBody.shape.visibility.optional(),
           })
           .strict(),
         example: {
@@ -143,6 +151,9 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents"],
+        // sharing and the avatar are set on the web
+        omits: ["memberIds", "profile"],
+        loosens: { visibility: "optional: the operation creates private agents only" },
         confirm: "personal",
         summary: (i) => ({
           zh: `新建私有智能体「${i.definition.name}」`,
@@ -161,17 +172,15 @@ export class AgentsOperations implements OnModuleInit {
             ...(d.skills !== undefined && { skills: d.skills }),
             ...(d.subagents !== undefined && { subagents: d.subagents }),
           });
-          return asToolError(() =>
-            this.agents.create(
-              ctx.orgId,
-              ctx.actorAccountId,
-              {
-                definition: { ...parsed, instructions: d.instructions },
-                visibility: "private",
-              },
-              undefined,
-              viaAgent("agents.create", ctx),
-            ),
+          return this.agents.create(
+            ctx.orgId,
+            ctx.actorAccountId,
+            {
+              definition: { ...parsed, instructions: d.instructions },
+              visibility: "private",
+            },
+            undefined,
+            viaAgent("agents.create", ctx),
           );
         },
       }),
@@ -181,9 +190,9 @@ export class AgentsOperations implements OnModuleInit {
           "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
         input: z
           .object({
-            agentId: Id,
-            version: z.number().int().positive(),
-            name: z.string().min(1).max(80).optional(),
+            agentId: AgentId,
+            version: AgentUpdateBody.shape.expectedVersion.unwrap(),
+            name: Fields.name.optional(),
             instructions: Fields.instructions.optional(),
             model: Fields.model.optional(),
             tools: Fields.tools.optional(),
@@ -199,6 +208,19 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId"],
+        // flat: the definition's editable fields at the top, merged into the current definition;
+        // `version` is the route's `expectedVersion`, required here; visibility is the web's
+        omits: ["visibility", "memberIds"],
+        renames: {
+          version: "expectedVersion",
+          name: "definition.name",
+          instructions: "definition.instructions",
+          model: "definition.model",
+          tools: "definition.tools",
+          toolPolicies: "definition.toolPolicies",
+          skills: "definition.skills",
+          subagents: "definition.subagents",
+        },
         confirm: "personal",
         errors: [
           {
@@ -220,59 +242,57 @@ export class AgentsOperations implements OnModuleInit {
                 en: `Update shared agent "${name}" (version ${i.version})`,
               };
         },
-        run: async (input, ctx) =>
-          asToolError(async () => {
-            const { agentId, version, ...patch } = input;
-            const current = (await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId))
-              .definition;
-            // the files are the authoring form of the prompt: a new prompt replaces them
-            const { instructionFiles, ...base } = current;
-            const definition = {
-              ...(patch.instructions === undefined && instructionFiles !== undefined
-                ? { ...base, instructionFiles }
-                : base),
-              ...(patch.name !== undefined && { name: patch.name }),
-              ...(patch.instructions !== undefined && { instructions: patch.instructions }),
-              ...(patch.model !== undefined && { model: patch.model as ModelRef }),
-              ...(patch.tools !== undefined && { tools: patch.tools }),
-              ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
-              ...(patch.skills !== undefined && { skills: patch.skills }),
-              ...(patch.subagents !== undefined && { subagents: patch.subagents }),
-            };
-            return this.agents.update(
-              ctx.orgId,
-              agentId,
-              ctx.actorAccountId,
-              { definition, expectedVersion: version },
-              undefined,
-              viaAgent("agents.update", ctx),
-            );
-          }),
+        run: async (input, ctx) => {
+          const { agentId, version, ...patch } = input;
+          const current = (await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId))
+            .definition;
+          // the files are the authoring form of the prompt: a new prompt replaces them
+          const { instructionFiles, ...base } = current;
+          const definition = {
+            ...(patch.instructions === undefined && instructionFiles !== undefined
+              ? { ...base, instructionFiles }
+              : base),
+            ...(patch.name !== undefined && { name: patch.name }),
+            ...(patch.instructions !== undefined && { instructions: patch.instructions }),
+            ...(patch.model !== undefined && { model: patch.model as ModelRef }),
+            ...(patch.tools !== undefined && { tools: patch.tools }),
+            ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
+            ...(patch.skills !== undefined && { skills: patch.skills }),
+            ...(patch.subagents !== undefined && { subagents: patch.subagents }),
+          };
+          return this.agents.update(
+            ctx.orgId,
+            agentId,
+            ctx.actorAccountId,
+            { definition, expectedVersion: version },
+            undefined,
+            viaAgent("agents.update", ctx),
+          );
+        },
       }),
       defineOperation({
         id: "agents.preview-from-template",
         description:
           "Preview creating an agent from an agent template: what carries over, what is pending (connectors the org has not set up) or unavailable, the model that would be used, and a previewHash. agents.create-from-template needs that hash.",
-        input: z.object({ templateId: Id }).strict(),
+        input: AgentFromTemplatePreviewBody,
         example: { templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10" },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template/preview"],
         confirm: "read",
-        run: async (input, ctx) =>
-          asToolError(() => this.fromTemplate.preview(ctx.orgId, input.templateId)),
+        run: async (input, ctx) => this.fromTemplate.preview(ctx.orgId, input.templateId),
       }),
       defineOperation({
         id: "agents.create-from-template",
         description:
           "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
-        input: z
-          .object({
-            templateId: Id,
-            name: z.string().min(1).max(80),
-            previewHash: z.string().min(1).max(100),
-            model: Model.optional(),
-            visibility: z.string().max(40).optional(),
-          })
+        input: AgentFromTemplateBody.pick({
+          templateId: true,
+          name: true,
+          previewHash: true,
+          visibility: true,
+        })
+          // the model with bounded strings (the route's are not)
+          .extend({ model: Model.optional() })
           .strict(),
         example: {
           templateId: "5d0c7a52-3a0e-4f0a-bd0a-0f8c3d2a9e10",
@@ -281,13 +301,45 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["POST /api/v1/orgs/:orgId/agents/from-template"],
+        // a members agent and its avatar are set on the web
+        omits: ["members", "avatar"],
         confirm: "personal",
         errors: [
           {
             code: "agent.template_preview_stale",
             next: "Call agents.preview-from-template again and use its new previewHash.",
           },
+          {
+            code: "component.not_found",
+            next: "Check the template id with agent-templates.list; this org cannot use that template.",
+          },
+          {
+            code: "agent.model_unavailable",
+            next: {
+              superAdmin:
+                "No model is set up: configure a model provider in the admin console, then call again.",
+              orgAdmin:
+                "No model is available in this deployment; ask the super admin to set one up.",
+              member: "No model is available in this deployment; ask an org admin.",
+            },
+          },
+          {
+            code: "agent.visibility_web_only",
+            next: "Leave visibility out (the agent is private), and share it on the agents page of the web app.",
+          },
         ],
+        precheck: async (i, ctx) => {
+          if (i.visibility !== undefined && i.visibility !== "private") {
+            return { ok: false, code: "agent.visibility_web_only", message: WEB_ONLY };
+          }
+          return precheckBy(() =>
+            this.fromTemplate.check(ctx.orgId, {
+              templateId: i.templateId,
+              previewHash: i.previewHash,
+              ...(i.model !== undefined && { model: i.model }),
+            }),
+          );
+        },
         summary: async (i, ctx) => {
           const t = named(
             await orElse(
@@ -304,20 +356,18 @@ export class AgentsOperations implements OnModuleInit {
           if (input.visibility !== undefined && input.visibility !== "private") {
             throw new ToolError(WEB_ONLY);
           }
-          return asToolError(() =>
-            this.fromTemplate.create(
-              ctx.orgId,
-              ctx.actorAccountId,
-              {
-                templateId: input.templateId,
-                name: input.name,
-                previewHash: input.previewHash,
-                visibility: "private",
-                ...(input.model !== undefined && { model: input.model }),
-              },
-              undefined,
-              viaAgent("agents.create-from-template", ctx),
-            ),
+          return this.fromTemplate.create(
+            ctx.orgId,
+            ctx.actorAccountId,
+            {
+              templateId: input.templateId,
+              name: input.name,
+              previewHash: input.previewHash,
+              visibility: "private",
+              ...(input.model !== undefined && { model: input.model }),
+            },
+            undefined,
+            viaAgent("agents.create-from-template", ctx),
           );
         },
       }),
