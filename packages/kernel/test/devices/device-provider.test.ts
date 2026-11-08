@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { DeviceSandboxProvider } from "../../src/devices/device-provider.js";
+import { DeviceSandboxProvider, STOP_STEP_TIMEOUT_MS } from "../../src/devices/device-provider.js";
 import { deviceReqKey } from "../../src/devices/keys.js";
 import { DeviceRelay } from "../../src/devices/relay.js";
 import { ApiError } from "../../src/errors.js";
@@ -308,6 +308,28 @@ describe("DeviceSandboxProvider", () => {
     );
     await offlineCheckFails.destroyFileSystemByName(`cap-env-${randomUUID()}`, signal());
   });
+
+  it("a hung Redis delays deletion by at most the step timeout", async () => {
+    const hung = new DeviceSandboxProvider(
+      { holderLive: () => new Promise<boolean>(() => {}) } as unknown as DeviceRelay,
+      log,
+    );
+    const t0 = Date.now();
+    await hung.destroyFileSystem({ id: randomUUID() }, signal());
+    const took = Date.now() - t0;
+    expect(took).toBeGreaterThanOrEqual(STOP_STEP_TIMEOUT_MS - 50);
+    expect(took).toBeLessThan(STOP_STEP_TIMEOUT_MS + 1000);
+    const sendHangs = new DeviceSandboxProvider(
+      {
+        holderLive: async () => true,
+        send: () => new Promise<void>(() => {}),
+      } as unknown as DeviceRelay,
+      log,
+    );
+    const t1 = Date.now();
+    await sendHangs.destroyFileSystemByName(`cap-env-${randomUUID()}`, signal());
+    expect(Date.now() - t1).toBeLessThan(STOP_STEP_TIMEOUT_MS + 1000);
+  }, 20_000);
 });
 
 describe("DevicesModule", () => {

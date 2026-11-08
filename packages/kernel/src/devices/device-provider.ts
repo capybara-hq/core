@@ -17,7 +17,20 @@ export const EXEC_DEADLINE_MARGIN_MS = 5000;
 /** How long the machine may take for one non-exec operation. */
 export const OP_DEADLINE_MS = 30_000;
 
+/** The longest each Redis step of telling a machine to stop may take (a hung Redis never delays deletion). */
+export const STOP_STEP_TIMEOUT_MS = 5000;
+
 const NAME_PREFIX = "cap-env-";
+
+/** `p`, or a rejection after `ms` (the step may still finish later; nobody waits for it). */
+function within<T>(ms: number, p: Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  p.catch(() => {}); // a late failure after the timeout is not unhandled
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
 
 /**
  * The handle of an instance on a machine: the environment id (ruling R1: the relay is keyed by
@@ -193,8 +206,11 @@ export class DeviceSandboxProvider implements SandboxProvider {
   private async stop(environmentId: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     try {
-      if (!(await this.relay.holderLive(environmentId))) return;
-      await this.relay.send(environmentId, "stop", { reason: "deleted" }, OP_DEADLINE_MS);
+      if (!(await within(STOP_STEP_TIMEOUT_MS, this.relay.holderLive(environmentId)))) return;
+      await within(
+        STOP_STEP_TIMEOUT_MS,
+        this.relay.send(environmentId, "stop", { reason: "deleted" }, OP_DEADLINE_MS),
+      );
     } catch (e) {
       this.log.warn("could not tell the connected machine its environment was deleted", {
         environmentId,

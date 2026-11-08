@@ -280,6 +280,28 @@ describe("DeviceRelay", () => {
     await redis.del(deviceReqKey(h.environmentId));
   }, 15_000);
 
+  it("a reconnect within the grace restores the full wait: a long command still delivers", async () => {
+    graceSeconds = 1;
+    const h = holder();
+    await h.connect();
+    const t0 = Date.now();
+    const call = relay.call(h.environmentId, "exec", execArgs, {
+      deadlineMs: 10_000,
+      signal: signal(),
+    });
+    const req = await h.next();
+    // the lease is gone across the first lease check (at HOLDER_POLL_MS) and back within the grace
+    await sleep(HOLDER_POLL_MS - 500 - (Date.now() - t0));
+    await h.disconnect();
+    await sleep(HOLDER_POLL_MS + 500 - (Date.now() - t0));
+    await h.connect();
+    // answered well after the capped give-up time (loss + 1 s grace)
+    await sleep(HOLDER_POLL_MS + 2500 - (Date.now() - t0));
+    await h.respond(req.id, { ok: true, result: EXEC_RESULT });
+    expect(await call).toEqual(EXEC_RESULT);
+    await h.disconnect();
+  }, 20_000);
+
   it("abort of a taken request queues a cancel and rejects with the abort reason", async () => {
     const h = holder();
     await h.connect();

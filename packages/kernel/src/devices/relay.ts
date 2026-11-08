@@ -193,26 +193,34 @@ export class DeviceRelay {
       this.nudge(environmentId, id);
       onStored(await this.redis.get(deviceResKey(id)));
 
-      // wait until the result, the abort, or `giveUpAt`; the lease is checked every poll, and its
-      // loss caps `giveUpAt` at one grace from then (never extends it)
-      let giveUpAt = Date.now() + deadlineMs + graceMs;
+      // wait until the result, the abort, or `giveUpAt`. The lease is checked every poll: its loss
+      // caps `giveUpAt` at one grace from then (never extending it); a reconnect within that grace
+      // restores the full wait, so a long command whose machine blipped keeps its deadline
+      const fullGiveUpAt = Date.now() + deadlineMs + graceMs;
+      let giveUpAt = fullGiveUpAt;
       let capped = false;
       const tick = async () => {
         if (stopped) return;
         try {
-          if (Date.now() >= giveUpAt) {
-            // a last look at the key: the publish may have been lost while the subscriber reconnected
-            const raw = await this.redis.get(deviceResKey(id));
-            if (raw !== null) onStored(raw);
-            else settle({ error: GRACE_EXPIRED });
-            return;
-          }
-          if (!capped && !(await this.holderLive(environmentId))) {
+          const live = await this.holderLive(environmentId);
+          if (live && capped) {
+            capped = false;
+            giveUpAt = fullGiveUpAt;
+          } else if (!live && !capped) {
             capped = true;
             giveUpAt = Math.min(giveUpAt, Date.now() + graceMs);
           }
         } catch (e) {
-          this.log.warn("device relay wait check failed", { environmentId, error: errMsg(e) });
+          this.log.warn("device relay lease check failed", { environmentId, error: errMsg(e) });
+        }
+        if (stopped) return;
+        if (Date.now() >= giveUpAt) {
+          // a last look at the key: the publish may have been lost while the subscriber reconnected
+          this.redis.get(deviceResKey(id)).then(
+            (raw) => (raw !== null ? onStored(raw) : settle({ error: GRACE_EXPIRED })),
+            () => settle({ error: GRACE_EXPIRED }),
+          );
+          return;
         }
         schedule();
       };
