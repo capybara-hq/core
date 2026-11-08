@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { setupGuideHash } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelConfig } from "../../src/config/schema.js";
+import { PluginGuides } from "../../src/extensions/plugin-guides.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createAgent, createOrg } from "../helpers/runs.js";
@@ -424,11 +425,37 @@ describe("setup guides v2: rendering", { timeout: 60_000 }, () => {
       .set({ manifest: JSON.stringify({ ...(row.manifest as object), setupGuides: [v1] }) })
       .where("item_id", "=", itemId)
       .execute();
-    const r = await env.boss({ method: "GET", url: guideUrl(itemId) });
-    expect(r.statusCode).toBe(404);
-    expect(r.json().error.code).toBe("catalog.guide_not_found");
-    // the channel pages find no guide either
-    await insertConnection(env.orgId, "im-guide");
+    const guides = env.k.app.get(PluginGuides);
+    // the logger PluginGuides got (KERNEL_LOGGER is transient: one instance per consumer)
+    const log = (guides as unknown as { log: { warn: (...a: unknown[]) => void } }).log;
+    const warn = vi.spyOn(log, "warn");
+    try {
+      const r = await env.boss({ method: "GET", url: guideUrl(itemId) });
+      expect(r.statusCode).toBe(404);
+      expect(r.json().error.code).toBe("catalog.guide_not_found");
+      // logged once for the render, naming the plugin and version
+      const skipped = warn.mock.calls.filter(([m]) => String(m).startsWith("setup guide entries"));
+      expect(skipped).toEqual([
+        [
+          expect.any(String),
+          expect.objectContaining({ plugin: "im-guide", version: "1.0.0", skipped: 1 }),
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+    // the channel pages find no guide either: no ref, no drift for a connection of the plugin
+    const connectionId = await insertConnection(env.orgId, "im-guide");
+    const org = { orgId: env.orgId, role: "owner" as const };
+    expect(await guides.channelGuides(["im-guide"], org)).toEqual(new Map());
+    const states = await guides.connectionStates(
+      [{ id: connectionId, plugin: "im-guide", guideAck: null }],
+      org,
+    );
+    expect(states.get(connectionId)).toEqual({ setupGuide: null, guideDrift: null });
+    expect(await guides.currentAck("im-guide", "channel-connection", { mode: "webhook" })).toBe(
+      null,
+    );
     const admin = await env.root({
       method: "GET",
       url: `/api/v1/admin/catalog/${itemId}/guides/demo`,
@@ -482,6 +509,16 @@ describe("setup guides v2: rendering", { timeout: 60_000 }, () => {
     expect(member.checks).toEqual([]);
     const denied = await env.mem({ method: "GET", url: guideUrl(itemId, "gh") });
     expect(denied.statusCode).toBe(403);
+    // no connector id resolves yet (Task 6 looks them up): 404, never a guide for an unchecked id
+    for (const req of [env.boss, env.mem]) {
+      const audience = req === env.mem ? "&audience=member" : "";
+      const r = await req({
+        method: "GET",
+        url: guideUrl(itemId, "gh", `?connectorId=${randomUUID()}${audience}`),
+      });
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json().error.code).toBe("connector.not_found");
+    }
     // modes and channel targets are not this place's
     for (const query of ["?mode=webhook", `?connectionId=${randomUUID()}`]) {
       const r = await env.boss({ method: "GET", url: guideUrl(itemId, "gh", query) });
