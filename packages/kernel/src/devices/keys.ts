@@ -13,6 +13,15 @@ export const deviceReqKey = (environmentId: string): string => `capk:device-req:
 /** The result of one request: `capk:device-res:<requestId>`. */
 export const deviceResKey = (requestId: string): string => `capk:device-res:${requestId}`;
 
+/** The prefix of {@link deviceTakenKey} (the holder's Lua script builds the key from it). */
+export const DEVICE_TAKEN_PREFIX = "capk:device-taken:";
+
+/**
+ * A request the holder forwarded to a machine: `capk:device-taken:<requestId>` → the environment
+ * id. Only a result for a taken request of the socket's own environment is accepted.
+ */
+export const deviceTakenKey = (requestId: string): string => `${DEVICE_TAKEN_PREFIX}${requestId}`;
+
 /** A new request for the machine of the environment. */
 export const deviceReqTopic = (environmentId: string): string => `device.req.${environmentId}`;
 

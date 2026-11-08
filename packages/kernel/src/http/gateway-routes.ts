@@ -15,8 +15,9 @@ export interface GatewayRoutes {
 
 /**
  * Registers the gateway role's HTTP routes (`serveGateway = roles.includes("gateway")`): the
- * channel webhook and the device connection WebSocket. These are raw Fastify routes, not a Nest module, so the API's global guard and
- * CSRF check do not apply (P-4); each route does its own (plugin-side) verification.
+ * channel webhook and the device connection WebSocket. These are raw Fastify routes, not a Nest
+ * module, so the API's global guard and CSRF check do not apply (P-4); each route does its own
+ * verification (the channel plugin's signature check, the machine credential).
  */
 export async function registerGatewayRoutes(
   fastify: FastifyInstance,

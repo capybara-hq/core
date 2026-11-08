@@ -15,12 +15,14 @@ import { type LeaseHandle, LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
+  DEVICE_TAKEN_PREFIX,
   deviceLeaseKey,
   deviceReqKey,
   deviceReqTopic,
   deviceResKey,
   deviceResTopic,
   deviceRevokedTopic,
+  deviceTakenKey,
   deviceTakeoverTopic,
 } from "./keys.js";
 import { type MachineIdentity, MachinesService } from "./machines.js";
@@ -71,20 +73,40 @@ end
 return 1
 `;
 
-/** The payload of `device.takeover.<environmentId>`: who asks, and when it connected. */
-interface Takeover {
-  token: string;
-  at: number;
-}
+/**
+ * Pops the next frame of the request list (`KEYS[1]`) and, when it is a `req`, marks it taken in
+ * the same step: `<ARGV[1]><id>` → the environment id `ARGV[2]`, for the reconnect grace `ARGV[3]`
+ * ms plus the request's deadline plus the margin `ARGV[4]` ms (ruling R20). Returns the frame, or
+ * false when the list is empty. A frame that is not JSON is returned as is (the caller drops it).
+ */
+const TAKE = `
+local raw = redis.call('LPOP', KEYS[1])
+if not raw then return false end
+local ok, f = pcall(cjson.decode, raw)
+if ok and type(f) == 'table' and f.type == 'req' and type(f.id) == 'string'
+  and type(f.deadlineMs) == 'number' and f.deadlineMs > 0 then
+  local ttl = tonumber(ARGV[3]) + math.ceil(f.deadlineMs) + tonumber(ARGV[4])
+  redis.call('SET', ARGV[1] .. f.id, ARGV[2], 'PX', ttl)
+end
+return raw
+`;
+
+/**
+ * Accepts a result (ruling R20): only when its request is marked taken (`KEYS[1]`) for the
+ * environment `ARGV[1]`. Stores the frame `ARGV[2]` under `KEYS[2]` for what is left of the taken
+ * mark's TTL (the caller's whole window, also after a reconnect) and clears the mark. Returns 1
+ * when stored, 0 otherwise.
+ */
+const ACCEPT = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl <= 0 then return 0 end
+redis.call('SET', KEYS[2], ARGV[2], 'PX', ttl)
+redis.call('DEL', KEYS[1])
+return 1
+`;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-const isTakeover = (p: unknown): p is Takeover =>
-  typeof p === "object" &&
-  p !== null &&
-  typeof (p as Takeover).token === "string" &&
-  typeof (p as Takeover).at === "number";
-/** Whether takeover `a` is newer than `b` (connect time, then token as the tie-break). */
-const newer = (a: Takeover, b: Takeover) => a.at > b.at || (a.at === b.at && a.token > b.token);
 
 type State = "hello" | "claiming" | "holding" | "closed";
 
@@ -94,10 +116,7 @@ type State = "hello" | "claiming" | "holding" | "closed";
  */
 class DeviceConnection {
   readonly token = randomUUID();
-  readonly at = Date.now();
   state: State = "hello";
-  /** Requests forwarded to the machine and not answered yet: id → `deadlineMs` (the result TTL). */
-  private readonly taken = new Map<string, number>();
   private lease: LeaseHandle | undefined;
   private readonly unsubscribes: (() => Promise<void>)[] = [];
   private helloTimer: NodeJS.Timeout | undefined;
@@ -174,6 +193,7 @@ class DeviceConnection {
       }
       clearTimeout(this.helloTimer);
       this.state = "claiming";
+      if (!(await this.claim())) return;
       try {
         await this.gw.machines.recordHello(this.identity.machineId, frame);
       } catch (e) {
@@ -181,10 +201,7 @@ class DeviceConnection {
           environmentId: this.environmentId,
           error: errMsg(e),
         });
-        this.close(DEVICE_CLOSE.internal, "internal error");
-        return;
       }
-      await this.claim();
       return;
     }
     if (frame.type !== "res" || this.state === "hello") {
@@ -196,13 +213,26 @@ class DeviceConnection {
     await this.store(frame);
   }
 
-  /** Stores one result and announces it (the relay's wire, relay.ts). */
+  /**
+   * Stores one result and announces it (the relay's wire, relay.ts), only for a request taken for
+   * this environment (ruling R20); anything else is dropped.
+   */
   private async store(res: DeviceRes): Promise<void> {
-    const deadlineMs = this.taken.get(res.id) ?? 0;
-    this.taken.delete(res.id);
-    const ttlMs = this.gw.graceMs() + deadlineMs + LIST_TTL_MARGIN_MS;
     try {
-      await this.gw.redis.set(deviceResKey(res.id), JSON.stringify(res), "PX", ttlMs);
+      const stored = await this.gw.redis.eval(
+        ACCEPT,
+        2,
+        deviceTakenKey(res.id),
+        deviceResKey(res.id),
+        this.environmentId,
+        JSON.stringify(res),
+      );
+      if (Number(stored) !== 1) {
+        this.gw.log.warn("dropping a device result for a request not taken for its environment", {
+          environmentId: this.environmentId,
+        });
+        return;
+      }
       await this.gw.bus.publish(deviceResTopic(res.id), res);
     } catch (e) {
       this.gw.log.warn("could not store a device result", {
@@ -213,25 +243,26 @@ class DeviceConnection {
   }
 
   /**
-   * Claims the environment's lease: newest connection wins. When another connection holds it,
-   * a takeover is published and the lease retried every {@link CLAIM_RETRY_MS} for
-   * {@link CLAIM_TIMEOUT_MS}. A newer takeover seen meanwhile ends this connection (4002).
+   * Claims the environment's lease; true when this connection holds it. The newest connection
+   * wins (ruling R21): when another connection holds the lease, a takeover is published (the
+   * holder yields to any takeover) and the lease retried every {@link CLAIM_RETRY_MS} for
+   * {@link CLAIM_TIMEOUT_MS}, then 4409 (the program reconnects). A claimer never yields.
    */
-  private async claim(): Promise<void> {
+  private async claim(): Promise<boolean> {
     const env = this.environmentId;
-    const me: Takeover = { token: this.token, at: this.at };
     try {
-      // subscribed before asking, so a newer connection's takeover is never missed
+      // subscribed before claiming, so a takeover right after the claim is not missed
       await this.subscribe(deviceTakeoverTopic(env), (p) => {
-        if (isTakeover(p) && p.token !== this.token && newer(p, me)) {
+        const token = (p as { token?: unknown } | null)?.token;
+        if (this.state === "holding" && token !== this.token) {
           this.close(DEVICE_CLOSE.replaced, "replaced by a newer connection");
         }
       });
-      if (this.state !== "claiming") return;
+      if (this.state !== "claiming") return false;
       const ttl = this.gw.leaseTtlMs();
       let lease = await this.gw.locks.hold(deviceLeaseKey(env), this.token, ttl);
       if (!lease) {
-        await this.gw.bus.publish(deviceTakeoverTopic(env), me);
+        await this.gw.bus.publish(deviceTakeoverTopic(env), { token: this.token });
         const until = Date.now() + CLAIM_TIMEOUT_MS;
         while (!lease && this.state === "claiming" && Date.now() < until) {
           await new Promise((r) => setTimeout(r, CLAIM_RETRY_MS));
@@ -242,42 +273,45 @@ class DeviceConnection {
       if (this.state !== "claiming") {
         // closed while claiming (replaced, revoked, shutdown, the machine left)
         await lease?.release();
-        return;
+        return false;
       }
       if (!lease) {
         this.close(DEVICE_CLOSE.claimTimeout, "the environment is held by another connection");
-        return;
+        return false;
       }
       this.lease = lease;
       this.state = "holding";
       const onLost = () => this.close(DEVICE_CLOSE.leaseLost, "lease lost");
       if (lease.lost.aborted) {
         onLost();
-        return;
+        return false;
       }
       lease.lost.addEventListener("abort", onLost, { once: true });
       await this.subscribe(deviceReqTopic(env), () => this.drain());
       await this.subscribe(deviceRevokedTopic(env), (p) => {
         const id = (p as { machineId?: unknown } | null)?.machineId;
         if (id !== this.identity.machineId) return;
-        // after the drains already queued: a stop frame nudged before the revocation goes out
+        // one more drain first: a stop frame whose nudge was lost still goes out before the close
+        this.drain();
         this.chain = this.chain.then(() =>
           this.close(DEVICE_CLOSE.revoked, "the machine was disconnected"),
         );
       });
-      if (this.state !== "holding") return;
+      if (this.state !== "holding") return false;
       this.gw.log.info("device connected", {
         environmentId: env,
         machineId: this.identity.machineId,
       });
       // what was queued while nobody held the machine
       this.drain();
+      return true;
     } catch (e) {
       this.gw.log.warn("could not claim a device connection", {
         environmentId: env,
         error: errMsg(e),
       });
       this.close(DEVICE_CLOSE.internal, "internal error");
+      return false;
     }
   }
 
@@ -303,7 +337,17 @@ class DeviceConnection {
   private async drainOnce(): Promise<void> {
     const key = deviceReqKey(this.environmentId);
     while (this.state === "holding") {
-      const raw = await this.gw.redis.lpop(key);
+      // no lease fencing needed: the pop is atomic, so each frame reaches one connection only, and
+      // a holder that lost its lease still talks to the environment's own machine (or puts it back)
+      const raw = (await this.gw.redis.eval(
+        TAKE,
+        1,
+        key,
+        DEVICE_TAKEN_PREFIX,
+        this.environmentId,
+        String(this.gw.graceMs()),
+        String(LIST_TTL_MARGIN_MS),
+      )) as string | null;
       if (raw === null) return;
       let frame: KernelReq | KernelCancel;
       try {
@@ -334,8 +378,6 @@ class DeviceConnection {
         });
         continue;
       }
-      if (frame.type === "req") this.taken.set(frame.id, frame.deadlineMs);
-      else this.taken.delete(frame.id);
       this.socket.send(raw);
     }
   }
@@ -345,7 +387,7 @@ class DeviceConnection {
     this.pingTimer = setTimeout(() => {
       this.ping();
       if (this.state !== "closed") this.schedulePing();
-    }, PING_INTERVAL_MS);
+    }, this.gw.pingIntervalMs);
   }
 
   private ping(): void {
@@ -442,10 +484,11 @@ class DeviceConnection {
  * connections of connected machines (`GET /device/connect`, device-routes.ts). One connection per
  * environment across replicas, under the lease `capk:device-lease:<environmentId>` (the newest
  * connection wins: it publishes `device.takeover.<environmentId>` and the holder lets go). The
- * holder drains `capk:device-req:<environmentId>` on every `device.req.<environmentId>` nudge and
- * once after claiming, forwards the frames, and stores each `res` under `capk:device-res:<id>`
- * (TTL: the reconnect grace plus the request's deadline plus a margin) before publishing it on
- * `device.res.<id>`. `device.revoked.<environmentId>` closes the connection of that machine only
+ * holder drains `capk:device-req:<environmentId>` on every `device.req.<environmentId>` nudge,
+ * once after claiming and on every ping, marking each forwarded request taken for its environment
+ * (`capk:device-taken:<id>`, TTL the reconnect grace plus the request's deadline plus a margin).
+ * A `res` is accepted only for a request taken for the socket's environment: it is stored under
+ * `capk:device-res:<id>` for the rest of that TTL and published on `device.res.<id>`. `device.revoked.<environmentId>` closes the connection of that machine only
  * (ruling R16). The sockets are this process's own; everything other replicas need is in Redis.
  */
 @Injectable()
@@ -453,6 +496,8 @@ export class DeviceGateway {
   /** This replica's open connections (the sockets cannot live anywhere else). */
   private readonly connections = new Set<DeviceConnection>();
   private stopping = false;
+  /** How often connections are pinged ({@link PING_INTERVAL_MS}; a test seam). */
+  pingIntervalMs = PING_INTERVAL_MS;
 
   constructor(
     @Inject(MachinesService)

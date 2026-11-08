@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { connect as tcpConnect } from "node:net";
 import type { KernelReq } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { deviceLeaseKey, deviceResKey, deviceRevokedTopic } from "../../src/devices/keys.js";
+import { DeviceGateway } from "../../src/devices/device-gateway.js";
+import {
+  deviceLeaseKey,
+  deviceResKey,
+  deviceResTopic,
+  deviceRevokedTopic,
+  deviceTakenKey,
+} from "../../src/devices/keys.js";
 import { MachinesService } from "../../src/devices/machines.js";
 import { DeviceRelay } from "../../src/devices/relay.js";
 import { EnvironmentsService } from "../../src/environments/environments.service.js";
@@ -255,6 +263,142 @@ describe("GET /device/connect", () => {
       }),
     ).toEqual(EXEC_RESULT);
     second.close();
+  });
+
+  it("a result for an unknown request writes no key and publishes nothing", async () => {
+    const m = await connected();
+    const machine = new FakeMachine(url, m.credential);
+    await machine.opened;
+    await held(m.environmentId);
+    const id = randomUUID();
+    const sub = new Redis(rd.url);
+    const heard: string[] = [];
+    sub.on("message", (_ch, msg: string) => heard.push(msg));
+    await sub.subscribe(`cap:kernel:${deviceResTopic(id)}`);
+    machine.respond(id, { ok: true, result: EXEC_RESULT });
+    await sleep(500);
+    expect(await redis.exists(deviceResKey(id))).toBe(0);
+    expect(heard).toEqual([]);
+    expect(machine.ws.readyState).toBe(machine.ws.OPEN);
+    sub.disconnect();
+    machine.close();
+  });
+
+  it("a result for a request taken for another environment is dropped", async () => {
+    const m = await connected();
+    const machine = new FakeMachine(url, m.credential);
+    await machine.opened;
+    await held(m.environmentId);
+    const id = randomUUID();
+    const other = randomUUID();
+    await redis.set(deviceTakenKey(id), other, "PX", 60_000);
+    machine.respond(id, { ok: true, result: EXEC_RESULT });
+    await sleep(500);
+    expect(await redis.exists(deviceResKey(id))).toBe(0);
+    expect(await redis.get(deviceTakenKey(id))).toBe(other);
+    machine.close();
+  });
+
+  it("a result flushed after a reconnect on a new socket is accepted", async () => {
+    const m = await connected();
+    const first = new FakeMachine(url, m.credential);
+    await first.opened;
+    await held(m.environmentId);
+    const call = relay.call(m.environmentId, "exec", execArgs, {
+      deadlineMs: 20_000,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const req = (await first.next((f) => f.type === "req")) as KernelReq;
+    expect(await redis.get(deviceTakenKey(req.id))).toBe(m.environmentId);
+    first.close();
+    await first.closed;
+    await waitFor(async () => (await redis.get(deviceLeaseKey(m.environmentId))) === null);
+    // the program flushes what finished while it was away right after its hello
+    const second = new FakeMachine(url, m.credential);
+    await second.opened;
+    second.respond(req.id, { ok: true, result: EXEC_RESULT });
+    expect(await call).toEqual(EXEC_RESULT);
+    second.close();
+  });
+
+  it("an upgrade request to another path is answered 404 and its socket closed", async () => {
+    for (const path of ["/healthz", "/api/v1/setup"]) {
+      const answer = await new Promise<{ data: string; closed: boolean }>((resolve, reject) => {
+        const sock = tcpConnect(k.port as number, "127.0.0.1");
+        let data = "";
+        const timer = setTimeout(() => resolve({ data, closed: false }), 5000);
+        sock.on("data", (c) => {
+          data += c.toString("utf8");
+        });
+        sock.on("close", () => {
+          clearTimeout(timer);
+          resolve({ data, closed: true });
+        });
+        sock.on("error", reject);
+        sock.write(
+          `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
+            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+        );
+      });
+      expect(answer.data.startsWith("HTTP/1.1 404"), `${path}: ${answer.data}`).toBe(true);
+      expect(answer.closed, path).toBe(true);
+    }
+  });
+
+  it("two near-simultaneous newcomers end with exactly one holder", async () => {
+    const m = await connected();
+    const holder = new FakeMachine(url, m.credential);
+    await holder.opened;
+    await held(m.environmentId);
+    const a = new FakeMachine(url, m.credential);
+    const b = new FakeMachine(url, m.credential);
+    expect((await holder.closed).code).toBe(4002);
+    const loser = await Promise.race([
+      a.closed.then((c) => ({ c, other: b })),
+      b.closed.then((c) => ({ c, other: a })),
+    ]);
+    expect([4002, 4409]).toContain(loser.c.code);
+    await sleep(1000);
+    expect(loser.other.ws.readyState).toBe(loser.other.ws.OPEN);
+    expect(await redis.get(deviceLeaseKey(m.environmentId))).not.toBeNull();
+    a.close();
+    b.close();
+  }, 20_000);
+
+  it("a lease held elsewhere that is never handed back closes the claim with 4409", async () => {
+    const m = await connected();
+    await redis.set(deviceLeaseKey(m.environmentId), "stuck", "PX", 60_000);
+    const machine = new FakeMachine(url, m.credential);
+    await machine.opened;
+    expect((await machine.closed).code).toBe(4409);
+    await redis.del(deviceLeaseKey(m.environmentId));
+  }, 20_000);
+
+  it("a lost lease closes the socket with 4001", async () => {
+    const m = await connected();
+    const machine = new FakeMachine(url, m.credential);
+    await machine.opened;
+    await held(m.environmentId);
+    // the key taken by someone else: the next renewal (every TTL/3) fails
+    await redis.set(deviceLeaseKey(m.environmentId), "someone-else", "PX", 60_000);
+    expect((await machine.closed).code).toBe(4001);
+    expect(await redis.get(deviceLeaseKey(m.environmentId))).toBe("someone-else");
+    await redis.del(deviceLeaseKey(m.environmentId));
+  }, 20_000);
+
+  it("a machine that misses two pongs is terminated", async () => {
+    const gw = k.app.get(DeviceGateway);
+    gw.pingIntervalMs = 200;
+    try {
+      const m = await connected();
+      const machine = new FakeMachine(url, m.credential, undefined, { autoPong: false });
+      await machine.opened;
+      // terminated without a close frame
+      expect((await machine.closed).code).toBe(1006);
+      await waitFor(async () => (await redis.get(deviceLeaseKey(m.environmentId))) === null);
+    } finally {
+      gw.pingIntervalMs = 20_000;
+    }
   });
 
   it("stopping the kernel closes the socket with 1001 and releases the lease", async () => {

@@ -33,12 +33,26 @@ function bearer(req: FastifyRequest): string {
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
  * CSRF check applies; the route checks the machine credential itself, before the upgrade (401
  * `device.credential_invalid`), then the protocol header (426 `environment.program_outdated`).
- * Must be called before Nest `app.init()`.
+ * Must be called before Nest `app.init()`, on the root instance.
+ *
+ * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
+ * root hooks below keep that from reaching any other route: an upgrade to another path is
+ * answered 404 and its socket closed once answered (Node would have dropped it without a
+ * listener).
  */
 export async function registerDeviceConnectRoute(
   fastify: FastifyInstance,
   opts: DeviceRoutesOptions,
 ): Promise<void> {
+  fastify.addHook("onRequest", async (req, reply) => {
+    if (req.headers.upgrade === undefined || req.routeOptions.url === DEVICE_CONNECT_ROUTE) return;
+    return reply
+      .code(404)
+      .send(errorBody("not_found", "This path does not accept a protocol upgrade"));
+  });
+  fastify.addHook("onResponse", async (req) => {
+    if (req.headers.upgrade !== undefined) req.raw.socket?.destroy();
+  });
   await fastify.register(async (scope) => {
     await scope.register(websocket, { options: { maxPayload: opts.maxFrameBytes } });
     const identities = new WeakMap<FastifyRequest, { identity: MachineIdentity; cred: string }>();
