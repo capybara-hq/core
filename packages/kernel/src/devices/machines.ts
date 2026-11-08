@@ -105,6 +105,8 @@ export class MachinesService {
    * forgets its instance (status `none`, no handle) and its files count as there again; the next
    * use creates a fresh instance on the machine (with its roots: a new `environment_paths` event
    * follows). The fence moves on, so a lifecycle holder of the old instance fails its next write.
+   * Lost files come back as an empty directory: the reset count moves on, so conversations that
+   * used the old files are told their files were reset, not that they were kept.
    */
   private async resetInstance(environmentId: string): Promise<void> {
     await this.db
@@ -117,6 +119,7 @@ export class MachinesService {
         suspended_at: null,
         destroyed_at: sql<Date>`now()`,
         generation: eb("generation", "+", 1),
+        fs_resets: sql<number>`CASE WHEN fs_status = 'lost' THEN fs_resets + 1 ELSE fs_resets END`,
       }))
       .where("environment_id", "=", environmentId)
       .execute();

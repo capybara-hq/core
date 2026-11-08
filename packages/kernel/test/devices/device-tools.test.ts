@@ -15,6 +15,7 @@ import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { sandboxFilesResetNotice } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinTool } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -357,8 +358,14 @@ describe("connected environments through the sandbox tools", () => {
 
     // the owner signs in again (the program recreates the directory): the next call works
     const next = await signIn(m.environmentId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" }, m.ctx());
+    const written = await m
+      .tool("Write")
+      .run({ file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" }, m.ctx());
     expect(next.dir.files.has(`${ROOTS_A.workspace}/b.txt`)).toBe(true);
+    // the recreated directory is empty: the conversation is told its files were reset
+    expect(JSON.stringify(written)).toContain(
+      JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
+    );
     expect((await m.instance())?.fs_status).toBe("ready");
   }, 60_000);
 });
