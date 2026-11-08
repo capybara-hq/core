@@ -33,6 +33,8 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/v1/device/token",
   // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
   "POST /channels/webhook/:connectionId",
+  // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)
+  "GET /device/connect",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

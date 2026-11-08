@@ -263,7 +263,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // environments (personal cloud environments, environments design phase 1)
   // connected machines (environments design phase 2): device sign-in by the program and on the
-  // confirmation page, and disconnecting a machine
+  // confirmation page, and disconnecting a machine. The machine's WebSocket (`GET /device/connect`)
+  // is a raw gateway-role route, not a Nest controller, so it is not listed (like the webhook)
   {
     route: "DELETE /api/v1/orgs/:orgId/environments/:id/machine",
     category: "human-only",
