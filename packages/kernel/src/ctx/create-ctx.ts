@@ -9,6 +9,7 @@ import {
   ExtensionPointUnavailableError,
   type ExtensionStorage,
   FILE_PREVIEW_EXTENSION_POINT,
+  type FilePreviewer,
   type FilePreviewProvider,
   type HookHandler,
   type Logger,
@@ -269,6 +270,9 @@ const noProviders = (deps: KernelDeps): ExtensionPointAccess => ({
   configOk: async () => true,
 });
 
+/** What {@link resolveUiSlots} returns for a manifest. */
+export type UiResolution = ReturnType<typeof resolveUiSlots>;
+
 /** 内核视角的插件 ctx：插件契约之外还带宿主要用的登记信息与关闭方法。 */
 export type KernelExtensionContext = ExtensionContext & {
   /** 本实例的登记账（C17）：每次登记记一笔，撤销时逐项撤销。 */
@@ -287,6 +291,8 @@ export type KernelExtensionContext = ExtensionContext & {
   registeredTools: RegisteredTool[];
   /** Hooks registered through `ctx.hooks.on` (registration order). */
   registeredHooks: RegisteredHook[];
+  /** The manifest's `ui` resolved against the slot catalog once per load (UI slots spec §3.2). */
+  uiResolution: UiResolution;
   /** 经 `ctx.ui.view` 注册的视图（按贡献 id）。 */
   uiViews: ReadonlyMap<string, UiRender>;
   /** 经 `ctx.ui.action` 注册的动作处理函数（按贡献 id）。 */
@@ -406,8 +412,9 @@ export function createExtensionContext(
 
   const uiReg = new PluginUiRegistration(manifest, deny);
   const embedTokens = deps.embedTokens;
+  const uiResolution = resolveUiSlots(manifest.ui);
   const uiSlots = new Map<string, UiSlotSpec>(
-    resolveUiSlots(manifest.ui).resolved.map((r) => [r.contribution.id, r.slot]),
+    uiResolution.resolved.map((r) => [r.contribution.id, r.slot]),
   );
 
   type Entry = { plugin: string; impl: unknown };
@@ -691,13 +698,16 @@ export function createExtensionContext(
           `plugin ${name}: extension point ${extensionPoint} provided more than once`,
         );
       }
-      if (extensionPoint === FILE_PREVIEW_EXTENSION_POINT) checkFilePreviewProvider(manifest, impl);
-      provided.set(extensionPoint, impl);
+      const served =
+        extensionPoint === FILE_PREVIEW_EXTENSION_POINT
+          ? checkFilePreviewProvider(manifest, impl, uiResolution, deps.log)
+          : impl;
+      provided.set(extensionPoint, served);
       ledger.add({
         kind: "provide",
         key: extensionPoint,
         dispose: async () => {
-          if (provided.get(extensionPoint) === impl) provided.delete(extensionPoint);
+          if (provided.get(extensionPoint) === served) provided.delete(extensionPoint);
         },
       });
     },
@@ -715,6 +725,7 @@ export function createExtensionContext(
     provided,
     registeredTools,
     registeredHooks,
+    uiResolution,
     uiViews: uiReg.views,
     uiActions: uiReg.actions,
     ledger,
@@ -771,27 +782,59 @@ export function createExtensionContext(
  * A `file-preview@1` provider must be valid when it is provided (setup fails otherwise): the shape
  * ({@link validateFilePreviewProvider}), and every `embed` names a ui contribution of this extension
  * with `kind: "embed"` that resolved to the slot `file.preview` (from `slot` or the deprecated
- * `place`).
+ * `place`). A previewer whose embed names an embed contribution dropped at load (unknown slot or
+ * slot version, UI slots spec §3.2) is left out instead, with one warn per load: the returned
+ * provider is what the kernel serves.
  */
-function checkFilePreviewProvider(manifest: ExtensionManifest, impl: unknown): void {
+function checkFilePreviewProvider(
+  manifest: ExtensionManifest,
+  impl: unknown,
+  ui: UiResolution,
+  log: KernelDeps["log"],
+): unknown {
   const problems = validateFilePreviewProvider(impl);
-  if (problems.length === 0) {
-    const embeds = new Set(
-      resolveUiSlots(manifest.ui)
-        .resolved.filter((r) => r.contribution.kind === "embed" && r.slot.id === "file.preview")
-        .map((r) => r.contribution.id),
-    );
-    (impl as FilePreviewProvider).previewers.forEach((p, i) => {
-      if (p.embed !== undefined && !embeds.has(p.embed)) {
-        problems.push(
-          `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", slot: "file.preview" }`,
-        );
-      }
-    });
-  }
   if (problems.length > 0) {
     throw new Error(
       `plugin ${manifest.name}: invalid ${FILE_PREVIEW_EXTENSION_POINT} provider: ${problems.join("; ")}`,
     );
   }
+  const embeds = new Set(
+    ui.resolved
+      .filter((r) => r.contribution.kind === "embed" && r.slot.id === "file.preview")
+      .map((r) => r.contribution.id),
+  );
+  const droppedEmbeds = new Map(
+    ui.dropped
+      .filter((d) => manifest.ui?.some((c) => c.id === d.id && c.kind === "embed"))
+      .map((d) => [d.id, d] as const),
+  );
+  const provider = impl as FilePreviewProvider;
+  const kept: FilePreviewer[] = [];
+  const dropped: { previewer: string; embed: string; ref: string; reason: string }[] = [];
+  provider.previewers.forEach((p, i) => {
+    if (p.embed === undefined || embeds.has(p.embed)) {
+      kept.push(p);
+      return;
+    }
+    const d = droppedEmbeds.get(p.embed);
+    if (d !== undefined) {
+      dropped.push({ previewer: p.id, embed: p.embed, ref: d.ref, reason: d.reason });
+      return;
+    }
+    problems.push(
+      `previewers[${i}].embed "${p.embed}" is not a ui contribution { kind: "embed", slot: "file.preview" }`,
+    );
+  });
+  if (problems.length > 0) {
+    throw new Error(
+      `plugin ${manifest.name}: invalid ${FILE_PREVIEW_EXTENSION_POINT} provider: ${problems.join("; ")}`,
+    );
+  }
+  if (dropped.length === 0) return impl;
+  log.warn("plugin file previewers dropped", {
+    plugin: manifest.name,
+    version: manifest.version,
+    previewers: dropped,
+  });
+  return { ...provider, previewers: kept } satisfies FilePreviewProvider;
 }

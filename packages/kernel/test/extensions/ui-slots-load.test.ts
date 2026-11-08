@@ -43,6 +43,7 @@ import {
 const fixture = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const UI_SLOTS = fixture("ui-slots");
+const UI_PREVIEW_DROPPED = fixture("ui-preview-dropped");
 const LEGACY_SRC = fixture("ui-legacy-place");
 const MAX_BYTES = 4 * 1024 * 1024;
 
@@ -111,7 +112,7 @@ beforeAll(async () => {
     },
   );
   k = await startKernel(
-    { ...base, extensions: [...base.extensions, UI_SLOTS] },
+    { ...base, extensions: [...base.extensions, UI_SLOTS, UI_PREVIEW_DROPPED] },
     { env: {}, logger: createLogger("info", { write: (l) => lines.push(l) }) },
   );
   host = k.app.get(ExtensionHost);
@@ -129,7 +130,7 @@ afterAll(async () => {
 /** An org with both fixtures on and a conversation whose agent may call their tools. */
 async function conversation(): Promise<{ orgId: string; convId: string }> {
   const orgId = await createOrg(admin, `Acme ${Math.random().toString(36).slice(2, 8)}`);
-  for (const plugin of ["ui-slots", "ui-legacy-place"]) {
+  for (const plugin of ["ui-slots", "ui-legacy-place", "ui-preview-dropped"]) {
     const r = await admin({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/${plugin}`,
@@ -193,6 +194,7 @@ describe("UI slots at load", () => {
     ]);
     expect(host.uiDropped("ui-slots")).toEqual([
       { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
+      { id: "old-page", ref: "org.page@2", reason: "unsupported-version" },
     ]);
     expect(host.uiDropped("not-loaded")).toEqual([]);
     // the tool of the extension is callable
@@ -202,13 +204,16 @@ describe("UI slots at load", () => {
   });
 
   it("the drop is logged once per load", () => {
-    const warned = logs("plugin ui contributions dropped");
+    const warned = logs("plugin ui contributions dropped").filter((l) => l.plugin === "ui-slots");
     expect(warned).toHaveLength(1);
     expect(warned[0]).toMatchObject({
       level: "warn",
       plugin: "ui-slots",
       version: "0.1.0",
-      dropped: [{ id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" }],
+      dropped: [
+        { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
+        { id: "old-page", ref: "org.page@2", reason: "unsupported-version" },
+      ],
     });
   });
 
@@ -217,6 +222,7 @@ describe("UI slots at load", () => {
     expect(r.statusCode, r.body).toBe(200);
     expect((r.json() as { uiDropped: unknown }).uiDropped).toEqual([
       { id: "lost", ref: "nowhere.at-all", reason: "unknown-slot" },
+      { id: "old-page", ref: "org.page@2", reason: "unsupported-version" },
     ]);
     const legacy = await admin({ method: "GET", url: "/api/v1/admin/extensions/ui-legacy-place" });
     expect(legacy.statusCode, legacy.body).toBe(200);
@@ -257,7 +263,7 @@ describe("UI slots at load", () => {
         .filter((i) => i.plugin === "ui-slots")
         .map((i) => i.id),
     ).toEqual(["page"]);
-    for (const id of ["notes", "org-admin", "platform-home", "lost"]) {
+    for (const id of ["notes", "org-admin", "platform-home", "lost", "old-page"]) {
       const r = await admin({ method: "GET", url: `${ui}/views/ui-slots/${id}` });
       expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
     }
@@ -268,6 +274,36 @@ describe("UI slots at load", () => {
     });
     expect(token.statusCode, token.body).toBe(404);
     expect((await admin({ method: "GET", url: `${ui}/views/ui-slots/page` })).statusCode).toBe(200);
+  });
+
+  it("a previewer whose embed names a dropped contribution is left out; the extension loads", async () => {
+    expect(host.current("ui-preview-dropped")).toBeDefined();
+    expect(host.uiDropped("ui-preview-dropped")).toEqual([
+      { id: "old-embed", ref: "file.preview@2", reason: "unsupported-version" },
+    ]);
+    const { orgId } = await conversation();
+    const r = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/file-previewers` });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(
+      (r.json() as { items: { plugin: string; id: string }[] }).items
+        .filter((i) => i.plugin === "ui-preview-dropped")
+        .map((i) => i.id),
+    ).toEqual(["txt"]);
+    const warned = logs("plugin file previewers dropped");
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toMatchObject({
+      level: "warn",
+      plugin: "ui-preview-dropped",
+      version: "0.1.0",
+      previewers: [
+        {
+          previewer: "old",
+          embed: "old-embed",
+          ref: "file.preview@2",
+          reason: "unsupported-version",
+        },
+      ],
+    });
   });
 
   it("the pipeline keeps a card naming an inline contribution declared with place", async () => {

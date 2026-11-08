@@ -7,7 +7,6 @@ import {
   ExtensionManifestError,
   type ExtensionPointRef,
   type ResolvedUiContribution,
-  resolveUiSlots,
   type StaticExtensionManifest,
   staticManifestOf,
 } from "@capybara-hq/plugin-sdk";
@@ -142,7 +141,7 @@ export class ExtensionInstance {
     this.source = init.source;
     this.generation = init.generation;
     this.permissions = init.permissions;
-    const ui = resolveUiSlots(init.manifest.ui);
+    const ui = init.ctx.uiResolution;
     this.ui = ui.resolved;
     this.uiDropped = ui.dropped;
     this.uiUnknownAnchors = ui.unknownAnchors;

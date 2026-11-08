@@ -13,7 +13,8 @@ const named =
  * UI slots fixture (UI slots spec): one view in each slot without a deprecated place
  * (`agent.detail.section`, `org.settings.section`, `platform.page`) plus an `org.page` view, a
  * `platform.page` embed whose data route answers the verified embed claims (401 without), a view
- * `lost` in a slot the catalog does not know (dropped at load, the extension still loads) and a
+ * `lost` in a slot the catalog does not know and a view `old-page` at `org.page@2` (both dropped at
+ * load, the extension still loads) and a
  * tool `ping`.
  */
 export default defineExtension({
@@ -44,6 +45,8 @@ export default defineExtension({
       path: "/ui/platform",
     },
     { id: "lost", title: t("丢失", "Lost"), slot: "nowhere.at-all", kind: "view" },
+    // a known slot at a version the catalog does not have: dropped as unsupported-version
+    { id: "old-page", title: t("旧页面", "Old page"), slot: "org.page@2", kind: "view" },
   ],
   permissions: {
     http: [
@@ -51,7 +54,7 @@ export default defineExtension({
       { method: "GET", path: "/ui/platform-data" },
     ],
     ui: {
-      views: ["notes", "org-admin", "platform-home", "page", "lost"],
+      views: ["notes", "org-admin", "platform-home", "page", "lost", "old-page"],
       embeds: ["platform-embed"],
     },
     tools: ["ping"],
@@ -66,7 +69,7 @@ export default defineExtension({
       },
       async () => ({ content: [{ type: "text", text: "pong" }] }),
     );
-    for (const id of ["notes", "org-admin", "platform-home", "page", "lost"]) {
+    for (const id of ["notes", "org-admin", "platform-home", "page", "lost", "old-page"]) {
       ctx.ui.view(id, named(id));
     }
     ctx.http.route("GET", "/ui/platform", async () => new Response("platform"));

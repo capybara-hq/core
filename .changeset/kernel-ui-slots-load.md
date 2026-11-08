@@ -7,3 +7,5 @@ slot or slot version is dropped (the extension still loads), logged once, and li
 on the admin extension view. Contributions still on the deprecated `place` load unchanged (info
 log). The contribution list no longer carries `legacyPlace`, and contributions to slots without a
 place (agent, org settings, platform) are not listed or served through the org routes yet.
+A file previewer whose embed names a dropped contribution is left out (one warn per load) instead
+of failing the extension.

@@ -2071,11 +2071,8 @@ export class ExtensionHost {
         if (c) ctx = c;
         if (c || this.settingUp === ctx) this.settingUp = c;
       },
-    }).then((inst) => {
-      this.logUiResolution(inst);
-      return inst;
     });
-    if (timeoutMs === undefined) return p;
+    if (timeoutMs === undefined) return p.then((inst) => this.logUiResolution(inst));
     let timer: NodeJS.Timeout | undefined;
     let onClose: () => void = () => {};
     const stop = new Promise<"timeout" | "closed">((resolve) => {
@@ -2086,7 +2083,8 @@ export class ExtensionHost {
     });
     try {
       const r = await Promise.race([p.then((inst) => ({ inst })), stop]);
-      if (typeof r === "object") return r.inst;
+      // a late instance that is disposed right away never logs its UI resolution
+      if (typeof r === "object") return this.logUiResolution(r.inst);
       // setup 迟迟不返回：关闭它的 ctx（此后它的登记立即撤销），迟到完成的实例直接撤销
       p.then(
         (inst) => this.disposeQuietly(inst, 0),
@@ -2107,7 +2105,7 @@ export class ExtensionHost {
   }
 
   /** Logs once per load what slot resolution left out or flagged (UI slots spec §3.2). */
-  private logUiResolution(inst: ExtensionInstance): void {
+  private logUiResolution(inst: ExtensionInstance): ExtensionInstance {
     const at = { plugin: inst.name, version: inst.version };
     if (inst.uiDropped.length > 0) {
       this.log.warn("plugin ui contributions dropped", { ...at, dropped: inst.uiDropped });
@@ -2118,6 +2116,7 @@ export class ExtensionHost {
     if (inst.uiDeprecatedPlace.length > 0) {
       this.log.info("plugin ui uses the deprecated place", { ...at, ids: inst.uiDeprecatedPlace });
     }
+    return inst;
   }
 
   /** 取能力实现：单选能力无需 providerName，多选能力必须指定。 */
