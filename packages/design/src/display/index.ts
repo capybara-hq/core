@@ -72,6 +72,7 @@ export {
   type ImpactPreviewNote,
   type ImpactPreviewProps,
 } from "./impact-preview";
+export { InstructionList, type InstructionListProps } from "./instruction-list";
 export {
   ItemList,
   type ItemListInset,
@@ -90,6 +91,7 @@ export {
   type MarkdownProps,
 } from "./markdown";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
+export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";
 export { PENDING_DELAY_MS, PendingState } from "./pending-state";
 export { SecretReveal, type SecretRevealProps } from "./secret-reveal";
@@ -105,5 +107,15 @@ export { StatCards } from "./stat-cards";
 export { type Step, StepList } from "./step-list";
 export { LoadingSubsection, Subsection, type SubsectionProps } from "./subsection";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
+export {
+  BUILTIN_THEME_SWATCHES,
+  type ThemeScheme,
+  ThemeSwatch,
+  type ThemeSwatchColors,
+  ThemeSwatchGroup,
+  type ThemeSwatchGroupItem,
+  type ThemeSwatchGroupProps,
+  type ThemeSwatchProps,
+} from "./theme-swatch";
 export { Tooltip } from "./tooltip";
 export { formatSpanDuration, type Span, SpanWaterfall, type SpanWaterfallProps } from "./waterfall";

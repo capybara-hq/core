@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import type { PluginSetupGuide } from "@capybara-hq/plugin-sdk";
 import {
   type FakeChannelServer,
   startFakeChannelServer,
@@ -10,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ChannelConnections } from "../../src/channels/connections.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { setupGuideHash } from "../../src/extensions/plugin-guides.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -165,6 +168,10 @@ describe("渠道连接 HTTP", () => {
         { path: "appSecret", set: true },
         { path: "webhookToken", set: false },
       ],
+      // the plugin's name and icon for the pages: a config-declared fixture without a display
+      // name or a catalog item has neither
+      pluginDisplayName: null,
+      pluginIcon: null,
     });
     const id = ch.id as string;
     // 非密钥列不含密钥；密钥在 secrets（命名空间 kernel）
@@ -184,9 +191,13 @@ describe("渠道连接 HTTP", () => {
       expect(r.statusCode).toBe(200);
       expect(r.body).not.toContain(SECRET);
     }
-    expect(
-      ((await owner({ method: "GET", url: base() })).json() as { channels: unknown[] }).channels,
-    ).toHaveLength(1);
+    const listed = (
+      (await owner({ method: "GET", url: base() })).json() as {
+        channels: Record<string, unknown>[];
+      }
+    ).channels;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ pluginDisplayName: null, pluginIcon: null });
 
     // 长连接由 worker 建立
     await waitFor(async () => im.active(id).length === 1, 10_000, "long connection");
@@ -357,4 +368,179 @@ describe("渠道连接 HTTP", () => {
     });
     expect(bad.statusCode).toBe(400);
   });
+});
+
+// Plugin setup guides (spec 2026-11-08-plugin-setup-guides-design.md §6): a connection records the
+// guide it was set up with; a plugin upgrade that changes the templates of its mode is drift.
+describe("channel setup guide drift", () => {
+  const GUIDE: PluginSetupGuide = {
+    id: "app",
+    place: "channel-connection",
+    title: { en: "Create the app" },
+    files: [
+      {
+        path: "./guides/socket.yaml.tmpl",
+        title: { en: "M" },
+        language: "yaml",
+        mode: "long_connection",
+      },
+      { path: "./guides/webhook.yaml.tmpl", title: { en: "M" }, language: "yaml", mode: "webhook" },
+    ],
+  };
+  const files = (socket: string, webhook: string) => [
+    { path: "guides/socket.yaml.tmpl", size: 10, sha256: socket.repeat(64) },
+    { path: "guides/webhook.yaml.tmpl", size: 10, sha256: webhook.repeat(64) },
+  ];
+  /** The chan-mini catalog item (the extension itself comes from the startup config). */
+  const seedVersion = async (itemId: string, version: string, f: ReturnType<typeof files>) => {
+    await db
+      .insertInto("catalog_item_versions")
+      .values({
+        item_id: itemId,
+        version,
+        manifest: JSON.stringify({
+          schemaVersion: 1,
+          name: "chan-mini",
+          version,
+          publisher: "Acme",
+          description: "IM",
+          setupGuides: [GUIDE],
+        }),
+        source: "file",
+        source_ref: "upload",
+        object_prefix: null,
+        files: JSON.stringify(f),
+        size: 1000,
+      })
+      .execute();
+    await db
+      .updateTable("catalog_items")
+      .set({ latest_version: version })
+      .where("id", "=", itemId)
+      .execute();
+  };
+  type Page = {
+    id: string;
+    guideAck: { guideId: string; version: string; hash: string; mode: string } | null;
+    setupGuide: { itemId: string; guideId: string; version: string } | null;
+    guideDrift: { from: string; to: string } | null;
+  };
+  const get = async (id: string): Promise<Page> => {
+    const r = await owner({ method: "GET", url: `${base()}/${id}` });
+    expect(r.statusCode, r.body).toBe(200);
+    return (r.json() as { channel: Page }).channel;
+  };
+
+  it("records the guide on create, flags a changed template of its mode, clears on ack", async () => {
+    await enable(true);
+    const itemId = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "chan-mini",
+        package_name: "@acme/plugin-chan-mini",
+        publisher: "Acme",
+        description: "IM",
+        latest_version: "1.0.0",
+        policy: "allow",
+        disabled: false,
+      })
+      .execute();
+    await seedVersion(itemId, "1.0.0", files("a", "b"));
+    // 新建渠道 finds the guide through the schema route
+    const schema = await owner({ method: "GET", url: `${base()}/schema/chan-mini` });
+    expect(schema.json().guide).toEqual({ itemId, guideId: "app" });
+
+    const created = await owner({
+      method: "POST",
+      url: base(),
+      payload: body({ name: "Guide bot" }),
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const id = (created.json() as { channel: Page }).channel.id;
+    const v1 = setupGuideHash(GUIDE, files("a", "b"), "long_connection");
+    let page = await get(id);
+    expect(page.guideAck).toEqual({
+      guideId: "app",
+      version: "1.0.0",
+      hash: v1,
+      mode: "long_connection",
+    });
+    expect(page.setupGuide).toEqual({ itemId, guideId: "app", version: "1.0.0" });
+    expect(page.guideDrift).toBeNull();
+
+    // 1.1.0 changes only the webhook template: not drift for a long-connection connection
+    await seedVersion(itemId, "1.1.0", files("a", "c"));
+    expect((await get(id)).guideDrift).toBeNull();
+    // 1.2.0 changes the socket template: drift, with the versions
+    await seedVersion(itemId, "1.2.0", files("d", "c"));
+    page = await get(id);
+    expect(page.guideDrift).toEqual({ from: "1.0.0", to: "1.2.0" });
+    const listed = (await owner({ method: "GET", url: base() })).json() as { channels: Page[] };
+    expect(listed.channels.find((c) => c.id === id)?.guideDrift).toEqual({
+      from: "1.0.0",
+      to: "1.2.0",
+    });
+
+    // 「我已更新应用」: the hash shown must be the current one
+    const stale = await owner({
+      method: "POST",
+      url: `${base()}/${id}/guide-ack`,
+      payload: { hash: v1 },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(errCode(stale)).toBe("channel.guide_changed");
+    const denied = await member({
+      method: "POST",
+      url: `${base()}/${id}/guide-ack`,
+      payload: { hash: v1 },
+    });
+    expect(denied.statusCode).toBe(403);
+    const v3 = setupGuideHash(GUIDE, files("d", "c"), "long_connection");
+    const ack = await owner({
+      method: "POST",
+      url: `${base()}/${id}/guide-ack`,
+      payload: { hash: v3 },
+    });
+    expect(ack.statusCode, ack.body).toBe(200);
+    expect((ack.json() as { channel: Page }).channel.guideDrift).toBeNull();
+    expect((await get(id)).guideAck).toMatchObject({ version: "1.2.0", hash: v3 });
+    const audits = await db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("target", "=", id)
+      .execute();
+    expect(audits.map((a) => a.action)).toContain("channel.guide_confirmed");
+
+    // a connection without an ack (made before 0099) never shows a notice
+    await db
+      .updateTable("channel_connections")
+      .set({ guide_ack: null })
+      .where("id", "=", id)
+      .execute();
+    await seedVersion(itemId, "1.3.0", files("e", "c"));
+    expect((await get(id)).guideDrift).toBeNull();
+    // the item hidden from the org: no guide, no notice
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await get(id)).setupGuide).not.toBeNull(); // org admins still see disabled items
+    await db
+      .updateTable("catalog_items")
+      .set({ disabled: false, deleted_at: new Date() })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await get(id)).setupGuide).toBeNull();
+    const none = await owner({
+      method: "POST",
+      url: `${base()}/${id}/guide-ack`,
+      payload: { hash: v3 },
+    });
+    expect(none.statusCode).toBe(404);
+    expect(errCode(none)).toBe("catalog.guide_not_found");
+    expect((await owner({ method: "DELETE", url: `${base()}/${id}` })).statusCode).toBe(204);
+  }, 30_000);
 });

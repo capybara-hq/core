@@ -57,7 +57,7 @@ export interface SyncMarketplaceResult {
   /** `name@version` of the other entries of the tree's plugins (dropped with `write`). */
   removed: string[];
   /**
-   * `name@version` of listed entries whose `summary` / `displayName` differ from plugin.json
+   * `name@version` of listed entries whose `summary` / `displayName` / `icon` differ from plugin.json
    * (rewritten with `write`; source and integrity never change).
    */
   refreshed: string[];
@@ -66,7 +66,7 @@ export interface SyncMarketplaceResult {
    * `marketplace-integrity` and `marketplace-version-decrease` (with a base, see
    * {@link SyncMarketplaceOptions.base}) and, without `write`, `marketplace-missing` (one per
    * plugin whose current version is not listed, or not as its only entry) and
-   * `marketplace-display-stale` (a listed entry's summary / displayName differ from plugin.json).
+   * `marketplace-display-stale` (a listed entry's summary / displayName / icon differ from plugin.json).
    */
   findings: Finding[];
 }
@@ -114,7 +114,7 @@ interface PluginUpdate {
   entry: unknown;
   isNew: boolean;
   dropped: string[];
-  /** The listed entry's summary / displayName differed from plugin.json and were rewritten. */
+  /** The listed entry's summary / displayName / icon differed from plugin.json and were rewritten. */
   refreshed: boolean;
 }
 
@@ -122,39 +122,63 @@ interface PluginUpdate {
 interface Display {
   summary: { en: string; zh?: string };
   displayName?: { zh: string; en: string };
+  /** The plugin.json `icon` as a path in the repository (`./<plugin dir>/<icon>`). */
+  icon?: string;
 }
 
-/** The display fields of a plugin's source plugin.json; undefined when it does not parse. */
-function displayOf(json: unknown): Display | undefined {
+/**
+ * The repository path of a plugin's icon: the plugin.json `icon` (relative to the plugin's
+ * directory `dir`) as `./<path from the root>` (an entry's `icon`, read at the marketplace's
+ * commit, so it follows every release without naming a tag).
+ */
+export function repoIconPath(root: string, dir: string, icon: string): string {
+  const rel = relative(root, dir).split("\\").join("/");
+  const file = icon.replace(/^\.\//, "");
+  return `./${rel === "" ? file : `${rel}/${file}`}`;
+}
+
+/**
+ * The display fields of a plugin's source plugin.json (`dir` its directory under `root`); undefined
+ * when it does not parse.
+ */
+function displayOf(json: unknown, root: string, dir: string): Display | undefined {
   const m = parsePluginManifest(json);
   if ("errors" in m) return undefined;
   return {
     summary: summaryOf(m.description),
     ...(m.displayName !== undefined && { displayName: m.displayName }),
+    ...(m.icon !== undefined && { icon: repoIconPath(root, dir, m.icon) }),
   };
 }
 
+/** The display fields after `summary`, in this order. */
+const AFTER_SUMMARY = ["displayName", "icon"] as const;
+
 /**
- * `raw` with its `summary` and `displayName` set to `d` (in place, `displayName` right after
- * `summary` when it is new, removed when plugin.json has none); undefined when they already equal.
+ * `raw` with its `summary`, `displayName` and `icon` set to `d` (in place; a new `displayName` /
+ * `icon` right after `summary`, removed when plugin.json has none); undefined when they already
+ * equal.
  */
 function refreshDisplay(raw: unknown, d: Display): Record<string, unknown> | undefined {
   if (!isObj(raw)) return undefined;
   if (
     canonical(raw.summary) === canonical(d.summary) &&
-    canonical(raw.displayName) === canonical(d.displayName)
+    AFTER_SUMMARY.every((k) => canonical(raw[k]) === canonical(d[k]))
   ) {
     return undefined;
   }
+  const after = (out: Record<string, unknown>) => {
+    for (const k of AFTER_SUMMARY) if (d[k] !== undefined) out[k] = d[k];
+  };
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
-    if (k === "displayName") continue;
+    if ((AFTER_SUMMARY as readonly string[]).includes(k)) continue;
     out[k] = k === "summary" ? d.summary : v;
-    if (k === "summary" && d.displayName !== undefined) out.displayName = d.displayName;
+    if (k === "summary") after(out);
   }
   if (!("summary" in raw)) {
     out.summary = d.summary;
-    if (d.displayName !== undefined) out.displayName = d.displayName;
+    after(out);
   }
   return out;
 }
@@ -164,16 +188,18 @@ function refreshDisplay(raw: unknown, d: Display): Record<string, unknown> | und
  * per public plugin, its current version (plugin component management spec §13.2, replacing the
  * one-entry-per-version rule of the package ecosystem spec §5.2). Each public plugin (not
  * `"private": true`) not listed at its version is packed reproducibly with {@link packPlugin} and
- * gets an entry `{ name, version, summary, displayName?, homepage?, permissions, source: { npm: {
- * package, version, integrity } } }` (`summary` from the plugin.json `description`, a string being
- * `en`; `displayName` copied from plugin.json; `integrity` the pack's sha512, which the release
+ * gets an entry `{ name, version, summary, displayName?, icon?, homepage?, permissions, source: {
+ * npm: { package, version, integrity } } }` (`summary` from the plugin.json `description`, a string
+ * being `en`; `displayName` copied from plugin.json; `icon` the plugin.json `icon` as a path in the
+ * repository, `./<plugin dir>/<icon>`, which a git marketplace reads at its refreshed commit;
+ * `integrity` the pack's sha512, which the release
  * then publishes byte for byte; `permissions` display only). The new entry takes the place of the
  * plugin's first entry (a version that moved), the plugin's other entries are dropped (also those
  * of a file written in the older one-entry-per-version form), and a plugin not listed yet is
  * appended. Entries of plugins not in the tree are kept. A version already listed is not packed or
  * compared: once published, its bytes are the release gate's business (`release --marketplace`),
  * so a later source or toolchain change at the same version is not a finding; only its display
- * fields (`summary`, `displayName`) are refreshed from the source plugin.json. Every other field
+ * fields (`summary`, `displayName`, `icon`) are refreshed from the source plugin.json. Every other field
  * of a kept entry stays as written, among them `deprecated`, which the maintainer sets by hand on
  * a published version's entry (not in plugin.json: that would change the packed bytes); a new
  * version's entry has none, and no rule compares it with the base. With `base`, see
@@ -242,7 +268,7 @@ export async function syncMarketplace(
       const kept = listed[0];
       /** Keeps the listed entry: drops the other versions, refreshes its display fields. */
       const keep = (raw: unknown) => {
-        const display = displayOf(source);
+        const display = displayOf(source, opts.root, dir);
         const fresh = display === undefined ? undefined : refreshDisplay(raw, display);
         if (dropped.length > 0 || fresh !== undefined) {
           const entry = fresh ?? raw;
@@ -284,6 +310,9 @@ export async function syncMarketplace(
         version: npm.version,
         summary: summaryOf(r.manifest.description),
         ...(r.manifest.displayName !== undefined && { displayName: r.manifest.displayName }),
+        ...(r.manifest.icon !== undefined && {
+          icon: repoIconPath(opts.root, dir, r.manifest.icon),
+        }),
         ...(r.manifest.homepage !== undefined && { homepage: r.manifest.homepage }),
         permissions: await permissionsOf(bytes, r.manifest.extension !== undefined),
         source: { npm },

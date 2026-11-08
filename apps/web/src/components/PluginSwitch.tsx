@@ -33,6 +33,7 @@ import { useErrorMessage } from "../lib/use-error-message";
 import { useCatalogErrorLines } from "./CatalogParts";
 import { hasConfigFields } from "./config-form/model";
 import { FormError } from "./form-error";
+import { useOrgThemeName, useThemeImpactGroup } from "./ThemeImpact";
 
 /** A plugin's state in the org as a label and its tone (spec §9, the workspace 插件 page). */
 export type PluginStateLabel = { label: string; tone: "ok" | "warn" | "muted" };
@@ -418,6 +419,7 @@ export function SwitchOffDialog({
   const locale = useLocale();
   const sep = locale === "zh" ? "、" : ", ";
   const kind = (k: string) => (tk.has(`componentKind.${k}`) ? tk(`componentKind.${k}`) : k);
+  const themeGroup = useThemeImpactGroup(preview.themes, useOrgThemeName(orgId));
   const iq = pluginInstallsQuery(orgId);
   const installs = useQuery({ ...iq, retryOnMount: retryOnMountOf(iq.queryKey) }).data?.installs;
   const refOf = (c: { kind: string; ref: string }) =>
@@ -491,6 +493,7 @@ export function SwitchOffDialog({
                 ],
               })),
             },
+            ...(themeGroup === null ? [] : [themeGroup]),
           ]}
         />
       </Stack>

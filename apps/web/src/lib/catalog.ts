@@ -1,4 +1,4 @@
-import type { PackageWarning } from "./admin-extensions";
+import type { PackageWarning, SingleProviderBlock, SingleProviderNote } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { Owner } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
@@ -36,6 +36,11 @@ export interface CatalogItem {
   name: string;
   publisher: string;
   displayName: LocalizedName | null;
+  /**
+   * The URL of its icon on this viewer's catalog icon route (the lists only); null or absent when
+   * the latest version has none: draw the initial.
+   */
+  icon?: string | null;
   /** The English description. */
   description: string;
   /** The latest version's Chinese description; null without one (see {@link descriptionOf}). */
@@ -95,6 +100,7 @@ export interface ComponentCounts {
   skills: number;
   connectorTemplates: number;
   agentTemplates: number;
+  themes: number;
 }
 
 /** The static manifest of a plugin's extension (SDK `StaticExtensionManifest`, the parts shown). */
@@ -477,11 +483,17 @@ export interface PluginDeployResult {
   action: "install" | "upgrade";
   version: string;
   sha256: string;
-  result: "enabled" | "failed";
+  /** `installed`: left disabled, see `singleProvider`. */
+  result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
+  /**
+   * Installed but left disabled (code `extension.single_provider_enabled`): another enabled
+   * extension provides this single-provider extension point; disable it first, then enable this.
+   */
+  singleProvider?: SingleProviderBlock;
 }
 
 export interface PluginConfirmResult {
@@ -584,6 +596,12 @@ export interface MarketplaceEntry {
   /** host_not_allowed: outside `marketplaces.allowedHosts`; a path entry of an http marketplace. */
   reason?: "host_not_allowed" | "path_needs_git_marketplace";
   adopted: { itemId: string; versions: string[] } | null;
+  /**
+   * The icon's kernel URL (super admins): an imported plugin's catalog icon (the one 已安装
+   * shows), else the icon the marketplace gives for the entry; null (or absent from older kernels)
+   * without one: the row draws the initial.
+   */
+  icon?: string | null;
   newerAvailable: boolean;
   /**
    * A version of this release is imported, but the entry now points at other content (a moved
@@ -830,6 +848,18 @@ export interface UninstallPreview {
   components: { kind: ComponentKind; ref: string; created: boolean }[];
   kept: { kind: ComponentKind; ref: string; reason: KeptReason }[];
   agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+  /** The plugin's themes that go off in the org: its default? who picked them (themes spec §6). */
+  themes?: ThemePreview[];
+}
+
+/**
+ * One theme a change takes away (kernel `ThemePreview`, themes spec §6): the orgs losing it whose
+ * default it is, and how many of their members picked it. `id` is the `platform_themes` id.
+ */
+export interface ThemePreview {
+  id: string;
+  orgDefaults: { orgId: string; orgName: string }[];
+  pickedBy: number;
 }
 
 /** The switch-off preview and the hash that confirms it (`PUT …/switch`, org extension `PUT`). */
@@ -857,6 +887,8 @@ export interface ScopePreview {
   replaced?: { kind: string; id: string; name: string }[];
   /** Orgs that would newly be offered a skill whose name their own skills use: refused. */
   conflicts?: ScopeConflict[];
+  /** The plugin's themes the change takes away from some orgs. */
+  themes?: ThemePreview[];
   scopeHash: string;
 }
 
@@ -928,8 +960,14 @@ export interface PlatformUpdateComponent {
 export interface PlatformUpdateConnectorOrg {
   orgId: string;
   connectors: { id: string; name: string; templateId: string; credentialsReset: boolean }[];
-  /** Added templates whose connectors need the org's input (the update creates none). */
+  /** Templates the update turns on (added, or no longer shipped off): their connectors need the org's input. */
   needsConfig: string[];
+  /** Templates now shipped off that turn off in the org; their connectors stay. Absent when none. */
+  turnedOff?: {
+    templateId: string;
+    agents: { id: string; name: string }[];
+    connectorsKept: number;
+  }[];
 }
 
 /** `POST /api/v1/admin/catalog/items/:id/update/preview` (kernel `PlatformUpdatePreview`). */
@@ -955,6 +993,8 @@ export interface PlatformUpdatePreview {
    * admin cannot read other orgs' names); absent from kernels that do not send it.
    */
   orgNames?: Record<string, string>;
+  /** The themes the update removes that are on in some org. */
+  themes?: ThemePreview[];
   /** Confirm with it; 409 `plugin.upgrade_stale` once what the update does changed. */
   diffHash: string;
 }
@@ -966,6 +1006,11 @@ export interface PlatformUpdateResult {
   components: PlatformUpdateComponent[];
   extension: PlatformUpdatePreview["extension"];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The update installed the extension but left it disabled: a single-provider extension point it
+   * provides is held by another enabled extension (`required`: by a required plugin).
+   */
+  extensionLeftDisabled?: SingleProviderNote;
 }
 
 export const KEPT_REASONS = [
@@ -1220,10 +1265,12 @@ export const confirmOrgUpload = (
   stagingId: string,
   body: { reviewHash: string; shareable?: boolean },
 ) =>
-  apiFetch<{ item: OrgCatalogItem; outcome: OrgUploadOutcome }>(
-    `${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`,
-    post(body),
-  );
+  apiFetch<{
+    item: OrgCatalogItem;
+    outcome: OrgUploadOutcome;
+    /** An update left the plugin's extension disabled (see `PlatformUpdateResult`). */
+    extensionLeftDisabled?: SingleProviderNote;
+  }>(`${org(orgId)}/catalog/uploads/${enc(stagingId)}/confirm`, post(body));
 
 /** Sets 可共享 on the org's own plugin (P3-17). */
 export const setOwnedShareable = (orgId: string, itemId: string, shareable: boolean) =>

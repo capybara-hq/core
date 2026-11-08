@@ -135,7 +135,7 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       try {
         after = await env.tasks.stopper.stop(task, "tool", ctx.signal);
       } catch (e) {
-        const mapped = mapSandboxError(e);
+        const mapped = mapSandboxError(e, env.log);
         if (mapped instanceof ToolError) throw mapped;
         const why = e instanceof Error ? e.message : String(e);
         throw new ToolError(

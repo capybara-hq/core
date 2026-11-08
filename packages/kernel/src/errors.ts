@@ -68,6 +68,16 @@ export const ERROR_CODES = {
   "extension.name_mismatch": 409,
   "extension.downgrade_unsupported": 409,
   "extension.not_disabled": 409,
+  /**
+   * Another enabled extension provides a single-provider extension point this one provides
+   * (details `[{ extensionPoint, enabled: { name, displayName } }]`): disable it first.
+   */
+  "extension.single_provider_enabled": 409,
+  /**
+   * A required bootstrap plugin provides a single-provider extension point this one provides
+   * (details as above, `required: true`): it cannot be disabled, so it cannot be replaced.
+   */
+  "extension.single_provider_required": 409,
   "packages.npm_failed": 502,
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,
@@ -91,11 +101,38 @@ export const ERROR_CODES = {
   "catalog.not_owned": 409,
   /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
   "catalog.item_pending": 409,
+  /** Deleting a platform plugin whose extension is still enabled on the deployment. */
+  "catalog.extension_enabled": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */
   "catalog.item_removed": 409,
   /** What deleting an org's own plugin does changed since its preview (P3-19). */
   "catalog.preview_stale": 409,
   "catalog.name_conflict": 409,
+  /** A theme of an imported plugin fails its file or asset checks (themes spec §4, §5). */
+  "theme.invalid": 400,
+  /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
+  "theme.unreadable": 400,
+  /**
+   * A settings write names a theme that is not available where it is set (§7, §9): an org default
+   * off in the org, a platform default that is not a platform theme with scope `all`, or a
+   * person's pick on in none of their orgs; details `[{ theme }]`.
+   */
+  "theme.not_available": 400,
+  /**
+   * The change would take the platform default theme (`uiTheme`) away from an org: narrowing,
+   * disabling, removing it or its plugin (§7); details `[{ theme, setting: "uiTheme" }]`.
+   */
+  "theme.platform_default": 409,
+  /**
+   * Another theme with the same id is already on in an org the change would turn this one on in
+   * (§6, rule 10); details `[{ theme, orgId, themes, plugins }]`.
+   */
+  "theme.id_taken": 409,
+  /**
+   * A theme delivery URL names no stored theme version, or a file that version does not name (§8);
+   * a removed theme's versions are still served.
+   */
+  "theme.not_found": 404,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,
@@ -121,6 +158,7 @@ export const ERROR_CODES = {
   "catalog.custom_disabled": 403,
   "catalog.not_deployed": 409,
   "catalog.icon_not_found": 404,
+  "catalog.guide_not_found": 404,
   "marketplace.not_found": 404,
   "marketplace.entry_not_found": 404,
   "marketplace.fetch_failed": 502,
@@ -229,6 +267,7 @@ export const ERROR_CODES = {
   "channel.webhook_not_found": 404,
   "channel.webhook_unavailable": 409,
   "channel.webhook_retry": 503,
+  "channel.guide_changed": 409,
   "ui.not_found": 404,
   "ui.render_failed": 502,
   "ui.action_failed": 502,

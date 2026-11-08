@@ -872,6 +872,11 @@ button.cb-property-row {
   box-shadow: var(--cb-shadow-sheet);
   outline: none;
 }
+/* The properties sheet's head (title and ×): on the sheet's ground, like the sections under it. */
+.cb-conv-sheet-head {
+  background: var(--cb-panel-2);
+  border-left: 1px solid var(--cb-line-soft);
+}
 /* The sheet is the box: its sections are heading and hairline groups (data-inset="box"). */
 .cb-conv-sheet > .cb-properties {
   width: 100%;

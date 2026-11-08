@@ -94,6 +94,14 @@ function blockedByText(p: PendingExtension): string {
 
 /** 一个待批准插件的说明行（含新增 / 减少的权限项）。 */
 function describePending(p: PendingExtension): string[] {
+  if (p.reason === "conflict") {
+    const with_ = (p.conflicts ?? [])
+      .map((c) => `${c.extensionPoint} (also provided by ${c.providers.join(", ")})`)
+      .join("; ");
+    return [
+      `${p.plugin} ${p.version}: not loaded: provides a single-provider extension point another extension provides: ${with_}; disable that one first`,
+    ];
+  }
   if (p.reason === "dependency") {
     const waiting = (p.blockedBy ?? []).some((b) => b.providers.length > 0);
     return [
@@ -411,7 +419,10 @@ export async function runExtensionsInstall(
       if (view.status === "pending_approval") {
         lines.push(`Approve with: capybara extensions approve ${review.name}`);
       }
-      if (view.desired?.state === "disabled") {
+      if (view.leftDisabled !== undefined) {
+        // The new version newly provides a single-provider point another extension holds
+        lines.push(`Left disabled: ${view.leftDisabled.message}.`);
+      } else if (view.desired?.state === "disabled") {
         lines.push(`Enable with: capybara extensions enable ${review.name}`);
       }
       io.stdout.write(`${lines.join("\n")}\n`);

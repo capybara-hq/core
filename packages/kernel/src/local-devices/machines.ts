@@ -78,9 +78,20 @@ export class MachinesService {
     arch: string;
     programVersion: string;
   }): Promise<{ machineId: string; credential: string }> {
+    // the machine the device was last served from (revoked or not)
+    const prev = await this.db
+      .selectFrom("device_machines")
+      .select(["name", "os", "arch"])
+      .where("device_id", "=", input.deviceId)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    // another machine has other files (maintainer decision 2026-11-08)
+    const moved = prev !== undefined && !sameMachine(prev, input);
     // no stop frame: it would wait on the list and could reach the replacement machine instead
     await this.revokeActive(input.deviceId, null);
-    await this.resetInstance(input.deviceId);
+    await this.resetInstance(input.deviceId, moved);
     const credential = MACHINE_CREDENTIAL_PREFIX + randomBytes(32).toString("base64url");
     const row = await this.db
       .insertInto("device_machines")
@@ -105,8 +116,13 @@ export class MachinesService {
    * forgets its instance (status `none`, no handle) and its files count as there again; the next
    * use creates a fresh instance on the machine (with its roots: a new `device_paths` event
    * follows). The fence moves on, so a lifecycle holder of the old instance fails its next write.
+   * The reset count (`fs_resets`) moves on when the files the next instance sees are not the old
+   * ones, so conversations that used the old files are told their files were reset, not that they
+   * were kept: lost files come back as an empty directory, and another machine (`moved`: name, OS
+   * or arch differ from the device's previous machine) has other files. Another directory on
+   * the same machine is known only from the new machine's first hello ({@link recordHello}).
    */
-  private async resetInstance(deviceId: string): Promise<void> {
+  private async resetInstance(deviceId: string, moved: boolean): Promise<void> {
     await this.db
       .updateTable("device_instances")
       .set((eb) => ({
@@ -117,6 +133,9 @@ export class MachinesService {
         suspended_at: null,
         destroyed_at: sql<Date>`now()`,
         generation: eb("generation", "+", 1),
+        fs_resets: moved
+          ? sql<number>`fs_resets + 1`
+          : sql<number>`CASE WHEN fs_status = 'lost' THEN fs_resets + 1 ELSE fs_resets END`,
       }))
       .where("device_id", "=", deviceId)
       .execute();
@@ -156,8 +175,49 @@ export class MachinesService {
       : null;
   }
 
-  /** Stores what the program reported in its hello frame and marks the machine seen. */
+  /**
+   * Stores what the program reported in its hello frame and marks the machine seen. On the
+   * machine's first hello, when it is the same machine as the device's previous one (else
+   * {@link issue} already counted the reset) but serves another directory or mode (other roots,
+   * ruling R23), the device's files are other files: `fs_resets` moves on (maintainer
+   * decision 2026-11-08), so conversations get the files-reset notice. A previous machine that
+   * never said hello has no known roots: nothing to compare.
+   */
+  @Transactional()
   async recordHello(machineId: string, hello: DeviceHello): Promise<void> {
+    const self = await this.db
+      .selectFrom("device_machines")
+      .select(["device_id", "name", "os", "arch", "roots", "created_at"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .forUpdate()
+      .executeTakeFirst();
+    if (self === undefined) return;
+    if (self.roots === null) {
+      const prev = await this.db
+        .selectFrom("device_machines")
+        .select(["name", "os", "arch", "mode"])
+        .select(sql<boolean>`roots = ${JSON.stringify(hello.roots)}::jsonb`.as("same_roots"))
+        .where("device_id", "=", self.device_id)
+        .where("id", "!=", machineId)
+        .where("created_at", "<=", self.created_at)
+        .where("roots", "is not", null)
+        .orderBy("created_at", "desc")
+        .orderBy("id", "desc")
+        .limit(1)
+        .executeTakeFirst();
+      if (
+        prev !== undefined &&
+        sameMachine(prev, self) &&
+        (!prev.same_roots || prev.mode !== hello.mode)
+      ) {
+        await this.db
+          .updateTable("device_instances")
+          .set({ fs_resets: sql<number>`fs_resets + 1` })
+          .where("device_id", "=", self.device_id)
+          .execute();
+      }
+    }
     await this.db
       .updateTable("device_machines")
       .set({
@@ -325,4 +385,12 @@ export class MachinesService {
       this.log.warn("could not publish a machine revocation", { deviceId, machineId, err });
     }
   }
+}
+
+/** Two machine rows (or a login) name the same machine: same name, OS and arch. */
+function sameMachine(
+  a: { name: string; os: string; arch: string },
+  b: { name: string; os: string; arch: string },
+): boolean {
+  return a.name === b.name && a.os === b.os && a.arch === b.arch;
 }

@@ -121,11 +121,27 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Uploads a platform skill package as raw bytes",
   },
   // marketplaces
+  {
+    route: "GET /api/v1/admin/marketplaces/:id/icons/:sha256",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
   // org-catalog
   {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",
     category: "transport",
     reason: "Serves icon image bytes",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId",
+    category: "internal",
+    reason:
+      "A plugin's setup guide (an app manifest, URLs, steps) for the web's setup section; a person pastes it into the third-party platform's console, which an agent cannot reach",
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
@@ -206,6 +222,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/channels",
     category: "secret",
     reason: "Creates a channel connection with app secrets",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack",
+    category: "human-only",
+    reason:
+      "A person confirms they updated the app on the third-party platform after a setup guide changed; only that person knows it was done",
   },
   // attachments
   {
@@ -675,5 +697,21 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/ui/stream",
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
+  },
+  // themes (themes spec §8-§9)
+  {
+    route: "GET /api/v1/themes/:id/:version/theme.css",
+    category: "transport",
+    reason: "Serves a theme version's stylesheet to the browser; an agent reads themes.list",
+  },
+  {
+    route: "GET /api/v1/themes/:id/:version/assets/:file",
+    category: "transport",
+    reason: "Serves a theme version's font and logo bytes to the browser",
+  },
+  {
+    route: "GET /api/v1/platform/theme",
+    category: "transport",
+    reason: "The platform default theme for the web's pages before sign-in; no session to act for",
   },
 ];

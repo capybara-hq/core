@@ -24,13 +24,13 @@ describe("sandbox tool errors", () => {
   ];
 
   it.each(cases)("tool errors name the device, never an environment: %s", (_name, err) => {
-    const text = message(mapSandboxError(err));
+    const text = message(mapSandboxError(err, undefined));
     expect(text).toMatch(/device/);
     expect(text).not.toMatch(/environment/i);
   });
 
   it.each(others)("outside withSandbox: %s", (_name, err) => {
-    const text = message(mapSandboxError(err));
+    const text = message(mapSandboxError(err, undefined));
     expect(text).toMatch(/device/);
     expect(text).not.toMatch(/environment/i);
   });

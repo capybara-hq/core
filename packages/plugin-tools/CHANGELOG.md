@@ -1,5 +1,70 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.9
+
+### Minor Changes
+
+- 6d9a256: `capybara-plugin pack` ships a plugin's themes (`themes/*.json` or `manifest.themes`) with the fonts
+  and logos they reference, and a plugin may hold only themes. `capybara-plugin check` adds the
+  "Themes" check: `theme-invalid`, `theme-readability` and `theme-asset` (the 16 MB asset limit is
+  summed over the plugin's themes).
+
+### Patch Changes
+
+- Updated dependencies [bbd508e]
+- Updated dependencies [00e742e]
+- Updated dependencies [b2b3faa]
+- Updated dependencies [f120273]
+- Updated dependencies [2191e44]
+- Updated dependencies [c489ee6]
+- Updated dependencies [c1c7b0f]
+- Updated dependencies [ff5e3bf]
+- Updated dependencies [00e742e]
+- Updated dependencies [0158d0c]
+  - @capybara-hq/kernel@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.8
+
+## 0.1.0-rc.8
+
+### Minor Changes
+
+- 2435645: `capybara-plugin marketplace --write` fills each entry's `icon` with the repository path of the
+  plugin's `plugin.json` `icon` (`./plugins/<dir>/<icon>`) and refreshes it on listed entries like
+  `summary` / `displayName` (`marketplace-display-stale` in `--check`).
+- d38fcfd: `capybara-plugin pack` (and so `capybara-plugin check`) ships a plugin's setup guide template
+  files and refuses a missing, oversized or binary one, a placeholder the guide's place does not
+  define (in a file or a step), and a `channel-connection` guide without an extension. The `fake-im`
+  test plugin carries a channel setup guide with a file per inbound mode.
+
+### Patch Changes
+
+- Updated dependencies [6599de8]
+- Updated dependencies [2de4f26]
+- Updated dependencies [dbea14d]
+- Updated dependencies [fa23383]
+- Updated dependencies [eb83fb5]
+- Updated dependencies [09dea3e]
+- Updated dependencies [c85f0b6]
+- Updated dependencies [cafa6e4]
+- Updated dependencies [c3e12b3]
+- Updated dependencies [60ce217]
+- Updated dependencies [3cbf6e8]
+- Updated dependencies [5ec789c]
+- Updated dependencies [ff9cd78]
+- Updated dependencies [2435645]
+- Updated dependencies [2435645]
+- Updated dependencies [ebe127f]
+- Updated dependencies [48b244e]
+- Updated dependencies [f74afee]
+- Updated dependencies [d6fd4a9]
+- Updated dependencies [733a954]
+- Updated dependencies [a4ab6e3]
+- Updated dependencies [f035baa]
+- Updated dependencies [0e8592b]
+- Updated dependencies [cb6f42d]
+  - @capybara-hq/kernel@0.1.0-rc.10
+  - @capybara-hq/plugin-sdk@0.1.0-rc.7
+
 ## 0.1.0-rc.7
 
 ### Patch Changes

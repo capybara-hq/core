@@ -14,7 +14,7 @@
     "cancel": "Cancel",
     "retry": "Retry",
     "language": "Language",
-    "theme": "Theme",
+    "theme": "Color scheme",
     "themeLight": "Light",
     "themeDark": "Dark",
     "back": "Back",
@@ -221,6 +221,8 @@
       "name_mismatch": "The extension name in the package does not match.",
       "downgrade_unsupported": "Cannot downgrade to this version: it has migrations that were never run.",
       "not_disabled": "Disable the extension before uninstalling it.",
+      "single_provider_enabled": "Only one extension may provide this; disable the enabled one first, then enable this one.",
+      "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
       "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment. Import it into the catalog instead.",
@@ -259,9 +261,11 @@
       "not_shareable": "Its owner organization has not made it shareable, so it cannot be shown or associated with other organizations.",
       "owner_required": "The owner organization cannot be removed from its own item's list.",
       "item_pending": "This plugin is waiting for the super admin's confirmation and cannot be changed yet.",
+      "extension_enabled": "This plugin's extension is still enabled on the deployment: disable it on the Extensions page first, then delete the plugin.",
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
-      "not_owned": "Only your organization's own skills and agent templates can be shared."
+      "not_owned": "Only your organization's own skills and agent templates can be shared.",
+      "guide_not_found": "The plugin has no such setup guide."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -278,7 +282,8 @@
       "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
       "webhook_unavailable": "Webhooks are not available for this channel: the extension does not support them or the deployment has no webhook address.",
       "webhook_not_found": "No webhook is registered at this address.",
-      "webhook_retry": "The event could not be accepted; retry later."
+      "webhook_retry": "The event could not be accepted; retry later.",
+      "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -382,6 +387,14 @@
       "aborted": "The model request was aborted."
     },
     "payload_too_large": "The request is over the size limit.",
+    "theme": {
+      "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "not_available": "This theme is not available here. Choose one of the themes listed for this setting.",
+      "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
+      "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first.",
+      "not_found": "This theme version or file does not exist. Reload the page to load the current theme."
+    },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
@@ -1466,6 +1479,7 @@
     "title": "Devices",
     "listLabel": "Your devices",
     "personal": "Personal",
+    "demotedName": "Personal ({provider})",
     "new": "New device",
     "none": "None",
     "source": {
@@ -1530,6 +1544,7 @@
       "files": "Files",
       "filesNote": "Files are kept until the device is deleted.",
       "suspendNote": "Suspending ends the processes that are running.",
+      "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
       "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",
       "created": "Created",
@@ -2088,7 +2103,8 @@
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
-      "preferences": "Preferences"
+      "preferences": "Preferences",
+      "appearance": "Appearance"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -2356,6 +2372,19 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
+    },
+    "guide": {
+      "title": "Setup guide",
+      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
+      "modeLabel": "Inbound mode",
+      "stepsLabel": "Setup steps",
+      "unresolved": "{names} have no value yet and are shown as written.",
+      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
+      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
+      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
+      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+      "driftAck": "I updated the {plugin} app",
+      "driftAcked": "Recorded: the app matches the plugin's setup."
     }
   },
   "extensions": {
@@ -2374,6 +2403,7 @@
       "pending_migration": "being prepared",
       "loading": "loading",
       "dependency": "a required extension is missing",
+      "conflict": "conflicts with another extension",
       "failed": "failed to load",
       "deployment_disabled": "disabled on the platform"
     },
@@ -3220,6 +3250,7 @@
       "skills": "Skills",
       "connector-templates": "Connector templates",
       "agent-templates": "Agent templates",
+      "themes": "Themes",
       "models": "Models",
       "plugins": "Plugins"
     },
@@ -3495,6 +3526,7 @@
         "converging": "Converging",
         "failed": "Failed",
         "dependency": "Missing dependency",
+        "conflict": "Conflict",
         "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
@@ -3538,6 +3570,7 @@
           "approval": "Permissions awaiting approval",
           "migration": "Another replica is running the migrations",
           "dependency": "A required extension point has no available provider",
+          "conflict": "Another extension already provides an extension point that allows only one provider",
           "sync_failed": "Could not sync the extension package",
           "sha_mismatch": "Package contents do not match the recorded sha256",
           "import_failed": "Could not import the extension module",
@@ -3557,6 +3590,12 @@
           "uninstall": "Uninstall"
         },
         "uninstallNeedsDisable": "Disable the extension before uninstalling it",
+        "conflictLine": "Only one {point} provider can be enabled: {others} is enabled. Disable it and {name} loads.",
+        "conflictJoin": ", ",
+        "enableBlocked": "Only one {point} provider can be enabled: disable {other} first, then enable {name}.",
+        "enableBlockedRequired": "{point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "noProviderLine": "{point} has no running provider: {others} was chosen but is not loaded, so {name} does not load either. Get {others} running, or disable it and {name} loads.",
+        "openOther": "Open {name}",
         "drainHint": "In-flight tool calls get up to {seconds} seconds to finish before they are aborted.",
         "disableConfirm": {
           "title": "Disable “{name}”?",
@@ -3624,6 +3663,7 @@
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
+      "calloutNoProvider": "{point} has no running provider.",
       "configure": "Configure",
       "settings": "Settings",
       "upgrade": "Upgrade",
@@ -3771,7 +3811,6 @@
       "bootstrap": "Preinstalled"
     },
     "newer": "New version",
-    "iconAlt": "{name} icon",
     "components": {
       "extension": "Extension",
       "extensionNone": "No extension.",
@@ -3837,8 +3876,11 @@
         "deleteConfirm": {
           "title": "Delete plugin {name}",
           "hint": "Organizations will no longer see this plugin; installed components are not affected. You can bring it in again later.",
-          "confirm": "Delete"
+          "confirm": "Delete",
+          "extensionNote": "A plugin whose extension is enabled on the deployment cannot be deleted: disable the extension on the Extensions page first. After the delete the extension stays on the Extensions page, where you can uninstall it.",
+          "openExtension": "Disable it on the Extensions page"
         },
+        "deleteExtensionEnabled": "Disable \"{name}\" on the Extensions page first, then delete the plugin.",
         "deletedToast": "Deleted \"{name}\".",
         "versionColumns": {
           "version": "Version",
@@ -3931,6 +3973,9 @@
         "done": "Imported plugin \"{name}\".",
         "deployResult": "Deployment result",
         "deployFailed": "{name} {version}: installing on the deployment failed ({code}); the import is kept. Retry in the extension admin.",
+        "deployLeftDisabled": "{name} {version} is installed but left disabled: only one {point} provider can be enabled. Disable {other} first, then enable it.",
+        "deployLeftDisabledRequired": "{name} {version} is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
+        "openEnabled": "Open {name}",
         "openItem": "Open plugin",
         "gone": "The staged import has expired or was already confirmed. Start the import again.",
         "restart": "Start a new import",
@@ -4187,6 +4232,7 @@
           "skills": "{n, plural, one {# skill} other {# skills}}",
           "connectorTemplates": "{n, plural, one {# connector template} other {# connector templates}}",
           "agentTemplates": "{n, plural, one {# agent template} other {# agent templates}}",
+          "themes": "{n, plural, one {# theme} other {# themes}}",
           "none": "No components"
         }
       },
@@ -4451,6 +4497,8 @@
       "confirm": "Update",
       "cancel": "Cancel",
       "done": "Updated \"{name}\" to {version}.",
+      "leftDisabled": "The extension of \"{name}\" is installed but left disabled: only one {point} provider can be enabled, and {other} is. Disable it first, then enable this extension.",
+      "leftDisabledRequired": "The extension of \"{name}\" is installed but left disabled: {point} is provided by {other}, a plugin this deployment requires; it can't be replaced.",
       "stale": "What the update does has changed. Review it again, then confirm.",
       "orgCount": "{count, plural, one {# organization} other {# organizations}}",
       "otherOrgs": "{count, plural, one {# other organization} other {# other organizations}}",
@@ -4467,7 +4515,8 @@
       "extensionOrgs": "Organizations using it move with it: {orgs}",
       "connectorsNote": "Updated from the new template: {names}",
       "credentialsResetNote": "Authentication changed; credentials are cleared and must be entered again: {names}",
-      "needsConfigNote": "Added connector templates need an address and credentials: {ids}"
+      "needsConfigNote": "Connector templates turning on need an address and credentials: {ids}",
+      "turnedOffNote": "Off by default in the new version, so off here (their connectors stay): {ids}"
     },
     "errorDetail": {
       "host": "Host: {host}",
@@ -4768,12 +4817,14 @@
     "titles": {
       "skill": "Skills",
       "connector_template": "Connector templates",
-      "agent_template": "Agent templates"
+      "agent_template": "Agent templates",
+      "theme": "Themes"
     },
     "descriptions": {
       "skill": "Every skill on the deployment: from plugins and from the platform. Manage scope, disabling and versions here.",
       "connector_template": "Organizations fill in a template's address and credentials to get their own connector. Manage scope and disabling here.",
-      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here."
+      "agent_template": "Ready-made agent definitions, also usable as sub-agent types. Manage scope, disabling and versions here.",
+      "theme": "Every theme on the deployment: the colors, fonts and logo plugins bring. Manage scope, disabling and versions here; choose the platform default theme under Appearance in the deployment settings."
     },
     "tabs": {
       "all": "All",
@@ -4783,7 +4834,8 @@
     "empty": {
       "skill": "No skills yet. They appear here once a plugin that brings skills is imported.",
       "connector_template": "No connector templates yet. They appear here once a plugin that brings connector templates is imported.",
-      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported."
+      "agent_template": "No agent templates yet. They appear here once a plugin that brings agent templates is imported.",
+      "theme": "No themes yet. They appear here once a plugin that brings themes is imported."
     },
     "emptyTab": {
       "agent_template": "No agent templates under this tab."
@@ -4811,7 +4863,8 @@
     "state": {
       "disabled": "Disabled",
       "pluginStopped": "Plugin stopped",
-      "builtin": "Built-in"
+      "builtin": "Built-in",
+      "platformDefault": "Platform default theme"
     },
     "detail": {
       "tabsLabel": "Component",
@@ -4854,7 +4907,8 @@
         "named": "Named organizations: only the organizations below can use it."
       },
       "orgOwnedNote": "It belongs to {org}; new versions come from that organization.",
-      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled."
+      "builtinNote": "It comes from a built-in plugin: on in every organization; its scope cannot be changed and it cannot be disabled.",
+      "platformDefaultNote": "This is the platform default theme: it is on in every organization and cannot be narrowed or disabled; choose another one under Appearance in the deployment settings first."
     },
     "scopeDialog": {
       "title": "Set the scope of {name}",
@@ -4915,7 +4969,8 @@
       "conflict": {
         "skill": "This organization already has a skill named {name}; skill names are unique in an organization. Remove or rename that skill, then turn this one on.",
         "agent_template": "This organization already has an agent template of type {name}; agent template types are unique in an organization.",
-        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on."
+        "connector_template": "This organization already has a connector template named {name}; another one of that name cannot be turned on.",
+        "theme": "Another theme with the id {name} is already on in this organization; theme ids must be unique within an organization. Switch that theme off first."
       },
       "locked": "{name} is on for every organization by the platform and cannot be turned off here."
     },
@@ -4924,7 +4979,8 @@
       "hint": {
         "skill": "Once it is off, this organization's agents can no longer load this skill.",
         "agent_template": "Once it is off, this organization's agents can no longer use this template as a sub-agent.",
-        "connector_template": "Once it is off, this organization can no longer create connectors from this template."
+        "connector_template": "Once it is off, this organization can no longer create connectors from this template.",
+        "theme": "Once off, this organization can no longer choose this theme; the organization default and anyone who picked it fall back to the next level."
       },
       "agents": "These agents use it and will lose it:",
       "noAgents": "No agent in this organization uses it.",
@@ -4936,7 +4992,8 @@
     "kind": {
       "skill": "Skill",
       "agent_template": "Agent template",
-      "connector_template": "Connector template"
+      "connector_template": "Connector template",
+      "theme": "Theme"
     },
     "unavailable": "The components' state in this organization could not be read.",
     "inOrg": "In this organization",
@@ -4954,6 +5011,51 @@
       "label": "Time zone",
       "help": "A time zone you choose takes precedence over your browser's.",
       "follow": "Follow the browser"
+    }
+  },
+  "themeImpact": {
+    "title": "Themes",
+    "description": "Organizations and people losing these themes fall back to the next level.",
+    "orgDefaults": "The default theme of these organizations, which will follow the platform: {orgs}",
+    "pickedBy": "{n, plural, one {# person picked it and} other {# people picked it and}} will use their organization's default",
+    "nobody": "No organization or person chose it"
+  },
+  "appearance": {
+    "title": "Appearance",
+    "save": "Save",
+    "saved": "Appearance settings saved.",
+    "builtin": "Built-in theme",
+    "followPlatform": "Follow the platform",
+    "themes": {
+      "title": "Themes",
+      "description": "The themes on in this organization; choose the default among them below. The platform default theme is on in every organization and cannot be switched off.",
+      "label": "Themes of this organization",
+      "empty": "No themes are available yet. They appear here once a super admin imports a plugin that brings themes.",
+      "lockedDefault": "Platform default theme · cannot be switched off"
+    },
+    "org": {
+      "title": "Default theme",
+      "description": "The theme members of this organization see, unless they chose one themselves. Following the platform uses the platform default theme.",
+      "label": "Organization default theme",
+      "unavailable": "The previous default theme \"{name}\" is no longer available in this organization; it follows the platform now.",
+      "personal": "Let members choose",
+      "personalOn": "Allowed",
+      "personalOff": "Set by the organization",
+      "personalHelp": "When off, members no longer see a theme choice in their preferences and everyone uses the organization default. Each person still chooses the color scheme (dark or light)."
+    },
+    "personal": {
+      "title": "Appearance",
+      "description": "The theme you see. The choice applies in every organization you belong to; where it is not on, that organization's default applies.",
+      "label": "My theme",
+      "default": "Default",
+      "locked": "Set by the organization: its admins chose the theme for every member.",
+      "unavailable": "The theme you chose is not available in this organization; its default applies now."
+    },
+    "platform": {
+      "title": "Appearance",
+      "description": "The platform default theme: organizations without a default theme use it, and so do the sign-in pages. Only platform-owned themes whose scope is all organizations and that are not disabled can be chosen.",
+      "label": "Platform default theme",
+      "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
     }
   }
 }

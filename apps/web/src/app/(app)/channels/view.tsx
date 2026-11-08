@@ -1,9 +1,10 @@
 "use client";
 
-import { ListPage, ObjectRow } from "@capybara-hq/design";
+import { ListPage } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ChannelCard } from "../../../components/ChannelCard";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
@@ -15,10 +16,13 @@ import { useWorkspace } from "../../../lib/query/workspace";
 import NotFound from "../not-found";
 
 /**
- * `/channels`: the org's channel connections as object rows (admins); a name opens the detail.
- * From the query cache (the layout prefetched it on a first load): the connections, and the
- * agents' names by id (a section, display only: a connection shows its agent id when the name is
- * unknown).
+ * `/channels`: the org's channel connections as cards (admins; maintainer decision 2026-11-08,
+ * design spec §6.34): each card draws its plugin's icon (the initial without one), the connection
+ * name as the link to its detail, the platform's display name (while it fails, the last error, and
+ * the platform leads the meta), the bound agent and the unbound-person mode, and the running state
+ * (`ChannelCard`, shared with the agent page's 渠道 section). From the query cache
+ * (the layout prefetched it on a first load): the connections, and the agents' names by id (a
+ * section, display only: a connection shows its agent id when the name is unknown).
  */
 export default function ChannelsView() {
   const ws = useWorkspace({ min: "admin", setup: "step" });
@@ -70,29 +74,11 @@ function Channels({ orgId }: { orgId: string }) {
           action: { label: t("new"), variant: "primary" as const, href: "/channels/new" },
         }
       : undefined;
-  if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
+  if (list.kind === "loading") return <ListPage header={header} variant="cards" loading />;
   return (
-    <ListPage header={header} variant="objects" {...(empty ? { empty } : {})}>
+    <ListPage header={header} variant="cards" listLabel={t("title")} {...(empty ? { empty } : {})}>
       {rows.map((c) => (
-        <ObjectRow
-          key={c.id}
-          mark={{
-            text: c.name,
-            ...(c.status === "error" ? { tone: "warn" as const } : {}),
-          }}
-          name={c.name}
-          href={`/channels/${c.id}`}
-          chips={[{ label: c.plugin }]}
-          {...(c.status === "error" && c.lastError !== null ? { description: c.lastError } : {})}
-          meta={`${agentNames[c.agentId] ?? c.agentId} · ${t(`policy.${c.unboundPolicy}`)}`}
-          state={
-            c.status === "active"
-              ? { label: t("status.active"), tone: "ok" }
-              : c.status === "error"
-                ? { label: t("status.error"), tone: "fail" }
-                : { label: t("status.disabled"), tone: "muted" }
-          }
-        />
+        <ChannelCard key={c.id} channel={c} agent={agentNames[c.agentId] ?? c.agentId} />
       ))}
     </ListPage>
   );

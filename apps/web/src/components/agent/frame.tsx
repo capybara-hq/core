@@ -86,7 +86,8 @@ export function useSectionNav(agentId: string, editable: boolean) {
  * One section of the agent page: the `SettingsPage` template with the page's head and section
  * nav, the section's content, and its own action row (Save, Discard) while it has changes.
  * `dirty` tells the page the section holds unsaved edits; `loading` draws the section's static
- * field layout while its reads are on the way.
+ * field layout while its reads are on the way, or, with `children`, those children (a section that
+ * draws its own loading frame: the 渠道 cards on the page ground) inside the page's busy region.
  */
 export function AgentSectionFrame({
   actionRow,
@@ -115,7 +116,12 @@ export function AgentSectionFrame({
       nav={page.nav}
       activeNav={page.section}
       {...(actionRow ? { actionRow } : {})}
-      {...(loading ? { loading: { sections: [loadingSection(page.section, fields, t)] } } : {})}
+      {...(loading
+        ? {
+            loading:
+              children !== undefined ? {} : { sections: [loadingSection(page.section, fields, t)] },
+          }
+        : {})}
     >
       {children}
     </SettingsPage>

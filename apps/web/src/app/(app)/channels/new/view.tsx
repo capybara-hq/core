@@ -13,13 +13,14 @@ import {
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AgentSelect, PolicyRadio } from "../../../../components/ChannelFields";
 import { ConfigForm } from "../../../../components/config-form/ConfigForm";
 import { channelConfig } from "../../../../components/config-form/channel";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { SetupGuideBody } from "../../../../components/SetupGuide";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
@@ -30,7 +31,11 @@ import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import { provides } from "../../../../lib/extensions";
 import type { ConfigIssue } from "../../../../lib/json-schema";
 import { agentsQuery } from "../../../../lib/query/agents";
-import { channelSchemaQuery, orgExtensionsQuery } from "../../../../lib/query/channels";
+import {
+  channelGuideRefQuery,
+  channelSchemaQuery,
+  orgExtensionsQuery,
+} from "../../../../lib/query/channels";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -156,6 +161,13 @@ function NewChannelForm({
   const [error, setError] = useState<{ message: string; extra: string[]; issues: ConfigIssue[] }>();
   // No plugin picked yet: nothing to read until the person picks one (the key's plugin is unused).
   const schema = useQuery({ ...channelSchemaQuery(orgId, plugin), enabled: plugin !== "" });
+  // The plugin's setup guide (接入指南), rendered with the name typed so far (settled for 400 ms)
+  const guideRef = useQuery({ ...channelGuideRefQuery(orgId, plugin), enabled: plugin !== "" });
+  const [guideName, setGuideName] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setGuideName(name.trim()), 400);
+    return () => clearTimeout(timer);
+  }, [name]);
   // A new connection invalidates the org's connections (the list, an agent's channels section).
   const create = useAppMutation({
     fn: (input: Parameters<typeof createChannel>[1]) => createChannel(orgId, input),
@@ -248,6 +260,16 @@ function NewChannelForm({
           <Input value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />
         </Field>
       </FormSection>
+      {plugin !== "" && guideRef.data ? (
+        <FormSection id="guide" title={t("guide.title")} description={t("guide.hint")}>
+          <SetupGuideBody
+            key={plugin}
+            orgId={orgId}
+            guide={guideRef.data}
+            query={guideName === "" ? {} : { name: guideName }}
+          />
+        </FormSection>
+      ) : null}
       <FormSection id="config" title={t("form.configSection")} description={t("form.configHint")}>
         {plugin === "" ? (
           <Text tone="muted">{t("form.pickPluginFirst")}</Text>

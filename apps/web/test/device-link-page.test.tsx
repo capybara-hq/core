@@ -127,6 +127,30 @@ describe("/devices/link", () => {
     expect(router.replace).toHaveBeenCalledWith("/devices/d1");
   });
 
+  it("an unnamed connected device is labelled like everywhere else (deviceName)", async () => {
+    stubApi({
+      ...ROUTES,
+      [`GET ${ENVS}`]: () =>
+        json(200, {
+          ...LIST,
+          items: [
+            ...LIST.items,
+            env("d2", null, {
+              isDefault: false,
+              source: "local",
+              provider: "@local",
+              online: false,
+              demotedFrom: { provider: "sandbox-docker", displayName: null, ordinal: 2 },
+            }),
+          ],
+        }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("combobox", { name: D.device }));
+    expect(await screen.findByRole("option", { name: "Personal (sandbox-docker) 2" })).toBeTruthy();
+  });
+
   it("confirming invalidates the org's devices", async () => {
     const calls = stubApi({
       ...ROUTES,

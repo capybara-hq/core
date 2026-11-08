@@ -20,6 +20,12 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import {
+  assertNotPlatformDefault,
+  type ThemeAfter,
+  type ThemePreview,
+  themesPreview,
+} from "../themes/theme-usage.js";
 import { type ActorOpts, type CatalogItemView, CatalogService } from "./catalog.service.js";
 import { assertOrgsExist, markVersionApplied } from "./catalog-items.js";
 import { nameConflictError } from "./component-scope.service.js";
@@ -35,6 +41,7 @@ import {
   pluginFactsOf,
   skillNameClashes,
   switchOf,
+  themeIdClashes,
 } from "./component-state.js";
 import { ownedPluginCleanupJob } from "./job-ids.js";
 import {
@@ -84,7 +91,9 @@ export interface ScopePreview {
   replaced: { kind: ComponentKind; id: string; name: string }[];
   /**
    * The orgs the change would newly offer a skill of the plugin whose own skills already use its
-   * name (rule 10): the change is refused while there are any.
+   * name, or turn a theme of the plugin on in where another theme with its id is on (rule 10,
+   * themes spec §6; `kind: "theme"` with the clashing themes in `themes`, `skills` empty): the
+   * change is refused while there are any.
    */
   conflicts: {
     orgId: string;
@@ -92,7 +101,16 @@ export interface ScopePreview {
     name: string;
     skills: string[];
     plugins: string[];
+    /** Set for a theme id clash; absent for a skill. */
+    kind?: "theme";
+    /** A theme id clash: the clashing themes on in the org. */
+    themes?: string[];
   }[];
+  /**
+   * The plugin's themes the change takes away from some orgs (themes spec §6): the orgs among
+   * them whose default each is and how many people picked it. Absent when no theme is taken away.
+   */
+  themes?: ThemePreview[];
   scopeHash: string;
 }
 
@@ -158,9 +176,29 @@ function scopeHash(target: Target, p: Omit<ScopePreview, "scopeHash">): string {
         needsConfig: [...p.needsConfig].sort(),
         replaced: [...p.replaced].sort((a, b) => a.id.localeCompare(b.id)),
         conflicts: [...p.conflicts].sort((a, b) => a.orgId.localeCompare(b.orgId)),
+        // only when present: a preview without themes keeps the hash it had before themes
+        ...(p.themes !== undefined && { themes: p.themes }),
       }),
     )
     .digest("hex");
+}
+
+/**
+ * The refusal of a preview's conflicts: skill ones as `plugin.skill_conflict`, theme ones as
+ * `theme.id_taken`; both at once as `plugin.skill_conflict` listing every clash (the skill details
+ * first, then the theme ones `{ theme, orgId, themes, plugins }`), so none waits for a retry.
+ */
+export function conflictsError(conflicts: ScopePreview["conflicts"]): ApiError {
+  const skills = conflicts.filter((c) => c.kind !== "theme");
+  const themes = conflicts.filter((c) => c.kind === "theme").map(({ kind: _k, ...c }) => c);
+  if (themes.length === 0) return nameConflictError(skills);
+  const t = nameConflictError(themes, "theme");
+  if (skills.length === 0) return t;
+  const s = nameConflictError(skills);
+  return new ApiError(s.code, `${s.message}\n${t.message}`, [
+    ...(s.details ?? []),
+    ...(t.details ?? []),
+  ]);
 }
 
 /**
@@ -298,7 +336,8 @@ export class CatalogScopeService {
       // Already approved but not enabled yet: carry on to the enable; else nothing to confirm
       if (!disabled || !(e instanceof ApiError && e.code === "extension.not_pending")) throw e;
     }
-    if (disabled) await this.ops.enable(item.name, actor, opts.actorTokenId);
+    // An occupied single-provider point leaves it installed disabled (the admin view says why)
+    if (disabled) await this.ops.enableUnlessOccupied(item.name, actor, opts.actorTokenId);
     await this.enqueue(itemId);
     return (await this.catalog.get(itemId)).item;
   }
@@ -462,7 +501,8 @@ export class CatalogScopeService {
       await this.stillPending(itemId, name, version);
       await this.approvePackage(actor, name, sha, reviewHash, opts);
       await this.stillPending(itemId, name, version);
-      await this.ops.enable(name, actor, opts.actorTokenId);
+      // An occupied single-provider point leaves it installed disabled (the admin view says why)
+      await this.ops.enableUnlessOccupied(name, actor, opts.actorTokenId);
       await this.finishFirstVersion(actor, itemId, version, opts);
     } catch (e) {
       // Taken out only when this confirmation did not win: the item gone or still waiting
@@ -861,9 +901,14 @@ export class CatalogScopeService {
     // The owner stays listed (P3-17); widening goes through the share gate (P3-16)
     assertOwnerListed(item, t);
     assertShareableTarget(item, { scope: item.scope, orgs: from }, t);
+    // A scope change sends every theme back to following the plugin (rule 2): each is `all` after
+    // only when the plugin is (themes spec §7)
+    await this.assertKeepsPlatformDefault(item.id, (c) =>
+      c.disabled || item.disabled ? "gone" : t.scope === "all" ? "all" : "narrower",
+    );
     const p = await this.compute(item, t);
     if (p.scopeHash !== hash) throw staleError();
-    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    if (p.conflicts.length > 0) throw conflictsError(p.conflicts);
     if (item.scope === t.scope && from.join() === t.orgs.join() && p.replaced.length === 0) return;
     await this.followAgain(actor, itemId, p.replaced, opts);
     await this.db
@@ -918,6 +963,7 @@ export class CatalogScopeService {
     await this.adminLock.lockAndAuthorize(actor);
     const item = await this.item(itemId, true);
     if (item.disabled === disabled) return;
+    if (disabled) await this.assertKeepsPlatformDefault(item.id, () => "gone");
     const p = await this.compute(
       item,
       disabled
@@ -925,7 +971,7 @@ export class CatalogScopeService {
         : { scope: item.scope, orgs: await this.listed(itemId), disabled, scopeChange: false },
     );
     if (disabled && p.scopeHash !== hash) throw staleError();
-    if (p.conflicts.length > 0) throw nameConflictError(p.conflicts);
+    if (p.conflicts.length > 0) throw conflictsError(p.conflicts);
     await this.db
       .updateTable("catalog_items")
       .set({
@@ -976,6 +1022,7 @@ export class CatalogScopeService {
       "platform_skills",
       "platform_agent_templates",
       "platform_connector_templates",
+      "platform_themes",
     ] as const) {
       await this.db
         .updateTable(table as "platform_skills")
@@ -1030,6 +1077,23 @@ export class CatalogScopeService {
     } catch (err) {
       this.log.warn("enqueueing the plugin scope sync failed", { itemId, err });
     }
+  }
+
+  /**
+   * 409 `theme.platform_default` when a live theme of the item is the platform default and `after`
+   * says the change leaves it narrower than `all` or gone (themes spec §7). In the caller's
+   * transaction, before anything is written.
+   */
+  private async assertKeepsPlatformDefault(
+    itemId: string,
+    after: (c: { disabled: boolean }) => ThemeAfter,
+  ): Promise<void> {
+    const themes = await loadComponents(this.db, "theme", { itemId });
+    await assertNotPlatformDefault(
+      this.db,
+      themes.map((c) => c.id),
+      (id) => after(themes.find((c) => c.id === id) ?? { disabled: false }),
+    );
   }
 
   /** The live item (row locked with `forUpdate`); missing -> 404, builtin -> `plugin.builtin`. */
@@ -1150,14 +1214,21 @@ export class CatalogScopeService {
       if (needs) needsConfig.push(org.id);
       else onAfter.add(org.id);
     }
-    const { replaced, conflicts } = await this.componentChanges(
+    const { replaced, conflicts, themesLost } = await this.componentChanges(
       item,
       target,
       orgs,
       onAfter,
       affected,
     );
-    const p = { affected, needsConfig, replaced, conflicts };
+    const themes = await themesPreview(db, themesLost);
+    const p = {
+      affected,
+      needsConfig,
+      replaced,
+      conflicts,
+      ...(themes !== undefined && { themes }),
+    };
     return { ...p, scopeHash: scopeHash(target, p) };
   }
 
@@ -1166,8 +1237,9 @@ export class CatalogScopeService {
    * components with their own scope a scope change replaces; the orgs where a skill or agent
    * template is on now and would be off after (agents merged into `affected`: a component with its
    * own scope that goes back to following the plugin, or one cut by the disable); and the orgs a
-   * skill would newly be offered to whose own skills use its name. `onAfter`: the orgs the plugin
-   * is on in after the change.
+   * skill would newly be offered to whose own skills use its name, or a theme would come on in
+   * where another theme with its id is on; and per theme the orgs it would go off in
+   * (`themesLost`). `onAfter`: the orgs the plugin is on in after the change.
    */
   private async componentChanges(
     item: ItemRow,
@@ -1175,10 +1247,13 @@ export class CatalogScopeService {
     orgs: { id: string; name: string }[],
     onAfter: Set<string>,
     affected: ScopePreview["affected"],
-  ): Promise<Pick<ScopePreview, "replaced" | "conflicts">> {
+  ): Promise<
+    Pick<ScopePreview, "replaced" | "conflicts"> & { themesLost: Map<string, Set<string>> }
+  > {
     const db = this.db;
     const replaced: ScopePreview["replaced"] = [];
     const conflicts: ScopePreview["conflicts"] = [];
+    const themesLost = new Map<string, Set<string>>();
     const lose = new Map<string, Map<string, string>>();
     for (const kind of COMPONENT_KINDS) {
       const comps = await loadComponents(db, kind, { itemId: item.id });
@@ -1203,7 +1278,31 @@ export class CatalogScopeService {
           };
           const listed = listedIn(st, c.id, org.id);
           const s = switchOf(st, c.id, org.id);
-          if (componentOn(c, pNow, listed, s) && !componentOn(cAfter, pAfter, listed, s)) {
+          const onNow = componentOn(c, pNow, listed, s);
+          const onAfterChange = componentOn(cAfter, pAfter, listed, s);
+          if (kind === "theme") {
+            if (onNow && !onAfterChange) {
+              const set = themesLost.get(c.id) ?? new Set<string>();
+              set.add(org.id);
+              themesLost.set(c.id, set);
+            }
+            if (onAfterChange && !onNow) {
+              const clash = await themeIdClashes(db, org.id, c, c.name);
+              if (clash.length > 0) {
+                conflicts.push({
+                  orgId: org.id,
+                  orgName: org.name,
+                  name: c.name,
+                  skills: [],
+                  themes: clash.map((x) => x.id),
+                  plugins: clash.map((x) => x.plugin ?? "platform"),
+                  kind: "theme",
+                });
+              }
+            }
+            continue;
+          }
+          if (onNow && !onAfterChange) {
             for (const a of await agentsUsing(db, org.id, kind, [c.id])) {
               const m = lose.get(org.id) ?? new Map<string, string>();
               m.set(a.id, a.name);
@@ -1236,7 +1335,7 @@ export class CatalogScopeService {
         if (!e.agents.some((a) => a.id === id)) e.agents.push({ id, name });
       }
     }
-    return { replaced, conflicts };
+    return { replaced, conflicts, themesLost };
   }
 
   /**
@@ -1256,7 +1355,9 @@ export class CatalogScopeService {
           ? "platform_skills"
           : r.kind === "agent_template"
             ? "platform_agent_templates"
-            : "platform_connector_templates";
+            : r.kind === "theme"
+              ? "platform_themes"
+              : "platform_connector_templates";
       await this.db
         .updateTable(table as "platform_skills")
         .set({

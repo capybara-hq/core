@@ -14,6 +14,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SkillsModule } from "../skills/skills.module.js";
+import { ThemesModule } from "../themes/themes.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AccountsOperations } from "./ops/accounts.ops.js";
 import { AdminOperations } from "./ops/admin.ops.js";
@@ -42,6 +43,7 @@ import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
+import { ThemesOperations } from "./ops/themes.ops.js";
 import { PlatformModule } from "./platform.module.js";
 
 /**
@@ -82,6 +84,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   // Task 11b: devices, agent skills
   DevicesOperations,
   AgentSkillsOperations,
+  // themes (themes spec §9)
+  ThemesOperations,
 ] as const;
 
 /**
@@ -108,6 +112,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     DevicesModule,
     BackgroundModule,
     FilesModule,
+    ThemesModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

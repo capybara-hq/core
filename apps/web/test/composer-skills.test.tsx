@@ -748,3 +748,44 @@ describe("a new conversation", () => {
     expect(posts(calls, `${ORG}/conversations`)).toHaveLength(1);
   });
 });
+
+describe("quick actions in a conversation under way", () => {
+  const withQuick = () => ({
+    agents: AGENTS.agents.map((a) =>
+      a.id === "ag1"
+        ? {
+            ...a,
+            profile: {
+              ...a.profile,
+              quickActions: [
+                { title: "Weekly report", body: "Turn this week's work into a report" },
+              ],
+            },
+          }
+        : a,
+    ),
+  });
+
+  it("the agent's quick actions sit in the composer and fill it", async () => {
+    api({
+      [`GET ${ORG}/agents`]: () => json(200, withQuick()),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
+    });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    const user = userEvent.setup();
+    const zap = await screen.findByRole("button", { name: "Common tasks" });
+    await user.click(zap);
+    await user.click(await screen.findByRole("menuitem", { name: "Weekly report" }));
+    await vi.waitFor(() =>
+      expect(input().textContent).toContain("Turn this week's work into a report"),
+    );
+  });
+
+  it("an agent without quick actions shows no button", async () => {
+    api({ [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }) });
+    await renderChatRoute();
+    await screen.findByText("hi");
+    expect(screen.queryByRole("button", { name: "Common tasks" })).toBeNull();
+  });
+});

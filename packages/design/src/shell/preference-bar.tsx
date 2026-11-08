@@ -11,8 +11,11 @@ export type PreferenceBarProps = {
     options: { value: string; label: string }[];
     onChange(value: string): void;
   };
-  /** The theme: a two-choice radio (light, dark), one icon each. */
-  theme: {
+  /**
+   * The theme: a two-choice radio (light, dark), one icon each. Absent when the UI theme defines
+   * only one scheme (themes spec §10): no toggle is drawn.
+   */
+  theme?: {
     label: string;
     value: Theme;
     lightLabel: string;
@@ -36,7 +39,7 @@ export function PreferenceBar({ language, theme }: PreferenceBarProps) {
         options={language.options}
         onChange={(e) => language.onChange(e.target.value)}
       />
-      <ThemeToggle {...theme} />
+      {theme ? <ThemeToggle {...theme} /> : null}
     </div>
   );
 }
@@ -46,7 +49,7 @@ export function PreferenceBar({ language, theme }: PreferenceBarProps) {
  * arrow keys move the choice). The sidebar puts it after the account; PreferenceBar after the
  * language.
  */
-export function ThemeToggle(theme: PreferenceBarProps["theme"]) {
+export function ThemeToggle(theme: NonNullable<PreferenceBarProps["theme"]>) {
   const name = useId();
   const choices: { value: Theme; label: string; icon: "sun" | "moon" }[] = [
     { value: "light", label: theme.lightLabel, icon: "sun" },

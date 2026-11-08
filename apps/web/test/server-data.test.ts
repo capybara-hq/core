@@ -62,6 +62,16 @@ const ME = {
   canCreateOrg: true,
 };
 const READY = { modelProvider: "ready", agents: 1 };
+const PAPER = {
+  id: "t-paper",
+  version: "1.0.0",
+  name: { en: "Paper" },
+  schemes: ["dark", "light"],
+  singleScheme: null,
+  logo: null,
+  cssUrl: "/api/v1/themes/t-paper/1.0.0/theme.css",
+};
+const THEMES = { themes: [], resolved: PAPER, org: { id: "t-paper", personal: "allowed" } };
 
 beforeEach(() => {
   req.headers = new Headers({ cookie: "cap_at=t1", "x-cap-path": "/agents?tab=mine" });
@@ -165,6 +175,7 @@ describe("getShell", () => {
     const calls = kernel({
       "/api/v1/me": () => json(200, ME),
       "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [{}, {}], truncated: true }),
       "/api/v1/orgs/o1/ui/contributions": () => err(500, "internal"),
@@ -178,14 +189,16 @@ describe("getShell", () => {
       groups: { groups: [], next: null },
       pending: { count: 2, more: true },
       extensions: null,
+      theme: PAPER,
     });
-    expect(calls).toHaveLength(5);
+    expect(calls).toHaveLength(6);
   });
 
   it("keeps only page contributions", async () => {
     kernel({
       "/api/v1/me": () => json(200, ME),
       "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => err(500, "internal"),
       "/api/v1/orgs/o1/inbox": () => err(500, "internal"),
       "/api/v1/orgs/o1/ui/contributions": () =>
@@ -203,8 +216,11 @@ describe("getShell", () => {
     });
   });
 
-  it("has no readiness and no org reads without a current org", async () => {
-    const calls = kernel({ "/api/v1/me": () => json(200, { ...ME, currentOrgId: null }) });
+  it("has no readiness and no org reads without a current org; the theme is the platform's", async () => {
+    const calls = kernel({
+      "/api/v1/me": () => json(200, { ...ME, currentOrgId: null }),
+      "/api/v1/platform/theme": () => json(200, PAPER),
+    });
     expect(await getShell()).toMatchObject({
       kind: "ready",
       org: null,
@@ -212,8 +228,29 @@ describe("getShell", () => {
       groups: null,
       pending: null,
       extensions: null,
+      theme: PAPER,
     });
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("falls back to the built-in theme (null) when the themes read fails", async () => {
+    kernel({
+      "/api/v1/me": () => json(200, ME),
+      "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => err(500, "internal"),
+      "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
+      "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
+      "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
+    });
+    expect(await getShell()).toMatchObject({ kind: "ready", readiness: READY, theme: null });
+  });
+
+  it("reads null from the platform theme's empty answer without an org", async () => {
+    kernel({
+      "/api/v1/me": () => json(200, { ...ME, currentOrgId: null }),
+      "/api/v1/platform/theme": () => new Response(null, { status: 200 }),
+    });
+    expect(await getShell()).toMatchObject({ kind: "ready", theme: null });
   });
 
   it("returns unavailable when the kernel can't answer me", async () => {
@@ -233,6 +270,7 @@ describe("getShell", () => {
     kernel({
       "/api/v1/me": () => json(200, ME),
       "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => err(401, "auth.required"),
       "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),
@@ -244,6 +282,7 @@ describe("getShell", () => {
     kernel({
       "/api/v1/me": () => json(200, ME),
       "/api/v1/orgs/o1/readiness": () => json(200, READY),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
       "/api/v1/orgs/o1/ui/contributions": () => {
@@ -257,6 +296,7 @@ describe("getShell", () => {
     kernel({
       "/api/v1/me": () => json(200, ME),
       "/api/v1/orgs/o1/readiness": () => err(500, "internal"),
+      "/api/v1/orgs/o1/themes": () => json(200, THEMES),
       "/api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
       "/api/v1/orgs/o1/inbox": () => json(200, { items: [], truncated: false }),
       "/api/v1/orgs/o1/ui/contributions": () => json(200, { items: [] }),

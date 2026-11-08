@@ -4,6 +4,7 @@ import {
   AgentsChip,
   type ConversationPageProps,
   elapsed,
+  QuickActions,
   RenameDialog,
   Stack,
   type TitleBarMenuItem,
@@ -14,7 +15,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { avatarValue } from "../../lib/agents";
 import type { ModelRef } from "../../lib/conversations";
 import { canEditAgent } from "../../lib/org-settings";
@@ -60,7 +61,13 @@ import { FormError } from "../form-error";
 import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
-import { ComposerBar, type ComposerMessage, newClientMessageId } from "./ComposerBar";
+import { useDeviceName } from "../use-device-name";
+import {
+  ComposerBar,
+  type ComposerControl,
+  type ComposerMessage,
+  newClientMessageId,
+} from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
@@ -175,6 +182,8 @@ export function useConversationPage(
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data
     ?.agents;
   const agent = agents?.find((a) => a.id === conv.conversation?.agentId);
+  const composer = useRef<ComposerControl>(null);
+  const quickActions = agent?.profile.quickActions ?? [];
   // The title bar path `<org slug> / <agent> /` before the title (spec §3.5).
   const path = usePagePath(
     "org",
@@ -195,18 +204,18 @@ export function useConversationPage(
     ...deviceQ,
     retryOnMount: retryOnMountOf(deviceQ.queryKey),
   });
-  const tDevices = useTranslations("devices");
+  const deviceName = useDeviceName();
   const devicePicker = lockedDevicePicker(
     {
       label: t("pickDevice"),
       hint: t("deviceLocked"),
       deleted: t("deviceDeleted"),
-      personal: tDevices("personal"),
     },
     // a row read before the first tool call bound the conversation says none; the device
     // query (read again after sandbox tool results) knows better
     conv.conversation?.deviceId ?? device.data?.id,
     device.data,
+    deviceName,
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
@@ -454,6 +463,21 @@ export function useConversationPage(
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
           placeholder={t("placeholder")}
+          control={composer}
+          // the agent's quick actions, as on a new conversation: a zap menu that fills the composer
+          {...(quickActions.length > 0
+            ? {
+                quickActions: (
+                  <QuickActions
+                    items={quickActions.map((q, i) => ({ id: String(i), title: q.title }))}
+                    onPick={(id) => {
+                      const body = quickActions[Number(id)]?.body;
+                      if (body !== undefined) composer.current?.fill(body);
+                    }}
+                  />
+                ),
+              }
+            : {})}
           {...(slot?.agents
             ? {
                 agents: (

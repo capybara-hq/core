@@ -1,4 +1,5 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { findNestedBoxes } from "@capybara-hq/design/reference";
+import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -168,6 +169,99 @@ describe("渠道连接列表（ListPage）", () => {
     );
     // A tab only when it holds something different from "all": one failing channel of one.
     expect(screen.queryByRole("link", { name: new RegExp(m.tabs.error) })).toBeNull();
+  });
+});
+
+describe("the channels page is a card list (maintainer decision 2026-11-08)", () => {
+  const ICON = `${BASE}/catalog/item1/icon?v=1.0.0`;
+  const SLACK = {
+    ...CHANNEL,
+    id: "ch2",
+    plugin: "slack",
+    pluginDisplayName: { zh: "Slack 中文", en: "Slack" },
+    pluginIcon: ICON,
+    name: "Support",
+    unboundPolicy: "anonymous",
+    status: "active",
+    lastError: null,
+  };
+
+  it.each(["zh", "en"] as const)(
+    "a card per connection: icon, name link, platform, agent, unbound mode, state (%s)",
+    async (locale) => {
+      const m = msgs[locale].channels;
+      stubApi({
+        [`GET ${BASE}/channels`]: () => json(200, { channels: [CHANNEL, SLACK] }),
+        [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+      });
+      const { container } = await renderList({ locale });
+      const grid = await screen.findByRole("list", { name: m.title });
+      expect(grid.getAttribute("data-part")).toBe("card-grid");
+      const cards = within(grid).getAllByRole("listitem");
+      expect(cards).toHaveLength(2);
+      const card = cards[1] as HTMLElement;
+      expect(card.getAttribute("data-part")).toBe("object-card");
+      // the name is the card's one link, to the detail
+      expect(within(card).getByRole("link", { name: "Support" }).getAttribute("href")).toBe(
+        "/channels/ch2",
+      );
+      // the plugin's icon, decorative, on the org's icon route
+      const img = card.querySelector('img[data-part="mark-image"]');
+      expect(img?.getAttribute("src")).toBe(ICON);
+      expect(img?.getAttribute("alt")).toBe("");
+      // the platform's display name in the page locale, never the plugin id chip
+      expect(within(card).getByText(locale === "zh" ? "Slack 中文" : "Slack")).toBeTruthy();
+      expect(within(card).queryByText("slack")).toBeNull();
+      expect(within(card).getByText(new RegExp(`Helper · ${m.policy.anonymous}`))).toBeTruthy();
+      const state = card.querySelector('[data-part="object-card-state"]');
+      expect(state?.textContent).toBe(m.status.active);
+      expect(state?.getAttribute("data-tone")).toBe("ok");
+      // one box per card on the page ground
+      expect(findNestedBoxes(container)).toEqual([]);
+    },
+  );
+
+  it("a connection without an icon (or whose icon fails) draws its name's initial; a failing one says why", async () => {
+    stubApi({
+      [`GET ${BASE}/channels`]: () => json(200, { channels: [CHANNEL, SLACK] }),
+      [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+    });
+    await renderList({ locale: "en" });
+    const grid = await screen.findByRole("list", { name: en.channels.title });
+    const [bare, slack] = within(grid).getAllByRole("listitem") as HTMLElement[];
+    const mark = (c: HTMLElement | undefined) =>
+      c?.querySelector('[data-part="object-card-avatar"]') as HTMLElement;
+    expect(mark(bare).querySelector("img")).toBeNull();
+    expect(mark(bare).textContent).toBe("A");
+    // the failing connection: its last error, the platform (the plugin id without a display name)
+    // leading the meta, and the fail state
+    expect(within(bare as HTMLElement).getByText("connect failed with status 503")).toBeTruthy();
+    expect(within(bare as HTMLElement).getByText(/fake-im · Helper/)).toBeTruthy();
+    fireEvent.error(mark(slack).querySelector("img") as HTMLImageElement);
+    expect(mark(slack).textContent).toBe("S");
+  });
+
+  it("the empty state and 新建渠道 stay; loading draws skeleton cards", async () => {
+    stubApi({
+      [`GET ${BASE}/channels`]: () => json(200, { channels: [] }),
+      [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+    });
+    await renderList({ locale: "zh" });
+    expect(await screen.findByText(zh.channels.empty)).toBeTruthy();
+    expect(screen.getByRole("link", { name: zh.channels.new }).getAttribute("href")).toBe(
+      "/channels/new",
+    );
+    cleanup();
+    await renderRouteEmptyCache("/channels", {
+      [`GET ${BASE}/channels`]: () => new Promise<Response>(() => {}),
+      [`GET ${BASE}/agents`]: () => new Promise<Response>(() => {}),
+    });
+    const busy = await vi.waitFor(() => {
+      const el = document.querySelector('[data-part="card-grid"][aria-busy="true"]');
+      if (el === null) throw new Error("no grid yet");
+      return el;
+    });
+    expect(busy.querySelectorAll('[data-part="object-card"][data-skeleton="true"]').length).toBe(6);
   });
 });
 

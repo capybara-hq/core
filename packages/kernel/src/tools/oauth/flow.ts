@@ -11,7 +11,7 @@ import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER, REDIS } from "../../infra/tokens.js";
 import { OrgLock } from "../../orgs/org-lock.js";
 import { ConnectorsService } from "../connectors.service.js";
-import { type ConnectorAuth, Credentials } from "../credentials.js";
+import { type ConnectorAuth, Credentials, type OAuthAuth } from "../credentials.js";
 import { oauthHttpOptions } from "./discovery.js";
 import {
   callbackUrl,
@@ -226,6 +226,7 @@ export class OAuthFlow {
           resource: client.resource,
         },
         oauthHttpOptions(this.config.get()),
+        { tokenTypes: (app.auth as unknown as OAuthAuth).tokenTypes },
       );
     } catch (e) {
       this.log.warn("oauth code exchange failed", { orgId, connectorId, err: e });

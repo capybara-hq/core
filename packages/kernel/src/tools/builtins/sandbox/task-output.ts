@@ -98,6 +98,7 @@ export interface TaskEnv {
   tasks: NonNullable<SandboxToolDeps["tasks"]>;
   ifRunning: SandboxService["ifRunning"];
   devices: SandboxToolDeps["devices"];
+  log: SandboxToolDeps["log"];
 }
 
 /**
@@ -118,6 +119,7 @@ export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): P
     tasks,
     ifRunning: deps.sandbox.ifRunning.bind(deps.sandbox),
     devices: deps.devices,
+    log: deps.log,
   };
 }
 
@@ -150,7 +152,7 @@ export async function recheckDevice(env: TaskEnv, ctx: BuiltinCallContext): Prom
   try {
     await env.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
   } catch (e) {
-    throw mapSandboxError(e);
+    throw mapSandboxError(e, env.log);
   }
 }
 
@@ -174,7 +176,7 @@ export async function onTaskInstance<T>(
       signal,
     );
   } catch (e) {
-    throw mapSandboxError(e);
+    throw mapSandboxError(e, env.log);
   }
 }
 

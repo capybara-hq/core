@@ -7,6 +7,7 @@ import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../.
 import type { ModelRef, Selection } from "../../lib/conversations";
 import { type Device, type DeviceList, devicePickable, deviceState } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
+import { useDeviceName } from "../use-device-name";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -216,6 +217,7 @@ export type DeviceChoice = {
 export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
   const t = useTranslations("chat");
   const te = useTranslations("devices");
+  const nameOf = useDeviceName();
   const [picked, setPicked] = useState<string | null>(null);
   if (list === undefined || !(list.cloudAvailable || list.items.some((e) => e.source === "local")))
     return { deviceId: undefined, picker: undefined };
@@ -226,7 +228,6 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
     usable(list.lastUsedId) ??
     usable(list.defaultId) ??
     list.items.find(devicePickable)?.id;
-  const nameOf = (e: { name: string | null }) => e.name ?? te("personal");
   const current = list.items.find((e) => e.id === id);
   const tagOf = (e: Device) => {
     const state = deviceState(e);
@@ -261,14 +262,15 @@ export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
  * 设备已删除 when the bound device is gone, nothing for a conversation with none bound.
  */
 export function lockedDevicePicker(
-  text: { label: string; hint: string; deleted: string; personal: string },
+  text: { label: string; hint: string; deleted: string },
   deviceId: string | null | undefined,
-  device: { name: string | null } | null | undefined,
+  device: Pick<Device, "name" | "demotedFrom"> | null | undefined,
+  nameOf: (e: Pick<Device, "name" | "demotedFrom">) => string,
 ): PickerProps | undefined {
   if (!deviceId || device === undefined) return undefined;
   return {
     label: text.label,
-    value: device === null ? text.deleted : (device.name ?? text.personal),
+    value: device === null ? text.deleted : nameOf(device),
     locked: { hint: text.hint },
     groups: [],
     onPick: () => {},

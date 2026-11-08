@@ -7,6 +7,7 @@ import { DeviceCreateDialog } from "../../../components/DeviceCreateDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
+import { useDeviceName } from "../../../components/use-device-name";
 import { type Device, deviceState } from "../../../lib/devices";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
@@ -83,11 +84,12 @@ function Devices({ orgId }: { orgId: string }) {
 
 function DeviceCard({ device: e }: { device: Device }) {
   const t = useTranslations("devices");
+  const nameOf = useDeviceName();
   const state = deviceState(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
-      title={e.name ?? t("personal")}
+      title={nameOf(e)}
       href={`/devices/${encodeURIComponent(e.id)}`}
       description={t(`source.${e.source}`)}
       meta={[

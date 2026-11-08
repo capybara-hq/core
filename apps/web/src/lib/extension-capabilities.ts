@@ -56,6 +56,12 @@ const POINTS: Record<string, { capability: Capability; tab: CapabilityTab }> = {
   "file-preview": { capability: "filePreview", tab: "tools" },
 };
 
+/** The capability of an extension point ref (`sandbox@2` → `sandbox`; an unknown one by its name). */
+export const capabilityOfPoint = (ref: string): Capability => {
+  const p = ref.split("@")[0] ?? ref;
+  return POINTS[p]?.capability ?? `point:${p}`;
+};
+
 const itemsOf = (groups: readonly PermissionGroup[], category: string): string[] =>
   groups.filter((g) => g.category === category).flatMap((g) => g.items);
 

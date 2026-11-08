@@ -1,4 +1,4 @@
-import type { FileSystemHandle, SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type { FileSystemHandle, ParsedTheme, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -22,6 +22,8 @@ export interface AccountsTable {
   time_zone: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0090: the account must set its own password first (a generated initial password). */
   must_change_password: Generated<boolean>;
+  /** 0093: the person's theme id across all their orgs; null follows the org (themes spec §7). */
+  theme: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -282,7 +284,7 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
-  /** 0088, renamed in 0095: the device the conversation runs in; null = not chosen yet. */
+  /** 0088, renamed in 0104: the device the conversation runs in; null = not chosen yet. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -607,6 +609,14 @@ export interface LgCheckpointWritesTable {
 }
 
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
+/** `channel_connections.guide_ack` (0099): the setup guide a connection was set up with. */
+export interface GuideAckJson {
+  guideId: string;
+  version: string;
+  hash: string;
+  mode: string;
+}
+
 export interface ChannelConnectionsTable {
   id: string;
   org_id: string;
@@ -621,6 +631,11 @@ export interface ChannelConnectionsTable {
   last_error: string | null;
   bot_user_id: string | null;
   tenant_id: string | null;
+  /**
+   * 0099_channel_connection_guide_ack.sql: the setup guide last set up with,
+   * `{ guideId, version, hash, mode }`; null when unknown.
+   */
+  guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
   created_by: string;
   created_at: Ts;
   updated_at: Ts;
@@ -825,7 +840,7 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
-  /** 0088, renamed in 0095: the device the task runs in. */
+  /** 0088, renamed in 0104: the device the task runs in. */
   device_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -867,7 +882,7 @@ type InstanceHandle = ColumnType<
 >;
 
 /**
- * 0088_environments.sql, renamed in 0095: a device. A cloud device is one instance plus a kept file
+ * 0088_environments.sql, renamed in 0104: a device. A cloud device is one instance plus a kept file
  * system; a local device is a person's machine (device_machines).
  */
 export interface DevicesTable {
@@ -877,15 +892,17 @@ export interface DevicesTable {
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0093, renamed in 0095: `local` is a person's machine (device_machines). */
+  /** 0093, renamed in 0104: `local` is a person's machine (device_machines). */
   source: "cloud" | "local";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0096: the provider a demoted default was demoted from; null for every other device. */
+  demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
 }
 
-/** 0088_environments.sql, renamed in 0095: the instance and file system of a device. */
+/** 0088_environments.sql, renamed in 0104: the instance and file system of a device. */
 export interface DeviceInstancesTable {
   device_id: string;
   org_id: string;
@@ -912,6 +929,8 @@ export interface DeviceInstancesTable {
   generation: ColumnType<number, number | undefined, number>;
   /** An instance was created at least once (only ever set to true). */
   had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** How many times the files were reset (0095); a reset may bring back the same file system id. */
+  fs_resets: ColumnType<number, number | undefined, number>;
   /** The old provider's instance left behind by a provider change. */
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;
@@ -919,7 +938,7 @@ export interface DeviceInstancesTable {
 }
 
 /**
- * 0093_connected_environments.sql, renamed in 0095: the machine of a local device. At most one
+ * 0093_connected_environments.sql, renamed in 0104: the machine of a local device. At most one
  * unrevoked row per device; revoking sets `revoked_at` and keeps the row.
  */
 export interface DeviceMachinesTable {
@@ -946,7 +965,7 @@ export interface DeviceMachinesTable {
   revoked_at: TsNullable;
 }
 
-/** 0088_environments.sql, renamed in 0095: the device a member's new conversations use by default. */
+/** 0088_environments.sql, renamed in 0104: the device a member's new conversations use by default. */
 export interface DeviceDefaultsTable {
   org_id: string;
   account_id: string;
@@ -1105,6 +1124,16 @@ export interface ExtensionPackagesTable {
   >;
 }
 
+/**
+ * 0100: catalog display files (plugin icons, connector template icons, setup guide files) by
+ * sha256, shared by every version listing one (`catalog/catalog-files.ts`).
+ */
+export interface CatalogFilesTable {
+  sha256: string;
+  data: Buffer;
+  touched_at: Ts;
+}
+
 /** 0030, renamed in 0041: package bytes when there is no object storage. */
 export interface ExtensionBlobsTable {
   sha256: string;
@@ -1130,6 +1159,12 @@ export interface ExtensionInstallsTable {
    * disabled or uninstalled). Written only by the bootstrap step.
    */
   required: ColumnType<boolean, boolean | undefined, boolean>;
+  /**
+   * 0097: when the desired state last became `enabled` (NULL while disabled). Of two enabled
+   * providers of one single-provider extension point (left from before enabling a second was
+   * refused) the earliest enabled is the one every replica loads.
+   */
+  enabled_at: TsNullable;
 }
 
 /** Which npm package owns an extension name (Ruling P3): written on first install, kept on uninstall. */
@@ -1265,8 +1300,11 @@ export interface KernelDatabase {
   extension_deployment_configs: ExtensionDeploymentConfigsTable;
   catalog_items: CatalogItemsTable;
   catalog_item_versions: CatalogItemVersionsTable;
+  catalog_files: CatalogFilesTable;
   marketplaces: MarketplacesTable;
   marketplace_entries: MarketplaceEntriesTable;
+  marketplace_icons: MarketplaceIconsTable;
+  marketplace_icon_failures: MarketplaceIconFailuresTable;
   plugin_import_staging: PluginImportStagingTable;
   catalog_requests: CatalogRequestsTable;
   catalog_org_grants: CatalogOrgGrantsTable;
@@ -1277,6 +1315,8 @@ export interface KernelDatabase {
   platform_agent_templates: PlatformAgentTemplatesTable;
   platform_agent_template_versions: PlatformAgentTemplateVersionsTable;
   platform_connector_templates: PlatformConnectorTemplatesTable;
+  platform_themes: PlatformThemesTable;
+  platform_theme_versions: PlatformThemeVersionsTable;
   component_scope_orgs: ComponentScopeOrgsTable;
   component_org_switches: ComponentOrgSwitchesTable;
   plugin_installs: PluginInstallsTable;
@@ -1426,7 +1466,7 @@ export interface CatalogItemOrgSwitchesTable {
 
 type ScopeMode = "follow" | "own";
 type ComponentScope = "all" | "optional" | "named";
-type ComponentKind = "skill" | "agent_template" | "connector_template";
+type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
 type Dflt<T> = ColumnType<T, T | undefined, T>;
 type NullableDflt<T> = ColumnType<T | null, T | null | undefined, T | null>;
 
@@ -1523,6 +1563,41 @@ export interface PlatformConnectorTemplatesTable extends PlatformScopeColumns {
   deleted_at: TsNullable;
 }
 
+/** 0093: a theme (themes spec §6); every theme comes from a plugin, owned by the platform or an org. */
+export interface PlatformThemesTable extends PlatformScopeColumns {
+  id: string;
+  /** The owning org (null = the platform). */
+  owner_org_id: NullableDflt<string>;
+  /** The org it was created in; never changed. */
+  origin_org_id: NullableDflt<string>;
+  /** The owner shares it with other orgs. */
+  shareable: Dflt<boolean>;
+  catalog_item_id: NullableDflt<string>;
+  plugin_name: NullableDflt<string>;
+  name: string;
+  description: NullableDflt<string>;
+  description_zh: NullableDflt<string>;
+  current_version: number;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/**
+ * 0093: one version of a theme; `definition` is the parsed theme file, its fonts and logo live
+ * under `object_prefix` in `deployment/` (null without assets).
+ */
+export interface PlatformThemeVersionsTable {
+  theme_id: string;
+  version: number;
+  definition: Json<ParsedTheme>;
+  object_prefix: NullableDflt<string>;
+  catalog_version: NullableDflt<string>;
+  updated_on_own: Dflt<boolean>;
+  created_by: NullableDflt<string>;
+  created_at: Ts;
+}
+
 /** 0081: the orgs an own-scope `named` component is offered to. */
 export interface ComponentScopeOrgsTable {
   kind: ComponentKind;
@@ -1544,7 +1619,8 @@ export interface ComponentOrgSwitchesTable {
  * 0034, renamed in 0042, reshaped in 0044: the versions of a platform catalog item. `manifest` is
  * the normalized plugin.json (skills and connector templates listed explicitly); `extension_sha256`
  * the plugin's extension package in `extension_packages` (null without an extension); `files` the
- * files stored under `object_prefix` (skills, connector templates, icons).
+ * version's stored files: display files (icons, setup guide files) in `catalog_files` (0100), the
+ * rest (skills, connector and agent templates) under `object_prefix`.
  */
 export interface CatalogItemVersionsTable {
   item_id: string;
@@ -1616,6 +1692,8 @@ export interface MarketplacesTable {
   owner_name: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0051: entries the last successful refresh could not store (`{ name, reason }[]`). */
   skipped: ColumnType<{ name: string; reason: string }[], string | undefined, string>;
+  /** 0101: the git commit whose repository-path icons were last stored completely. */
+  icons_commit: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**
@@ -1636,6 +1714,27 @@ export interface MarketplaceEntriesTable {
   /** 0051: the Claude marketplace entry's overlay (`ClaudeEntryOverlay`; null for a Capybara entry). */
   claude: ColumnType<unknown | null, string | null | undefined, string | null>;
   updated_at: Ts;
+}
+
+/**
+ * 0101: marketplace entry icons, one per (marketplace, the entry's `icon` as written), downloaded
+ * on refresh (`catalog/marketplace-icons.ts`).
+ */
+export interface MarketplaceIconsTable {
+  source_id: string;
+  ref: string;
+  sha256: string;
+  content_type: "image/svg+xml" | "image/png";
+  data: Buffer;
+  fetched_at: Ts;
+}
+
+/** 0101: icon URLs whose last download failed, retried after a backoff. */
+export interface MarketplaceIconFailuresTable {
+  source_id: string;
+  ref: string;
+  failed_at: Ts;
+  attempts: ColumnType<number, number | undefined, number>;
 }
 
 /**
@@ -1744,8 +1843,8 @@ export interface PluginInstallsTable {
  */
 export interface PluginInstallComponentsTable {
   install_id: string;
-  /** 0053: 'agent_template', ref = the agent_templates id. */
-  kind: "extension" | "connector" | "skill" | "plugin" | "agent_template";
+  /** 0053: 'agent_template', ref = the agent_templates id; 0093: 'theme', ref = the platform_themes id. */
+  kind: "extension" | "connector" | "skill" | "plugin" | "agent_template" | "theme";
   ref: string;
   created: boolean;
   skill_version: NullableCol<number>;

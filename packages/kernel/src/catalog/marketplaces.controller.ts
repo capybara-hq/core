@@ -1,6 +1,8 @@
-import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post } from "@nestjs/common";
+import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Res } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import type { z } from "zod";
 import { ApiError } from "../errors.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -15,6 +17,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { CatalogService, type MarketplaceImportResult } from "./catalog.service.js";
+import { orgMarketplaceIconUrl } from "./marketplace-icons.js";
 import {
   MarketplaceImportBody as ImportBody,
   MarketplaceAddBody,
@@ -27,6 +30,7 @@ import {
   MarketplacesService,
   type MarketplaceView,
 } from "./marketplaces.service.js";
+import { sendCatalogIcon } from "./org-catalog.controller.js";
 import { itemsSeenBy } from "./scope-state.js";
 
 /** 手动刷新的总时限（每个地址另有 30 秒超时）。 */
@@ -57,6 +61,7 @@ export class MarketplacesController {
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /** 全部来源；`offline` 为 true 表示 `marketplaces.official.enabled` 为 false（界面显示「离线模式」）。 */
@@ -99,16 +104,43 @@ export class MarketplacesController {
    * `MARKETPLACE_ENTRIES_MAX`, `truncated` true means there are more). An entry that cannot be
    * imported has `importable: false` and a `reason`: `host_not_allowed` (its git / archive host is
    * outside `marketplaces.allowedHosts`) or `path_needs_git_marketplace` (a path entry of an http
-   * marketplace).
+   * marketplace). `icon`: an imported plugin's catalog icon (its current version's, the one the
+   * 已安装 list shows, also on an entry of a newer version), else the marketplace icon the last
+   * refresh stored, else null.
    */
   @Get("entries")
-  entries(
+  async entries(
     @ZQuery(MarketplaceEntriesQueryDto) q: z.infer<typeof MarketplaceEntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
-    return this.marketplaces.entries({
+    const r = await this.marketplaces.entries({
       ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
       ...(q.q !== undefined && { q: q.q }),
     });
+    const installed = await this.icons.ofItems(
+      r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+      { kind: "admin" },
+    );
+    return {
+      ...r,
+      items: r.items.map((e) => {
+        const own = e.adopted ? installed.get(e.adopted.itemId) : undefined;
+        return own === undefined ? e : { ...e, icon: own };
+      }),
+    };
+  }
+
+  /**
+   * A marketplace entry icon the last refresh stored (`icon` of the entries), from PG with the
+   * plugin icon response headers (`sendCatalogIcon`: nosniff, CSP sandbox). Not stored -> 404
+   * `catalog.icon_not_found`.
+   */
+  @Get(":id/icons/:sha256")
+  async icon(
+    @Param("id") id: string,
+    @Param("sha256") sha256: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await sendCatalogIcon(reply, await this.marketplaces.icon(id, sha256));
   }
 
   /**
@@ -204,14 +236,40 @@ export class MarketplacesController {
  * Org admins browse the marketplaces read-only (`GET /api/v1/orgs/:orgId/marketplaces/entries`,
  * `catalog.decide`; plugin scope spec §5.1 rule 3) to request an import. The deployment setting
  * `orgMarketplaceBrowse` off -> 404 `not_found`. An entry imported as an item the org can neither
- * see nor request (a hidden `named` item) reads as not imported (`adopted: null`).
+ * see nor request (a hidden `named` item) reads as not imported (`adopted: null`). `icon`: the
+ * catalog item's org icon route when the org's catalog shows the item (the share gate,
+ * `PluginIcons`), else the marketplace icon on this controller's icon route, else null.
  */
 @Controller("api/v1/orgs/:orgId/marketplaces")
 export class OrgMarketplacesController {
   constructor(
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
+
+  /** The org browse is off (`orgMarketplaceBrowse`) -> 404, like the entries. */
+  private async assertBrowse(): Promise<void> {
+    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
+      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
+    }
+  }
+
+  /**
+   * A marketplace entry icon for the org browse (`catalog.decide`, the org admins), gated like the
+   * entries: browsing on, the marketplace enabled; served like plugin icons (`sendCatalogIcon`).
+   * Not stored -> 404 `catalog.icon_not_found`.
+   */
+  @Get(":id/icons/:sha256")
+  @OrgAction("catalog.decide")
+  async icon(
+    @Param("id") id: string,
+    @Param("sha256") sha256: string,
+    @Res() reply: FastifyReply,
+  ): Promise<void> {
+    await this.assertBrowse();
+    await sendCatalogIcon(reply, await this.marketplaces.icon(id, sha256, { browsable: true }));
+  }
 
   @Get("entries")
   @OrgAction("catalog.decide")
@@ -219,27 +277,32 @@ export class OrgMarketplacesController {
     @CurrentOrg() org: OrgContext,
     @ZQuery(MarketplaceEntriesQueryDto) q: z.infer<typeof MarketplaceEntriesQuery>,
   ): Promise<{ items: MarketplaceEntryView[]; truncated: boolean }> {
-    if (!(await readOrgMarketplaceBrowse(this.kdb.db))) {
-      throw new ApiError("not_found", "Marketplace browsing is off for organizations");
-    }
-    const r = await this.marketplaces.entries({
-      ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
-      ...(q.q !== undefined && { q: q.q }),
-    });
+    await this.assertBrowse();
+    const r = await this.marketplaces.entries(
+      {
+        ...(q.sourceId !== undefined && { marketplaceId: q.sourceId }),
+        ...(q.q !== undefined && { q: q.q }),
+      },
+      orgMarketplaceIconUrl(org.orgId),
+    );
     // A hidden `named` item the org is not listed on stays unknown to it: the entry reads as not
-    // imported
-    const seen = await itemsSeenBy(
-      this.kdb.db,
-      org.orgId,
-      r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : [])),
+    // imported (and shows the marketplace icon, never the item's)
+    const adoptedIds = r.items.flatMap((e) => (e.adopted ? [e.adopted.itemId] : []));
+    const seen = await itemsSeenBy(this.kdb.db, org.orgId, adoptedIds);
+    const own = await this.icons.ofItems(
+      adoptedIds.filter((id) => seen.has(id)),
+      orgIconScope(org),
     );
     return {
       ...r,
-      items: r.items.map((e) =>
-        e.adopted === null || seen.has(e.adopted.itemId)
-          ? e
-          : { ...e, adopted: null, newerAvailable: false, contentChanged: false },
-      ),
+      items: r.items.map((e) => {
+        if (e.adopted === null) return e;
+        if (!seen.has(e.adopted.itemId)) {
+          return { ...e, adopted: null, newerAvailable: false, contentChanged: false };
+        }
+        const icon = own.get(e.adopted.itemId);
+        return icon === undefined ? e : { ...e, icon };
+      }),
     };
   }
 }

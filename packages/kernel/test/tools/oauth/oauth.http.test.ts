@@ -609,6 +609,38 @@ describe("刷新", () => {
   }, 60_000);
 });
 
+describe("Slack-like token endpoint (token_type user, errors as 200 ok:false)", () => {
+  it("connects with token_type user and calls with Authorization: Bearer", async () => {
+    const { as, mcp } = await servers({ dialect: "slack" });
+    const app = await installDcr(mcp);
+    expect(await connectFully(app.id)).toBe(
+      `${PUBLIC_URL}/account/connections?connected=${app.id}`,
+    );
+    expect((await getConnector(app.id)).credential.status).toBe("connected");
+    const convId = await createConv(req, orgId, await agentFor(app.id));
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
+    expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
+    expect(as.tokenRequests.map((t) => t.status)).toEqual([200]);
+  }, 60_000);
+
+  it("a dead refresh token (200 invalid_refresh_token) asks the person to reconnect", async () => {
+    const { as, mcp } = await servers({ dialect: "slack" });
+    const app = await installDcr(mcp);
+    await connectFully(app.id);
+    as.revokeAccessTokens();
+    as.revokeRefreshTokens();
+    const convId = await createConv(req, orgId, await agentFor(app.id));
+    const r = await runTool(convId, 1, "mcp__docs__whoami");
+    expect(r).toMatchObject({
+      isError: true,
+      content:
+        "The user has not connected Docs. A connect card was shown; ask the user to connect, then retry.",
+    });
+    expect(refreshes(as)).toMatchObject([{ status: 200, error: "invalid_refresh_token" }]);
+    expect((await getConnector(app.id)).credential.status).toBe("missing");
+  }, 60_000);
+});
+
 describe("轮换客户端与其他校验", () => {
   it("A18：客户端凭据连接器 PUT 组织凭据 → 先验证再替换客户端与组织 token；错误密钥 502 且不改动", async () => {
     const { as, mcp } = await servers({

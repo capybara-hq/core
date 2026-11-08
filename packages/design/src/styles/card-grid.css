@@ -34,7 +34,7 @@
   pointer-events: none;
   transition: opacity var(--cb-motion-hover) ease-out;
 }
-.cb-object-card:not([data-skeleton="true"]):hover::before {
+.cb-object-card:has(.cb-object-card-link):hover::before {
   opacity: 1;
 }
 /* Keyboard focus is on the link; the ring goes around the card (spec §2.5, `:focus-visible` only). */
@@ -55,8 +55,15 @@
   width: 40px;
   height: 40px;
 }
-/* An object without a picture: its icon on a 40 px tile (the avatar's size and radius). */
-.cb-object-card-avatar[data-kind="icon"] {
+/* An object without a picture: its icon on a 40 px tile (the avatar's size and radius); a thing a
+   plugin brings: the plugin's icon (24, contained) on the same tile, or the title's initial. */
+.cb-object-card-avatar[data-kind="image"] {
+  font-size: var(--cb-type-h2-size);
+  font-weight: 600;
+  line-height: 1;
+}
+.cb-object-card-avatar[data-kind="icon"],
+.cb-object-card-avatar[data-kind="image"] {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   color: var(--cb-ink);
@@ -113,6 +120,14 @@
   flex-direction: column;
   cursor: default;
 }
+/* A card without a link (a read-only list): the name in the link's look, the description opens nothing. */
+.cb-object-card-name[data-static="true"] {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-object-card:not(:has(.cb-object-card-link)) .cb-object-card-desc {
+  cursor: default;
+}
 .cb-object-card-foot {
   display: flex;
   align-items: center;
@@ -149,4 +164,24 @@
     min-width: 40px;
     min-height: 40px;
   }
+}
+
+/* The object's state at the head's right (as ObjectRow's, spec §6.17): mono small, toned. */
+.cb-object-card-state {
+  flex: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+}
+.cb-object-card-state[data-tone="ok"] {
+  color: var(--cb-ok);
+}
+.cb-object-card-state[data-tone="warn"] {
+  color: var(--cb-warn);
+}
+.cb-object-card-state[data-tone="fail"] {
+  color: var(--cb-fail);
+}
+.cb-object-card-state[data-tone="muted"] {
+  color: var(--cb-faint);
 }

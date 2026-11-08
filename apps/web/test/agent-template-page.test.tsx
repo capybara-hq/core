@@ -538,8 +538,15 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     (screen.getAllByText(title).find((e) => e.closest("li")) as HTMLElement).closest(
       "li",
     ) as HTMLElement;
-  const save = (user: ReturnType<typeof userEvent.setup>) =>
-    user.click(screen.getByRole("button", { name: TF.submit }));
+  /** The action row's save button, found by its text: a page-wide role query is slow here. */
+  const buttonByText = (label: string) => {
+    const button = [...document.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === label,
+    );
+    if (button === undefined) throw new Error(`no button ${label}`);
+    return button;
+  };
+  const save = (user: ReturnType<typeof userEvent.setup>) => user.click(buttonByText(TF.submit));
 
   it("工具: an extension tool the org turned off shows the switched-off reason", async () => {
     const r = live();
@@ -807,13 +814,16 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     const calls = stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=subagents", r);
     const user = userEvent.setup();
+    // each value is pasted (one input event), not typed key by key: every keystroke re-renders
+    // the whole editor, and 27 of them per row made this case slow under load
+    const enter = async (field: HTMLElement, text: string) => {
+      await user.click(field);
+      await user.paste(text);
+    };
     const fill = async (row: HTMLElement, name: string, mode?: string) => {
-      await user.type(within(row).getByRole("textbox", { name: SA.inlineName }), name);
-      await user.type(
-        within(row).getByRole("textbox", { name: SA.inlineDescription }),
-        `${name} it`,
-      );
-      await user.type(within(row).getByRole("textbox", { name: SA.inlineInstructions }), "Do it.");
+      await enter(within(row).getByRole("textbox", { name: SA.inlineName }), name);
+      await enter(within(row).getByRole("textbox", { name: SA.inlineDescription }), `${name} it`);
+      await enter(within(row).getByRole("textbox", { name: SA.inlineInstructions }), "Do it.");
       if (mode !== undefined) {
         await pickOption(
           within(row).getByRole("combobox", { name: P.subagents.tools }),
@@ -824,9 +834,8 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     };
     const rows = () =>
       within(screen.getByRole("list", { name: SA.inlineLabel })).getAllByRole("listitem");
-    for (let i = 0; i < 3; i++) {
-      await user.click(await screen.findByRole("button", { name: SA.addInline }));
-    }
+    await screen.findByText(SA.addInline);
+    for (let i = 0; i < 3; i++) await user.click(buttonByText(SA.addInline));
     await fill(rows()[0] as HTMLElement, "all-tools");
     await fill(rows()[1] as HTMLElement, "no-tools", P.subagents.toolsMode.none);
     await fill(rows()[2] as HTMLElement, "some-tools", P.subagents.toolsMode.list);

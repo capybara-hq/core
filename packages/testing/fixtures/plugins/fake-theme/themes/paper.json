@@ -1,0 +1,12 @@
+{
+  "name": { "en": "Paper", "zh": "纸张" },
+  "schemes": {
+    "light": {
+      "color": { "accent": "#8A3B12", "on-accent": "#FFFFFF" },
+      "radius": { "md": 6 }
+    },
+    "dark": {
+      "color": { "accent": "#E0A070", "on-accent": "#1B1915" }
+    }
+  }
+}

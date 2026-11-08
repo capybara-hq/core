@@ -300,9 +300,10 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       sender: MessageSenderSchema.optional(),
       /**
-       * The sender's time zone (IANA) and language at send time (run context spec §3.4): the
-       * account setting, else the browser's, else the org defaults. Not model-visible: the next
-       * run's `run_context` is derived from them.
+       * The sender's time zone (IANA) and language at send time (run context spec §3.4): an IM
+       * platform's values, the account setting, the browser's, the person's latest web language,
+       * the org defaults (`readMessageContext`). Not model-visible: the next run's `run_context`
+       * is derived from them.
        */
       timeZone: z.string().min(1).max(64).optional(),
       locale: z.enum(RUN_CONTEXT_LOCALES).optional(),

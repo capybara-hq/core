@@ -27,6 +27,14 @@ const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
   </a>
 );
 
+/**
+ * What a theme replaces of the brand (spec §3): the logo mark as an image URL and the wordmark
+ * text; a null part keeps the built-in pixel capybara or `CAPYBARA`.
+ */
+export type Brand = { markUrl: string | null; wordmark: string | null };
+
+const BrandContext = createContext<Brand | null>(null);
+
 const LocaleContext = createContext<Locale>("zh");
 const LinkContext = createContext<LinkComponent>(DefaultLink);
 const neverPending = () => false;
@@ -37,6 +45,7 @@ export function DesignProvider({
   link,
   useLinkPending,
   clock,
+  brand,
   children,
 }: {
   locale: Locale;
@@ -52,13 +61,20 @@ export function DesignProvider({
    * times hydrate with it, then follow the browser's clock (`useNow`, `useTimeZone`).
    */
   clock?: ServerClock;
+  /**
+   * The resolved theme's brand (apps/web passes it): `Logo` draws it in the sidebar and on the
+   * auth and status pages. Without it the logo is the pixel capybara and `CAPYBARA`.
+   */
+  brand?: Brand;
   children: ReactNode;
 }) {
   return (
     <LocaleContext.Provider value={locale}>
       <LinkContext.Provider value={link ?? DefaultLink}>
         <LinkPendingContext.Provider value={useLinkPending ?? neverPending}>
-          <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
+          <BrandContext.Provider value={brand ?? null}>
+            <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
+          </BrandContext.Provider>
         </LinkPendingContext.Provider>
       </LinkContext.Provider>
     </LocaleContext.Provider>
@@ -73,6 +89,11 @@ export function useDesignT(): (key: DesignKey) => string {
 /** The DesignProvider's locale. */
 export function useDesignLocale(): Locale {
   return useContext(LocaleContext);
+}
+
+/** The DesignProvider's theme brand, null when the theme replaces nothing. */
+export function useBrand(): Brand | null {
+  return useContext(BrandContext);
 }
 
 export function useDesignLink(): LinkComponent {

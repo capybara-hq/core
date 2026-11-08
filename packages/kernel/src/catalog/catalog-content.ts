@@ -9,9 +9,13 @@ import {
   type ConnectorTemplateFile,
   type ConnectorTemplateSpec,
   type LocalizedName,
+  type ParsedTheme,
   type PluginManifest,
   parseAgentTemplate,
   parseConnectorTemplateFile,
+  parseThemeFile,
+  themeIdOf,
+  validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
 import { normalizeToolKeys } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -26,12 +30,13 @@ import type { StorageService } from "../storage/storage.service.js";
 import type { ConnectorTemplateRef, CreateConnectorInput } from "../tools/connectors.service.js";
 import type { ConnectorAuth } from "../tools/credentials.js";
 import type { CatalogItemView } from "./catalog.service.js";
+import { readDisplayFiles } from "./catalog-files.js";
 import type {
   ConnectorInstallInput,
   PluginInstallInput,
   PluginInstallView,
 } from "./plugin-install.js";
-import { iconProblem } from "./plugin-package.js";
+import { iconProblem, pluginThemeError, themeApiError } from "./plugin-package.js";
 import type { OrgPluginState, PluginScope } from "./scope.js";
 import { satisfiesRange } from "./versions.js";
 
@@ -243,7 +248,6 @@ export async function catalogHasIcon(db: KernelSchemaDb, itemId: string): Promis
  */
 export async function readCatalogIcon(
   db: KernelSchemaDb,
-  storage: StorageService,
   itemId: string,
   includeDisabled: boolean,
 ): Promise<CatalogIcon> {
@@ -251,7 +255,7 @@ export async function readCatalogIcon(
   const path = iconPath(v);
   const f = path === undefined ? undefined : v.files.find((x) => x.path === path);
   if (path === undefined || !f) throw iconNotFound();
-  const [file] = await readCatalogFiles(storage, v.object_prefix, [f]);
+  const [file] = await readCatalogDisplayFiles(db, [f]);
   if (!file) throw iconNotFound();
   const problem = iconProblem(path, file.data);
   if (problem !== undefined) throw new ApiError("internal", `Stored icon is invalid: ${problem}`);
@@ -492,6 +496,23 @@ export async function readCatalogFiles(
   return out;
 }
 
+/**
+ * Reads a version's display files (icons, setup guide files; `catalog-files.ts`) from PG, sha256
+ * checked, in the order given; no object storage is involved. A listed file missing from PG is lost
+ * or tampered data (`internal`).
+ */
+export async function readCatalogDisplayFiles(
+  db: Parameters<typeof readDisplayFiles>[0],
+  files: { path: string; size: number; sha256: string }[],
+): Promise<SkillPackageFile[]> {
+  const stored = await readDisplayFiles(db, files);
+  return files.map((f) => {
+    const got = stored.get(f.path);
+    if (!got) throw new ApiError("internal", `Catalog file ${f.path} is not stored`);
+    return got;
+  });
+}
+
 /** 校验技能文件并取名字与描述（导入时已校验过；这里防存储被改）。 */
 export function skillOf(files: SkillPackageFile[]): ReturnType<typeof checkSkillFiles> {
   try {
@@ -560,4 +581,90 @@ export async function readCatalogAgentTemplates(
     // spec §8.3); rc `<x>__<tool>` keys are read with the org's scope by `loadTemplates`
     return { path, template: normalizeToolKeys(parsed.template) as AgentTemplate };
   });
+}
+
+/** A theme of a catalog version ({@link readCatalogThemes}). */
+export interface CatalogTheme {
+  /** The theme id (the file's base name). */
+  id: string;
+  /** Relative to the plugin root. */
+  path: string;
+  theme: ParsedTheme;
+  /** The theme's fonts and logo files (paths relative to the plugin root), sanitized. */
+  assets: SkillPackageFile[];
+  /** {@link themeAssetsDigest} of the version's records of those files. */
+  assetsDigest: string;
+}
+
+/** The asset paths a parsed theme references (fonts, logo mark and favicon), without `./`. */
+export function themeAssetPaths(theme: ParsedTheme): string[] {
+  const refs = (theme.fonts ?? []).map((f) => f.file);
+  for (const ref of [theme.logo?.mark, theme.logo?.favicon]) if (ref !== undefined) refs.push(ref);
+  return [...new Set(refs.map((r) => packagePath(r)))];
+}
+
+/**
+ * The digest of a theme's assets as recorded on a catalog version (`files`): equal digests = the
+ * same fonts and logo. With the canonical definition it decides whether a theme changed.
+ */
+export function themeAssetsDigest(
+  files: { path: string; sha256: string }[],
+  theme: ParsedTheme,
+): string {
+  const paths = new Set(themeAssetPaths(theme));
+  return skillFilesDigest(files.filter((f) => paths.has(f.path)));
+}
+
+/**
+ * The themes of a catalog version (`manifest.themes`, listed explicitly since import), parsed from
+ * storage and their assets checked again (checked at import; again in case storage was changed).
+ * Grammar and token names are checked again (a token renamed in core stays loud, themes spec
+ * §4.1), but not readability: the version passed it at import, and a later change of the built-in
+ * tokens must not block an update or a rollback to it. A theme that fails -> 400 `theme.invalid`
+ * as at import (themes spec §6: a failing new version blocks the plugin update with the same
+ * refusal).
+ */
+export async function readCatalogThemes(
+  storage: StorageService,
+  v: CatalogVersionFiles,
+): Promise<CatalogTheme[]> {
+  const refs = (v.manifest as PluginManifest).themes ?? [];
+  if (refs.length === 0) return [];
+  const read = async (paths: string[]) =>
+    (
+      await readCatalogFiles(
+        storage,
+        v.object_prefix,
+        v.files.filter((f) => paths.includes(f.path)),
+      )
+    ).map((f) => [f.path, f.data] as const);
+  const paths = refs.map((r) => packagePath(r.path));
+  const texts = new Map(await read(paths));
+  const parsed = paths.map((path) => {
+    const id = themeIdOf(path);
+    const data = texts.get(path);
+    if (data === undefined) throw new ApiError("internal", `Stored theme ${path} is missing`);
+    const r = parseThemeFile(id, new TextDecoder().decode(data), { readability: false });
+    if ("errors" in r) throw themeApiError(pluginThemeError([{ theme: id, problems: r.errors }]));
+    return { id, path, theme: r };
+  });
+  const files = new Map(await read([...new Set(parsed.flatMap((t) => themeAssetPaths(t.theme)))]));
+  const out: CatalogTheme[] = [];
+  for (const { id, path, theme } of parsed) {
+    const { assets, errors } = validateThemeAssets(theme, files);
+    if (errors.length > 0) throw themeApiError(pluginThemeError([{ theme: id, problems: errors }]));
+    out.push({
+      id,
+      path,
+      theme,
+      assets: [...assets].map(([p, bytes]) => ({
+        path: p,
+        size: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        data: bytes,
+      })),
+      assetsDigest: themeAssetsDigest(v.files, theme),
+    });
+  }
+  return out;
 }

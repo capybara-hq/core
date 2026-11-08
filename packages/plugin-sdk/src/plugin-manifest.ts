@@ -14,10 +14,20 @@ import {
   validateConnectorTemplate,
 } from "./plugin-package.js";
 import { hasUpperBound } from "./semver-range.js";
+import {
+  type PluginSetupGuide,
+  SETUP_GUIDE_FILE_RE,
+  SETUP_GUIDE_LANGUAGES,
+  SETUP_GUIDE_LIMITS,
+  SETUP_GUIDE_MODES,
+  SETUP_GUIDE_PLACES,
+} from "./setup-guide.js";
+import { type PluginThemeRef, THEME_LIMITS, themeIdOf } from "./theme.js";
 
 /**
  * The plugin manifest `.capybara-plugin/plugin.json` (package ecosystem spec §4.1). A plugin is a
- * bundle of at most one extension, skills and connector templates, packed as an npm-pack tgz:
+ * bundle of at most one extension, skills, connector templates, agent templates and themes, packed as
+ * an npm-pack tgz:
  *
  * ```
  * package/package.json                  npm metadata; version equals plugin.json version
@@ -25,13 +35,14 @@ import { hasUpperBound } from "./semver-range.js";
  * package/skills/<name>/SKILL.md        skills
  * package/connectors/<id>.json          connector templates ({@link ConnectorTemplateFile})
  * package/agents/<name>.md              agent templates (parsed by `parseAgentTemplate`)
+ * package/themes/<id>.json              themes (parsed by `parseThemeFile`)
  * package/dist/index.mjs                extension entry (only with an extension)
  * package/migrations/*.sql, package/ui/**
  * ```
  *
  * Paths start with `./` and stay inside the plugin root. Omitting `skills` / `connectorTemplates`
- * / `agents` means "scan `skills/*\/SKILL.md` / `connectors/*.json` / `agents/*.md`" (done by the
- * kernel when it reads the package). `extension` is written by the packer, never by hand.
+ * / `agents` / `themes` means "scan `skills/*\/SKILL.md` / `connectors/*.json` / `agents/*.md` /
+ * `themes/*.json`" (done by the kernel when it reads the package). `extension` is written by the packer, never by hand.
  *
  * The committed JSON Schema (`schemas/plugin.v1.schema.json`) is generated from
  * {@link PluginManifestSchema} by `pnpm gen:package-schemas` and drift-checked by
@@ -56,6 +67,8 @@ export const PLUGIN_MANIFEST_LIMITS = {
   connectorTemplates: 20,
   /** Agent templates ({@link AGENT_TEMPLATE_LIMITS}`.perPlugin`). */
   agents: AGENT_TEMPLATE_LIMITS.perPlugin,
+  /** Themes ({@link THEME_LIMITS}`.perPlugin`). */
+  themes: THEME_LIMITS.perPlugin,
   descriptionChars: 1024,
   publisherChars: 100,
   displayNameChars: 100,
@@ -141,6 +154,13 @@ export interface PluginManifest {
   connectorTemplates?: PluginConnectorTemplateRef[];
   /** Agent templates; omitted = scan `agents/*.md`. */
   agents?: PluginAgentRef[];
+  /** Themes; omitted = scan `themes/*.json`. */
+  themes?: PluginThemeRef[];
+  /**
+   * Setup guides (spec `2026-11-08-plugin-setup-guides-design.md`): steps and template files the
+   * kernel renders for a place (`channel-connection`); see {@link PluginSetupGuide}.
+   */
+  setupGuides?: PluginSetupGuide[];
   extension?: PluginExtensionSection;
 }
 
@@ -150,6 +170,12 @@ export interface ConnectorTemplateFile {
   description?: string;
   /** Safe path relative to the plugin root (an optional leading `./`), .svg / .png. */
   icon?: string;
+  /**
+   * `false`: the template starts switched off in every org, even where its plugin is on, until an
+   * org admin switches it on (it then needs no org input while off). Default `true`: on wherever
+   * its plugin is. Ignored for a builtin plugin.
+   */
+  defaultEnabled?: boolean;
   /** Validated by {@link validateConnectorTemplate}. */
   template: ConnectorTemplateSpec;
 }
@@ -211,6 +237,40 @@ const configSchemaJson = z
       message: `must be at most ${CONFIG_UI_LIMITS.configSchemaBytes} bytes of JSON (${CONFIG_UI_LIMITS.configSchemaBytes / 1024} KiB)`,
     },
   );
+
+const guideText = (max: number, what: string) =>
+  z.strictObject({ en: text(max, `${what}.en`), zh: text(max, `${what}.zh`).optional() });
+
+const setupGuide = z.strictObject({
+  id: z.string().regex(CATALOG_ITEM_NAME_RE, {
+    message: "id must match ^[a-z0-9][a-z0-9-]{0,63}$",
+  }),
+  place: z.enum(SETUP_GUIDE_PLACES),
+  title: guideText(SETUP_GUIDE_LIMITS.titleChars, "title"),
+  steps: z
+    .array(
+      z.strictObject({
+        en: text(SETUP_GUIDE_LIMITS.stepChars, "en"),
+        zh: text(SETUP_GUIDE_LIMITS.stepChars, "zh").optional(),
+        mode: z.string().max(64).optional(),
+      }),
+    )
+    .max(SETUP_GUIDE_LIMITS.steps)
+    .optional(),
+  files: z
+    .array(
+      z.strictObject({
+        path: dotPath("path").regex(SETUP_GUIDE_FILE_RE, {
+          message: "path must be a .tmpl, .yaml, .yml, .json or .txt file",
+        }),
+        title: guideText(SETUP_GUIDE_LIMITS.titleChars, "title"),
+        language: z.enum(SETUP_GUIDE_LANGUAGES),
+        mode: z.string().max(64).optional(),
+      }),
+    )
+    .max(SETUP_GUIDE_LIMITS.files)
+    .optional(),
+});
 
 const extensionSection = z.strictObject({
   entry: dotPath("entry").refine((p) => p.endsWith(".mjs"), {
@@ -293,6 +353,18 @@ const schema = z
       )
       .max(L.agents)
       .optional(),
+    themes: z
+      .array(
+        z.strictObject({
+          path: dotPath("path").refine(
+            (p) => p.endsWith(".json") && CATALOG_ITEM_NAME_RE.test(themeIdOf(p)),
+            { message: "path must be a <id>.json file with id matching ^[a-z0-9][a-z0-9-]{0,63}$" },
+          ),
+        }),
+      )
+      .max(L.themes)
+      .optional(),
+    setupGuides: z.array(setupGuide).max(SETUP_GUIDE_LIMITS.guides).optional(),
     extension: extensionSection.optional(),
   })
   .superRefine((m, ctx) => {
@@ -333,15 +405,57 @@ const schema = z
         issue(["agents", i, "path"], `duplicate agent template path ${a.path}`);
       agentPaths.add(a.path);
     });
+    const themeIds = new Set<string>();
+    m.themes?.forEach((t, i) => {
+      const id = themeIdOf(t.path);
+      if (themeIds.has(id)) issue(["themes", i, "path"], `duplicate theme id ${id}`);
+      themeIds.add(id);
+    });
+    const guideIds = new Set<string>();
+    m.setupGuides?.forEach((g, i) => {
+      if (guideIds.has(g.id)) issue(["setupGuides", i, "id"], `duplicate setup guide id ${g.id}`);
+      guideIds.add(g.id);
+      if ((g.steps?.length ?? 0) === 0 && (g.files?.length ?? 0) === 0) {
+        issue(["setupGuides", i], "a setup guide needs at least one step or file");
+      }
+      const modes = SETUP_GUIDE_MODES[g.place];
+      const badMode = (mode: string | undefined, path: (string | number)[]) => {
+        if (mode !== undefined && !modes.includes(mode)) {
+          issue(path, `mode must be one of ${modes.join(", ")} for place ${g.place}`);
+        }
+      };
+      g.steps?.forEach((s, j) => {
+        badMode(s.mode, ["setupGuides", i, "steps", j, "mode"]);
+      });
+      const paths = new Set<string>();
+      g.files?.forEach((f, j) => {
+        badMode(f.mode, ["setupGuides", i, "files", j, "mode"]);
+        if (paths.has(f.path)) {
+          issue(["setupGuides", i, "files", j, "path"], `duplicate file ${f.path} in the guide`);
+        }
+        paths.add(f.path);
+      });
+      if (
+        g.place === "channel-connection" &&
+        m.extension !== undefined &&
+        !m.extension.manifest.provides.some((p) => p.startsWith("channel@"))
+      ) {
+        issue(
+          ["setupGuides", i, "place"],
+          "a channel-connection guide needs the plugin's extension to provide channel@1",
+        );
+      }
+    });
     if (
       m.extension === undefined &&
       m.skills?.length === 0 &&
       m.connectorTemplates?.length === 0 &&
-      (m.agents === undefined || m.agents.length === 0)
+      (m.agents === undefined || m.agents.length === 0) &&
+      (m.themes === undefined || m.themes.length === 0)
     ) {
       issue(
         [],
-        "a plugin must contain an extension, a skill, a connector template or an agent template",
+        "a plugin must contain an extension, a skill, a connector template, an agent template or a theme",
       );
     }
     const ext = m.extension;
@@ -424,6 +538,7 @@ const templateFile = z
         message: "icon must be a relative .svg or .png path inside the plugin",
       })
       .optional(),
+    defaultEnabled: z.boolean().optional(),
     template,
   })
   // Field rules (no credentials, auth presets, editableEndpoint, ...) belong to validateConnectorTemplate.

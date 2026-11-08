@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { assertThemeOnForAccount } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
@@ -319,28 +320,39 @@ export class AccountsService {
   }
 
   /**
-   * A person's preferences (run context spec §3.4): `timeZone` is their time zone setting (IANA),
-   * null = follow the browser. Missing account → null.
+   * A person's preferences: `timeZone` is their time zone setting (IANA), null = follow the browser
+   * (run context spec §3.4); `theme` their theme (a `platform_themes` id), null = follow the org
+   * (themes spec §7). Missing account -> nulls.
    */
-  async preferences(accountId: string): Promise<{ timeZone: string | null }> {
+  async preferences(accountId: string): Promise<{ timeZone: string | null; theme: string | null }> {
     const row = await this.db
       .selectFrom("accounts")
-      .select("time_zone")
+      .select(["time_zone", "theme"])
       .where("id", "=", accountId)
       .executeTakeFirst();
-    return { timeZone: row?.time_zone ?? null };
+    return { timeZone: row?.time_zone ?? null, theme: row?.theme ?? null };
   }
 
-  /** Sets a person's preferences (the caller validated the time zone). */
+  /**
+   * Updates the preferences given (a field left out keeps its value; the caller validated the time
+   * zone). A theme must be on in at least one of the person's orgs, else 400 `theme.not_available`.
+   */
   async setPreferences(
     accountId: string,
-    prefs: { timeZone: string | null },
-  ): Promise<{ timeZone: string | null }> {
-    await this.db
-      .updateTable("accounts")
-      .set({ time_zone: prefs.timeZone, updated_at: new Date() })
-      .where("id", "=", accountId)
-      .execute();
+    prefs: { timeZone?: string | null | undefined; theme?: string | null | undefined },
+  ): Promise<{ timeZone: string | null; theme: string | null }> {
+    if (prefs.theme != null) await assertThemeOnForAccount(this.db.db, accountId, prefs.theme);
+    const set = {
+      ...(prefs.timeZone !== undefined && { time_zone: prefs.timeZone }),
+      ...(prefs.theme !== undefined && { theme: prefs.theme }),
+    };
+    if (Object.keys(set).length > 0) {
+      await this.db
+        .updateTable("accounts")
+        .set({ ...set, updated_at: new Date() })
+        .where("id", "=", accountId)
+        .execute();
+    }
     return this.preferences(accountId);
   }
 

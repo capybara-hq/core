@@ -9,12 +9,12 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0095_devices_rename.sql (spec 2026-11-07-environments-design §15.2): every environment table,
+ * 0104_devices_rename.sql (spec 2026-11-07-environments-design §15.2): every environment table,
  * column, index and constraint takes the device name; `source` 'device' becomes 'local', the
  * provider '@device' becomes '@local', and the log event 'environment_paths' becomes
- * 'device_paths'. Migrates to the migration before it, writes one row of each kind, then runs 0095.
+ * 'device_paths'. Migrates to the migration before it, writes one row of each kind, then runs 0104.
  */
-const FILE = "0095_devices_rename.sql";
+const FILE = "0104_devices_rename.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -110,8 +110,8 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0095_devices_rename", () => {
-  it("0095 keeps every row and its links", async () => {
+describe("0104_devices_rename", () => {
+  it("0104 keeps every row and its links", async () => {
     const devices = await sql<{ id: string; source: string; provider: string | null }>`
       select id, source, provider from capybara.devices order by id`.execute(db);
     expect(devices.rows).toEqual([
@@ -186,7 +186,7 @@ describe("0095_devices_rename", () => {
     ).rejects.toThrow(/conversations_device_id_fkey/);
   });
 
-  it("a rerun of 0095 is a no-op", async () => {
+  it("a rerun of 0104 is a no-op", async () => {
     const before = await sql<{ id: string; source: string }>`
       select id, source from capybara.devices order by id`.execute(db);
     const body = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");

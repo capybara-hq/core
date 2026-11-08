@@ -56,7 +56,7 @@
   display: flex;
   flex-direction: column;
   width: min(480px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   background: var(--cb-panel);
   color: var(--cb-ink);
   border: 1px solid var(--cb-line-strong);

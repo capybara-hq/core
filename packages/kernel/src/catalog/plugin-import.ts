@@ -10,6 +10,7 @@ import {
   pluginDescription,
   SDK_VERSION,
   SKILL_ENTRY_FILE,
+  type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
 import { Inject, Injectable } from "@nestjs/common";
@@ -18,7 +19,7 @@ import { type ExpressionBuilder, sql } from "kysely";
 import semver from "semver";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { ExtensionAdminOps } from "../extensions/admin-ops.js";
+import { ExtensionAdminOps, type InstallView } from "../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { writeSnapshot } from "../extensions/approvals.js";
 import { blobKey, ExtensionBlobs } from "../extensions/blobs.js";
@@ -47,6 +48,7 @@ import {
   permissionKeyItems,
 } from "../extensions/permission-view.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import type { SingleProviderBlock } from "../extensions/single-provider.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -72,6 +74,7 @@ import type {
   SourceDetail,
 } from "./catalog.service.js";
 import { findConnectorIn } from "./catalog-content.js";
+import { displayFilePaths, putDisplayFiles, sweepDisplayFiles } from "./catalog-files.js";
 import {
   assertOrgsExist,
   assertPluginNameOwner,
@@ -118,6 +121,7 @@ import {
   packagePath,
   readPluginFiles,
   readPluginPackage,
+  themeApiError,
 } from "./plugin-package.js";
 import { hasImportRequests, importRequestOf, resolveImportRequests } from "./request-rules.js";
 import { assertNameNotReserved } from "./reserved-names.js";
@@ -142,8 +146,10 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  * catalog name / version conflicts and the actor still a super admin. Dependencies are only
  * resolved against the imported catalog versions for the review (an unresolved one does not block
  * the import, spec §4.1); they are never fetched. Only then is the extension handed to
- * `ExtensionInstalls.ingest` (source `catalog`), the skill / template / icon files written to object
- * storage, a staging row written (24 hours) and `catalog.plugin_staged` audited.
+ * `ExtensionInstalls.ingest` (source `catalog`), the skill / template files written to object
+ * storage, the display files (icons, setup guide files; `catalog-files.ts`) written to PG with a
+ * staging row (24 hours), and `catalog.plugin_staged` audited. A display file inside a skill
+ * directory or at a template's path goes to both places: each reader finds it where it looks.
  *
  * confirm: `reviewHash` must match the staging; in one transaction it deletes the staging row
  * (confirm works once), locks the extension name and recomputes its deployment state (installed /
@@ -157,9 +163,10 @@ export const PLATFORM_SYNC_RETRY_MS = 60_000;
  * not installed gets its old snapshot back.
  *
  * Expired staging is cleaned by the maintenance job `app-staging-cleanup`
- * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix; a stored
- * extension package stays in the content-addressed `extension_packages` (the same as importing the
- * same tgz again; without an install record referencing it it is never loaded).
+ * ({@link PluginImport.cleanupExpired}): it deletes the staging row and its object prefix, then the
+ * display files (`catalog_files`) nothing lists any more; a stored extension package stays in the
+ * content-addressed `extension_packages` (the same as importing the same tgz again; without an
+ * install record referencing it it is never loaded).
  */
 
 /** How long a staged import is kept. */
@@ -238,6 +245,19 @@ export interface PluginReviewAgentTemplate {
   effort?: AgentTemplate["effort"];
   maxSteps?: number;
   skills?: string[];
+}
+
+/** One theme in a review (themes spec §6): what the super admin sees before confirming. */
+export interface PluginReviewTheme {
+  /** The theme id (the file's base name). */
+  id: string;
+  name: LocalizedName;
+  /** The schemes it defines. */
+  schemes: ThemeScheme[];
+  /** Number of fonts. */
+  fonts: number;
+  /** It replaces the logo mark, the wordmark or the favicon. */
+  logo: boolean;
 }
 
 /** The source of a staged import. */
@@ -328,6 +348,11 @@ export interface PluginReview {
    */
   agentTemplates?: PluginReviewAgentTemplate[];
   /**
+   * Themes (themes spec §6). Absent without any; left out of {@link pluginReviewHash} when empty,
+   * so the digests of plugins without themes are unchanged.
+   */
+  themes?: PluginReviewTheme[];
+  /**
    * Each dependency with the highest imported catalog version satisfying its range (null when
    * nothing does yet: the import still completes, an org install is refused until it is imported).
    */
@@ -356,11 +381,21 @@ export interface ExtensionDeployResult {
   sha256: string;
   /**
    * enabled: installed and enabled; installed: installed, desired state left as it was (confirm
-   * with `enable: false`, the bootstrap step's upgrades); failed: see code / message.
+   * with `enable: false`, the bootstrap step's upgrades), or left disabled because a
+   * single-provider extension point is taken (code / message / `singleProvider` say so); failed:
+   * see code / message.
    */
   result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
+  /**
+   * Installed but left disabled (result `installed`, code `extension.single_provider_enabled`, or
+   * `extension.single_provider_required` when the holder is a required plugin): another enabled
+   * extension provides a single-provider extension point this one provides (a new install, or an
+   * upgrade whose new version newly provides it). The super admin disables that one, then enables
+   * this one; a required holder cannot be replaced.
+   */
+  singleProvider?: SingleProviderBlock;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
 }
@@ -492,11 +527,16 @@ const mismatch = (what: string) =>
 
 /**
  * The API error of a plugin package that cannot be read in a catalog path: the pre-0.1.0 format ->
- * `catalog.legacy_format`, anything else -> `catalog.invalid_manifest` (issues as details).
+ * `catalog.legacy_format`; a failing theme (themes spec §5) -> `theme.invalid` (details
+ * `[{ theme, errors }]`) or `theme.unreadable` (details `[{ theme, issues }]`, the failing pairs);
+ * anything else -> `catalog.invalid_manifest` (issues as details).
  */
 export function catalogPackageError(e: PluginPackageError | ExtensionPackageError): ApiError {
   const legacy = e.code === "catalog.legacy_format" || e.code === "extension.legacy_format";
   if (legacy) return new ApiError("catalog.legacy_format", e.message, e.issues);
+  if (e.code === "theme.invalid" || e.code === "theme.unreadable") {
+    return themeApiError(e as PluginPackageError);
+  }
   return invalid(e.issues);
 }
 
@@ -818,7 +858,20 @@ export class PluginImport {
       );
       await assertDowngradable(this.db, extension, ext.migrationSql);
     }
-    if (content.files.length > 0) this.files.assertAvailable();
+    // Display files go to PG with the staging row; skills and templates need object storage, which a
+    // bootstrap import never has (the object store may be a bootstrap plugin itself). A file that is
+    // both (an icon inside a skill directory) goes to both: the readers of each look only there
+    const displayFiles = content.files.filter((f) => content.displayPaths.has(f.path));
+    const objectFiles = content.files.filter((f) => content.objectPaths.has(f.path));
+    if (objectFiles.length > 0 && retry === undefined) {
+      if (source.kind === "bootstrap" && !this.files.available) {
+        throw new ApiError(
+          "storage.unavailable",
+          `Bootstrap plugin ${m.name} ships skills, connector templates, agent templates or themes, which are kept in object storage, and object storage is not running yet (it may be a bootstrap plugin itself); a required bootstrap plugin may ship only an icon and setup guides, an optional one is retried once the extensions have loaded`,
+        );
+      }
+      this.files.assertAvailable();
+    }
     const src: PluginImportSource = {
       kind: source.kind,
       ref: source.ref,
@@ -869,6 +922,7 @@ export class PluginImport {
       skills: content.skills,
       connectorTemplates: content.templates,
       ...(content.agentTemplates.length > 0 && { agentTemplates: content.agentTemplates }),
+      ...(content.themes.length > 0 && { themes: content.themes }),
       dependencies,
       source: src,
       provenance: (opts.provenance ?? NOT_NPM).provenance,
@@ -904,9 +958,9 @@ export class PluginImport {
       );
     }
     let objectPrefix: string | null = null;
-    if (content.files.length > 0 && retry === undefined) {
+    if (objectFiles.length > 0 && retry === undefined) {
       objectPrefix = catalogObjectPrefix(itemId, version, stagingId);
-      await putCatalogFiles(this.files, objectPrefix, content.files);
+      await putCatalogFiles(this.files, objectPrefix, objectFiles);
     }
     const keys = ext
       ? permissionKeys(permissionSetOfPackage(ext))
@@ -932,7 +986,17 @@ export class PluginImport {
       ...(license.truncated && { licenseTruncated: true as const }),
       ...(retry !== undefined && { retry: true as const }),
     };
-    await this.writeStaging(actor, stagingId, review, staged, objectPrefix, src, opts, owner);
+    await this.writeStaging(
+      actor,
+      stagingId,
+      review,
+      staged,
+      objectPrefix,
+      src,
+      opts,
+      owner,
+      displayFiles,
+    );
     return { stagingId, review, permissionKeys: keys, permissionsMismatch: mismatch };
   }
 
@@ -947,10 +1011,13 @@ export class PluginImport {
     src: PluginImportSource,
     opts: ActorOpts,
     owner: ImportOwner | undefined,
+    displayFiles: { sha256: string; data: Uint8Array }[],
   ): Promise<void> {
     const { extension } = review;
     const t = this.db;
     await this.authorizeActor(actor, owner);
+    // committed with the staging row that lists them (the sweep keeps what a staging lists)
+    await putDisplayFiles(t, displayFiles);
     await t
       .insertInto("plugin_import_staging")
       .values({
@@ -1646,7 +1713,9 @@ export class PluginImport {
 
   /**
    * Deploys the plugin's extension after the commit: `install` (a new install is disabled, a version
-   * change keeps the desired state) then `enable`. Nothing is thrown; the result says what happened.
+   * change keeps the desired state) then `enable`, unless another enabled extension provides one of
+   * its single-provider extension points: then it stays disabled (result `installed` with code
+   * `extension.single_provider_enabled`). Nothing is thrown; the result says what happened.
    * When an upgrade was not installed, the snapshot overwritten at confirm is restored (the old
    * version keeps running, F-O; audit `extension.permissions_restored`). Retry through the extension
    * admin (the package is already in the package store) with the sha256 from the result.
@@ -1670,8 +1739,9 @@ export class PluginImport {
       e instanceof ApiError
         ? { code: e.code as string, message: e.message }
         : { code: "internal", message: "Internal error" };
+    let installed: InstallView;
     try {
-      await this.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
+      installed = await this.ops.install(p.name, p.sha256, actor, opts.actorTokenId, {
         catalogItemId: itemId,
       });
     } catch (e) {
@@ -1695,10 +1765,17 @@ export class PluginImport {
       }
       return result;
     }
+    // An upgrade of an enabled extension that newly provides a held single-provider point: left
+    // disabled by the install, and why
+    if (installed.leftDisabled !== undefined) {
+      return { ...base, result: "installed", ...installed.leftDisabled };
+    }
     if (!enable) return { ...base, result: "installed" };
     try {
-      await this.ops.enable(p.name, actor, opts.actorTokenId);
-      return { ...base, result: "enabled" };
+      const r = await this.ops.enableUnlessOccupied(p.name, actor, opts.actorTokenId);
+      if (r.enabled) return { ...base, result: "enabled" };
+      // A single-provider point another enabled extension provides: installed disabled, and why
+      return { ...base, result: "installed", ...r.note };
     } catch (e) {
       this.log.warn("enabling a plugin's extension failed", { plugin: p.name, err: e });
       return { ...base, result: "failed", ...failure(e) };
@@ -1759,11 +1836,24 @@ export class PluginImport {
   }
 
   /**
-   * Deletes expired staging rows and their object prefixes (maintenance job `app-staging-cleanup`).
-   * Row by row: objects first, then the row (a failed object delete keeps the row for the next
-   * round); concurrent replicas skip each other's rows (`SKIP LOCKED`). Returns the rows deleted.
+   * Deletes expired staging rows and their object prefixes (maintenance job `app-staging-cleanup`),
+   * then the unused display files ({@link sweepDisplayFiles}). Row by row: objects first, then the
+   * row (a failed object delete keeps the row for the next round); concurrent replicas skip each
+   * other's rows (`SKIP LOCKED`). Returns the rows deleted.
    */
   async cleanupExpired(): Promise<number> {
+    const total = await this.cleanupStagingRows();
+    // display files no version or staging lists (an abandoned import's), older than a staging
+    try {
+      await sweepDisplayFiles(this.db, PLUGIN_STAGING_TTL_MS);
+    } catch (err) {
+      this.log.warn("cannot sweep unused catalog display files", { err });
+    }
+    return total;
+  }
+
+  /** The expired staging rows, batch by batch; returns the rows deleted. */
+  private async cleanupStagingRows(): Promise<number> {
     let total = 0;
     for (;;) {
       const batch = await this.db
@@ -1923,9 +2013,18 @@ export class PluginImport {
     format: PluginSourceFormat = "capybara",
   ): {
     files: SkillPackageFile[];
+    /** The paths of `files` kept in PG (`catalog_files`): icons and setup guide files. */
+    displayPaths: Set<string>;
+    /**
+     * The paths of `files` kept under the version's object prefix: skill files, connector and agent
+     * templates, theme files and their assets (a display path may be one too: then it is kept in
+     * both places).
+     */
+    objectPaths: Set<string>;
     templates: PluginReviewTemplate[];
     skills: PluginReview["skills"];
     agentTemplates: PluginReviewAgentTemplate[];
+    themes: PluginReviewTheme[];
     /** Translated templates whose connector is not loaded (static checks only, Decisions 2). */
     notLoaded: string[];
     /** Template id -> path. */
@@ -1941,7 +2040,17 @@ export class PluginImport {
       const data = pkg.files.get(path);
       if (data !== undefined && !stored.has(path)) stored.set(path, fileOf(path, data));
     };
-    if (m.icon !== undefined) keep(packagePath(m.icon));
+    const objectPaths = new Set<string>();
+    const keepObject = (path: string) => {
+      keep(path);
+      if (stored.has(path)) objectPaths.add(path);
+    };
+    // The plugin icon and the setup guide templates (rendered by PluginGuides): display files
+    const displayPaths = displayFilePaths(
+      m,
+      pkg.connectorTemplates.flatMap((c) => (c.file.icon === undefined ? [] : [c.file.icon])),
+    );
+    for (const path of displayPaths) keep(path);
 
     const skills: PluginReview["skills"] = [];
     for (const s of pkg.skills) {
@@ -1963,7 +2072,7 @@ export class PluginImport {
           files: files.length,
           suggestPinned: pinned.get(s.dir) === true,
         });
-        for (const f of s.files) keep(`${s.dir}/${f}`);
+        for (const f of s.files) keepObject(`${s.dir}/${f}`);
       } catch (e) {
         if (!(e instanceof SkillArchiveError)) throw e;
         for (const p of e.problems) problems.push(`${s.dir}: ${p}`);
@@ -2010,9 +2119,8 @@ export class PluginImport {
           `${at}.connector: extension ${t.plugin} providing connector "${t.connector}" is not loaded in this deployment and is neither this plugin's extension nor a dependency`,
         );
       }
-      keep(c.path);
+      keepObject(c.path);
       templatePaths.set(c.id, c.path);
-      if (c.file.icon !== undefined) keep(packagePath(c.file.icon));
       return {
         id: c.id,
         displayName: c.file.displayName,
@@ -2026,16 +2134,36 @@ export class PluginImport {
       };
     });
     const agentTemplates: PluginReviewAgentTemplate[] = pkg.agentTemplates.map((a) => {
-      keep(a.path);
+      keepObject(a.path);
       const { name, description, instructions, model, ...rest } = a.template;
       return { name, path: a.path, description, instructions, model: model ?? "inherit", ...rest };
+    });
+    // Themes: the file as written, the assets as sanitized by the reader (never the uploaded
+    // originals: a shared path, e.g. the plugin icon, is stored sanitized too)
+    const themes: PluginReviewTheme[] = pkg.themes.map((t) => {
+      keepObject(t.path);
+      for (const [path, data] of t.assets) {
+        stored.set(path, fileOf(path, data));
+        objectPaths.add(path);
+      }
+      const logo = t.theme.logo;
+      return {
+        id: t.id,
+        name: t.theme.name,
+        schemes: (["dark", "light"] as const).filter((k) => t.theme.schemes[k] !== undefined),
+        fonts: t.theme.fonts?.length ?? 0,
+        logo: logo !== undefined && Object.keys(logo).length > 0,
+      };
     });
     if (problems.length > 0) throw invalid(problems);
     return {
       files: [...stored.values()],
+      displayPaths,
+      objectPaths,
       templates,
       skills,
       agentTemplates,
+      themes,
       notLoaded,
       templatePaths,
     };
@@ -2201,7 +2329,7 @@ function normalizedManifest(pkg: PluginContents): PluginManifest {
   const pinned = new Map(
     (pkg.manifest.skills ?? []).map((s) => [packagePath(s.path), s.pinned] as const),
   );
-  const { agents: _, ...manifest } = pkg.manifest;
+  const { agents: _, themes: __, ...manifest } = pkg.manifest;
   return {
     ...manifest,
     skills: pkg.skills.map((s) => {
@@ -2213,6 +2341,7 @@ function normalizedManifest(pkg: PluginContents): PluginManifest {
     ...(pkg.agentTemplates.length > 0 && {
       agents: pkg.agentTemplates.map((a) => ({ path: `./${a.path}` })),
     }),
+    ...(pkg.themes.length > 0 && { themes: pkg.themes.map((t) => ({ path: `./${t.path}` })) }),
   };
 }
 
@@ -2255,7 +2384,8 @@ function actionOf(
  * current version / package, its own review digest), every template field, each skill's name / path
  * / file count, the dependency resolution, the sha256 of every stored file, the format, the
  * translation report's items, the sha256 of the license text and the two review flags
- * (`claudeManifestIgnored`, `licenseTruncated`), and the agent templates when there are any.
+ * (`claudeManifestIgnored`, `licenseTruncated`), the agent templates when there are any and the
+ * themes when there are any.
  * Exported for tests. `repository` is display only.
  */
 export function pluginReviewHash(
@@ -2267,6 +2397,7 @@ export function pluginReviewHash(
     | "extension"
     | "connectorTemplates"
     | "agentTemplates"
+    | "themes"
     | "skills"
     | "dependencies"
     | "format"
@@ -2305,6 +2436,10 @@ export function pluginReviewHash(
     // phase C: agent templates, only when there are any (earlier digests stay the same)
     ...((r.agentTemplates ?? []).length > 0
       ? [(r.agentTemplates ?? []).map((a) => [a.path, canonicalJson(a)])]
+      : []),
+    // themes, only when there are any, tagged (never read as agent templates)
+    ...((r.themes ?? []).length > 0
+      ? [{ themes: (r.themes ?? []).map((t) => [t.id, canonicalJson(t)]) }]
       : []),
   ]);
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
@@ -2394,7 +2529,8 @@ function ownStaging(owner: ImportOwner | undefined) {
 /**
  * An org upload's custom deny, by content (ruling P3-15'): skills or agent templates ->
  * `customSkills`, connector templates -> `customConnectors`; each `deny` -> 403
- * `catalog.custom_disabled`. A package carrying neither passes.
+ * `catalog.custom_disabled`. A package carrying neither passes; themes are covered by neither
+ * switch (themes spec §6), so a themes-only upload passes.
  */
 async function assertCustomContent(
   db: KernelSchemaDb,

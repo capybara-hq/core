@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { DeviceAccess } from "./access.js";
@@ -12,8 +13,9 @@ import { DevicesService } from "./devices.service.js";
  * {@link SandboxModule}'s.
  */
 @Module({
-  // LocalDevicesModule: deleting a local device revokes its machine
-  imports: [SandboxModule, LocalDevicesModule],
+  // ExtensionsModule: the provider display names of demoted defaults; LocalDevicesModule: deleting
+  // a local device revokes its machine
+  imports: [SandboxModule, ExtensionsModule, LocalDevicesModule],
   providers: [DeviceAccess, DevicesService, ConversationDevices],
   exports: [DeviceAccess, DevicesService, ConversationDevices],
 })

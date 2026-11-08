@@ -217,7 +217,7 @@ async function runInBackground(
   try {
     deviceId = await deps.devices.forTool(ctx.orgId, root);
   } catch (e) {
-    throw mapSandboxError(e);
+    throw mapSandboxError(e, deps.log);
   }
   if (!(await sandbox.availableFor(deviceId))) throw noSandboxError();
   const maxTasks = cfg.sandbox.background.maxTasks;

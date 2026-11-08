@@ -77,6 +77,8 @@ export interface DeploymentSettings {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride>;
   customConnectors: CustomPolicy;
   customSkills: CustomPolicy;
+  /** The platform default theme (themes spec §7); `id` null: the built-in theme. */
+  uiTheme?: { id: string | null };
 }
 
 /** `PUT /admin/settings` 的体：只给改动的键；两个覆盖表按组织合并，值为 null 删除该组织的覆盖。 */

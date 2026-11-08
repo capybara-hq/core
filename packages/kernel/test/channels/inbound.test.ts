@@ -713,3 +713,108 @@ describe("/device: the IM default device", () => {
     expect(await db.selectFrom("device_defaults").selectAll().execute()).toHaveLength(0);
   });
 });
+
+describe("IM sender time zone and language (run context spec §3.4)", () => {
+  /** The latest user message of the owner's live direct-message thread. */
+  const lastDmMessage = async () => {
+    const t = (await threads()).find((r) => r.thread_key === "dm:u-owner" && !r.archived_at);
+    const msgs = await userMessages(t?.conversation_id as string);
+    return msgs[msgs.length - 1]?.payload as { timeZone?: string; locale?: string };
+  };
+
+  it("what the platform gives for the sender is recorded on the message, normalized", async () => {
+    await pushAndSettle(
+      dm("tz-1", "u-owner", "hi", "t1", { timeZone: "Asia/Shanghai", locale: "zh-CN" }),
+    );
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "Asia/Shanghai", locale: "zh" });
+    // an unknown zone is ignored; any other language tag is English
+    await pushAndSettle(
+      dm("tz-2", "u-owner", "hi", "t1", { timeZone: "Mars/Olympus", locale: "fr-FR" }),
+    );
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "UTC", locale: "en" });
+  });
+
+  it("without platform values: the account's zone and the latest web language, else the org's", async () => {
+    // nothing anywhere: the org defaults
+    await pushAndSettle(dm("tz-3", "u-owner", "hi"));
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "UTC", locale: "en" });
+    const pref = await owner({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      payload: { timeZone: "Europe/Berlin" },
+    });
+    expect(pref.statusCode, pref.body).toBe(200);
+    try {
+      const web = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations`,
+        payload: {
+          agentId,
+          message: { text: "from the web", clientMessageId: "web-tz-1", locale: "zh" },
+        },
+      });
+      expect(web.statusCode, web.body).toBe(201);
+      await pushAndSettle(dm("tz-4", "u-owner", "hi"));
+      expect(await lastDmMessage()).toMatchObject({ timeZone: "Europe/Berlin", locale: "zh" });
+      // the platform's values win over both
+      await pushAndSettle(
+        dm("tz-5", "u-owner", "hi", "t1", { timeZone: "Asia/Tokyo", locale: "en-US" }),
+      );
+      expect(await lastDmMessage()).toMatchObject({ timeZone: "Asia/Tokyo", locale: "en" });
+    } finally {
+      await owner({ method: "PUT", url: "/api/v1/me/preferences", payload: { timeZone: null } });
+    }
+  });
+});
+
+describe("kernel IM text in the person's language (run context spec §3.4)", () => {
+  /** Sends a direct message (optionally with a platform language) and returns the bot's reply. */
+  const sendDm = async (id: string, text: string, locale?: string): Promise<FakeChannelSent> => {
+    const n = im.sent.length;
+    const key = idempotencyKey(`${connId}-${id}-reply`);
+    im.push(connId, dm(id, "u-owner", text, "t1", locale === undefined ? undefined : { locale }));
+    return sentAfter(n, "dm-u-owner", (x) => x.idempotencyKey === key);
+  };
+
+  it("/device replies: IM language, else the latest web message's, else the org's", async () => {
+    await db.deleteFrom("device_defaults").where("account_id", "=", ownerId).execute();
+    // nothing known (the owner's web conversations hidden): the org's language (en)
+    await sql`UPDATE capybara.conversations SET deleted_at = now()
+      WHERE org_id = ${orgId} AND account_id = ${ownerId} AND kind = 'chat' AND deleted_at IS NULL
+        AND id NOT IN (SELECT conversation_id FROM capybara.channel_threads)`.execute(raw);
+    const plain = await sendDm("loc-1", "/device");
+    expect(plain.message.text).toContain("Your devices:");
+    expect(plain.locale).toBe("en");
+    // the person's latest web message is in Chinese: replies in Chinese, org still en
+    const web = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "from the web", clientMessageId: "web-loc-1", locale: "zh" },
+      },
+    });
+    expect(web.statusCode, web.body).toBe(201);
+    const zh = await sendDm("loc-2", "/device");
+    expect(zh.message.text).toContain("你的设备：");
+    expect(zh.message.text).toContain("（当前）");
+    expect(zh.locale).toBe("zh");
+    expect((await sendDm("loc-3", "/device lab")).message.text).toBe(
+      "下一个新对话将使用设备「Lab」，发送 /new 开始。",
+    );
+    expect((await sendDm("loc-4", "/new")).message.text).toBe("已开始新对话");
+    // the IM platform's language wins over the web one
+    const en = await sendDm("loc-5", "/device", "en-US");
+    expect(en.message.text).toContain("Your devices:");
+    expect(en.locale).toBe("en");
+    await db.deleteFrom("device_defaults").where("account_id", "=", ownerId).execute();
+  });
+
+  it("an unbound sender's bind prompt follows the IM language, else the org's", async () => {
+    const n = im.sent.length;
+    im.push(connId, dm("loc-6", "nobody-zh", "hi", "t1", { locale: "zh-CN" }));
+    const s = await sentAfter(n, "dm-nobody-zh");
+    expect(s.message.text).toBe("请先绑定你的 Capybara 账号，再与我对话。");
+    expect(s.locale).toBe("zh");
+  });
+});

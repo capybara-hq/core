@@ -9,6 +9,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
 import { OrgLock } from "./org-lock.js";
 
@@ -26,6 +27,8 @@ import { OrgLock } from "./org-lock.js";
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
  *   own (run context spec §3.3); an invalid stored value reads as absent.
+ * - `theme`: the org's default theme and whether members may pick their own (themes spec §7);
+ *   absent (or an invalid stored value) = follow the platform, personal picks allowed.
  */
 
 /** 组织沙箱出站白名单的主机数上限。 */
@@ -57,6 +60,23 @@ export const SandboxEgressSettingSchema = z
 
 export type SandboxEgressSetting = z.infer<typeof SandboxEgressSettingSchema>;
 
+/**
+ * The org's theme setting (themes spec §7): `id` a theme on in the org (a `platform_themes` id),
+ * null = follow the platform's default; `personal: "locked"` hides the personal picker in the org
+ * and resolution ignores personal picks there.
+ */
+export const OrgThemeSettingSchema = z
+  .object({
+    id: z.string().min(1).max(200).nullable(),
+    personal: z.enum(["allowed", "locked"]),
+  })
+  .strict();
+
+export type OrgThemeSetting = z.infer<typeof OrgThemeSettingSchema>;
+
+/** The theme setting of an org that has none: follow the platform, personal picks allowed. */
+export const DEFAULT_ORG_THEME: OrgThemeSetting = { id: null, personal: "allowed" };
+
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
@@ -67,6 +87,8 @@ export const OrgSettingsSchema = z.object({
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
   /** The org's default time zone (run context spec §3.3); absent = UTC. */
   timeZone: IanaTimeZone.optional().catch(undefined),
+  /** The org's default theme and personal lock (themes spec §7); absent = {@link DEFAULT_ORG_THEME}. */
+  theme: OrgThemeSettingSchema.optional().catch(undefined),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -84,6 +106,11 @@ export const OrgSettingsPatchSchema = z
     sandboxEgress: SandboxEgressSettingSchema.nullable().optional(),
     /** The org's default time zone (IANA); null clears it (UTC). */
     timeZone: IanaTimeZone.nullable().optional(),
+    /**
+     * The org's default theme (`id`: a theme on in the org, else 400 `theme.not_available`; null
+     * follows the platform) and whether members may pick their own; null clears it.
+     */
+    theme: OrgThemeSettingSchema.nullable().optional(),
   })
   .strict();
 
@@ -261,12 +288,19 @@ export class OrgSettingsService {
     if (after.sandboxEgress === undefined) delete after.sandboxEgress;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
+    if (after.theme === undefined) delete after.theme;
     if (sameSettings(before, after)) return before;
+    // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
+    // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
+    if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
+      await assertThemeOnIn(this.db.db, orgId, patch.theme.id);
+    }
     // 与存量合并：保留本版本不认识的键（清除的 sandboxEgress 不留在存量里）
     const {
       sandboxEgress: _old,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
+      theme: _oldTheme,
       ...rest
     } = stored;
     await this.db

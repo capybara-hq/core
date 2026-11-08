@@ -1,5 +1,164 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.12
+
+### Patch Changes
+
+- Updated dependencies [bbd508e]
+- Updated dependencies [00e742e]
+- Updated dependencies [b2b3faa]
+- Updated dependencies [f120273]
+- Updated dependencies [2191e44]
+- Updated dependencies [c489ee6]
+  - @capybara-hq/kernel@0.1.0-rc.11
+
+## 0.1.0-rc.11
+
+### Patch Changes
+
+- dbea14d: Deleting a platform plugin whose extension is still enabled is refused with 409
+  `catalog.extension_enabled` (disable the extension first, as an uninstall requires); the admin
+  plugin page says so in the delete confirm and links to the extension.
+- fa23383: Plugin icons, connector template icons and setup guide files are kept in PG (`catalog_files`,
+  migration 0100) instead of object storage, so a bootstrap plugin that ships an icon imports before
+  any object store runs and a deployment without an object store still shows icons and guides. The
+  staging cleanup removes the ones nothing lists any more.
+- eb83fb5: Catalog and marketplace icon fixes. A display file inside a skill directory or at a template's
+  path (a plugin icon under `skills/<name>/`) is also stored in object storage, so the platform sync
+  of that skill no longer fails. Marketplace icons: a failed icon write is recovered by the next
+  refresh at the same commit; failed icon URLs are retried after 6 hours, after the URLs never
+  tried; stored icons are checked again (sha256 and content) when served.
+- 09dea3e: A connector template file may say `"defaultEnabled": false`: the template then starts switched
+  off in every org, even where its plugin is on, until an org admin switches it on, and while off it
+  creates no connector and needs no org input (no 需要配置). Ignored for a builtin plugin and for a
+  template the super admin gave its own scope.
+- c85f0b6: Connector templates shipped `"defaultEnabled": false` show up correctly in previews. Moving one
+  from its own scope back to following its plugin lists the orgs it turns off in. A platform update
+  no longer asks for input on an added template that is shipped off. An update that changes
+  `defaultEnabled` on a template lists, for each org without a switch of its own, the template
+  under `needsConfig` (now on) or under the new `turnedOff` (now off, with the agents using it and
+  the connectors it keeps). OAuth hardening: an auth preset's `tokenTypes` refuses `DPoP`, and a
+  token endpoint's HTTP 200 with RFC 6749's `temporarily_unavailable` or `server_error` counts as
+  unavailable instead of a refusal.
+- cafa6e4: A person's default environment left behind by a sandbox provider switch is now shown as
+  「个人环境（Docker 沙箱）」 / "Personal (Docker sandbox)" (the provider's display name, not its
+  plugin id), and switching back to that provider makes it the default again, with its files,
+  instead of creating another empty default. Renaming such an environment makes it an ordinary one.
+  
+  Rolling deploys: replicas older than migration 0096 still rename a demoted default
+  `Personal (<plugin id>)` instead of marking it; that is accepted before 0.1.0, so don't run old
+  replicas alongside new ones across this upgrade.
+- c3e12b3: A second enabled provider of a single-provider extension point now shows as a conflict (replica
+  reason and status `conflict`, naming the provider in the way) instead of a missing dependency, and
+  loads by itself once the other provider is disabled.
+- 60ce217: IM approval cards show what the web shows, never the raw call input: the approval card's
+  `inputPreview` now carries one line, the tool's confirmation summary in the card language (a
+  Platform operation's `summary`), else the tool's title and key argument (`Title: arg`), redacted
+  and at most 300 characters; the full input stays behind the card's web link. `renderCardAsText`
+  labels the line Summary / 摘要 and leaves it out when it is empty.
+- 3cbf6e8: Kernel-generated IM text speaks the person's language, not the org's: `/new`, `/env`, bind prompts
+  and card-click replies use the sender's platform language, else the bound person's latest web
+  message language, else the org's; delivered cards and notices use the language recorded on the
+  conversation's latest user message (in a group thread, the person who triggered the run).
+  `ChannelSendArgs.locale` carries that language to the extension.
+- 5ec789c: IM time zone and language per person: channel@1 `InboundSender` gains optional `timeZone` (IANA)
+  and `locale` (`zh` / `en` or a BCP 47 tag). The kernel records on an IM `user_message` the
+  platform's zone (when valid), else the account setting, else the org default, and the platform's
+  language (`zh` / `zh-*` Chinese, any other tag English), else the UI language of the person's most
+  recent web message in the org, else the org's `locale`. Any message without a language uses the
+  latest web language the same way, and run start falls back to the author's settings for a message
+  from an older log. The fake channel's sender profile takes `timeZone` and `locale`.
+- ff9cd78: The workspace 插件 → 市场 tab shows plugin icons too: the org marketplace entries carry `icon`, the
+  item's org icon when the org sees the imported plugin, else the marketplace icon on
+  `GET /api/v1/orgs/:orgId/marketplaces/:id/icons/:sha256` (org admins, gated like the org browse).
+- 2435645: Marketplace rows show icons: an imported plugin its catalog icon, otherwise the icon its
+  marketplace entry names. The kernel downloads entry icons on refresh through the marketplace
+  network rules (or reads them from a git marketplace's commit), keeps real svg / png files of at
+  most 64 KiB in PG (migration 0101) and serves them to super admins on
+  `GET /api/v1/admin/marketplaces/:id/icons/:sha256`; the admin entries carry `icon`. A bad icon never
+  fails the refresh.
+- ebe127f: OAuth connectors work with Slack-like token endpoints. A token response with `token_type: "user"`
+  (Slack's `oauth.v2.user.access`) is accepted and sent as `Authorization: Bearer`, like `Bearer`;
+  an `oauth_code` / `oauth_client` auth preset may list more accepted types in `tokenTypes`, and
+  any other type is still refused (`unsupported_token_type`). A token endpoint error reported as
+  HTTP 200 with `{ "ok": false, "error": … }` (or an `error` and no token) is a refusal with that
+  code, like a 400: `invalid_refresh_token`, `token_revoked` and `token_expired` join `invalid_grant`
+  in deleting the person's connection so they are asked to reconnect, transient codes such as
+  `ratelimited` count as unavailable, and other codes keep the credential.
+- 48b244e: Plugin icons wherever the kernel shows something a plugin brings: channel connections
+  (`pluginIcon`, `pluginDisplayName`), org and admin extensions, model providers and the catalog
+  lists carry the URL of their plugin's icon for the reader's scope (org or admin icon route; null
+  without one, or when the org may not see the plugin). The web draws it as the mark, falling back to
+  the initial, and the org channels page is a card list.
+- f74afee: Plugin setup guides: an import validates and stores a plugin's `setupGuides` template files with
+  the version; `GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId?mode=&connectionId=&name=`
+  renders a guide for the org (the catalog icon's visibility, `channels.manage` for a channel guide)
+  with a fixed set of safe variables (`publicUrl`, `webhookUrl`, `signInCallbackUrl`,
+  `connectionName`, `orgName`, `pluginName`, `pluginVersion`, `mode`; never a secret). Channel
+  connections record the guide they were set up with (`guideAck`, migration 0099), carry
+  `setupGuide` and `guideDrift` when an upgrade changed the templates of their mode, and
+  `POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack { hash }` confirms the platform app was
+  updated. `GET channels/schema/:plugin` gains `guide`.
+- 733a954: After an environment's files are reset (on the environments page, by the Platform operation, or
+  after they were lost), each conversation of the environment now learns on its next sandbox command
+  that the files were reset, instead of being told the instance restarted with its files kept. The
+  kernel counts resets itself, since a provider may give the new file system the old id. A connected
+  machine's lost directory recreated by a new `capybara-device login` counts as a reset too. So does a
+  new login from another machine, or from another directory or mode on the same machine.
+- a4ab6e3: A sandbox provider that can't be reached (connection refused, unknown host, a dropped connection)
+  now gives the sandbox tools an actionable error instead of a generic failure: a connection that
+  never opened says nothing ran and an admin must check the sandbox extension; one that broke
+  mid-call says to check the sandbox before retrying. The raw error stays in the kernel log.
+- f035baa: Switching a channel connection's inbound mode no longer clears the setup guide update notice: the
+  mode switch moves the recorded guide on only when it shows no drift, so the notice stays until a
+  person confirms 「我已更新应用」. The 接入指南 says why a variable has no value (saving the
+  channel on 新建渠道, or the public address and webhook address a super admin sets in the
+  deployment settings), and the guide read is keyed by the plugin version so an upgrade shows the
+  new manifest.
+- 0e8592b: A single-provider extension point (sandbox, object store, secret store, config source) takes one
+  enabled provider: enabling a second one is refused with 409 `extension.single_provider_enabled`
+  (disable the current one first), an import or bootstrap preinstall of a second one is installed
+  disabled and says why, and two left enabled from before load the earliest enabled on every replica
+  and after every restart (`extension_installs.enabled_at`, migration 0097). The admin console turns
+  启用 off with a line naming the provider to disable and a link to it.
+- cb6f42d: Single-provider extension points, follow-ups. An upgrade of an enabled extension whose new version
+  newly provides a single-provider point another extension holds installs the new version disabled
+  and says why (`leftDisabled`, the import / update / bootstrap results) instead of silently taking
+  the point over. A required bootstrap entry whose point is held fails the bootstrap ("disable
+  <other> and run the bootstrap again"). A point a required plugin holds cannot be replaced: 409
+  `extension.single_provider_required`, and the admin console says so. Refusals name the provider
+  actually loaded. When the elected provider fails to load, the admin console warns that the point
+  has no running provider.
+  
+  Upgrading: a deployment that already had two enabled providers of one point (from before the
+  one-provider rule) could switch providers on the rolling deploy, because migration 0097 picks the
+  one enabled first by the audit. Migration 0098 prefers the provider replicas are running (a
+  `loaded` replica status row, most recent heartbeat); with no such row the 0097 order stays, and the
+  provider may change: check the admin console after the upgrade and disable the one you don't want.
+- Updated dependencies [6599de8]
+- Updated dependencies [2de4f26]
+- Updated dependencies [dbea14d]
+- Updated dependencies [fa23383]
+- Updated dependencies [eb83fb5]
+- Updated dependencies [09dea3e]
+- Updated dependencies [c85f0b6]
+- Updated dependencies [cafa6e4]
+- Updated dependencies [c3e12b3]
+- Updated dependencies [60ce217]
+- Updated dependencies [3cbf6e8]
+- Updated dependencies [5ec789c]
+- Updated dependencies [ff9cd78]
+- Updated dependencies [2435645]
+- Updated dependencies [ebe127f]
+- Updated dependencies [48b244e]
+- Updated dependencies [f74afee]
+- Updated dependencies [733a954]
+- Updated dependencies [a4ab6e3]
+- Updated dependencies [f035baa]
+- Updated dependencies [0e8592b]
+- Updated dependencies [cb6f42d]
+  - @capybara-hq/kernel@0.1.0-rc.10
+
 ## 0.1.0-rc.10
 
 ### Patch Changes

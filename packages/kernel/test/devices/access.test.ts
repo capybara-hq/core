@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceAccess } from "../../src/devices/access.js";
@@ -178,10 +178,10 @@ describe("device access", () => {
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
       VALUES (${oldId}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
-    // the name the demoted one would get is taken: it gets the next free one
+    // a person-made device named like the old generated name is left alone
     await sql`INSERT INTO capybara.devices
         (id, org_id, owner_kind, owner_account_id, name, source, provider)
-      VALUES (${randomUUID()}, ${orgId}, 'personal', ${me}, 'personal (SANDBOX-OLD)', 'cloud',
+      VALUES (${randomUUID()}, ${orgId}, 'personal', ${me}, 'Personal (sandbox-old)', 'cloud',
         'sandbox-fake')`.execute(raw);
 
     const ids = await Promise.all(
@@ -202,9 +202,13 @@ describe("device access", () => {
     });
     expect(body.items.find((e) => e.id === oldId)).toMatchObject({
       isDefault: false,
-      name: "Personal (sandbox-old) 2",
+      name: null,
+      demotedFrom: { provider: "sandbox-old", displayName: null, ordinal: 1 },
       provider: "sandbox-old",
       available: false,
+    });
+    expect(body.items.find((e) => e.name === "Personal (sandbox-old)")).toMatchObject({
+      demotedFrom: null,
     });
     // a new conversation without a choice gets the fresh default
     expect(await k.app.get(ConversationDevices).forNew(orgId, me)).toBe(freshId);
@@ -224,6 +228,233 @@ describe("device access", () => {
     const id = await service.ensureDefault(orgId, me);
     await sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${id}`.execute(raw);
     expect(await service.ensureDefault(orgId, me)).toBe(id);
+  });
+
+  it("switching the provider back restores the demoted default instead of making another", async () => {
+    const service = k.app.get(DevicesService);
+    const providers = k.app.get(SandboxProviders);
+    const login = `rs-${randomUUID().slice(0, 8)}`;
+    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, me, "member", ownerId);
+    const req = await session(k, login);
+    const realCurrent = providers.cloud.bind(providers);
+    const switchTo = (plugin: string | null) => {
+      vi.restoreAllMocks();
+      if (plugin === null) return;
+      const impl = realCurrent()?.impl;
+      if (!impl) throw new Error("no current provider");
+      vi.spyOn(providers, "cloud").mockReturnValue({ plugin, impl });
+    };
+    const rows = () =>
+      db
+        .selectFrom("devices")
+        .select(["id", "name", "is_default", "demoted_from_provider"])
+        .where("org_id", "=", orgId)
+        .where("owner_account_id", "=", me)
+        .where("deleted_at", "is", null)
+        .orderBy("created_at")
+        .orderBy("id")
+        .execute();
+
+    // P1 (sandbox-fake): the default, whose files the provider keeps
+    const d1 = await service.ensureDefault(orgId, me);
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${d1}, ${orgId}, 'sandbox-fake', '{"id":"fs-d1"}'::jsonb, 'ready')`.execute(raw);
+    // a person-made device named like a demoted default, with files at P1: never restored
+    const named = await service.create(orgId, me, { name: "Personal (sandbox-fake)" });
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${named.id}, ${orgId}, 'sandbox-fake', '{"id":"fs-n"}'::jsonb, 'ready')`.execute(raw);
+
+    try {
+      // P1 -> P2: d1 is demoted (marker, no name), a fresh default d2 is made
+      switchTo("sandbox-other");
+      const d2 = await service.ensureDefault(orgId, me);
+      expect(d2).not.toBe(d1);
+      expect(await rows()).toEqual([
+        { id: d1, name: null, is_default: false, demoted_from_provider: "sandbox-fake" },
+        {
+          id: named.id,
+          name: "Personal (sandbox-fake)",
+          is_default: false,
+          demoted_from_provider: null,
+        },
+        { id: d2, name: null, is_default: true, demoted_from_provider: null },
+      ]);
+
+      // P2 -> P1: d1 comes back (same row, same files), d2 is demoted; no new row
+      switchTo(null);
+      const back = await Promise.all(
+        Array.from({ length: 8 }, () => service.ensureDefault(orgId, me)),
+      );
+      expect(new Set(back)).toEqual(new Set([d1]));
+      expect(await rows()).toEqual([
+        { id: d1, name: null, is_default: true, demoted_from_provider: null },
+        {
+          id: named.id,
+          name: "Personal (sandbox-fake)",
+          is_default: false,
+          demoted_from_provider: null,
+        },
+        { id: d2, name: null, is_default: false, demoted_from_provider: "sandbox-other" },
+      ]);
+      const fs = await db
+        .selectFrom("device_instances")
+        .select("fs_handle")
+        .where("device_id", "=", d1)
+        .executeTakeFirstOrThrow();
+      expect(fs.fs_handle).toEqual({ id: "fs-d1" });
+
+      const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as { items: DeviceView[]; defaultId: string };
+      expect(body.defaultId).toBe(d1);
+      expect(body.items.find((e) => e.id === d1)).toMatchObject({
+        isDefault: true,
+        name: null,
+        demotedFrom: null,
+        available: true,
+      });
+      expect(body.items.find((e) => e.id === d2)).toMatchObject({
+        isDefault: false,
+        name: null,
+        demotedFrom: { provider: "sandbox-other", ordinal: 1 },
+      });
+
+      // and again: back and forth swaps the two rows, never adds one
+      switchTo("sandbox-other");
+      expect(await service.ensureDefault(orgId, me)).toBe(d2);
+      switchTo(null);
+      expect(await service.ensureDefault(orgId, me)).toBe(d1);
+      expect((await rows()).length).toBe(3);
+
+      // renaming a demoted default takes it over: it is no longer restorable
+      await service.rename(orgId, me, d2, "Old E2B box");
+      expect((await rows()).find((r) => r.id === d2)).toMatchObject({
+        name: "Old E2B box",
+        demoted_from_provider: null,
+      });
+      switchTo("sandbox-other");
+      const d3 = await service.ensureDefault(orgId, me);
+      expect([d1, d2, named.id]).not.toContain(d3);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  describe("which former default replaces the live one", () => {
+    const member = async (prefix: string) => {
+      const login = `${prefix}-${randomUUID().slice(0, 8)}`;
+      const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
+        .id;
+      await testMembers(db).add(orgId, me, "member", ownerId);
+      return me;
+    };
+    const switcher = () => {
+      const providers = k.app.get(SandboxProviders);
+      const realCurrent = providers.cloud.bind(providers);
+      return (plugin: string | null) => {
+        vi.restoreAllMocks();
+        if (plugin === null) return;
+        const impl = realCurrent()?.impl;
+        if (!impl) throw new Error("no current provider");
+        vi.spyOn(providers, "cloud").mockReturnValue({ plugin, impl });
+      };
+    };
+    /** An instance row; `usedDaysAgo` sets last_used_at. */
+    const instance = async (
+      id: string,
+      provider: string,
+      fs: "none" | "ready" | "lost",
+      opts: { status?: string; usedDaysAgo?: number } = {},
+    ) => {
+      const handle = fs === "none" ? null : JSON.stringify({ id: `fs-${id.slice(0, 8)}` });
+      await sql`INSERT INTO capybara.device_instances
+          (device_id, org_id, provider, fs_handle, fs_status, status, last_used_at)
+        VALUES (${id}, ${orgId}, ${provider}, ${handle}::jsonb, ${fs}, ${opts.status ?? "none"},
+          now() - make_interval(days => ${opts.usedDaysAgo ?? 0}))`.execute(raw);
+    };
+    /** A former default of `me` demoted from `from`. */
+    const former = async (me: string, from: string) => {
+      const id = randomUUID();
+      await sql`INSERT INTO capybara.devices
+          (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider,
+           demoted_from_provider)
+        VALUES (${id}, ${orgId}, 'personal', ${me}, NULL, false, 'cloud', ${from}, ${from})`.execute(
+        raw,
+      );
+      return id;
+    };
+    const liveCount = async (me: string) =>
+      (
+        await db
+          .selectFrom("devices")
+          .select("id")
+          .where("org_id", "=", orgId)
+          .where("owner_account_id", "=", me)
+          .where("deleted_at", "is", null)
+          .execute()
+      ).length;
+
+    it("a former default swapped out while empty and used later belongs to the provider holding its files", async () => {
+      const service = k.app.get(DevicesService);
+      const me = await member("ru");
+      const switchTo = switcher();
+      try {
+        // P (sandbox-fake): L holds files at P
+        const l = await service.ensureDefault(orgId, me);
+        await instance(l, "sandbox-fake", "ready", { usedDaysAgo: 2 });
+        // P -> Q: L demoted (marker P), D made under Q; D gets no files
+        switchTo("sandbox-other");
+        const d = await service.ensureDefault(orgId, me);
+        expect(d).not.toBe(l);
+        // Q -> P: the empty swap restores L and demotes D (marker Q)
+        switchTo(null);
+        expect(await service.ensureDefault(orgId, me)).toBe(l);
+        // a conversation bound to D then makes D's files at P
+        await instance(d, "sandbox-fake", "ready");
+        expect((await service.get(orgId, me, d)).demotedFrom).toMatchObject({
+          provider: "sandbox-fake",
+          ordinal: 1,
+        });
+        // P -> Q: L is stranded; D's files are at P, so it is not Q's former default
+        switchTo("sandbox-other");
+        const e = await service.ensureDefault(orgId, me);
+        expect([l, d]).not.toContain(e);
+        // Q -> P: D (files at P, the most recently used) is restored, nothing is added
+        switchTo(null);
+        expect(await service.ensureDefault(orgId, me)).toBe(d);
+        expect(await liveCount(me)).toBe(3);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("never swaps away a live default whose first instance is being created", async () => {
+      const service = k.app.get(DevicesService);
+      const me = await member("rc");
+      const d = await service.ensureDefault(orgId, me);
+      // SandboxService's first use: status creating, no file system, no handle yet
+      await instance(d, "sandbox-fake", "none", { status: "creating" });
+      const l = await former(me, "sandbox-fake");
+      await instance(l, "sandbox-fake", "ready");
+      expect(await service.ensureDefault(orgId, me)).toBe(d);
+    });
+
+    it("lost files count as none when picking the default", async () => {
+      const service = k.app.get(DevicesService);
+      const me = await member("rl");
+      const d = await service.ensureDefault(orgId, me);
+      const lost = await former(me, "sandbox-fake");
+      await instance(lost, "sandbox-fake", "lost");
+      // a lost former default does not win over the healthy empty live default
+      expect(await service.ensureDefault(orgId, me)).toBe(d);
+      // nor over a former default with healthy files, even when used more recently
+      const healthy = await former(me, "sandbox-fake");
+      await instance(healthy, "sandbox-fake", "ready", { usedDaysAgo: 3 });
+      expect(await service.ensureDefault(orgId, me)).toBe(healthy);
+    });
   });
 });
 

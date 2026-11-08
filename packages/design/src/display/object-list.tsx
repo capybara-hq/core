@@ -6,17 +6,25 @@ import { BoxScope } from "../layout/box";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
-import { initialOf } from "./initial";
+import { MarkImage } from "./object-mark";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 export type ObjectRowProps = {
   /**
    * The 36 px mark: `text` is the display name, drawn as its upper-cased first grapheme (the one
-   * avatar-tile rule); `icon` only for rows that are steps, not objects; `warn` when it needs
-   * attention. `avatar` (an agent's row): its `Avatar` at 28 (§6.30) in the mark's 36 px place;
-   * `null` draws the initial square.
+   * avatar-tile rule); `image`, for a thing a plugin brings (a channel, an extension, a model
+   * provider), the plugin's declared icon at 24 on the tile, the initial when it fails to load
+   * (maintainer decision 2026-11-08); `icon` only for rows that are steps, not objects; `warn`
+   * when it needs attention. `avatar` (an agent's row): its `Avatar` at 28 (§6.30) in the mark's
+   * 36 px place; `null` draws the initial square.
    */
-  mark: { text?: string; icon?: IconName; tone?: "neutral" | "warn"; avatar?: AvatarValue };
+  mark: {
+    text?: string;
+    image?: string | null;
+    icon?: IconName;
+    tone?: "neutral" | "warn";
+    avatar?: AvatarValue;
+  };
   name: string;
   /** The name links here. */
   href?: string;
@@ -136,8 +144,21 @@ export function ObjectRow({
           <Avatar value={mark.avatar} name={mark.text ?? name} size={28} />
         </span>
       ) : (
-        <span className="cb-object-mark" data-tone={mark.tone ?? "neutral"} aria-hidden="true">
-          {mark.icon ? <Icon name={mark.icon} size={16} /> : initialOf(mark.text ?? "")}
+        <span
+          className="cb-object-mark"
+          data-tone={mark.tone ?? "neutral"}
+          data-kind={mark.image ? "image" : undefined}
+          aria-hidden="true"
+        >
+          {mark.icon ? (
+            <Icon name={mark.icon} size={16} />
+          ) : (
+            <MarkImage
+              {...(mark.image ? { src: mark.image } : {})}
+              text={mark.text ?? ""}
+              size={24}
+            />
+          )}
         </span>
       )}
       <span className="cb-object-text">

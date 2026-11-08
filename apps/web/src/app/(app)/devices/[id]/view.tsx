@@ -16,12 +16,13 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
+import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import { osLabel } from "../../../../lib/device-sign-in";
 import {
@@ -33,6 +34,7 @@ import {
   resetDeviceFiles,
   revokeDeviceMachine,
 } from "../../../../lib/devices";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import { deviceQuery } from "../../../../lib/query/devices";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -124,7 +126,8 @@ function Detail({
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState<Dialogs>(null);
-  const name = e.name ?? t("personal");
+  const name = useDeviceName()(e);
+  const lang = labelLocale(useLocale());
   const state = deviceState(e);
   const invalidates = () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)];
   const rename = useAppMutation({
@@ -199,6 +202,16 @@ function Detail({
           {e.filesLost && (
             <Text variant="prose" tone="warn">
               {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
+            </Text>
+          )}
+          {e.demotedFrom !== null && (
+            <Text variant="prose" tone="muted">
+              {t("detail.demotedNote", {
+                provider: extensionLabel(
+                  { name: e.demotedFrom.provider, displayName: e.demotedFrom.displayName },
+                  lang,
+                ),
+              })}
             </Text>
           )}
           {local ? (

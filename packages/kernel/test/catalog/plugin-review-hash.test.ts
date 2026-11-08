@@ -85,4 +85,33 @@ describe("pluginReviewHash", () => {
     expect(hash({ agentTemplates: [{ ...reviewer, model: "fast" }] })).not.toBe(one);
     expect(hash({ agentTemplates: [{ ...reviewer, tools: ["Read"] }] })).not.toBe(one);
   });
+
+  it("covers themes and leaves the digest of a plugin without any unchanged", () => {
+    const base = hash({});
+    // the digest of BASE before themes existed
+    expect(base).toBe("ea8c41d5141d9fea6bd083f70a06550c");
+    expect(hash({ themes: [] })).toBe(base);
+    const night = {
+      id: "night-city",
+      name: { en: "Night City", zh: "夜之城" },
+      schemes: ["dark" as const],
+      fonts: 1,
+      logo: true,
+    };
+    const one = hash({ themes: [night] });
+    expect(one).not.toBe(base);
+    expect(hash({ themes: [{ ...night, fonts: 2 }] })).not.toBe(one);
+    expect(hash({ themes: [{ ...night, schemes: ["dark", "light"] }] })).not.toBe(one);
+    // themes and agent templates never stand in for each other
+    const reviewer = {
+      name: "reviewer",
+      path: "agents/reviewer.md",
+      description: "Reviews.",
+      instructions: "Review.",
+      model: "inherit" as const,
+    };
+    expect(hash({ agentTemplates: [reviewer], themes: [night] })).not.toBe(
+      hash({ agentTemplates: [reviewer] }),
+    );
+  });
 });

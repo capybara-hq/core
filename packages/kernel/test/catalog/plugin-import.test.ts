@@ -443,10 +443,22 @@ describe("one import flow for every plugin", { timeout: 60_000 }, () => {
     const prefix = row.object_prefix as string;
     expect(prefix).toMatch(/^directory\/[0-9a-f-]{36}\/1\.0\.0\/[0-9a-f-]{36}\/$/);
     const d = k.app.get(StorageService).deployment();
-    for (const f of ["icon.svg", "connectors/crm-mcp.json", "skills/crm-notes/SKILL.md"]) {
+    for (const f of ["connectors/crm-mcp.json", "skills/crm-notes/SKILL.md"]) {
       expect(await d.head(`${prefix}${f}`), f).not.toBeNull();
     }
-    for (const f of ["README.md", "package.json", "dist/index.mjs"]) {
+    // display files (the icons) are kept in PG (catalog_files), by sha256
+    const icon = (row.manifest as { files: { path: string; sha256: string }[] }).files.find(
+      (f) => f.path === "icon.svg",
+    );
+    expect(icon).toBeDefined();
+    expect(
+      await db
+        .selectFrom("catalog_files")
+        .select("sha256")
+        .where("sha256", "=", icon?.sha256 as string)
+        .execute(),
+    ).toHaveLength(1);
+    for (const f of ["icon.svg", "README.md", "package.json", "dist/index.mjs"]) {
       expect(await d.head(`${prefix}${f}`), f).toBeNull();
     }
     const staged = await db
@@ -738,6 +750,40 @@ describe("deploying the extension at confirm", { timeout: 60_000 }, () => {
       .execute();
     expect(restored).toHaveLength(1);
     expect(restored[0]?.detail).toMatchObject({ restoredVersion: "1.0.0" });
+  });
+
+  it("a second provider of a single-provider point (sandbox) is installed disabled, and the result says why", async () => {
+    const first = await imported(
+      await lifePkg({ name: "sbx-one", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    expect(first.deploy).toMatchObject({ name: "sbx-one", result: "enabled" });
+    const second = await imported(
+      await lifePkg({ name: "sbx-two", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    expect(second.deploy).toEqual({
+      name: "sbx-two",
+      action: "install",
+      version: "1.0.0",
+      sha256: expect.any(String),
+      result: "installed",
+      code: "extension.single_provider_enabled",
+      message:
+        "Only one extension may provide sandbox@2; disable sbx-one first, then enable sbx-two",
+      singleProvider: {
+        extensionPoint: "sandbox@2",
+        enabled: { name: "sbx-one", displayName: null },
+      },
+    });
+    expect(
+      await db
+        .selectFrom("extension_installs")
+        .select(["name", "desired_state"])
+        .orderBy("name")
+        .execute(),
+    ).toEqual([
+      { name: "sbx-one", desired_state: "enabled" },
+      { name: "sbx-two", desired_state: "disabled" },
+    ]);
   });
 
   it("an older version than the deployed one: recorded in the catalog only, the deployment keeps v2 (ruling H)", async () => {
@@ -1103,6 +1149,101 @@ describe("staging cleanup (maintenance job app-staging-cleanup)", { timeout: 60_
     expect(await k.app.get(PluginImport).cleanupExpired()).toBe(1);
     expect(await db.selectFrom("plugin_import_staging").select("id").execute()).toEqual([]);
     expect((await k.app.get(StorageService).deployment().list(prefix)).items).toEqual([]);
+  });
+
+  it("display files go to PG, not the object prefix; cleanup keeps a listed one and sweeps an old unlisted one", async () => {
+    const icon = (n: number) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}"/>`;
+    const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+    const withIcon = (name: string, svg: string) =>
+      skillPlugin(name, { manifest: { icon: "./icon.svg" }, files: { "icon.svg": svg } });
+    const kept = await prepared(await withIcon("icon-kept", icon(2)));
+    const swept = await prepared(await withIcon("icon-swept", icon(3)));
+    const row = await db
+      .selectFrom("plugin_import_staging")
+      .select("object_prefix")
+      .where("id", "=", swept.stagingId)
+      .executeTakeFirstOrThrow();
+    // the skill is under the object prefix, the icon only in PG
+    const keys = (
+      await k.app
+        .get(StorageService)
+        .deployment()
+        .list(row.object_prefix as string)
+    ).items.map((i) => i.key);
+    expect(keys.some((key) => key.endsWith("SKILL.md"))).toBe(true);
+    expect(keys.some((key) => key.endsWith("icon.svg"))).toBe(false);
+    const stored = async () =>
+      (await db.selectFrom("catalog_files").select("sha256").execute()).map((r) => r.sha256);
+    expect(await stored()).toEqual(expect.arrayContaining([sha(icon(2)), sha(icon(3))]));
+    // icon-swept expires and its icon is old; icon-kept's staging still lists its old icon
+    await db
+      .updateTable("plugin_import_staging")
+      .set({ expires_at: sql<Date>`now() - interval '1 minute'` as unknown as Date })
+      .where("id", "=", swept.stagingId)
+      .execute();
+    await db
+      .updateTable("catalog_files")
+      .set({ touched_at: sql<Date>`now() - interval '2 days'` as unknown as Date })
+      .execute();
+    expect(await k.app.get(PluginImport).cleanupExpired()).toBe(1);
+    const after = await stored();
+    expect(after).toContain(sha(icon(2)));
+    expect(after).not.toContain(sha(icon(3)));
+    // an unlisted file stored recently (an import in progress) is not swept
+    await db
+      .insertInto("catalog_files")
+      .values({ sha256: sha("fresh"), data: Buffer.from("fresh") })
+      .execute();
+    await k.app.get(PluginImport).cleanupExpired();
+    expect(await stored()).toContain(sha("fresh"));
+    await db.deleteFrom("plugin_import_staging").where("id", "=", kept.stagingId).execute();
+  });
+
+  it("a display file inside a skill directory is stored in both places: the skill syncs, the icon reads from PG", async () => {
+    const r = await imported(
+      await skillPlugin("inner-icon", {
+        manifest: { icon: "./skills/inner-icon/icon.svg" },
+        files: { "skills/inner-icon/icon.svg": SVG_ICON },
+      }),
+    );
+    const itemId = r.item.id as string;
+    const item = await db
+      .selectFrom("catalog_items")
+      .select("platform_synced_version")
+      .where("id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    // the platform sync read every skill file from object storage
+    expect(item.platform_synced_version).toBe("1.0.0");
+    expect(
+      await db
+        .selectFrom("platform_skills")
+        .select("name")
+        .where("plugin_name", "=", "inner-icon")
+        .where("deleted_at", "is", null)
+        .execute(),
+    ).toEqual([{ name: "inner-icon" }]);
+    const v = await db
+      .selectFrom("catalog_item_versions")
+      .select("object_prefix")
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    const keys = (
+      await k.app
+        .get(StorageService)
+        .deployment()
+        .list(v.object_prefix as string)
+    ).items.map((i) => i.key);
+    expect(keys.some((key) => key.endsWith("skills/inner-icon/icon.svg"))).toBe(true);
+    expect(
+      await db
+        .selectFrom("catalog_files")
+        .select("sha256")
+        .where("sha256", "=", sha256(new TextEncoder().encode(SVG_ICON)))
+        .execute(),
+    ).toHaveLength(1);
+    const icon = await admin({ method: "GET", url: `/api/v1/admin/catalog/items/${itemId}/icon` });
+    expect(icon.statusCode, icon.body).toBe(200);
+    expect(icon.body).toBe(SVG_ICON);
   });
 
   it("the job name and scheduler id contain no colon", () => {

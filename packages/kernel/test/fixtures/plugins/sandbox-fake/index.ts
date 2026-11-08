@@ -45,6 +45,11 @@ import { z } from "zod";
  *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
  * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
  *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
+ * - `root/fs-ids-by-name` (optional, {@link setFakeFileSystemIdsByName}): `createFileSystem` gives
+ *   a new file system the id `fs-<name>`, as sandbox-docker names its volumes, so a file system
+ *   destroyed and made again under the same name comes back with the same id;
+ * - `root/fault.json` (optional, {@link setFakeSandboxFault}): every provider method throws the
+ *   network error it names, as a provider whose endpoint is down does (read at each call);
  * - `root/bin`: node shims for `setsid`, `timeout`, `pgrep -s` and `pkill -s` (background tasks,
  *   spec 2026-11-05-background-bash-design §4.2), first on every exec's PATH, so the tests also run
  *   on macOS, which has no `setsid` or `timeout`. A shim session is a process group: `setsid` starts
@@ -323,6 +328,77 @@ export async function setFakeSandboxDelays(root: string, d: FakeSandboxDelays): 
   await writeFile(join(root, "delays.json"), JSON.stringify(d));
 }
 
+/**
+ * While `on`, a new file system gets the id `fs-<name>` (as sandbox-docker's volumes), so one made
+ * again after a reset has the id of the destroyed one; off: random ids (the default).
+ */
+export async function setFakeFileSystemIdsByName(root: string, on: boolean): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const flag = join(root, "fs-ids-by-name");
+  if (on) await writeFile(flag, "");
+  else await rm(flag, { force: true });
+}
+
+/**
+ * A network failure every provider method throws while set: `code` as node's `net` sets it
+ * (`ECONNREFUSED`, `ECONNRESET`, ...); `wrap: "fetch"` wraps it as `fetch` does
+ * (`TypeError: fetch failed` with the socket error as `cause`).
+ */
+export interface FakeSandboxFault {
+  code: string;
+  syscall?: string;
+  wrap?: "fetch";
+}
+
+/** Sets the network failure every provider method throws; `null` clears it. */
+export async function setFakeSandboxFault(
+  root: string,
+  fault: FakeSandboxFault | null,
+): Promise<void> {
+  await mkdir(root, { recursive: true });
+  if (fault === null) await rm(join(root, "fault.json"), { force: true });
+  else await writeFile(join(root, "fault.json"), JSON.stringify(fault));
+}
+
+/** The error of a fault, shaped like node's socket errors. */
+function faultError(f: FakeSandboxFault): Error {
+  const syscall = f.syscall ?? (f.code === "ECONNRESET" ? "read" : "connect");
+  const socket = Object.assign(
+    new Error(syscall === "connect" ? `connect ${f.code} 127.0.0.1:2375` : `${syscall} ${f.code}`),
+    { code: f.code, syscall, address: "127.0.0.1", port: 2375 },
+  );
+  return f.wrap === "fetch" ? new TypeError("fetch failed", { cause: socket }) : socket;
+}
+
+/** `provider` whose every method first throws the fault set in `root/fault.json`, if any. */
+function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(provider)) {
+    out[key] =
+      typeof value === "function"
+        ? async (...args: unknown[]) => {
+            const raw = await readFile(join(root, "fault.json"), "utf8").catch(() => null);
+            if (raw !== null) throw faultError(JSON.parse(raw) as FakeSandboxFault);
+            return (value as (...a: unknown[]) => unknown).apply(provider, args);
+          }
+        : value;
+  }
+  return out as unknown as SandboxProvider;
+}
+
+/**
+ * The tags of the instance's exec commands that have started and not ended (`""` for an untagged
+ * one): once a tag is listed, `killTagged` / `killAll` / `suspend` reach its command.
+ */
+export async function fakeSandboxRunningTags(root: string, id: string): Promise<string[]> {
+  const dir = join(instanceDir(root, id), "procs");
+  const pids = await readdir(dir).catch(() => [] as string[]);
+  const tags = await Promise.all(
+    pids.map((pid) => readFile(join(dir, pid), "utf8").catch(() => null)),
+  );
+  return tags.filter((t): t is string => t !== null);
+}
+
 /** 模拟提供方那边的实例被删（之后 resume 返回 `gone`）。 */
 export async function removeFakeSandbox(root: string, id: string): Promise<void> {
   await rm(instanceDir(root, id), { recursive: true, force: true });
@@ -460,14 +536,18 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     return join(m[r] as string, p.slice(r.length));
   };
 
-  return {
+  const provider: SandboxProvider = {
     concurrentExec: true as const,
 
     async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
       await delay("create", signal);
       const existing = await fsIdByName(name);
       if (existing !== null) return { id: existing };
-      const id = `fs-${randomUUID().slice(0, 8)}`;
+      const byName = await stat(join(root, "fs-ids-by-name")).then(
+        () => true,
+        () => false,
+      );
+      const id = byName ? `fs-${name}` : `fs-${randomUUID().slice(0, 8)}`;
       const dir = fileSystemDir(root, id);
       for (const r of ["workspace", "skills"]) await mkdir(join(dir, r), { recursive: true });
       await writeFile(join(dir, "meta.json"), JSON.stringify({ name, limits }));
@@ -700,6 +780,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
     },
   };
+  return withFaults(root, provider);
 }
 
 /** 测试用 `sandbox@2`：部署配置 `{ root }`，见文件头注释。 */

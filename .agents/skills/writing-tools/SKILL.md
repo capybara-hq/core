@@ -196,7 +196,10 @@ the same transaction as the business rows.
   anonymous IM sender's conversation has no device (`sandbox.unavailable`, an anonymous-specific tool error). Then
   `SandboxService.withSandbox({ orgId, deviceId, holderConversationId, actor })` (instance created lazily, see
   `.agents/skills/writing-sandbox-providers`), passing the lock-linked signal to every provider call; path leases (`withPathLease(deps, session, …)`)
-  are on the device. `mapSandboxError` turns `device.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors.
+  are on the device. `mapSandboxError` turns `device.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors,
+  and a provider that can't be reached (`SandboxProviderUnreachableError`, see writing-sandbox-providers) into `SANDBOX_UNREACHABLE_TEXT` (never connected: nothing ran,
+  retrying won't help) or `SANDBOX_CONNECTION_DROPPED_TEXT` (broke mid-call: check before retrying), `kind: "unavailable"`, the raw error warned
+  as `sandbox provider unreachable`.
   Paths go through `validateSandboxPath`, and `write` / `edit` reject `/skills`. A conversation is bound at create (`POST /conversations`
   `deviceId`, checked with `usable`; without it the owner's default) and its device is read at `GET …/conversations/:id/device`.
 - Timeout: `Bash` = `min(timeout ?? 120000, sandbox.limits.maxCommandSeconds * 1000)` milliseconds plus a margin (margin =

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { connectorTemplateState } from "../../src/catalog/component-state.js";
 import { PlatformComponents } from "../../src/catalog/platform-components.js";
 import { PluginInstaller } from "../../src/catalog/plugin-install.js";
 import type { PlatformUpdatePreview } from "../../src/catalog/plugin-upgrade.js";
@@ -1076,5 +1077,113 @@ describe("platform plugin update: storage, dependencies, missing connectors (fix
     expect(recorded).toEqual([{ ref: docs.id, template_id: "docs", created: true }]);
     expect(await state()).toBe("on");
     expect(await missing()).toEqual([]);
+  });
+});
+
+describe("platform plugin update: templates shipped defaultEnabled false", {
+  timeout: 120_000,
+}, () => {
+  const ghId = async () =>
+    (
+      await env.db
+        .selectFrom("platform_connector_templates")
+        .select("id")
+        .where("template_id", "=", "gh")
+        .where("deleted_at", "is", null)
+        .executeTakeFirstOrThrow()
+    ).id;
+  /** The org's switch of platform connector template `id`. */
+  const setSwitch = (orgId: string, id: string, enabled: boolean) =>
+    env.db
+      .insertInto("component_org_switches")
+      .values({
+        kind: "connector_template",
+        component_id: id,
+        org_id: orgId,
+        enabled,
+        updated_by: env.rootId,
+      })
+      .execute();
+
+  it("an added template shipped off needs no org's input", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {}, docs: {} },
+      defaultOff: ["docs"],
+    });
+    await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
+    const p = await previewOk(item, "1.1.0");
+    expect(p.components.find((c) => c.name === "docs")).toMatchObject({ change: "added" });
+    expect(p.connectorOrgs).toEqual([]);
+  });
+
+  it("a template the update ships off: the orgs it turns off in, with the connectors kept", async () => {
+    const item = await seedPlugin(env, { name: "crm", skills: [], templates: { gh: {} } });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {} },
+      defaultOff: ["gh"],
+    });
+    await installIn(env.orgId, item, { connectors: { gh: tokenInput() } });
+    await installIn(org2, item, { connectors: { gh: tokenInput() } });
+    const tpl = await ghId();
+    // org2 switched it on: it stays on there
+    await setSwitch(org2, tpl, true);
+    const gh1 = await connectorFrom(env.orgId, "gh");
+    const gh2 = await connectorFrom(org2, "gh");
+    const p = await previewOk(item, "1.1.0");
+    const entry = (orgId: string, c: { id: string; name: string }) => ({
+      orgId,
+      connectors: [{ id: c.id, name: c.name, templateId: "gh", credentialsReset: false }],
+      needsConfig: [],
+    });
+    expect(p.connectorOrgs).toEqual(
+      [
+        {
+          ...entry(env.orgId, gh1),
+          turnedOff: [{ templateId: "gh", agents: [], connectorsKept: 1 }],
+        },
+        entry(org2, gh2),
+      ].sort((a, b) => a.orgId.localeCompare(b.orgId)),
+    );
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await connectorTemplateState(env.db, env.orgId, tpl)).toBe("off");
+    expect(await connectorTemplateState(env.db, org2, tpl)).toBe("on");
+  });
+
+  it("a template the update ships on: it needs the input of the orgs it turns on in", async () => {
+    const item = await seedPlugin(env, {
+      name: "crm",
+      skills: [],
+      templates: { gh: {} },
+      defaultOff: ["gh"],
+    });
+    await seedPlugin(env, {
+      name: "crm",
+      addTo: item,
+      version: "1.1.0",
+      skills: [],
+      templates: { gh: {} },
+    });
+    await installIn(env.orgId, item);
+    await installIn(org2, item);
+    const tpl = await ghId();
+    expect(await connectorTemplateState(env.db, env.orgId, tpl)).toBe("off");
+    // org2 switched it off itself: it stays off there
+    await setSwitch(org2, tpl, false);
+    const p = await previewOk(item, "1.1.0");
+    expect(p.connectorOrgs).toEqual([{ orgId: env.orgId, connectors: [], needsConfig: ["gh"] }]);
+    const r = await confirm(item, { version: "1.1.0", diffHash: p.diffHash });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await connectorTemplateState(env.db, env.orgId, tpl)).toBe("on");
+    expect(await connectorTemplateState(env.db, org2, tpl)).toBe("off");
   });
 });

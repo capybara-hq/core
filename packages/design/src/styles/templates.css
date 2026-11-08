@@ -257,7 +257,7 @@
   flex-direction: row;
   align-items: stretch;
   justify-content: space-between;
-  min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
   background: var(--cb-bg);
 }
@@ -792,7 +792,7 @@ a.cb-object-name:hover {
   background: var(--cb-bg);
 }
 .cb-pending[data-frame="app"] {
-  height: 100vh;
+  height: 100dvh;
 }
 .cb-pending-column {
   display: flex;

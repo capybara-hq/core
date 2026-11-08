@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ThemeSwatchGroup · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ThemeSwatchGroup</h1>
+<p>A theme picker (spec §6.38): ThemeSwatch cards in one radio group, as many columns as fit at layout.swatch-min or wider, space.3 apart; the second card is selected (the tab stop). The colors are token references standing in for the themes' values. The block is 560 wide with space.4 padding.</p>
+<div class="r-blocks">
+<section data-ref-block="theme-swatch-group-default" style="width:560px" data-pad>
+  <div class="r-theme-swatch-group" data-part="theme-swatch-group" role="radiogroup" aria-label="组织默认主题">
+    <button class="r-theme-swatch" data-part="theme-swatch" data-scheme="dark" data-state="default" role="radio" aria-checked="false"><span class="r-theme-swatch-preview" data-part="theme-swatch-preview" style="--sw-bg:var(--cb-bg);--sw-panel:var(--cb-panel);--sw-ink:var(--cb-ink);--sw-accent:var(--cb-accent)"><span class="r-theme-swatch-panel"></span><span class="r-theme-swatch-ink"></span><span class="r-theme-swatch-accent"></span></span><span class="r-theme-swatch-foot"><span class="r-theme-swatch-name" data-part="theme-swatch-name">跟随平台</span><i data-icon="moon" data-size="12"></i></span></button>
+    <button class="r-theme-swatch" data-part="theme-swatch" data-scheme="dark" data-state="selected" role="radio" aria-checked="true"><span class="r-theme-swatch-preview" data-part="theme-swatch-preview" style="--sw-bg:var(--cb-panel-2);--sw-panel:var(--cb-raised);--sw-ink:var(--cb-muted);--sw-accent:var(--cb-warn)"><span class="r-theme-swatch-panel"></span><span class="r-theme-swatch-ink"></span><span class="r-theme-swatch-accent"></span></span><span class="r-theme-swatch-foot"><span class="r-theme-swatch-name" data-part="theme-swatch-name">夜之城</span><i data-icon="moon" data-size="12"></i></span></button>
+    <button class="r-theme-swatch" data-part="theme-swatch" data-scheme="dark" data-state="default" role="radio" aria-checked="false"><span class="r-theme-swatch-preview" data-part="theme-swatch-preview" style="--sw-bg:var(--cb-sidebar);--sw-panel:var(--cb-panel);--sw-ink:var(--cb-ink);--sw-accent:var(--cb-info)"><span class="r-theme-swatch-panel"></span><span class="r-theme-swatch-ink"></span><span class="r-theme-swatch-accent"></span></span><span class="r-theme-swatch-foot"><span class="r-theme-swatch-name" data-part="theme-swatch-name">纸张</span><i data-icon="moon" data-size="12"></i></span></button>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

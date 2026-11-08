@@ -18,6 +18,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
+import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
   countInstalls,
   itemConfirmations,
@@ -159,6 +160,7 @@ export interface ComponentCounts {
   skills: number;
   connectorTemplates: number;
   agentTemplates: number;
+  themes: number;
 }
 
 /**
@@ -789,27 +791,75 @@ export class CatalogService {
   /**
    * Deletes the item (soft delete, audit `catalog.removed`; requests still pending are cancelled in
    * the same transaction): versions and stored files are kept (installed components still refer to
-   * them), organizations no longer see it; the same name can later be imported again as a new
-   * item. Deleted / missing -> `catalog.item_not_found`.
+   * them), its themes are soft-deleted (nothing refers to their rows), organizations no longer see
+   * it; the same name can later be imported again as a new item. Deleted / missing -> `catalog.item_not_found`. A platform plugin whose extension is
+   * still enabled on the deployment -> 409 `catalog.extension_enabled` (details
+   * `[{ extension, displayName }]`): disable it on the Extensions page first, as an uninstall
+   * requires. A disabled extension keeps its install record (the super admin uninstalls it on the
+   * Extensions page); an org-owned item's extension is taken out by `OwnedPluginCleanup`.
    */
   async remove(actor: string, itemId: string, opts: ActorOpts = {}): Promise<void> {
     if (!UUID_RE.test(itemId)) throw notFound();
     await this.writeRemove(actor, itemId, opts);
   }
 
+  /**
+   * The precheck of {@link remove} (the Platform tool's `plugins.delete`): throws what the delete
+   * would throw for an enabled extension; read-only, no locks.
+   */
+  async assertRemovable(itemId: string): Promise<void> {
+    if (!UUID_RE.test(itemId)) throw notFound();
+    await this.assertExtensionDisabled(this.kdb.db, itemId);
+  }
+
   @Transactional()
   private async writeRemove(actor: string, itemId: string, opts: ActorOpts): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
+    await this.assertExtensionDisabled(this.db, itemId, true);
     if ((await this.removeIn(actor, itemId, opts)) === null) throw notFound();
+  }
+
+  /**
+   * A live platform item whose extension (the install of the item's name from its package) is
+   * enabled -> 409 `catalog.extension_enabled`. With `lock`, under the per-name install lock an
+   * enable takes too (the caller's transaction), so no enable slips in between.
+   */
+  private async assertExtensionDisabled(
+    db: KernelSchemaDb,
+    itemId: string,
+    lock = false,
+  ): Promise<void> {
+    const item = await db
+      .selectFrom("catalog_items")
+      .select(["name", "package_name", "owner_org_id", "display_name"])
+      .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!item || item.owner_org_id !== null) return;
+    if (lock) await this.installLock.lock(item.name);
+    const install = await db
+      .selectFrom("extension_installs as x")
+      .innerJoin("extension_packages as p", "p.sha256", "x.sha256")
+      .select(["x.desired_state", "p.package_name"])
+      .where("x.name", "=", item.name)
+      .executeTakeFirst();
+    if (install === undefined || install.desired_state !== "enabled") return;
+    if (item.package_name !== null && install.package_name !== item.package_name) return;
+    throw new ApiError(
+      "catalog.extension_enabled",
+      `The extension "${item.name}" of this plugin is enabled on the deployment; disable it on the Extensions page first, then delete the plugin`,
+      [{ extension: item.name, displayName: item.display_name ?? null }],
+    );
   }
 
   /**
    * The soft delete of {@link remove} in the caller's transaction, without its super admin check
    * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
    * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
-   * extension name claim of a first upload still waiting released (ruling P3-37, F10), pending
-   * requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
-   * item's name, or null when it is gone already.
+   * extension name claim of a first upload still waiting released (ruling P3-37, F10), its themes
+   * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default),
+   * pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the
+   * removed item's name, or null when it is gone already.
    */
   @Transactional({ propagation: "mandatory" })
   async removeIn(
@@ -819,6 +869,21 @@ export class CatalogService {
   ): Promise<{ name: string } | null> {
     const t = this.db;
     const now = sql<Date>`now()` as unknown as Date;
+    // Its themes go with it: refused while one is the platform default (themes spec §7), before
+    // anything is written
+    // (the theme rows FOR UPDATE first: the theme lock order is item, theme row, `uiTheme`)
+    const themes = await t
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .forUpdate()
+      .execute();
+    await assertNotPlatformDefault(
+      t,
+      themes.map((r) => r.id),
+      () => "gone",
+    );
     const row = await t
       .updateTable("catalog_items")
       .set({
@@ -840,6 +905,14 @@ export class CatalogService {
       await this.installLock.lock(row.name);
       await releaseExtensionClaim(t, row.name, row.package_name);
     }
+    // Its themes go with it (themes spec §6): nothing refers to a theme row (a theme picked by an
+    // org or a person is an id that falls back once no live theme has it)
+    await t
+      .updateTable("platform_themes")
+      .set({ deleted_at: now, updated_at: now })
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .execute();
     // Pending requests for a deleted item are pointless: cancel them in the same transaction
     await cancelPendingRequests(t, { itemId }, actor, "item_removed", opts);
     await audit(t, {

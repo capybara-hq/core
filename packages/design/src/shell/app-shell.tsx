@@ -67,6 +67,40 @@ export function AppShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [searchable]);
 
+  // iOS (Safari and the WebKit Chrome) scrolls the document to show a focused text field even though
+  // the shell never lets it scroll, and does not always scroll back when the keyboard closes: the
+  // head then sits under the status bar and cannot be tapped. Once the keyboard is closed (the visual
+  // viewport is the full window again; without visualViewport: no text field focused), put the
+  // document back at the top.
+  useEffect(() => {
+    if (reference !== undefined) return;
+    const vv = window.visualViewport;
+    let frame = 0;
+    const restore = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (vv) {
+          if (vv.height < window.innerHeight - 120) return;
+        } else {
+          const active = document.activeElement;
+          if (
+            active instanceof HTMLElement &&
+            (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))
+          )
+            return;
+        }
+        if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+      });
+    };
+    document.addEventListener("focusout", restore);
+    vv?.addEventListener("resize", restore);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("focusout", restore);
+      vv?.removeEventListener("resize", restore);
+    };
+  }, [reference]);
+
   // Before hydration the bar is drawn and CSS shows it below 960 only.
   const bar = drawerRef || (!railRef && (!hydrated || narrow));
 

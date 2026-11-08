@@ -16,7 +16,9 @@ import {
   meQuery,
   readinessQuery,
 } from "../query/shell";
+import { orgThemesQuery, platformThemeQuery } from "../query/themes";
 import { CHANGE_PASSWORD_PATH, type Me, type Membership } from "../session";
+import type { ThemeRef } from "../themes";
 import type { UiContributionItem } from "../ui";
 import { SESSION_STATE_HEADER } from "./kernel";
 import { currentPath, isKernelUnavailable, isSignedOut } from "./page";
@@ -45,6 +47,11 @@ export interface ShellData {
   pending: { count: number; more: boolean } | null;
   /** The extension pages (`place: "page"`); `null` when the read failed or no org. */
   extensions: UiContributionItem[] | null;
+  /**
+   * The viewer's resolved theme (themes spec §8): the org's themes read, or the platform default
+   * without a current org; `null` for the built-in theme or when the read failed.
+   */
+  theme: ThemeRef | null;
 }
 
 export type Shell = { kind: "unavailable" } | ({ kind: "ready" } & ShellData);
@@ -71,8 +78,9 @@ const fetchShell = <T>(qc: QueryClient, o: UseQueryOptions<T, ApiClientError>): 
 /**
  * The shell data, read in parallel through `qc` (so it is dehydrated for the browser's cache). A
  * kernel that can't answer (any of the reads) gives `unavailable`; readiness failing otherwise
- * throws; the conversation groups, the pending count and the extension pages resolve to `null` on
- * other failures (each section draws its own error state).
+ * throws; the conversation groups, the pending count, the extension pages and the theme resolve to
+ * `null` on other failures (each section draws its own error state; the theme falls back to the
+ * built-in one).
  *
  * `alongside` (the route's prefetch) starts with the shell reads once `/me` has answered, in the
  * same parallel wave; its failure fails the shell.
@@ -95,26 +103,34 @@ export async function getShell(
   const orgId = org?.orgId ?? null;
   const route = alongside?.({ me, orgId });
   if (orgId === null) {
-    await route;
-    return {
-      kind: "ready",
-      me,
-      org,
-      readiness: null,
-      groups: null,
-      pending: null,
-      extensions: null,
-    };
+    try {
+      const [theme] = await Promise.all([section(fetchShell(qc, platformThemeQuery())), route]);
+      return {
+        kind: "ready",
+        me,
+        org,
+        readiness: null,
+        groups: null,
+        pending: null,
+        extensions: null,
+        theme,
+      };
+    } catch (e) {
+      if (isKernelUnavailable(e)) return { kind: "unavailable" };
+      throw e;
+    }
   }
   try {
-    const [readiness, groups, pending, extensions] = await Promise.all([
+    const [readiness, groups, pending, extensions, themes] = await Promise.all([
       read(fetchShell(qc, readinessQuery(orgId))),
       section(fetchShell(qc, conversationGroupsQuery(orgId))),
       section(fetchShell(qc, inboxCountQuery(orgId))),
       section(fetchShell(qc, extensionPagesQuery(orgId))),
+      section(fetchShell(qc, orgThemesQuery(orgId))),
       route,
     ]);
-    return { kind: "ready", me, org, readiness, groups, pending, extensions };
+    const theme = themes?.resolved ?? null;
+    return { kind: "ready", me, org, readiness, groups, pending, extensions, theme };
   } catch (e) {
     if (isKernelUnavailable(e)) return { kind: "unavailable" };
     throw e;

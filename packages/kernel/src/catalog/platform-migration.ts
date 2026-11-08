@@ -239,7 +239,9 @@ export class PlatformMigration {
       const version = await this.platformVersion(item.id, item.latest_version);
       try {
         const r = await this.platform.syncFromVersion(item.id, version, { initial: false });
-        if (r.skills.length + r.agentTemplates.length + r.connectorTemplates.length > 0) {
+        const changed =
+          r.skills.length + r.agentTemplates.length + r.connectorTemplates.length + r.themes.length;
+        if (changed > 0) {
           stats.itemsSynced.push(`${item.name}@${version}`);
         }
       } catch (err) {

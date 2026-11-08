@@ -5,6 +5,7 @@ import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
+import { PluginIcons } from "../extensions/plugin-icons.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import {
   CurrentPrincipal,
@@ -98,6 +99,7 @@ export class AdminController {
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
   ) {}
 
   /** 后台概览的四个数字（只读计数，不含任何对话内容）。 */
@@ -221,7 +223,7 @@ export class AdminController {
    */
   @Get("models")
   async getModels(): Promise<{
-    providers: (ProviderStatus & { displayName: LocalizedName | null })[];
+    providers: (ProviderStatus & { displayName: LocalizedName | null; icon: string | null })[];
     prices: ModelPrice[];
     currency: string;
   }> {
@@ -229,9 +231,17 @@ export class AdminController {
       this.registry.listWithStatus(),
       this.getModelPrices(),
     ]);
-    const names = await this.displayNames.many(providers.map((p) => p.plugin));
+    const plugins = providers.map((p) => p.plugin);
+    const [names, icons] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.icons.many(plugins, { kind: "admin" }),
+    ]);
     return {
-      providers: providers.map((p) => ({ ...p, displayName: names.get(p.plugin) ?? null })),
+      providers: providers.map((p) => ({
+        ...p,
+        displayName: names.get(p.plugin) ?? null,
+        icon: icons.get(p.plugin) ?? null,
+      })),
       ...prices,
     };
   }

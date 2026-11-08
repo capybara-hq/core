@@ -28,6 +28,7 @@ import {
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiContributionItem } from "../../lib/ui";
+import { useDeviceName } from "../use-device-name";
 import { BackgroundSection } from "./BackgroundSection";
 import { type BlockContext, ExtensionSection } from "./ExtensionBlocks";
 
@@ -156,6 +157,7 @@ export function ContextSection({
     [connectors],
   );
   const te = useTranslations("devices");
+  const nameOf = useDeviceName();
   const rowQ = conversationQuery(orgId, conversationId);
   const deviceId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
     ?.deviceId;
@@ -176,7 +178,7 @@ export function ContextSection({
           ? t("deviceDeleted")
           : t("deviceNone")
         : t("deviceLine", {
-            name: device.data.name ?? te("personal"),
+            name: nameOf(device.data),
             state: te(`state.${deviceState(device.data)}`),
           });
   return (

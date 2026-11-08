@@ -24,9 +24,37 @@ export interface ProviderFacts {
  */
 export function deviceProvider(f: ProviderFacts, current: string | undefined): string | null {
   if (f.provider !== null && isInternalProvider(f.provider)) return f.provider;
-  const holdsResources = f.fsStatus !== null && (f.fsStatus !== "none" || f.hasInstance);
-  if (holdsResources) return f.instanceProvider;
+  if (holdsResources(f)) return f.instanceProvider;
   return current ?? f.provider;
+}
+
+/** It has files or an instance at some provider (a file system, even a lost one, or a handle). */
+export const holdsResources = (f: ProviderFacts): boolean =>
+  f.fsStatus !== null && (f.fsStatus !== "none" || f.hasInstance);
+
+/** `device_instances.status`. */
+export type InstanceStatus = "none" | "creating" | "running" | "suspended" | "destroyed";
+
+/**
+ * For replacing a default (which one is the person's default): it holds healthy files or an
+ * instance, or an instance row is under way (`creating`, `running`, `suspended`: a first use may
+ * be creating the instance before any file system or handle is recorded). Lost files count as
+ * none here, unlike {@link holdsResources}, which decides the provider.
+ */
+export const inUseForDefault = (f: ProviderFacts & { status: InstanceStatus | null }): boolean =>
+  f.fsStatus === "ready" ||
+  f.hasInstance ||
+  (f.status !== null && f.status !== "none" && f.status !== "destroyed");
+
+/**
+ * The provider a former default belongs to (its label and the provider whose switch back restores
+ * it): the one holding its resources once it holds any, else the one it was demoted from (the
+ * marker). A former default demoted while empty and used afterwards keeps a stale marker; its
+ * resources decide. null for a device that is not a former default.
+ */
+export function demotedProvider(marker: string | null, f: ProviderFacts): string | null {
+  if (marker === null) return null;
+  return (holdsResources(f) ? f.instanceProvider : null) ?? marker;
 }
 
 /**

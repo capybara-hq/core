@@ -1,4 +1,6 @@
 import { apiFetch } from "./api";
+import type { LocalizedName } from "./catalog";
+import { extensionLabel } from "./extension-label";
 
 /**
  * The kernel's devices API (`packages/kernel/src/devices/devices.service.ts`; only the
@@ -27,9 +29,18 @@ export interface DeviceMachine {
 
 export interface Device {
   id: string;
-  /** null for the person's default device (shown as 个人设备 / "Personal"). */
+  /**
+   * null for the person's default device (shown as 个人设备 / "Personal") and for a former
+   * default (shown from `demotedFrom`); see {@link deviceName}.
+   */
   name: string | null;
   isDefault: boolean;
+  /**
+   * A former default demoted by a sandbox provider switch: the provider it was demoted from, its
+   * display name (null: show the id) and its place among the unnamed ones of that provider (1, 2,
+   * …). It becomes the default again when the platform switches back to that provider.
+   */
+  demotedFrom: { provider: string; displayName: LocalizedName | null; ordinal: number } | null;
   ownerKind: "personal";
   /** `local`: a machine connected with `capybara-device` (provider `@local`). */
   source: "cloud" | "local";
@@ -74,6 +85,23 @@ export function deviceState(e: Device): DeviceState {
   if (e.source === "local") return e.online === true ? "online" : "offline";
   if (e.filesLost) return "filesLost";
   return e.instance?.status ?? "notStarted";
+}
+
+/**
+ * A device's name for people: its own name, else 个人设备 / "Personal" for the default, else
+ * for a former default 个人设备（Docker 沙箱） / "Personal (Docker sandbox)" (the provider's display
+ * name, its id when it has none), with " 2", " 3", … after the first of the same provider.
+ */
+export function deviceName(
+  e: Pick<Device, "name" | "demotedFrom">,
+  text: { personal: string; demoted(provider: string): string },
+  locale: "zh" | "en",
+): string {
+  if (e.name !== null) return e.name;
+  const d = e.demotedFrom;
+  if (!d) return text.personal;
+  const provider = extensionLabel({ name: d.provider, displayName: d.displayName }, locale);
+  return text.demoted(provider) + (d.ordinal > 1 ? ` ${d.ordinal}` : "");
 }
 
 /**

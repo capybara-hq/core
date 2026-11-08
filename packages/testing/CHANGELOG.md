@@ -1,5 +1,83 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- e1f6143: Add the `fake-theme` fixture plugin (two themes, a font and a logo, no extension): `FAKE_PLUGINS`,
+  `FakePluginName`, and `packFixture` / `fakeExtensionDir` accept it.
+
+### Patch Changes
+
+- Updated dependencies [bbd508e]
+- Updated dependencies [00e742e]
+- Updated dependencies [b2b3faa]
+- Updated dependencies [f120273]
+- Updated dependencies [2191e44]
+- Updated dependencies [c489ee6]
+- Updated dependencies [c1c7b0f]
+- Updated dependencies [6d9a256]
+- Updated dependencies [ff5e3bf]
+- Updated dependencies [00e742e]
+- Updated dependencies [0158d0c]
+  - @capybara-hq/kernel@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.8
+  - @capybara-hq/plugin-tools@0.1.0-rc.9
+
+## 0.1.0-rc.10
+
+### Patch Changes
+
+- 7784331: `startFakeOAuthServer` takes `dialect: "slack"` (answers like Slack's `oauth.v2.user.access`:
+  `ok: true`, `token_type: "user"`, every error as HTTP 200 `{ ok: false, error }` with
+  `invalid_code` / `invalid_refresh_token` / `invalid_client_id`) and `tokenType`; each
+  `tokenRequests` entry records the `error` it answered.
+- 3cbf6e8: Kernel-generated IM text speaks the person's language, not the org's: `/new`, `/env`, bind prompts
+  and card-click replies use the sender's platform language, else the bound person's latest web
+  message language, else the org's; delivered cards and notices use the language recorded on the
+  conversation's latest user message (in a group thread, the person who triggered the run).
+  `ChannelSendArgs.locale` carries that language to the extension.
+- 5ec789c: IM time zone and language per person: channel@1 `InboundSender` gains optional `timeZone` (IANA)
+  and `locale` (`zh` / `en` or a BCP 47 tag). The kernel records on an IM `user_message` the
+  platform's zone (when valid), else the account setting, else the org default, and the platform's
+  language (`zh` / `zh-*` Chinese, any other tag English), else the UI language of the person's most
+  recent web message in the org, else the org's `locale`. Any message without a language uses the
+  latest web language the same way, and run start falls back to the author's settings for a message
+  from an older log. The fake channel's sender profile takes `timeZone` and `locale`.
+- d38fcfd: `capybara-plugin pack` (and so `capybara-plugin check`) ships a plugin's setup guide template
+  files and refuses a missing, oversized or binary one, a placeholder the guide's place does not
+  define (in a file or a step), and a `channel-connection` guide without an extension. The `fake-im`
+  test plugin carries a channel setup guide with a file per inbound mode.
+- Updated dependencies [6599de8]
+- Updated dependencies [2de4f26]
+- Updated dependencies [dbea14d]
+- Updated dependencies [fa23383]
+- Updated dependencies [eb83fb5]
+- Updated dependencies [09dea3e]
+- Updated dependencies [c85f0b6]
+- Updated dependencies [cafa6e4]
+- Updated dependencies [c3e12b3]
+- Updated dependencies [60ce217]
+- Updated dependencies [3cbf6e8]
+- Updated dependencies [5ec789c]
+- Updated dependencies [ff9cd78]
+- Updated dependencies [2435645]
+- Updated dependencies [2435645]
+- Updated dependencies [2435645]
+- Updated dependencies [ebe127f]
+- Updated dependencies [48b244e]
+- Updated dependencies [f74afee]
+- Updated dependencies [d6fd4a9]
+- Updated dependencies [d38fcfd]
+- Updated dependencies [733a954]
+- Updated dependencies [a4ab6e3]
+- Updated dependencies [f035baa]
+- Updated dependencies [0e8592b]
+- Updated dependencies [cb6f42d]
+  - @capybara-hq/kernel@0.1.0-rc.10
+  - @capybara-hq/plugin-sdk@0.1.0-rc.7
+  - @capybara-hq/plugin-tools@0.1.0-rc.8
+
 ## 0.1.0-rc.9
 
 ### Minor Changes

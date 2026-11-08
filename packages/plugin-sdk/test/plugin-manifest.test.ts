@@ -204,7 +204,7 @@ describe("parsePluginManifest", () => {
     [
       "nothing in it",
       skillsOnly({ skills: [], connectorTemplates: [] }),
-      /a plugin must contain an extension, a skill, a connector template or an agent template/,
+      /a plugin must contain an extension, a skill, a connector template, an agent template or a theme/,
     ],
     [
       "extension name ≠ plugin name",
@@ -275,6 +275,28 @@ describe("parsePluginManifest", () => {
     expect(errorsOf(skillsOnly({ agents: refs(65) }))[0]).toMatch(/^agents: /);
   });
 
+  it("a plugin of themes only carries something; at most 10 themes, unique ids", () => {
+    const refs = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `./themes/t${i}.json` }));
+    const themesOnly = skillsOnly({ skills: [], connectorTemplates: [], themes: refs(1) });
+    expect(errorsOf(themesOnly)).toEqual([]);
+    expect(
+      errorsOf(skillsOnly({ skills: [], connectorTemplates: [], themes: [] })).join("\n"),
+    ).toMatch(/or a theme/);
+    expect(PLUGIN_MANIFEST_LIMITS.themes).toBe(10);
+    expect(errorsOf(skillsOnly({ themes: refs(10) }))).toEqual([]);
+    expect(errorsOf(skillsOnly({ themes: refs(11) }))[0]).toMatch(/^themes: /);
+    expect(errorsOf(skillsOnly({ themes: [{ path: "./themes/Bad.json" }] }))[0]).toMatch(
+      /^themes\.0\.path: /,
+    );
+    expect(errorsOf(skillsOnly({ themes: [{ path: "./themes/a.md" }] }))[0]).toMatch(
+      /^themes\.0\.path: /,
+    );
+    expect(
+      errorsOf(skillsOnly({ themes: [{ path: "./themes/a.json" }, { path: "./x/a.json" }] }))[0],
+    ).toMatch(/^themes\.1\.path: duplicate theme id a/);
+  });
+
   it("caps errors at 50 and never throws", () => {
     const m = skillsOnly({
       skills: Array.from({ length: 50 }, () => ({ path: "../x" })),
@@ -325,6 +347,41 @@ describe("parseConnectorTemplateFile", () => {
   it("accepts the file text", () => {
     const r = parseConnectorTemplateFile(JSON.stringify(file()));
     expect("errors" in r ? r.errors : []).toEqual([]);
+  });
+
+  it("defaultEnabled is an optional boolean", () => {
+    const off = parseConnectorTemplateFile({ ...file(), defaultEnabled: false });
+    expect("errors" in off ? off.errors : off.defaultEnabled).toBe(false);
+    const bad = parseConnectorTemplateFile({ ...file(), defaultEnabled: "no" });
+    expect("errors" in bad ? bad.errors.join("\n") : "").toMatch(/defaultEnabled/);
+  });
+
+  it("an OAuth auth preset may list more bearer token types (tokenTypes)", () => {
+    const oauth = (tokenTypes: unknown) =>
+      file({
+        auth: {
+          type: "oauth_code",
+          ownership: "personal",
+          discovery: "mcp",
+          client: "manual",
+          tokenTypes,
+        },
+      });
+    const ok = parseConnectorTemplateFile(oauth(["user", "N_A.v2"]));
+    expect("errors" in ok ? ok.errors : []).toEqual([]);
+    // DPoP binds the token to a key the kernel does not hold: never a bearer token
+    for (const bad of [
+      ["bad type"],
+      [""],
+      Array(6).fill("x"),
+      "user",
+      ["DPoP"],
+      ["dpop"],
+      ["DPOP"],
+    ]) {
+      const r = parseConnectorTemplateFile(oauth(bad));
+      expect("errors" in r ? r.errors : [], JSON.stringify(bad)).not.toEqual([]);
+    }
   });
 });
 
@@ -485,6 +542,8 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["agents without a path", skillsOnly({ agents: [{}] })],
     ["agents", skillsOnly({ agents: [{ path: "./agents/a.md" }] })],
     ["agent path not .md", skillsOnly({ agents: [{ path: "./agents/a.json" }] })],
+    ["themes", skillsOnly({ themes: [{ path: "./themes/a.json" }] })],
+    ["theme without a path", skillsOnly({ themes: [{}] })],
     ["homepage http", skillsOnly({ homepage: "http://x.example.com" })],
     ["missing publisher", { ...skillsOnly(), publisher: undefined }],
     ["localized description", skillsOnly({ description: { en: "Skills", zh: "技能" } })],
@@ -517,7 +576,13 @@ describe("JSON Schema (ajv) agrees with zod", () => {
       displayName: { zh: "a", en: "a" },
       template: { plugin: "connector-mcp", connector: "mcp", endpoint: {}, auth: { type: "none" } },
     };
-    for (const json of [ok, { ...ok, extra: 1 }, { ...ok, displayName: { zh: "a" } }]) {
+    for (const json of [
+      ok,
+      { ...ok, extra: 1 },
+      { ...ok, displayName: { zh: "a" } },
+      { ...ok, defaultEnabled: false },
+      { ...ok, defaultEnabled: "no" },
+    ]) {
       expect(template(json)).toBe(ConnectorTemplateFileSchema.safeParse(json).success);
     }
   });

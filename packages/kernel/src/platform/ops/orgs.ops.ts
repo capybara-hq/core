@@ -160,6 +160,7 @@ export class OrgsOperations implements OnModuleInit {
           "customConnectors",
           "customSkills",
           "orgMarketplaceBrowse",
+          "uiTheme",
         ],
         extras: ["orgId", "runConcurrency", "sandbox", "subagents"],
         confirm: "platform",

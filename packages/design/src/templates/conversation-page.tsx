@@ -9,12 +9,14 @@ import {
   useRef,
   useState,
 } from "react";
+import { IconButton } from "../controls/button";
 import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
 import { ThreadHistory, type ThreadHistoryProps } from "../conversation/thread-history";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
+import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
@@ -341,6 +343,19 @@ export function ConversationPage({
   ) : (
     panel
   );
+  // In a sheet the properties panel has its own head with ×: on a phone the sheet covers the window,
+  // so there is no scrim to tap and the title bar's toggle is hidden under it.
+  const propertiesHead = (
+    <header className="cb-rpanel-head cb-conv-sheet-head" data-part="sheet-head">
+      <span className="cb-rpanel-title-text cb-rpanel-title-plain">{t("props.label")}</span>
+      <span className="cb-rpanel-grow" />
+      <IconButton
+        label={t("overlay.close")}
+        icon={<Icon name="x" size={16} />}
+        onClick={onCloseRight}
+      />
+    </header>
+  );
   const rightNode = right === "properties" ? propertiesNode : right === "panel" ? panelNode : null;
   const anyLoading =
     loading?.thread === true ||
@@ -419,14 +434,23 @@ export function ConversationPage({
             {!open ? null : reference ? (
               <>
                 <div className="cb-conv-scrim" data-inline="true" data-part="scrim" />
-                <SheetContent inline label={t("panel.label")} focusReturn={focusReturn}>
+                <SheetContent
+                  inline
+                  label={t("panel.label")}
+                  focusReturn={focusReturn}
+                  head={right === "properties" ? propertiesHead : undefined}
+                >
                   {rightNode}
                 </SheetContent>
               </>
             ) : (
               <RD.Portal>
                 <RD.Overlay className="cb-conv-scrim" data-part="scrim" />
-                <SheetContent label={t("panel.label")} focusReturn={focusReturn}>
+                <SheetContent
+                  label={t("panel.label")}
+                  focusReturn={focusReturn}
+                  head={right === "properties" ? propertiesHead : undefined}
+                >
                   {rightNode}
                 </SheetContent>
               </RD.Portal>
@@ -442,11 +466,14 @@ function SheetContent({
   inline,
   label,
   focusReturn,
+  head,
   children,
 }: {
   inline?: boolean;
   label: string;
   focusReturn: ReturnType<typeof useFocusReturn>;
+  /** A head row drawn above the content (the properties sheet's title and ×). */
+  head?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -464,6 +491,7 @@ function SheetContent({
         : { onOpenAutoFocus: focusReturn.capture, onCloseAutoFocus: focusReturn.restore })}
     >
       <RD.Title className="cb-sr-only">{label}</RD.Title>
+      {head}
       {/* The sheet is a box: the properties sections inside draw as heading and hairline groups
           (a RightPanel resets this: a full-height pane holds content like a page). */}
       <BoxScope kind="properties-sheet">{children}</BoxScope>

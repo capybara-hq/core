@@ -1,6 +1,6 @@
 "use client";
 
-import { DetailPage, Text, versionLabel } from "@capybara-hq/design";
+import { DetailPage, ObjectMark, Text, versionLabel } from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
@@ -80,6 +80,8 @@ function ExtensionDetail({ name, orgId }: { name: string; orgId: string | null }
         header={{
           path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label: name }],
           title: "",
+          // the plugin's mark keeps its place
+          loading: { title: true, avatar: true },
         }}
         tabs={tabs(tab, () => {})}
         loading={{
@@ -148,6 +150,8 @@ function Detail({
         path: [...scope, { label: "extensions", href: "/admin/extensions" }, { label }],
         title: label,
         ...(plugin && {
+          // the plugin's icon, the initial without one (spec §6.17)
+          avatar: <ObjectMark text={label} image={plugin.icon ?? null} size={40} />,
           count: versionLabel(plugin.version),
           status: (
             <ExtensionStatusMark

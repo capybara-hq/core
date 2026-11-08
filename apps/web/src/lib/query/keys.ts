@@ -73,6 +73,31 @@ export const keys = {
       channel: (channelId: string): readonly unknown[] => [...all, "channel", channelId],
       /** A channel plugin's connection schema. */
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
+      /** Where a channel plugin's setup guide is. */
+      channelGuideRef: (plugin: string): readonly unknown[] => [...all, "channelGuideRef", plugin],
+      /** Every rendered setup guide (an invalidation prefix). */
+      setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
+      /**
+       * A plugin's setup guide rendered for a connection / mode / name, at the item's version (an
+       * upgrade reads the new guide; "" where the version is unknown, as on 新建渠道).
+       */
+      setupGuide: (
+        itemId: string,
+        guideId: string,
+        version: string,
+        connectionId: string,
+        mode: string,
+        name: string,
+      ): readonly unknown[] => [
+        ...all,
+        "setupGuide",
+        itemId,
+        guideId,
+        version,
+        connectionId,
+        mode,
+        name,
+      ],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
       /** One extension's two-level config in the org: following or a copy, per-field levels. */
@@ -153,6 +178,8 @@ export const keys = {
       members: (): readonly unknown[] => [...all, "members"],
       /** The org's settings (with the deployment's defaults and the sandbox limits). */
       orgSettings: (): readonly unknown[] => [...all, "orgSettings"],
+      /** The themes on in the org, the viewer's resolved theme and the org's theme setting. */
+      themes: (): readonly unknown[] => [...all, "themes"],
       /** The org's invitations (admins). */
       invitations: (): readonly unknown[] => [...all, "invitations"],
       /** The org's model purposes and what each maps to. */
@@ -352,6 +379,8 @@ export const keys = {
       adminOrgs: (): readonly unknown[] => [...all, "adminOrgs"],
       /** The deployment settings. */
       settings: (): readonly unknown[] => [...all, "settings"],
+      /** The platform default theme (public: the pages before sign-in). */
+      platformTheme: (): readonly unknown[] => [...all, "platformTheme"],
       /** The providers with their models and the price table. */
       adminModels: (): readonly unknown[] => [...all, "adminModels"],
       /** The purposes' deployment defaults. */

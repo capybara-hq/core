@@ -27,6 +27,21 @@ const Scopes = z
       .regex(/^[\x21\x23-\x5B\x5D-\x7E]+$/, "Invalid scope"),
   )
   .max(50);
+/**
+ * More `token_type` values the token endpoint may return for a bearer token (case-insensitive;
+ * `Bearer` and Slack's `user` are always accepted). The token is still sent as
+ * `Authorization: Bearer`. Never `DPoP`: such a token is bound to a key the kernel does not hold.
+ */
+const TokenTypes = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .max(32)
+      .regex(/^[A-Za-z][A-Za-z0-9_.-]*$/, "Invalid token type")
+      .refine((t) => t.toLowerCase() !== "dpop", "DPoP tokens are not bearer tokens"),
+  )
+  .max(5);
 
 /** 认证方式：只有类型与非密钥字段；凭据值走内核的 `credential` / 凭据接口。 */
 export const ConnectorAuthSchema = z.discriminatedUnion("type", [
@@ -62,6 +77,7 @@ export const ConnectorAuthSchema = z.discriminatedUnion("type", [
       scopes: Scopes.optional(),
       client: z.enum(["dcr", "manual"]),
       tokenAuthMethod: TokenAuthMethod.optional(),
+      tokenTypes: TokenTypes.optional(),
     })
     .strict()
     .superRefine((a, ctx) => {
@@ -95,6 +111,7 @@ export const ConnectorAuthSchema = z.discriminatedUnion("type", [
       tokenUrl: OAuthUrl,
       scopes: Scopes.optional(),
       tokenAuthMethod: TokenAuthMethod.optional(),
+      tokenTypes: TokenTypes.optional(),
     })
     .strict(),
 ]);

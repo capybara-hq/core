@@ -1,6 +1,8 @@
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
+import { PluginGuides, type RenderedSetupGuide } from "../extensions/plugin-guides.js";
+import { orgIconScope, PluginIcons } from "../extensions/plugin-icons.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -22,6 +24,7 @@ import type {
 } from "./catalog-content.js";
 import {
   CatalogConnectorInput,
+  CatalogGuideQuery,
   CatalogMarketplaceRequestBody,
   CatalogRequestBody,
   CatalogRequestsListQuery,
@@ -72,6 +75,7 @@ const DecideBody = z
   .object({ approve: z.boolean(), reason: z.string().max(1000).optional() })
   .strict();
 
+class CatalogGuideQueryDto extends createZodDto(CatalogGuideQuery, "CatalogGuideQuery") {}
 class CatalogRequestsQuery extends createZodDto(CatalogRequestsListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBodyDto extends createZodDto(OrgPluginInstallBody, "OrgPluginInstallBody") {}
@@ -116,16 +120,24 @@ export class OrgCatalogController {
     @Inject(OrgCatalogService) private readonly catalog: OrgCatalogService,
     @Inject(CatalogRequestsService) private readonly requests: CatalogRequestsService,
     @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
+    @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(PluginGuides) private readonly guides: PluginGuides,
   ) {}
 
+  /** The org's catalog; each item carries `icon`, its icon's URL here (null without one). */
   @Get("catalog")
   @OrgAction("catalog.read")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-  ): Promise<{ items: OrgCatalogItem[] }> {
+  ): Promise<{ items: (OrgCatalogItem & { icon: string | null })[] }> {
     const p = requireUser(principal);
-    return { items: await this.catalog.list(org.orgId, p.account.id) };
+    const items = await this.catalog.list(org.orgId, p.account.id);
+    const icons = await this.icons.ofItems(
+      items.map((i) => i.id),
+      orgIconScope(org),
+    );
+    return { items: items.map((i) => ({ ...i, icon: icons.get(i.id) ?? null })) };
   }
 
   /**
@@ -156,6 +168,23 @@ export class OrgCatalogController {
   ): Promise<void> {
     const icon = await this.catalog.icon(itemId, roleAtLeast(org.role, "admin"), org.orgId);
     await sendCatalogIcon(reply, icon);
+  }
+
+  /**
+   * A setup guide of the item, rendered for this org (spec 2026-11-08-plugin-setup-guides-design.md
+   * §4): steps and template files with the place's variables filled in, the modes and the template
+   * hash. The item must be one the org's catalog shows; a `channel-connection` guide also needs
+   * `channels.manage` (checked by the service).
+   */
+  @Get("catalog/:itemId/guides/:guideId")
+  @OrgAction("catalog.read")
+  async guide(
+    @CurrentOrg() org: OrgContext,
+    @Param("itemId") itemId: string,
+    @Param("guideId") guideId: string,
+    @ZQuery(CatalogGuideQueryDto) q: z.infer<typeof CatalogGuideQuery>,
+  ): Promise<{ guide: RenderedSetupGuide }> {
+    return { guide: await this.guides.render(org, itemId, guideId, q) };
   }
 
   /**

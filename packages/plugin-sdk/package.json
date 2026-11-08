@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/plugin-sdk",
-  "version": "0.1.0-rc.6",
+  "version": "0.1.0-rc.8",
   "description": "Capybara plugin SDK: the types and pure functions plugins are written against",
   "license": "Apache-2.0",
   "repository": {
@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "kysely": "^0.29.6",
+    "saxes": "6.0.0",
     "semver": "^7.8.5",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"

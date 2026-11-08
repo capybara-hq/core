@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { DevicesService, type DeviceView } from "../../devices/devices.service.js";
 import { DeviceNameBody, DeviceParams } from "../../devices/dto.js";
+import { deviceLabel } from "../../devices/label.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
@@ -12,8 +13,11 @@ import { named, orElse } from "./summary.js";
 const DeviceId = z.object({ deviceId: DeviceParams.shape.id }).strict();
 const Name = z.object({ name: DeviceNameBody.shape.name }).strict();
 
-/** The default device has no name; the web shows it as 「个人设备」 / "Personal". */
-const labelOf = (e: Pick<DeviceView, "name">): string => e.name ?? "Personal";
+/**
+ * Model-facing names are English: the default is "Personal", a default demoted by a provider
+ * switch "Personal (Docker sandbox)" (the web shows 「个人设备」 / 「个人设备（Docker 沙箱）」).
+ */
+const labelOf = (e: Pick<DeviceView, "name" | "demotedFrom">): string => deviceLabel(e, "en");
 
 /** A row's state: why it cannot be used now, else whether its instance runs. */
 function stateOf(e: DeviceView): { state: string; reason?: string; next?: string } {
@@ -116,7 +120,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids and whether new cloud devices can be made. The default device is shown as Personal.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids and whether new cloud devices can be made. The default device is shown as Personal; a former default left behind by a sandbox provider switch is shown as Personal (<provider>) and becomes the default again when that provider is back.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
