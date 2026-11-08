@@ -22,10 +22,13 @@ export interface ProviderFacts {
  * creates them there), else the one recorded at creation. The same rule as `SandboxService`'s use.
  */
 export function environmentProvider(f: ProviderFacts, current: string | undefined): string | null {
-  const holdsResources = f.fsStatus !== null && (f.fsStatus !== "none" || f.hasInstance);
-  if (holdsResources) return f.instanceProvider;
+  if (holdsResources(f)) return f.instanceProvider;
   return current ?? f.provider;
 }
+
+/** It has files or an instance at some provider (a file system, even a lost one, or a handle). */
+export const holdsResources = (f: ProviderFacts): boolean =>
+  f.fsStatus !== null && (f.fsStatus !== "none" || f.hasInstance);
 
 /** The environment's provider is not the current one, or there is no provider (503). */
 export const environmentUnavailable = (provider: string | null): ApiError =>

@@ -33,8 +33,6 @@ export const CHANNEL_PHRASES = {
     zh: "你目前没有可用的环境。",
     en: "You have no usable environments.",
   },
-  /** 环境列表里默认环境的名字。 */
-  envPersonal: { zh: "个人环境", en: "Personal" },
   /** 环境列表里当前 IM 默认环境的标记。 */
   envCurrent: { zh: "（当前）", en: " (current)" },
   /** 未绑定的人在私聊里发消息：附绑定卡片。 */

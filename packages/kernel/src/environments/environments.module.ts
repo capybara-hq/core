@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { EnvironmentAccess } from "./access.js";
 import { ConversationEnvironments } from "./conversation-environments.js";
@@ -11,7 +12,8 @@ import { EnvironmentsService } from "./environments.service.js";
  * {@link SandboxModule}'s.
  */
 @Module({
-  imports: [SandboxModule],
+  // ExtensionsModule: the provider display names of demoted defaults
+  imports: [SandboxModule, ExtensionsModule],
   providers: [EnvironmentAccess, EnvironmentsService, ConversationEnvironments],
   exports: [EnvironmentAccess, EnvironmentsService, ConversationEnvironments],
 })
