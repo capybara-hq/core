@@ -87,6 +87,7 @@ const ROUTES: Routes = {
       deployment: { sandboxEgress: { mode: "open", allowHosts: [] } },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
     }),
+  [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
   [`GET ${O}/members`]: () => json(200, { members: MEMBERS }),
   [`GET ${O}/invitations`]: () => json(200, { invitations: [INVITATION] }),
   [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),

@@ -808,7 +808,12 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/settings/organization",
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [
+            q(orgSettingsQuery(orgId)),
+            ...(atLeast(me, "admin") ? [q(contributionsQuery(orgId))] : []),
+          ],
   },
   {
     pattern: "/settings/appearance",

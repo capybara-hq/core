@@ -662,6 +662,7 @@ describe("组织设置：IM 语言", () => {
     const o = msgs[locale].orgSettings;
     const calls = api({
       [`GET ${BASE}/settings`]: () => json(200, { settings: { toolSearch: "on", locale: "en" } }),
+      [`GET ${BASE}/ui/contributions`]: () => json(200, { items: [] }),
       [`PATCH ${BASE}/settings`]: (c) =>
         json(200, { settings: { toolSearch: "on", locale: "en", ...(bodyOf(c) as object) } }),
     });

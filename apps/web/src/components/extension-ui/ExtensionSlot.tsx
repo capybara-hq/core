@@ -1,6 +1,6 @@
 "use client";
 
-import { type RightPanelSwitcher, Stack, Text } from "@capybara-hq/design";
+import { FormSection, type RightPanelSwitcher, Stack, Text } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -139,7 +139,9 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
       return p.host && p.select ? (
         <FilePreviewSlot args={p.args} select={p.select} host={p.host} />
       ) : null;
-    // agent.detail.section, org.settings.section and platform.page: rendered from Tasks 12 to 14
+    case "org.settings.section":
+      return <OrgSettingsSlot args={p.args} />;
+    // agent.detail.section and platform.page: rendered from Tasks 13 and 14
     default:
       return null;
   }
@@ -264,18 +266,55 @@ function OrgPageSlot({
   );
 }
 
+/**
+ * The extension sections of the org settings page: one `FormSection` per contribution, titled by
+ * its title, whose body is the view or the embed (the kernel serves the slot to org admins and
+ * owners only; the page does not render the slot for anyone else).
+ */
+function OrgSettingsSlot({ args }: { args: SlotArgs["org.settings.section"] }) {
+  const { items } = useSlotContributions(args.orgId, "org.settings.section");
+  return (
+    <>
+      {items.map((c) => (
+        <OrgSettingsSection key={uiKey(c.plugin, c.id)} orgId={args.orgId} c={c} />
+      ))}
+    </>
+  );
+}
+
+function OrgSettingsSection({ orgId, c }: { orgId: string; c: UiContributionItem }) {
+  const locale = uiLocale(useLocale());
+  const title = c.title[locale];
+  // `flush`: a view may hold a table, which runs to the card's edges (spec §1, web-ui-box-in-box)
+  return (
+    <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+      <div data-extension-section={uiKey(c.plugin, c.id)}>
+        <BlockBoundary name={title}>
+          {c.kind === "embed" ? (
+            <OrgPageEmbed orgId={orgId} c={c} />
+          ) : (
+            <OrgPageView orgId={orgId} c={c} />
+          )}
+        </BlockBoundary>
+      </div>
+    </FormSection>
+  );
+}
+
 function OrgPageEmbed({ orgId, c }: { orgId: string; c: UiContributionItem }) {
   const locale = uiLocale(useLocale());
   return <EmbedTab orgId={orgId} plugin={c.plugin} id={c.id} title={c.title[locale]} />;
 }
 
-function OrgPageView({ orgId, c }: { orgId: string; c: UiContributionItem }) {
-  const t = useTranslations();
+/**
+ * An org view's state: read through the query cache, refreshed by the org UI stream (read again
+ * when this contribution changes, and once after a reconnect: refreshes may have been missed
+ * meanwhile).
+ */
+function useOrgView(orgId: string, c: UiContributionItem) {
   const locale = uiLocale(useLocale());
   const { plugin, id } = c;
   const targets = useMemo(() => [{ plugin, id }], [plugin, id]);
-  // The org UI stream: read again when this page's contribution changes, and once after a
-  // reconnect (refreshes may have been missed meanwhile)
   const qc = useQueryClient();
   // the org stream ended (session revoked, the browser gave up reconnecting): the content stays,
   // with a line saying live refresh stopped
@@ -295,20 +334,30 @@ function OrgPageView({ orgId, c }: { orgId: string; c: UiContributionItem }) {
   const key = uiKey(plugin, id);
   const views = useExtensionViews(orgId, targets, { locale });
   const runAction = useUiAction(orgId, { locale, onView: views.setView });
+  return {
+    liveLost,
+    state: views.states[key],
+    retry: () => views.retry(key),
+    onAction: runAction({ plugin, id }),
+  };
+}
+
+function OrgViewBody({ live }: { live: ReturnType<typeof useOrgView> }) {
+  const t = useTranslations();
   return (
     <Stack gap={12}>
-      {liveLost && (
+      {live.liveLost && (
         <Text variant="small" tone="warn">
           {t("pluginPage.liveLost")}
         </Text>
       )}
-      <ExtensionViewTab
-        state={views.states[key]}
-        onRetry={() => views.retry(key)}
-        onAction={runAction({ plugin, id })}
-      />
+      <ExtensionViewTab state={live.state} onRetry={live.retry} onAction={live.onAction} />
     </Stack>
   );
+}
+
+function OrgPageView({ orgId, c }: { orgId: string; c: UiContributionItem }) {
+  return <OrgViewBody live={useOrgView(orgId, c)} />;
 }
 
 function FilePreviewSlot({
