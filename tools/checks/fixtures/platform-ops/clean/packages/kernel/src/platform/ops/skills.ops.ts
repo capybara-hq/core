@@ -49,4 +49,15 @@ export const ops = [
     confirm: "read",
     run: async () => ({}),
   }),
+  defineOperation({
+    id: "platform.set-preferences",
+    description: "Set your preferences.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.read" },
+    mirrors: ["PUT /api/v1/me/preferences"],
+    confirm: "personal",
+    summary: () => ({ zh: "设置偏好", en: "Set preferences" }),
+    run: async () => ({}),
+  }),
 ];

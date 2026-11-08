@@ -16,6 +16,7 @@ import { ENVIRONMENT_ROUTES } from "../environments/environments.schemas.js";
 import { EVAL_ROUTES } from "../evals/evals.schemas.js";
 import { EXTENSION_POINT_ROUTES } from "../extensions/point-defaults.schemas.js";
 import { FILE_PREVIEWER_ROUTES } from "../files/previewers.schemas.js";
+import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
@@ -71,4 +72,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...FILE_PREVIEWER_ROUTES,
   // Task 11b: environments
   ...ENVIRONMENT_ROUTES,
+  // personal preferences (run context spec §3.4)
+  ...ME_ROUTES,
 ];

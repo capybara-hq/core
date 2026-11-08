@@ -530,7 +530,7 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 
 **What was built**
 
-- 179 operations in 20 domains; every other kernel route is excluded for good
+- 181 operations in 20 domains; every other kernel route is excluded for good
   with a reason (`human-only` / `secret` / `transport` / `internal`). No `later` route remains:
   the category is gone from `ExclusionCategory` and `check:platform-ops` rule `platform-op-later`
   rejects any `later` entry (red fixture in `tools/checks/fixtures/platform-ops/violations`).
@@ -541,6 +541,13 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   editable", role-keyed `forbidden`. `agents.get` already returned the profile (`AgentView`);
   `platform.me` now returns it too (avatar, description, quick actions). `agents.update` takes the
   description, saved with the definition (run context spec §3.5).
+- Personal preferences (after run context merged, maintainer decision 2026-11-08):
+  `platform.preferences` / `platform.set-preferences` mirror `GET` / `PUT /api/v1/me/preferences`
+  (the time zone; `PreferencesSchema` moved into `identity/me.schemas.ts`); the set is `personal`
+  and rememberable, the card names the old and the new zone. The two routes were excluded as
+  `internal` / `human-only`; the time zone is no sensitive setting, so parity offers it.
+  `check:platform-ops` rule `platform-op-authz` lets an operation ask any authz of a route without
+  `@OrgAction` / `@SuperAdmin` (any signed-in person): every run's actor is a member of its org.
 - Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
   `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
   parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,

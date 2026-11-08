@@ -2,6 +2,8 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
+import { AccountsService } from "../../identity/accounts.js";
+import { PreferencesSchema } from "../../identity/me.schemas.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { effectiveSandboxEgress, OrgSettingsService } from "../../orgs/settings.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
@@ -30,7 +32,10 @@ const FAMILIES = [
 
 const EMPTY = z.object({}).strict();
 
-/** The `platform` domain: orientation, and what this agent is (spec §7). Synthetic, no route. */
+/**
+ * The `platform` domain: orientation and what this agent is (spec §7, synthetic), and the
+ * person's own preferences (`/me/preferences`).
+ */
 @Injectable()
 export class PlatformOperationsProvider implements OnModuleInit {
   constructor(
@@ -39,6 +44,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(AgentsService) private readonly agents: AgentsService,
     @Inject(OrgSettingsService) private readonly settings: OrgSettingsService,
     @Inject(ToolRegistry) private readonly tools: ToolRegistry,
+    @Inject(AccountsService) private readonly accounts: AccountsService,
   ) {}
 
   /**
@@ -145,6 +151,48 @@ export class PlatformOperationsProvider implements OnModuleInit {
             },
           };
         },
+      }),
+      defineOperation({
+        id: "platform.preferences",
+        description:
+          "Read your own preferences: your time zone (an IANA name such as Asia/Shanghai), or null when it follows the time zone of the browser you send messages from. The run context already tells you the zone in effect for this message.",
+        input: EMPTY,
+        example: {},
+        // any signed-in person may call the route; every run's actor is a member of this org
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/me/preferences"],
+        confirm: "read",
+        run: async (_input, ctx) => this.accounts.preferences(ctx.actorAccountId),
+      }),
+      defineOperation({
+        id: "platform.set-preferences",
+        description:
+          "Set your own time zone (an IANA name such as Europe/Berlin), or null to follow the time zone of the browser you send messages from. It applies to the messages you send afterwards, on the web and in IM; the current run keeps its zone.",
+        input: PreferencesSchema,
+        example: { timeZone: "Asia/Shanghai" },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["PUT /api/v1/me/preferences"],
+        confirm: "personal",
+        errors: [
+          {
+            code: "validation_failed",
+            next: "Use an IANA time zone name such as Asia/Shanghai or America/New_York, or null.",
+          },
+        ],
+        summary: async (input, ctx) => {
+          const now = (await this.accounts.preferences(ctx.actorAccountId)).timeZone;
+          const from = { zh: now ?? "跟随浏览器", en: now ?? "follow the browser" };
+          const to = {
+            zh: input.timeZone ?? "跟随浏览器",
+            en: input.timeZone ?? "follow the browser",
+          };
+          return {
+            zh: `把你的时区从「${from.zh}」改为「${to.zh}」`,
+            en: `Change your time zone from "${from.en}" to "${to.en}"`,
+          };
+        },
+        run: async (input, ctx) =>
+          this.accounts.setPreferences(ctx.actorAccountId, { timeZone: input.timeZone }),
       }),
     ]);
   }
