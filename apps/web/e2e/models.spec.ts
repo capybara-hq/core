@@ -29,6 +29,21 @@ const saveAll = (page: import("@playwright/test").Page) =>
 const MODEL_FAKE = "模拟模型";
 
 /**
+ * The 模型 tab with model-fake open (`?provider=<plugin>`), and the 用途默认 tab (`?tab=purposes`)
+ * of the admin and org models pages.
+ */
+const ADMIN_MODELS = "/admin/models?provider=model-fake";
+const ADMIN_PURPOSES = "/admin/models?tab=purposes";
+const ORG_PURPOSES = "/settings/models?tab=purposes";
+
+/**
+ * model-fake's chat models table on the 模型 tab: one table per model kind, named by the provider,
+ * or `<provider> · <kind>` when the provider has models of more than one kind.
+ */
+const chatTable = (page: import("@playwright/test").Page) =>
+  page.getByRole("table", { name: new RegExp(`^${MODEL_FAKE}( · ${M.kind.chat})?$`) });
+
+/**
  * The eval purpose's row (an ItemListItem, never a card): a group named by the purpose's label,
  * the kernel's `KERNEL_PURPOSES` zh label.
  */
@@ -38,13 +53,13 @@ const evalRow = (page: import("@playwright/test").Page) =>
 test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认", async ({ page }) => {
   await signIn(page);
 
-  // 1. 管理 → 模型：model-fake 的表里有 fake-1，行内编辑价格
-  await page.goto("/admin/models");
+  // 1. Admin -> models, 模型 tab with model-fake open: fake-1 in its chat table, edit the price
+  // from the row menu
+  await page.goto(ADMIN_MODELS);
   await expect(page.locator('[data-template="ListPage"]')).toBeVisible();
   // controls used before hydration have no React handlers yet: what they do would be lost
   await hydrated(page);
-  const table = page.getByRole("table", { name: MODEL_FAKE });
-  const row = table.getByRole("row").filter({ hasText: "fake-1" });
+  const row = chatTable(page).getByRole("row").filter({ hasText: "fake-1" });
   await row.getByRole("button", { name: RECORD_ROW_MENU }).click();
   await page.getByRole("menuitem", { name: M.admin.menu.editPrice }).click();
   await page.getByRole("textbox", { name: M.admin.price.input }).fill("2");
@@ -55,7 +70,9 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(page.getByText(fill(M.admin.price.saved, { model: "fake-1" }))).toBeVisible();
   await expect(row.getByRole("cell", { name: "8", exact: true })).toBeVisible();
 
-  // 2. eval 未映射 → 设部署默认为 fake-1，提示消失
+  // 2. 用途默认 tab: eval unmapped -> set the deployment default to fake-1, the notice goes
+  await page.goto(ADMIN_PURPOSES);
+  await hydrated(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
   const evalCard = evalRow(page);
   await selectOption(evalCard.getByRole("combobox", { name: P.model }), "model-fake/fake-1");
@@ -63,22 +80,23 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(page.getByText(fill(P.savedAll, { n: 1 }))).toBeVisible();
   await expect(page.getByText(M.evalUnmapped)).toHaveCount(0);
 
-  // 刷新后价格与映射仍在（存在 PG）
+  // After a reload the mapping and the price are still there (stored in PG)
   await page.reload();
-  await expect(
-    page
-      .getByRole("table", { name: MODEL_FAKE })
-      .getByRole("row")
-      .filter({ hasText: "fake-1" })
-      .getByRole("cell", { name: "8", exact: true }),
-  ).toBeVisible();
   await expect(evalCard.getByRole("combobox", { name: P.model })).toHaveAttribute(
     "value",
     "model-fake/fake-1",
   );
+  await page.goto(ADMIN_MODELS);
+  await expect(
+    chatTable(page)
+      .getByRole("row")
+      .filter({ hasText: "fake-1" })
+      .getByRole("cell", { name: "8", exact: true }),
+  ).toBeVisible();
 
-  // 3. 组织设置 → 模型用途（评测向导的「去设置」链到这里）：显示部署默认，覆盖后恢复默认
-  await page.goto("/settings/models");
+  // 3. Org settings -> models, 用途默认 tab (the eval wizard's 「去设置」 links here): it shows the
+  // deployment default; override, then restore the default
+  await page.goto(ORG_PURPOSES);
   await hydrated(page);
   const orgCard = evalRow(page);
   const defText = fill(P.useDefault, { target: `${MODEL_FAKE} / fake-1` });
@@ -93,16 +111,15 @@ test("后台定价与 eval 部署默认 → 组织设置页覆盖并恢复默认
   await expect(orgCard.getByText(P.overridden)).toHaveCount(0);
   await expect(orgCard.getByRole("combobox", { name: P.model })).toHaveAttribute("value", "");
 
-  // 4. 清理：清除 eval 部署默认与 fake-1 的价格
-  await page.goto("/admin/models");
+  // 4. Clean up: clear the eval deployment default (用途默认) and fake-1's price (模型)
+  await page.goto(ADMIN_PURPOSES);
   await hydrated(page);
   await selectOption(evalRow(page).getByRole("combobox", { name: P.model }), "");
   await saveAll(page);
   await expect(page.getByText(M.evalUnmapped)).toBeVisible();
-  const priced = page
-    .getByRole("table", { name: MODEL_FAKE })
-    .getByRole("row")
-    .filter({ hasText: "fake-1" });
+  await page.goto(ADMIN_MODELS);
+  await hydrated(page);
+  const priced = chatTable(page).getByRole("row").filter({ hasText: "fake-1" });
   await priced.getByRole("button", { name: RECORD_ROW_MENU }).click();
   await page.getByRole("menuitem", { name: M.admin.menu.clearPrice }).click();
   await expect(priced.getByRole("cell", { name: "8", exact: true })).toHaveCount(0);
