@@ -112,6 +112,15 @@ The sidebar has three contexts (the third, setup, is drawn only by `SetupPage`):
 - Extension blocks (inline card, properties section, right panel, previewer) fail alone: "Failed to load · Retry" in that block, the stream and the composer keep working.
 - The right area lives in the URL hash (`lib/right-area.ts`: `#properties`, `#panel=<plugin>/<contribution>[/<item>]`, `#file=`, `#output=`, `#subagent=`), one thing at a time, so a reload keeps it and another conversation never inherits it. Back in a sub-agent panel returns to what was open before it (e.g. the properties panel), else closes. The properties sections render in the spec §6.16.17 order (Context, extension sections, Files, Background tasks); Files includes the sub-agents' deliveries, marked with the sub-agent.
 - A new conversation (`/`) creates nothing on the kernel before the first send.
+- Phones (below 640) on the conversation page are the design package's (spec §4.3, §5.4, §6.16.2):
+  the new conversation pins the composer at the bottom with the greeting and a sideways-scrolling
+  agents row at the top; the page passes the agent's quick actions twice, as the composer's
+  `QuickActions` and as `newConversation.quickActions` (a `QuickActionList`, listed on a phone, the
+  same `onPick`); the composer collapses its environment / model / effort pickers into one options
+  button and bottom sheet by itself (pass the pickers as usual). On a touch device
+  (`isTouchPointer()`, read at the tap) a choice never focuses the composer, and a quick action
+  fills it without focus. The shell lifts the conversation column above the iOS keyboard
+  (`--cb-keyboard-inset`); pages add nothing for it.
 - A card whose state the log does not carry (a sub-agent's approval or question, named only by id)
   reads it before the first paint (`openWaitReads` in the route's `then`) and draws nothing until
   that read answers (`ApprovalCard fromRead`), never a pending card first (web query cache spec §6).

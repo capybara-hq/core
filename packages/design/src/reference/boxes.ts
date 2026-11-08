@@ -18,6 +18,7 @@ export const BOXES: readonly BoxRule[] = [
   { name: "Sheet", selector: ".cb-sheet" },
   { name: "Popover", selector: ".cb-popover" },
   { name: "properties sheet", selector: ".cb-conv-sheet" },
+  { name: "options sheet", selector: ".cb-bsheet" },
   { name: "InlineCard", selector: ".cb-icard" },
   { name: "PropertySection", selector: '.cb-property-section:not([data-inset="box"])' },
   { name: "DataTable frame", selector: '.cb-table[data-framed="true"] .cb-table-panel' },
