@@ -713,3 +713,56 @@ describe("/env: the IM default environment", () => {
     expect(await db.selectFrom("environment_defaults").selectAll().execute()).toHaveLength(0);
   });
 });
+
+describe("IM sender time zone and language (run context spec §3.4)", () => {
+  /** The latest user message of the owner's live direct-message thread. */
+  const lastDmMessage = async () => {
+    const t = (await threads()).find((r) => r.thread_key === "dm:u-owner" && !r.archived_at);
+    const msgs = await userMessages(t?.conversation_id as string);
+    return msgs[msgs.length - 1]?.payload as { timeZone?: string; locale?: string };
+  };
+
+  it("what the platform gives for the sender is recorded on the message, normalized", async () => {
+    await pushAndSettle(
+      dm("tz-1", "u-owner", "hi", "t1", { timeZone: "Asia/Shanghai", locale: "zh-CN" }),
+    );
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "Asia/Shanghai", locale: "zh" });
+    // an unknown zone is ignored; any other language tag is English
+    await pushAndSettle(
+      dm("tz-2", "u-owner", "hi", "t1", { timeZone: "Mars/Olympus", locale: "fr-FR" }),
+    );
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "UTC", locale: "en" });
+  });
+
+  it("without platform values: the account's zone and the latest web language, else the org's", async () => {
+    // nothing anywhere: the org defaults
+    await pushAndSettle(dm("tz-3", "u-owner", "hi"));
+    expect(await lastDmMessage()).toMatchObject({ timeZone: "UTC", locale: "en" });
+    const pref = await owner({
+      method: "PUT",
+      url: "/api/v1/me/preferences",
+      payload: { timeZone: "Europe/Berlin" },
+    });
+    expect(pref.statusCode, pref.body).toBe(200);
+    try {
+      const web = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations`,
+        payload: {
+          agentId,
+          message: { text: "from the web", clientMessageId: "web-tz-1", locale: "zh" },
+        },
+      });
+      expect(web.statusCode, web.body).toBe(201);
+      await pushAndSettle(dm("tz-4", "u-owner", "hi"));
+      expect(await lastDmMessage()).toMatchObject({ timeZone: "Europe/Berlin", locale: "zh" });
+      // the platform's values win over both
+      await pushAndSettle(
+        dm("tz-5", "u-owner", "hi", "t1", { timeZone: "Asia/Tokyo", locale: "en-US" }),
+      );
+      expect(await lastDmMessage()).toMatchObject({ timeZone: "Asia/Tokyo", locale: "en" });
+    } finally {
+      await owner({ method: "PUT", url: "/api/v1/me/preferences", payload: { timeZone: null } });
+    }
+  });
+});

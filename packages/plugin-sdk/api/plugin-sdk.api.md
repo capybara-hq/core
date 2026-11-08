@@ -1293,7 +1293,9 @@ export interface InboundSender {
     avatarUrl?: string;
     displayName?: string;
     externalId: string;
+    locale?: string;
     tenantId: string;
+    timeZone?: string;
 }
 
 // @public

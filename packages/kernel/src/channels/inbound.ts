@@ -10,6 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import { type ImSenderContext, imSenderContext } from "../conversations/message-context.js";
 import { EnvironmentsService, type EnvironmentView } from "../environments/environments.service.js";
 import { DEFAULT_ENVIRONMENT_ALIASES, environmentLabel } from "../environments/label.js";
 import { ApiError } from "../errors.js";
@@ -278,6 +279,8 @@ export class ChannelInbound {
         // person by their account's name (the kernel reads it)
         ...(threadAccount === null &&
           e.sender.displayName !== undefined && { senderName: e.sender.displayName }),
+        // the sender's zone and language as the platform gives them (run context spec §3.4)
+        im: imSenderContext(e.sender),
       });
       seq = posted.event.seq;
       // best-effort (batch 5 review m4): a failed note must not fail the job before the thread
@@ -380,7 +383,7 @@ export class ChannelInbound {
     orgId: string,
     conversationId: string,
     accountId: string,
-    input: { text: string; clientMessageId: string; senderName?: string },
+    input: { text: string; clientMessageId: string; senderName?: string; im: ImSenderContext },
   ): Promise<{ event: ConversationEvent; skillNotRun: boolean }> {
     const cmd = parseSlashCommand(input.text.trimStart());
     let skillNotRun = false;
