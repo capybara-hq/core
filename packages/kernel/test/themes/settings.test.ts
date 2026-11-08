@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
+import { type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "../catalog/org-env.js";
 import {
   clearThemeLevels,
   importTheme,
@@ -154,6 +157,175 @@ describe("theme settings", () => {
         payload: { enabled: false },
       });
       expect(sw.statusCode, sw.body).toBe(200);
+    });
+  });
+
+  describe("the platform default must be on in every org", () => {
+    const orgName = async (id: string) =>
+      (
+        await env.db
+          .selectFrom("orgs")
+          .select("name")
+          .where("id", "=", id)
+          .executeTakeFirstOrThrow()
+      ).name;
+
+    it("a scope-all theme an org switched off is refused, naming that org", async () => {
+      await setThemeSwitch(env, env.orgId, on, false);
+      const r = await adminSettings({ uiTheme: { id: on } });
+      expect(r.statusCode, r.body).toBe(400);
+      expect(r.json().error).toMatchObject({
+        code: "theme.not_available",
+        details: [{ theme: on, orgs: [{ orgId: env.orgId, orgName: await orgName(env.orgId) }] }],
+      });
+      const row = await env.db
+        .selectFrom("deployment_settings")
+        .select("value")
+        .where("key", "=", "uiTheme")
+        .executeTakeFirst();
+      const stored: unknown = row === undefined ? { id: null } : row.value;
+      expect(stored).toEqual({ id: null });
+    });
+
+    it("a follow theme of an all-scope plugin not installed in an org is refused", async () => {
+      const t = await importTheme(env, "glow", "glow");
+      await setScope(env, t.itemId, "all");
+      // no install in the org (the scope sync is not awaited here): the theme is off there
+      await env.db.deleteFrom("plugin_installs").where("item_id", "=", t.itemId).execute();
+      const r = await adminSettings({ uiTheme: { id: t.id } });
+      expect(r.json().error.code).toBe("theme.not_available");
+      expect(r.json().error.details[0].orgs).toContainEqual({
+        orgId: env.orgId,
+        orgName: await orgName(env.orgId),
+      });
+    });
+
+    it("setting the default and an org switch-off of it in parallel never deadlock", async () => {
+      // The org switch's order (component-scope setSwitch): item FOR SHARE, theme row FOR UPDATE,
+      // then `uiTheme` FOR SHARE. Held open here on another connection while the setter runs.
+      const item = (
+        await env.db
+          .selectFrom("platform_themes")
+          .select("catalog_item_id")
+          .where("id", "=", on)
+          .executeTakeFirstOrThrow()
+      ).catalog_item_id as string;
+      await writeUiTheme(env, null); // the row the migration seeds (the reset truncated it)
+      let setter: Promise<{ statusCode: number; body: string }> | undefined;
+      await env.db.transaction().execute(async (trx) => {
+        await trx
+          .selectFrom("catalog_items")
+          .select("id")
+          .where("id", "=", item)
+          .forShare()
+          .execute();
+        await trx
+          .selectFrom("platform_themes")
+          .select("id")
+          .where("id", "=", on)
+          .forUpdate()
+          .execute();
+        setter = adminSettings({ uiTheme: { id: on } });
+        // wait until the setter is blocked on the theme row this transaction holds
+        let blocked = false;
+        for (let i = 0; i < 400 && !blocked; i++) {
+          const w = await sql<{ n: number }>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND query ILIKE '%platform_themes%for share%'`.execute(
+            env.db,
+          );
+          blocked = (w.rows[0]?.n ?? 0) > 0;
+          if (!blocked) await new Promise((r) => setTimeout(r, 25));
+        }
+        expect(blocked).toBe(true);
+        await trx
+          .selectFrom("deployment_settings")
+          .select("key")
+          .where("key", "=", "uiTheme")
+          .forShare()
+          .execute();
+        await trx
+          .insertInto("component_org_switches")
+          .values({ kind: "theme", component_id: on, org_id: env.orgId, enabled: false })
+          .execute();
+      });
+      const r = await (setter as Promise<{ statusCode: number; body: string }>);
+      // the switch-off committed first, so the setter sees the theme off in the org
+      expect(r.body).not.toContain("deadlock");
+      expect(r.statusCode, r.body).toBe(400);
+      expect(JSON.parse(r.body).error.code).toBe("theme.not_available");
+    });
+
+    it("the reverse: a switch-off waits for the setter and is then refused", async () => {
+      const results = await Promise.all([
+        adminSettings({ uiTheme: { id: on } }),
+        env.boss({
+          method: "PUT",
+          url: `/api/v1/orgs/${env.orgId}/components/theme/${on}/switch`,
+          payload: { enabled: false },
+        }),
+      ]);
+      for (const r of results) expect(r.statusCode, r.body).not.toBe(500);
+      const [set, sw] = results;
+      if (set?.statusCode === 200) {
+        expect(sw?.json().error.code).toBe("theme.platform_default");
+      } else {
+        // the switch-off returns its preview first (nothing written), so the setter succeeds
+        expect(set?.statusCode).toBe(200);
+      }
+    });
+  });
+
+  describe("Platform tool summaries name only themes the reader may see", () => {
+    const ctx = (accountId: string) => ({
+      orgId: env.orgId,
+      actorAccountId: accountId,
+      agentId: randomUUID(),
+      conversationId: randomUUID(),
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    });
+    const summary = async (id: string, input: unknown, accountId: string) => {
+      const o = env.k.app.get(PlatformOperations).get(id);
+      if (o === null) throw new Error(id);
+      return o.summary?.(o.input.parse(input) as never, ctx(accountId));
+    };
+
+    it("set-preferences shows a theme off in your orgs by its id, one on by its name", async () => {
+      expect(await summary("platform.set-preferences", { theme: off }, env.memId)).toEqual({
+        zh: `把你的主题从「跟随组织」改为「${off}」`,
+        en: `Change your theme from "follow the org" to "${off}"`,
+      });
+      expect(await summary("platform.set-preferences", { theme: on }, env.memId)).toEqual({
+        zh: "把你的主题从「跟随组织」改为「night-city zh」",
+        en: 'Change your theme from "follow the org" to "night-city en"',
+      });
+    });
+
+    it("org and deployment settings summaries show theme names", async () => {
+      expect(
+        await summary("org-settings.update", { theme: { id: on, personal: "locked" } }, env.bossId),
+      ).toEqual({
+        zh: "修改组织设置：theme → night-city zh（个人选择：锁定）",
+        en: "Update the org settings: theme → night-city en (personal picks locked)",
+      });
+      expect(
+        await summary(
+          "org-settings.update",
+          { theme: { id: off, personal: "allowed" } },
+          env.bossId,
+        ),
+      ).toMatchObject({ en: `Update the org settings: theme → ${off} (personal picks allowed)` });
+      expect(await summary("admin.update-settings", { uiTheme: { id: on } }, env.rootId)).toEqual({
+        zh: "修改平台部署设置：uiTheme=night-city zh",
+        en: "Change the deployment settings: uiTheme=night-city en",
+      });
+      expect(await summary("admin.update-settings", { uiTheme: { id: null } }, env.rootId)).toEqual(
+        {
+          zh: "修改平台部署设置：uiTheme=内置主题",
+          en: "Change the deployment settings: uiTheme=built-in theme",
+        },
+      );
     });
   });
 

@@ -825,11 +825,13 @@ export class CatalogService {
     const now = sql<Date>`now()` as unknown as Date;
     // Its themes go with it: refused while one is the platform default (themes spec §7), before
     // anything is written
+    // (the theme rows FOR UPDATE first: the theme lock order is item, theme row, `uiTheme`)
     const themes = await t
       .selectFrom("platform_themes")
       .select("id")
       .where("catalog_item_id", "=", itemId)
       .where("deleted_at", "is", null)
+      .forUpdate()
       .execute();
     await assertNotPlatformDefault(
       t,

@@ -7,7 +7,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { assertPlatformDefaultEligible } from "../themes/theme-state.js";
+import { assertPlatformDefaultEligible, lockThemeShared } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
 import { SuperAdminLock } from "./super-admin.js";
 
@@ -352,14 +352,17 @@ export class SettingsService {
       next.orgMarketplaceBrowse = patch.orgMarketplaceBrowse;
     }
     if (patch.uiTheme !== undefined) {
-      // Lock order (themes spec §7; after the super admin lock above): the `uiTheme` row FOR
-      // UPDATE, then the chosen theme's catalog item and its `platform_themes` row FOR SHARE
-      // (assertPlatformDefaultEligible), and only then the eligibility check. The guards that take
-      // the default away (themes/theme-usage.ts) hold those rows FOR UPDATE and read `uiTheme`
-      // FOR SHARE, so a narrowing and a new default never interleave unseen.
+      // The one theme lock order (themes spec §7), inside the super admin lock above: the chosen
+      // theme's catalog item, then its `platform_themes` row FOR SHARE, then the `uiTheme` row FOR
+      // UPDATE, and only then the eligibility check (on in every live org). The writers that take
+      // a theme away or switch it off in an org (scope, disable, removal, the org switch and
+      // uninstall) hold the item or theme row before they read `uiTheme` FOR SHARE, so they and
+      // this write wait for each other in the same order and never deadlock.
+      if (patch.uiTheme.id !== null) await lockThemeShared(this.db.db, patch.uiTheme.id);
       await lockUiThemeRow(this.db.db);
-      if (patch.uiTheme.id !== null)
+      if (patch.uiTheme.id !== null) {
         await assertPlatformDefaultEligible(this.db.db, patch.uiTheme.id);
+      }
       next.uiTheme = { id: patch.uiTheme.id };
     }
     const {

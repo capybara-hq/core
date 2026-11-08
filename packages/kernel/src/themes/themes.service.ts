@@ -8,6 +8,8 @@ import {
   type ListedTheme,
   type ThemeRef,
   themeDefinitions,
+  themeOnForAccount,
+  themeOnIn,
   themeRefOf,
   themeSwatches,
   themesOnIn,
@@ -19,7 +21,11 @@ export interface OrgThemes {
   themes: ListedTheme[];
   /** The viewer's theme ({@link ThemesService.resolve}); null: the built-in theme. */
   resolved: ThemeRef | null;
-  /** The org's setting: its default (null: follow the platform) and the personal lock. */
+  /**
+   * The org's setting as stored: its default (null: follow the platform) and the personal lock.
+   * The stored id may name a theme absent from `themes` (it went off in the org after it was
+   * chosen; resolution skips it): the UI shows it as unavailable, not as selected.
+   */
   org: { id: string | null; personal: "allowed" | "locked" };
 }
 
@@ -71,7 +77,10 @@ export class ThemesService {
     return d ? themeRefOf(id, d.version, d.definition) : null;
   }
 
-  /** The listing, the viewer's resolved theme and the org's setting, from one read of each. */
+  /**
+   * The listing, the viewer's resolved theme and the org's setting. Separate reads, not one
+   * snapshot: a change committed between them shows at the next read.
+   */
   async forOrg(orgId: string, accountId: string | null): Promise<OrgThemes> {
     const themes = await this.listForOrg(orgId);
     const org = (await readOrgSettings(this.db.db, orgId)).theme ?? DEFAULT_ORG_THEME;
@@ -96,8 +105,18 @@ export class ThemesService {
     return { themes, resolved, org: { id: org.id, personal: org.personal } };
   }
 
-  /** A live theme's name (the Platform tool's summaries); null when there is no such theme. */
+  /** A live theme's name (the super admin's summaries); null when there is no such theme. */
   async nameOf(id: string): Promise<LocalizedName | null> {
     return (await themeDefinitions(this.db.db, [id])).get(id)?.definition.name ?? null;
+  }
+
+  /** Theme `id`'s name if it is on in the org, else null (a summary never names another org's theme). */
+  async nameIn(orgId: string, id: string): Promise<LocalizedName | null> {
+    return (await themeOnIn(this.db.db, orgId, id)) ? this.nameOf(id) : null;
+  }
+
+  /** Theme `id`'s name if it is on in one of the person's orgs, else null (same reason). */
+  async nameForAccount(accountId: string, id: string): Promise<LocalizedName | null> {
+    return (await themeOnForAccount(this.db.db, accountId, id)) ? this.nameOf(id) : null;
   }
 }

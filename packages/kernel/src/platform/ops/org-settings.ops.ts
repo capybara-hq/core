@@ -1,6 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { OrgSettingsPatchSchema, OrgSettingsService } from "../../orgs/settings.service.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -25,6 +26,7 @@ export class OrgSettingsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(OrgSettingsService) private readonly settings: OrgSettingsService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   onModuleInit(): void {
@@ -70,18 +72,38 @@ export class OrgSettingsOperations implements OnModuleInit {
           },
         ],
         precheck: (i) => precheckBy(async () => this.settings.check(i)),
-        summary: (i) => {
-          const parts = Object.entries(i)
+        summary: async (i, ctx) => {
+          const { theme, ...rest } = i;
+          const parts = Object.entries(rest)
             .filter(([, v]) => v !== undefined)
             .map(([k, v]) => `${k} → ${show(v)}`);
+          const zhParts = [...parts];
+          const enParts = [...parts];
+          if (theme !== undefined) {
+            // the theme by its name when it is on in this org; any other id is shown as given
+            const name = theme?.id == null ? null : await this.themes.nameIn(ctx.orgId, theme.id);
+            if (theme === null) {
+              zhParts.push("theme → 清除（跟随平台，允许个人选择）");
+              enParts.push("theme → cleared (follow the platform, personal picks allowed)");
+            } else {
+              const zh = theme.id === null ? "跟随平台" : (name?.zh ?? theme.id);
+              const en = theme.id === null ? "follow the platform" : (name?.en ?? theme.id);
+              zhParts.push(
+                `theme → ${zh}（个人选择：${theme.personal === "locked" ? "锁定" : "允许"}）`,
+              );
+              enParts.push(
+                `theme → ${en} (personal picks ${theme.personal === "locked" ? "locked" : "allowed"})`,
+              );
+            }
+          }
           const warn = i.platformTool === "off" || i.platformTool === "read-only";
           return {
-            zh: `修改组织设置：${parts.join("，")}${
+            zh: `修改组织设置：${zhParts.join("，")}${
               warn
                 ? "（之后智能体不能再用平台工具" + (i.platformTool === "off" ? "" : "写入") + "）"
                 : ""
             }`,
-            en: `Update the org settings: ${parts.join(", ")}${
+            en: `Update the org settings: ${enParts.join(", ")}${
               warn
                 ? `; from the next call the Platform tool is ${
                     i.platformTool === "off" ? "off" : "read-only"

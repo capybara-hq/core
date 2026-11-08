@@ -156,20 +156,30 @@ export async function eligiblePlatformDefault(
   return platformDefaultEligible(st, c) ? c : null;
 }
 
-/** 400 `theme.not_available`: theme `id` cannot be chosen where it was set. */
-export const themeNotAvailable = (id: string, where: string): ApiError =>
+/**
+ * 400 `theme.not_available`: theme `id` cannot be chosen where it was set; `orgs`: the live orgs
+ * where it is off (a platform default must be on in every org).
+ */
+export const themeNotAvailable = (
+  id: string,
+  where: string,
+  orgs?: { orgId: string; orgName: string }[],
+): ApiError =>
   new ApiError(
     "theme.not_available",
-    `Theme ${id} is not available ${where}; choose one of the themes listed for it`,
-    [{ theme: id }],
+    orgs === undefined
+      ? `Theme ${id} is not available ${where}; choose one of the themes listed for it`
+      : `Theme ${id} is off in ${orgs.length} organization(s) (${orgs.map((o) => o.orgName).join(", ")}), so it cannot be the platform default; choose a theme that is on in every organization`,
+    [{ theme: id, ...(orgs !== undefined && { orgs }) }],
   );
 
 /**
- * Locks theme `id`'s catalog item, then its `platform_themes` row, FOR SHARE (the catalog order:
- * item, then component rows; the scope, disable and removal writers hold them FOR UPDATE), so the
+ * Locks theme `id`'s catalog item, then its `platform_themes` row, FOR SHARE (the one theme lock
+ * order: catalog item, then theme row, then the `uiTheme` setting row; the scope, disable, switch
+ * and removal writers hold the item or theme row FOR UPDATE before they read `uiTheme`), so the
  * check that follows reads a state no such writer changes before the caller commits.
  */
-async function lockThemeShared(db: KernelSchemaDb, id: string): Promise<void> {
+export async function lockThemeShared(db: KernelSchemaDb, id: string): Promise<void> {
   const row = await db
     .selectFrom("platform_themes")
     .select("catalog_item_id")
@@ -189,14 +199,26 @@ async function lockThemeShared(db: KernelSchemaDb, id: string): Promise<void> {
 
 /**
  * Refuses (400 `theme.not_available`) a platform default that is not a platform-owned theme with
- * effective scope `all`, live and not disabled (spec §7). Call it in the setting's transaction
- * after locking the `uiTheme` row: it locks the theme's rows FOR SHARE before reading them.
+ * effective scope `all`, live and not disabled, or that is off in some live org (an org switched it
+ * off, or does not have the plugin a `follow` theme comes with; details list those orgs): the
+ * default is locked on in every org and every org falls back to it (spec §7). Call it in the
+ * setting's transaction after {@link lockThemeShared} and the `uiTheme` row lock.
  */
 export async function assertPlatformDefaultEligible(db: KernelSchemaDb, id: string): Promise<void> {
-  await lockThemeShared(db, id);
-  if ((await eligiblePlatformDefault(db, id)) === null) {
+  const [c] = await loadComponents(db, "theme", { ids: [id] });
+  const st = c && (await loadScopeState(db, "theme", [c]));
+  if (!c || !st || !platformDefaultEligible(st, c)) {
     throw themeNotAvailable(id, "as the platform default (a platform theme whose scope is all)");
   }
+  const orgs = await db
+    .selectFrom("orgs")
+    .select(["id", "name"])
+    .where("deleted_at", "is", null)
+    .orderBy("name")
+    .orderBy("id")
+    .execute();
+  const off = orgs.filter((o) => !onIn(st, c, o.id)).map((o) => ({ orgId: o.id, orgName: o.name }));
+  if (off.length > 0) throw themeNotAvailable(id, "as the platform default", off);
 }
 
 /**
@@ -214,6 +236,32 @@ export async function assertThemeOnIn(
   if (!c || !st || !onIn(st, c, orgId)) throw themeNotAvailable(id, "in this organization");
 }
 
+/** Whether theme `id` is on in the org (no locks: a read for display). */
+export async function themeOnIn(db: KernelSchemaDb, orgId: string, id: string): Promise<boolean> {
+  const [c] = await loadComponents(db, "theme", { ids: [id] });
+  if (!c) return false;
+  return onIn(await loadScopeState(db, "theme", [c]), c, orgId);
+}
+
+/** Whether theme `id` is on in at least one of the person's live orgs. */
+export async function themeOnForAccount(
+  db: KernelSchemaDb,
+  accountId: string,
+  id: string,
+): Promise<boolean> {
+  const orgs = await db
+    .selectFrom("memberships as m")
+    .innerJoin("orgs as o", "o.id", "m.org_id")
+    .select("m.org_id")
+    .where("m.account_id", "=", accountId)
+    .where("o.deleted_at", "is", null)
+    .execute();
+  const [c] = await loadComponents(db, "theme", { ids: [id] });
+  if (!c || orgs.length === 0) return false;
+  const st = await loadScopeState(db, "theme", [c]);
+  return orgs.some((o) => onIn(st, c, o.org_id));
+}
+
 /**
  * Refuses (400 `theme.not_available`) a person's pick that is on in none of their live orgs (the
  * pick is one value across their orgs, spec §7; where it is off, the org's default applies).
@@ -223,17 +271,7 @@ export async function assertThemeOnForAccount(
   accountId: string,
   id: string,
 ): Promise<void> {
-  const orgs = await db
-    .selectFrom("memberships as m")
-    .innerJoin("orgs as o", "o.id", "m.org_id")
-    .select("m.org_id")
-    .where("m.account_id", "=", accountId)
-    .where("o.deleted_at", "is", null)
-    .execute();
-  const [c] = await loadComponents(db, "theme", { ids: [id] });
-  if (c && orgs.length > 0) {
-    const st = await loadScopeState(db, "theme", [c]);
-    if (orgs.some((o) => onIn(st, c, o.org_id))) return;
+  if (!(await themeOnForAccount(db, accountId, id))) {
+    throw themeNotAvailable(id, "in any of your organizations");
   }
-  throw themeNotAvailable(id, "in any of your organizations");
 }

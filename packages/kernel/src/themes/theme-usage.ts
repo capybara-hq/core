@@ -124,7 +124,9 @@ export const platformDefaultError = (theme: string): ApiError =>
  * Refuses a change that takes the platform default theme away from any org (spec §7): when one of
  * `themeIds` is the platform default and `after` says it would no longer be `all` (narrower, or
  * gone), 409 `theme.platform_default`. Call it in the change's transaction before anything is
- * written; the setting's row is read FOR SHARE.
+ * written, after locking the catalog item or theme rows the change touches (the one theme lock
+ * order: catalog item, theme row, then the `uiTheme` row, which this reads FOR SHARE; the setting's
+ * write takes them in the same order).
  */
 export async function assertNotPlatformDefault(
   db: KernelSchemaDb,

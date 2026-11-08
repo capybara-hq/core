@@ -16,6 +16,7 @@ import { purposeTargetOf } from "../../models/purposes.controller.js";
 import { ModelPurposesService, PURPOSE_PUT, withDeclaredByNames } from "../../models/purposes.js";
 import { OrgsService } from "../../orgs/orgs.service.js";
 import { ProviderRegistry } from "../../runtime/providers.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -63,6 +64,7 @@ export class AdminOperations implements OnModuleInit {
     @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(PricesService) private readonly prices: PricesService,
     @Inject(ModelPurposesService) private readonly purposes: ModelPurposesService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   private assertProvider(provider: string): void {
@@ -137,14 +139,20 @@ export class AdminOperations implements OnModuleInit {
             ? { ok: true }
             : { ok: false, code: "validation_failed", message: r.error.issues[0]?.message ?? "" };
         },
-        summary: (i) => {
-          const parts = Object.entries(i).map(
-            ([k, v]) =>
-              `${k}=${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`,
-          );
+        summary: async (i) => {
+          const { uiTheme, ...rest } = i;
+          const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
+          const zh = [...parts];
+          const en = [...parts];
+          if (uiTheme !== undefined) {
+            // the theme by its name (the super admin sees every theme), the built-in one by name
+            const name = uiTheme.id === null ? null : await this.themes.nameOf(uiTheme.id);
+            zh.push(`uiTheme=${uiTheme.id === null ? "内置主题" : (name?.zh ?? uiTheme.id)}`);
+            en.push(`uiTheme=${uiTheme.id === null ? "built-in theme" : (name?.en ?? uiTheme.id)}`);
+          }
           return {
-            zh: `修改平台部署设置：${parts.join("，")}`,
-            en: `Change the deployment settings: ${parts.join(", ")}`,
+            zh: `修改平台部署设置：${zh.join("，")}`,
+            en: `Change the deployment settings: ${en.join(", ")}`,
           };
         },
         run: (input, ctx) =>

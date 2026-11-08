@@ -201,8 +201,14 @@ export class PlatformOperationsProvider implements OnModuleInit {
             );
           }
           if (input.theme !== undefined) {
+            // only themes on in one of your orgs are named; any other id is shown as given
             const name = async (id: string | null) =>
-              id === null ? null : ((await this.themes.nameOf(id)) ?? { en: id, zh: id });
+              id === null
+                ? null
+                : ((await this.themes.nameForAccount(ctx.actorAccountId, id)) ?? {
+                    en: id,
+                    zh: id,
+                  });
             const from = await name(now.theme);
             const to = await name(input.theme);
             const inZh = (n: typeof from) => (n === null ? "跟随组织" : n.zh);

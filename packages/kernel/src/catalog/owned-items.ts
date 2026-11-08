@@ -519,9 +519,10 @@ export class OwnedItems {
     }
     // A transfer leaves none of its themes `all` (an `all` scope is narrowed, P3-39): refused
     // while one is the platform default (themes spec §7), before anything changes
+    // (its theme rows FOR UPDATE first: the theme lock order is item, theme row, `uiTheme`)
     await assertNotPlatformDefault(
       t,
-      (await loadComponents(t, "theme", { itemId: item.id })).map((c) => c.id),
+      (await loadComponents(t, "theme", { itemId: item.id, forUpdate: true })).map((c) => c.id),
       () => "narrower",
     );
     // Read before anything changes: where each own-scope `all` component is on (P3-39)
