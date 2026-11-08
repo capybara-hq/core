@@ -44,7 +44,11 @@ import {
   skillConflicts,
 } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
-import { type ThemePreview, themesPreview } from "../themes/theme-usage.js";
+import {
+  assertNotPlatformDefault,
+  type ThemePreview,
+  themesPreview,
+} from "../themes/theme-usage.js";
 import type {
   ConnectorDetail,
   CreateConnectorInput,
@@ -1658,6 +1662,9 @@ export class PluginInstaller {
         }
       }
     }
+    // An org's own uninstall never takes the platform default theme away from it (themes spec §7;
+    // a scope sync uninstall follows a scope change or disable that was guarded already)
+    if (via !== "scope") await this.assertKeepsPlatformDefault(orgId, installId);
     const outcome = await this.uninstallIn(orgId, actor, installId, {
       report,
       removing: new Set(),
@@ -1678,6 +1685,28 @@ export class PluginInstaller {
       }
     });
     return report;
+  }
+
+  /**
+   * 409 `theme.platform_default` when uninstalling `installId` would switch the platform default
+   * theme off in the org (one of the plugin's `follow` themes on there through it, themes spec §7),
+   * in the caller's transaction before anything is written. A missing install passes (the
+   * uninstall reports it).
+   */
+  async assertKeepsPlatformDefault(orgId: string, installId: string): Promise<void> {
+    const found = await this.db
+      .selectFrom("plugin_installs")
+      .select("id")
+      .where("id", "=", installId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!found) return;
+    const p = await this.previewUninstall(orgId, installId);
+    await assertNotPlatformDefault(
+      this.db,
+      (p.themes ?? []).map((t) => t.id),
+      () => "narrower",
+    );
   }
 
   /**

@@ -811,8 +811,9 @@ export class CatalogService {
    * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
    * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
    * extension name claim of a first upload still waiting released (ruling P3-37, F10), its themes
-   * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default), pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
-   * item's name, or null when it is gone already.
+   * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default),
+   * pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the
+   * removed item's name, or null when it is gone already.
    */
   @Transactional({ propagation: "mandatory" })
   async removeIn(

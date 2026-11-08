@@ -1328,7 +1328,7 @@ export class PlatformPluginUpdater {
     for (const c of components) {
       if (c.kind !== "theme" || c.change !== "added") continue;
       for (const orgId of onOrgs) {
-        const clash = await themeIdClashes(db, orgId, { id: "" }, c.name);
+        const clash = await themeIdClashes(db, orgId, null, c.name);
         if (clash.length > 0) {
           themeConflicts.push({
             theme: c.name,

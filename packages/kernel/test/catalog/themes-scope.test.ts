@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { conflictsError } from "../../src/catalog/catalog-scope.service.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
@@ -93,7 +94,7 @@ describe("themes: scope, switches, previews and the platform default", () => {
     expect(r.statusCode, r.body).toBe(200);
     return r.json() as {
       affected: { orgId: string }[];
-      conflicts: { orgId: string; name: string; skills: string[] }[];
+      conflicts: { orgId: string; name: string; skills: string[]; themes?: string[] }[];
       themes?: {
         id: string;
         orgDefaults: { orgId: string; orgName: string }[];
@@ -196,7 +197,12 @@ describe("themes: scope, switches, previews and the platform default", () => {
       const b = await themeOf(bItem);
       const p = await previewComponent(b.id, { scope: "all" });
       expect(p.conflicts).toEqual([
-        expect.objectContaining({ orgId: env.orgId, name: "night-city", skills: [a.theme.id] }),
+        expect.objectContaining({
+          orgId: env.orgId,
+          name: "night-city",
+          skills: [],
+          themes: [a.theme.id],
+        }),
       ]);
       const r = await env.root({
         method: "PUT",
@@ -479,11 +485,132 @@ describe("themes: scope, switches, previews and the platform default", () => {
       expect(item.deleted_at).toBeNull();
     });
 
+    it("an org admin cannot switch it off in the org, and the org list shows it locked", async () => {
+      const { theme } = await allTheme("neon");
+      await setUiTheme(theme.id);
+      // refused at the first call, before any preview
+      refused(await switchTheme(theme.id, { enabled: false }), theme.id);
+      const sw = await env.db
+        .selectFrom("component_org_switches")
+        .select("enabled")
+        .where("component_id", "=", theme.id)
+        .execute();
+      expect(sw).toEqual([]);
+      const list = await env.boss({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/components?kind=theme`,
+      });
+      expect(list.json().components).toEqual([
+        expect.objectContaining({ id: theme.id, on: true, locked: true, switchable: false }),
+      ]);
+    });
+
+    /** A theme plugin installed in the org (scope optional), its theme following it. */
+    const installedTheme = async () => {
+      const itemId = await importPlugin(env, await themePlugin("neon"));
+      await setScope(env, itemId, "optional");
+      const inst = await env.boss({
+        method: "POST",
+        url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/install`,
+        payload: {},
+      });
+      expect(inst.statusCode, inst.body).toBe(201);
+      return { itemId, theme: await themeOf(itemId), installId: inst.json().id as string };
+    };
+
+    const liveInstalls = (itemId: string) =>
+      env.db
+        .selectFrom("plugin_installs")
+        .select("id")
+        .where("item_id", "=", itemId)
+        .where("org_id", "=", env.orgId)
+        .execute();
+
+    it("an org admin cannot switch its plugin off in the org", async () => {
+      const { itemId, theme } = await installedTheme();
+      await setUiTheme(theme.id);
+      refused(
+        await env.boss({
+          method: "PUT",
+          url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+          payload: { enabled: false },
+        }),
+        theme.id,
+      );
+      expect(await liveInstalls(itemId)).toHaveLength(1);
+    });
+
+    it("an org admin cannot uninstall its plugin from the org", async () => {
+      const { itemId, theme } = await installedTheme();
+      const [install] = await liveInstalls(itemId);
+      await setUiTheme(theme.id);
+      refused(
+        await env.boss({
+          method: "DELETE",
+          url: `/api/v1/orgs/${env.orgId}/plugin-installs/${install?.id}`,
+        }),
+        theme.id,
+      );
+      expect(await liveInstalls(itemId)).toHaveLength(1);
+    });
+
+    it("the uninstall's transaction refuses a switch-off confirmed after the theme became the default", async () => {
+      const { itemId, theme } = await installedTheme();
+      const p = await env.boss({
+        method: "PUT",
+        url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+        payload: { enabled: false },
+      });
+      expect(p.statusCode, p.body).toBe(200);
+      await setUiTheme(theme.id);
+      refused(
+        await env.boss({
+          method: "PUT",
+          url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/switch`,
+          payload: { enabled: false, confirm: p.json().confirm },
+        }),
+        theme.id,
+      );
+      expect(await liveInstalls(itemId)).toHaveLength(1);
+    });
+
     it("another theme is not guarded", async () => {
       const { theme } = await allTheme("neon");
       const other = await allTheme("glow", "glow");
       await setUiTheme(theme.id);
       expect((await scopeTheme(other.theme.id, { scope: "optional" })).statusCode).toBe(200);
     });
+  });
+});
+
+describe("conflictsError", () => {
+  const skill = { orgId: "o1", orgName: "One", name: "notes", skills: ["s1"], plugins: [] };
+  const theme = {
+    orgId: "o1",
+    orgName: "One",
+    name: "night-city",
+    skills: [],
+    themes: ["t1"],
+    plugins: ["neon"],
+    kind: "theme" as const,
+  };
+
+  it("theme clashes alone are theme.id_taken with the clashing themes", () => {
+    const e = conflictsError([theme]);
+    expect(e.code).toBe("theme.id_taken");
+    expect(e.details).toEqual([
+      { theme: "night-city", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
+    ]);
+  });
+
+  it("skill and theme clashes together are all listed", () => {
+    const e = conflictsError([skill, theme]);
+    expect(e.code).toBe("plugin.skill_conflict");
+    expect(e.details).toEqual([
+      expect.objectContaining({ skill: "notes", orgId: "o1", skills: ["s1"] }),
+      { theme: "night-city", orgId: "o1", themes: ["t1"], plugins: ["neon"] },
+    ]);
+    expect(e.message).toContain("notes");
+    expect(e.message).toContain("night-city");
   });
 });

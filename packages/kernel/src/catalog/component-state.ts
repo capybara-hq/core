@@ -570,16 +570,16 @@ export async function skillNameClashes(
 }
 
 /**
- * The other live themes with id `name` that are on in the org (themes spec §6: theme ids are unique
- * in an org's usable set, rule 10), excluding `component` itself.
+ * The live themes with id `name` that are on in the org (themes spec §6: theme ids are unique in an
+ * org's usable set, rule 10), except `self` (null: a theme with no row yet, e.g. one an update adds).
  */
 export async function themeIdClashes(
   db: KernelSchemaDb,
   orgId: string,
-  component: { id: string },
+  self: { id: string } | null,
   name: string,
 ): Promise<ComponentRow[]> {
-  const others = (await loadComponents(db, "theme", { name })).filter((c) => c.id !== component.id);
+  const others = (await loadComponents(db, "theme", { name })).filter((c) => c.id !== self?.id);
   if (others.length === 0) return [];
   const st = await loadScopeState(db, "theme", others);
   return others.filter((c) =>

@@ -14,6 +14,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgAction } from "../orgs/roles.js";
 import {
   assertNotPlatformDefault,
+  platformDefaultThemeId,
   type ThemeAfter,
   type ThemePreview,
   themesPreview,
@@ -88,6 +89,8 @@ export interface ComponentScopePreview {
     plugins: string[];
     /** An agent template's: the owner of each clashing template, in `skills`' order. */
     owners?: Owner[];
+    /** A theme's: the clashing themes on in the org (`skills` then empty). */
+    themes?: string[];
   }[];
   /**
    * A theme the change takes away from some orgs (themes spec §6): the orgs among them whose
@@ -166,7 +169,10 @@ export interface OrgComponentView {
   /** The org's switch (null: never switched). */
   switch: boolean | null;
   on: boolean;
-  /** Of a builtin plugin: it cannot be switched off (an `all` one can, layering spec §4). */
+  /**
+   * Of a builtin plugin, or the platform default theme (themes spec §7): it cannot be switched off
+   * (an `all` one can, layering spec §4).
+   */
   locked: boolean;
 }
 
@@ -264,7 +270,7 @@ export function nameConflictError(
       conflicts.map((c) => ({
         theme: c.name,
         orgId: c.orgId,
-        themes: c.skills,
+        themes: c.themes ?? [],
         plugins: c.plugins,
       })),
     );
@@ -484,6 +490,8 @@ export class ComponentScopeService {
     filter: { kind?: ComponentKind; itemId?: string },
   ): Promise<OrgOfferedComponentView[]> {
     const out: OrgOfferedComponentView[] = [];
+    // the platform default theme is locked on in every org (themes spec §7)
+    const uiTheme = await platformDefaultThemeId(this.db);
     for (const kind of filter.kind !== undefined ? [filter.kind] : COMPONENT_KINDS) {
       const comps = await loadComponents(
         this.db,
@@ -503,7 +511,7 @@ export class ComponentScopeService {
         const sw = switchOf(st, c.id, orgId);
         const on = componentOn(c, p, listed, sw);
         if (!on && !componentOffered(c, p, listed)) continue;
-        const locked = componentLocked(c, p);
+        const locked = componentLocked(c, p) || isUiTheme(c, uiTheme);
         const pluginOn = componentPluginOn(c, p);
         rows.push({
           kind,
@@ -750,7 +758,8 @@ export class ComponentScopeService {
    * The org admin's switch of one component (`PUT orgs/:orgId/components/:kind/:id/switch`): only
    * this component (rule 5). A component not offered to the org -> 404. On: refused while the
    * component or its plugin is disabled (`plugin.disabled`) or an own skill of the org has its name
-   * (`plugin.skill_conflict`, rule 10). Off: of a builtin plugin -> `plugin.scope_locked`; while it
+   * (`plugin.skill_conflict`, rule 10; a theme: `theme.id_taken`). Off: the platform default theme
+   * while it is on -> `theme.platform_default`; of a builtin plugin -> `plugin.scope_locked`; while it
    * is on, without `confirm` the preview (agents that use it) and its hash are returned, with the
    * current hash the switch is written (a changed preview -> `plugin.switch_stale`).
    */
@@ -805,7 +814,8 @@ export class ComponentScopeService {
                   orgId,
                   orgName: org?.name ?? orgId,
                   name: c.name,
-                  skills: clash.map((x) => x.id),
+                  skills: [],
+                  themes: clash.map((x) => x.id),
                   plugins: clash.map((x) => x.plugin ?? "platform"),
                 },
               ],
@@ -825,6 +835,9 @@ export class ComponentScopeService {
         }
       }
     } else {
+      // The platform default theme is locked on in every org (themes spec §7): refused before the
+      // preview, inside this transaction
+      if (kind === "theme" && on) await assertNotPlatformDefault(this.db, [c.id], () => "narrower");
       if (componentLocked(c, p)) {
         throw new ApiError(
           "plugin.scope_locked",
@@ -890,7 +903,7 @@ export class ComponentScopeService {
         plugin: c.plugin,
         switch: body.enabled,
         on: componentOn(c, p, listed, body.enabled),
-        locked: componentLocked(c, p),
+        locked: componentLocked(c, p) || isUiTheme(c, await platformDefaultThemeId(this.db)),
       },
     };
   }
@@ -928,7 +941,7 @@ export class ComponentScopeService {
       listed,
     );
     if (!on && !offered) throw notFound();
-    const locked = componentLocked(c, p);
+    const locked = componentLocked(c, p) || isUiTheme(c, await platformDefaultThemeId(this.db));
     let preview = null;
     let confirm = null;
     if (on && !locked) {
@@ -1377,7 +1390,8 @@ export class ComponentScopeService {
               orgId: org.id,
               orgName: org.name,
               name: c.name,
-              skills: clash.map((x) => x.id),
+              skills: [],
+              themes: clash.map((x) => x.id),
               plugins: clash.map((x) => x.plugin ?? "platform"),
             });
           }
@@ -1406,6 +1420,10 @@ export class ComponentScopeService {
     return { ...p, scopeHash: previewHash({ kind: c.kind, id: x.hashId ?? c.id }, target, p) };
   }
 }
+
+/** Whether `c` is the platform default theme `uiTheme` (locked on in every org, themes spec §7). */
+const isUiTheme = (c: { kind: ComponentKind; id: string }, uiTheme: string | null): boolean =>
+  c.kind === "theme" && c.id === uiTheme;
 
 /** The plugin row FOR SHARE (exclusive with its scope writers and an unshare, which hold it FOR UPDATE). */
 async function lockItemShared(db: KernelSchemaDb, itemId: string): Promise<void> {

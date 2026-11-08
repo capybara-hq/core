@@ -92,8 +92,8 @@ export interface ScopePreview {
   /**
    * The orgs the change would newly offer a skill of the plugin whose own skills already use its
    * name, or turn a theme of the plugin on in where another theme with its id is on (rule 10,
-   * themes spec §6; `kind: "theme"`, `skills` then the clashing themes): the change is refused
-   * while there are any.
+   * themes spec §6; `kind: "theme"` with the clashing themes in `themes`, `skills` empty): the
+   * change is refused while there are any.
    */
   conflicts: {
     orgId: string;
@@ -103,6 +103,8 @@ export interface ScopePreview {
     plugins: string[];
     /** Set for a theme id clash; absent for a skill. */
     kind?: "theme";
+    /** A theme id clash: the clashing themes on in the org. */
+    themes?: string[];
   }[];
   /**
    * The plugin's themes the change takes away from some orgs (themes spec §6): the orgs among
@@ -182,17 +184,21 @@ function scopeHash(target: Target, p: Omit<ScopePreview, "scopeHash">): string {
 }
 
 /**
- * The refusal of a preview's conflicts: the skill ones as `plugin.skill_conflict`, else the theme
- * ones as `theme.id_taken`.
+ * The refusal of a preview's conflicts: skill ones as `plugin.skill_conflict`, theme ones as
+ * `theme.id_taken`; both at once as `plugin.skill_conflict` listing every clash (the skill details
+ * first, then the theme ones `{ theme, orgId, themes, plugins }`), so none waits for a retry.
  */
-function conflictsError(conflicts: ScopePreview["conflicts"]) {
+export function conflictsError(conflicts: ScopePreview["conflicts"]): ApiError {
   const skills = conflicts.filter((c) => c.kind !== "theme");
-  return skills.length > 0
-    ? nameConflictError(skills)
-    : nameConflictError(
-        conflicts.map(({ kind: _k, ...c }) => c),
-        "theme",
-      );
+  const themes = conflicts.filter((c) => c.kind === "theme").map(({ kind: _k, ...c }) => c);
+  if (themes.length === 0) return nameConflictError(skills);
+  const t = nameConflictError(themes, "theme");
+  if (skills.length === 0) return t;
+  const s = nameConflictError(skills);
+  return new ApiError(s.code, `${s.message}\n${t.message}`, [
+    ...(s.details ?? []),
+    ...(t.details ?? []),
+  ]);
 }
 
 /**
@@ -1285,7 +1291,8 @@ export class CatalogScopeService {
                   orgId: org.id,
                   orgName: org.name,
                   name: c.name,
-                  skills: clash.map((x) => x.id),
+                  skills: [],
+                  themes: clash.map((x) => x.id),
                   plugins: clash.map((x) => x.plugin ?? "platform"),
                   kind: "theme",
                 });
