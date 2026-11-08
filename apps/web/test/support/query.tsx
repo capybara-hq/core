@@ -161,13 +161,20 @@ export async function hydrateRouteWithCache(
   routes: Routes,
   opts: RouteOpts & { clock?: ServerClock; beforeHydrate?: () => void },
 ) {
-  const { clock, beforeHydrate, ...rest } = opts;
+  const { clock: given, beforeHydrate, ...rest } = opts;
+  // One clock for both renders, as the root layout passes the server's: without it the server
+  // render and the hydration each read Date.now(), and a running time that crosses a second in
+  // between ("Turn 1 · 3m 58s" vs "3m 59s") fails hydration now and then.
+  const clock: ServerClock = given ?? {
+    now: Date.now(),
+    timeZone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
   const { state, page, render } = await serverLoad(path, routes, rest);
   const html = renderToString(
     pageElement(withCache(page, state), {
       ...render,
       client: testQueryClient(),
-      ...(clock !== undefined && { clock }),
+      clock,
     }),
   );
   const container = document.createElement("div");
@@ -188,7 +195,7 @@ export async function hydrateRouteWithCache(
         pageElement(withCache(page, state), {
           ...render,
           client,
-          ...(clock !== undefined && { clock }),
+          clock,
         }),
         { onRecoverableError: (e) => errors.push(String(e)) },
       );
