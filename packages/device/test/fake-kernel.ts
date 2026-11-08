@@ -136,7 +136,10 @@ export class FakeExecutor implements Executor {
   async killAll() {
     this.killed.push(["*"]);
   }
+  /** When set, ensureRoot waits for it. */
+  rootGate: Promise<void> | undefined;
   async ensureRoot() {
+    await this.rootGate;
     return this.root;
   }
 }

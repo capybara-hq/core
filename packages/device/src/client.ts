@@ -31,6 +31,12 @@ export interface ConnectOptions {
   random?: () => number;
   now?: () => number;
   programVersion?: string;
+  /** A connection must stay up this long before the backoff resets (default 10 s). */
+  stableMs?: number;
+  /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
+  livenessMs?: number;
+  /** Terminate a socket still closing this long after we asked it to close (default 2 s). */
+  closeTimeoutMs?: number;
 }
 
 /** A running connection. `done` resolves with the exit code once the program should end. */
@@ -76,6 +82,9 @@ export function connect(
   const random = opts.random ?? Math.random;
   const now = opts.now ?? Date.now;
   const graceMs = cred.reconnectGraceSeconds * 1000;
+  const stableMs = opts.stableMs ?? 10_000;
+  const livenessMs = opts.livenessMs ?? 60_000;
+  const closeTimeoutMs = opts.closeTimeoutMs ?? 2000;
 
   const lifetime = new AbortController();
   let ws: WebSocket | undefined;
@@ -83,6 +92,7 @@ export function connect(
   let stopping = false;
   let exitAfterStop: { exit: number; message?: string } | undefined;
   let session: ((end: SessionEnd) => void) | undefined;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
 
   const running = new Map<string, AbortController>();
   /** Requests the kernel gave up on: never started, or their result is dropped. */
@@ -116,13 +126,36 @@ export function connect(
     s?.(end);
   };
 
+  /** Ends the loop: no more reconnects, and a backoff sleep in progress wakes up. */
+  const halt = (): void => {
+    stopping = true;
+    lifetime.abort();
+  };
+
+  /** Asks the socket to close; terminates it if the close handshake does not finish. */
+  const closeSocket = (sock: WebSocket | undefined): void => {
+    if (!sock) return;
+    sock.close(1000);
+    setTimeout(() => sock.terminate(), closeTimeoutMs).unref();
+  };
+
+  const finishDrain = (): void => {
+    clearTimeout(drainTimer);
+    exitAfterStop = { exit: 0 };
+    halt();
+    closeSocket(ws);
+    if (!isOpen()) endSession({ exit: 0 });
+  };
+
   const maybeFinishDrain = (): void => {
-    if (draining && running.size === 0) {
-      exitAfterStop = { exit: 0 };
-      stopping = true;
-      ws?.close(1000);
-      if (!isOpen()) endSession({ exit: 0 });
+    if (!draining || running.size > 0 || stopping) return;
+    prune();
+    if (pending.size > 0 && !isOpen()) {
+      // Results wait for a reconnect, at most the grace.
+      drainTimer ??= setTimeout(finishDrain, graceMs);
+      return;
     }
+    finishDrain();
   };
 
   const handleReq = (req: KernelReq): void => {
@@ -152,9 +185,10 @@ export function connect(
           reason === "revoked"
             ? { exit: 1, message: DISCONNECTED_MESSAGE }
             : { exit: 0, message: DELETED_MESSAGE };
-        stopping = true;
-        if (isOpen()) {
-          ws?.send(JSON.stringify(res), () => ws?.close(1000));
+        halt();
+        const sock = ws;
+        if (isOpen() && sock) {
+          sock.send(JSON.stringify(res), () => closeSocket(sock));
         } else {
           endSession(exitAfterStop);
         }
@@ -221,8 +255,18 @@ export function connect(
         },
       });
       ws = sock;
+      let liveness: ReturnType<typeof setTimeout> | undefined;
+      let stable: ReturnType<typeof setTimeout> | undefined;
+      const heard = (): void => {
+        clearTimeout(liveness);
+        liveness = setTimeout(() => sock.terminate(), livenessMs);
+      };
+      sock.on("ping", heard);
       sock.on("open", () => {
-        attempt = 0;
+        heard();
+        stable = setTimeout(() => {
+          attempt = 0;
+        }, stableMs);
         sock.send(JSON.stringify(hello()));
         prune();
         for (const [id, p] of pending) {
@@ -232,6 +276,7 @@ export function connect(
         maybeFinishDrain();
       });
       sock.on("message", (data, isBinary) => {
+        heard();
         if (isBinary) return;
         onMessage(data.toString("utf8"));
       });
@@ -247,6 +292,8 @@ export function connect(
         // 'close' follows; the reason is decided there.
       });
       sock.on("close", (code) => {
+        clearTimeout(liveness);
+        clearTimeout(stable);
         if (ws === sock) ws = undefined;
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 1, message: REPLACED_MESSAGE });
@@ -270,6 +317,7 @@ export function connect(
   };
 
   const done = loop().finally(() => {
+    clearTimeout(drainTimer);
     lifetime.abort();
     for (const ctl of running.values()) ctl.abort();
   });
@@ -281,9 +329,8 @@ export function connect(
       maybeFinishDrain();
     },
     stop() {
-      stopping = true;
-      lifetime.abort();
-      if (ws) ws.close(1000);
+      halt();
+      if (ws) closeSocket(ws);
       else endSession({ exit: 0 });
     },
   };

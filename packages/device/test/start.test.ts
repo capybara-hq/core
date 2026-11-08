@@ -63,6 +63,29 @@ describe("start, stop, drain", () => {
     expect(proc.listenerCount("SIGTERM")).toBe(0);
   });
 
+  it("a SIGTERM during executor creation stops without connecting", async () => {
+    writeCredential(dir, cred);
+    const proc = Object.assign(new EventEmitter(), { pid: 4243 });
+    let connected = false;
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      createExecutor: async () => {
+        proc.emit("SIGTERM");
+        return new FakeExecutor();
+      },
+      connect: () => {
+        connected = true;
+        throw new Error("must not connect");
+      },
+    });
+    expect(code).toBe(0);
+    expect(connected).toBe(false);
+    expect(existsSync(pidPath(dir))).toBe(false);
+  });
+
   it("start without a credential exits 1", async () => {
     const err: string[] = [];
     const code = await start({ stateDir: dir, out: () => {}, err: (l) => err.push(l) });

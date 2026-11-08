@@ -1,4 +1,4 @@
-import { connect } from "../client.js";
+import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import type { Executor } from "../exec/types.js";
 import { readRunningPid, removePid, writePid } from "../pid.js";
@@ -40,28 +40,35 @@ export async function start(deps: StartDeps): Promise<number> {
     err(`capybara-device is already running (pid ${running}). Stop it first: capybara-device stop`);
     return 1;
   }
-  let executor: Executor;
-  try {
-    executor = await deps.createExecutor(cred, readPolicy(stateDir));
-  } catch (e) {
-    err(`Cannot start: ${(e as Error).message}`);
-    return 1;
-  }
-  writePid(stateDir, proc.pid);
-  const conn = (deps.connect ?? connect)(cred, executor, {
-    log: new CommandLog(stateDir),
-    err,
-  });
-  const onStop = (): void => conn.stop();
+  // Signals arriving while the executor is still being prepared are applied once connected.
+  let conn: Connection | undefined;
+  let stopRequested = false;
+  let drainRequested = false;
+  const onStop = (): void => {
+    stopRequested = true;
+    conn?.stop();
+  };
   const onDrain = (): void => {
+    drainRequested = true;
     out("Draining: no new commands; stopping when the running ones finish.");
-    conn.drain();
+    conn?.drain();
   };
   proc.on("SIGTERM", onStop);
   proc.on("SIGINT", onStop);
   proc.on("SIGUSR2", onDrain);
-  out(`capybara-device: serving environment ${cred.environmentId} (${cred.mode} mode)`);
+  writePid(stateDir, proc.pid);
   try {
+    let executor: Executor;
+    try {
+      executor = await deps.createExecutor(cred, readPolicy(stateDir));
+    } catch (e) {
+      err(`Cannot start: ${(e as Error).message}`);
+      return 1;
+    }
+    if (stopRequested) return 0;
+    conn = (deps.connect ?? connect)(cred, executor, { log: new CommandLog(stateDir), err });
+    if (drainRequested) conn.drain();
+    out(`capybara-device: serving environment ${cred.environmentId} (${cred.mode} mode)`);
     return await conn.done;
   } finally {
     proc.off("SIGTERM", onStop);

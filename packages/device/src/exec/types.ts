@@ -9,7 +9,10 @@ import type {
 export interface Executor {
   readonly mode: "os" | "docker";
   readonly roots: SandboxRoots;
-  /** Runs one command; `signal` aborting kills its whole process tree. */
+  /**
+   * Runs one command; `signal` aborting kills its whole process tree. An executor must not start
+   * work on an already-aborted signal (the kernel cancelled the request).
+   */
   exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult>;
   /** The file's bytes (at most `maxBytes`); null when it does not exist. */
   readFile(

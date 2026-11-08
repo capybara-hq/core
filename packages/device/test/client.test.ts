@@ -24,7 +24,7 @@ const cred = (): Credential => ({
   reconnectGraceSeconds: 120,
 });
 
-const start = (extra: { sleep?: boolean } = {}): Connection => {
+const start = (extra: Partial<ConnectOptions> = {}): Connection => {
   conn = connect(cred(), exec, {
     err: (l) => errs.push(l),
     log: new CommandLog(dir),
@@ -67,7 +67,14 @@ describe("client", () => {
     const res = await kernel.waitFor("res", () => kernel.of("res")[0]);
     expect(res).toEqual({ type: "res", id: "r1", ok: true, result: OK_EXEC });
     const line = JSON.parse(readFileSync(join(dir, "commands.log"), "utf8").trim());
-    expect(line).toMatchObject({ op: "exec", tag: "t1", actor: { accountId: "acc" }, exitCode: 0 });
+    expect(Object.keys(line).sort()).toEqual(["actor", "exitCode", "op", "tag", "time"]);
+    expect(line).toEqual({
+      time: expect.any(String),
+      op: "exec",
+      tag: "t1",
+      actor: { accountId: "acc" },
+      exitCode: 0,
+    });
   });
 
   it("answers the file operations and create", async () => {
@@ -134,6 +141,99 @@ describe("client", () => {
     await kernel.waitFor("after answered", () => kernel.of("res").find((r) => r.id === "after"));
     expect(exec.started).toEqual(["now"]);
     expect(kernel.of("res").some((r) => r.id === "ghost")).toBe(false);
+  });
+
+  it("a cancel that arrives while ensureRoot runs means the command never starts", async () => {
+    let open!: () => void;
+    exec.rootGate = new Promise((r) => {
+      open = r;
+    });
+    start();
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.send(0, req("r1", "exec", execArgs("never")));
+    await new Promise((r) => setTimeout(r, 30));
+    kernel.send(0, { type: "cancel", id: "r1" });
+    await new Promise((r) => setTimeout(r, 30));
+    open();
+    exec.rootGate = undefined;
+    kernel.send(0, req("r2", "exec", execArgs("now")));
+    await kernel.waitFor("r2", () => kernel.of("res").find((r) => r.id === "r2"));
+    expect(exec.started).toEqual(["now"]);
+    expect(kernel.of("res").some((r) => r.id === "r1")).toBe(false);
+  });
+
+  it("a stop between sockets ends the backoff sleep at once", async () => {
+    const c = start({
+      sleep: (_ms, signal) =>
+        new Promise((r) => {
+          signal.addEventListener("abort", () => r(), { once: true });
+          setTimeout(r, 30_000).unref();
+        }),
+    });
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.sockets[0]?.close(1001);
+    await new Promise((r) => setTimeout(r, 100));
+    c.stop();
+    expect(await c.done).toBe(0);
+  });
+
+  it("a drain that ends with unsent results waits for the reconnect, then exits", async () => {
+    const c = start();
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.send(0, req("r1", "exec", execArgs("slow")));
+    await kernel.waitFor("started", () => exec.started.includes("slow"));
+    const closed = new Promise((r) => kernel.sockets[0]?.once("close", r));
+    kernel.sockets[0]?.close(4001);
+    await closed;
+    c.drain();
+    exec.release("slow");
+    expect(await c.done).toBe(0);
+    const res = await kernel.waitFor("r1", () => kernel.of("res", 1).find((r) => r.id === "r1"));
+    expect(res).toMatchObject({ ok: true });
+  });
+
+  it("the backoff keeps growing when connections close at once", async () => {
+    const sleeps: number[] = [];
+    const c = start({
+      random: () => 1,
+      stableMs: 60_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        await new Promise((r) => setTimeout(r, 5));
+      },
+    });
+    for (let i = 0; i < 4; i++) {
+      await kernel.waitFor(`hello ${i}`, () => kernel.of("hello", i)[0]);
+      kernel.sockets[i]?.close(1001);
+    }
+    await kernel.waitFor("4 sleeps", () => sleeps.length >= 4);
+    expect(sleeps.slice(0, 4)).toEqual([1000, 2000, 4000, 8000]);
+    c.stop();
+  });
+
+  it("the backoff resets once a connection stayed up", async () => {
+    const sleeps: number[] = [];
+    start({
+      random: () => 1,
+      stableMs: 20,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        await new Promise((r) => setTimeout(r, 5));
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      await kernel.waitFor(`hello ${i}`, () => kernel.of("hello", i)[0]);
+      await new Promise((r) => setTimeout(r, 60));
+      kernel.sockets[i]?.close(1001);
+    }
+    await kernel.waitFor("3 sleeps", () => sleeps.length >= 3);
+    expect(sleeps.slice(0, 3)).toEqual([1000, 1000, 1000]);
+  });
+
+  it("a socket that hears nothing from the server is terminated and reconnected", async () => {
+    start({ livenessMs: 100 });
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    await kernel.waitFor("second hello", () => kernel.of("hello", 1)[0]);
   });
 
   it("a vanished root answers fs_gone", async () => {
