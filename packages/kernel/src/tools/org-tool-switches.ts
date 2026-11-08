@@ -157,7 +157,7 @@ export class OrgToolSwitches {
 
   /**
    * Switches one tool in the org. On applies at once. Off, while the tool is on: without
-   * `confirm` the preview (the org's agents whose current version selects the tool) and its hash,
+   * `confirm` the preview (the org's agents whose current version does not turn it off) and its hash,
    * with the current hash the switch is written (a changed preview -> 409 `plugin.switch_stale`).
    * A tool the extension does not register -> 404 `extension.tool_not_found`. A change writes the
    * audit row `extension.tool_switched`.

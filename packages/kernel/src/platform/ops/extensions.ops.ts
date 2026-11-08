@@ -135,7 +135,7 @@ export class ExtensionsOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.tool-disable-preview",
         description:
-          "Preview turning one extension tool off in this org (org admins): the org's agents that selected it, and the confirm value extensions.set-tool-enabled needs. Show the preview to the person before turning it off.",
+          "Preview turning one extension tool off in this org (org admins): the org's agents that have it (every agent that does not turn it off), and the confirm value extensions.set-tool-enabled needs. Show the preview to the person before turning it off.",
         input: z.object({ extension: Extension, tool: Tool }).strict(),
         example: { extension: "todo", tool: "add_item" },
         // the web previews through the switch route itself (no confirm); writes nothing here
