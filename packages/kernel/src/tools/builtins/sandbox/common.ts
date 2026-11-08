@@ -1,5 +1,7 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
+  DeviceProtocolError,
+  isFileSystemGoneError,
   isSandboxGoneError,
   type SandboxHandle,
   type SandboxRoots,
@@ -125,6 +127,18 @@ const ENV_UNAVAILABLE_TEXT =
   "This conversation's environment is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation in another environment, or an administrator to re-enable that provider.";
 const ENV_FILES_LOST_TEXT =
   "This environment's files are gone. Ask the user to reset its files on the environments page, then retry.";
+const DEVICE_FILES_LOST_TEXT =
+  "This environment's directory is gone from its connected machine. Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine, then retry.";
+const FILES_GONE_TEXT =
+  "This environment's files are gone. Ask the user to reset its files on the environments page (for a connected machine: to run capybara-device logout, then capybara-device login, on it), then retry.";
+const DEVICE_OFFLINE_TEXT =
+  "The connected machine is offline. Ask the person to start capybara-device on it.";
+const DEVICE_OUTDATED_TEXT =
+  "The connected machine runs an outdated capybara-device. Ask the person to update it on that machine and start it again.";
+const DEVICE_REVOKED_TEXT =
+  "The connected machine of this environment was disconnected. Ask the person to sign it in again with capybara-device login, or to start a new conversation in another environment.";
+const deviceProtocolText = (detail: string): string =>
+  `The connected machine sent an answer the platform cannot read (${detail}). Ask the person to update capybara-device on that machine, then retry.`;
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
@@ -444,11 +458,23 @@ export function mapSandboxError(e: unknown): unknown {
       if (reason === ANONYMOUS_NO_ENVIRONMENT) return new ToolError(ANONYMOUS_TEXT);
       return new ToolError(NO_SANDBOX_TEXT);
     }
+    const detail = e.details?.[0] as { reason?: unknown; source?: unknown } | undefined;
     if (e.code === "environment.not_found") return new ToolError(ENV_NOT_FOUND_TEXT);
+    if (e.code === "environment.forbidden" && detail?.reason === "machine_revoked") {
+      return new ToolError(DEVICE_REVOKED_TEXT);
+    }
     if (e.code === "environment.forbidden") return new ToolError(ENV_FORBIDDEN_TEXT);
     if (e.code === "environment.unavailable") return new ToolError(ENV_UNAVAILABLE_TEXT);
+    if (e.code === "environment.files_lost" && detail?.source === "device") {
+      return new ToolError(DEVICE_FILES_LOST_TEXT);
+    }
     if (e.code === "environment.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
+    if (e.code === "environment.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
+    if (e.code === "environment.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
   }
+  // an operation outside withSandbox's own mapping (it records lost files itself)
+  if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
+  if (e instanceof DeviceProtocolError) return new ToolError(deviceProtocolText(e.message));
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
   if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
   return e;

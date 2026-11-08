@@ -179,12 +179,22 @@ export const environmentResourceName = (environmentId: string): string =>
 export const environmentNotFound = (): ApiError =>
   new ApiError("environment.not_found", "This environment does not exist or was deleted.");
 
-/** The environment's file system is gone at the provider (409); never replaced silently. */
-export const environmentFilesLost = (): ApiError =>
-  new ApiError(
-    "environment.files_lost",
-    "The environment's files are gone; reset its files from the environments page to start with an empty workspace.",
-  );
+/**
+ * The environment's file system is gone at the provider (409); never replaced silently. On a
+ * connected machine (`device`, details `[{ source: "device" }]`) the directory is the machine
+ * owner's: `capybara-device logout`, then `login` into the environment, recreates it (ruling R24).
+ */
+export const environmentFilesLost = (device = false): ApiError =>
+  device
+    ? new ApiError(
+        "environment.files_lost",
+        "The environment's directory is gone from its connected machine; run capybara-device logout, then capybara-device login into this environment, on that machine to recreate it.",
+        [{ source: "device" }],
+      )
+    : new ApiError(
+        "environment.files_lost",
+        "The environment's files are gone; reset its files from the environments page to start with an empty workspace.",
+      );
 
 /**
  * The row still records the instance `gone` (same handle and same `created_at`). Handles compare
@@ -543,7 +553,12 @@ export class SandboxService {
               this.register(env, lease.token),
             );
             const sig = AbortSignal.any([signal, lease.signal]);
-            return { kind: "ran", value: await fn(impl, e.handle, sig) };
+            try {
+              return { kind: "ran", value: await fn(impl, e.handle, sig) };
+            } catch (err) {
+              if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+              throw err;
+            }
           } finally {
             await this.leave(env, e);
           }
@@ -577,7 +592,8 @@ export class SandboxService {
    * - When `fn` throws `SandboxGoneError` (the instance is gone) the instance is rebuilt on the
    *   kept files (or the one another holder rebuilt is taken) and `fn` runs once more with
    *   `restarted: true`; a second `gone` is thrown. Other errors are thrown as they are.
-   * - Lost files throw `environment.files_lost` (409).
+   * - Lost files throw `environment.files_lost` (409), also when `fn` throws
+   *   `FileSystemGoneError` (the files are then recorded lost, ruling R24).
    * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
    *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
    */
@@ -599,23 +615,56 @@ export class SandboxService {
       try {
         return await this.runAs(e, ctx, p, fn, signal);
       } catch (err) {
+        if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
         this.log.info("sandbox instance is gone during use; recreating", { environmentId: env });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
         e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone));
-        return await this.runAs(
-          { ...e, info: { fresh: true, restarted: true } },
-          ctx,
-          p,
-          fn,
-          signal,
-        );
+        try {
+          return await this.runAs(
+            { ...e, info: { fresh: true, restarted: true } },
+            ctx,
+            p,
+            fn,
+            signal,
+          );
+        } catch (err2) {
+          if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
+          throw err2;
+        }
       }
     } finally {
       await this.leave(env, e);
     }
+  }
+
+  /**
+   * Ruling R24: an operation on the held instance `e` found its file system gone. Records
+   * `fs_status = 'lost'` while the row still records that instance on its file system (the
+   * instance handle stays, so a reset still destroys it), moving the fence on, and returns
+   * `environment.files_lost` to throw. Uses then fail until the files are reset (a connected
+   * machine: until a new login, which resets the row). A failed write only logs.
+   */
+  private async filesGone(env: string, p: SandboxProviderEntry, e: Entered): Promise<ApiError> {
+    this.log.warn("environment file system is gone at the provider; its files are lost", {
+      environmentId: env,
+      provider: p.plugin,
+    });
+    try {
+      await this.db
+        .updateTable("environment_instances")
+        .set((eb) => ({ fs_status: "lost", generation: eb("generation", "+", 1) }))
+        .where("environment_id", "=", env)
+        .where("fs_status", "=", "ready")
+        // `createdAt` is the row's value read back in milliseconds
+        .where(sql<Date>`date_trunc('milliseconds', created_at)`, "=", new Date(e.createdAt))
+        .execute();
+    } catch (err) {
+      this.log.warn("cannot record lost environment files", { environmentId: env, err });
+    }
+    return environmentFilesLost(p.plugin === DEVICE_PROVIDER);
   }
 
   /**
@@ -739,7 +788,10 @@ export class SandboxService {
     return environmentNotFound();
   }
 
-  /** Recorded running with the current provider, and not the instance found gone. */
+  /**
+   * Recorded running with the current provider on files not lost (lost ones go through the
+   * exclusive path, which refuses them), and not the instance found gone.
+   */
   private usable(
     row: Row | undefined,
     p: SandboxProviderEntry,
@@ -748,6 +800,7 @@ export class SandboxService {
     return (
       row !== undefined &&
       row.status === "running" &&
+      row.fs_status !== "lost" &&
       row.provider === p.plugin &&
       row.handle !== null &&
       !isInstance(row, gone)
@@ -1338,7 +1391,7 @@ export class SandboxService {
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
-    if (row.fs_status === "lost") throw environmentFilesLost();
+    if (row.fs_status === "lost") throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
     if (
       row.provider !== null &&
       row.provider !== p.plugin &&
@@ -1461,7 +1514,7 @@ export class SandboxService {
         provider: p.plugin,
       });
       await this.fenced(held, id, fence, { fs_status: "lost", status: "none" });
-      throw environmentFilesLost();
+      throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
     }
     let createdAt: Date;
     try {

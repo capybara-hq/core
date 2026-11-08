@@ -298,9 +298,12 @@ export class EnvironmentsService {
     return Number(n);
   }
 
-  /** The refusals {@link resetFiles} would raise (not found, its provider not current), read only. */
+  /**
+   * The refusals {@link resetFiles} would raise (not found, its provider not current, a connected
+   * environment), read only.
+   */
   async checkReset(orgId: string, accountId: string, id: string): Promise<void> {
-    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
   }
 
   /** The refusals {@link rename} would raise, read without locks (see {@link checkCreate}). */
@@ -424,7 +427,8 @@ export class EnvironmentsService {
    * `environment.files_lost`): records the request (audit), then, after the commit, enqueues the
    * `sandbox-reset-files` job (deterministic id per environment), whose worker waits for running
    * commands and destroys any instance and the file system; the next use creates new ones. Its
-   * provider must be the current one (`environment.unavailable`). An enqueue failure is thrown
+   * provider must be the current one (`environment.unavailable`); a connected environment's files
+   * are its machine owner's (`environment.files_on_device`). An enqueue failure is thrown
    * (the request can be repeated: the reset is idempotent).
    */
   async resetFiles(
@@ -447,7 +451,7 @@ export class EnvironmentsService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -800,5 +804,18 @@ export class EnvironmentsService {
       .where(sql<boolean>`lower(name) = lower(${name})`)
       .executeTakeFirst();
     if (clash) throw nameTaken();
+  }
+}
+
+/**
+ * Ruling R24: a connected environment's files are in a directory on its machine, which the
+ * platform never wipes; a lost directory comes back with `capybara-device logout` and a new `login` on the machine.
+ */
+function refuseDeviceReset(env: { provider: string | null }): void {
+  if (env.provider === DEVICE_PROVIDER) {
+    throw new ApiError(
+      "environment.files_on_device",
+      "This environment's files are in a directory on its connected machine and cannot be reset from here. To start over, run capybara-device logout, then capybara-device login into this environment, on that machine.",
+    );
   }
 }

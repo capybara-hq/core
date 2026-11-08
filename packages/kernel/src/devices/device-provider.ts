@@ -1,42 +1,40 @@
-import {
-  type ExecResult,
-  type FileSystemHandle,
-  SandboxGoneError,
-  type SandboxHandle,
-  type SandboxLimits,
-  type SandboxProvider,
-  type SandboxRoots,
+import type {
+  ExecResult,
+  FileSystemHandle,
+  SandboxHandle,
+  SandboxLimits,
+  SandboxProvider,
+  SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceRelay, environmentOffline } from "./relay.js";
+import { DeviceTargets, sameRoots } from "./targets.js";
 
 /** Extra time the machine gets beyond a command's own timeout (spawn, output, the trip back). */
 export const EXEC_DEADLINE_MARGIN_MS = 5000;
 /** How long the machine may take for one non-exec operation. */
 export const OP_DEADLINE_MS = 30_000;
 
-/** The longest each Redis step of telling a machine to stop may take (a hung Redis never delays deletion). */
-export const STOP_STEP_TIMEOUT_MS = 5000;
+/**
+ * Room left in a frame for everything around a `readFile` result's base64 data (the `res`
+ * envelope): a read is clamped so the machine's answer fits `environments.device.maxFrameBytes`
+ * (ruling R26).
+ */
+export const FRAME_ENVELOPE_BYTES = 64 * 1024;
+
+/** The most raw bytes whose base64 plus {@link FRAME_ENVELOPE_BYTES} fit in `maxFrameBytes`. */
+export const maxReadBytes = (maxFrameBytes: number): number =>
+  Math.max(0, Math.floor((maxFrameBytes - FRAME_ENVELOPE_BYTES) / 4) * 3);
 
 const NAME_PREFIX = "cap-env-";
-
-/** `p`, or a rejection after `ms` (the step may still finish later; nobody waits for it). */
-function within<T>(ms: number, p: Promise<T>): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
-  });
-  p.catch(() => {}); // a late failure after the timeout is not unhandled
-  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
-}
 
 /**
  * The handle of an instance on a machine: the environment id (ruling R1: the relay is keyed by
  * environment), the roots the machine reported at `create`, and the org's effective limits at
- * creation (sent with every `exec`, so the machine can intersect egress with its local policy;
- * limits apply at creation only, as for cloud providers).
+ * creation (for the record: every `exec` carries the org's limits read at that moment, ruling
+ * R27, so the machine intersects its local policy with the current egress).
  */
 export interface DeviceSandboxHandle extends SandboxHandle {
   roots: SandboxRoots;
@@ -49,12 +47,8 @@ export const environmentIdOfName = (name: string): string | undefined =>
     ? name.slice(NAME_PREFIX.length)
     : undefined;
 
-const limitsOf = (h: SandboxHandle): SandboxLimits => {
-  const limits = (h as Partial<DeviceSandboxHandle>).limits;
-  // a handle without limits cannot run commands: let the kernel recreate the instance
-  if (limits === undefined) throw new SandboxGoneError("the instance handle carries no limits");
-  return limits;
-};
+const rootsOf = (h: SandboxHandle): SandboxRoots | undefined =>
+  (h as Partial<DeviceSandboxHandle>).roots;
 
 const bytesOf = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, "base64"));
 
@@ -63,8 +57,10 @@ const bytesOf = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, "ba
  * environment's connected machine through the {@link DeviceRelay}. The file system is the
  * machine's environment directory (the program creates it on first use), so `createFileSystem`
  * touches nothing; `suspend` and `destroy` do nothing (the machine is not the platform's to stop);
- * deleting the environment tells a connected machine to stop and leaves its files where they are.
- * Nothing here throws `environment.offline` on the cleanup paths (ruling R9).
+ * deleting the environment leaves the files on the machine where they are. Nothing here throws `environment.offline` on the cleanup paths (ruling R9).
+ *
+ * The files on a machine are its owner's: `destroyFileSystem` (a files reset, the deletion sweep)
+ * does nothing; the deletion's `stop` comes from `MachinesService.revokeActive` (ruling R24).
  */
 @Injectable()
 export class DeviceSandboxProvider implements SandboxProvider {
@@ -73,7 +69,10 @@ export class DeviceSandboxProvider implements SandboxProvider {
 
   constructor(
     @Inject(DeviceRelay) private readonly relay: DeviceRelay,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(DeviceTargets)
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
+    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
   ) {}
 
   async createFileSystem(args: {
@@ -87,14 +86,13 @@ export class DeviceSandboxProvider implements SandboxProvider {
     return { id };
   }
 
-  async destroyFileSystem(fs: FileSystemHandle, signal: AbortSignal): Promise<void> {
-    await this.stop(fs.id, signal);
+  /** The files are the machine owner's: nothing to do (ruling R24; never a `stop`). */
+  async destroyFileSystem(_fs: FileSystemHandle, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
   }
 
-  async destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void> {
-    const id = environmentIdOfName(name);
-    if (id !== undefined) await this.stop(id, signal);
-    else signal.throwIfAborted();
+  async destroyFileSystemByName(_name: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
   }
 
   async create(args: {
@@ -114,9 +112,17 @@ export class DeviceSandboxProvider implements SandboxProvider {
     return { id, roots: r.roots, limits: args.limits };
   }
 
+  /**
+   * Needs the machine online. `gone` (the kernel recreates the instance) when the active machine
+   * last reported other roots than the instance was created with (a new login into another
+   * directory or mode, ruling R23).
+   */
   async resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone"> {
     signal.throwIfAborted();
     if (!(await this.relay.holderLive(h.id))) throw environmentOffline();
+    const had = rootsOf(h);
+    const now = await this.targets.machineRoots(h.id);
+    if (had === undefined || (now !== null && !sameRoots(had, now))) return "gone";
     return "resumed";
   }
 
@@ -143,7 +149,8 @@ export class DeviceSandboxProvider implements SandboxProvider {
   async exec(h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]): Promise<ExecResult> {
     const { signal, ...rest } = args;
     signal.throwIfAborted();
-    const limits = limitsOf(h);
+    const limits = await this.currentLimits(h.id);
+    signal.throwIfAborted();
     try {
       return await this.relay.call(
         h.id,
@@ -166,10 +173,15 @@ export class DeviceSandboxProvider implements SandboxProvider {
     path: string,
     opts: { maxBytes: number; signal: AbortSignal },
   ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
+    // the answer must fit one frame: a larger file comes back truncated (Deliver: too large)
+    const maxBytes = Math.min(
+      opts.maxBytes,
+      maxReadBytes(this.config.get().environments.device.maxFrameBytes),
+    );
     const r = await this.relay.call(
       h.id,
       "readFile",
-      { path, maxBytes: opts.maxBytes },
+      { path, maxBytes },
       { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
     );
     return r === null ? null : { data: bytesOf(r.dataB64), truncated: r.truncated };
@@ -198,24 +210,10 @@ export class DeviceSandboxProvider implements SandboxProvider {
     return this.relay.call(h.id, "stat", { path }, { deadlineMs: OP_DEADLINE_MS, signal });
   }
 
-  /**
-   * Tells a connected machine its environment was deleted (it stops serving it; its files stay).
-   * Fire-and-forget (ruling R14): queued only while a replica holds the machine, never awaited;
-   * any failure is logged and swallowed, so deletion always goes through.
-   */
-  private async stop(environmentId: string, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
-    try {
-      if (!(await within(STOP_STEP_TIMEOUT_MS, this.relay.holderLive(environmentId)))) return;
-      await within(
-        STOP_STEP_TIMEOUT_MS,
-        this.relay.send(environmentId, "stop", { reason: "deleted" }, OP_DEADLINE_MS),
-      );
-    } catch (e) {
-      this.log.warn("could not tell the connected machine its environment was deleted", {
-        environmentId,
-        error: e instanceof Error ? e.message : String(e),
-      });
-    }
+  /** The org's effective limits now (ruling R27); a deleted environment is not found. */
+  private async currentLimits(environmentId: string): Promise<SandboxLimits> {
+    const orgId = await this.targets.orgOf(environmentId);
+    if (orgId === null) throw environmentNotFound();
+    return this.sandbox.orgLimits(orgId);
   }
 }

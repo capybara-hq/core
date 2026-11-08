@@ -2,23 +2,30 @@ import { randomUUID } from "node:crypto";
 import type { ExtensionContext, KernelReq, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { DeviceSandboxProvider, STOP_STEP_TIMEOUT_MS } from "../../src/devices/device-provider.js";
+import {
+  DeviceSandboxProvider,
+  FRAME_ENVELOPE_BYTES,
+  maxReadBytes,
+} from "../../src/devices/device-provider.js";
 import { deviceReqKey } from "../../src/devices/keys.js";
 import { DeviceRelay } from "../../src/devices/relay.js";
+import type { DeviceTargets } from "../../src/devices/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { DEVICE_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
 /**
  * The kernel-internal `@device` provider (environments spec §13.5): `sandbox@2` over the relay,
- * handles keyed by the environment id (ruling R1), cleanup paths safe while offline (ruling R9).
+ * handles keyed by the environment id (ruling R1), cleanup paths safe while offline (ruling R9),
+ * the files never touched (ruling R24), the org's current limits on every exec (ruling R27).
  */
 
 let rd: TestContainer;
@@ -40,6 +47,17 @@ const ROOTS = {
   skills: "/home/me/env/skills",
   tmp: "/home/me/env/tmp",
 };
+/** What the stubbed PG reads answer: the org's limits now, the machine's roots, the org. */
+let orgLimits: SandboxLimits;
+let machineRoots: typeof ROOTS | null;
+let orgOfEnv: string | null;
+let maxFrameBytes: number;
+beforeEach(() => {
+  orgLimits = LIMITS;
+  machineRoots = ROOTS;
+  orgOfEnv = "org-1";
+  maxFrameBytes = 16 * 1024 * 1024;
+});
 const EXEC_RESULT = { exitCode: 0, stdout: "ok", stderr: "", truncated: false, timedOut: false };
 const signal = () => AbortSignal.timeout(30_000);
 const isOffline = (e: unknown) => e instanceof ApiError && e.code === "environment.offline";
@@ -92,8 +110,19 @@ beforeAll(async () => {
       get: () => ({ environments: { device: { reconnectGraceSeconds: 2 } } }),
     } as unknown as KernelConfigService,
     log,
+    { state: async () => "active" } as Pick<DeviceTargets, "state"> as DeviceTargets,
   );
-  provider = new DeviceSandboxProvider(relay, log);
+  provider = new DeviceSandboxProvider(
+    relay,
+    {
+      orgOf: async () => orgOfEnv,
+      machineRoots: async () => machineRoots,
+    },
+    { orgLimits: async () => orgLimits } as Pick<SandboxService, "orgLimits">,
+    {
+      get: () => ({ environments: { device: { maxFrameBytes } } }),
+    } as unknown as KernelConfigService,
+  );
 }, 120_000);
 afterAll(async () => {
   await sub?.close();
@@ -147,10 +176,25 @@ describe("DeviceSandboxProvider", () => {
       }),
     );
     expect(isOffline(created)).toBe(true);
-    expect(isOffline(await rejection(provider.resume({ id: env }, signal())))).toBe(true);
+    const handle = { id: env, roots: ROOTS, limits: LIMITS };
+    expect(isOffline(await rejection(provider.resume(handle, signal())))).toBe(true);
     const h = new TestHolder(redis, bus, env, machine());
     await h.connect();
-    expect(await provider.resume({ id: env }, signal())).toBe("resumed");
+    expect(await provider.resume(handle, signal())).toBe("resumed");
+    await h.disconnect();
+  });
+
+  it("resume reports gone when the machine now reports other roots (ruling R23)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.environmentId, roots: ROOTS, limits: LIMITS };
+    machineRoots = { ...ROOTS, workspace: "/home/me/other/workspace" };
+    expect(await provider.resume(handle, signal())).toBe("gone");
+    // no roots reported yet: nothing to compare
+    machineRoots = null;
+    expect(await provider.resume(handle, signal())).toBe("resumed");
+    // a handle without roots cannot be the machine's instance
+    expect(await provider.resume({ id: h.environmentId }, signal())).toBe("gone");
     await h.disconnect();
   });
 
@@ -231,10 +275,47 @@ describe("DeviceSandboxProvider", () => {
     await h.disconnect();
   });
 
-  it("exec on a handle without limits reports the instance gone (the kernel recreates it)", async () => {
+  it("exec carries the org's limits of the moment, not the handle's (ruling R27)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.environmentId, roots: ROOTS, limits: LIMITS };
+    const args = {
+      command: "ls",
+      timeoutMs: 1000,
+      maxOutputBytes: 10,
+      tag: "t",
+      actor: { accountId: "a", conversationId: "c" },
+    };
+    await provider.exec(handle, { ...args, signal: signal() });
+    expect((h.frames[0] as KernelReq).args).toMatchObject({ limits: { egress: "allowlist" } });
+    // the org's egress is turned off: the next exec carries it
+    orgLimits = { ...LIMITS, egress: "none", allowHosts: [] };
+    await provider.exec(handle, { ...args, signal: signal() });
+    expect((h.frames[1] as KernelReq).args).toMatchObject({
+      limits: { egress: "none", allowHosts: [] },
+    });
+    await h.disconnect();
+  });
+
+  it("readFile asks for no more than fits in one frame (ruling R26)", async () => {
+    const h = new TestHolder(redis, bus, randomUUID(), machine());
+    await h.connect();
+    const handle = { id: h.environmentId, roots: ROOTS, limits: LIMITS };
+    maxFrameBytes = FRAME_ENVELOPE_BYTES + 400;
+    expect(maxReadBytes(maxFrameBytes)).toBe(300);
+    await provider.readFile(handle, "/x", { maxBytes: 10_000, signal: signal() });
+    expect((h.frames[0] as KernelReq).args).toEqual({ path: "/x", maxBytes: 300 });
+    maxFrameBytes = 16 * 1024 * 1024;
+    await provider.readFile(handle, "/x", { maxBytes: 10_000, signal: signal() });
+    expect((h.frames[1] as KernelReq).args).toEqual({ path: "/x", maxBytes: 10_000 });
+    await h.disconnect();
+  });
+
+  it("exec in a deleted environment is not found", async () => {
+    orgOfEnv = null;
     const e = await rejection(
       provider.exec(
-        { id: randomUUID() },
+        { id: randomUUID(), roots: ROOTS },
         {
           command: "ls",
           timeoutMs: 1000,
@@ -245,7 +326,7 @@ describe("DeviceSandboxProvider", () => {
         },
       ),
     );
-    expect((e as Error).name).toBe("SandboxGoneError");
+    expect(e instanceof ApiError && e.code === "environment.not_found").toBe(true);
   });
 
   it("suspend, destroy and the file system cleanup never fail while offline", async () => {
@@ -260,76 +341,19 @@ describe("DeviceSandboxProvider", () => {
     expect(await redis.exists(deviceReqKey(env))).toBe(0);
   });
 
-  it("deleting the file system tells a connected machine to stop; destroy does not", async () => {
+  it("suspend, destroy and the file system cleanup never reach a connected machine", async () => {
     const h = new TestHolder(redis, bus, randomUUID(), machine());
     await h.connect();
-    await provider.destroy({ id: h.environmentId }, signal());
-    await provider.suspend({ id: h.environmentId }, signal());
+    const env = h.environmentId;
+    await provider.destroy({ id: env }, signal());
+    await provider.suspend({ id: env }, signal());
+    await provider.destroyFileSystem({ id: env }, signal());
+    await provider.destroyFileSystemByName(`cap-env-${env}`, signal());
+    await new Promise((r) => setTimeout(r, 200));
     expect(h.frames).toEqual([]);
-    await provider.destroyFileSystem({ id: h.environmentId }, signal());
-    await provider.destroyFileSystemByName(`cap-env-${h.environmentId}`, signal());
-    await vi.waitFor(() =>
-      expect(h.frames).toMatchObject([
-        { op: "stop", args: { reason: "deleted" } },
-        { op: "stop", args: { reason: "deleted" } },
-      ]),
-    );
+    expect(await redis.exists(deviceReqKey(env))).toBe(0);
     await h.disconnect();
   });
-
-  it("stop is fire-and-forget: a live machine that never answers does not delay deletion", async () => {
-    const h = new TestHolder(redis, bus, randomUUID());
-    await h.connect();
-    const t0 = Date.now();
-    await provider.destroyFileSystem({ id: h.environmentId }, signal());
-    expect(Date.now() - t0).toBeLessThan(500);
-    expect(await h.next()).toMatchObject({ op: "stop", args: { reason: "deleted" } });
-    await h.disconnect();
-  });
-
-  it("a Redis failure while telling the machine does not fail the deletion", async () => {
-    const broken = new DeviceSandboxProvider(
-      {
-        holderLive: async () => true,
-        send: async () => {
-          throw new Error("redis down");
-        },
-      } as unknown as DeviceRelay,
-      log,
-    );
-    await broken.destroyFileSystem({ id: randomUUID() }, signal());
-    const offlineCheckFails = new DeviceSandboxProvider(
-      {
-        holderLive: async () => {
-          throw new Error("redis down");
-        },
-      } as unknown as DeviceRelay,
-      log,
-    );
-    await offlineCheckFails.destroyFileSystemByName(`cap-env-${randomUUID()}`, signal());
-  });
-
-  it("a hung Redis delays deletion by at most the step timeout", async () => {
-    const hung = new DeviceSandboxProvider(
-      { holderLive: () => new Promise<boolean>(() => {}) } as unknown as DeviceRelay,
-      log,
-    );
-    const t0 = Date.now();
-    await hung.destroyFileSystem({ id: randomUUID() }, signal());
-    const took = Date.now() - t0;
-    expect(took).toBeGreaterThanOrEqual(STOP_STEP_TIMEOUT_MS - 50);
-    expect(took).toBeLessThan(STOP_STEP_TIMEOUT_MS + 1000);
-    const sendHangs = new DeviceSandboxProvider(
-      {
-        holderLive: async () => true,
-        send: () => new Promise<void>(() => {}),
-      } as unknown as DeviceRelay,
-      log,
-    );
-    const t1 = Date.now();
-    await sendHangs.destroyFileSystemByName(`cap-env-${randomUUID()}`, signal());
-    expect(Date.now() - t1).toBeLessThan(STOP_STEP_TIMEOUT_MS + 1000);
-  }, 20_000);
 });
 
 describe("DevicesModule", () => {

@@ -41,7 +41,7 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  * - `POST /authorize { name, os, arch, programVersion }` → `{ deviceCode, userCode,
  *   verificationUri, verificationUriComplete, interval, expiresIn }` (`device-authorize-ip`);
  * - `POST /token { deviceCode }` → `{ credential, orgId, environmentId, connectUrl,
- *   reconnectGraceSeconds }` once, else `device.authorization_pending` / `device.slow_down` /
+ *   reconnectGraceSeconds, maxFrameBytes }` once, else `device.authorization_pending` / `device.slow_down` /
  *   `device.denied` / `device.expired` (`device-token-ip`).
  *
  * The person's routes need a web session (the confirmation page `/device`); each try of a user

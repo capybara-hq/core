@@ -4,6 +4,7 @@ import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { DeviceSandboxProvider } from "./device-provider.js";
 import { MachinesService } from "./machines.js";
 import { DeviceRelay } from "./relay.js";
+import { DeviceTargets } from "./targets.js";
 
 /**
  * Connected machines (environments spec §6, §13): the caller side of the device relay and the
@@ -14,7 +15,7 @@ import { DeviceRelay } from "./relay.js";
  */
 @Module({
   imports: [SandboxModule],
-  providers: [DeviceRelay, DeviceSandboxProvider, MachinesService],
+  providers: [DeviceTargets, DeviceRelay, DeviceSandboxProvider, MachinesService],
   exports: [DeviceRelay, DeviceSandboxProvider, MachinesService],
 })
 export class DevicesModule implements OnModuleInit {

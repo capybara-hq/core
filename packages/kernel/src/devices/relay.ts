@@ -20,6 +20,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { environmentNotFound } from "../sandbox/sandbox.service.js";
 import {
   deviceLeaseKey,
   deviceReqKey,
@@ -27,6 +28,7 @@ import {
   deviceResKey,
   deviceResTopic,
 } from "./keys.js";
+import { type DeviceTargetState, DeviceTargets } from "./targets.js";
 
 /** The environment's connected machine is not connected (no replica holds its lease). */
 export const environmentOffline = (): ApiError =>
@@ -34,6 +36,20 @@ export const environmentOffline = (): ApiError =>
     "environment.offline",
     "The connected machine of this environment is offline. Start capybara-device on that machine, or pick another environment.",
   );
+
+/**
+ * The environment's machine was disconnected (revoked, signed out): 403 `environment.forbidden`
+ * with `details: [{ reason: "machine_revoked" }]`, so the tools tell the model what to ask for.
+ */
+export const machineRevoked = (): ApiError =>
+  new ApiError(
+    "environment.forbidden",
+    "The connected machine of this environment was disconnected. Sign it in again with capybara-device login, or pick another environment.",
+    [{ reason: "machine_revoked" }],
+  );
+
+/** The text a machine's `error` result reaches the model with (ruling R28). */
+export const ON_MACHINE_PREFIX = "On the connected machine: ";
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -121,6 +137,7 @@ export class DeviceRelay {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(DeviceTargets) private readonly targets: Pick<DeviceTargets, "state">,
   ) {}
 
   /** Whether a gateway replica holds the machine's connection now. */
@@ -148,9 +165,12 @@ export class DeviceRelay {
   /**
    * Runs `op` on the environment's machine and returns its validated result. Throws
    * `environment.offline` when no replica holds the machine at send time or when the wait ran
-   * out; the machine's failures map to `SandboxGoneError` (`gone`), `FileSystemGoneError`
-   * (`fs_gone`), a `ToolError` (`policy`) or an `Error` (`error`); an invalid answer throws a
-   * `DeviceProtocolError`. On abort the abort reason is thrown.
+   * out, but `environment.forbidden` ({@link machineRevoked}) when the machine was revoked and
+   * `environment.not_found` when the environment was deleted (checked whenever the connection is
+   * missing, ruling R27); the machine's failures map to `SandboxGoneError` (`gone`),
+   * `FileSystemGoneError` (`fs_gone`) or a `ToolError` (`policy`, and `error` prefixed
+   * {@link ON_MACHINE_PREFIX}); an invalid answer throws a `DeviceProtocolError`. On abort the
+   * abort reason is thrown.
    */
   async call<Op extends DeviceOp>(
     environmentId: string,
@@ -160,7 +180,9 @@ export class DeviceRelay {
   ): Promise<DeviceOpResults[Op]> {
     const { signal } = opts;
     signal.throwIfAborted();
-    if (!(await this.holderLive(environmentId))) throw environmentOffline();
+    if (!(await this.holderLive(environmentId))) {
+      throw this.goneError(await this.targetState(environmentId)) ?? environmentOffline();
+    }
     signal.throwIfAborted();
 
     const id = randomUUID();
@@ -213,6 +235,14 @@ export class DeviceRelay {
           } else if (live === false && !capped) {
             capped = true;
             giveUpAt = Math.min(giveUpAt, Date.now() + graceMs);
+          }
+          if (live === false) {
+            // a revoked machine or a deleted environment never comes back: fail at once
+            const gone = this.goneError(await this.targetState(environmentId));
+            if (gone) {
+              settle({ error: gone });
+              return;
+            }
           }
         } catch (e) {
           this.log.warn("device relay lease check failed", { environmentId, error: errMsg(e) });
@@ -277,6 +307,39 @@ export class DeviceRelay {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * The environment's state ({@link DeviceTargets}), or undefined when it cannot be read within
+   * {@link LEASE_CHECK_TIMEOUT_MS} (a failure only logs: the caller keeps its other rules).
+   */
+  private async targetState(environmentId: string): Promise<DeviceTargetState | undefined> {
+    let timer: NodeJS.Timeout | undefined;
+    const read = this.targets.state(environmentId);
+    read.catch(() => {});
+    try {
+      return await Promise.race([
+        read,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), LEASE_CHECK_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (e) {
+      this.log.warn("device relay could not read the environment state", {
+        environmentId,
+        error: errMsg(e),
+      });
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** The error of a state that never comes back; undefined for `active` or unknown. */
+  private goneError(state: DeviceTargetState | undefined): ApiError | undefined {
+    if (state === "deleted") return environmentNotFound();
+    if (state === "revoked") return machineRevoked();
+    return undefined;
   }
 
   private graceMs(): number {
@@ -361,7 +424,7 @@ export class DeviceRelay {
       case "policy":
         throw new ToolError(`Refused by the machine's local policy: ${message}`);
       default:
-        throw new Error(message);
+        throw new ToolError(`${ON_MACHINE_PREFIX}${message}`);
     }
   }
 }

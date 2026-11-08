@@ -155,13 +155,13 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     message: "Too many device sign-in attempts; try again later",
     getTracker: ip,
   },
-  // device token polls per client address (@Throttled like device-authorize-ip): 120, well above
-  // one login's polls (600 s / 5 s) plus a few machines behind one address
+  // device token polls per client address (@Throttled like device-authorize-ip): 600, one login
+  // polls up to 120 times (600 s / 5 s), so several machines behind one NAT address fit
   {
     name: "device-token-ip",
     group: "device-token",
     onSuccess: "clear",
-    limit: 120,
+    limit: 600,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many device sign-in polls; try again later",
     getTracker: ip,

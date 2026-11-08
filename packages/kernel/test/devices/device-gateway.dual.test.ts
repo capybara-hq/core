@@ -7,6 +7,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { deviceLeaseKey } from "../../src/devices/keys.js";
 import { DeviceRelay } from "../../src/devices/relay.js";
+import type { DeviceTargets } from "../../src/devices/targets.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
@@ -158,6 +159,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
         get: () => ({ environments: { device: { reconnectGraceSeconds: GRACE_SECONDS } } }),
       } as unknown as KernelConfigService,
       log,
+      { state: async () => "active" } as Pick<DeviceTargets, "state"> as DeviceTargets,
     );
     expect(
       await relay.call(environmentId, "exec", execArgs, {

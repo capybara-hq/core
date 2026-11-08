@@ -254,6 +254,12 @@ export const ERROR_CODES = {
   "environment.name_taken": 409,
   /** The person already has `environments.maxPersonal` live personal environments. */
   "environment.limit_reached": 409,
+  /**
+   * A connected environment's files are on its machine: they cannot be reset from the platform;
+   * run `capybara-device logout`, then `capybara-device login` into the environment, on the machine
+   * (ruling R24).
+   */
+  "environment.files_on_device": 409,
   /** The environment's connected machine is not connected now (no replica holds its lease). */
   "environment.offline": 503,
   /** The connected machine runs a device program too old for this kernel; update the program. */

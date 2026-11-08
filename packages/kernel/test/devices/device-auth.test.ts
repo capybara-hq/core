@@ -153,6 +153,7 @@ interface Granted {
   environmentId: string;
   connectUrl: string;
   reconnectGraceSeconds: number;
+  maxFrameBytes: number;
 }
 
 /** Authorize, confirm into a new environment named `name`, take the credential. */
@@ -276,6 +277,7 @@ describe("device authorization", () => {
       environmentId,
       connectUrl: "wss://cap.example.com/device/connect",
       reconnectGraceSeconds: 120,
+      maxFrameBytes: 16 * 1024 * 1024,
     });
 
     // the credential authenticates the machine; it is never an /api credential
@@ -514,8 +516,8 @@ describe("device authorization", () => {
     expect(errCode(await token(a.deviceCode))).toBe("device.expired");
   });
 
-  it("token polls are limited to 120 per address in 15 minutes", async () => {
-    for (let i = 0; i < 120; i++) await token("nope");
+  it("token polls are limited to 600 per address in 15 minutes", async () => {
+    for (let i = 0; i < 600; i++) await token("nope");
     const over = await token("nope");
     expect(over.statusCode).toBe(429);
     expect(errCode(over)).toBe("auth.rate_limited");

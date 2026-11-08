@@ -27,6 +27,13 @@ function stateOf(e: EnvironmentView): { state: string; reason?: string; next?: s
       next: "Ask an org admin; use another environment meanwhile.",
     };
   }
+  if (e.filesLost && e.source === "device") {
+    return {
+      state: "files_lost",
+      reason: "Its directory is gone from the connected machine.",
+      next: "Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine.",
+    };
+  }
   if (e.filesLost) {
     return {
       state: "files_lost",
@@ -250,7 +257,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.reset-files",
         description:
-          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost. The person confirms every reset; it is never remembered. The environment this conversation works in cannot be wiped. Takes the id from environments.list.",
+          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost (not for a connected machine's environment: its files are on the machine). The person confirms every reset; it is never remembered. The environment this conversation works in cannot be wiped. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -266,6 +273,10 @@ export class EnvironmentsOperations implements OnModuleInit {
           {
             code: "environment.current",
             next: "This conversation works in it: ask the person to wipe it on the web, or wipe a different one.",
+          },
+          {
+            code: "environment.files_on_device",
+            next: "Its files are on its connected machine: ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine.",
           },
           {
             code: "environment.unavailable",

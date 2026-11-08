@@ -80,6 +80,7 @@ export class MachinesService {
   }): Promise<{ machineId: string; credential: string }> {
     // no stop frame: it would wait on the list and could reach the replacement machine instead
     await this.revokeActive(input.environmentId, null);
+    await this.resetInstance(input.environmentId);
     const credential = MACHINE_CREDENTIAL_PREFIX + randomBytes(32).toString("base64url");
     const row = await this.db
       .insertInto("environment_machines")
@@ -96,6 +97,29 @@ export class MachinesService {
       .returning("id")
       .executeTakeFirstOrThrow();
     return { machineId: row.id, credential };
+  }
+
+  /**
+   * Ruling R23: the new machine may serve the environment from another directory or mode (other
+   * roots), and a login recreates a directory that was lost (ruling R24). So the instance row
+   * forgets its instance (status `none`, no handle) and its files count as there again; the next
+   * use creates a fresh instance on the machine (with its roots: a new `environment_paths` event
+   * follows). The fence moves on, so a lifecycle holder of the old instance fails its next write.
+   */
+  private async resetInstance(environmentId: string): Promise<void> {
+    await this.db
+      .updateTable("environment_instances")
+      .set((eb) => ({
+        status: "none",
+        handle: null,
+        fs_status: sql<"none" | "ready">`CASE WHEN fs_handle IS NULL THEN 'none' ELSE 'ready' END`,
+        running_since: null,
+        suspended_at: null,
+        destroyed_at: sql<Date>`now()`,
+        generation: eb("generation", "+", 1),
+      }))
+      .where("environment_id", "=", environmentId)
+      .execute();
   }
 
   /**

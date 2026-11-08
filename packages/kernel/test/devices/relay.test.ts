@@ -23,6 +23,7 @@ import {
   LEASE_CHECK_TIMEOUT_MS,
   LIST_TTL_MARGIN_MS,
 } from "../../src/devices/relay.js";
+import type { DeviceTargetState, DeviceTargets } from "../../src/devices/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -41,6 +42,11 @@ let sub: ReturnType<typeof createBusSubscriber>;
 let bus: ExtensionContext["bus"];
 let relay: DeviceRelay;
 let graceSeconds = 5;
+/** What the stubbed PG says about each environment (absent: active). */
+const states = new Map<string, DeviceTargetState>();
+const targets = {
+  state: async (env: string) => states.get(env) ?? "active",
+} as Pick<DeviceTargets, "state"> as DeviceTargets;
 const log = createLogger("error", { write: () => {} });
 
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
@@ -72,6 +78,7 @@ const relayOver = (r: Redis) =>
       get: () => ({ environments: { device: { reconnectGraceSeconds: graceSeconds } } }),
     } as unknown as KernelConfigService,
     log,
+    targets,
   );
 
 /**
@@ -116,6 +123,7 @@ afterAll(async () => {
 });
 beforeEach(() => {
   graceSeconds = 5;
+  states.clear();
 });
 
 const holder = (answer?: (req: KernelReq) => Parameters<TestHolder["respond"]>[1] | undefined) =>
@@ -285,6 +293,36 @@ describe("DeviceRelay", () => {
     await redis.del(deviceReqKey(h.environmentId));
   }, 15_000);
 
+  it.each([
+    ["revoked", "environment.forbidden"],
+    ["deleted", "environment.not_found"],
+  ] as const)(
+    "a machine %s while a call waits fails it at the next lease check with %s (ruling R27)",
+    async (state, code) => {
+      graceSeconds = 60;
+      const h = holder();
+      await h.connect();
+      const t0 = Date.now();
+      const call = rejection(
+        relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 30_000, signal: signal() }),
+      );
+      await h.next();
+      states.set(h.environmentId, state);
+      await h.disconnect();
+      const e = await call;
+      expect(e instanceof ApiError && e.code === code).toBe(true);
+      // within one poll, far from the 90 s the deadline plus the grace would take
+      expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 2000);
+      // a new call is refused the same way at once, not as offline
+      const again = await rejection(
+        relay.call(h.environmentId, "exec", execArgs, { deadlineMs: 1000, signal: signal() }),
+      );
+      expect(again instanceof ApiError && again.code === code).toBe(true);
+      await redis.del(deviceReqKey(h.environmentId));
+    },
+    15_000,
+  );
+
   it("a reconnect within the grace restores the full wait: a long command still delivers", async () => {
     graceSeconds = 3;
     const h = holder();
@@ -324,6 +362,7 @@ describe("DeviceRelay", () => {
         get: () => ({ environments: { device: { reconnectGraceSeconds: graceSeconds } } }),
       } as unknown as KernelConfigService,
       log,
+      targets,
     );
     const t0 = Date.now();
     const call = rejection(
@@ -365,7 +404,7 @@ describe("DeviceRelay", () => {
     await h.disconnect();
   });
 
-  it("fs_gone maps to FileSystemGoneError, gone to SandboxGoneError, policy to a ToolError", async () => {
+  it("fs_gone maps to FileSystemGoneError, gone to SandboxGoneError, policy and error to ToolErrors", async () => {
     const kinds = {
       create: "fs_gone",
       stat: "gone",
@@ -390,10 +429,10 @@ describe("DeviceRelay", () => {
     expect((policy as Error).message).toBe(
       "Refused by the machine's local policy: writeFile failed",
     );
+    // ruling R28: the machine's own failure reaches the model as it said it
     const plain = await rejection(relay.call(env, "readFile", { path: "/w", maxBytes: 1 }, opts()));
-    expect(plain).toBeInstanceOf(Error);
-    expect(isSandboxGoneError(plain) || plain instanceof ToolError).toBe(false);
-    expect((plain as Error).message).toBe("readFile failed");
+    expect(plain).toBeInstanceOf(ToolError);
+    expect((plain as Error).message).toBe("On the connected machine: readFile failed");
     await h.disconnect();
   });
 

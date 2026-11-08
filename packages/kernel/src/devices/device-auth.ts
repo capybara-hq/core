@@ -125,6 +125,8 @@ export interface DeviceAuthorization {
 export interface DeviceGrant extends Grant {
   connectUrl: string;
   reconnectGraceSeconds: number;
+  /** `environments.device.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
+  maxFrameBytes: number;
 }
 
 const codeInvalid = () =>
@@ -236,10 +238,12 @@ export class DeviceAuthService {
     switch (r[0]) {
       case "approved": {
         const grant = JSON.parse(r[1] as string) as Grant;
+        const device = this.config.get().environments.device;
         return {
           ...grant,
           connectUrl,
-          reconnectGraceSeconds: this.config.get().environments.device.reconnectGraceSeconds,
+          reconnectGraceSeconds: device.reconnectGraceSeconds,
+          maxFrameBytes: device.maxFrameBytes,
         };
       }
       case "slow_down":
