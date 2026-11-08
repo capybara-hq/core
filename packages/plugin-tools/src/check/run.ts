@@ -11,6 +11,7 @@ import { checkPluginReleaseMetadata } from "./release-metadata.js";
 import { printCheck } from "./report.js";
 import type { Finding } from "./source.js";
 import { checkPluginTestImports } from "./test-imports.js";
+import { checkThemes } from "./themes.js";
 import { checkToolDesign } from "./tool-design.js";
 
 /** What the plugin-scoped checks scan. */
@@ -61,6 +62,7 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
     { name: "Plugin pack", run: () => checkPluginPack(plugins) },
     { name: "Config forms", run: () => checkConfigForms(plugins) },
     { name: "Org override", run: () => checkOrgOverride(plugins) },
+    { name: "Themes", run: () => checkThemes(plugins) },
     {
       name: "Tool design",
       run: () => checkToolDesign([...(scope.toolDesignDirs ?? []), ...plugins]),
