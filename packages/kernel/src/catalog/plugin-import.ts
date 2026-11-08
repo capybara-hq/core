@@ -867,7 +867,7 @@ export class PluginImport {
       if (source.kind === "bootstrap" && !this.files.available) {
         throw new ApiError(
           "storage.unavailable",
-          `Bootstrap plugin ${m.name} ships skills, connector templates or agent templates, which are kept in object storage, and object storage is not running yet (it may be a bootstrap plugin itself); a required bootstrap plugin may ship only an icon and setup guides, an optional one is retried once the extensions have loaded`,
+          `Bootstrap plugin ${m.name} ships skills, connector templates, agent templates or themes, which are kept in object storage, and object storage is not running yet (it may be a bootstrap plugin itself); a required bootstrap plugin may ship only an icon and setup guides, an optional one is retried once the extensions have loaded`,
         );
       }
       this.files.assertAvailable();
@@ -2017,7 +2017,8 @@ export class PluginImport {
     displayPaths: Set<string>;
     /**
      * The paths of `files` kept under the version's object prefix: skill files, connector and agent
-     * templates (a display path may be one too: then it is kept in both places).
+     * templates, theme files and their assets (a display path may be one too: then it is kept in
+     * both places).
      */
     objectPaths: Set<string>;
     templates: PluginReviewTemplate[];
@@ -2140,8 +2141,11 @@ export class PluginImport {
     // Themes: the file as written, the assets as sanitized by the reader (never the uploaded
     // originals: a shared path, e.g. the plugin icon, is stored sanitized too)
     const themes: PluginReviewTheme[] = pkg.themes.map((t) => {
-      keep(t.path);
-      for (const [path, data] of t.assets) stored.set(path, fileOf(path, data));
+      keepObject(t.path);
+      for (const [path, data] of t.assets) {
+        stored.set(path, fileOf(path, data));
+        objectPaths.add(path);
+      }
       const logo = t.theme.logo;
       return {
         id: t.id,
