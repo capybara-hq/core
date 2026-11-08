@@ -37,6 +37,7 @@ import {
   reviewHash,
 } from "./permission-view.js";
 import { pluginItemsOf } from "./plugin-items.js";
+import { parseProviderConflict } from "./resolve.js";
 import type { ExtensionSource } from "./sources.js";
 
 export { PLUGINS_CHANGED_TOPIC };
@@ -418,6 +419,18 @@ export class ExtensionAdmin {
       .orderBy("replica_id")
       .execute();
     const items = await pluginItemsOf(this.db, names);
+    // The other providers named by a `conflict` row, for their display names.
+    const conflicts = new Map(
+      rows.flatMap((r) => {
+        const c =
+          r.state === "pending" && r.reason === "conflict" && parseProviderConflict(r.detail);
+        return c ? [[r.plugin, c] as const] : [];
+      }),
+    );
+    const otherNames = [
+      ...new Set([...conflicts].flatMap(([n, c]) => c.providers.filter((p) => p !== n))),
+    ];
+    const otherDisplay = otherNames.length > 0 ? await this.displayNames.many(otherNames) : null;
     const needing = await this.orgsNeedingConfig(subjects);
     const counts = new Map(
       (
@@ -486,19 +499,29 @@ export class ExtensionAdmin {
         };
       }
       const permissions = permissionGroups(s.set);
+      const status = deriveExtensionStatus({
+        source: s.source,
+        desired: install && { sha256: install.sha256, state: install.desiredState },
+        pendingApproval: !snapshotCovers(snap, s.set),
+        configValid,
+        migratedSha: install?.migratedSha ?? null,
+        replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
+      });
+      const conflict = status === "conflict" ? conflicts.get(s.name) : undefined;
       return {
         name: s.name,
         displayName,
         version: s.version,
         source: s.source,
         sha256: target,
-        status: deriveExtensionStatus({
-          source: s.source,
-          desired: install && { sha256: install.sha256, state: install.desiredState },
-          pendingApproval: !snapshotCovers(snap, s.set),
-          configValid,
-          migratedSha: install?.migratedSha ?? null,
-          replicas: replicas.map((r) => ({ state: r.state, reason: r.reason, sha256: r.sha256 })),
+        status,
+        ...(conflict && {
+          conflict: {
+            extensionPoint: conflict.extensionPoint,
+            providers: conflict.providers
+              .filter((p) => p !== s.name)
+              .map((p) => ({ name: p, displayName: otherDisplay?.get(p) ?? null })),
+          },
         }),
         desired: install && {
           version: install.version,

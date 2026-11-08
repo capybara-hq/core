@@ -378,6 +378,41 @@ describe("插件生命周期（单副本，不重启）", { timeout: 60_000 }, (
     await waitFor(async () => (await view("dep")).status === "enabled", 10_000, "dep enabled");
   });
 
+  it("single-provider conflict: the second provider is pending / conflict (not dependency) and loads once the first is disabled", async () => {
+    await install(
+      "sbx-a",
+      await lifePkg({ name: "sbx-a", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    await approve("sbx-a");
+    await setState("sbx-a", "enable");
+    await waitFor(async () => loadedVersion("sbx-a") === "1.0.0", 15_000, "sbx-a loaded");
+
+    await install(
+      "sbx-b",
+      await lifePkg({ name: "sbx-b", version: "1.0.0", provides: ["sandbox@2"] }),
+    );
+    await approve("sbx-b");
+    await setState("sbx-b", "enable");
+    await waitFor(async () => (await view("sbx-b")).status === "conflict", 15_000, "conflict");
+    expect(loadedVersion("sbx-b")).toBeUndefined();
+    const b = (await view("sbx-b")) as View & {
+      conflict?: { extensionPoint: string; providers: { name: string }[] };
+    };
+    expect(b.replicas[0]).toMatchObject({ state: "pending", reason: "conflict" });
+    expect(b.conflict).toEqual({
+      extensionPoint: "sandbox@2",
+      providers: [{ name: "sbx-a", displayName: null }],
+    });
+
+    // Disabling the other provider is the whole fix: sbx-b loads without a restart.
+    await setState("sbx-a", "disable");
+    await waitFor(async () => loadedVersion("sbx-b") === "1.0.0", 15_000, "sbx-b loaded");
+    await waitFor(async () => (await view("sbx-b")).status === "enabled", 10_000, "sbx-b enabled");
+    expect(((await view("sbx-b")) as { conflict?: unknown }).conflict).toBeUndefined();
+    await setState("sbx-b", "disable");
+    await waitFor(async () => loadedVersion("sbx-b") === undefined, 15_000, "sbx-b unloaded");
+  });
+
   it("审阅：迁移里的破坏性语句列为敏感警告（不拒绝）", async () => {
     const r = (await upload(
       await lifePkg({

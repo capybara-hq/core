@@ -170,7 +170,7 @@ describe("deriveExtensionStatus", () => {
     );
   });
 
-  it("优先级：failed > dependency > pending_approval > pending_config > pending_migration > converging", () => {
+  it("优先级：failed > dependency > conflict > pending_approval > pending_config > pending_migration > converging", () => {
     const failed = { state: "failed", reason: "setup", sha256: SHA };
     const dep = { state: "pending", reason: "dependency", sha256: SHA };
     const all = {
@@ -181,6 +181,11 @@ describe("deriveExtensionStatus", () => {
     };
     expect(deriveExtensionStatus(install(all))).toBe("failed");
     expect(deriveExtensionStatus(install({ ...all, replicas: [dep] }))).toBe("dependency");
+    const conflict = { state: "pending", reason: "conflict", sha256: SHA };
+    expect(deriveExtensionStatus(install({ ...all, replicas: [conflict] }))).toBe("conflict");
+    expect(deriveExtensionStatus(install({ ...all, replicas: [dep, conflict] }))).toBe(
+      "dependency",
+    );
     expect(deriveExtensionStatus(install({ ...all, replicas: [] }))).toBe("pending_approval");
     expect(deriveExtensionStatus(install({ ...all, pendingApproval: false, replicas: [] }))).toBe(
       "pending_config",
@@ -252,6 +257,7 @@ describe('extensionNeedsAction ("extensions to act on" in the admin overview)', 
           "converging",
           "failed",
           "dependency",
+          "conflict",
         ] as const
       ).filter(extensionNeedsAction),
     ).toEqual([
@@ -261,6 +267,7 @@ describe('extensionNeedsAction ("extensions to act on" in the admin overview)', 
       "converging",
       "failed",
       "dependency",
+      "conflict",
     ]);
   });
 });

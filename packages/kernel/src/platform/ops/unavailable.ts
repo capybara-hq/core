@@ -18,6 +18,8 @@ const MISSING: Record<PluginUnavailableReason, string> = {
   pending_migration: "the platform is still preparing it (database migration)",
   loading: "the platform is still loading it",
   dependency: "it requires an extension point that no running extension provides",
+  conflict:
+    "it provides an extension point only one extension may provide, and another running extension already provides it",
   failed: "it failed to load on the platform",
   deployment_disabled: "the super admin disabled it on the platform",
 };
@@ -61,6 +63,12 @@ export function unavailableNext(reason: PluginUnavailableReason, name: string): 
       return {
         superAdmin: `${adminPath} to see the extension point it requires, then install or enable an extension that provides it.`,
         orgAdmin: `Only the super admin can provide what ${name} requires. ${TELL_SUPER_ADMIN}`,
+        member: memberNext(name),
+      };
+    case "conflict":
+      return {
+        superAdmin: `${adminPath} to see which extension already provides the same extension point; disable that one (or uninstall it) and ${name} loads, no restart.`,
+        orgAdmin: `Only the super admin can resolve the conflict of ${name} with another extension. ${TELL_SUPER_ADMIN}`,
         member: memberNext(name),
       };
     case "failed":

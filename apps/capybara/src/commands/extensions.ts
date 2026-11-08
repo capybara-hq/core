@@ -94,6 +94,14 @@ function blockedByText(p: PendingExtension): string {
 
 /** 一个待批准插件的说明行（含新增 / 减少的权限项）。 */
 function describePending(p: PendingExtension): string[] {
+  if (p.reason === "conflict") {
+    const with_ = (p.conflicts ?? [])
+      .map((c) => `${c.extensionPoint} (also provided by ${c.providers.join(", ")})`)
+      .join("; ");
+    return [
+      `${p.plugin} ${p.version}: not loaded: provides a single-provider extension point another extension provides: ${with_}; disable that one first`,
+    ];
+  }
   if (p.reason === "dependency") {
     const waiting = (p.blockedBy ?? []).some((b) => b.providers.length > 0);
     return [

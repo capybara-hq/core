@@ -8,6 +8,28 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import semver from "semver";
 
+/**
+ * Code of the {@link ExtensionResolveError} for a single-provider extension point that more than
+ * one extension provides: nothing is missing, the extensions conflict (replica reason `conflict`).
+ */
+export const PROVIDER_CONFLICT = "extension.provider_conflict";
+
+const CONFLICT_RE = /^extension point (\S+) is single-provider but provided by: (.+)$/;
+
+/** The message (and replica `detail`) of a {@link PROVIDER_CONFLICT}; read back by {@link parseProviderConflict}. */
+export function providerConflictMessage(extensionPoint: string, providers: string[]): string {
+  return `extension point ${extensionPoint} is single-provider but provided by: ${providers.join(", ")}`;
+}
+
+/** The extension point and its providers from a {@link providerConflictMessage}; null for any other text. */
+export function parseProviderConflict(
+  detail: string | null,
+): { extensionPoint: string; providers: string[] } | null {
+  const m = detail === null ? null : CONFLICT_RE.exec(detail);
+  if (!m) return null;
+  return { extensionPoint: m[1] as string, providers: (m[2] as string).split(", ") };
+}
+
 /** 插件依赖解析失败（信息列出插件名与能力名）。 */
 export class ExtensionResolveError extends Error {
   constructor(
@@ -65,7 +87,11 @@ export function resolveExtensions(
       list.length > 1
     ) {
       throw new ExtensionResolveError(
-        `extension point ${cap} is single-provider but provided by: ${list.map((p) => p.name).join(", ")}`,
+        providerConflictMessage(
+          cap,
+          list.map((p) => p.name),
+        ),
+        PROVIDER_CONFLICT,
       );
     }
   }

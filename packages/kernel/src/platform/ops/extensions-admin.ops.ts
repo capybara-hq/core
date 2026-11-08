@@ -25,10 +25,20 @@ const EXAMPLE = { name: "model-anthropic" };
 const enName = (v: AdminExtensionView): string => localized(v.displayName, v.name).en;
 
 /** Why an extension does not run, and the super admin's next step (absent when it runs). */
-const why = (v: AdminExtensionView) =>
-  v.status === "enabled"
-    ? {}
-    : unavailableFields(unavailableReason(v.status), enName(v), "superAdmin");
+const why = (v: AdminExtensionView) => {
+  if (v.status === "enabled") return {};
+  const fields = unavailableFields(unavailableReason(v.status), enName(v), "superAdmin");
+  if (v.status !== "conflict" || v.conflict === undefined || v.conflict.providers.length === 0)
+    return fields;
+  // A conflict names the extensions in the way: disabling them is the whole fix.
+  const others = v.conflict.providers.map(
+    (p) => `${localized(p.displayName, p.name).en} (${p.name})`,
+  );
+  return {
+    ...fields,
+    next: `Only one extension may provide ${v.conflict.extensionPoint}, and ${others.join(", ")} already does. Disable it (extensions.platform-disable, or the admin console → Extensions) and ${enName(v)} loads by itself, no restart.`,
+  };
+};
 
 /** An extension as `extensions.platform-list` shows it: a compact row. */
 const row = (v: AdminExtensionView) => ({
@@ -124,7 +134,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-list",
         description:
-          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Extensions only other orgs' own plugins bring are counted (otherOrgExtensions), never listed. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
+          "List the extensions on the platform (super admin), one compact row each: the deployment status (enabled, disabled, pending_approval, pending_config, pending_migration, converging, failed, dependency, conflict, legacy_format), why one does not run (reason) and your next step (next), its version, how many orgs have it on and whether it is required. Extensions only other orgs' own plugins bring are counted (otherOrgExtensions), never listed. Details come from extensions.platform-get. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },

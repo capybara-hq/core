@@ -228,6 +228,8 @@ export function permissionGroups(set: PermissionSet): PermissionGroup[] {
 /**
  * 部署级插件状态（后台展示；F-I：副本行存原因，这里推导展示用的状态）。
  * `dependency`：必需能力没有（加载着的）提供方（F-M：排在 `failed` 之后、`pending_approval` 之前）。
+ * `conflict`: it provides a single-provider extension point another loaded extension provides (same
+ * rank as `dependency`); it loads once that one is disabled.
  */
 export type DeploymentExtensionStatus =
   | "enabled"
@@ -238,6 +240,7 @@ export type DeploymentExtensionStatus =
   | "converging"
   | "failed"
   | "dependency"
+  | "conflict"
   /** The stored package is in the pre-0.1.0 format: reinstall it from a repacked tgz. */
   | "legacy_format";
 
@@ -317,6 +320,14 @@ export interface AdminExtensionView {
   /** Where the install record came from (`bootstrap` for the bootstrap step); null for config-declared. */
   installSource: "npm" | "file" | "catalog" | "bootstrap" | null;
   /**
+   * Only with status `conflict`: the single-provider extension point and the other extensions that
+   * provide it (they keep this one from loading; disabling them loads it, no restart).
+   */
+  conflict?: {
+    extensionPoint: string;
+    providers: { name: string; displayName: LocalizedName | null }[];
+  };
+  /**
    * Why the install record's package cannot be read (bytes missing or corrupt, over the current
    * size limit; status failed), or the legacy-format message (status `legacy_format`); permissions
    * are then empty.
@@ -340,7 +351,7 @@ export interface StatusInput {
 
 /**
  * 由期望状态、快照、配置校验、`migrated_sha` 与各副本状态推出部署级状态，优先级：
- * `failed` > `dependency` > `pending_approval` > `pending_config` > `pending_migration` > `converging` > `enabled` / `disabled`。
+ * `failed` > `dependency` > `conflict` > `pending_approval` > `pending_config` > `pending_migration` > `converging` > `enabled` / `disabled`。
  * - 安装记录只看目标包（`desired.sha256`）的副本行：旧包的失败不算；
  * - 停用的安装记录不看迁移；仍有副本加载着时为 `converging`；
  * - 配置声明始终期望启用。
@@ -353,6 +364,7 @@ export function deriveExtensionStatus(i: StatusInput): DeploymentExtensionStatus
     rows.some((r) => r.reason === "dependency" && (r.state === "pending" || r.state === "unloaded"))
   )
     return "dependency";
+  if (rows.some((r) => r.reason === "conflict" && r.state === "pending")) return "conflict";
   if (i.pendingApproval) return "pending_approval";
   if (!i.configValid) return "pending_config";
   const wantLoaded = i.desired === null || i.desired.state === "enabled";

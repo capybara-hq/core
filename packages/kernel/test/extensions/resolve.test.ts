@@ -4,7 +4,12 @@ import {
   type ExtensionPointRef,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { resolveExtensions } from "../../src/extensions/resolve.js";
+import {
+  ExtensionResolveError,
+  PROVIDER_CONFLICT,
+  parseProviderConflict,
+  resolveExtensions,
+} from "../../src/extensions/resolve.js";
 
 const mk = (
   name: string,
@@ -59,6 +64,27 @@ describe("resolveExtensions", () => {
     const a = mk("aa", { provides: ["sandbox@2"] });
     const b = mk("bb", { provides: ["sandbox@2"] });
     expect(() => resolveExtensions([a, b], "0.1.0")).toThrow(/aa.*bb/);
+  });
+
+  it("a single-provider conflict carries extension.provider_conflict and its message parses back", () => {
+    const a = mk("aa", { provides: ["sandbox@2"] });
+    const b = mk("bb", { provides: ["sandbox@2"] });
+    let err: unknown;
+    try {
+      resolveExtensions([a, b], "0.1.0");
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(ExtensionResolveError);
+    expect((err as ExtensionResolveError).code).toBe(PROVIDER_CONFLICT);
+    expect(parseProviderConflict((err as Error).message)).toEqual({
+      extensionPoint: "sandbox@2",
+      providers: ["aa", "bb"],
+    });
+    expect(parseProviderConflict("plugin aa: required extension point x@1 has no provider")).toBe(
+      null,
+    );
+    expect(parseProviderConflict(null)).toBe(null);
   });
 
   it("多选能力允许多个提供者", () => {

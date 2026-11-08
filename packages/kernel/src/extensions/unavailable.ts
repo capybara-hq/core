@@ -14,6 +14,7 @@ import { ExtensionRegistry } from "./registry.js";
  * - `pending_approval`: its permissions wait for the super admin's approval;
  * - `pending_migration` / `loading`: the platform is still bringing it up;
  * - `dependency`: an extension point it requires has no loaded provider;
+ * - `conflict`: it provides a single-provider extension point another loaded extension provides;
  * - `failed`: it failed to load (or its package cannot be read);
  * - `deployment_disabled`: the super admin disabled it on the platform.
  * State only: never a config value or field name.
@@ -25,6 +26,7 @@ export type ExtensionUnavailableReason =
   | "pending_migration"
   | "loading"
   | "dependency"
+  | "conflict"
   | "failed"
   | "deployment_disabled";
 
@@ -46,6 +48,8 @@ export function unavailableReason(status: DeploymentExtensionStatus): ExtensionU
       return "pending_migration";
     case "dependency":
       return "dependency";
+    case "conflict":
+      return "conflict";
     case "failed":
     case "legacy_format":
       return "failed";
