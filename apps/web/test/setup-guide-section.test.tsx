@@ -103,7 +103,8 @@ const rendered = (
   title: o.title ?? "创建 Slack 应用",
   modes: ["long_connection", "webhook"],
   mode,
-  audiences: ["admin"],
+  // a document without audience sections (as the kernel reports it)
+  audiences: [],
   audience: "admin",
   blocks: [
     {
@@ -341,6 +342,108 @@ describe("channel detail: 接入指南 and the drift notice", () => {
         hash: "c".repeat(64),
       }),
     );
+  });
+
+  it("renders a guide exactly as the kernel's route returns it", async () => {
+    // Captured from GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId in the kernel test
+    // guides.http.test.ts (fixture plugins/guide-demo, a webhook connection, locale zh, no
+    // channels.webhookBaseUrl); only the ids are renamed to this file's stubs.
+    const REAL = {
+      itemId: "item1",
+      plugin: "im-guide",
+      version: "1.0.0",
+      id: "app",
+      place: "channel-connection",
+      locale: "zh",
+      title: "创建演示应用",
+      modes: ["long_connection", "webhook"],
+      mode: "webhook",
+      audiences: [],
+      audience: "admin",
+      blocks: [
+        {
+          kind: "markdown",
+          text: "组织 Acme，插件 im-guide 1.0.0，模式 webhook。\n\n## 1. 用 manifest 创建应用",
+        },
+        {
+          kind: "code",
+          language: "yaml",
+          title: "应用 manifest（webhook）",
+          text: 'display_information:\n  name: "Support bot"\nsettings:\n  event_subscriptions:\n    request_url: "{{webhookUrl}}"\noauth_config:\n  redirect_urls:\n    - "https://capybara.example.com/api/v1/auth/sso/im-guide/callback"',
+        },
+        {
+          kind: "markdown",
+          text: "平台把事件发到 {{webhookUrl}}。\n\n## 2. 复制机器人令牌\n\n把机器人令牌粘贴到「Bot token」字段。",
+        },
+        {
+          kind: "check",
+          id: "bot-token",
+          label: "机器人令牌可用",
+        },
+        {
+          kind: "check",
+          id: "capybara:public-url",
+          label: "已设置公网地址",
+        },
+      ],
+      checks: [
+        {
+          id: "bot-token",
+          label: "机器人令牌可用",
+          source: "plugin",
+        },
+        {
+          id: "capybara:public-url",
+          label: "已设置公网地址",
+          source: "kernel",
+        },
+      ],
+      unresolved: [
+        {
+          name: "webhookUrl",
+          reason: "webhook_base",
+        },
+      ],
+      hash: "fa699e978e61197f8cb067090fbcbc5832f82502f38d9b07a77dbf7ca97b3203",
+      target: {
+        kind: "channel-connection",
+        id: "ch1",
+      },
+    };
+    const calls = stubApi(
+      detailRoutes({
+        [`GET ${BASE}/channels/ch1`]: () =>
+          json(200, { channel: { ...CHANNEL, inboundMode: "webhook" } }),
+        [`GET ${GUIDE_URL}`]: () => json(200, { guide: REAL }),
+        [`POST ${BASE}/channels/ch1/guide-ack`]: () =>
+          json(200, { channel: { ...CHANNEL, inboundMode: "webhook", guideDrift: null } }),
+      }),
+    );
+    const { container } = await renderRouteWithCache("/channels/ch1", lastStubRoutes(), {
+      locale: "zh",
+    });
+    expect(await screen.findByText("创建演示应用")).toBeTruthy();
+    // the mode switch starts at the rendered mode
+    expect(screen.getByRole("radio", { name: g.modes.webhook }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+    // prose (headings included), the titled code block, the unresolved variable as written
+    expect(screen.getByRole("heading", { name: "1. 用 manifest 创建应用" })).toBeTruthy();
+    expect(screen.getByText("应用 manifest（webhook）")).toBeTruthy();
+    expect(screen.getByText(/request_url: "\{\{webhookUrl\}\}"/)).toBeTruthy();
+    expect(screen.getByText(/平台把事件发到 \{\{webhookUrl\}\}/)).toBeTruthy();
+    // both check rows, a saved connection's: not 保存后检查
+    for (const label of ["机器人令牌可用", "已设置公网地址"]) {
+      const row = screen.getByRole("group", { name: label });
+      expect(within(row).queryByText(g.checkAfterSave)).toBeNull();
+    }
+    expect(screen.getByText(names(g.unresolved.webhook_base, "webhookUrl"))).toBeTruthy();
+    // the ack posts the hash the kernel sent for the connection's own mode
+    await userEvent.setup().click(screen.getByRole("button", { name: /^我已更新/ }));
+    await vi.waitFor(() =>
+      expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ hash: REAL.hash }),
+    );
+    expect(findNestedBoxes(container)).toEqual([]);
   });
 
   it("unresolved lines by reason (deployment settings)", async () => {
