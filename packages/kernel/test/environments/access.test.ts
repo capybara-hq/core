@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { deviceLeaseKey } from "../../src/devices/keys.js";
 import { EnvironmentAccess } from "../../src/environments/access.js";
 import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
 import {
@@ -15,6 +17,16 @@ import {
   type EnvironmentView,
 } from "../../src/environments/environments.service.js";
 import type { ApiError } from "../../src/errors.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { REDIS } from "../../src/infra/tokens.js";
+import {
+  DEVICE_PROVIDER,
+  type SandboxProviderEntry,
+  SandboxProviders,
+} from "../../src/sandbox/providers.js";
+import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -223,5 +235,205 @@ describe("environment access", () => {
       raw,
     );
     expect(await service.ensureDefault(orgId, me)).toBe(id);
+  });
+});
+
+describe("device environments", () => {
+  /** A member of the org with a fresh login (their own environments only). */
+  async function member(): Promise<{ id: string; req: Req }> {
+    const login = `dv-${randomUUID().slice(0, 8)}`;
+    const id = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+    await testMembers(db).add(orgId, id, "member", ownerId);
+    return { id, req: await session(k, login) };
+  }
+  const deviceEntry = (): SandboxProviderEntry => ({
+    plugin: DEVICE_PROVIDER,
+    impl: createFakeSandbox(join(root, "device")),
+  });
+  // the kernel serves @device for every test here (DevicesModule does this on init, Task 4)
+  beforeAll(() => {
+    k.app.get(SandboxProviders).register(deviceEntry());
+  });
+
+  it("createDevice records source device on @device, counted against maxPersonal", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const me = await member();
+    const { id } = await service.createDevice(orgId, me.id, "laptop");
+    const row = await db
+      .selectFrom("environments")
+      .select(["source", "provider", "is_default", "name"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      source: "device",
+      provider: "@device",
+      is_default: false,
+      name: "laptop",
+    });
+    expect(await codeOf(service.createDevice(orgId, me.id, "LAPTOP"))).toBe(
+      "environment.name_taken",
+    );
+    const max = k.app.get(KernelConfigService).get().environments.maxPersonal;
+    for (let i = 1; i < max; i++) await service.createDevice(orgId, me.id, `m${i}`);
+    expect(await codeOf(service.createDevice(orgId, me.id, "one-too-many"))).toBe(
+      "environment.limit_reached",
+    );
+  });
+
+  it("usable while @device is registered, whatever the cloud provider; never someone else's", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const access = k.app.get(EnvironmentAccess);
+    const me = await member();
+    const { id } = await service.createDevice(orgId, me.id, "box");
+    // a kernel that does not serve @device (the cloud provider is still there)
+    const unserved = new EnvironmentAccess(k.app.get(KernelDb), {
+      cloud: () => k.app.get(SandboxProviders).cloud(),
+      forName: () => undefined,
+    });
+    const err = await unserved.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
+    expect(err).toMatchObject({ code: "environment.unavailable" });
+    expect((err as ApiError).message).toContain("connected machine");
+    expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@device" });
+    expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("environment.not_found");
+  });
+
+  it("list shows source, online null for cloud; a device environment's online and machine", async () => {
+    const service = k.app.get(EnvironmentsService);
+    const me = await member();
+    const { id } = await service.createDevice(orgId, me.id, "workstation");
+    const list = async () => {
+      const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/environments` });
+      expect(res.statusCode, res.body).toBe(200);
+      return res.json() as { items: EnvironmentView[]; defaultId: string; cloudAvailable: boolean };
+    };
+    let body = await list();
+    expect(body.cloudAvailable).toBe(true);
+    expect(body.items.find((e) => e.id === body.defaultId)).toMatchObject({
+      source: "cloud",
+      online: null,
+      sessionIsolation: false,
+      machine: null,
+      available: true,
+    });
+    expect(body.items.find((e) => e.id === id)).toMatchObject({
+      source: "device",
+      provider: "@device",
+      available: true,
+      online: false,
+      sessionIsolation: false,
+      machine: null,
+    });
+    const seen = new Date("2026-11-08T10:00:00.000Z");
+    const machineId = randomUUID();
+    await sql`INSERT INTO capybara.environment_machines
+        (id, org_id, environment_id, account_id, credential_hash, name, os, arch, program_version,
+         mode, last_seen_at, session_isolation)
+      VALUES (${machineId}, ${orgId}, ${id}, ${me.id}, 'h', 'grant-mbp', 'darwin', 'arm64', '0.1.0',
+        'os', ${seen}, true)`.execute(raw);
+    // a revoked machine of the same environment is not shown
+    await sql`INSERT INTO capybara.environment_machines
+        (org_id, environment_id, account_id, credential_hash, name, os, arch, revoked_at)
+      VALUES (${orgId}, ${id}, ${me.id}, 'h2', 'old', 'linux', 'x64', now())`.execute(raw);
+    await (k.app.get(REDIS) as Redis).set(deviceLeaseKey(id), "replica-1", "PX", 60_000);
+    body = await list();
+    expect(body.items.find((e) => e.id === id)).toMatchObject({
+      online: true,
+      sessionIsolation: true,
+      machine: {
+        id: machineId,
+        name: "grant-mbp",
+        os: "darwin",
+        mode: "os",
+        programVersion: "0.1.0",
+        lastSeenAt: seen.toISOString(),
+      },
+    });
+    await (k.app.get(REDIS) as Redis).del(deviceLeaseKey(id));
+    expect((await list()).items.find((e) => e.id === id)?.online).toBe(false);
+  });
+
+  it("a conversation bound to a device environment needs no cloud provider", async () => {
+    const me = await member();
+    const { id } = await k.app.get(EnvironmentsService).createDevice(orgId, me.id, "rig");
+    const kdb = k.app.get(KernelDb);
+    const noCloud = { cloud: () => undefined };
+    const entry = deviceEntry();
+    const access = new EnvironmentAccess(kdb, {
+      ...noCloud,
+      forName: (n: string) => (n === DEVICE_PROVIDER ? entry : undefined),
+    });
+    const conversations = new ConversationEnvironments(
+      kdb,
+      k.app.get(TransactionHost),
+      noCloud,
+      access,
+      k.app.get(EnvironmentsService),
+    );
+    const agentId = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${agentId}, ${orgId}, ${me.id}, 'org', 1)`.execute(raw);
+    const bound = randomUUID();
+    const unbound = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, environment_id)
+      VALUES (${bound}, ${orgId}, ${agentId}, ${me.id}, ${id}),
+        (${unbound}, ${orgId}, ${agentId}, ${me.id}, NULL)`.execute(raw);
+    expect(await conversations.forTool(orgId, bound)).toBe(id);
+    expect(await codeOf(conversations.forTool(orgId, unbound))).toBe("sandbox.unavailable");
+    expect(await conversations.forNew(orgId, me.id, { environmentId: id })).toBe(id);
+    expect(await conversations.forNew(orgId, me.id)).toBeNull();
+    // an IM default on the device environment still applies without a cloud provider
+    await sql`INSERT INTO capybara.environment_defaults (org_id, account_id, environment_id)
+      VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
+    expect(await conversations.forNew(orgId, me.id, { im: true })).toBe(id);
+  });
+
+  it("usableNow: the listing gate follows the conversation's environment (ruling R8)", async () => {
+    const me = await member();
+    const { id } = await k.app.get(EnvironmentsService).createDevice(orgId, me.id, "rig-2");
+    const kdb = k.app.get(KernelDb);
+    const entry = deviceEntry();
+    const make = (providers: ConstructorParameters<typeof ConversationEnvironments>[2]) =>
+      new ConversationEnvironments(
+        kdb,
+        k.app.get(TransactionHost),
+        providers,
+        new EnvironmentAccess(kdb, { cloud: () => undefined, forName: () => entry }),
+        k.app.get(EnvironmentsService),
+      );
+    const registered = make({
+      cloud: () => undefined,
+      forName: (n: string) => (n === DEVICE_PROVIDER ? entry : undefined),
+    });
+    const unregistered = make({ cloud: () => undefined, forName: () => undefined });
+    const cloud = make({ cloud: () => entry, forName: () => undefined });
+    const agentId = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${agentId}, ${orgId}, ${me.id}, 'org', 1)`.execute(raw);
+    const [bound, unbound, imThread] = [randomUUID(), randomUUID(), randomUUID()];
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, environment_id)
+      VALUES (${bound}, ${orgId}, ${agentId}, ${me.id}, ${id}),
+        (${unbound}, ${orgId}, ${agentId}, ${me.id}, NULL),
+        (${imThread}, ${orgId}, ${agentId}, ${me.id}, NULL)`.execute(raw);
+    const connId = randomUUID();
+    await sql`INSERT INTO capybara.channel_connections (id, org_id, plugin, name, agent_id, created_by)
+      VALUES (${connId}, ${orgId}, 'fake-im', 'bot', ${agentId}, ${me.id})`.execute(raw);
+    await sql`INSERT INTO capybara.channel_threads
+        (id, connection_id, chat_id, thread_key, account_id, conversation_id)
+      VALUES (${randomUUID()}, ${connId}, 'chat-1', 't1', ${me.id}, ${imThread})`.execute(raw);
+
+    expect(await registered.usableNow(orgId, bound)).toBe(true);
+    expect(await unregistered.usableNow(orgId, bound)).toBe(false);
+    expect(await registered.usableNow(orgId, unbound)).toBe(false);
+    // an unbound IM thread: its owner's IM default, when there is one
+    await sql`DELETE FROM capybara.environment_defaults
+      WHERE org_id = ${orgId} AND account_id = ${me.id}`.execute(raw);
+    expect(await registered.usableNow(orgId, imThread)).toBe(false);
+    await sql`INSERT INTO capybara.environment_defaults (org_id, account_id, environment_id)
+      VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
+    expect(await registered.usableNow(orgId, imThread)).toBe(true);
+    expect(await registered.usableNow(orgId, unbound)).toBe(false);
+    // another org's id reads as nothing; a cloud provider answers at once
+    expect(await registered.usableNow(randomUUID(), bound)).toBe(false);
+    expect(await cloud.usableNow(orgId, unbound)).toBe(true);
   });
 });

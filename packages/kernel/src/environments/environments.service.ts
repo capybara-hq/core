@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { deviceLeaseKey } from "../devices/keys.js";
+import { MachinesService } from "../devices/machines.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -9,10 +11,11 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { SandboxJobs } from "../sandbox/jobs.js";
-import { SandboxProviders } from "../sandbox/providers.js";
+import { DEVICE_PROVIDER, isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
   EnvironmentAccess,
@@ -28,11 +31,16 @@ export interface EnvironmentView {
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
-  source: "cloud";
+  /** `device`: a connected machine (provider `@device`). */
+  source: "cloud" | "device";
   /** The provider keeping its files, or the one its first use will create them with. */
   provider: string | null;
-  /** Its provider is the deployment's current sandbox provider. */
+  /** Its provider is there: the deployment's current cloud provider, or `@device` registered. */
   available: boolean;
+  /** A device environment: some replica holds its machine's connection now; null for cloud. */
+  online: boolean | null;
+  /** A device environment's connected machine (its unrevoked one); null for cloud or none. */
+  machine: EnvironmentMachineView | null;
   sessionIsolation: boolean;
   /** Its file system is gone at the provider; reset the files to use it again. */
   filesLost: boolean;
@@ -40,6 +48,16 @@ export interface EnvironmentView {
   /** The org's effective sandbox limits (phase 1 environments use them unchanged, spec §8.4). */
   limits: SandboxLimits;
   createdAt: string;
+}
+
+/** The machine connected to a device environment, as its owner sees it. */
+export interface EnvironmentMachineView {
+  id: string;
+  name: string;
+  os: string;
+  mode: "os" | "docker" | null;
+  programVersion: string | null;
+  lastSeenAt: string | null;
 }
 
 /** The list response: the person's live environments in the org. */
@@ -63,7 +81,8 @@ const nameTaken = (): ApiError =>
   new ApiError("environment.name_taken", "You already have an environment with this name");
 
 /**
- * Personal cloud environments (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §9): a
+ * Personal environments (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9):
+ * cloud ones on the deployment's sandbox provider and `device` ones on a connected machine; a
  * person's environments in an org, visible and usable only by their owner (anyone else gets
  * `environment.not_found`). Deleting one soft-deletes it and destroys its instance and files in a
  * `sandbox-destroy-for` job after the commit.
@@ -74,11 +93,16 @@ export class EnvironmentsService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "current">,
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "orgLimits">,
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy" | "resetFiles">,
     @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    /** Reads the device relay's lease (`online`). */
+    @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
+    @Inject(MachinesService)
+    private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
   ) {}
 
   /**
@@ -87,7 +111,7 @@ export class EnvironmentsService {
    * spec §4.2 item 7; an existing one is only read).
    */
   async list(orgId: string, accountId: string): Promise<EnvironmentList> {
-    const cloudAvailable = this.providers.current() !== undefined;
+    const cloudAvailable = this.providers.cloud() !== undefined;
     const defaultId = cloudAvailable ? await this.ensureDefault(orgId, accountId) : null;
     const items = await this.views(orgId, accountId);
     const last = await this.db
@@ -143,8 +167,54 @@ export class EnvironmentsService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<string> {
-    const current = this.providers.current();
+    const current = this.providers.cloud();
     if (!current) throw environmentUnavailable(null);
+    return this.insertNamed(
+      orgId,
+      accountId,
+      name,
+      "cloud",
+      current.plugin,
+      actorTokenId,
+      auditDetail ?? {},
+    );
+  }
+
+  /**
+   * A new personal `device` environment for a machine being connected (provider `@device`; the
+   * machine row is the caller's). Joins the caller's transaction (the device authorization's).
+   * Counted against `environments.maxPersonal` (`environment.limit_reached`); a live name of the
+   * person's → `environment.name_taken`. Needs no cloud provider.
+   */
+  @Transactional()
+  async createDevice(orgId: string, accountId: string, name: string): Promise<{ id: string }> {
+    const id = await this.insertNamed(
+      orgId,
+      accountId,
+      name,
+      "device",
+      DEVICE_PROVIDER,
+      undefined,
+      {
+        source: "device",
+      },
+    );
+    return { id };
+  }
+
+  /**
+   * Inserts a named personal environment under the person's membership lock, after the limit
+   * and name checks, and audits `environment.created`. Runs in the caller's transaction.
+   */
+  private async insertNamed(
+    orgId: string,
+    accountId: string,
+    name: string,
+    source: "cloud" | "device",
+    provider: string,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown>,
+  ): Promise<string> {
     await this.lockMember(orgId, accountId);
     const { n } = await this.db
       .selectFrom("environments")
@@ -172,8 +242,8 @@ export class EnvironmentsService {
           owner_kind: "personal",
           owner_account_id: accountId,
           name,
-          source: "cloud",
-          provider: current.plugin,
+          source,
+          provider,
         })
         .execute();
     } catch (e) {
@@ -197,7 +267,7 @@ export class EnvironmentsService {
    * same {@link ApiError}s; a race still ends in `create`'s own refusal.
    */
   async checkCreate(orgId: string, accountId: string, name: string): Promise<void> {
-    if (!this.providers.current()) throw environmentUnavailable(null);
+    if (!this.providers.cloud()) throw environmentUnavailable(null);
     const { n } = await this.db
       .selectFrom("environments")
       .select((eb) => eb.fn.countAll<string>().as("n"))
@@ -228,9 +298,12 @@ export class EnvironmentsService {
     return Number(n);
   }
 
-  /** The refusals {@link resetFiles} would raise (not found, its provider not current), read only. */
+  /**
+   * The refusals {@link resetFiles} would raise (not found, its provider not current, a connected
+   * environment), read only.
+   */
   async checkReset(orgId: string, accountId: string, id: string): Promise<void> {
-    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
   }
 
   /** The refusals {@link rename} would raise, read without locks (see {@link checkCreate}). */
@@ -293,7 +366,9 @@ export class EnvironmentsService {
    * Deletes one of the person's live environments: soft delete, its IM default row cleared, and
    * after the commit a `sandbox-destroy-for` job (the worker waits for running commands, then
    * destroys the instance and the files). Conversations bound to it keep pointing at it; their
-   * sandbox tools then fail with `environment.not_found`.
+   * sandbox tools then fail with `environment.not_found`. A device environment's machine is
+   * revoked in the same transaction; after the commit it is told `stop { reason: "deleted" }`
+   * (while connected) and its connection is closed.
    */
   @Transactional()
   async remove(
@@ -315,6 +390,7 @@ export class EnvironmentsService {
       .where("account_id", "=", accountId)
       .where("environment_id", "=", id)
       .execute();
+    await this.machines.revokeActive(id, "deleted");
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -334,11 +410,25 @@ export class EnvironmentsService {
   }
 
   /**
+   * Disconnects the machine of one of the person's own device environments (it must sign in
+   * again); see {@link MachinesService.revoke}.
+   */
+  async revokeMachine(
+    orgId: string,
+    accountId: string,
+    id: string,
+    actorTokenId?: string,
+  ): Promise<void> {
+    await this.machines.revoke(orgId, accountId, id, actorTokenId);
+  }
+
+  /**
    * Starts one of the person's environments over with empty files (after
    * `environment.files_lost`): records the request (audit), then, after the commit, enqueues the
    * `sandbox-reset-files` job (deterministic id per environment), whose worker waits for running
    * commands and destroys any instance and the file system; the next use creates new ones. Its
-   * provider must be the current one (`environment.unavailable`). An enqueue failure is thrown
+   * provider must be the current one (`environment.unavailable`); a connected environment's files
+   * are its machine owner's (`environment.files_on_device`). An enqueue failure is thrown
    * (the request can be repeated: the reset is idempotent).
    */
   async resetFiles(
@@ -361,7 +451,7 @@ export class EnvironmentsService {
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.access.usable(orgId, accountId, id);
+    refuseDeviceReset(await this.access.usable(orgId, accountId, id));
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -395,7 +485,7 @@ export class EnvironmentsService {
 
   @Transactional()
   private async insertDefault(orgId: string, accountId: string): Promise<string> {
-    const current = this.providers.current();
+    const current = this.providers.cloud();
     if (!current) throw environmentUnavailable(null);
     await this.lockMember(orgId, accountId, "share");
     const live = await this.defaultOf(orgId, accountId, true);
@@ -548,7 +638,7 @@ export class EnvironmentsService {
 
   /** Its files or instance are kept by a provider that is not the current one. */
   private stranded(f: ProviderFacts): boolean {
-    const current = this.providers.current()?.plugin;
+    const current = this.providers.cloud()?.plugin;
     return current !== undefined && environmentProvider(f, current) !== current;
   }
 
@@ -557,12 +647,23 @@ export class EnvironmentsService {
     const rows = await this.db
       .selectFrom("environments as e")
       .leftJoin("environment_instances as i", "i.environment_id", "e.id")
+      .leftJoin("environment_machines as m", (j) =>
+        j.onRef("m.environment_id", "=", "e.id").on("m.revoked_at", "is", null),
+      )
       .select([
         "e.id",
         "e.name",
         "e.is_default",
+        "e.source",
         "e.provider",
         "e.created_at",
+        "m.id as machine_id",
+        "m.name as machine_name",
+        "m.os as machine_os",
+        "m.mode as machine_mode",
+        "m.program_version as machine_program_version",
+        "m.last_seen_at as machine_last_seen_at",
+        "m.session_isolation as machine_session_isolation",
         "i.provider as instance_provider",
         "i.fs_status",
         "i.handle",
@@ -580,7 +681,18 @@ export class EnvironmentsService {
       .execute();
     if (rows.length === 0) return [];
     const limits = await this.sandbox.orgLimits(orgId);
-    const current = this.providers.current()?.plugin;
+    const current = this.providers.cloud()?.plugin;
+    // a device environment is online while a replica holds its machine's connection lease
+    const online = new Map(
+      await Promise.all(
+        rows
+          .filter((r) => r.source === "device")
+          .map(
+            async (r) =>
+              [r.id, (await this.locks.holderOf(deviceLeaseKey(r.id))) !== null] as const,
+          ),
+      ),
+    );
     return rows.map((r) => {
       const provider = environmentProvider(
         {
@@ -597,10 +709,26 @@ export class EnvironmentsService {
         name: r.name,
         isDefault: r.is_default,
         ownerKind: "personal",
-        source: "cloud",
+        source: r.source,
         provider,
-        available: current !== undefined && provider === current,
-        sessionIsolation: false,
+        available:
+          provider !== null && isInternalProvider(provider)
+            ? this.providers.forName(provider) !== undefined
+            : current !== undefined && provider === current,
+        online: r.source === "device" ? (online.get(r.id) ?? false) : null,
+        machine:
+          r.machine_id !== null && r.machine_name !== null && r.machine_os !== null
+            ? {
+                id: r.machine_id,
+                name: r.machine_name,
+                os: r.machine_os,
+                mode: r.machine_mode,
+                programVersion: r.machine_program_version,
+                lastSeenAt: r.machine_last_seen_at?.toISOString() ?? null,
+              }
+            : null,
+        // a device environment's machine decides it; cloud environments have none in phase 2
+        sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
         instance: live
           ? {
@@ -676,5 +804,18 @@ export class EnvironmentsService {
       .where(sql<boolean>`lower(name) = lower(${name})`)
       .executeTakeFirst();
     if (clash) throw nameTaken();
+  }
+}
+
+/**
+ * Ruling R24: a connected environment's files are in a directory on its machine, which the
+ * platform never wipes; a lost directory comes back with `capybara-device logout` and a new `login` on the machine.
+ */
+function refuseDeviceReset(env: { provider: string | null }): void {
+  if (env.provider === DEVICE_PROVIDER) {
+    throw new ApiError(
+      "environment.files_on_device",
+      "This environment's files are in a directory on its connected machine and cannot be reset from here. To start over, run capybara-device logout, then capybara-device login into this environment, on that machine.",
+    );
   }
 }

@@ -274,6 +274,10 @@ describe("validateSkillPackage", () => {
       "/skills/deploy@0123456789ab/run.sh",
     );
     expect(skillSandboxDir("deploy", "0123456789ab")).toBe("/skills/deploy@0123456789ab");
+    // an instance with its own skills root (a connected machine)
+    expect(skillSandboxPath("deploy", "0123456789ab", "run.sh", "/home/u/e1/skills")).toBe(
+      "/home/u/e1/skills/deploy@0123456789ab/run.sh",
+    );
   });
 });
 

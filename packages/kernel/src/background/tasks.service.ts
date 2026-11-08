@@ -1,4 +1,4 @@
-import { isSandboxGoneError } from "@capybara-hq/plugin-sdk";
+import { isSandboxGoneError, rootsOf } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -66,7 +66,7 @@ export class BackgroundTasks {
     private readonly store: Pick<BackgroundTaskStore, "listFor" | "get">,
     @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
+    private readonly sandbox: Pick<SandboxService, "availableFor" | "ifRunning">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "findByIdem">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationEnvironments)
@@ -193,7 +193,7 @@ export class BackgroundTasks {
       task.sid !== null &&
       task.sandboxCreatedAt !== null &&
       task.environmentId !== null &&
-      this.sandbox.available &&
+      (await this.sandbox.availableFor(task.environmentId)) &&
       (await this.environmentUsable(orgId, task.conversationId))
     ) {
       const createdAt = task.sandboxCreatedAt;
@@ -206,7 +206,7 @@ export class BackgroundTasks {
           async (p, h, signal) => {
             const res = await actingAs(p, actor).exec(h, {
               command: tailScript(task.id, tail),
-              cwd: "/workspace",
+              cwd: rootsOf(h).workspace,
               timeoutMs: OUTPUT_READ_TIMEOUT_MS,
               maxOutputBytes: 2 * OUTPUT_TAIL_MAX_BYTES + 4096,
               signal,
@@ -233,7 +233,7 @@ export class BackgroundTasks {
   }
 }
 
-/** Prints `size <bytes>` and `out <base64 of the last `tail` bytes>`. Relative to `/workspace`. */
+/** Prints `size <bytes>` and `out <base64 of the last `tail` bytes>`. Relative to the workspace root. */
 function tailScript(id: string, tail: number): string {
   if (!TASK_ID_RE.test(id)) throw new Error(`invalid background task id: ${id}`);
   const f = `${TASKS_DIR}/${id}.out`;

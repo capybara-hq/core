@@ -87,6 +87,8 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   source: "cloud",
   provider: "sandbox-docker",
   available: true,
+  online: null,
+  machine: null,
   sessionIsolation: false,
   filesLost: false,
   instance: null,

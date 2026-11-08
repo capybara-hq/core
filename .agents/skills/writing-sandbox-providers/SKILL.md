@@ -138,6 +138,34 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
   Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
 
+## The kernel-internal provider `@device` (connected machines)
+
+Connected environments (spec §6 and §13) run on a person's machine, driven through a program that
+connects to the gateway. Their provider is `@device`, registered by the kernel itself
+(`packages/kernel/src/sandbox/providers.ts`, `packages/kernel/src/devices`); it is not an extension and
+no plugin can take the name.
+
+- **Per-environment resolution.** The provider is chosen by the environment's row
+  (`environments.provider`), not by the deployment's one sandbox extension, so cloud and connected
+  environments coexist. Handle ids are the environment id (parsed from `cap-env-<environmentId>`).
+- **Relay.** Calls become requests on `capk:device-req:<environmentId>` and results come back under
+  `capk:device-res:<requestId>`; no holder means `environment.offline` at once. See
+  `packages/kernel/src/devices` and spec §13.4. The handle carries the org's limits from `create`; a
+  handle without them answers `SandboxGoneError`, which rebuilds the instance.
+- **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and
+  `destroyFileSystemByName` never fail because the machine is away (a stop is relayed only when it is
+  online and is fire-and-forget). Files on the machine are never removed.
+- **Never swept.** Idle suspension, `maxRunning` eviction and inactivity destruction skip `@device`;
+  the only sweep that includes its rows is the gone-sweep for a deleted org or environment.
+- **Roots and real paths.** `SandboxHandle.roots` (`{ workspace, skills, tmp }`, absolute paths in the
+  instance) is optional; absent means `SANDBOX_ROOTS`. A device reports its roots in `hello`. Every
+  kernel tool, attachment copy, skill file and background task builds paths from the **held
+  instance's roots**, never from constants, and tool descriptions never name `/workspace` ("the
+  workspace directory"). Root-independent path checks run before entering the instance
+  (`validateSandboxPathShape`). Each conversation records an `environment_paths` event on its first
+  sandbox call and whenever the roots change, including back to the defaults; it is in the log, so it
+  needs no `DriftReason`. A new tool must use the roots too.
+
 ## Lifecycle: `SandboxService` (`packages/kernel/src/sandbox/sandbox.service.ts`)
 
 The kernel owns it; the extension implements only primitives. **Do not do scheduling, timing or state tables in the extension**:

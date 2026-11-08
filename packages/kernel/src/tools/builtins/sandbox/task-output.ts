@@ -1,12 +1,13 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   isSandboxGoneError,
+  rootsOf,
   type SandboxHandle,
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
 import type { BackgroundFinish } from "../../../background/finish.js";
-import { TASK_ID_RE, TASKS_DIR } from "../../../background/launch.js";
+import { TASK_ID_RE, TASKS_DIR, taskOutputFile } from "../../../background/launch.js";
 import { formatElapsed, lostReasonText } from "../../../background/render.js";
 import { actingAs, SID_RE, taskActor } from "../../../background/session.js";
 import {
@@ -32,6 +33,7 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
+  sandboxUsable,
   unavailableWhenNoSandbox,
 } from "./common.js";
 
@@ -98,9 +100,13 @@ export interface TaskEnv {
   environments: SandboxToolDeps["environments"];
 }
 
-/** The task tools' dependencies; throws the tool's error when they are missing. */
-export function taskEnv(deps: SandboxToolDeps): TaskEnv {
-  if (!deps.sandbox.available) throw noSandboxError();
+/**
+ * The task tools' dependencies; throws the tool's error when they are missing, or when the
+ * conversation's environment cannot run (no cloud provider, and not a registered `@device` one:
+ * ruling R8).
+ */
+export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): Promise<TaskEnv> {
+  if (!(await sandboxUsable(deps, ctx.orgId, sandboxConversationOf(ctx)))) throw noSandboxError();
   const { background, tasks } = deps;
   if (!background || !tasks || !deps.sandbox.ifRunning) {
     throw new ToolError(
@@ -187,7 +193,7 @@ export function statusLine(task: BackgroundTaskRow, now = new Date()): string {
 }
 
 /** The absolute path of the task's output file, as the model sees it. */
-export const outputFile = (task: BackgroundTaskRow): string => `/workspace/${task.outputPath}`;
+export const outputFile = (task: BackgroundTaskRow): string => taskOutputFile(task.outputPath);
 
 /** Why the output cannot be read: the task's sandbox instance is not running. */
 export function unavailableText(task: BackgroundTaskRow, r: IfRunningResult<unknown>): string {
@@ -200,7 +206,7 @@ export function unavailableText(task: BackgroundTaskRow, r: IfRunningResult<unkn
 // ---- reading a task ----
 
 /**
- * The exec that checks and reads task `t` (relative to `/workspace`): for a running task first
+ * The exec that checks and reads task `t` (relative to the workspace root): for a running task first
  * its status line (the poller's, {@link pollScript}: liveness, then the exit file), then
  * `size <bytes>` and `out <base64>`, at most `cap` bytes of the output from byte `offset` on.
  * The file is never read whole: `tail -c +<offset+1> | head -c <cap>`. Without `read` only the
@@ -287,7 +293,7 @@ async function look(
     async (p, h, sig) => {
       const r = await p.exec(h, {
         command: script,
-        cwd: "/workspace",
+        cwd: rootsOf(h).workspace,
         timeoutMs: READ_EXEC_TIMEOUT_MS,
         maxOutputBytes: maxBytes,
         signal: sig,
@@ -379,7 +385,7 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     },
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
-      const env = taskEnv(deps);
+      const env = await taskEnv(deps, ctx);
       let task = await ownedTask(env, ctx, task_id);
       await recheckEnvironment(env, ctx);
       if (block && task.status === "running") {

@@ -233,6 +233,9 @@ export function useNewConversationPage(
       <Stack gap={8}>
         {error !== undefined && <FormError message={error} />}
         {agents !== undefined && usable.length === 0 ? <FormError message={t("noAgents")} /> : null}
+        {!sent && environment.unavailable !== undefined ? (
+          <FormError message={environment.unavailable} />
+        ) : null}
         {sent && blocked ? (
           <Text variant="small" tone="muted">
             {t("sendAfterCreate")}
@@ -248,7 +251,8 @@ export function useNewConversationPage(
           initialDraft={sent ? undefined : restore.draft}
           running={false}
           // one message at a time until the conversation exists (it has no queue yet)
-          sendDisabled={!agent || sent}
+          // and never without an environment while the only ones are connected machines, offline
+          sendDisabled={!agent || sent || environment.unavailable !== undefined}
           onBlocked={() => {
             if (sent) setBlocked(true);
           }}

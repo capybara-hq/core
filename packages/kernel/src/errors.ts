@@ -254,6 +254,30 @@ export const ERROR_CODES = {
   "environment.name_taken": 409,
   /** The person already has `environments.maxPersonal` live personal environments. */
   "environment.limit_reached": 409,
+  /**
+   * A connected environment's files are on its machine: they cannot be reset from the platform;
+   * run `capybara-device logout`, then `capybara-device login` into the environment, on the machine
+   * (ruling R24).
+   */
+  "environment.files_on_device": 409,
+  /** The environment's connected machine is not connected now (no replica holds its lease). */
+  "environment.offline": 503,
+  /** The connected machine runs a device program too old for this kernel; update the program. */
+  "environment.program_outdated": 426,
+  /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
+  "device.authorization_pending": 400,
+  /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */
+  "device.slow_down": 400,
+  /** Device sign-in: the code expired before it was approved; start over. */
+  "device.expired": 400,
+  /** Device sign-in: the person denied the code. */
+  "device.denied": 400,
+  /** Device sign-in: no pending code matches the one given. */
+  "device.code_invalid": 404,
+  /** Device sign-in: the confirmation could not hand the credential to the program; start over. */
+  "device.unavailable": 503,
+  /** The machine credential is unknown or revoked. */
+  "device.credential_invalid": 401,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,

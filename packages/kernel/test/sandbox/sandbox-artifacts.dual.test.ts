@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
   fakeExtensionEntry,
@@ -292,7 +293,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
       description: "Test step",
       command:
         "mkdir -p /workspace/out && awk -F, 'NR>1{s+=$2} END{print \"total=\" s}' " +
-        `${attachmentsDir(convId)}/fruit.csv | tee /workspace/out/summary.txt`,
+        `${attachmentsDir(DEFAULT_SANDBOX_ROOTS, convId)}/fruit.csv | tee /workspace/out/summary.txt`,
     });
     const r2 = await finished(convId, 2);
     expect(r2.result.isError, r2.result.content).toBe(false);

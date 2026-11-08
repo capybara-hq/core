@@ -32,6 +32,8 @@ import {
   type SandboxSession,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
+  sandboxConversationOf,
+  sandboxUsable,
   withNotices,
   withPathLease,
 } from "./sandbox/common.js";
@@ -40,14 +42,14 @@ import {
  * Builtin tool `Skill` (M5 T14, ruling M17): resolves the name against the latest skills catalog
  * snapshot in the log to an id and version, and returns that version's SKILL.md body and file list
  * (the result names the version). A skill with other files is copied whole into the conversation's
- * environment at `/skills/<name>@<digest>/` (the provider writes as root, commands read only; the
+ * environment at `<skills root>/<name>@<digest>/` (the instance's skills root, `/skills` by default; the provider writes as root, commands read only; the
  * digest is {@link skillDigest} of the version's file manifest, so versions of one skill coexist in
  * the shared file system). Without a sandbox provider only the body is given, with a note that
  * scripts are unavailable.
  *
  * - Every file read from storage is checked against the manifest's sha256; a mismatch is refused.
  * - The copy is recorded in a kernel-controlled marker, one per skill version
- *   ({@link skillMarkerPath}: `/skills/.capybara/<name>@<digest>.json`, commands cannot change it):
+ *   ({@link skillMarkerPath}: `<skills root>/.capybara/<name>@<digest>.json`, commands cannot change it):
  *   `{ digest, files }`. A present marker with the same digest skips the copy.
  * - An agent without any sandbox tool creates no sandbox and copies nothing (the model could not
  *   run the scripts), and is told so.
@@ -56,12 +58,19 @@ import {
  */
 
 /**
- * 已复制进沙箱的技能的标记目录（内核控制：`/skills` 只有提供方以 root 能写；技能名不以 `.` 开头，不会撞名）。
+ * 已复制进沙箱的技能的标记目录（内核控制：技能根目录只有提供方以 root 能写；技能名不以 `.` 开头，不会撞名）。
+ * `skillsRoot`: the instance's skills root.
  */
-export const SKILLS_MARKER_DIR = `${SKILLS_SANDBOX_ROOT}/.capybara`;
+export const skillsMarkerDir = (skillsRoot: string = SKILLS_SANDBOX_ROOT): string =>
+  `${skillsRoot}/.capybara`;
+/** {@link skillsMarkerDir} of an instance with the default roots. */
+export const SKILLS_MARKER_DIR = skillsMarkerDir();
 /** The marker file of one skill version. */
-export const skillMarkerPath = (name: string, digest: string): string =>
-  `${SKILLS_MARKER_DIR}/${name}@${digest}.json`;
+export const skillMarkerPath = (
+  name: string,
+  digest: string,
+  skillsRoot: string = SKILLS_SANDBOX_ROOT,
+): string => `${skillsMarkerDir(skillsRoot)}/${name}@${digest}.json`;
 const MARKER_MAX_BYTES = 256 * 1024;
 /** 结果里最多列出的文件数（其余只给数量）。 */
 const MAX_LISTED_FILES = 200;
@@ -76,7 +85,7 @@ const SPEC: ToolSpec = {
     "Load a skill from the skills list: returns the skill's instructions " +
     "(its SKILL.md) and the list of its files. Call it before starting a task that matches a " +
     "skill's description, then follow the returned instructions. If the skill has scripts or other " +
-    "files, they are copied read-only to /skills/<name>@<version-id>/ in this environment; run scripts " +
+    "files, they are copied read-only to <name>@<version-id>/ in the skills directory of this environment; run scripts " +
     "there with an interpreter (sh, python3, node). Call it again when the skills list changes. Pass args when the task gives the skill arguments (they replace " +
     "$ARGUMENTS and $1, $2… in the instructions). Do not use it for skills that are not in the list.",
   inputSchema: {
@@ -233,13 +242,13 @@ interface LoadedVersion {
 }
 
 /**
- * Copies the skill version whole to `/skills/<name>@<digest>/` (skipped when its marker matches).
+ * Copies the skill version whole to `<skills root>/<name>@<digest>/` (skipped when its marker matches).
  * Every file is checked against the manifest before it is written; the marker is written last, so
  * a failure midway means the next call starts over.
  */
 async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<void> {
   const { name } = v.entry;
-  const markerPath = skillMarkerPath(name, v.digest);
+  const markerPath = skillMarkerPath(name, v.digest, s.roots.skills);
   const m = await s.p.readFile(s.h, markerPath, { maxBytes: MARKER_MAX_BYTES, signal: s.signal });
   const cur = m && !m.truncated ? parseMarker(m.data) : undefined;
   if (cur?.digest === v.digest) return;
@@ -248,7 +257,12 @@ async function copySkill(s: SandboxSession, v: LoadedVersion): Promise<void> {
       f.path === SKILL_ENTRY_FILE
         ? v.entryBytes
         : await readVerified(v.store, `${v.keyPrefix}${f.path}`, f, name, s.signal);
-    await s.p.writeFile(s.h, skillSandboxPath(name, v.digest, f.path), data, s.signal);
+    await s.p.writeFile(
+      s.h,
+      skillSandboxPath(name, v.digest, f.path, s.roots.skills),
+      data,
+      s.signal,
+    );
   }
   const entry: MarkerEntry = { digest: v.digest, files: v.manifest.files.map((f) => f.path) };
   await s.p.writeFile(s.h, markerPath, new TextEncoder().encode(JSON.stringify(entry)), s.signal);
@@ -554,13 +568,14 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       }
       if ("errors" in parsed) throw new ToolError(integrityText(name));
 
-      const dir = `${skillSandboxDir(name, digest)}/`;
+      // the skills root of the instance the files were copied to (the default without a copy)
+      let skillsRoot = SKILLS_SANDBOX_ROOT;
       const others = manifest.files.filter((f) => f.path !== SKILL_ENTRY_FILE);
       let notices: string[] = [];
       let filesText: string;
       if (others.length === 0) {
         filesText = "This skill has no files besides its instructions.";
-      } else if (!deps.sandbox.available) {
+      } else if (!(await sandboxUsable(deps, ctx.orgId, sandboxConversationOf(ctx)))) {
         filesText =
           `Skill files (for reference):\n${fileList(manifest.files)}\n` +
           "This deployment has no sandbox, so the skill's scripts and other files are not available; " +
@@ -574,22 +589,35 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       } else {
         // the skill's marker is read, compared and written: one holder at a time per skill
         const r = await inSandbox(deps, ctx, (s) =>
-          withPathLease(deps, s, skillMarkerPath(name, digest), s.signal, (signal) =>
-            copySkill({ ...s, signal }, v),
+          withPathLease(
+            deps,
+            s,
+            skillMarkerPath(name, digest, s.roots.skills),
+            s.signal,
+            (signal) => copySkill({ ...s, signal }, v).then(() => s.roots),
           ),
         );
         notices = r.notices;
+        skillsRoot = r.value.skills;
+        const dir = `${skillSandboxDir(name, digest, skillsRoot)}/`;
         filesText =
           `Skill files (copied to ${dir} in the sandbox, read-only):\n${fileList(manifest.files)}\n` +
           `Run scripts with an interpreter, e.g. \`sh ${dir}<script>.sh\`, \`python3 ${dir}<script>.py\` ` +
           "or `node`; the files are not executable, so `./script` does not work. Write outputs under " +
-          `/workspace, not ${SKILLS_SANDBOX_ROOT}.`;
+          `${r.value.workspace}, not ${skillsRoot}.`;
       }
       const invocation = invocationOf(manifest);
       const fork = invocation.fork;
       let instructions: string;
       try {
-        instructions = renderSkillBody(parsed.body.trim(), invocation, args ?? "", name, digest);
+        instructions = renderSkillBody(
+          parsed.body.trim(),
+          invocation,
+          args ?? "",
+          name,
+          digest,
+          skillsRoot,
+        );
       } catch (e) {
         if (!(e instanceof RangeError)) throw e;
         throw new ToolError(

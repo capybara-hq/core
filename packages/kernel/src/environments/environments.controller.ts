@@ -31,7 +31,9 @@ import {
  * - `POST / { name }` → 201 `{ environment }`; `GET /:id`, `PATCH /:id { name }` → `{ environment }`;
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
- *   starts empty).
+ *   starts empty);
+ * - `DELETE /:id/machine` → 204: a device environment's machine is disconnected (its credential
+ *   revoked; it must sign in again).
  */
 @Controller("api/v1/orgs/:orgId/environments")
 export class EnvironmentsController {
@@ -118,5 +120,17 @@ export class EnvironmentsController {
   ): Promise<void> {
     const p = requireUser(principal);
     await this.environments.resetFiles(org.orgId, p.account.id, params.id, patTokenId(p));
+  }
+
+  @Delete(":id/machine")
+  @HttpCode(204)
+  @OrgAction("agents.use")
+  async revokeMachine(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(EnvironmentParamsDto) params: z.infer<typeof EnvironmentParams>,
+  ): Promise<void> {
+    const p = requireUser(principal);
+    await this.environments.revokeMachine(org.orgId, p.account.id, params.id, patTokenId(p));
   }
 }

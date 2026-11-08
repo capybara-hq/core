@@ -142,6 +142,7 @@ describe("role modules", () => {
     const a = await start(["api"]);
     expect(routes(a)).toContain("GET /api/v1/setup");
     expect(routes(a)).not.toContain("POST /channels/webhook/:connectionId");
+    expect(routes(a)).not.toContain("GET /device/connect");
     expect(scan(a)).toEqual({ jobHosts: [], processors: [] });
     absent(a, SchedulerRegistry);
     absent(a, LockedIntervalScheduler);
@@ -180,10 +181,11 @@ describe("role modules", () => {
     expect(Date.now() - t0).toBeLessThan(BOUND_MS);
   }, 60_000);
 
-  it("gateway only: runs the supervisor and the webhook route, no cron and no BullMQ worker", async () => {
+  it("gateway only: runs the supervisor, the webhook and device routes, no cron and no BullMQ worker", async () => {
     const a = await start(["gateway"]);
     // the extension routes are served by the api and gateway roles (unchanged)
     expect(routes(a).filter((r) => !r.endsWith(" /plugins/*"))).toEqual([
+      "GET /device/connect",
       "GET /healthz",
       "GET /readyz",
       "POST /channels/webhook/:connectionId",
@@ -243,6 +245,7 @@ describe("role modules", () => {
     for (const q of queues) expect(await q.getWorkersCount(), q.name).toBe(1);
     expect(routes(a)).toContain("GET /api/v1/setup");
     expect(routes(a)).toContain("POST /channels/webhook/:connectionId");
+    expect(routes(a)).toContain("GET /device/connect");
   }, 60_000);
 
   it("no cron or interval tick runs before the worker role started (after the extension load)", async () => {

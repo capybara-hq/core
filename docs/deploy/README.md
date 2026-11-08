@@ -137,7 +137,7 @@ starting. Read its output with `docker compose logs init`.
 | `api` | `capybara-api` | HTTP API (`CAPYBARA_ROLES=api`) |
 | `worker` | `capybara-worker` | Agent runs, queues, maintenance jobs (`CAPYBARA_ROLES=worker`) |
 | `gateway` | `capybara-gateway` | IM long connections and channel webhooks (`CAPYBARA_ROLES=gateway`) |
-| `web` | `capybara-web` | The web app; proxies `/api/*` to `api` and object storage (see below) |
+| `web` | `capybara-web` | The web app; proxies `/api/*` to `api`, object storage (see below) and connected machines' WebSocket (`/device/connect`) to `gateway` |
 
 - **Only `web` publishes a port**: `${CAPYBARA_WEB_BIND:-0.0.0.0}:${CAPYBARA_WEB_PORT:-3000}:3000`.
   Never publish `api` or `worker`. `api` trusts exactly one proxy hop (`CAPYBARA_HTTP__TRUST_PROXY=1`),
@@ -146,11 +146,15 @@ starting. Read its output with `docker compose logs init`.
 - **Networks:**
   - `frontend` holds only `web` and `api`.
   - `objectstore` holds only `web` and `seaweedfs-s3`.
+  - `devices` holds only `web` and `gateway`: `web` forwards connected machines' WebSocket upgrades
+    on `/device/connect` there (`CAPYBARA_WEB_GATEWAY_URL=http://gateway:8080`).
   - `sandbox` is internal (no route out) and holds only `worker` and `sandbox-proxy`.
-  - Everything else is on the backend network (`default`), which `api` and `seaweedfs-s3` also join.
+  - Everything else is on the backend network (`default`), which `api`, `gateway` and `seaweedfs-s3`
+    also join.
 
-  So `web` reaches only `api:8080` and `seaweedfs-s3:8333`. It never reaches PostgreSQL, Valkey, the
-  SeaweedFS filer / master / volume server, `worker` or `gateway`. The S3 gateway's gRPC port (18333)
+  So `web` reaches only `api:8080`, `seaweedfs-s3:8333` and `gateway:8080` (used only for
+  `/device/connect`). It never reaches PostgreSQL, Valkey, the SeaweedFS filer / master / volume
+  server or `worker`. The S3 gateway's gRPC port (18333)
   can't be turned off in SeaweedFS 4.48, so it stays reachable on the `objectstore` network. The
   Iceberg and Lance servers are turned off.
 - **Shutdown:** the kernel services and `web` run with `init: true`, so signals reach node. The kernel
@@ -604,8 +608,8 @@ replica.
   port is reachable without going through `web`, so a hop count would let any caller forge
   `X-Forwarded-For`. In compose, set `CAPYBARA_GATEWAY_TRUST_PROXY` to the proxy's address as the
   gateway sees it (a comma-separated list of addresses / CIDRs works too), or leave it `false` (the
-  default). A proxy on the host connects from the bridge gateway of the `default` network, the only
-  network the gateway is on:
+  default). A proxy on the host connects from the bridge gateway of the `default` network (the
+  gateway's other network, `devices`, carries only `web`'s `/device/connect` forwarding):
   `docker network inspect capybara_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'`.
 - **Limits:**
   - Bodies over `channels.webhookMaxBodyBytes` (default 1 MiB) get 413.
@@ -640,6 +644,40 @@ Platform setup:
 worker crashes after Slack accepted an approval or question card but before the kernel recorded it,
 the retry can post the card a second time. This is rare, and both copies act on the same request.
 Lark and the test fake deliver exactly once.
+
+## Connected devices
+
+People can connect their own laptop or server as an environment with `@capybara-hq/device`
+(`capybara-device`, see [its README](../../packages/device/README.md)). The program opens one
+long-lived WebSocket connection to the kernel's `gateway` role.
+
+- **Route and origin.** The program connects to `wss://<http.publicUrl host>/device/connect`
+  (`GET`, outside `/api`, `Authorization: Bearer cap_dev_...`), which must reach a **gateway**
+  replica over TLS (`wss://`). The `web` server forwards exactly that WebSocket upgrade to
+  `CAPYBARA_WEB_GATEWAY_URL` (an http(s) URL; compose sets `http://gateway:8080` and puts `web` and
+  `gateway` on the `devices` network): it pipes the raw connection with the original request line
+  and headers (`Authorization`, `X-Capybara-Device-Protocol`), refuses upgrades on any other path,
+  and answers `/device/connect` upgrades with 404 (and a log line) while the variable is unset.
+  Alternatively, your reverse proxy or load balancer may route `/device/connect` on the public
+  origin (`CAPYBARA_PUBLIC_URL`) to the gateway replicas directly; then the upgrade never reaches
+  `web`. The gateway serves only a real WebSocket upgrade; a plain request gets 404.
+- **WebSocket upgrade.** The proxy must pass `Upgrade` and `Connection: upgrade` and not buffer the
+  stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
+  `proxy_set_header Connection "upgrade"`).
+- **Long idle connections.** A connection stays open for as long as the machine is online. The
+  gateway pings every 20 s and the program reconnects after 60 s without any frame from it, so a
+  proxy idle timeout of at least 60 s is enough. Don't set a maximum connection age shorter than a
+  few hours: the program reconnects, but a command in flight waits out the reconnect grace.
+- **Replicas.** Any gateway replica can hold the connection; one lease per environment
+  (`capk:device-lease:<environmentId>`) keeps it to one connection across replicas, and the newest
+  connection wins. Requests from api and worker replicas reach the holder through Redis.
+- **Config.** `environments.device.reconnectGraceSeconds` (how long a disconnected machine is not yet
+  reported offline, default 120; also sent to the program at sign-in), `leaseTtlMs`,
+  `authCodeTtlSeconds`, `pollIntervalSeconds` and `maxFrameBytes`; names and defaults in
+  [docs/config.md](../config.md). Environment variables follow the usual rule
+  (`CAPYBARA_ENVIRONMENTS__DEVICE__RECONNECT_GRACE_SECONDS`).
+- **Sign-in** uses the public routes `POST /api/v1/device/authorize` and `/device/token` and the web
+  page `/device`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
 
 ## Sandbox (optional)
 

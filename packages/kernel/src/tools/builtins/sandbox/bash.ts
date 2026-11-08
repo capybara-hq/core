@@ -1,4 +1,9 @@
-import { type ExecResult, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  type ExecResult,
+  ToolError,
+  type ToolSpec,
+} from "@capybara-hq/plugin-sdk";
 import {
   backgroundMaxSeconds,
   LAUNCH_EXEC_TIMEOUT_MS,
@@ -39,14 +44,14 @@ const SPEC: ToolSpec = {
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["command"],
   description:
-    "Run a shell command (bash) in this conversation's sandbox, an isolated Linux machine. " +
+    "Run a shell command (bash) in this conversation's sandbox, an isolated machine. " +
     "Use it to run programs and scripts, install packages, process files and inspect the " +
-    "filesystem. The working directory is /workspace; files persist between calls in the same " +
+    "filesystem. The working directory is the workspace directory; files persist between calls in the same " +
     "conversation, but background processes may not: when the sandbox is suspended after a period " +
-    "without use they can be stopped and /tmp cleared, so keep results in files under /workspace. " +
-    "Files the user attached to the conversation are copied to /workspace/attachments/<conversation>/ " +
-    "(the result names the paths), " +
-    "and skill files under /skills (read-only). Each call runs in a fresh shell (no state such as " +
+    "without use they can be stopped and the temporary files directory cleared, so keep results in " +
+    "files under the workspace directory. Files the user attached to the conversation are copied to " +
+    "attachments/<conversation>/ in the workspace directory (the result names the paths), " +
+    "and skill files to the skills directory (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
     "long output is saved and can be paged with ReadToolOutput. A command that runs longer than " +
     "timeout milliseconds is stopped. Prefer Read, Write, Edit, Glob and " +
@@ -57,13 +62,13 @@ const SPEC: ToolSpec = {
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
     "test suite. The call returns at once with a task id and the command's output goes to a file " +
-    "under /workspace/.capybara/tasks. Read the output with TaskOutput (or Read) and stop the " +
+    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput (or Read) and stop the " +
     "task with TaskStop; you will be told when it finishes. You do not need to use '&' at the end " +
     "of the command when using this parameter. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
-    "sandbox.limits.maxRunningMinutes), so keep its results in files under /workspace.",
+    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.",
   inputSchema: {
     type: "object",
     properties: {
@@ -110,9 +115,14 @@ const msFor = (input: BashInput, maxSeconds: number): number =>
 
 /**
  * 命令结果 → 给模型的文本。`budgetClamped`：运行的时限把超时收紧到了 `seconds`（Ruling M20），超时说明改为
- * 指向 `runtime.maxRunSeconds`，而不是让模型加大 timeout。
+ * 指向 `runtime.maxRunSeconds`，而不是让模型加大 timeout。`workspace`: the instance's workspace root.
  */
-export function formatExec(r: ExecResult, seconds: number, budgetClamped = false): string {
+export function formatExec(
+  r: ExecResult,
+  seconds: number,
+  budgetClamped = false,
+  workspace: string = DEFAULT_SANDBOX_ROOTS.workspace,
+): string {
   const parts: string[] = [];
   if (r.stdout !== "") parts.push(r.stdout.replace(/\n$/, ""));
   if (r.stderr !== "") parts.push(`[stderr]\n${r.stderr.replace(/\n$/, "")}`);
@@ -120,11 +130,11 @@ export function formatExec(r: ExecResult, seconds: number, budgetClamped = false
     parts.push(`[Output truncated: only the first ${MAX_OUTPUT_BYTES} bytes were kept.]`);
   if (r.timedOut && budgetClamped) {
     parts.push(
-      `[timedOut: the command did not finish within ${seconds}s and was stopped. ${runBudgetNote(seconds)} The sandbox is still usable; split the work into shorter steps that save progress to files under /workspace, or run long jobs in the background and check on them in a later run.]`,
+      `[timedOut: the command did not finish within ${seconds}s and was stopped. ${runBudgetNote(seconds)} The sandbox is still usable; split the work into shorter steps that save progress to files under ${workspace}, or run long jobs in the background and check on them in a later run.]`,
     );
   } else if (r.timedOut) {
     parts.push(
-      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeout in milliseconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under /workspace.]`,
+      `[timedOut: the command did not finish within ${seconds}s and was stopped. The sandbox is still usable; pass a larger timeout in milliseconds (up to the deployment maximum), or split the work into shorter steps that save progress to files under ${workspace}.]`,
     );
   } else if (r.exitCode === null) {
     parts.push(
@@ -196,7 +206,6 @@ async function runInBackground(
       "Background tasks can only be started from an agent run; call Bash without run_in_background.",
     );
   }
-  if (!sandbox.available) throw noSandboxError();
   const currentInstance = sandbox.currentInstance.bind(sandbox);
   const cfg = deps.config.get();
   const maxMs = backgroundMaxSeconds(cfg) * 1000;
@@ -210,6 +219,7 @@ async function runInBackground(
   } catch (e) {
     throw mapSandboxError(e);
   }
+  if (!(await sandbox.availableFor(environmentId))) throw noSandboxError();
   const maxTasks = cfg.sandbox.background.maxTasks;
   const id = newTaskId();
   const description = input.description ?? clip(input.command, 120);
@@ -248,23 +258,28 @@ async function runInBackground(
       await deps.eventLog.publishChanged(c, "background");
     }
   };
-  const large =
-    Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES
-      ? " A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under /workspace and run that instead."
+  // the instance's workspace once the call entered it (the default until then)
+  let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
+  const isLarge =
+    Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES;
+  const largeText = (): string =>
+    isLarge
+      ? ` A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under ${workspace} and run that instead.`
       : "";
   // set once the row has its sid: from then on the task runs and is tracked, whatever follows
   let started = false;
   let launch: Launch;
   let notices: string[];
   try {
-    ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
+    ({ value: launch, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
+      workspace = roots.workspace;
       // right after the launch a process may fork while it is killed: killSession repeats
       const kill = (sid: string): Promise<boolean> => killSession(p, h, sid);
       // the session id the launch wrote before printing it: the launch may have ended (aborted,
       // timed out, thrown) after starting the command but before its output came back
       const sidFile = async (): Promise<string | null> => {
         const f = await p
-          .readFile(h, `/workspace/${taskSidPath(id)}`, {
+          .readFile(h, `${roots.workspace}/${taskSidPath(id)}`, {
             maxBytes: 64,
             signal: AbortSignal.timeout(KILL_SESSION_TIMEOUT_MS),
           })
@@ -276,7 +291,7 @@ async function runInBackground(
       try {
         r = await p.exec(h, {
           command: launchScript(id, input.command, seconds),
-          cwd: "/workspace",
+          cwd: roots.workspace,
           timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
           maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
           signal,
@@ -300,6 +315,7 @@ async function runInBackground(
         const marked = await background.markStarted(id, {
           sid,
           sandboxCreatedAt: instance.createdAt,
+          outputPath: `${roots.workspace}/${taskOutputPath(id)}`,
         });
         if (!marked) throw new Error("its task record was finished meanwhile");
         started = true;
@@ -331,9 +347,9 @@ async function runInBackground(
       const why = e instanceof Error ? e.message : String(e);
       await background.failLaunch(id, `launch failed: ${why}`).catch(() => undefined);
       await announce();
-      if (large === "" || e instanceof ToolError) throw e;
+      if (!isLarge || e instanceof ToolError) throw e;
       throw new ToolError(
-        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the sandbox, or call Bash without run_in_background.${large}`,
+        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the sandbox, or call Bash without run_in_background.${largeText()}`,
       );
     }
   }
@@ -341,7 +357,7 @@ async function runInBackground(
     await background.failLaunch(id, launch.why);
     await announce();
     throw new ToolError(
-      `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${large}`,
+      `The background task was not started: ${launch.why}. Check the sandbox, or call Bash without run_in_background.${largeText()}`,
     );
   }
   if (launch.kind === "stopped") {
@@ -369,7 +385,12 @@ async function runInBackground(
       : "";
   const shown = clip(input.command, 120);
   return {
-    content: [{ type: "text", text: withNotices(notices, startedText(id, description) + lowered) }],
+    content: [
+      {
+        type: "text",
+        text: withNotices(notices, startedText(id, description, workspace) + lowered),
+      },
+    ],
     isError: false,
     view: { kind: "command", description, exitCode: null, timedOut: false },
     display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
@@ -405,12 +426,14 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       // The run's deadline makes the command time out itself first (Ruling M20): counted after the
       // sandbox is obtained, so the time spent waiting for the lock and resuming is deducted
       let ms = askedMs;
-      const { value: r, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) => {
+      let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
+      const { value: r, notices } = await inSandbox(deps, ctx, ({ h, roots, p, signal }) => {
         const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
         ms = Math.max(1000, Math.min(askedMs, left));
+        workspace = roots.workspace;
         return p.exec(h, {
           command,
-          cwd: "/workspace",
+          cwd: roots.workspace,
           timeoutMs: ms,
           maxOutputBytes: MAX_OUTPUT_BYTES,
           signal,
@@ -423,7 +446,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         requested !== undefined && requested > maxMs
           ? `\n[timeout ${requested} ms is over the deployment maximum; it was lowered to ${maxMs} ms.]`
           : "";
-      const text = formatExec(r, seconds, clamped) + lowered;
+      const text = formatExec(r, seconds, clamped, workspace) + lowered;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,

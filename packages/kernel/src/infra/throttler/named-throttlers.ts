@@ -52,6 +52,11 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * | `PUT /api/v1/me/password` | `change-password`, `change-password-ip` |
  * | `POST /api/v1/setup` | `setup-token`, `setup-ip` |
  * | `POST /api/v1/invitations/:token/accept` | `invitation`, `invitation-ip` |
+ * | `GET /api/v1/device/pending/:userCode`, `POST /api/v1/device/confirm`, `POST /api/v1/device/deny` | `device-code-account` |
+ *
+ * `POST /api/v1/device/authorize` and `POST /api/v1/device/token` opt in to `device-authorize-ip`
+ * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
+ * credential: the device code is 32 random bytes).
  */
 export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
   // (login, IP): 10; an attacker filling one login from one IP leaves the owner's other IPs alone (R25)
@@ -137,6 +142,39 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many invitation attempts; try again later",
     getTracker: ip,
+  },
+  // device sign-in codes issued per client address (each one holds Redis state for its TTL): 20.
+  // Opted in with @Throttled, which counts every request before the handler: group and onSuccess
+  // are unused (they matter only to CredentialThrottler).
+  {
+    name: "device-authorize-ip",
+    group: "device-authorize",
+    onSuccess: "clear",
+    limit: 20,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many device sign-in attempts; try again later",
+    getTracker: ip,
+  },
+  // device token polls per client address (@Throttled like device-authorize-ip): 600, one login
+  // polls up to 120 times (600 s / 5 s), so several machines behind one NAT address fit
+  {
+    name: "device-token-ip",
+    group: "device-token",
+    onSuccess: "clear",
+    limit: 600,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many device sign-in polls; try again later",
+    getTracker: ip,
+  },
+  // user codes tried per signed-in person (guessing another machine's code): 10, refunded on success
+  {
+    name: "device-code-account",
+    group: "device-code",
+    onSuccess: "refund",
+    limit: 10,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many device code attempts; try again later",
+    getTracker: (req) => sha256(principalAccountId(req)),
   },
 ];
 

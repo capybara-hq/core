@@ -45,7 +45,7 @@ const SPEC: ToolSpec = {
     "user-invocable, context, agent, argument-hint and arguments, which are kept; with " +
     "disable-model-invocation: true only a person can invoke the skill and you cannot load it). " +
     "Every other entry in `files` is stored at " +
-    "/skills/<name>@<version-id>/<path> once loaded. Files of the previous version that you leave out are not part of the new " +
+    "<name>@<version-id>/<path> in the skills directory once loaded. Files of the previous version that you leave out are not part of the new " +
     "version. Text files only, at most 1 MB per skill in total. Use an existing skill's name to update " +
     "it; an organization skill with the same name is shadowed by this agent's own skill. On a private " +
     "agent the new version takes effect immediately. On a shared agent the change is sent to the " +
@@ -58,7 +58,7 @@ const SPEC: ToolSpec = {
         minLength: 1,
         maxLength: SKILL_LIMITS.nameMaxChars,
         description:
-          'Skill name: lowercase letters, digits and single hyphens, e.g. "weekly-report". Also the folder name under /skills/.',
+          'Skill name: lowercase letters, digits and single hyphens, e.g. "weekly-report". Also the folder name in the skills directory.',
       },
       description: {
         type: "string",

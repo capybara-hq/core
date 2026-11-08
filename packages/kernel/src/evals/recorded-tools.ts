@@ -1,4 +1,6 @@
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { environmentPathsChange } from "../runtime/context/environment-paths.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
 import { MATCH_IGNORED_FIELDS } from "../tools/builtin-names.js";
 import {
@@ -34,6 +36,14 @@ export interface RecordedCall {
   specHash: string;
   /** The recorded call used release-candidate names; `toolKey` and `inputKey` are already the current ones. */
   legacy?: true;
+  /**
+   * The roots of the latest `environment_paths` event the original run had logged by this call's
+   * step (environments spec §13.1, ruling R22): set on every recorded call from the step where an
+   * event was logged onward. A replay that matches the call writes the event when the eval
+   * conversation's latest one differs, so a candidate whose first sandbox call lands in another
+   * step still gets the line, once.
+   */
+  environmentPaths?: SandboxRoots;
 }
 
 /**
@@ -171,10 +181,27 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       if (!started.has(p.callId)) started.set(p.callId, p.specHash);
     }
   }
+  // an environment_paths event belongs to the step of the assistant message before it, and holds
+  // for that step's calls and every later step's (until the next one)
+  const pathsOf = new Map<number, SandboxRoots>();
+  const assistants = own.filter((e) => e.type === "assistant_message").map((e) => e.seq);
+  let current: SandboxRoots | undefined;
+  let next = 0;
+  for (const [i, a] of assistants.entries()) {
+    const end = assistants[i + 1] ?? Number.POSITIVE_INFINITY;
+    for (; next < own.length && (own[next] as { seq: number }).seq < end; next++) {
+      const e = own[next] as { seq: number; type: string; payload: unknown };
+      if (e.type === "environment_paths" && e.seq > a) {
+        current = (e.payload as { roots: SandboxRoots }).roots;
+      }
+    }
+    if (current !== undefined) pathsOf.set(a, current);
+  }
   const scope = legacyScopeOf(s);
   const out: RecordedCall[] = [];
   for (const e of own) {
     if (e.type !== "assistant_message") continue;
+    const paths = pathsOf.get(e.seq);
     const content = (e.payload as { content: { type: string }[] }).content;
     for (const b of content) {
       if (b.type !== "tool_call") continue;
@@ -191,6 +218,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
         ...(r.loadedTools !== undefined && { loadedTools: r.loadedTools }),
         ...(r.contentTypes !== undefined && { contentTypes: r.contentTypes }),
         specHash: started.get(call.id) ?? "",
+        ...(paths !== undefined && { environmentPaths: paths }),
       });
     }
   }
@@ -258,7 +286,19 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
       }
       const rec = this.take(call.name, matchKey(call.name, call.input));
       if (!rec) this.misses++;
+      // the original run had told the model the instance's directories by this call: so does the
+      // replay, when the eval conversation's latest record differs (as the sandbox tools write it)
+      const paths = rec?.environmentPaths;
+      const change =
+        paths === undefined
+          ? null
+          : environmentPathsChange(
+              await eventLog.latestOfType(ctx.conversationId, "environment_paths"),
+              paths,
+              ctx.runId,
+            );
       await eventLog.append(ctx.conversationId, [
+        ...(change ? [change] : []),
         {
           type: "tool_call_started",
           runId: ctx.runId,

@@ -3,7 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  type SandboxHandle,
+  type SandboxProvider,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -230,7 +234,7 @@ describe("concurrent commands (fake sandbox)", () => {
       signal(),
     );
     const [aEnded, rb, ci] = await Promise.all([a, b, c]);
-    expect(rb.info).toEqual({ fresh: true, restarted: true });
+    expect(rb.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(rb.r.stdout).toBe("b\n");
     expect(cEntered).toBeGreaterThanOrEqual(aEnded - 50);
     expect(ci.restarted).toBe(false);
@@ -265,7 +269,8 @@ describe("concurrent commands (fake sandbox)", () => {
         signal(),
       );
     const out = await Promise.all([holder(), holder(), holder()]);
-    for (const o of out) expect(o.info).toEqual({ fresh: true, restarted: true });
+    for (const o of out)
+      expect(o.info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(new Set(out.map((o) => o.h.id)).size).toBe(1);
     expect(out[0]?.h.id).not.toBe(id);
     expect(await ops("create")).toHaveLength(2);
@@ -306,7 +311,8 @@ describe("concurrent commands (fake sandbox)", () => {
         signal(),
       );
     const out = await Promise.all([0, 1, 2].map(holder));
-    for (const info of out) expect(info).toEqual({ fresh: true, restarted: true });
+    for (const info of out)
+      expect(info).toEqual({ fresh: true, restarted: true, roots: DEFAULT_SANDBOX_ROOTS });
     expect(await ops("create")).toHaveLength(2);
     expect(await ops("destroy")).toHaveLength(0);
     // no holder's file was wiped by a second rebuild, and a later use is not "restarted"
@@ -323,7 +329,7 @@ describe("concurrent commands (fake sandbox)", () => {
       }),
       signal(),
     );
-    expect(after.info).toEqual({ fresh: false, restarted: false });
+    expect(after.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
     expect(after.files).toEqual(["0", "1", "2"]);
   });
 
@@ -335,7 +341,7 @@ describe("concurrent commands (fake sandbox)", () => {
     await setFakeSandboxDelays(root, { resume: 300 });
     const out = await Promise.all([0, 1, 2].map(() => run(s, "sleep 0.4")));
     for (const o of out) {
-      expect(o.info).toEqual({ fresh: false, restarted: false });
+      expect(o.info).toEqual({ fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
       expect(o.r.exitCode).toBe(0);
     }
     expect(await ops("resume")).toHaveLength(1);
@@ -607,7 +613,7 @@ describe("path leases in the sandbox tools", () => {
       config: { get: () => config },
     }).find((x) => x.spec.name === "Bash") as BuiltinTool;
     await t.run({ command: "true" }, callCtx());
-    expect(leased).toEqual([syncMarkerPath(conversationId)]);
+    expect(leased).toEqual([syncMarkerPath(DEFAULT_SANDBOX_ROOTS, conversationId)]);
     await t.run({ command: "true" }, callCtx());
     await t.run({ command: "true" }, callCtx());
     expect(leased).toHaveLength(1);

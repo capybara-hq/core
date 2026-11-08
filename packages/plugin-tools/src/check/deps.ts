@@ -61,6 +61,16 @@ const SDK_RULES: Rules = {
   allowed: () => false,
 };
 
+const DEVICE_RULES: Rules = {
+  pkgRule: "device-imports-internal",
+  outsideRule: "device-imports-internal",
+  pkgMessage: (what) =>
+    `packages/device runs on a person's machine and may depend only on ${SDK} and third-party npm packages, not on ${what}; the kernel is reached over HTTP and WebSocket only`,
+  outsideMessage: (what) =>
+    `packages/device must not reference files outside its package directory (${what})`,
+  allowed: (pkg) => pkg === SDK,
+};
+
 /** The violation a reference string (package name / relative path / file: URL / protocol dependency value) makes, if any. */
 function judge(
   value: string,
@@ -214,7 +224,9 @@ function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {
  * - pluginDirs: each plugin directory (source imports and package.json); a violation is
  *   plugin-imports-kernel (a path leaving the plugin directory: plugin-imports-outside);
  * - sdkDirs: the packages/plugin-sdk directory; any @capybara-hq/* package or path leaving the
- *   package directory is sdk-imports-internal.
+ *   package directory is sdk-imports-internal;
+ * - deviceDirs: the packages/device directory (source, tests and package.json); any @capybara-hq/*
+ *   package other than plugin-sdk or path leaving the package directory is device-imports-internal.
  *
  * Covers: import / export from / export * / import type / dynamic import("literal or concatenated
  * literals") / require("…") / import x = require() / import("x") types; package.json dependencies /
@@ -229,7 +241,11 @@ function sourceFindings(dir: string, rules: Rules, srcDir: string): Finding[] {
  * `module.require` or `createRequire(...)`; `import.meta.resolve`; paths built at run time to read
  * files; nested package.json files and TS `paths` mappings.
  */
-export function checkDeps(pluginDirs: string[], sdkDirs: string[] = []): Finding[] {
+export function checkDeps(
+  pluginDirs: string[],
+  sdkDirs: string[] = [],
+  deviceDirs: string[] = [],
+): Finding[] {
   const findings: Finding[] = [];
   for (const dir of pluginDirs) {
     findings.push(...packageFindings(dir, PLUGIN_RULES), ...sourceFindings(dir, PLUGIN_RULES, dir));
@@ -239,6 +255,9 @@ export function checkDeps(pluginDirs: string[], sdkDirs: string[] = []): Finding
       ...packageFindings(dir, SDK_RULES),
       ...sourceFindings(dir, SDK_RULES, join(dir, "src")),
     );
+  }
+  for (const dir of deviceDirs) {
+    findings.push(...packageFindings(dir, DEVICE_RULES), ...sourceFindings(dir, DEVICE_RULES, dir));
   }
   return findings;
 }

@@ -10,6 +10,7 @@ import { ApiError } from "../../../errors.js";
 import type { BuiltinTool } from "../../registry.js";
 import {
   checkPath,
+  checkPathShape,
   clip,
   display,
   inSandbox,
@@ -35,7 +36,8 @@ const SPEC: ToolSpec = {
       file_path: {
         type: "string",
         minLength: 1,
-        description: 'Absolute path of the file in the sandbox, e.g. "/workspace/out/report.pdf".',
+        description:
+          "Absolute path of the file in the sandbox, e.g. out/report.pdf in the workspace directory.",
       },
       name: {
         type: "string",
@@ -127,31 +129,38 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
     spec: SPEC,
     defaultPolicy: "allow",
     // 没有沙箱或没有对象存储都交付不了（先报沙箱的原因）
-    unavailable: (ctx) =>
-      unavailableWhenNoSandbox(deps)(ctx) ?? (deps.storage.available ? null : NO_STORAGE_REASON),
+    unavailable: async (ctx) =>
+      (await unavailableWhenNoSandbox(deps)(ctx)) ??
+      (deps.storage.available ? null : NO_STORAGE_REASON),
     timeoutMs: () => 2 * sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       // 存储在调用前就核对：不为一个交付不了的文件去 stat / 读沙箱
       if (!deps.storage.available) throw new ToolError(NO_STORAGE);
-      const path = checkPath((input as DeliverInput).file_path, "file_path");
       const given = (input as DeliverInput).name?.trim();
       // 与 artifact_created 的 schema 同一规则，在上传前检查（不合法的名字不会在写事件时才失败）
       if (given !== undefined && (!isValidArtifactName(given) || /[/\\]/.test(given))) {
         throw new ToolError(BAD_NAME);
       }
-      const name = given ?? defaultName(path);
       const max = deps.config.get().sandbox.deliverMaxBytes;
-      const { value: data, notices } = await inSandbox(deps, ctx, async ({ h, p, signal }) => {
-        const st = await p.stat(h, path, signal);
-        if (st === null) throw new ToolError(notFound(path));
-        if (st.isDir) throw new ToolError(isDirectory(path));
-        if (st.size > max) throw new ToolError(tooLarge(path, st.size, max));
-        const got = await p.readFile(h, path, { maxBytes: max, signal });
-        if (got === null) throw new ToolError(notFound(path));
-        // 读的过程中文件变大了
-        if (got.truncated) throw new ToolError(tooLarge(path, max + 1, max));
-        return got.data;
-      });
+      checkPathShape((input as DeliverInput).file_path, "file_path");
+      let path = "";
+      const { value: data, notices } = await inSandbox(
+        deps,
+        ctx,
+        async ({ h, roots, p, signal }) => {
+          path = checkPath((input as DeliverInput).file_path, roots, "file_path");
+          const st = await p.stat(h, path, signal);
+          if (st === null) throw new ToolError(notFound(path));
+          if (st.isDir) throw new ToolError(isDirectory(path));
+          if (st.size > max) throw new ToolError(tooLarge(path, st.size, max));
+          const got = await p.readFile(h, path, { maxBytes: max, signal });
+          if (got === null) throw new ToolError(notFound(path));
+          // 读的过程中文件变大了
+          if (got.truncated) throw new ToolError(tooLarge(path, max + 1, max));
+          return got.data;
+        },
+      );
+      const name = given ?? defaultName(path);
       // 上传在沙箱锁之外进行：不占着沙箱
       const artifactId = randomUUID();
       const objectKey = `artifacts/${ctx.conversationId}/${artifactId}`;

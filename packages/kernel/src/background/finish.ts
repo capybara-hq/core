@@ -4,6 +4,7 @@ import { afterCommit } from "../infra/database/after-commit.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { taskOutputFile } from "./launch.js";
 import { LAST_LINES_MAX_CHARS } from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
@@ -71,7 +72,7 @@ export class BackgroundTaskFinisher {
             lastLines.length > LAST_LINES_MAX_CHARS
               ? lastLines.slice(-LAST_LINES_MAX_CHARS)
               : lastLines,
-          outputPath: `/workspace/${task.outputPath}`,
+          outputPath: taskOutputFile(task.outputPath),
           reported,
           ...(to.lostReason !== undefined && { lostReason: to.lostReason }),
           ...(opts.stoppedBy !== undefined && { stoppedBy: opts.stoppedBy }),

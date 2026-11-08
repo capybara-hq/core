@@ -8,6 +8,7 @@ export * from "./connector.js";
 export * from "./connector-auth.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
+export * from "./device-protocol.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
 export * from "./file-preview.js";

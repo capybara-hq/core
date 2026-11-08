@@ -874,7 +874,8 @@ export interface EnvironmentsTable {
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  source: "cloud";
+  /** 0093: `device` is a connected machine (environment_machines). */
+  source: "cloud" | "device";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
@@ -912,6 +913,34 @@ export interface EnvironmentInstancesTable {
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
+}
+
+/**
+ * 0093_connected_environments.sql: the machine connected to a `device` environment. At most one
+ * unrevoked row per environment; revoking sets `revoked_at` and keeps the row.
+ */
+export interface EnvironmentMachinesTable {
+  id: Generated<string>;
+  org_id: string;
+  environment_id: string;
+  account_id: string;
+  /** A hash of the machine credential, never the credential itself. */
+  credential_hash: string;
+  name: string;
+  os: string;
+  arch: string;
+  program_version: ColumnType<string | null, string | null | undefined, string | null>;
+  mode: ColumnType<
+    "os" | "docker" | null,
+    "os" | "docker" | null | undefined,
+    "os" | "docker" | null
+  >;
+  /** The roots the program exposes, as it reported them (a JSON array). */
+  roots: ColumnType<unknown, string | null | undefined, string | null>;
+  session_isolation: ColumnType<boolean, boolean | undefined, boolean>;
+  last_seen_at: TsNullable;
+  created_at: Ts;
+  revoked_at: TsNullable;
 }
 
 /** 0088_environments.sql: the environment a member's new conversations use by default. */
@@ -1211,6 +1240,7 @@ export interface KernelDatabase {
   environments: EnvironmentsTable;
   environment_instances: EnvironmentInstancesTable;
   environment_defaults: EnvironmentDefaultsTable;
+  environment_machines: EnvironmentMachinesTable;
   background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;

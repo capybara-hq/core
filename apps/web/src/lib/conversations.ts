@@ -277,6 +277,14 @@ type EventBody =
         }[];
       };
     }
+  /**
+   * The paths the sandbox tools use in the conversation's environment (written on its first
+   * sandbox call and whenever they change; model-facing, the UI shows nothing).
+   */
+  | {
+      type: "environment_paths";
+      payload: { roots: { workspace: string; skills: string; tmp: string } };
+    }
   /** A background `Bash` task ended (background Bash spec §2): the thread's one-line notice. */
   | {
       type: "background_task_finished";

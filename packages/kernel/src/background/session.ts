@@ -1,4 +1,4 @@
-import type { SandboxActor, SandboxHandle } from "@capybara-hq/plugin-sdk";
+import { rootsOf, type SandboxActor, type SandboxHandle } from "@capybara-hq/plugin-sdk";
 import type { HeldProvider, TaggedProvider } from "../sandbox/sandbox.service.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
 
@@ -67,7 +67,7 @@ export async function killSession(
   const r = await p
     .exec(h, {
       command: `${killSessionScript(sid)}; exit "$ks"`,
-      cwd: "/workspace",
+      cwd: rootsOf(h).workspace,
       timeoutMs: KILL_SESSION_TIMEOUT_MS,
       maxOutputBytes: 4096,
       signal: AbortSignal.timeout(KILL_SESSION_TIMEOUT_MS),
@@ -84,7 +84,7 @@ export const LAST_LINES_MAX_CHARS = 4000;
 
 /**
  * A shell pipeline printing the last 20 lines of task `id`'s output (at most {@link TAIL_BYTES}),
- * base64 on one line (empty when there is no output file). Relative to `/workspace`.
+ * base64 on one line (empty when there is no output file). Relative to the workspace root.
  */
 export function tailCommand(id: string): string {
   return `{ tail -n 20 ${TASKS_DIR}/${id}.out 2>/dev/null | tail -c ${TAIL_BYTES} | base64 | tr -d '\\n'; }`;

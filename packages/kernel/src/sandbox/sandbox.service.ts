@@ -4,10 +4,12 @@ import {
   type FileSystemHandle,
   isFileSystemGoneError,
   isSandboxGoneError,
+  rootsOf,
   type SandboxActor,
   type SandboxHandle,
   type SandboxLimits,
   type SandboxProvider,
+  type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
@@ -45,7 +47,12 @@ import {
   type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
-import { type SandboxProviderEntry, SandboxProviders } from "./providers.js";
+import {
+  DEVICE_PROVIDER,
+  providerForEnvironment,
+  type SandboxProviderEntry,
+  SandboxProviders,
+} from "./providers.js";
 
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
@@ -83,7 +90,15 @@ export interface SandboxUseInfo {
    * new instance on the kept files, so earlier processes are gone.
    */
   restarted: boolean;
+  /**
+   * The instance's roots ({@link rootsOf} of its handle): every model-visible path is built from
+   * them (environments spec §13.1; a connected machine's real paths).
+   */
+  roots: SandboxRoots;
 }
+
+/** {@link SandboxUseInfo} before the roots are read from the handle. */
+type EnteredInfo = Omit<SandboxUseInfo, "roots">;
 
 /** Who uses the sandbox in {@link SandboxService.withSandbox}. */
 export interface SandboxUseContext {
@@ -149,7 +164,7 @@ interface Entered {
   createdAt: number;
   /** The id of the file system the instance runs on (a reset makes a new one). */
   fsId: string;
-  info: SandboxUseInfo;
+  info: EnteredInfo;
 }
 
 /** The signal of one provider call in maintenance: aborted on timeout or when the lease is lost. */
@@ -164,12 +179,22 @@ export const environmentResourceName = (environmentId: string): string =>
 export const environmentNotFound = (): ApiError =>
   new ApiError("environment.not_found", "This environment does not exist or was deleted.");
 
-/** The environment's file system is gone at the provider (409); never replaced silently. */
-export const environmentFilesLost = (): ApiError =>
-  new ApiError(
-    "environment.files_lost",
-    "The environment's files are gone; reset its files from the environments page to start with an empty workspace.",
-  );
+/**
+ * The environment's file system is gone at the provider (409); never replaced silently. On a
+ * connected machine (`device`, details `[{ source: "device" }]`) the directory is the machine
+ * owner's: `capybara-device logout`, then `login` into the environment, recreates it (ruling R24).
+ */
+export const environmentFilesLost = (device = false): ApiError =>
+  device
+    ? new ApiError(
+        "environment.files_lost",
+        "The environment's directory is gone from its connected machine; run capybara-device logout, then capybara-device login into this environment, on that machine to recreate it.",
+        [{ source: "device" }],
+      )
+    : new ApiError(
+        "environment.files_lost",
+        "The environment's files are gone; reset its files from the environments page to start with an empty workspace.",
+      );
 
 /**
  * The row still records the instance `gone` (same handle and same `created_at`). Handles compare
@@ -336,11 +361,18 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
+ * - **Provider per environment** (environments spec §6): each call resolves the provider from
+ *   the environment's `environments.provider` ({@link providerForEnvironment}): a `device`
+ *   environment runs on the kernel-internal `@device` provider (never the cloud one), a cloud
+ *   environment on the loaded `sandbox@2` extension. A `@device` instance is never suspended or
+ *   destroyed for inactivity; a deleted `@device` environment (or one of a deleted org) is
+ *   destroyed by the sweep like any other.
+ *
  * Files kept by another provider than the current one make the environment unusable
  * (`environment.unavailable`) until that provider is back; deleting it still works while that
- * provider is loaded ({@link SandboxProviders.lookup}). Without a provider {@link available} is false and
- * uses throw `sandbox.unavailable` (503). No in-process state: replicas share it through PG and
- * Redis.
+ * provider is loaded ({@link SandboxProviders.forName}). Without the environment's provider
+ * {@link availableFor} is false and uses throw `sandbox.unavailable` (503). No in-process state:
+ * replicas share it through PG and Redis.
  */
 @Injectable()
 export class SandboxService {
@@ -349,9 +381,9 @@ export class SandboxService {
     /** The record of the instance each holder last used (`capk:sandbox-seen:…`). */
     @Inject(REDIS) private readonly redis: Pick<Redis, "set">,
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
-    /** The `sandbox@2` provider (read at every call: providers are ready after the extension load). */
+    /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "current" | "lookup">,
+    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
     /** Background tasks lost while their process may live on (killed after a resume). */
@@ -364,9 +396,43 @@ export class SandboxService {
     return this.leases.pollMs;
   }
 
-  /** Whether there is a sandbox provider. */
-  get available(): boolean {
-    return this.providers.current() !== undefined;
+  /**
+   * Whether there is a cloud sandbox provider (a loaded `sandbox@2` extension). For gates that have
+   * no environment yet (tool listing, skill files); a call on an environment asks
+   * {@link availableFor}.
+   */
+  get cloudAvailable(): boolean {
+    return this.providers.cloud() !== undefined;
+  }
+
+  /** Whether the environment's provider is there (`@device` registered, or a cloud provider). */
+  async availableFor(environmentId: string): Promise<boolean> {
+    return (await this.providerOf(environmentId)) !== undefined;
+  }
+
+  /**
+   * The provider the environment works with, read from its row ({@link providerForEnvironment});
+   * a missing row (or one of another org, with `orgId`) reads as a cloud environment, whose use
+   * then fails as not found.
+   */
+  private async providerOf(
+    environmentId: string,
+    orgId?: string,
+  ): Promise<SandboxProviderEntry | undefined> {
+    const row = await this.db
+      .selectFrom("environments")
+      .select("provider")
+      .where("id", "=", environmentId)
+      .$if(orgId !== undefined, (q) => q.where("org_id", "=", orgId as string))
+      .executeTakeFirst();
+    return providerForEnvironment(this.providers, row?.provider ?? null);
+  }
+
+  /** {@link providerOf}, or `sandbox.unavailable` (503) without it. */
+  private async require(environmentId: string, orgId?: string): Promise<SandboxProviderEntry> {
+    const p = await this.providerOf(environmentId, orgId);
+    if (!p) throw sandboxUnavailable();
+    return p;
   }
 
   /** Concurrent holders of one environment (`sandbox.maxConcurrentCommands`, read at every use). */
@@ -452,7 +518,7 @@ export class SandboxService {
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<IfRunningResult<T>> {
-    const p = this.require();
+    const p = await this.require(environmentId);
     const env = environmentId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
@@ -487,7 +553,12 @@ export class SandboxService {
               this.register(env, lease.token),
             );
             const sig = AbortSignal.any([signal, lease.signal]);
-            return { kind: "ran", value: await fn(impl, e.handle, sig) };
+            try {
+              return { kind: "ran", value: await fn(impl, e.handle, sig) };
+            } catch (err) {
+              if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+              throw err;
+            }
           } finally {
             await this.leave(env, e);
           }
@@ -521,7 +592,8 @@ export class SandboxService {
    * - When `fn` throws `SandboxGoneError` (the instance is gone) the instance is rebuilt on the
    *   kept files (or the one another holder rebuilt is taken) and `fn` runs once more with
    *   `restarted: true`; a second `gone` is thrown. Other errors are thrown as they are.
-   * - Lost files throw `environment.files_lost` (409).
+   * - Lost files throw `environment.files_lost` (409), also when `fn` throws
+   *   `FileSystemGoneError` (the files are then recorded lost, ruling R24).
    * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
    *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
    */
@@ -535,7 +607,7 @@ export class SandboxService {
     ) => Promise<T>,
     signal: AbortSignal,
   ): Promise<T> {
-    const p = this.require();
+    const p = await this.require(ctx.environmentId, ctx.orgId);
     const env = ctx.environmentId;
     const holder = ctx.holderConversationId;
     let e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, null));
@@ -543,23 +615,56 @@ export class SandboxService {
       try {
         return await this.runAs(e, ctx, p, fn, signal);
       } catch (err) {
+        if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
         this.log.info("sandbox instance is gone during use; recreating", { environmentId: env });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
         const prev = e;
         await this.leave(env, prev);
         e = await this.seenBy(env, holder, await this.enter(ctx, p, signal, gone));
-        return await this.runAs(
-          { ...e, info: { fresh: true, restarted: true } },
-          ctx,
-          p,
-          fn,
-          signal,
-        );
+        try {
+          return await this.runAs(
+            { ...e, info: { fresh: true, restarted: true } },
+            ctx,
+            p,
+            fn,
+            signal,
+          );
+        } catch (err2) {
+          if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
+          throw err2;
+        }
       }
     } finally {
       await this.leave(env, e);
     }
+  }
+
+  /**
+   * Ruling R24: an operation on the held instance `e` found its file system gone. Records
+   * `fs_status = 'lost'` while the row still records that instance on its file system (the
+   * instance handle stays, so a reset still destroys it), moving the fence on, and returns
+   * `environment.files_lost` to throw. Uses then fail until the files are reset (a connected
+   * machine: until a new login, which resets the row). A failed write only logs.
+   */
+  private async filesGone(env: string, p: SandboxProviderEntry, e: Entered): Promise<ApiError> {
+    this.log.warn("environment file system is gone at the provider; its files are lost", {
+      environmentId: env,
+      provider: p.plugin,
+    });
+    try {
+      await this.db
+        .updateTable("environment_instances")
+        .set((eb) => ({ fs_status: "lost", generation: eb("generation", "+", 1) }))
+        .where("environment_id", "=", env)
+        .where("fs_status", "=", "ready")
+        // `createdAt` is the row's value read back in milliseconds
+        .where(sql<Date>`date_trunc('milliseconds', created_at)`, "=", new Date(e.createdAt))
+        .execute();
+    } catch (err) {
+      this.log.warn("cannot record lost environment files", { environmentId: env, err });
+    }
+    return environmentFilesLost(p.plugin === DEVICE_PROVIDER);
   }
 
   /**
@@ -615,7 +720,7 @@ export class SandboxService {
     const impl = tagged<HeldProvider>(p.impl, e.lease.token, ctx.actor, () =>
       this.register(env, e.lease.token),
     );
-    return fn(e.handle, impl, e.info, sig);
+    return fn(e.handle, impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
   }
 
   /**
@@ -683,7 +788,10 @@ export class SandboxService {
     return environmentNotFound();
   }
 
-  /** Recorded running with the current provider, and not the instance found gone. */
+  /**
+   * Recorded running with the current provider on files not lost (lost ones go through the
+   * exclusive path, which refuses them), and not the instance found gone.
+   */
   private usable(
     row: Row | undefined,
     p: SandboxProviderEntry,
@@ -692,6 +800,7 @@ export class SandboxService {
     return (
       row !== undefined &&
       row.status === "running" &&
+      row.fs_status !== "lost" &&
       row.provider === p.plugin &&
       row.handle !== null &&
       !isInstance(row, gone)
@@ -867,7 +976,8 @@ export class SandboxService {
    * many it suspended. Called every minute by the `sandbox-suspend-idle` cron.
    */
   async suspendIdle(now: Date): Promise<number> {
-    const p = this.providers.current();
+    // cloud only: suspendDue keeps to this provider's rows, so `@device` is never suspended here
+    const p = this.providers.cloud();
     if (!p) return 0;
     const due = this.suspendDue(now, p.plugin);
     const runningBefore = new Date(
@@ -912,29 +1022,49 @@ export class SandboxService {
    * (the instance only; the file system is kept and the next use builds a new instance on it); an
    * environment that was deleted, or whose org was deleted, loses its instance and its file system
    * and its row is deleted (as {@link destroyEnvironment} does). Environments with any holder are
-   * skipped. Returns how many it destroyed. Called hourly by the `sandbox-destroy-inactive` cron.
+   * skipped. Inactivity never destroys a `@device` instance; a gone `@device` environment is
+   * destroyed like any other while `@device` is registered. Returns how many it destroyed. Called
+   * hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
-    const p = this.providers.current();
-    if (!p) return 0;
+    const p = this.providers.cloud();
+    const device = this.providers.forName(DEVICE_PROVIDER) !== undefined;
     let n = 0;
+    // Gone environments (deleted, or of a deleted org) on every provider that is here, `@device`
+    // too (its destroy calls never need the machine online); rows whose provider is missing wait.
+    const here = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+      eb.or([
+        ...(p ? [this.cloudRow(eb)] : []),
+        ...(device ? [eb("provider", "=", DEVICE_PROVIDER)] : []),
+      ]);
     const gone = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
-      this.environmentGone(eb);
-    await inPool(await this.candidates(gone), SWEEP_CONCURRENCY, async ({ environment_id: id }) => {
-      const done = await this.tryLocked(id, async (lease) => {
-        const row = await this.db
-          .selectFrom("environment_instances")
-          .selectAll()
-          .where("environment_id", "=", id)
-          .where(gone)
-          .executeTakeFirst();
-        if (!row) return false;
-        await this.destroyRow(row, p, lease, "environment");
-        return true;
-      });
-      if (done) n++;
-    });
-    const idle = this.instanceDue(now);
+      eb.and([here(eb), this.environmentGone(eb)]);
+    if (p || device) {
+      await inPool(
+        await this.candidates(gone),
+        SWEEP_CONCURRENCY,
+        async ({ environment_id: id }) => {
+          const done = await this.tryLocked(id, async (lease) => {
+            const row = await this.db
+              .selectFrom("environment_instances")
+              .selectAll()
+              .where("environment_id", "=", id)
+              .where(gone)
+              .executeTakeFirst();
+            const owner = row && this.rowProvider(row);
+            if (!row || !owner) return false;
+            await this.destroyRow(row, owner, lease, "environment");
+            return true;
+          });
+          if (done) n++;
+        },
+      );
+    }
+    // inactivity destroys cloud instances only: `@device` instances are never swept
+    if (!p) return n;
+    const due = this.instanceDue(now);
+    const idle = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+      eb.and([this.cloudRow(eb), due(eb)]);
     await inPool(await this.candidates(idle), SWEEP_CONCURRENCY, async ({ environment_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
         const row = await this.db
@@ -955,9 +1085,11 @@ export class SandboxService {
   /**
    * Destroys the environment's instance, then its file system, then deletes its instance row
    * (environment deletion, offboarding); nothing to do without a row. Waits for the exclusive lease
-   * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without a
-   * provider it only warns (the destruction sweep finishes a deleted environment later). Files kept
-   * by another provider that is not loaded cannot be destroyed: it throws and the row stays.
+   * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without the
+   * environment's provider it throws and the row stays, marked `sweep_failed_at` (the job is
+   * retried, and the destruction sweep finishes a deleted environment once the provider is back).
+   * Files kept by another provider that is not loaded cannot be destroyed: it throws and the row
+   * stays.
    */
   async destroyEnvironment(environmentId: string): Promise<void> {
     const row = await this.db
@@ -966,10 +1098,17 @@ export class SandboxService {
       .where("environment_id", "=", environmentId)
       .executeTakeFirst();
     if (!row) return;
-    const p = this.providers.current();
+    const p = await this.providerOf(environmentId);
     if (!p) {
-      this.log.warn("cannot destroy environment: no sandbox provider", { environmentId });
-      return;
+      await this.db
+        .updateTable("environment_instances")
+        .set({ sweep_failed_at: sql<Date>`now()` })
+        .where("environment_id", "=", environmentId)
+        .execute();
+      throw new Error(
+        `cannot destroy environment ${environmentId}: its sandbox provider is not there; ` +
+          "the destruction sweep retries it",
+      );
     }
     const lease = await this.leases.acquireExclusive(
       environmentId,
@@ -996,7 +1135,7 @@ export class SandboxService {
    * creates a new one. Nothing to do without a row. Throws `sandbox.unavailable` without a provider.
    */
   async resetFileSystem(environmentId: string): Promise<void> {
-    const p = this.require();
+    const p = await this.require(environmentId);
     const lease = await this.leases.acquireExclusive(
       environmentId,
       AbortSignal.timeout(EXCLUSIVE_WAIT_MS),
@@ -1111,12 +1250,6 @@ export class SandboxService {
     await this.background.clearKill(cleared.map((r) => r.id));
   }
 
-  private require(): SandboxProviderEntry {
-    const p = this.providers.current();
-    if (!p) throw sandboxUnavailable();
-    return p;
-  }
-
   /**
    * A fenced write: only while the lease holds and the row's generation is still the one read
    * under it (and incremented); otherwise {@link SandboxLockLostError}.
@@ -1212,7 +1345,7 @@ export class SandboxService {
     handle: SandboxHandle;
     createdAt: number;
     fsId: string;
-    info: SandboxUseInfo;
+    info: EnteredInfo;
     fence: Fence;
     resumed?: boolean;
   }> {
@@ -1258,7 +1391,7 @@ export class SandboxService {
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
-    if (row.fs_status === "lost") throw environmentFilesLost();
+    if (row.fs_status === "lost") throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
     if (
       row.provider !== null &&
       row.provider !== p.plugin &&
@@ -1381,7 +1514,7 @@ export class SandboxService {
         provider: p.plugin,
       });
       await this.fenced(held, id, fence, { fs_status: "lost", status: "none" });
-      throw environmentFilesLost();
+      throw environmentFilesLost(p.plugin === DEVICE_PROVIDER);
     }
     let createdAt: Date;
     try {
@@ -1422,7 +1555,7 @@ export class SandboxService {
     provider: string,
     signal: AbortSignal,
   ): Promise<void> {
-    const old = this.providers.lookup(provider);
+    const old = this.providers.forName(provider)?.impl;
     if (!old) {
       this.log.warn(
         "environment file system may have been made by a provider that is not loaded; it may leak",
@@ -1452,7 +1585,7 @@ export class SandboxService {
     handle: SandboxHandle,
     signal: AbortSignal,
   ): Promise<boolean> {
-    const old = this.providers.lookup(provider);
+    const old = this.providers.forName(provider)?.impl;
     if (old) {
       try {
         await old.destroy(
@@ -1497,7 +1630,7 @@ export class SandboxService {
       }
     } else if (!row.handle && row.status === "creating") {
       // the provider may have built it already: only the name finds it
-      const impl = owner === p.plugin ? p.impl : this.providers.lookup(owner);
+      const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
       await impl?.destroyByName(environmentResourceName(id), signal);
     }
     if (row.prev_handle && row.prev_provider && !("prev_handle" in prev)) {
@@ -1522,7 +1655,7 @@ export class SandboxService {
   ): Promise<void> {
     const id = row.environment_id;
     const owner = row.provider ?? p.plugin;
-    const impl = owner === p.plugin ? p.impl : this.providers.lookup(owner);
+    const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
     if (!impl) {
       if (row.fs_handle === null) return;
       if (!lenient) {
@@ -1587,6 +1720,21 @@ export class SandboxService {
         eb("provider", "=", plugin),
         eb.or([eb("last_used_at", "<", idleBefore), eb("running_since", "<", runningBefore)]),
       ]);
+  }
+
+  /** The provider of an instance row: an internal one (`@device`) by name, else the cloud one. */
+  private rowProvider(row: Row): SandboxProviderEntry | undefined {
+    return providerForEnvironment(this.providers, row.provider);
+  }
+
+  /**
+   * A row the idle sweeps may touch: not on a kernel-internal provider (`@device` instances live on
+   * people's machines and are never suspended or destroyed for inactivity).
+   */
+  private cloudRow(
+    eb: ExpressionBuilder<KernelDatabase, "environment_instances">,
+  ): Expression<SqlBool> {
+    return eb.or([eb("provider", "is", null), eb("provider", "not like", "@%")]);
   }
 
   /** The environment was deleted, or its org was: the instance and the files go. */
