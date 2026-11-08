@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "81e46839eb7eae14fc7bb331721889de85e96db8"
+    "commit": "d0cd2d17cad415916ceb9dc5184a9300f998ad0e"
   },
   "plugins": [
     {
@@ -36,6 +36,30 @@
       "npm": "@capybara-hq/plugin-openai",
       "version": "0.1.0-rc.1",
       "integrity": "sha512-F714dJ023p8XcrPXYNZyjiow5BXza5KTdlJV4Uw8spgulgjPSF44n0SVMEA1iyYCwOFrr58NSvw51AqmOYg6Fw==",
+      "required": false
+    },
+    {
+      "name": "deepseek",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-deepseek",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-/3+qpvDChcPpW6mL7EdMfdi6X56WDau2k725rXT79fvKI1P7q8tD5e7VVAn7eOKJuiNRx8UiH/704SzbmcVR6A==",
+      "required": false
+    },
+    {
+      "name": "bailian",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-bailian",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-ggAM/56wS7bEEwM/ZYQOQeLtH8QvWAFZyd2BPgSBvkOECZXwggavY6357SoPEmLevyNQH6PxR42uwxF8EuvJNg==",
+      "required": false
+    },
+    {
+      "name": "ark",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-ark",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-LqLgUj1MjtzBX9t6NR9YMEVOHSGTobQjtbbU1c0ifcKxEpxFg/2LqK12wyhV6eSaZJQGj9TPhkUfh14Y49PXwg==",
       "required": false
     },
     {
