@@ -119,6 +119,23 @@ describe("ConversationPage (§5.4)", () => {
     expect(onCloseRight).toHaveBeenCalled();
   });
 
+  it("the properties panel as a sheet has its own head with a close button (phones have no scrim to tap)", async () => {
+    const onCloseRight = vi.fn();
+    wrap(<ConversationPage {...page({ right: "properties", layout: "sheet", onCloseRight })} />);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByTestId("properties")).toBeTruthy();
+    expect(within(dialog).getByText("属性面板")).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole("button", { name: "关闭" }));
+    expect(onCloseRight).toHaveBeenCalled();
+  });
+
+  it("a right panel in a sheet keeps only its own head (no second close button)", () => {
+    wrap(
+      <ConversationPage {...page({ right: "panel", layout: "sheet", onCloseRight: vi.fn() })} />,
+    );
+    expect(document.querySelector('[data-part="sheet-head"]')).toBeNull();
+  });
+
   it("a new conversation shows the agent, its description and only context and version", () => {
     wrap(
       <ConversationPage
