@@ -534,7 +534,10 @@ export const listModels = (orgId: string, kind?: ModelKind) =>
  * The avatar the design `Avatar` renders. Uploads and migrated external avatars go through the
  * kernel's redirect route; `v` busts the browser cache when the profile changes.
  */
-export function avatarValue(agent: Pick<Agent, "id" | "profile">, orgId: string): AvatarValue {
+export function avatarValue(
+  agent: { id: string; profile: Pick<AgentProfile, "avatar" | "updatedAt"> },
+  orgId: string,
+): AvatarValue {
   const a = agent.profile.avatar;
   if (a === null) return null;
   if (a.kind === "preset") return { kind: "preset", id: a.id };

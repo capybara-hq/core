@@ -130,8 +130,9 @@ async function touch(conversationId: string, minute: number): Promise<void> {
     .execute();
 }
 
+type Profile = { avatar: { kind: string; id?: string } | null; updatedAt: string };
 type Group = {
-  agent: { id: string; name: string };
+  agent: { id: string; name: string; profile: Profile };
   latestAt: string;
   conversations: { id: string; title: string | null; agentId: string }[];
   more: boolean;
@@ -182,7 +183,7 @@ describe("GET /conversations/groups", () => {
     const { a, b, c, aConvs, bConv, cConvs } = await threeAgents(req, orgId);
     const res = await groups(req, orgId);
     expect(res.next).toBeNull();
-    expect(res.groups.map((g) => g.agent)).toEqual([
+    expect(res.groups.map((g) => ({ id: g.agent.id, name: g.agent.name }))).toEqual([
       { id: b, name: "Agent B" },
       { id: a, name: "Agent A" },
       { id: c, name: "Agent C" },
@@ -209,6 +210,39 @@ describe("GET /conversations/groups", () => {
       [2, true],
       [2, false],
     ]);
+  });
+
+  it("each group carries its agent's avatar and profile time, as the agents API returns them", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const a = await createAgent(req, orgId, "Agent A");
+    await createConv(req, orgId, a);
+    const read = async () =>
+      (
+        (await req({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${a}` })).json() as {
+          agent: { profile: Profile };
+        }
+      ).agent.profile;
+    const created = await read();
+    // an agent created without an avatar gets a random preset
+    expect(created.avatar?.kind).toBe("preset");
+    expect((await groups(req, orgId)).groups[0]?.agent.profile).toEqual({
+      avatar: created.avatar,
+      updatedAt: created.updatedAt,
+    });
+
+    const res = await req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/agents/${a}/profile`,
+      payload: { avatar: null, expectedUpdatedAt: created.updatedAt },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const cleared = await read();
+    expect(cleared.avatar).toBeNull();
+    expect((await groups(req, orgId)).groups[0]?.agent.profile).toEqual({
+      avatar: null,
+      updatedAt: cleared.updatedAt,
+    });
   });
 
   it("limit pages groups with next = the last group's agent id", async () => {

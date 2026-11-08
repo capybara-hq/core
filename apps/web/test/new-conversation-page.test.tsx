@@ -81,8 +81,13 @@ const AGENTS = {
   ],
 };
 
-const group = (id: string, name: string, latestAt: string) => ({
-  agent: { id, name },
+const group = (
+  id: string,
+  name: string,
+  latestAt: string,
+  avatar: AgentProfile["avatar"] = null,
+) => ({
+  agent: { id, name, profile: { avatar, updatedAt: "2026-10-20T06:32:00.000Z" } },
   latestAt,
   conversations: [],
   more: false,
@@ -336,13 +341,12 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(link.querySelector('[data-part="avatar"]')?.getAttribute("data-size")).toBe("16");
     cleanup();
 
-    // the sidebar group titles (16), from the cached agents; a group with no cached agent: its name
+    // the sidebar group titles (16), from the avatars the groups carry (no agents list cached)
     const client = testQueryClient();
-    client.setQueryData(agentsQuery("o1").queryKey, plain);
     client.setQueryData(conversationGroupsQuery("o1").queryKey, {
       groups: [
         { ...group("ag1", "echo agent", "2026-11-03T08:00:00.000Z") },
-        { ...group("ag2", "Beta", "2026-11-02T08:00:00.000Z") },
+        { ...group("ag2", "Beta", "2026-11-02T08:00:00.000Z", { kind: "preset", id: "owl" }) },
         { ...group("ag9", "gone agent", "2026-11-01T08:00:00.000Z") },
       ].map((g) => ({
         ...g,
@@ -379,7 +383,7 @@ describe("the new conversation page (agent profile design §4)", () => {
     );
     expect(initialIn(head("gone agent"))).toBe("G");
     // nothing read the agents for the sidebar
-    expect(client.getQueryState(agentsQuery("o1").queryKey)?.fetchStatus).toBe("idle");
+    expect(client.getQueryState(agentsQuery("o1").queryKey)).toBeUndefined();
   });
 });
 

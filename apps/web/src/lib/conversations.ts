@@ -1,3 +1,4 @@
+import type { AgentProfile } from "./agents";
 import { apiFetch } from "./api";
 import type { OrgRole } from "./members";
 
@@ -665,7 +666,8 @@ export const deleteConversation = (orgId: string, id: string) =>
 
 /** One agent's group of my conversations (`GET .../conversations/groups`, the sidebar). */
 export interface ConversationGroup {
-  agent: { id: string; name: string };
+  /** The agent's name and the avatar half of its profile, as the agents API returns them. */
+  agent: { id: string; name: string; profile: Pick<AgentProfile, "avatar" | "updatedAt"> };
   /** The group's latest activity (ISO). */
   latestAt: string;
   /** At most `perGroup`, newest first. */
