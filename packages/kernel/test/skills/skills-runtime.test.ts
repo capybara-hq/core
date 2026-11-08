@@ -511,7 +511,8 @@ describe("Skill handler", { timeout: 60_000 }, () => {
               } as ConversationEvent as never),
       },
       sandbox: {
-        available: sandboxAvailable,
+        cloudAvailable: sandboxAvailable,
+        availableFor: async () => sandboxAvailable,
         withSandbox: async () => {
           throw new Error("sandbox must not be used");
         },

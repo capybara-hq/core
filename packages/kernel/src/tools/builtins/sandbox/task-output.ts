@@ -100,7 +100,7 @@ export interface TaskEnv {
 
 /** The task tools' dependencies; throws the tool's error when they are missing. */
 export function taskEnv(deps: SandboxToolDeps): TaskEnv {
-  if (!deps.sandbox.available) throw noSandboxError();
+  if (!deps.sandbox.cloudAvailable) throw noSandboxError();
   const { background, tasks } = deps;
   if (!background || !tasks || !deps.sandbox.ifRunning) {
     throw new ToolError(

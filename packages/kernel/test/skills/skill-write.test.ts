@@ -951,7 +951,8 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
           }) as never,
       },
       sandbox: {
-        available: false,
+        cloudAvailable: false,
+        availableFor: async () => false,
         withSandbox: async () => {
           throw new Error("unused");
         },

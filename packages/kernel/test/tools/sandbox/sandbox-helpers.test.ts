@@ -154,7 +154,7 @@ describe("Bash time limit", () => {
     const bash = sandboxTools({
       environments,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到配置
-      sandbox: { available: true } as any,
+      sandbox: { cloudAvailable: true } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -219,7 +219,8 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
       const tool = sandboxTools({
         environments,
         sandbox: {
-          available: true,
+          cloudAvailable: true,
+          availableFor: async () => true,
           // 等锁用掉了 lockWaitSeconds + 25 秒
           withSandbox: async (_c, fn, sig) => {
             now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
@@ -281,8 +282,8 @@ describe("registry without a sandbox provider", () => {
     }
     const tools = sandboxTools({
       environments,
-      // biome-ignore lint/suspicious/noExplicitAny: 只用到 available
-      sandbox: { available: false } as any,
+      // biome-ignore lint/suspicious/noExplicitAny: 只用到 cloudAvailable
+      sandbox: { cloudAvailable: false } as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -337,7 +338,8 @@ describe("attachment sync", () => {
       },
     };
     const sandbox = {
-      available: true,
+      cloudAvailable: true,
+      availableFor: async () => true,
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -459,7 +461,8 @@ describe("fix round 2: sync marker, deliver failures, grep exit 2", () => {
     const tools = sandboxTools({
       environments,
       sandbox: {
-        available: true,
+        cloudAvailable: true,
+        availableFor: async () => true,
         withSandbox: async (
           _ctx: unknown,
           fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -617,7 +620,8 @@ describe("read before write over Read's byte limit", () => {
     // the log: the latest view.file of each path, as the conversation's tool_results record it
     const recorded = new Map<string, { size: number; sha256: string }>();
     const sandbox = {
-      available: true,
+      cloudAvailable: true,
+      availableFor: async () => true,
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,

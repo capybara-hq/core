@@ -66,7 +66,7 @@ export class BackgroundTasks {
     private readonly store: Pick<BackgroundTaskStore, "listFor" | "get">,
     @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
+    private readonly sandbox: Pick<SandboxService, "availableFor" | "ifRunning">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "findByIdem">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationEnvironments)
@@ -193,7 +193,7 @@ export class BackgroundTasks {
       task.sid !== null &&
       task.sandboxCreatedAt !== null &&
       task.environmentId !== null &&
-      this.sandbox.available &&
+      (await this.sandbox.availableFor(task.environmentId)) &&
       (await this.environmentUsable(orgId, task.conversationId))
     ) {
       const createdAt = task.sandboxCreatedAt;

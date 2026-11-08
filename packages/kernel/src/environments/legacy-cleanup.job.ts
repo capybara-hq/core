@@ -40,7 +40,7 @@ export interface LegacyCleanupResult {
 export class LegacySandboxCleanupJob {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "lookup">,
+    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "forName">,
     @Inject(KernelConfigService) readonly config: KernelConfigService,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -66,8 +66,8 @@ export class LegacySandboxCleanupJob {
       .select(["provider", (eb) => eb.fn.countAll<string>().as("n")])
       .groupBy("provider")
       .execute();
-    const loaded = byProvider.filter((p) => this.providers.lookup(p.provider) !== undefined);
-    const unloaded = byProvider.filter((p) => this.providers.lookup(p.provider) === undefined);
+    const loaded = byProvider.filter((p) => this.providers.forName(p.provider) !== undefined);
+    const unloaded = byProvider.filter((p) => this.providers.forName(p.provider) === undefined);
     const kept = unloaded.reduce((sum, p) => sum + Number(p.n), 0);
     if (unloaded.length > 0 && now.getTime() % 3_600_000 < PERIOD_MS) {
       this.log.warn("legacy sandboxes kept: their provider is not loaded", {
@@ -94,7 +94,7 @@ export class LegacySandboxCleanupJob {
     for (const row of rows) {
       if (signal?.aborted) break;
       const name = `cap-${row.conversation_id}`;
-      const impl = this.providers.lookup(row.provider);
+      const impl = this.providers.forName(row.provider)?.impl;
       if (impl === undefined) continue; // unloaded since the query: kept for a later tick
       const callSignal = () =>
         signal
@@ -104,7 +104,7 @@ export class LegacySandboxCleanupJob {
         await impl.destroyByName(name, callSignal());
         await impl.destroyFileSystemByName(name, callSignal());
         if (row.prev_provider !== null && row.prev_provider !== row.provider) {
-          const prev = this.providers.lookup(row.prev_provider);
+          const prev = this.providers.forName(row.prev_provider)?.impl;
           if (prev !== undefined) await prev.destroyByName(name, callSignal());
           else {
             this.log.warn("legacy sandbox of a replaced provider left: provider not loaded", {

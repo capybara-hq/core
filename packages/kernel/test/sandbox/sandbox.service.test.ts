@@ -204,9 +204,9 @@ const readIn = (s: SandboxService, name: string, env = envId) =>
   );
 
 describe("没有提供方", () => {
-  it("available 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
+  it("cloudAvailable 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
     const s = service(() => undefined);
-    expect(s.available).toBe(false);
+    expect(s.cloudAvailable).toBe(false);
     const err = await use(s).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("sandbox.unavailable");
@@ -272,7 +272,7 @@ describe("组织出站设置（Ruling M19）", () => {
 describe("lazy creation", () => {
   it("the first use creates the file system, then the instance on it (name cap-env-<environment>, no image by default, limits from config); later uses reuse them", async () => {
     const s = service();
-    expect(s.available).toBe(true);
+    expect(s.cloudAvailable).toBe(true);
     expect(await ops()).toEqual([]);
     const a = await use(s);
     expect(a.info).toEqual({ fresh: true, restarted: false });

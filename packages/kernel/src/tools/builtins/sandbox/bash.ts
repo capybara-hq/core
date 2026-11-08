@@ -196,7 +196,6 @@ async function runInBackground(
       "Background tasks can only be started from an agent run; call Bash without run_in_background.",
     );
   }
-  if (!sandbox.available) throw noSandboxError();
   const currentInstance = sandbox.currentInstance.bind(sandbox);
   const cfg = deps.config.get();
   const maxMs = backgroundMaxSeconds(cfg) * 1000;
@@ -210,6 +209,7 @@ async function runInBackground(
   } catch (e) {
     throw mapSandboxError(e);
   }
+  if (!(await sandbox.availableFor(environmentId))) throw noSandboxError();
   const maxTasks = cfg.sandbox.background.maxTasks;
   const id = newTaskId();
   const description = input.description ?? clip(input.command, 120);

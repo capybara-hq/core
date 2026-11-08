@@ -32,7 +32,7 @@ export interface SandboxToolDeps {
    * `currentInstance` too: a background `Bash` launch records the instance it started in; and
    * `ifRunning`, which `TaskOutput` reads a task through.
    */
-  sandbox: Pick<SandboxService, "available" | "withSandbox"> &
+  sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
   /** The environment a call enters: the root conversation's, checked for its owner every call. */
   environments: Pick<ConversationEnvironments, "forTool">;
@@ -476,11 +476,15 @@ export async function withPathLease<T>(
   }
 }
 
-/** 本部署是否有沙箱：没有时返回「不可用」原因（注册表据此把沙箱工具报为不可用）。 */
+/**
+ * Whether this deployment has a cloud sandbox: without one, the reason the registry reports the
+ * sandbox tools unavailable with. A listing has no environment yet, so it asks the cloud provider
+ * only.
+ */
 export const unavailableWhenNoSandbox =
   (deps: Pick<SandboxToolDeps, "sandbox">) =>
   (_ctx?: { orgId: string }): string | null =>
-    deps.sandbox.available ? null : SANDBOX_UNAVAILABLE_REASON;
+    deps.sandbox.cloudAvailable ? null : SANDBOX_UNAVAILABLE_REASON;
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */
 export function looksBinary(data: Uint8Array): boolean {

@@ -560,7 +560,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       let filesText: string;
       if (others.length === 0) {
         filesText = "This skill has no files besides its instructions.";
-      } else if (!deps.sandbox.available) {
+      } else if (!deps.sandbox.cloudAvailable) {
         filesText =
           `Skill files (for reference):\n${fileList(manifest.files)}\n` +
           "This deployment has no sandbox, so the skill's scripts and other files are not available; " +

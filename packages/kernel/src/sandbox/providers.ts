@@ -2,34 +2,78 @@ import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plug
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
 
-/** 当前的 `sandbox@2` 提供方：插件名与实现。 */
+/** The kernel-internal provider of connected machines (`device` environments). */
+export const DEVICE_PROVIDER = "@device";
+
+/**
+ * A kernel-internal provider name: it starts with `@`, which no extension name can
+ * (`EXTENSION_NAME_RE`), so it never collides with a loaded `sandbox@2` plugin.
+ */
+export const isInternalProvider = (name: string): boolean => name.startsWith("@");
+
+/** A sandbox provider: its name (plugin name, or an internal `@…` name) and implementation. */
 export interface SandboxProviderEntry {
   plugin: string;
   impl: SandboxProvider;
 }
 
 /**
- * The `sandbox@2` providers of this process, read from the {@link ExtensionRegistry} at every
- * call: providers are ready only after the extension load, and change with installs.
+ * The sandbox providers of this process. The cloud provider is the loaded `sandbox@2` extension,
+ * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
+ * extension load, and change with installs). Kernel-internal providers (`@device`) are registered
+ * by their module on init, in every replica: they are code, not shared state.
  */
 @Injectable()
 export class SandboxProviders {
+  private readonly internal = new Map<string, SandboxProviderEntry>();
+
   constructor(
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
   ) {}
 
-  /** The current provider; undefined without one. */
-  current(): SandboxProviderEntry | undefined {
+  /** Registers a kernel-internal provider (an `@…` name); the last registration of a name wins. */
+  register(entry: SandboxProviderEntry): void {
+    if (!isInternalProvider(entry.plugin)) {
+      throw new Error(`an internal sandbox provider name starts with @: ${entry.plugin}`);
+    }
+    this.internal.set(entry.plugin, entry);
+  }
+
+  /** The cloud provider (the loaded `sandbox@2` extension); undefined without one. */
+  cloud(): SandboxProviderEntry | undefined {
     const e = this.registry.list("sandbox").find((x) => x.capability === SANDBOX_EXTENSION_POINT);
     return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
   }
 
-  /** A still-loaded provider by plugin name (to destroy an earlier provider's instance). */
-  lookup(plugin: string): SandboxProvider | undefined {
-    return this.registry
+  /**
+   * A provider by name: a registered internal provider, else a still-loaded `sandbox@2` extension
+   * of that plugin name (to destroy an earlier provider's resources).
+   */
+  forName(name: string): SandboxProviderEntry | undefined {
+    const own = this.internal.get(name);
+    if (own) return own;
+    const e = this.registry
       .list("sandbox")
-      .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === plugin)?.impl as
-      | SandboxProvider
-      | undefined;
+      .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === name);
+    return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
   }
+
+  /** The provider an environment recording `provider` works with ({@link providerForEnvironment}). */
+  forEnvironment(provider: string | null): SandboxProviderEntry | undefined {
+    return providerForEnvironment(this, provider);
+  }
+}
+
+/**
+ * The provider an environment works with, from its `environments.provider`: an internal one
+ * (`@device`) by that name only, never falling back to the cloud provider; any other environment
+ * is a cloud environment and uses the current cloud provider (files kept by another provider are
+ * refused by the sandbox service, `environment.unavailable`).
+ */
+export function providerForEnvironment(
+  providers: Pick<SandboxProviders, "cloud" | "forName">,
+  provider: string | null,
+): SandboxProviderEntry | undefined {
+  if (provider !== null && isInternalProvider(provider)) return providers.forName(provider);
+  return providers.cloud();
 }
