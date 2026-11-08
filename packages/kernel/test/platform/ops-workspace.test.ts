@@ -324,6 +324,27 @@ describe("agents", () => {
     );
   });
 
+  it("a connector tool 允许 the input adds is confirmed every time, never remembered (an agent never loosens itself on a grant)", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const mc = ctxOf(env.memId, mine);
+    const KEY = "mcp__chat__send_message";
+    const upd = (toolPolicies: Record<string, string>) => ({
+      agentId: mine,
+      version: 1,
+      toolPolicies,
+    });
+    // tightening stays personal (may be remembered)
+    expect(await classOf("agents.update", upd({ [KEY]: "ask" }), mc)).toBe("personal");
+    // adding an allow: confirmed each time
+    expect(await classOf("agents.update", upd({ [KEY]: "allow" }), mc)).toBe("org");
+    // creating an agent that carries an allow: confirmed each time too
+    const create = (toolPolicies: Record<string, string>) => ({
+      definition: { name: "New", model: MODEL, toolPolicies },
+    });
+    expect(await classOf("agents.create", create({ [KEY]: "deny" }), mc)).toBe("personal");
+    expect(await classOf("agents.create", create({ [KEY]: "allow" }), mc)).toBe("org");
+  });
+
   it("the owner updates with the current version; a stale version is refused", async () => {
     const id = await agentOf(env.memId, "private");
     const c = ctxOf(env.memId, id);
