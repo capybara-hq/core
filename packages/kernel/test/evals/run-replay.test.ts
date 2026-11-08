@@ -67,6 +67,8 @@ let checkFailed = 0;
 let chargeFailed = 0;
 /** 置为 true 时删除评测对话一律失败。 */
 let deleteFails = false;
+/** Runs once after the next case is seeded (before its replay resolves any model). */
+let onSeeded: (() => Promise<void>) | undefined;
 
 let owner: Req;
 let admin: Req;
@@ -100,6 +102,11 @@ beforeAll(async () => {
           provide: EVAL_REPLAY_HOOKS,
           useValue: {
             async afterRunSeeded(evalRunId) {
+              if (onSeeded) {
+                const f = onSeeded;
+                onSeeded = undefined;
+                await f();
+              }
               if (cancelThenCrash) {
                 cancelThenCrash = false;
                 await db
@@ -672,6 +679,41 @@ describe("整轮回放", { timeout: 60_000 }, () => {
     expect(b?.status, JSON.stringify(b?.error)).toBe("done");
     expect(b?.drift).toEqual(["model_switched"]);
     expect(await evalModels(b as EvalResultView)).toEqual(["fake-1"]);
+  });
+
+  it("a candidate model disabled in the case's org after the check is refused by the replay itself (spec B §5.3)", async () => {
+    const conv = await createConv(admin, orgId, agentId);
+    await postMessage(admin, orgId, conv, "echo:to replay");
+    await waitForTerminal(db, conv);
+    const [src] = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    const setId = await createSet();
+    await addCase(setId, conv, src?.id as string);
+    const disable = (models: string[], enable: string[] = []) =>
+      admin({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+        payload: { disable: models, enable },
+      });
+    // the run's candidate check passes (fake-2 enabled), then the org disables it
+    onSeeded = async () => {
+      expect((await disable(["fake-2"])).statusCode).toBe(200);
+    };
+    try {
+      const run = await startRun(setId, {
+        candidate: { model: { provider: "model-fake", model: "fake-2" } },
+      });
+      await finished(run.id);
+      const [r] = await results(run.id);
+      expect(r?.status).toBe("error");
+      expect(JSON.stringify(r?.error)).toContain("fake-2 is disabled");
+    } finally {
+      onSeeded = undefined;
+      expect((await disable([], ["fake-2"])).statusCode).toBe(200);
+    }
   });
 
   it("Review Focus 3：参数不同或没有记录的工具都不执行；模型收到英文错误，结果标 unmatched", async () => {

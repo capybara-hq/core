@@ -91,6 +91,7 @@ const ROUTES: Routes = {
   [`GET ${O}/invitations`]: () => json(200, { invitations: [INVITATION] }),
   [`GET ${O}/model-purposes`]: () => json(200, { purposes: [] }),
   [`GET ${O}/models`]: () => json(200, { providers: [] }),
+  [`GET ${O}/models/catalog`]: () => json(200, { providers: [] }),
   [`GET ${O}/plugin-installs`]: () => json(200, { installs: [] }),
   [`GET ${O}/extensions`]: () => json(200, { extensions: [] }),
   [`GET ${O}/file-previewers`]: () => json(200, { items: [] }),
@@ -405,7 +406,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it.each([`GET ${O}/model-purposes`, `GET ${O}/models`])(
+  it.each([`GET ${O}/model-purposes`, `GET ${O}/models`, `GET ${O}/models/catalog`])(
     "/settings/models: an empty cache shows the template's loading state, then the data (held: %s)",
     async (held) => {
       const { release } = await renderHeld("/settings/models", held);

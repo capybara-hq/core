@@ -234,6 +234,7 @@ describe("what an extension change invalidates in the org", () => {
     for (const key of [
       k.readiness(),
       k.models(),
+      k.modelsCatalog(),
       k.orgPurposes(),
       k.contributions(),
       k.extensionPages(),

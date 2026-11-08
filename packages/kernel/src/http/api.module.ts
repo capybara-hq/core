@@ -43,6 +43,8 @@ import { ChannelConnectionsController } from "../channels/connections.controller
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { EnvironmentsController } from "../environments/environments.controller.js";
+import { EnvironmentsModule } from "../environments/environments.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -54,6 +56,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { InitialPasswordsController } from "../identity/initial-passwords.controller.js";
 import { MeController } from "../identity/me.controller.js";
 import {
   BindController,
@@ -62,6 +65,7 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
+import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
 import { DirectorySyncController } from "../orgs/directory-sync.controller.js";
@@ -97,6 +101,7 @@ import { UiController } from "../ui/views.controller.js";
 const CONTROLLERS: Type[] = [
   AuthController,
   MeController,
+  InitialPasswordsController,
   OrgsController,
   OrgSettingsController,
   InvitationsController,
@@ -115,9 +120,11 @@ const CONTROLLERS: Type[] = [
   AgentSaveAsTemplateController,
   PendingConnectorsController,
   ModelsController,
+  ModelEnablementController,
   ReadinessController,
   ConversationsController,
   BackgroundController,
+  EnvironmentsController,
   AttachmentsController,
   SkillsController,
   SkillChangesController,
@@ -173,6 +180,7 @@ const CONTROLLERS: Type[] = [
     AgentsModule,
     ConversationsModule,
     BackgroundModule,
+    EnvironmentsModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,

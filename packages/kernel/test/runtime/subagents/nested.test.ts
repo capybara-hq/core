@@ -300,8 +300,17 @@ describe("nested sub-agents", () => {
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map((r) => r.budget_run_id))).toEqual(new Set([rootRun.id]));
     // the great-grandchild wrote into the root conversation's sandbox
-    const sandboxes = await db.selectFrom("sandboxes").select("conversation_id").execute();
-    expect(sandboxes.map((s) => s.conversation_id)).toEqual([conv]);
+    // one instance, in the root conversation's environment
+    const sandboxes = await db
+      .selectFrom("environment_instances")
+      .select("environment_id")
+      .execute();
+    const { environment_id: rootEnv } = await db
+      .selectFrom("conversations")
+      .select("environment_id")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(sandboxes.map((s) => s.environment_id)).toEqual([rootEnv]);
   }, 90_000);
 
   it("org allowlist, dispatchable and visibility gates are checked at depth 2", async () => {

@@ -533,6 +533,16 @@ export class ChannelConnections implements OnApplicationShutdown {
     return inserted;
   }
 
+  /** The read-only refusals of {@link update} that need no write (the Platform tool's precheck). */
+  async checkUpdate(orgId: string, id: string, patch: UpdateChannelInput): Promise<void> {
+    const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
+    if (!current) throw notFound();
+    if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
+    if (patch.inboundMode === "webhook" && patch.inboundMode !== current.inbound_mode) {
+      this.assertWebhookAvailable(current.plugin);
+    }
+  }
+
   /**
    * 修改名称、agent、未绑定策略、启停，或轮换凭据（新配置同样先 `verify`，失败什么都不改）。
    * 插件在该组织停用时仍可轮换凭据，此时不 verify，返回 `verifySkipped: true`。
@@ -543,6 +553,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     patch: UpdateChannelInput,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ channel: ChannelConnectionView; verifySkipped: boolean }> {
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
     if (!current) throw notFound();
@@ -578,6 +590,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       verified,
       actorAccountId,
       actorTokenId,
+      auditDetail,
     });
     if (rotated) this.reportSecrets(rotated.schema, rotated.full);
     // New config, re-enabled or back to long connection: clear the backoff so the next scan connects
@@ -610,8 +623,9 @@ export class ChannelConnections implements OnApplicationShutdown {
     verified: { botUserId: string; tenantId: string } | undefined;
     actorAccountId: string;
     actorTokenId: string | undefined;
+    auditDetail: Record<string, unknown> | undefined;
   }) {
-    const { orgId, id, patch, rotated, verified, actorAccountId, actorTokenId } = a;
+    const { orgId, id, patch, rotated, verified, actorAccountId, actorTokenId, auditDetail } = a;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
     if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
     if (rotated) {
@@ -655,6 +669,7 @@ export class ChannelConnections implements OnApplicationShutdown {
           ),
           ...(rotated ? ["config"] : []),
         ],
+        ...auditDetail,
       },
     });
     return updated;
@@ -666,8 +681,10 @@ export class ChannelConnections implements OnApplicationShutdown {
     id: string,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.removeIn(orgId, id, actorAccountId, actorTokenId);
+    await this.removeIn(orgId, id, actorAccountId, actorTokenId, auditDetail);
     await this.changed(id, true);
   }
 
@@ -678,6 +695,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     id: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
     const r = await this.db
@@ -698,6 +716,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       orgId,
       action: "channel.deleted",
       target: id,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 

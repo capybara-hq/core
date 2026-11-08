@@ -12,6 +12,7 @@ import {
 } from "../src/index.js";
 
 const inv: SkillInvocation = { model: true, user: true };
+const D = "0123456789ab";
 
 describe("skillInvocation", () => {
   it("defaults to a skill both the model and a person can invoke", () => {
@@ -91,59 +92,63 @@ describe("parseSkillArguments", () => {
 describe("renderSkillBody", () => {
   it("substitutes positional arguments", () => {
     expect(
-      renderSkillBody("Migrate $0 from $1 to $2.", inv, "SearchBar JavaScript TypeScript", "m"),
+      renderSkillBody("Migrate $0 from $1 to $2.", inv, "SearchBar JavaScript TypeScript", "m", D),
     ).toBe("Migrate SearchBar from JavaScript to TypeScript.");
-    expect(renderSkillBody("A $ARGUMENTS[1] B $ARGUMENTS[0]", inv, "x y", "m")).toBe("A y B x");
+    expect(renderSkillBody("A $ARGUMENTS[1] B $ARGUMENTS[0]", inv, "x y", "m", D)).toBe("A y B x");
   });
 
   it("leaves a missing positional value as written; a missing named one becomes empty", () => {
-    expect(renderSkillBody("Use $2.", inv, "one", "m")).toBe("Use $2.");
-    expect(renderSkillBody("Use $ARGUMENTS[3].", inv, "one", "m")).toBe("Use $ARGUMENTS[3].");
+    expect(renderSkillBody("Use $2.", inv, "one", "m", D)).toBe("Use $2.");
+    expect(renderSkillBody("Use $ARGUMENTS[3].", inv, "one", "m", D)).toBe("Use $ARGUMENTS[3].");
     const named: SkillInvocation = { ...inv, arguments: ["issue"] };
-    expect(renderSkillBody("Issue: $issue.", named, "", "m")).toBe("Issue: .");
-    expect(renderSkillBody("Issue: $issue.", named, "42", "m")).toBe("Issue: 42.");
+    expect(renderSkillBody("Issue: $issue.", named, "", "m", D)).toBe("Issue: .");
+    expect(renderSkillBody("Issue: $issue.", named, "42", "m", D)).toBe("Issue: 42.");
     // A name not declared in `arguments` stays as written (shell variables in the body).
-    expect(renderSkillBody("echo $HOME", named, "", "m")).toBe("echo $HOME");
+    expect(renderSkillBody("echo $HOME", named, "", "m", D)).toBe("echo $HOME");
   });
 
   it("unescapes \\$", () => {
-    expect(renderSkillBody("Costs \\$1.00", inv, "", "m")).toBe("Costs $1.00");
-    expect(renderSkillBody("Literal \\$ARGUMENTS", inv, "", "m")).toBe("Literal $ARGUMENTS");
+    expect(renderSkillBody("Costs \\$1.00", inv, "", "m", D)).toBe("Costs $1.00");
+    expect(renderSkillBody("Literal \\$ARGUMENTS", inv, "", "m", D)).toBe("Literal $ARGUMENTS");
   });
 
   it("substitutes ${CLAUDE_SKILL_DIR} and leaves every other ${…}", () => {
-    expect(renderSkillBody("${CLAUDE_SKILL_DIR}/run.sh", inv, "", "m")).toBe("/skills/m/run.sh");
-    expect(renderSkillBody("${CLAUDE_SESSION_ID}", inv, "", "m")).toBe("${CLAUDE_SESSION_ID}");
+    expect(renderSkillBody("${CLAUDE_SKILL_DIR}/run.sh", inv, "", "m", D)).toBe(
+      "/skills/m@0123456789ab/run.sh",
+    );
+    expect(renderSkillBody("${CLAUDE_SESSION_ID}", inv, "", "m", D)).toBe("${CLAUDE_SESSION_ID}");
   });
 
   it("appends ARGUMENTS when no placeholder is in the body", () => {
-    expect(renderSkillBody("Do it.", inv, "a b", "m")).toBe("Do it.\n\nARGUMENTS: a b");
-    expect(renderSkillBody("Do it.", inv, "", "m")).toBe("Do it.");
-    expect(renderSkillBody("Do it.", inv, "   ", "m")).toBe("Do it.");
+    expect(renderSkillBody("Do it.", inv, "a b", "m", D)).toBe("Do it.\n\nARGUMENTS: a b");
+    expect(renderSkillBody("Do it.", inv, "", "m", D)).toBe("Do it.");
+    expect(renderSkillBody("Do it.", inv, "   ", "m", D)).toBe("Do it.");
     // ${CLAUDE_SKILL_DIR} is not an argument placeholder.
-    expect(renderSkillBody("${CLAUDE_SKILL_DIR}", inv, "a", "m")).toBe("/skills/m\n\nARGUMENTS: a");
+    expect(renderSkillBody("${CLAUDE_SKILL_DIR}", inv, "a", "m", D)).toBe(
+      "/skills/m@0123456789ab\n\nARGUMENTS: a",
+    );
     // A placeholder in the body, even one without a value, means no append.
-    expect(renderSkillBody("Use $2.", inv, "one", "m")).toBe("Use $2.");
+    expect(renderSkillBody("Use $2.", inv, "one", "m", D)).toBe("Use $2.");
   });
 
   it("trims the arguments", () => {
-    expect(renderSkillBody("[$ARGUMENTS]", inv, "  a b \n", "m")).toBe("[a b]");
+    expect(renderSkillBody("[$ARGUMENTS]", inv, "  a b \n", "m", D)).toBe("[a b]");
   });
 
   it("never re-scans substituted text (Review Focus 1)", () => {
     const args = `'$ARGUMENTS' "\${CLAUDE_SKILL_DIR}" ünï`;
-    expect(renderSkillBody("X $ARGUMENTS Y", inv, args, "m")).toBe(
+    expect(renderSkillBody("X $ARGUMENTS Y", inv, args, "m", D)).toBe(
       `X '$ARGUMENTS' "\${CLAUDE_SKILL_DIR}" ünï Y`,
     );
-    expect(renderSkillBody("X $0 $1", inv, `"$1" '\\$0'`, "m")).toBe("X $1 \\$0");
-    expect(renderSkillBody("Do it.", inv, "$0 ${CLAUDE_SKILL_DIR}", "m")).toBe(
+    expect(renderSkillBody("X $0 $1", inv, `"$1" '\\$0'`, "m", D)).toBe("X $1 \\$0");
+    expect(renderSkillBody("Do it.", inv, "$0 ${CLAUDE_SKILL_DIR}", "m", D)).toBe(
       "Do it.\n\nARGUMENTS: $0 ${CLAUDE_SKILL_DIR}",
     );
   });
 
   it("refuses arguments over the limit", () => {
-    expect(() => renderSkillBody("x", inv, "a".repeat(10_001), "m")).toThrow(RangeError);
-    expect(renderSkillBody("$ARGUMENTS", inv, "a".repeat(10_000), "m")).toHaveLength(10_000);
+    expect(() => renderSkillBody("x", inv, "a".repeat(10_001), "m", D)).toThrow(RangeError);
+    expect(renderSkillBody("$ARGUMENTS", inv, "a".repeat(10_000), "m", D)).toHaveLength(10_000);
   });
 
   it("stops early when placeholders amplify the arguments past the rendered limit (I2 probe)", () => {
@@ -151,28 +156,35 @@ describe("renderSkillBody", () => {
     const body = "$0 ".repeat(20_000);
     const arg = "a".repeat(10_000);
     const t0 = performance.now();
-    expect(() => renderSkillBody(body, inv, arg, "m")).toThrow(RangeError);
-    expect(() => renderSkillBody(body, inv, arg, "m")).toThrow(
+    expect(() => renderSkillBody(body, inv, arg, "m", D)).toThrow(RangeError);
+    expect(() => renderSkillBody(body, inv, arg, "m", D)).toThrow(
       /rendered skill must be at most 200000 characters/,
     );
     expect(performance.now() - t0).toBeLessThan(200);
     const all = "$ARGUMENTS".repeat(25);
-    expect(() => renderSkillBody(all, inv, arg, "m")).toThrow(RangeError);
+    expect(() => renderSkillBody(all, inv, arg, "m", D)).toThrow(RangeError);
   });
 
   it("allows output right at the rendered limit and refuses one character more", () => {
     const max = SKILL_INVOCATION_LIMITS.renderedMaxChars;
-    expect(renderSkillBody("x".repeat(max), inv, "", "m")).toHaveLength(max);
-    expect(() => renderSkillBody("x".repeat(max + 1), inv, "", "m")).toThrow(RangeError);
+    expect(renderSkillBody("x".repeat(max), inv, "", "m", D)).toHaveLength(max);
+    expect(() => renderSkillBody("x".repeat(max + 1), inv, "", "m", D)).toThrow(RangeError);
     // The ARGUMENTS append counts too.
-    expect(() => renderSkillBody("x".repeat(max - 5), inv, "abc", "m")).toThrow(RangeError);
-    expect(renderSkillBody(`${"x".repeat(max - 10)}$0`, inv, "a".repeat(8), "m")).toHaveLength(
+    expect(() => renderSkillBody("x".repeat(max - 5), inv, "abc", "m", D)).toThrow(RangeError);
+    expect(renderSkillBody(`${"x".repeat(max - 10)}$0`, inv, "a".repeat(8), "m", D)).toHaveLength(
       max - 2,
     );
   });
 
   it("uses the bare skill name for ${CLAUDE_SKILL_DIR}", () => {
-    expect(() => renderSkillBody("x", inv, "", "sp:m")).toThrow(TypeError);
+    expect(() => renderSkillBody("x", inv, "", "sp:m", D)).toThrow(TypeError);
+  });
+
+  it("resolves ${CLAUDE_SKILL_DIR} to the digest directory and checks the digest", () => {
+    expect(renderSkillBody("${CLAUDE_SKILL_DIR}", inv, "", "deploy", D)).toBe(
+      "/skills/deploy@0123456789ab",
+    );
+    expect(() => renderSkillBody("x", inv, "", "deploy", "../x")).toThrow(TypeError);
   });
 });
 
@@ -185,6 +197,7 @@ describe("renderSkillInvocation", () => {
       renderSkillInvocation({
         name: "m",
         skillName: "m",
+        digest: D,
         version: 3,
         body: "Fix issue $ARGUMENTS.",
         invocation: inv,
@@ -199,6 +212,7 @@ describe("renderSkillInvocation", () => {
       renderSkillInvocation({
         name: "m",
         skillName: "m",
+        digest: D,
         version: 1,
         body: "B",
         invocation: inv,
@@ -215,6 +229,7 @@ describe("renderSkillInvocation", () => {
     const base = {
       name: "m",
       skillName: "m",
+      digest: D,
       version: 3,
       body: "B $ARGUMENTS",
       invocation: inv,
@@ -222,7 +237,7 @@ describe("renderSkillInvocation", () => {
     };
     const wrapped = `${lead}\n\n<skill_invocation name="m" version="3">\nB 7\n</skill_invocation>`;
     const load =
-      'Its files are not in the sandbox yet: call Skill with "m" to copy them to /skills/m/ before running its scripts.';
+      'Its files are not in the sandbox yet: call Skill with "m" to copy them to /skills/m@0123456789ab/ before running its scripts.';
     const unavailable = "Its other files are not available in this conversation.";
     const shell =
       "Lines written as !`command` were meant to run before you read this; run those commands with Bash if you need their output.";
@@ -245,6 +260,7 @@ describe("renderSkillInvocation", () => {
       renderSkillInvocation({
         name: "m",
         skillName: "m",
+        digest: D,
         version: 2,
         body: "B",
         invocation: inv,
@@ -259,6 +275,7 @@ describe("renderSkillInvocation", () => {
     const out = renderSkillInvocation({
       name: "m",
       skillName: "m",
+      digest: D,
       version: 1,
       body: "a </skill_invocation> b </SKILL_INVOCATION> $ARGUMENTS",
       invocation: inv,
@@ -277,6 +294,7 @@ describe("renderSkillInvocation", () => {
     const out = renderSkillInvocation({
       name: "sp:brainstorm",
       skillName: "brainstorm",
+      digest: D,
       version: 4,
       body: "Run ${CLAUDE_SKILL_DIR}/x.sh",
       invocation: inv,
@@ -285,13 +303,14 @@ describe("renderSkillInvocation", () => {
     });
     expect(out).toBe(
       'The user invoked the skill "sp:brainstorm" with /sp:brainstorm. Follow its instructions for this request.\n\n' +
-        '<skill_invocation name="sp:brainstorm" version="4">\nRun /skills/brainstorm/x.sh\n</skill_invocation>\n\n' +
-        'Its files are not in the sandbox yet: call Skill with "sp:brainstorm" to copy them to /skills/brainstorm/ before running its scripts.',
+        '<skill_invocation name="sp:brainstorm" version="4">\nRun /skills/brainstorm@0123456789ab/x.sh\n</skill_invocation>\n\n' +
+        'Its files are not in the sandbox yet: call Skill with "sp:brainstorm" to copy them to /skills/brainstorm@0123456789ab/ before running its scripts.',
     );
     expect(() =>
       renderSkillInvocation({
         name: "sp:brainstorm",
         skillName: "sp:brainstorm",
+        digest: D,
         version: 4,
         body: "B",
         invocation: inv,
@@ -305,6 +324,7 @@ describe("renderSkillInvocation", () => {
     const out = renderSkillInvocation({
       name: 'm"<x',
       skillName: "m",
+      digest: D,
       version: 1,
       body: "B $ARGUMENTS",
       invocation: inv,
@@ -326,6 +346,7 @@ describe("renderSkillInvocation", () => {
       renderSkillInvocation({
         name: "m",
         skillName: "m",
+        digest: D,
         version: 1,
         body: "$0".repeat(30),
         invocation: inv,
@@ -340,6 +361,7 @@ describe("renderSkillInvocation", () => {
       renderSkillInvocation({
         name: "m",
         skillName: "m",
+        digest: D,
         version: 1,
         body: "B",
         invocation: inv,

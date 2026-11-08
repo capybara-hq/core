@@ -1,6 +1,6 @@
 import { Controller, Get, HttpCode, Inject, Param, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import { z } from "zod";
+import type { z } from "zod";
 import { CatalogRequestsService, type CatalogRequestView } from "../catalog/requests.service.js";
 import {
   CurrentPrincipal,
@@ -12,10 +12,11 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import type { AgentView } from "./agent-lookup.js";
+import { PendingConnectorBindBody as BindBodySchema } from "./agents.schemas.js";
 import { AgentsService } from "./agents.service.js";
 import { PendingConnectorsService } from "./pending-connectors.service.js";
 
-const BindBody = z.object({ connectorId: z.string().min(1).max(100) }).strict();
+const BindBody = BindBodySchema;
 
 class PendingConnectorBindBody extends createZodDto(BindBody, "PendingConnectorBindBody") {}
 

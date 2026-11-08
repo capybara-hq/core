@@ -15,6 +15,8 @@ export const ERROR_CODES = {
   "account.login_taken": 409,
   "account.not_found": 404,
   "account.last_super_admin": 409,
+  "account.initial_password_unavailable": 404,
+  "account.create_needs_approval": 409,
   "auth.account_disabled": 403,
   "auth.required": 401,
   "auth.token_expired": 401,
@@ -25,6 +27,7 @@ export const ERROR_CODES = {
   "auth.csrf": 403,
   "auth.rate_limited": 429,
   "auth.session_required": 403,
+  "auth.password_change_required": 403,
   "token.not_found": 404,
   "org.not_found": 404,
   "org.creation_disabled": 403,
@@ -239,7 +242,18 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  "sandbox.not_found": 404,
+  /** The environment is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
+  "environment.not_found": 404,
+  /** The environment's file system is gone at the provider; reset its files to start empty. */
+  "environment.files_lost": 409,
+  /** The caller may see the environment but not use it (project environments, later phases). */
+  "environment.forbidden": 403,
+  /** The environment's provider is not the deployment's current one, or there is none. */
+  "environment.unavailable": 503,
+  /** The person already has a live environment with this name (case-insensitive). */
+  "environment.name_taken": 409,
+  /** The person already has `environments.maxPersonal` live personal environments. */
+  "environment.limit_reached": 409,
   "skill.not_found": 404,
   /** Also a skill neither the model nor a person could use (phase D: both invocation flags off). */
   "skill.invalid_package": 400,
@@ -269,6 +283,9 @@ export const ERROR_CODES = {
   "eval.candidate_invalid": 400,
   "model.unconfigured": 409,
   "model.purpose_unknown": 404,
+  "model.provider_not_found": 404,
+  /** An extension's `ctx.models.embed` call was denied by a `model.request` policy hook. */
+  "model.hook_denied": 403,
   "eval.result_not_found": 404,
 } as const satisfies Record<string, number>;
 

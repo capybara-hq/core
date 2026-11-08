@@ -858,132 +858,111 @@ describe("修复波 W1：匿名访客保护", () => {
   });
 });
 
-describe("修复波 S2：离职销毁此人对话的沙箱", () => {
-  it("offboard 记下此人在该组织还没销毁的沙箱，提交后交给 sandboxes.destroy；别人的、别的组织的、已销毁的不算", async () => {
-    const conv = async (orgId: string, agentId: string, accountId: string) => {
-      const id = randomUUID();
-      await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-        VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
-      return id;
-    };
-    const box = (conversationId: string, orgId: string, status: string) =>
-      sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
-        VALUES (${conversationId}, ${orgId}, 'sandbox-fake', ${status})`.execute(raw);
-    const suspended = await conv(f.orgId, f.agentId, f.leaver.id);
-    const gone = await conv(f.orgId, f.agentId, f.leaver.id);
-    const others = await conv(f.orgId, f.agentId, f.bystander.id);
-    const otherOrg = await conv(f.otherOrgId, f.otherOrgAgentId, f.leaver.id);
-    await box(f.conversationId, f.orgId, "running");
-    await box(suspended, f.orgId, "suspended");
-    await box(gone, f.orgId, "destroyed");
-    await box(others, f.orgId, "running");
-    await box(otherOrg, f.otherOrgId, "running");
-    try {
-      const scheduled: string[][] = [];
-      const off = testOffboarding(db, {
-        credentials: credentialsFor(db, null as never),
-        approvals: approvalsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        questions: questionsFor(
-          db,
-          eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-          () => k.app.get(KernelConfigService).get(),
-        ),
-        sandboxDestroy: {
-          destroy: async (ids) => {
-            scheduled.push(ids);
-          },
-        },
-      });
-      const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
-      expect([...r.sandboxConversations].sort()).toEqual([f.conversationId, suspended].sort());
-      await off.afterOffboard(r);
-      expect(scheduled.map((ids) => [...ids].sort())).toEqual([
-        [f.conversationId, suspended].sort(),
-      ]);
-    } finally {
-      await sql`DELETE FROM capybara.sandboxes`.execute(raw);
-    }
+describe("offboarding and the leaver's environments", () => {
+  const env = async (orgId: string, accountId: string, name: string | null) => {
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.environments
+      (id, org_id, owner_kind, owner_account_id, name, is_default, source)
+      VALUES (${id}, ${orgId}, 'personal', ${accountId}, ${name}, ${name === null}, 'cloud')`.execute(
+      raw,
+    );
+    return id;
+  };
+  const toolDeps = () => ({
+    credentials: credentialsFor(db, null as never),
+    approvals: approvalsFor(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      () => k.app.get(KernelConfigService).get(),
+    ),
+    questions: questionsFor(
+      db,
+      eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
+      () => k.app.get(KernelConfigService).get(),
+    ),
   });
 
-  it("投递失败只记 warn，不让离职失败", async () => {
-    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
-      VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running')`.execute(raw);
-    try {
-      const warns: string[] = [];
-      const off = testOffboarding(
-        db,
-        {
-          credentials: credentialsFor(db, null as never),
-          approvals: approvalsFor(
-            db,
-            eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-            () => k.app.get(KernelConfigService).get(),
-          ),
-          questions: questionsFor(
-            db,
-            eventLogFor(db, k.app.get<ExtensionContext["bus"]>(KERNEL_BUS)),
-            () => k.app.get(KernelConfigService).get(),
-          ),
-          sandboxDestroy: {
-            destroy: async () => {
-              throw new Error("queue down");
-            },
-          },
+  it("offboarding deletes the account's environments", async () => {
+    const mine = await env(f.orgId, f.leaver.id, null);
+    const named = await env(f.orgId, f.leaver.id, "Repo");
+    const gone = await env(f.orgId, f.leaver.id, "Old");
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${gone}`.execute(raw);
+    const others = await env(f.orgId, f.bystander.id, null);
+    const otherOrg = await env(f.otherOrgId, f.leaver.id, null);
+    await sql`INSERT INTO capybara.environment_defaults (org_id, account_id, environment_id)
+      VALUES (${f.orgId}, ${f.leaver.id}, ${named}),
+             (${f.otherOrgId}, ${f.leaver.id}, ${otherOrg}),
+             (${f.orgId}, ${f.bystander.id}, ${others})`.execute(raw);
+    const scheduled: string[][] = [];
+    const off = testOffboarding(db, {
+      ...toolDeps(),
+      sandboxDestroy: {
+        destroy: async (ids) => {
+          scheduled.push(ids);
         },
-        { log: { warn: (m: string) => void warns.push(m) } },
-      );
-      const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
-      await off.afterOffboard(r);
-      expect(warns).toContain("offboarding: cannot schedule sandbox destruction");
-      expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
-    } finally {
-      await sql`DELETE FROM capybara.sandboxes`.execute(raw);
-    }
-  });
+      },
+    });
+    const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
+    expect([...r.environments].sort()).toEqual([mine, named].sort());
+    // nothing is enqueued before the caller's commit hook runs
+    expect(scheduled).toEqual([]);
+    await off.afterOffboard(r);
+    expect(scheduled.map((ids) => [...ids].sort())).toEqual([[mine, named].sort()]);
 
-  it("内核：删除 agent 投递 sandbox-destroy-for（它各对话还没销毁的沙箱；已销毁的不算）", async () => {
-    const { agent_id: agentId } = await db
-      .selectFrom("conversations")
-      .select("agent_id")
-      .where("id", "=", f.conversationId)
+    const live = await db
+      .selectFrom("environments")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .execute();
+    expect(live.map((e) => e.id)).toEqual([others, otherOrg].sort());
+    const defaults = await db
+      .selectFrom("environment_defaults")
+      .select(["org_id", "account_id"])
+      .orderBy("org_id")
+      .execute();
+    expect(defaults).toHaveLength(2);
+    expect(defaults).toEqual(
+      expect.arrayContaining([
+        { org_id: f.otherOrgId, account_id: f.leaver.id },
+        { org_id: f.orgId, account_id: f.bystander.id },
+      ]),
+    );
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "org.member.offboarded")
       .executeTakeFirstOrThrow();
-    const other = randomUUID();
-    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
-      VALUES (${other}, ${f.orgId}, ${agentId}, ${f.leaver.id})`.execute(raw);
-    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
-      VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running'),
-             (${other}, ${f.orgId}, 'sandbox-fake', 'destroyed')`.execute(raw);
-    const connection = new Redis(rd.url);
-    const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection });
-    // 内核自己的维护 worker 会立刻执行并删掉完成的任务（removeOnComplete）：暂停队列，读到的才是投递的任务
-    await q.pause();
-    try {
-      const res = await f.ownerReq({
-        method: "DELETE",
-        url: `/api/v1/orgs/${f.orgId}/agents/${agentId}`,
-      });
-      expect(res.statusCode, res.body).toBe(204);
-      const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
-      const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
-      expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
-    } finally {
-      await q.resume();
-      await q.close();
-      await connection.quit();
-      await sql`DELETE FROM capybara.sandboxes`.execute(raw);
-    }
+    expect(audit.detail).toMatchObject({ environmentsDeleted: 2 });
   });
 
-  it("内核：离职投递 sandbox-destroy-for 维护任务（数据为对话 id）", async () => {
-    await sql`INSERT INTO capybara.sandboxes (conversation_id, org_id, provider, status)
-      VALUES (${f.conversationId}, ${f.orgId}, 'sandbox-fake', 'running')`.execute(raw);
+  it("a failed enqueue only warns and does not fail the offboarding", async () => {
+    await env(f.orgId, f.leaver.id, null);
+    const warns: string[] = [];
+    const off = testOffboarding(
+      db,
+      {
+        ...toolDeps(),
+        sandboxDestroy: {
+          destroy: async () => {
+            throw new Error("queue down");
+          },
+        },
+      },
+      { log: { warn: (m: string) => void warns.push(m) } },
+    );
+    const r = await inTransaction(db, () => off.offboard(f.orgId, f.leaver.id, "removed"));
+    await off.afterOffboard(r);
+    expect(warns).toContain("offboarding: cannot schedule environment destruction");
+    expect(await isMember(f.orgId, f.leaver.id)).toBe(false);
+  });
+
+  it("kernel: removing a member enqueues sandbox-destroy-for with their environment ids", async () => {
+    const mine = await env(f.orgId, f.leaver.id, null);
     const connection = new Redis(rd.url);
     const q = new Queue(MAINTENANCE_QUEUE_NAME, { connection });
-    // 内核自己的维护 worker 会立刻执行并删掉完成的任务（removeOnComplete）：暂停队列，读到的才是投递的任务
+    // the kernel's own maintenance worker would run the job at once and remove it
+    // (removeOnComplete): pause the queue so the test reads the enqueued job
     await q.pause();
     try {
       const res = await f.ownerReq({
@@ -993,12 +972,11 @@ describe("修复波 S2：离职销毁此人对话的沙箱", () => {
       expect(res.statusCode).toBe(204);
       const jobs = await q.getJobs(["waiting", "delayed", "active", "completed", "failed"]);
       const job = jobs.find((j) => j.name === SANDBOX_DESTROY_FOR_JOB);
-      expect(job?.data).toEqual({ conversationIds: [f.conversationId] });
+      expect(job?.data).toEqual({ environmentIds: [mine] });
     } finally {
       await q.resume();
       await q.close();
       await connection.quit();
-      await sql`DELETE FROM capybara.sandboxes`.execute(raw);
     }
   });
 });

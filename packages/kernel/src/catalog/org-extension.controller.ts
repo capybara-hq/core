@@ -23,6 +23,11 @@ import {
   OrgToolSwitches,
   type OrgToolSwitchResult,
 } from "../tools/org-tool-switches.js";
+import {
+  OrgExtensionParams as ExtensionParams,
+  OrgExtensionToolParams as ToolParams,
+  OrgToolSwitchPut as ToolSwitchPut,
+} from "./org-extension.schemas.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import type { UninstallPreview } from "./plugin-install.js";
 
@@ -68,19 +73,8 @@ const OverridesTake = z
   .object({ paths: z.array(z.string().min(1).max(256)).min(1).max(200) })
   .strict();
 
-const ToolSwitchPut = z
-  .object({
-    enabled: z.boolean(),
-    /** The hash of the switch-off preview, to confirm turning the tool off. */
-    confirm: z.string().min(1).max(128).optional(),
-  })
-  .strict();
-
 class OrgToolSwitchPutBody extends createZodDto(ToolSwitchPut, "OrgToolSwitchPutBody") {}
 
-/** Route parameters of the overrides and tool switch routes (decision R20). */
-const ExtensionParams = z.object({ extension: z.string().min(1).max(64) });
-const ToolParams = ExtensionParams.extend({ tool: z.string().min(1).max(64) });
 class OrgExtensionParamsDto extends createZodDto(ExtensionParams, "OrgExtensionParams") {}
 class OrgExtensionToolParamsDto extends createZodDto(ToolParams, "OrgExtensionToolParams") {}
 

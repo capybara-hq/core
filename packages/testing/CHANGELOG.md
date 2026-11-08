@@ -1,5 +1,75 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.7
+
+### Minor Changes
+
+- 4a92acb: The model-provider conformance suite runs embedding cases when the target sets `expect.embedding`.
+
+### Patch Changes
+
+- Updated dependencies [4a92acb]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.4
+  - @capybara-hq/plugin-tools@0.1.0-rc.6
+  - @capybara-hq/kernel@0.1.0-rc.6
+
+## 0.1.0-rc.6
+
+### Minor Changes
+
+- 789068d: The fake E2B server builds templates from an image and pauses sandboxes without memory, for the
+  `sandbox@2` E2B provider of environments.
+
+### Patch Changes
+
+- Updated dependencies [49ae0b5]
+- Updated dependencies [f222ff8]
+- Updated dependencies [d423777]
+- Updated dependencies [3a4b54b]
+- Updated dependencies [0f383d7]
+- Updated dependencies [8f7a0a5]
+- Updated dependencies [da49ebd]
+- Updated dependencies [90c6125]
+- Updated dependencies [16225b1]
+- Updated dependencies [3c0ad62]
+- Updated dependencies [789068d]
+- Updated dependencies [7c8d05e]
+- Updated dependencies [abc772e]
+- Updated dependencies [8ee4c6c]
+- Updated dependencies [2a12327]
+- Updated dependencies [12fd552]
+- Updated dependencies [3adad42]
+- Updated dependencies [9f554a3]
+- Updated dependencies [8fd18a1]
+- Updated dependencies [9e90494]
+- Updated dependencies [fddab56]
+- Updated dependencies [e40774d]
+- Updated dependencies [99a00cd]
+- Updated dependencies [e0a0d60]
+- Updated dependencies [fddab56]
+- Updated dependencies [ffc33a2]
+- Updated dependencies [45d7275]
+- Updated dependencies [5ac4bba]
+- Updated dependencies [2fb7d41]
+- Updated dependencies [2321382]
+- Updated dependencies [3c45446]
+- Updated dependencies [cc21d5c]
+- Updated dependencies [a965a1a]
+- Updated dependencies [7278dec]
+- Updated dependencies [bdf5eba]
+- Updated dependencies [6b4da7f]
+- Updated dependencies [703c779]
+- Updated dependencies [77de995]
+- Updated dependencies [11f56fa]
+- Updated dependencies [927fad3]
+- Updated dependencies [7a1e1ae]
+- Updated dependencies [0e38b13]
+- Updated dependencies [cfee6f0]
+- Updated dependencies [26e8757]
+  - @capybara-hq/kernel@0.1.0-rc.5
+  - @capybara-hq/plugin-sdk@0.1.0-rc.3
+  - @capybara-hq/plugin-tools@0.1.0-rc.5
+
 ## 0.1.0-rc.5
 
 ### Patch Changes

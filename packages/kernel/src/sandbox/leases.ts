@@ -16,21 +16,23 @@ import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 
 /**
- * Shared and exclusive sandbox leases (sub-agents spec §10.3): the Redis protocol that lets several
- * holders use one conversation's running sandbox concurrently (shared leases: commands, file reads
- * and writes) while lifecycle changes (create, resume, rebuild, suspend, destroy) stay alone
- * (exclusive leases). Keys, conversation = the sandbox conversation:
+ * Shared and exclusive sandbox leases (sub-agents spec §10.3; environments spec §4.2): the Redis
+ * protocol that lets several holders (every conversation bound to the environment, and their
+ * sub-agents) use one environment's running instance concurrently (shared leases: commands, file
+ * reads and writes) while lifecycle changes (create, resume, rebuild, suspend, destroy, reset) stay
+ * alone (exclusive leases). Every `sandbox@2` provider runs commands concurrently and kills by tag,
+ * so there is no single-holder mode. Keys, env = the environment id:
  *
- * - `capk:sandbox:<conv>`: the lock key kept from before (rollout, §10.8): an exclusive holder's
- *   token, or `shared` while shared leases exist. An older replica's `SET NX` therefore never gets
- *   in while shared leases live, and its token blocks new shared leases.
- * - `capk:sandbox-users:<conv>`: sorted set of shared lease tokens scored by their expiry (ms, Redis
+ * - `capk:sandbox:<env>`: the lock key: an exclusive holder's token, or `shared` while shared
+ *   leases exist.
+ * - `capk:sandbox-users:<env>`: sorted set of shared lease tokens scored by their expiry (ms, Redis
  *   server clock).
- * - `capk:sandbox-intent:<conv>`: an exclusive waiter's token (writer preference); while it exists
+ * - `capk:sandbox-intent:<env>`: an exclusive waiter's token (writer preference); while it exists
  *   no new shared lease is granted.
- * - `capk:sandbox-holders:<conv>`: hash token → expiry of holders that may have commands running
- *   (the per-holder replacement of the single busy marker `capk:sandbox-busy:<conv>`, still read).
- * - `capk:sandbox-path:<conv>:<sha256hex(path)>`: a short per-path lease around the kernel's own
+ * - `capk:sandbox-holders:<env>`: hash token → expiry of holders that may have commands running;
+ *   a record without a live lease is a crashed holder whose commands (tagged with its token) are
+ *   killed by the next acquirer.
+ * - `capk:sandbox-path:<env>:<sha256hex(path)>`: a short per-path lease around the kernel's own
  *   read-modify-write of one file.
  *
  * The first three keys are a {@link LockService} shared lease (`tryShared` / `tryExclusive`,
@@ -40,23 +42,10 @@ import type { KernelLogger } from "../log.js";
  * with {@link SandboxLockLostError}.
  */
 
-/** Prefix of the lock key `capk:sandbox:<conversationId>`. */
+/** Prefix of the lock key `capk:sandbox:<environmentId>`. */
 export const SANDBOX_LOCK_PREFIX = "capk:sandbox:";
 /** TTL of a lease (ms): renewed every TTL / 3 while held. */
 export const SANDBOX_LOCK_TTL_MS = 60_000;
-/**
- * Prefix of the single "sandbox in use" marker of kernels before phase C,
- * `capk:sandbox-busy:<conversationId>`: present while such a holder ran commands. Found by an
- * exclusive acquirer, it means that holder crashed and its commands may still run.
- *
- * Holders of this kernel write it too, with the value {@link BUSY_V2}, while any holder record
- * exists (spec §10.8): this kernel ignores that value, and a replica from before phase C that
- * takes the lock after a new holder crashed sees a marker and kills everything, which is safe
- * because it only gets the lock when no shared lease is live.
- */
-export const SANDBOX_BUSY_PREFIX = "capk:sandbox-busy:";
-/** Value of the busy marker written by holders of this kernel (ignored by it). */
-export const BUSY_V2 = "v2";
 const USERS_PREFIX = "capk:sandbox-users:";
 const INTENT_PREFIX = "capk:sandbox-intent:";
 const HOLDERS_PREFIX = "capk:sandbox-holders:";
@@ -66,11 +55,11 @@ const PATH_LEASE_TTL_MS = 30_000;
 /** Shortest life of an exclusive waiter's intent (ms): outlasts event-loop lag between polls. */
 const INTENT_TTL_FLOOR_MS = 2000;
 
-/** The sandbox of this conversation is busy: waited longer than `sandbox.lockWaitSeconds` (409). */
+/** The environment's sandbox is busy: waited longer than `sandbox.lockWaitSeconds` (409). */
 export const sandboxBusy = (): ApiError =>
   new ApiError(
     "sandbox.busy",
-    "The sandbox for this conversation is busy with another command; wait for it to finish and try again",
+    "The sandbox of this environment is busy with other commands; wait for them to finish and try again",
   );
 
 /** A lease was lost while held, or the record changed under it (generation mismatch). */
@@ -78,11 +67,11 @@ export class SandboxLockLostError extends Error {
   /** `lock`: the lease was lost (renewal failed or none succeeded in time); `generation`: the record's fence changed. */
   readonly reason: "lock" | "generation";
 
-  constructor(conversationId: string, reason: "lock" | "generation" = "lock") {
+  constructor(environmentId: string, reason: "lock" | "generation" = "lock") {
     super(
       reason === "lock"
-        ? `sandbox lock lost for conversation ${conversationId}`
-        : `sandbox state of conversation ${conversationId} changed concurrently (generation mismatch)`,
+        ? `sandbox lock lost for environment ${environmentId}`
+        : `sandbox state of environment ${environmentId} changed concurrently (generation mismatch)`,
     );
     this.name = "SandboxLockLostError";
     this.reason = reason;
@@ -103,7 +92,7 @@ export type LeaseKind = "shared" | "exclusive";
 export interface SandboxLease {
   readonly kind: LeaseKind;
   readonly token: string;
-  readonly conversationId: string;
+  readonly environmentId: string;
   /** Aborts with {@link SandboxLockLostError} when the lease is lost. */
   readonly signal: AbortSignal;
   /** Renews once now; false when the lease is lost (the signal then aborts). */
@@ -114,40 +103,19 @@ export interface SandboxLease {
   downgrade(): Promise<SandboxLease>;
 }
 
-/**
- * KEYS holders, busy; ARGV token, ttl. Also writes the busy marker as v2 (kept for at least `ttl`)
- * unless an older kernel's holder owns it.
- */
+/** KEYS holders; ARGV token, ttl. The hash is kept for at least `ttl`. */
 const REGISTER = redisClockScript(`local ttl = tonumber(ARGV[2])
 redis.call('HSET', KEYS[1], ARGV[1], now + ttl)
 if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) end
-local b = redis.call('GET', KEYS[2])
-if (not b) or (b == '${BUSY_V2}' and redis.call('PTTL', KEYS[2]) < ttl) then
-  redis.call('SET', KEYS[2], '${BUSY_V2}', 'PX', ttl)
-end
 return 1`);
 
-/** Deletes the v2 busy marker (key `busy`) once no holder record (hash `holders`) is left. */
-const dropV2 = (holders: string, busy: string) => `
-if redis.call('HLEN', ${holders}) == 0 and redis.call('GET', ${busy}) == '${BUSY_V2}' then
-  redis.call('DEL', ${busy})
-end`;
-
-/** KEYS holders, busy; ARGV token. */
-const UNREGISTER = `
-redis.call('HDEL', KEYS[1], ARGV[1])
-${dropV2("KEYS[1]", "KEYS[2]")}
-return 1`;
-
 /**
- * KEYS lock, users, holders, busy; ARGV the caller's exclusive token (or ''). Removes and returns
- * the holder fields without a live lease (expired fields are dropped without being returned: the
- * in-sandbox time limit ended their commands); claims an older kernel's busy marker only for the
- * caller holding the exclusive lease (`cur == token`, so no shared lease is live and killing
- * everything cannot hit a live sibling). The v2 marker is never claimed; it goes with the last
- * record. Returns { legacy, tag… }.
+ * KEYS lock, users, holders. Removes and returns the holder fields without a live lease (expired
+ * fields are dropped without being returned: the in-sandbox time limit ended their commands). The
+ * caller's own token is live (a shared lease, or the exclusive token in the lock key), so it is
+ * never returned. Returns the tags.
  */
-const CLAIM = sharedLeaseReadScript(`local out = {0}
+const CLAIM = sharedLeaseReadScript(`local out = {}
 local f = redis.call('HGETALL', KEYS[3])
 for i = 1, #f, 2 do
   local tok = f[i]
@@ -157,12 +125,6 @@ for i = 1, #f, 2 do
     redis.call('HDEL', KEYS[3], tok)
     table.insert(out, tok)
   end
-end
-${dropV2("KEYS[3]", "KEYS[4]")}
-local b = redis.call('GET', KEYS[4])
-if ARGV[1] ~= '' and cur == ARGV[1] and b and b ~= '${BUSY_V2}' then
-  redis.call('DEL', KEYS[4])
-  out[1] = 1
 end
 return out`);
 
@@ -188,9 +150,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /** A signal that aborts with {@link SandboxLockLostError} when `lost` aborts. */
-function lostSignal(lost: AbortSignal, conv: string): AbortSignal {
+function lostSignal(lost: AbortSignal, env: string): AbortSignal {
   const ctl = new AbortController();
-  const abort = () => ctl.abort(new SandboxLockLostError(conv));
+  const abort = () => ctl.abort(new SandboxLockLostError(env));
   if (lost.aborted) abort();
   else lost.addEventListener("abort", abort, { once: true });
   return ctl.signal;
@@ -231,8 +193,8 @@ export class SandboxLeases {
 
   constructor(
     @Inject(LockService) private readonly locks: LockService,
-    /** The holder records and the legacy busy marker (scripts of this file). */
-    @Inject(REDIS) private readonly redis: Pick<Redis, "eval" | "get">,
+    /** The holder records (scripts of this file). */
+    @Inject(REDIS) private readonly redis: Pick<Redis, "eval" | "hdel">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Optional() @Inject(SANDBOX_LEASE_TIMINGS) timings: Partial<SandboxLeaseTimings> = {},
   ) {
@@ -249,11 +211,11 @@ export class SandboxLeases {
     return Math.max(this.pollMs * 4, INTENT_TTL_FLOOR_MS);
   }
 
-  private keys(conv: string): SharedLeaseKeys {
+  private keys(env: string): SharedLeaseKeys {
     return {
-      lock: `${SANDBOX_LOCK_PREFIX}${conv}`,
-      users: `${USERS_PREFIX}${conv}`,
-      intent: `${INTENT_PREFIX}${conv}`,
+      lock: `${SANDBOX_LOCK_PREFIX}${env}`,
+      users: `${USERS_PREFIX}${env}`,
+      intent: `${INTENT_PREFIX}${env}`,
     };
   }
 
@@ -267,7 +229,7 @@ export class SandboxLeases {
    * replica's lock token or another caller's intent exists.
    */
   async acquireShared(
-    conv: string,
+    env: string,
     cap: number,
     signal: AbortSignal,
     capMs: number,
@@ -276,7 +238,7 @@ export class SandboxLeases {
     const deadline = Date.now() + capMs;
     for (;;) {
       if (signal.aborted) throw abortReason(signal);
-      const lease = await this.tryShared(conv, cap, token);
+      const lease = await this.tryShared(env, cap, token);
       if (lease) return lease;
       if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
       await this.wait(signal);
@@ -290,7 +252,7 @@ export class SandboxLeases {
    * and when the wait ends otherwise.
    */
   async acquireExclusive(
-    conv: string,
+    env: string,
     signal: AbortSignal,
     capMs?: number,
     o: { intent?: boolean } = {},
@@ -300,15 +262,15 @@ export class SandboxLeases {
     try {
       for (;;) {
         if (signal.aborted) throw abortReason(signal);
-        const lease = await this.tryExclusive(conv, { token, intent: o.intent === true });
+        const lease = await this.tryExclusive(env, { token, intent: o.intent === true });
         if (lease) return lease;
         if (Date.now() + this.pollMs > deadline) throw sandboxBusy();
         await this.wait(signal);
       }
     } catch (e) {
       if (o.intent) {
-        await this.clearIntent(conv, token).catch((err: unknown) =>
-          this.log.warn("cannot clear sandbox intent", { conversationId: conv, err }),
+        await this.clearIntent(env, token).catch((err: unknown) =>
+          this.log.warn("cannot clear sandbox intent", { environmentId: env, err }),
         );
       }
       throw e;
@@ -321,16 +283,16 @@ export class SandboxLeases {
    * token, so one waiter can alternate between this and {@link tryShared} with the same token.
    */
   async tryExclusive(
-    conv: string,
+    env: string,
     o: { token?: string; intent?: boolean } = {},
   ): Promise<SandboxLease | null> {
     const h = await this.locks.tryExclusive(
-      this.keys(conv),
+      this.keys(env),
       o.token ?? randomUUID(),
       this.ttlMs,
       o.intent ? this.intentTtlMs : undefined,
     );
-    return h ? this.held(conv, h) : null;
+    return h ? this.held(env, h) : null;
   }
 
   /**
@@ -339,77 +301,44 @@ export class SandboxLeases {
    * (it should then {@link clearIntent}).
    */
   async tryShared(
-    conv: string,
+    env: string,
     cap: number,
     token: string = randomUUID(),
   ): Promise<SandboxLease | null> {
-    const h = await this.locks.tryShared(this.keys(conv), token, cap, this.ttlMs);
-    return h ? this.held(conv, h) : null;
+    const h = await this.locks.tryShared(this.keys(env), token, cap, this.ttlMs);
+    return h ? this.held(env, h) : null;
   }
 
-  /** Deletes the conversation's intent when it is `token`'s. */
-  async clearIntent(conv: string, token: string): Promise<void> {
-    await this.locks.releaseIf(this.keys(conv).intent, token);
+  /** Deletes the environment's intent when it is `token`'s. */
+  async clearIntent(env: string, token: string): Promise<void> {
+    await this.locks.releaseIf(this.keys(env).intent, token);
   }
 
-  /** Whether the single busy marker of a kernel before phase C is present (v2 does not count). */
-  async legacyMarker(conv: string): Promise<boolean> {
-    const v = await this.redis.get(`${SANDBOX_BUSY_PREFIX}${conv}`);
-    return v !== null && v !== BUSY_V2;
-  }
-
-  /** Live shared leases of the conversation. */
-  sharedCount(conv: string): Promise<number> {
-    return this.locks.sharedCount(this.keys(conv));
+  /** Live shared leases of the environment. */
+  sharedCount(env: string): Promise<number> {
+    return this.locks.sharedCount(this.keys(env));
   }
 
   /**
    * Records (or refreshes) a holder that may run commands (before its provider calls); `ttlMs`
-   * bounds the record. Also keeps the v2 busy marker for older replicas ({@link BUSY_V2}).
+   * bounds the record.
    */
-  async registerHolder(conv: string, token: string, ttlMs: number): Promise<void> {
-    await this.redis.eval(
-      REGISTER,
-      2,
-      `${HOLDERS_PREFIX}${conv}`,
-      `${SANDBOX_BUSY_PREFIX}${conv}`,
-      token,
-      ttlMs,
-    );
+  async registerHolder(env: string, token: string, ttlMs: number): Promise<void> {
+    await this.redis.eval(REGISTER, 1, `${HOLDERS_PREFIX}${env}`, token, ttlMs);
   }
 
-  /** Deletes a holder record (after its provider calls); the v2 marker goes with the last one. */
-  async unregisterHolder(conv: string, token: string): Promise<void> {
-    await this.redis.eval(
-      UNREGISTER,
-      2,
-      `${HOLDERS_PREFIX}${conv}`,
-      `${SANDBOX_BUSY_PREFIX}${conv}`,
-      token,
-    );
+  /** Deletes a holder record (after its provider calls). */
+  async unregisterHolder(env: string, token: string): Promise<void> {
+    await this.redis.hdel(`${HOLDERS_PREFIX}${env}`, token);
   }
 
   /**
-   * Tags of holders without a live lease, plus whether an older kernel's single busy marker was
-   * present. Atomically claims them (removes the fields) so only one caller kills. That marker is
-   * claimed only when `exclusiveToken` is the caller's exclusive lease (no shared lease live).
+   * Tags of holders without a live lease, atomically claimed (their fields removed) so only one
+   * caller kills them.
    */
-  async claimDeadHolders(
-    conv: string,
-    exclusiveToken?: string,
-  ): Promise<{ tags: string[]; legacyMarker: boolean }> {
-    const { lock, users } = this.keys(conv);
-    const r = (await this.redis.eval(
-      CLAIM,
-      4,
-      lock,
-      users,
-      `${HOLDERS_PREFIX}${conv}`,
-      `${SANDBOX_BUSY_PREFIX}${conv}`,
-      exclusiveToken ?? "",
-    )) as [number, ...string[]];
-    const [legacy, ...tags] = r;
-    return { tags, legacyMarker: Number(legacy) === 1 };
+  async claimDeadHolders(env: string): Promise<string[]> {
+    const { lock, users } = this.keys(env);
+    return (await this.redis.eval(CLAIM, 3, lock, users, `${HOLDERS_PREFIX}${env}`)) as string[];
   }
 
   /**
@@ -418,12 +347,12 @@ export class SandboxLeases {
    * (renewed every TTL / 3): when it is lost its `signal` aborts.
    */
   async pathLease(
-    conv: string,
+    env: string,
     path: string,
     signal: AbortSignal,
     capMs: number,
   ): Promise<SandboxPathLease> {
-    const key = `${PATH_PREFIX}${conv}:${createHash("sha256").update(path).digest("hex")}`;
+    const key = `${PATH_PREFIX}${env}:${createHash("sha256").update(path).digest("hex")}`;
     const token = randomUUID();
     const deadline = Date.now() + capMs;
     let h: LeaseHandle | undefined;
@@ -435,17 +364,17 @@ export class SandboxLeases {
       await this.wait(signal);
     }
     const held = h;
-    return { signal: lostSignal(held.lost, conv), release: () => held.release() };
+    return { signal: lostSignal(held.lost, env), release: () => held.release() };
   }
 
   /** A sandbox lease over a held {@link SharedLeaseHandle}, as its current kind. */
-  private held(conv: string, h: SharedLeaseHandle): SandboxLease {
-    return this.view(conv, h, lostSignal(h.lost, conv), h.kind);
+  private held(env: string, h: SharedLeaseHandle): SandboxLease {
+    return this.view(env, h, lostSignal(h.lost, env), h.kind);
   }
 
   /** A lease view of `h` as `kind`; a view stops working once the lease changes kind. */
   private view(
-    conv: string,
+    env: string,
     h: SharedLeaseHandle,
     signal: AbortSignal,
     kind: LeaseKind,
@@ -454,7 +383,7 @@ export class SandboxLeases {
     return {
       kind,
       token: h.token,
-      conversationId: conv,
+      environmentId: env,
       signal,
       // a Redis error is warned, not thrown: the deadline decides whether the lease is lost
       renew: async () => {
@@ -462,7 +391,7 @@ export class SandboxLeases {
         try {
           return await h.renew();
         } catch (err) {
-          this.log.warn("sandbox lease renew failed", { conversationId: conv, err });
+          this.log.warn("sandbox lease renew failed", { environmentId: env, err });
           return !signal.aborted;
         }
       },
@@ -472,8 +401,8 @@ export class SandboxLeases {
       downgrade: async () => {
         if (!current() || h.kind !== "exclusive") throw new Error("sandbox lease is not exclusive");
         if (signal.aborted) throw abortReason(signal);
-        if (!(await h.downgrade())) throw new SandboxLockLostError(conv);
-        return this.view(conv, h, signal, "shared");
+        if (!(await h.downgrade())) throw new SandboxLockLostError(env);
+        return this.view(env, h, signal, "shared");
       },
     };
   }

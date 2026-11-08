@@ -12,9 +12,11 @@ import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { TitlesModule } from "../conversations/titles.js";
+import { LegacySandboxCleanupJob } from "../environments/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
+import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
 import { OffboardSweepJob } from "../orgs/offboarding.js";
@@ -78,8 +80,10 @@ export class WorkerModule {
         AttachmentCleanupJob,
         StoragePurgeJob,
         SandboxSweepJobs,
+        LegacySandboxCleanupJob,
         BackgroundTaskPollJob,
         ToolJobs,
+        InitialPasswordCleanupJob,
         CatalogJobs,
         PlatformMigration,
         DirectoryScanJob,

@@ -1,7 +1,11 @@
-import type { ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelCallOptions, ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
+import {
+  type BoundProvider,
+  type ProviderHost,
+  ProviderRegistry,
+} from "../../src/runtime/providers.js";
 import { WEB_FETCH_SYSTEM_PROMPT } from "../../src/tools/builtins/web/extract.js";
 
 /**
@@ -47,11 +51,11 @@ export function captureProviderRequests(): ProviderCapture {
       webFetches.length = 0;
     },
     install() {
-      ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, ref) {
-        const r = await originalResolve.call(this, ref);
+      ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, orgId, ref) {
+        const r = await originalResolve.call(this, orgId, ref);
         const inner = r.provider;
-        const provider: ModelProvider = {
-          listModels: () => inner.listModels(),
+        const provider: BoundProvider = {
+          ...(inner.embed && { embed: inner.embed }),
           stream(req, opts) {
             const copy = structuredClone(req);
             if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) compactions.push(copy);
@@ -68,5 +72,56 @@ export function captureProviderRequests(): ProviderCapture {
     restore() {
       ProviderRegistry.prototype.resolve = originalResolve;
     },
+  };
+}
+
+/** One model provider call as the extension received it (`listModels`, `stream` or `embed`). */
+export interface ProviderCall {
+  site: "listModels" | "stream" | "embed";
+  plugin: string;
+  /** The per-call options the extension received (`orgId`, `config`). */
+  opts: ModelCallOptions;
+}
+
+/**
+ * Wraps `host` so every call reaching a model provider extension is recorded in `calls` with the
+ * options it received (spec B §5.5: the org id and the effective config). Pass the result to
+ * `providerRegistryFor` with a real `EffectiveConfigs`.
+ */
+export function recordingProviderHost(host: ProviderHost, calls: ProviderCall[]): ProviderHost {
+  const wrap = (plugin: string, impl: ModelProvider): ModelProvider => {
+    const optsOf = (o: unknown): ModelCallOptions => {
+      const { orgId, config } = (o ?? {}) as ModelCallOptions;
+      return { ...(orgId !== undefined && { orgId }), config };
+    };
+    const out: ModelProvider = {
+      listModels: (opts) => {
+        calls.push({ site: "listModels", plugin, opts: optsOf(opts) });
+        return impl.listModels(opts);
+      },
+      stream: (req, opts) => {
+        calls.push({ site: "stream", plugin, opts: optsOf(opts) });
+        return impl.stream(req, opts);
+      },
+    };
+    if (impl.embed) {
+      const embed = impl.embed.bind(impl);
+      out.embed = (req, opts) => {
+        calls.push({ site: "embed", plugin, opts: optsOf(opts) });
+        return embed(req, opts);
+      };
+    }
+    return out;
+  };
+  return {
+    list: (name) =>
+      host
+        .list(name)
+        .map((e) =>
+          name === "model-provider" && e.capability === "model-provider@2"
+            ? { ...e, impl: wrap(e.plugin, e.impl as ModelProvider) }
+            : e,
+        ),
+    ...(host.current && { current: host.current.bind(host) }),
   };
 }

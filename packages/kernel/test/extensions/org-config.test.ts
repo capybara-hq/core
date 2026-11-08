@@ -70,6 +70,7 @@ beforeAll(async () => {
     redisUrl: rd.url,
     keyring,
     embedTokens: new EmbedTokens(keyring),
+    hooks: undefined,
     runWorkers: false,
     log: silent,
   };

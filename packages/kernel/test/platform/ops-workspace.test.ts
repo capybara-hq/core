@@ -5,6 +5,7 @@ import { AgentsService } from "../../src/agents/agents.service.js";
 import { OrgAgentTemplates } from "../../src/agents/org-templates.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
+import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, setDeployment, startOrgEnv } from "../catalog/org-env.js";
@@ -50,10 +51,19 @@ const facts = (role: ActorFacts["role"]): ActorFacts => ({
   setting: "on",
 });
 
-/** Parses like the tool does, then runs. */
+/** Parses like the tool does, then runs; a service refusal becomes the tool's error. */
 const run = (id: string, input: unknown, ctx: OperationContext) => {
   const o = op(id);
-  return o.run(o.input.parse(input), ctx);
+  return o.run(o.input.parse(input), ctx).catch((e: unknown) => {
+    throw toToolError(e, (code) => nextStepFor(o.errors, code, "orgAdmin"));
+  });
+};
+
+/** The operation's precheck, as the tool's callPolicy runs it before the card. */
+const precheck = (id: string, input: unknown, ctx: OperationContext) => {
+  const o = op(id);
+  if (o.precheck === undefined) throw new Error(`${id} has no precheck`);
+  return o.precheck(o.input.parse(input), ctx);
 };
 
 /** The card summary and the class of a write, as the tool's callPolicy reads them. */
@@ -104,20 +114,43 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => /^(platform|skills|agents|agent-templates)\./.test(id)),
     ).toEqual([
+      "agent-templates.available",
+      "agent-templates.delete",
+      "agent-templates.delete-preview",
+      "agent-templates.disable-preview",
       "agent-templates.get",
       "agent-templates.list",
       "agent-templates.save",
+      "agent-templates.set-enabled",
+      "agent-templates.set-shareable",
+      "agent-templates.update",
+      "agents.bind-connector",
+      "agents.connector-setup-status",
       "agents.create",
       "agents.create-from-template",
+      "agents.delete",
+      "agents.delete-skill",
       "agents.get",
+      "agents.invocable-skills",
       "agents.list",
       "agents.preview-from-template",
+      "agents.readiness",
+      "agents.request-connector-setup",
+      "agents.skills",
       "agents.update",
+      "agents.versions",
       "platform.me",
       "platform.overview",
+      "skills.available",
       "skills.create",
+      "skills.delete",
+      "skills.delete-preview",
+      "skills.disable-preview",
       "skills.get",
+      "skills.get-change",
       "skills.list",
+      "skills.set-enabled",
+      "skills.set-shareable",
     ]);
   });
 });
@@ -156,8 +189,8 @@ describe("skills", () => {
     expect(row?.detail).toMatchObject({
       name: "triage",
       via: "agent",
-      conversationId: c.conversationId,
-      runId: c.runId,
+      agentConversationId: c.conversationId,
+      agentRunId: c.runId,
       operation: "skills.create",
     });
     const got = (await run("skills.get", { skillId: out.skill.id }, c)) as { body: string };
@@ -180,8 +213,25 @@ describe("skills", () => {
   it("a taken name answers a ToolError naming the code", async () => {
     const c = ctxOf(env.bossId, randomUUID());
     const input = { name: "dup", description: "Dup.", body: "# x" };
+    expect(await precheck("skills.create", input, c)).toEqual({ ok: true });
     await run("skills.create", input, c);
     await expect(run("skills.create", input, c)).rejects.toThrow(/skill\.name_exists/);
+    // the precheck knows it before the card
+    expect(await precheck("skills.create", input, c)).toEqual({
+      ok: false,
+      code: "skill.name_exists",
+      message: 'A skill named "dup" already exists in this organization. Choose another name.',
+    });
+  });
+
+  it("the precheck refuses custom skills the platform turned off, with the role's next step", async () => {
+    await setDeployment(env, { customSkills: "deny" });
+    const c = ctxOf(env.bossId, randomUUID());
+    const r = await precheck("skills.create", { name: "x", description: "X.", body: "# x" }, c);
+    expect(r).toMatchObject({ ok: false, code: "catalog.custom_disabled" });
+    const errors = op("skills.create").errors;
+    expect(nextStepFor(errors, "catalog.custom_disabled", "superAdmin")).toContain("admin console");
+    expect(nextStepFor(errors, "catalog.custom_disabled", "member")).not.toContain("admin console");
   });
 });
 
@@ -303,11 +353,35 @@ describe("agents", () => {
     );
     await expect(stale).rejects.toBeInstanceOf(ToolError);
     await expect(stale).rejects.toThrow(/agent\.template_preview_stale/);
+    // the precheck finds a stale hash, an unknown template and a shared visibility before the card
+    const zero = `${"0".repeat(64)}.${"0".repeat(16)}`;
+    expect(
+      await precheck(
+        "agents.create-from-template",
+        { templateId, name: "Copy", previewHash: zero },
+        c,
+      ),
+    ).toMatchObject({ ok: false, code: "agent.template_preview_stale" });
+    expect(
+      await precheck(
+        "agents.create-from-template",
+        { templateId: randomUUID(), name: "Copy", previewHash: zero },
+        c,
+      ),
+    ).toMatchObject({ ok: false, code: "component.not_found" });
+    expect(
+      await precheck(
+        "agents.create-from-template",
+        { templateId, name: "Copy", previewHash: zero, visibility: "org" },
+        c,
+      ),
+    ).toMatchObject({ ok: false, code: "agent.visibility_web_only" });
 
     expect(
       await summarize(
         "agents.create-from-template",
-        { templateId, name: "Copy", previewHash: "h" },
+        // the route's hash shape (the input is the route's schema), any value
+        { templateId, name: "Copy", previewHash: `${"0".repeat(64)}.${"0".repeat(16)}` },
         c,
       ),
     ).toEqual({
@@ -317,6 +391,13 @@ describe("agents", () => {
     const preview = (await run("agents.preview-from-template", { templateId }, c)) as {
       previewHash: string;
     };
+    expect(
+      await precheck(
+        "agents.create-from-template",
+        { templateId, name: "Copy", previewHash: preview.previewHash },
+        c,
+      ),
+    ).toEqual({ ok: true });
     const out = (await run(
       "agents.create-from-template",
       { templateId, name: "Copy", previewHash: preview.previewHash },

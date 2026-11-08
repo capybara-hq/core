@@ -1,4 +1,4 @@
-# Connector templates
+# Authoring: connector-templates
 
 <!-- generated:connector-template -->
 | Field | Type | Required |

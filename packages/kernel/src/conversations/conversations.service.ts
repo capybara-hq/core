@@ -6,6 +6,10 @@ import type { AgentDefinition, ModelRef } from "../agents/definition.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { unbindConversation } from "../channels/threads.js";
 import type { TitleSource } from "../db/kernel-schema.js";
+import {
+  ConversationEnvironments,
+  type NewConversationEnvironment,
+} from "../environments/conversation-environments.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -48,6 +52,12 @@ export interface ConversationView {
   subagentType: string | null;
   /** When the owner archived it; null = not archived (hidden from the default lists). */
   archivedAt: Date | null;
+  /**
+   * The environment it works in (environments spec §4.1 item 1); null while unbound (no sandbox
+   * provider when it was created, an anonymous IM sender's, or created before environments). A
+   * sub-agent's is null: it works in its root conversation's.
+   */
+  environmentId: string | null;
   /**
    * What the latest run is doing: `running` (queued or running), `waiting` (an approval or a
    * question), else null. Only the list queries compute it; other responses carry null.
@@ -177,6 +187,7 @@ const COLUMNS = [
   "parent_conversation_id",
   "subagent_type",
   "archived_at",
+  "environment_id",
 ] as const;
 
 function toView(r: {
@@ -193,6 +204,7 @@ function toView(r: {
   parent_conversation_id: string | null;
   subagent_type: string | null;
   archived_at: Date | null;
+  environment_id: string | null;
   activity?: "running" | "waiting" | null;
 }): ConversationView {
   return {
@@ -209,6 +221,7 @@ function toView(r: {
     parentConversationId: r.parent_conversation_id,
     subagentType: r.subagent_type,
     archivedAt: r.archived_at,
+    environmentId: r.environment_id,
     activity: r.activity ?? null,
   };
 }
@@ -298,6 +311,9 @@ export class ConversationsService {
     /** Stops a deleted conversation's background tasks. */
     @Inject(BackgroundTaskStopper)
     private readonly background: Pick<BackgroundTaskStopper, "stopForDeletedConversation">,
+    /** The environment a new conversation is bound to (environments spec §4.1 item 1). */
+    @Inject(ConversationEnvironments)
+    private readonly environments: Pick<ConversationEnvironments, "forNew">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -313,12 +329,29 @@ export class ConversationsService {
       );
   }
 
-  /** 新建会话；agent 对该账号不可用 → `agent.not_found`。 */
-  async create(orgId: string, accountId: string, agentId: string): Promise<ConversationView> {
+  /**
+   * Creates an empty conversation bound to its environment (`pick`, see
+   * {@link ConversationEnvironments.forNew}); an agent the account cannot use →
+   * `agent.not_found`, an environment it may not use → `environment.not_found` /
+   * `environment.unavailable`, and nothing is created.
+   */
+  async create(
+    orgId: string,
+    accountId: string,
+    agentId: string,
+    pick: NewConversationEnvironment = {},
+  ): Promise<ConversationView> {
     await this.agents.get(orgId, agentId, accountId);
+    const environmentId = await this.environments.forNew(orgId, accountId, pick);
     const row = await this.db
       .insertInto("conversations")
-      .values({ id: randomUUID(), org_id: orgId, agent_id: agentId, account_id: accountId })
+      .values({
+        id: randomUUID(),
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: accountId,
+        environment_id: environmentId,
+      })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow();
     return toView(row);
@@ -338,6 +371,7 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     input: UserMessageInput & { clientMessageId: string },
+    pick: NewConversationEnvironment = {},
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -347,11 +381,18 @@ export class ConversationsService {
     const agent = await this.agents.get(orgId, agentId, accountId);
     const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
     if (prior) return prior;
-    const next = await this.planSwitch(agent.definition, NO_SELECTION, input);
+    const environmentId = await this.environments.forNew(orgId, accountId, pick);
+    const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked = await this.prepareSkill(orgId, agentId, undefined, agent.definition, input);
     const id = randomUUID();
-    const all = await this.createIn(id, orgId, accountId, agentId, input, next, extra, invoked);
+    const all = await this.createIn(
+      { id, orgId, accountId, agentId, environmentId },
+      input,
+      next,
+      extra,
+      invoked,
+    );
     const written = all?.at(-1);
     if (!all || !written) {
       const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
@@ -367,22 +408,27 @@ export class ConversationsService {
   // its own transaction: the caller notifies and publishes after the commit
   @Transactional({ propagation: "requires_new" })
   private async createIn(
-    id: string,
-    orgId: string,
-    accountId: string,
-    agentId: string,
+    conv: {
+      id: string;
+      orgId: string;
+      accountId: string;
+      agentId: string;
+      environmentId: string | null;
+    },
     input: UserMessageInput & { clientMessageId: string },
     next: Selection | null,
     extra: ResolvedExtra,
     invoked: RenderedInvocation | undefined,
   ): Promise<ConversationEvent[] | undefined> {
+    const { id, orgId, accountId } = conv;
     const row = await this.db
       .insertInto("conversations")
       .values({
         id,
         org_id: orgId,
-        agent_id: agentId,
+        agent_id: conv.agentId,
         account_id: accountId,
+        environment_id: conv.environmentId,
         create_request_id: input.clientMessageId,
       })
       .onConflict((oc) =>
@@ -706,6 +752,7 @@ export class ConversationsService {
       parent_conversation_id: string | null;
       subagent_type: string | null;
       archived_at: Date | null;
+      environment_id: string | null;
       activity: "running" | "waiting" | null;
     }>`
       WITH g AS (
@@ -724,14 +771,14 @@ export class ConversationsService {
       SELECT page.agent_id, page.latest_at, v.definition ->> 'name' AS agent_name,
         cs.id, cs.org_id, cs.account_id, cs.title, cs.title_source, cs.selection, cs.last_seq,
         cs.created_at, cs.updated_at, cs.parent_conversation_id, cs.subagent_type,
-        cs.archived_at, cs.activity
+        cs.archived_at, cs.environment_id, cs.activity
       FROM page
       JOIN capybara.agents a ON a.id = page.agent_id
       JOIN capybara.agent_versions v ON v.agent_id = a.id AND v.version = a.current_version
       CROSS JOIN LATERAL (
         SELECT c.id, c.org_id, c.account_id, c.title, c.title_source, c.selection, c.last_seq,
           c.created_at, c.updated_at, c.parent_conversation_id, c.subagent_type,
-          c.archived_at, ${activitySql("c")} AS activity
+          c.archived_at, c.environment_id, ${activitySql("c")} AS activity
         FROM capybara.conversations c
         WHERE c.org_id = ${orgId} AND c.account_id = ${accountId} AND c.kind = 'chat'
           AND c.deleted_at IS NULL AND ${archivedFilter} ${searchFilter} ${stateFilter}
@@ -1000,7 +1047,7 @@ export class ConversationsService {
     const next =
       agent === undefined || (input.model === undefined && input.effort === undefined)
         ? null
-        : await this.planSwitch(agent, conv.selection, input);
+        : await this.planSwitch(orgId, agent, conv.selection, input);
     const extra = await this.resolveExtra(orgId, accountId, input);
     const invoked =
       agent === undefined
@@ -1057,11 +1104,13 @@ export class ConversationsService {
    * The selection a message switches to, or null when it changes nothing. A model equal to the
    * agent's means "back to the agent's model" (null); a model change without `effort` resets the
    * effort. The target model must resolve (`agent.model_unavailable`) and declare the effort
-   * (`validation_failed`). Resolving is the agent editor's check: providers are deployment-scoped
-   * and serve chat models only. If per-org provider enablement is added, this check and the run
-   * worker's `fallBackIfUnavailable` must follow it.
+   * (`validation_failed`). Resolving is the agent editor's check, for the org (its effective
+   * provider config, spec B §5.5) and its disabled lists: a model the platform or the org disabled,
+   * or a non-chat model, is refused (spec B §5.3), as the run worker's `fallBackIfUnavailable` falls
+   * back from it.
    */
   private async planSwitch(
+    orgId: string,
     agent: AgentDefinition,
     current: Selection,
     input: Pick<UserMessageInput, "model" | "effort">,
@@ -1069,7 +1118,7 @@ export class ConversationsService {
     const next = planSelection(agent.model, current, input);
     if (next === null) return null;
     const { model, effort } = next;
-    const { info } = await this.providers.resolve(model ?? agent.model);
+    const { info } = await this.providers.resolve(orgId, model ?? agent.model);
     if (effort !== null) {
       const knob = info.parameters.find((p) => p.key === "effort");
       const values = (knob?.schema as { enum?: unknown[] } | undefined)?.enum ?? [];
@@ -1095,7 +1144,7 @@ export class ConversationsService {
   ): Promise<void> {
     if (pick.model === undefined && pick.effort === undefined) return;
     const agent = await this.agents.get(orgId, conv.agentId, accountId);
-    await this.planSwitch(agent.definition, conv.selection, pick);
+    await this.planSwitch(orgId, agent.definition, conv.selection, pick);
   }
 
   /**

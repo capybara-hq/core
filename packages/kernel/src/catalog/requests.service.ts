@@ -171,7 +171,8 @@ export class CatalogRequestsService {
    * A request for a catalog item (`POST /orgs/:orgId/catalog/:itemId/requests`): `enable`
    * (`catalog.request`, members and up) or `access` (`catalog.decide`, org admins), checked first.
    * The item as the org sees it: absent (missing, deleted, hidden, disabled for a member) ->
-   * `catalog.item_not_found`; disabled -> `catalog.item_disabled` for an org admin; `access` needs
+   * `catalog.item_not_found`; disabled -> `catalog.item_disabled` for an org admin; its extension
+   * unable to run on the platform -> `catalog.request_invalid`; `access` needs
    * `not_offered`, `enable` needs `off` (else `catalog.request_invalid`); a pending request of the
    * kind -> `catalog.request_pending`. Audits `catalog.requested`.
    */
@@ -187,7 +188,13 @@ export class CatalogRequestsService {
     if (!UUID_RE.test(itemId)) throw itemNotFound();
     const [item] = await this.orgCatalog.list(orgId, actor, itemId);
     if (!item) throw itemNotFound();
-    if (item.state === "unavailable") throw itemDisabled();
+    if (item.state === "unavailable" && item.reason === "plugin_disabled") throw itemDisabled();
+    if (item.state === "unavailable") {
+      throw new ApiError(
+        "catalog.request_invalid",
+        `This plugin's extension cannot run on the platform now (${item.reason ?? "unavailable"}); only the super admin can fix that`,
+      );
+    }
     const want = input.kind === "access" ? "not_offered" : "off";
     if (item.state !== want) {
       throw new ApiError(

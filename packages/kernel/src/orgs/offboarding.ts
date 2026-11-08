@@ -44,8 +44,8 @@ export interface OffboardResult {
   runs: InFlightRun[];
   /** 负责的 agent 转交给的所有者；没有转交时为 null。 */
   newOwnerId: string | null;
-  /** 此人在该组织的对话里还没销毁的沙箱（按对话 id），提交后投递销毁。 */
-  sandboxConversations: string[];
+  /** The person's environments in the org, soft-deleted here; destroyed by a job after commit. */
+  environments: string[];
   /** Conversations whose queued messages were deleted (`changed: queue` after commit). */
   queueConversations: string[];
 }
@@ -93,7 +93,7 @@ export class Offboarding {
     @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "exists">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "notify" | "publishChanged">,
-    /** The departed member's sandboxes: one-off maintenance jobs, destroyed one by one by a worker. */
+    /** The departed member's environments: one-off maintenance jobs, destroyed by a worker. */
     @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
     /** Stops the departed member's runs (`by: null`, a system action). */
     @Inject(RunControl) private readonly runs: OffboardingRunControl,
@@ -121,7 +121,9 @@ export class Offboarding {
    *    以及成员关系自身的 `directory:<插件>` 来源，不论此人当初是不是由通讯录加入（手动重新加入后再被移出也不会被同步加回）；
    *    同步不再把此人加回，直到有人手动重新加入（{@link MembersService.add} 删除排除）；
    * 8. 审计 `org.member.offboarded`；
-   * 9. 记下此人在该组织对话里还没销毁的沙箱（提交后销毁，尽力而为）。
+   * 9. Soft-deletes the person's environments in the org and clears their default row (the
+   *    instances and files are destroyed after the commit, best effort; the hourly sweep finishes
+   *    any left).
    */
   @Transactional({ propagation: "mandatory" })
   async offboard(
@@ -307,13 +309,19 @@ export class Offboarding {
         .execute();
     }
 
-    const sandboxes = await this.db
-      .selectFrom("sandboxes")
-      .innerJoin("conversations", "conversations.id", "sandboxes.conversation_id")
-      .select("sandboxes.conversation_id")
-      .where("conversations.org_id", "=", orgId)
-      .where("conversations.account_id", "=", accountId)
-      .where("sandboxes.status", "<>", "destroyed")
+    const environments = await this.db
+      .updateTable("environments")
+      .set({ deleted_at: sql<Date>`now()`, updated_at: sql<Date>`now()` })
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .returning("id")
+      .execute();
+    await this.db
+      .deleteFrom("environment_defaults")
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
       .execute();
 
     await audit(this.db.db, {
@@ -336,7 +344,7 @@ export class Offboarding {
         channelThreadsArchived: Number(threads.numUpdatedRows),
         toolGrantsDeleted: Number(grants.numDeletedRows),
         ...(excluded.length > 0 && { directoryExcluded: excluded }),
-        ...(sandboxes.length > 0 && { sandboxesToDestroy: sandboxes.length }),
+        ...(environments.length > 0 && { environmentsDeleted: environments.length }),
         ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
       },
     });
@@ -350,7 +358,7 @@ export class Offboarding {
         status: r.status as InFlightRun["status"],
       })),
       newOwnerId: agents.length > 0 ? owner.account_id : null,
-      sandboxConversations: sandboxes.map((r) => r.conversation_id),
+      environments: environments.map((r) => r.id),
       queueConversations,
     };
   }
@@ -380,8 +388,8 @@ export class Offboarding {
   /**
    * After the commit (callers register it with the infra `afterCommit` inside their transaction):
    * writes the session revocation markers, publishes the cancelled events, stops the person's
-   * runs in the org and schedules destroying their conversations' sandboxes. A failing step only
-   * logs a warning.
+   * runs in the org and schedules destroying their environments. A failing step only logs a
+   * warning.
    */
   async afterOffboard(r: OffboardResult): Promise<void> {
     const { sessions, log, eventLog } = this;
@@ -405,12 +413,12 @@ export class Offboarding {
       }
     }
     for (const run of r.runs) await this.stopRun(run);
-    if (r.sandboxConversations.length > 0) {
+    if (r.environments.length > 0) {
       try {
-        await this.sandboxJobs.destroy(r.sandboxConversations);
+        await this.sandboxJobs.destroy(r.environments);
       } catch (err) {
-        log.warn("offboarding: cannot schedule sandbox destruction", {
-          count: r.sandboxConversations.length,
+        log.warn("offboarding: cannot schedule environment destruction", {
+          count: r.environments.length,
           err,
         });
       }

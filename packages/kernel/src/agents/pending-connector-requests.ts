@@ -90,6 +90,8 @@ export class PendingConnectorRequests {
     requestedBy: string;
     actor: string;
     actorTokenId?: string | undefined;
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>;
   }): Promise<{ id: string; created: boolean } | null> {
     const t = this.kdb.db;
     const agent = await t
@@ -144,7 +146,7 @@ export class PendingConnectorRequests {
           orgId: a.orgId,
           action: "catalog.requested",
           target: id,
-          detail: { kind: "connector_setup", agentId: a.agentId, keys },
+          detail: { kind: "connector_setup", agentId: a.agentId, keys, ...a.auditDetail },
         });
         return { id, created: true };
       }

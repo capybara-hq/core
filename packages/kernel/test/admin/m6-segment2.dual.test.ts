@@ -33,7 +33,8 @@ import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
  * `extensionPermissions.autoApprove: false`；引导插件 fake-object-store（核心假扩展，SeaweedFS，起初没配）、配置声明的 model-fake 与
  * deploycfg；其余插件经后台安装。全部经 HTTP（「卡住工具调用」用测试连接锁表；匿名访客由渠道产生，这里直接建）。
  *
- * 1. 副本 A 上传打包好的 sandbox@1 假插件 v1（敏感）与假扩展 fake-tools-ui v1，副本 B 安装、批准、启用：两个副本都加载，不重启；
+ * 1. replica A uploads the packed sandbox@2 fake plugin v1 (sensitive) and the fake extension
+ *    fake-tools-ui v1, replica B installs, approves and enables them: both replicas load them, no restart;
  * 2. fake-tools-ui 的工具调用卡在处理函数里（锁住它写的表）时在 A 上升级到 v2（带扩展迁移）：迁移只执行一次；在途调用超过
  *    `drainSeconds` 按 `PLUGIN_UNLOADED_TOOL_ERROR` 中止；运行照常 `completed`；之后的调用落到 v2；
  * 3. 停用 fake-tools-ui：两个副本上都不可用；再启用：又可用；
@@ -284,8 +285,16 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     expect(r.status, JSON.stringify(r.json)).toBe(202);
   };
-  const newConv = async (i: 0 | 1) =>
-    ((await ok(i, "POST", `${base}/conversations`, { agentId })).conversation as { id: string }).id;
+  /** A new conversation (in `environmentId`, else the caller's default environment). */
+  const newConv = async (i: 0 | 1, environmentId?: string) =>
+    (
+      (
+        await ok(i, "POST", `${base}/conversations`, {
+          agentId,
+          ...(environmentId !== undefined && { environmentId }),
+        })
+      ).conversation as { id: string }
+    ).id;
   /** 第 n 个终态（须为 run_finished completed）对应运行的最后一条 tool_result。 */
   const finished = async (convId: string, n: number): Promise<ToolResult> => {
     const term = await waitForTerminal(db, convId, n, 60_000);
@@ -603,11 +612,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   });
 
   it("5. 组织沙箱覆盖：之后新建的沙箱拿到覆盖的 cpu，已有的不变", async () => {
+    // the instance of the conversation's environment
     const sandboxOf = async (convId: string) => {
       const row = await db
-        .selectFrom("sandboxes")
-        .select("handle")
-        .where("conversation_id", "=", convId)
+        .selectFrom("environment_instances as i")
+        .innerJoin("conversations as c", "c.environment_id", "i.environment_id")
+        .select("i.handle")
+        .where("c.id", "=", convId)
         .executeTakeFirstOrThrow();
       return fakeSandboxMeta(sandboxRoot, row.handle?.id ?? "");
     };
@@ -624,7 +635,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const settings = await ok(1, "GET", `${base}/settings`);
     expect(settings.sandboxLimits).toEqual({ cpu: 2, memoryMb: 2048, source: "override" });
 
-    const after = await newConv(1);
+    // a new environment gets a new instance (the default one keeps its instance and limits)
+    const env = (
+      (await ok(1, "POST", `${base}/environments`, { name: "After override" })).environment as {
+        id: string;
+      }
+    ).id;
+    const after = await newConv(1, env);
     await send(0, after, "Bash", { description: "Test step", command: "echo two" });
     const r2 = await finished(after, 1);
     expect(r2.isError, String(r2.content)).toBe(false);

@@ -343,3 +343,104 @@ describe("model-fake", () => {
     expect(plugin.config?.deployment?.parse({ models })).toEqual({ models });
   });
 });
+
+describe("model-fake kinds and embeddings", () => {
+  const embedProvider = () =>
+    createFakeProvider({
+      kv: memKv(),
+      models: [{ id: "fake-1" }, { id: "emb-1", kind: "embedding", publisher: "fake" }],
+      modelsOf: (c) => (c as { models?: { id: string }[] }).models,
+    });
+  const sig = () => ({ signal: new AbortController().signal });
+
+  it("lists an embedding model with its embedding info", async () => {
+    const models = await embedProvider().listModels();
+    const emb = models.find((m) => m.id === "emb-1");
+    expect(emb?.kind).toBe("embedding");
+    expect(emb?.embedding).toEqual({
+      dimensions: [8, 16],
+      defaultDimensions: 8,
+      maxInputTokens: 512,
+      maxBatch: 4,
+    });
+    expect(models.find((m) => m.id === "fake-1")?.kind).toBeUndefined();
+  });
+
+  it("embeds deterministically, in order, at the requested dimension", async () => {
+    const p = embedProvider();
+    const a = await p.embed?.({ model: "emb-1", input: ["hello", "world"], dimensions: 16 }, sig());
+    const b = await p.embed?.({ model: "emb-1", input: ["world", "hello"], dimensions: 16 }, sig());
+    expect(a?.vectors).toHaveLength(2);
+    expect(a?.vectors[0]).toHaveLength(16);
+    expect(a?.vectors[0]).toEqual(b?.vectors[1]);
+    expect(a?.vectors[0]).not.toEqual(a?.vectors[1]);
+    expect(a?.vectors.flat().every((v) => v >= -1 && v <= 1)).toBe(true);
+    expect(a?.usage.inputTokens).toBe(4);
+    const d = await p.embed?.({ model: "emb-1", input: ["x"] }, sig());
+    expect(d?.vectors[0]).toHaveLength(8);
+  });
+
+  it("throws the scripted ModelError kind and rejects unknown models", async () => {
+    const p = embedProvider();
+    await expect(
+      p.embed?.({ model: "emb-1", input: ["fail:rate_limited"] }, sig()),
+    ).rejects.toMatchObject({ kind: "rate_limited" });
+    await expect(p.embed?.({ model: "fake-1", input: ["x"] }, sig())).rejects.toMatchObject({
+      kind: "invalid_request",
+    });
+  });
+
+  it("lists the per-call config's models instead of the setup ones", async () => {
+    const models = await embedProvider().listModels({ config: { models: [{ id: "org-1" }] } });
+    expect(models.map((m) => m.id)).toEqual(["org-1"]);
+  });
+
+  it("uses the setup models when the per-call config has no models field", async () => {
+    const models = await embedProvider().listModels({ config: {} });
+    expect(models.map((m) => m.id)).toEqual(["fake-1", "emb-1"]);
+  });
+
+  it("rejects batches over maxBatch, unsupported dimensions and chat models", async () => {
+    const p = createFakeProvider({
+      kv: memKv(),
+      models: [{ id: "fake-1" }, { id: "e", kind: "embedding", dimensions: [4, 2], maxBatch: 2 }],
+    });
+    const info = (await p.listModels()).find((m) => m.id === "e")?.embedding;
+    expect(info).toMatchObject({ dimensions: [4, 2], defaultDimensions: 4, maxBatch: 2 });
+    await expect(p.embed?.({ model: "e", input: ["a", "b", "c"] }, sig())).rejects.toMatchObject({
+      kind: "invalid_request",
+    });
+    await expect(
+      p.embed?.({ model: "e", input: ["a"], dimensions: 3 }, sig()),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
+    expect((await p.embed?.({ model: "e", input: ["a"] }, sig()))?.vectors[0]).toHaveLength(4);
+  });
+
+  it("refuses to stream an embedding model", async () => {
+    await expect(run(embedProvider(), req("hi", { model: "emb-1" }))).rejects.toMatchObject({
+      kind: "invalid_request",
+    });
+  });
+
+  it("treats an unknown fail kind as plain text", async () => {
+    const r = await embedProvider().embed?.({ model: "emb-1", input: ["fail:bogus"] }, sig());
+    expect(r?.vectors).toHaveLength(1);
+  });
+});
+
+describe("model-fake extension per-call config", () => {
+  it("raises invalid_request for an invalid per-call config", async () => {
+    const provided: ModelProvider[] = [];
+    const ctx = {
+      config: {},
+      kv: memKv(),
+      provide: (_p: unknown, impl: ModelProvider) => provided.push(impl),
+    };
+    await (plugin as unknown as { setup(c: unknown): Promise<void> | void }).setup(ctx);
+    await expect(provided[0]?.listModels({ config: { models: "nope" } })).rejects.toMatchObject({
+      kind: "invalid_request",
+    });
+    const ok = await provided[0]?.listModels({ config: { models: [{ id: "x" }] } });
+    expect(ok?.map((m) => m.id)).toEqual(["x"]);
+  });
+});

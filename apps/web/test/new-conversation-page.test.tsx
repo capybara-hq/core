@@ -16,6 +16,7 @@ import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
+  ENVIRONMENTS,
   FakeEventSource,
   LIMITS,
   MODELS,
@@ -97,6 +98,7 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
   [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
   [`GET ${ORG}/agents`]: () => json(200, agents),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
+  [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
   [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
 });
 
@@ -374,6 +376,87 @@ describe("the new conversation page (agent profile design §4)", () => {
     expect(initialIn(head("gone agent"))).toBe("G");
     // nothing read the agents for the sidebar
     expect(client.getQueryState(agentsQuery("o1").queryKey)?.fetchStatus).toBe("idle");
+  });
+});
+
+describe("the environment picker (environments design §4.1)", () => {
+  const picker = () =>
+    screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickEnvironment}: `) });
+  const withEnvironments = (environments: unknown) => ({
+    ...routes(),
+    [`GET ${ORG}/environments`]: () => json(200, environments),
+  });
+  const send = async (text: string) => {
+    const user = userEvent.setup();
+    await user.type(input(), `${text}{Enter}`);
+    return user;
+  };
+  const createdAt = () => json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "go") });
+
+  it("new conversation sends the chosen environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache("/", withEnvironments(ENVIRONMENTS));
+    const user = userEvent.setup();
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    await user.click(picker() as HTMLElement);
+    // the one whose provider is gone is listed but cannot be chosen
+    const gone = await screen.findByRole("menuitemradio", { name: /Old box/ });
+    expect(gone.hasAttribute("data-disabled")).toBe(true);
+    expect(gone.textContent).toContain(en.environments.state.unavailable);
+    await user.click(screen.getByRole("menuitemradio", { name: /Build box/ }));
+    expect(picker()?.textContent).toContain("Build box");
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
+      message: { text: "go" },
+      environmentId: "e2",
+    });
+  });
+
+  it("picker defaults to the last used environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e2" }));
+    expect(picker()?.textContent).toContain("Build box");
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "e2" });
+  });
+
+  it("falls back to the default when the last used one is unavailable", async () => {
+    resetNavigation("/");
+    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e3" }));
+    expect(picker()?.textContent).toContain(en.environments.personal);
+  });
+
+  it("an environment whose files are lost is tagged and not preselected", async () => {
+    resetNavigation("/");
+    const lost = {
+      ...ENVIRONMENTS,
+      items: ENVIRONMENTS.items.map((e) => (e.id === "e2" ? { ...e, filesLost: true } : e)),
+      lastUsedId: "e2",
+    };
+    await renderRouteWithCache("/", withEnvironments(lost));
+    expect(picker()?.textContent).toContain(en.environments.personal);
+    const user = userEvent.setup();
+    await user.click(picker() as HTMLElement);
+    const item = await screen.findByRole("menuitemradio", { name: /Build box/ });
+    expect(item.hasAttribute("data-disabled")).toBe(true);
+    expect(item.textContent).toContain(en.environments.state.filesLost);
+  });
+
+  it("without a sandbox provider there is no picker and the send carries no environment", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withEnvironments({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
+    );
+    expect(picker()).toBeNull();
+    await send("go");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("environmentId");
   });
 });
 

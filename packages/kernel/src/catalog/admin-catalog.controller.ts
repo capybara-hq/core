@@ -23,8 +23,21 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import {
+  CatalogItemsQuery,
+  CatalogUpdateBody,
+  CatalogUpdatePreviewBody,
+  CatalogDisabledBody as DisabledBody,
+  CatalogGitImportBody as GitBody,
+  CatalogHash as Hash,
+  CatalogNpmImportBody as NpmBody,
+  CatalogScopeOrgs as Orgs,
+  CatalogScope as Scope,
+  CatalogScopeBody as ScopeBody,
+  CatalogScopePreviewBody as ScopePreviewBody,
+  CatalogShownBody as ShownBody,
+} from "./admin-catalog.schemas.js";
+import {
   type ActorOpts,
-  CATALOG_LIST_MAX_LIMIT,
   type CatalogItemDetail,
   type CatalogItemView,
   CatalogService,
@@ -40,23 +53,6 @@ import {
   type PlatformUpdateResult,
 } from "./plugin-upgrade.js";
 
-const NpmBody = z.object({
-  package: z.string().min(1).max(214),
-  version: z.string().min(1).max(256).optional(),
-});
-
-const GitBody = z
-  .object({
-    url: z.string().min(1).max(2000),
-    ref: z.string().min(1).max(256).optional(),
-    path: z.string().min(1).max(512).optional(),
-  })
-  .strict();
-
-const Scope = z.enum(["all", "optional", "named"]);
-const Orgs = z.array(z.string().min(1).max(128)).max(1000);
-const Hash = z.string().min(1).max(128);
-
 const ConfirmBody = z
   .object({
     reviewHash: Hash,
@@ -68,38 +64,9 @@ const ConfirmBody = z
   })
   .strict();
 
-/** `{ scope, orgs? }` (a scope change) or `{ disabled: true }` (a disable), not both. */
-const ScopePreviewBody = z
-  .object({ scope: Scope.optional(), orgs: Orgs.optional(), disabled: z.literal(true).optional() })
-  .strict()
-  .refine((b) => (b.disabled === true) !== (b.scope !== undefined), {
-    message: "send either scope (with orgs for named) or disabled: true",
-  })
-  .refine((b) => b.disabled === undefined || b.orgs === undefined, {
-    message: "orgs: only allowed with scope named",
-    path: ["orgs"],
-  });
-
-const ScopeBody = z.object({ scope: Scope, orgs: Orgs.optional(), scopeHash: Hash }).strict();
-
-const DisabledBody = z.object({ disabled: z.boolean(), scopeHash: Hash.optional() }).strict();
-const ShownBody = z.object({ shownToOthers: z.boolean() }).strict();
-
-const ListQuery = z.object({
-  includeDeleted: z.enum(["true", "false"]).optional(),
-  limit: z.coerce.number().int().min(1).max(CATALOG_LIST_MAX_LIMIT).optional(),
-  offset: z.coerce.number().int().min(0).max(1_000_000).optional(),
-  /** `true`: only the items waiting for a permission confirmation (not paged). */
-  pending: z.enum(["true", "false"]).optional(),
-});
-
 const ConfirmPermissionsBody = z.object({ permissionsHash: Hash }).strict();
 /** The reason shown to the owner org in its `upload_rejected` notice (optional). */
 const RejectBody = z.object({ reason: z.string().trim().min(1).max(1000).optional() }).strict();
-
-const Version = z.string().min(1).max(256);
-const UpdatePreviewBody = z.object({ version: Version }).strict();
-const UpdateBody = z.object({ version: Version, diffHash: Hash }).strict();
 
 const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
   const tokenId = patTokenId(actor);
@@ -108,7 +75,7 @@ const actorOpts = (actor: ReturnType<typeof requireUser>): ActorOpts => {
 
 class CatalogImportConfirmBody extends createZodDto(ConfirmBody, "CatalogImportConfirmBody") {}
 class CatalogGitImportBody extends createZodDto(GitBody, "CatalogGitImportBody") {}
-class CatalogItemsQuery extends createZodDto(ListQuery, "CatalogItemsQuery") {}
+class CatalogItemsQueryDto extends createZodDto(CatalogItemsQuery, "CatalogItemsQuery") {}
 class CatalogNpmImportBody extends createZodDto(NpmBody, "CatalogNpmImportBody") {}
 class CatalogScopePreviewBody extends createZodDto(ScopePreviewBody, "CatalogScopePreviewBody") {}
 class CatalogScopeBody extends createZodDto(ScopeBody, "CatalogScopeBody") {}
@@ -119,11 +86,11 @@ class CatalogConfirmPermissionsBody extends createZodDto(
 class CatalogShownBody extends createZodDto(ShownBody, "CatalogShownBody") {}
 class CatalogRejectBody extends createZodDto(RejectBody, "CatalogRejectBody") {}
 class CatalogDisabledBody extends createZodDto(DisabledBody, "CatalogDisabledBody") {}
-class CatalogUpdatePreviewBody extends createZodDto(
-  UpdatePreviewBody,
+class CatalogUpdatePreviewBodyDto extends createZodDto(
+  CatalogUpdatePreviewBody,
   "CatalogUpdatePreviewBody",
 ) {}
-class CatalogUpdateBody extends createZodDto(UpdateBody, "CatalogUpdateBody") {}
+class CatalogUpdateBodyDto extends createZodDto(CatalogUpdateBody, "CatalogUpdateBody") {}
 
 /**
  * The platform catalog (`/api/v1/admin/catalog/*`, super admins): plugin import (upload / npm
@@ -276,7 +243,7 @@ export class AdminCatalogController {
    */
   @Get("items")
   list(
-    @ZQuery(CatalogItemsQuery) q: z.infer<typeof ListQuery>,
+    @ZQuery(CatalogItemsQueryDto) q: z.infer<typeof CatalogItemsQuery>,
   ): Promise<{ items: CatalogItemView[]; nextOffset: number | null }> {
     return this.catalog.page({
       includeDeleted: q.includeDeleted === "true",
@@ -444,7 +411,7 @@ export class AdminCatalogController {
   @HttpCode(200)
   previewUpdate(
     @Param("id") id: string,
-    @ZBody(CatalogUpdatePreviewBody) body: z.infer<typeof UpdatePreviewBody>,
+    @ZBody(CatalogUpdatePreviewBodyDto) body: z.infer<typeof CatalogUpdatePreviewBody>,
   ): Promise<PlatformUpdatePreview> {
     return this.updater.preview(id, body.version);
   }
@@ -461,7 +428,7 @@ export class AdminCatalogController {
   update(
     @CurrentPrincipal() principal: Principal,
     @Param("id") id: string,
-    @ZBody(CatalogUpdateBody) body: z.infer<typeof UpdateBody>,
+    @ZBody(CatalogUpdateBodyDto) body: z.infer<typeof CatalogUpdateBody>,
   ): Promise<PlatformUpdateResult> {
     const actor = requireUser(principal);
     return this.updater.update(actor.account.id, id, body, actorOpts(actor));

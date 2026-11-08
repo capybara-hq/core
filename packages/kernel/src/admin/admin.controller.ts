@@ -1,12 +1,11 @@
 import type { LocalizedName, Logger } from "@capybara-hq/plugin-sdk";
-import { Controller, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
-import { z } from "zod";
+import { Controller, Get, HttpCode, Inject, Patch, Post, Put } from "@nestjs/common";
+import type { z } from "zod";
 import { CatalogRequestsService } from "../catalog/requests.service.js";
 import { ExtensionAdmin } from "../extensions/admin-view.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { extensionNeedsAction } from "../extensions/permission-view.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
-import { MAX_PASSWORD_LENGTH } from "../identity/login.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -15,15 +14,18 @@ import {
   SuperAdmin,
 } from "../identity/principal.js";
 import { SessionService } from "../identity/sessions.js";
-import {
-  DEPLOYMENT_SETTINGS_PATCH,
-  type DeploymentSettings,
-  SettingsService,
-} from "../identity/settings.js";
+import { type DeploymentSettings, SettingsService } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
+import {
+  type ModelDisabledPatch,
+  ModelDisabledPatchDto,
+  type ModelProviderParams,
+  ModelProviderParamsDto,
+} from "../models/enablement.controller.js";
+import { type ModelDisableResult, ModelEnablement } from "../models/enablement.js";
 import {
   MODEL_PRICE_PUT,
   type ModelPrice,
@@ -40,7 +42,15 @@ import {
 } from "../models/purposes.js";
 import { type Org, OrgsService } from "../orgs/orgs.service.js";
 import { ProviderRegistry, type ProviderStatus } from "../runtime/providers.js";
-import type { SubagentLimits } from "../runtime/subagents/limits.js";
+import {
+  AccountListQuery,
+  AccountParams,
+  CreateAccountBody,
+  DeploymentSettingsBody,
+  PurposeParams,
+  UpdateAccountBody,
+} from "./admin.schemas.js";
+import { type LimitDefaults, limitDefaults } from "./limit-defaults.js";
 
 /** 后台概览（`GET /api/v1/admin/overview`）的计数。 */
 export interface AdminOverview {
@@ -55,47 +65,15 @@ export interface AdminOverview {
   accounts: number;
 }
 
-/**
- * The deployment's defaults of the per-org limits (with `GET /api/v1/admin/orgs`): what an
- * organization without an override gets, from the live config. `subagents.maxDispatchesPerRun` and
- * `maxTokensPerRun` of 0 mean no limit.
- */
-export interface LimitDefaults {
-  /** `runtime.orgConcurrency`. */
-  runConcurrency: number;
-  /** `sandbox.limits.cpu` / `memoryMb`. */
-  sandbox: { cpu: number; memoryMb: number };
-  /** `subagents.*`. */
-  subagents: SubagentLimits;
-}
-
-const ListQuerySchema = z.object({
-  after: z.string().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-});
-class AccountListQuery extends createZodDto(ListQuerySchema, "AccountListQuery") {}
-
-const CreateAccountSchema = z.object({
-  login: z.string().min(1).max(64),
-  password: z.string().min(1).max(MAX_PASSWORD_LENGTH),
-  displayName: z.string().trim().min(1).max(100),
-  email: z.email().max(254).optional(),
-  superAdmin: z.boolean().optional(),
-});
-class CreateAccountBody extends createZodDto(CreateAccountSchema, "CreateAccountBody") {}
-
-const UpdateAccountSchema = z.object({
-  displayName: z.string().trim().min(1).max(100).optional(),
-  status: z.enum(["active", "disabled"]).optional(),
-  isSuperAdmin: z.boolean().optional(),
-});
-class UpdateAccountBody extends createZodDto(UpdateAccountSchema, "UpdateAccountBody") {}
-
-/** 至少给出一个键；`runConcurrencyOverrides` 按组织合并，值为 null 删除该组织的覆盖。 */
-const SettingsSchema = DEPLOYMENT_SETTINGS_PATCH.refine((b) => Object.keys(b).length > 0, {
-  message: "at least one setting is required",
-});
-class DeploymentSettingsBody extends createZodDto(SettingsSchema, "DeploymentSettingsPatch") {}
+class AccountListQueryDto extends createZodDto(AccountListQuery, "AccountListQuery") {}
+class CreateAccountBodyDto extends createZodDto(CreateAccountBody, "CreateAccountBody") {}
+class UpdateAccountBodyDto extends createZodDto(UpdateAccountBody, "UpdateAccountBody") {}
+class AccountParamsDto extends createZodDto(AccountParams, "AccountParams") {}
+class PurposeParamsDto extends createZodDto(PurposeParams, "PurposeParams") {}
+class DeploymentSettingsBodyDto extends createZodDto(
+  DeploymentSettingsBody,
+  "DeploymentSettingsPatch",
+) {}
 // a union schema: a DTO value rather than a class (a class cannot extend a union instance type)
 const ModelPriceBody = createZodDto(MODEL_PRICE_PUT, "ModelPricePut");
 
@@ -118,6 +96,7 @@ export class AdminController {
     @Inject(ProviderRegistry) private readonly registry: ProviderRegistry,
     @Inject(CatalogRequestsService) private readonly catalogRequests: CatalogRequestsService,
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
+    @Inject(ModelEnablement) private readonly enablement: ModelEnablement,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
@@ -144,7 +123,7 @@ export class AdminController {
    */
   @Get("accounts")
   async listAccounts(
-    @ZQuery(AccountListQuery) q: z.infer<typeof ListQuerySchema>,
+    @ZQuery(AccountListQueryDto) q: z.infer<typeof AccountListQuery>,
   ): Promise<{ accounts: Account[]; next: string | null }> {
     const rows = await this.accounts.list({
       limit: q.limit + 1,
@@ -159,7 +138,7 @@ export class AdminController {
   @HttpCode(201)
   async createAccount(
     @CurrentPrincipal() principal: Principal,
-    @ZBody(CreateAccountBody) body: z.infer<typeof CreateAccountSchema>,
+    @ZBody(CreateAccountBodyDto) body: z.infer<typeof CreateAccountBody>,
   ): Promise<{ account: Account }> {
     const actor = requireUser(principal);
     const account = await this.accounts.createByAdmin(
@@ -180,8 +159,8 @@ export class AdminController {
   @Patch("accounts/:accountId")
   async updateAccount(
     @CurrentPrincipal() principal: Principal,
-    @Param("accountId") accountId: string,
-    @ZBody(UpdateAccountBody) body: z.infer<typeof UpdateAccountSchema>,
+    @ZParam(AccountParamsDto) { accountId }: z.infer<typeof AccountParams>,
+    @ZBody(UpdateAccountBodyDto) body: z.infer<typeof UpdateAccountBody>,
   ): Promise<{ account: Account }> {
     const actor = requireUser(principal);
     const patch: Parameters<AccountsService["update"]>[1] = {
@@ -217,7 +196,7 @@ export class AdminController {
     orgs: (Org & { memberCount: number })[];
     limitDefaults: LimitDefaults;
   }> {
-    return { orgs: await this.orgs.listAll(), limitDefaults: this.limitDefaults() };
+    return { orgs: await this.orgs.listAll(), limitDefaults: limitDefaults(this.config) };
   }
 
   @Get("settings")
@@ -225,21 +204,10 @@ export class AdminController {
     return this.settings.get();
   }
 
-  private limitDefaults(): LimitDefaults {
-    const cfg = this.config.get();
-    const { maxDepth, maxConcurrentPerConversation, maxDispatchesPerRun, maxTokensPerRun } =
-      cfg.subagents;
-    return {
-      runConcurrency: cfg.runtime.orgConcurrency,
-      sandbox: { cpu: cfg.sandbox.limits.cpu, memoryMb: cfg.sandbox.limits.memoryMb },
-      subagents: { maxDepth, maxConcurrentPerConversation, maxDispatchesPerRun, maxTokensPerRun },
-    };
-  }
-
   @Put("settings")
   async putSettings(
     @CurrentPrincipal() principal: Principal,
-    @ZBody(DeploymentSettingsBody) body: z.infer<typeof SettingsSchema>,
+    @ZBody(DeploymentSettingsBodyDto) body: z.infer<typeof DeploymentSettingsBody>,
   ): Promise<DeploymentSettings> {
     const actor = requireUser(principal);
     return this.settings.update(body, actor.account.id, patTokenId(actor));
@@ -248,7 +216,8 @@ export class AdminController {
   /**
    * 模型供应商与模型（后台「模型」页）：每个供应商带状态，列模型失败的标 `error`，不影响其他供应商；
    * 一并返回价格表与币种（改价仍走 `PUT /admin/model-prices`）。Each provider carries its extension's
-   * display name (null when it has none).
+   * display name (null when it has none); every model of the platform's list carries `disabled`
+   * (the platform's disabled list, spec B §5.3).
    */
   @Get("models")
   async getModels(): Promise<{
@@ -265,6 +234,25 @@ export class AdminController {
       providers: providers.map((p) => ({ ...p, displayName: names.get(p.plugin) ?? null })),
       ...prices,
     };
+  }
+
+  /**
+   * The platform's disabled models of one provider (spec B §5.3): disables and enables the ids the
+   * body names (others keep their state); such a model is invisible to every org. The response
+   * lists the agents and purposes, across orgs, that now point at a newly disabled model (the
+   * disable is not refused for them).
+   */
+  @Patch("models/:provider/disabled")
+  async patchModelsDisabled(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(ModelProviderParamsDto) params: z.infer<typeof ModelProviderParams>,
+    @ZBody(ModelDisabledPatchDto) body: z.infer<typeof ModelDisabledPatch>,
+  ): Promise<ModelDisableResult> {
+    const actor = requireUser(principal);
+    return this.enablement.setPlatform(params.provider, body, {
+      accountId: actor.account.id,
+      tokenId: patTokenId(actor),
+    });
   }
 
   /** 模型价格表（每百万 token）与币种（部署设置 `priceCurrency`）。 */
@@ -295,7 +283,7 @@ export class AdminController {
   @Put("model-purposes/:purpose")
   async putModelPurpose(
     @CurrentPrincipal() principal: Principal,
-    @Param("purpose") purpose: string,
+    @ZParam(PurposeParamsDto) { purpose }: z.infer<typeof PurposeParams>,
     @ZBody(PurposePutDto) body: PurposePut,
   ): Promise<{ purpose: PurposeListing }> {
     const actor = requireUser(principal);

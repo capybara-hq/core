@@ -18,6 +18,11 @@ export interface Account {
   email: string | null;
   status: "active" | "disabled";
   isSuperAdmin: boolean;
+  /**
+   * The account signed in with a generated initial password and must set its own before anything
+   * else (Platform tool spec §14.5 item 2): the auth guard refuses every other route until then.
+   */
+  mustChangePassword: boolean;
   createdAt: Date;
 }
 
@@ -35,12 +40,19 @@ export const ACCOUNT_COLUMNS = [
   "accounts.email",
   "accounts.status",
   "accounts.is_super_admin",
+  "accounts.must_change_password",
   "accounts.created_at",
 ] as const;
 
 type AccountRow = Pick<
   Selectable<AccountsTable>,
-  "id" | "display_name" | "email" | "status" | "is_super_admin" | "created_at"
+  | "id"
+  | "display_name"
+  | "email"
+  | "status"
+  | "is_super_admin"
+  | "must_change_password"
+  | "created_at"
 >;
 
 export function toAccount(r: AccountRow): Account {
@@ -50,6 +62,7 @@ export function toAccount(r: AccountRow): Account {
     email: r.email,
     status: r.status,
     isSuperAdmin: r.is_super_admin,
+    mustChangePassword: r.must_change_password,
     createdAt: r.created_at,
   };
 }
@@ -66,6 +79,19 @@ export interface LocalAccountInput {
   displayName: string;
   email?: string;
   superAdmin?: boolean;
+  /** The account must set its own password at first sign-in (a generated initial password). */
+  mustChangePassword?: boolean;
+}
+
+/** Options of {@link AccountsService.createByAdmin}. */
+export interface AdminCreateOptions {
+  /** Merged into the `account.created` audit detail (e.g. the Platform tool's `via: "agent"`). */
+  auditDetail?: Record<string, unknown>;
+  /**
+   * Runs in the creation's transaction right after the insert (the generated password is sealed
+   * there), so the account and what goes with it commit or roll back together.
+   */
+  inTransaction?: (account: Account) => Promise<void>;
 }
 
 interface PreparedLocal {
@@ -126,8 +152,36 @@ export class AccountsService {
     input: LocalAccountInput,
     actorAccountId: string,
     actorTokenId?: string,
+    opts: AdminCreateOptions = {},
   ): Promise<Account> {
-    return this.createByAdminIn(await prepareLocal(input), actorAccountId, actorTokenId);
+    return this.createByAdminIn(await prepareLocal(input), actorAccountId, actorTokenId, opts);
+  }
+
+  /**
+   * Whether `login` is free for a new local account (`account.login_taken` otherwise) and well
+   * formed (`validation_failed`): the read a caller checks before asking a person to confirm.
+   */
+  async assertLoginFree(login: string): Promise<void> {
+    const external = normalizeLogin(login);
+    const taken = await this.db
+      .selectFrom("identities")
+      .select("account_id")
+      .where("source", "=", "local")
+      .where("external_id", "=", external)
+      .executeTakeFirst();
+    if (taken) throw new ApiError("account.login_taken", "Login is already taken");
+  }
+
+  /** The local login of each account that has one (accounts without are left out). */
+  async localLogins(accountIds: readonly string[]): Promise<Map<string, string>> {
+    if (accountIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom("identities")
+      .select(["account_id", "external_id"])
+      .where("source", "=", "local")
+      .where("account_id", "in", accountIds)
+      .execute();
+    return new Map(rows.map((r) => [r.account_id, r.external_id]));
   }
 
   @Transactional()
@@ -135,6 +189,7 @@ export class AccountsService {
     prepared: PreparedLocal,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    opts: AdminCreateOptions,
   ): Promise<Account> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
     const a = await this.insertLocal(prepared);
@@ -143,8 +198,13 @@ export class AccountsService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "account.created",
       target: a.id,
-      detail: { superAdmin: a.isSuperAdmin },
+      detail: {
+        superAdmin: a.isSuperAdmin,
+        ...(a.mustChangePassword && { mustChangePassword: true }),
+        ...opts.auditDetail,
+      },
     });
+    await opts.inTransaction?.(a);
     return a;
   }
 
@@ -219,6 +279,7 @@ export class AccountsService {
         "accounts.email_verified",
         "accounts.status",
         "accounts.is_super_admin",
+        "accounts.must_change_password",
         "accounts.created_at",
         "accounts.updated_at",
         "local_passwords.password_hash",
@@ -317,6 +378,17 @@ export class AccountsService {
     exceptSessionId: string,
   ): Promise<string[]> {
     await this.writePassword(accountId, passwordHash);
+    // the person set their own password: the generated one is no longer theirs to be shown
+    await this.db
+      .updateTable("accounts")
+      .set({ must_change_password: false })
+      .where("id", "=", accountId)
+      .where("must_change_password", "=", true)
+      .execute();
+    await this.db
+      .deleteFrom("account_initial_passwords")
+      .where("account_id", "=", accountId)
+      .execute();
     const sessions = await this.db
       .updateTable("sessions")
       .set({ revoked_at: sql<Date>`now()` })
@@ -356,6 +428,7 @@ export class AccountsService {
     patch: AccountPatch,
     actorAccountId: string,
     actorTokenId?: string,
+    opts: { auditDetail?: Record<string, unknown> } = {},
   ): Promise<{ account: Account; revokedSessionIds: string[] }> {
     // Every super admin write is serialized by one lock and re-checks the actor under it: two
     // admins revoking each other concurrently cannot leave none, and a just-revoked admin's
@@ -370,7 +443,7 @@ export class AccountsService {
     return this.applyUpdate(before, patch, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
-      detail: patch,
+      detail: { ...patch, ...opts.auditDetail },
     });
   }
 
@@ -451,6 +524,7 @@ export class AccountsService {
         display_name: input.displayName,
         email: input.email ?? null,
         is_super_admin: input.superAdmin ?? false,
+        must_change_password: input.mustChangePassword ?? false,
       })
       .returningAll()
       .executeTakeFirstOrThrow();

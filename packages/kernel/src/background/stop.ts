@@ -9,7 +9,14 @@ import {
   BackgroundTaskFinisher,
 } from "./finish.js";
 import { TASKS_DIR } from "./launch.js";
-import { assertTaskRef, decodeTail, killSession, tailCommand } from "./session.js";
+import {
+  actingAs,
+  assertTaskRef,
+  decodeTail,
+  killSession,
+  tailCommand,
+  taskActor,
+} from "./session.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
 /** Why a task is stopped. */
@@ -108,6 +115,7 @@ export class BackgroundTaskStopper {
     // recording it after sees the claim (both are single-row updates of the same row)
     const cur = (await this.store.get(task.id)) ?? task;
     if (cur.status !== "running" || cur.sid === null || cur.sandboxCreatedAt === null) return cur;
+    const started = { ...cur, sandboxCreatedAt: cur.sandboxCreatedAt };
     const sid = cur.sid;
     assertTaskRef(cur.id, sid);
     const reported = why === "tool";
@@ -124,41 +132,7 @@ export class BackgroundTaskStopper {
     const opts = stoppedBy === undefined ? {} : { stoppedBy };
     let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
     try {
-      r = await this.sandbox.ifRunning(
-        cur.sandboxConversationId,
-        { createdAt: cur.sandboxCreatedAt },
-        async (p, h, sig) => {
-          const term = await p.exec(h, {
-            command: termScript(cur.id, sid),
-            cwd: "/workspace",
-            timeoutMs: TERM_EXEC_TIMEOUT_MS,
-            maxOutputBytes: 4096,
-            signal: sig,
-          });
-          const exited = /^exited (-?[0-9]+)$/.exec(term.stdout.trim());
-          if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
-            throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
-          }
-          // also after an exit: processes the command left running are stopped with the task
-          if (!(await killSession(p, h, sid))) {
-            throw new Error(`background task ${cur.id} could not be confirmed stopped`);
-          }
-          const tail = await p.exec(h, {
-            command: tailCommand(cur.id),
-            cwd: "/workspace",
-            timeoutMs: TAIL_EXEC_TIMEOUT_MS,
-            maxOutputBytes: 64 * 1024,
-            signal: sig,
-          });
-          const lastLines = tail.exitCode === 0 ? decodeTail(tail.stdout) : "";
-          // a task that had exited before the signal ends as its exit says
-          const to: BackgroundFinish = exited
-            ? exitedAs(cur, Number(exited[1]), new Date())
-            : { status: "stopped" };
-          return { to, lastLines };
-        },
-        signal,
-      );
+      r = await this.signalTask(started, sid, signal);
     } catch (err) {
       await this.store
         .releaseStop(cur.id)
@@ -175,6 +149,54 @@ export class BackgroundTaskStopper {
       await this.finisher.finish(cur, RECREATED, "", reported, opts);
     }
     return (await this.store.get(cur.id)) ?? cur;
+  }
+
+  /**
+   * SIGTERM, the grace period, SIGKILL until the session is empty, then the last lines: in the
+   * task's own instance only (`ifRunning`); a task from before environments has none.
+   */
+  private async signalTask(
+    cur: BackgroundTaskRow & { sandboxCreatedAt: Date },
+    sid: string,
+    signal: AbortSignal | undefined,
+  ): Promise<IfRunningResult<{ to: BackgroundFinish; lastLines: string }>> {
+    if (cur.environmentId === null) return { kind: "not_running", status: "gone" };
+    return this.sandbox.ifRunning(
+      cur.environmentId,
+      { createdAt: cur.sandboxCreatedAt },
+      async (tp, h, sig) => {
+        const p = actingAs(tp, taskActor(cur));
+        const term = await p.exec(h, {
+          command: termScript(cur.id, sid),
+          cwd: "/workspace",
+          timeoutMs: TERM_EXEC_TIMEOUT_MS,
+          maxOutputBytes: 4096,
+          signal: sig,
+        });
+        const exited = /^exited (-?[0-9]+)$/.exec(term.stdout.trim());
+        if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
+          throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
+        }
+        // also after an exit: processes the command left running are stopped with the task
+        if (!(await killSession(p, h, sid))) {
+          throw new Error(`background task ${cur.id} could not be confirmed stopped`);
+        }
+        const tail = await p.exec(h, {
+          command: tailCommand(cur.id),
+          cwd: "/workspace",
+          timeoutMs: TAIL_EXEC_TIMEOUT_MS,
+          maxOutputBytes: 64 * 1024,
+          signal: sig,
+        });
+        const lastLines = tail.exitCode === 0 ? decodeTail(tail.stdout) : "";
+        // a task that had exited before the signal ends as its exit says
+        const to: BackgroundFinish = exited
+          ? exitedAs(cur, Number(exited[1]), new Date())
+          : { status: "stopped" };
+        return { to, lastLines };
+      },
+      signal,
+    );
   }
 
   /**

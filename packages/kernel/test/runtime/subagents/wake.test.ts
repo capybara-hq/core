@@ -295,7 +295,7 @@ async function expectZeroDrift(conversationId: string, runId: string, marker: st
     const info = (
       await k.app
         .get(ProviderRegistry)
-        .resolve({ provider: c.payload.provider, model: c.payload.model })
+        .resolve(snap.orgId, { provider: c.payload.provider, model: c.payload.model })
     ).info;
     const out = reconstructRequest(snap, c.seq, { model: info });
     expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
@@ -531,6 +531,8 @@ describe("waking on sub-agent deliveries", { timeout: 90_000 }, () => {
       orgId,
       conversationId: child.conversationId,
       sandboxConversationId: conv,
+      // a row without a process: no instance to address
+      environmentId: null,
       runId: child.runId,
       callId: "call-x",
       triggerAccountId: ownerId,
@@ -884,6 +886,8 @@ async function finishChildTask(
     orgId,
     conversationId: child.conversationId,
     sandboxConversationId: conv,
+    // a row without a process: no instance to address
+    environmentId: null,
     runId: child.runId,
     callId: "call-x",
     triggerAccountId: ownerId,

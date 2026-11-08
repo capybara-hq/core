@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
+import { EXTENSION_POINTS, SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import {
   type FakeNpmRegistry,
   fakeExtensionEntry,
@@ -15,7 +15,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import type { KernelAppOptions } from "../../src/app.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -797,6 +797,12 @@ describe("安装记录：迁移目录只认审阅过的 capybara.migrations，�
         },
       }),
     );
+    // the chain links through counter@2, a major only this test's kernel accepts (restored below)
+    const counter = EXTENSION_POINTS.counter as NonNullable<(typeof EXTENSION_POINTS)["counter"]>;
+    EXTENSION_POINTS.counter = { ...counter, majors: [1, 2] };
+    onTestFinished(() => {
+      EXTENSION_POINTS.counter = counter;
+    });
     const k = await boot({ extensions: [MODEL_FAKE, fixture("chain-mid"), fixture("chain-top")] });
     const status = async (plugin: string) =>
       db

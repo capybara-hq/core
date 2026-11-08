@@ -103,7 +103,9 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Extensions:** in-process, full trust (approval is governance, not a sandbox); lifecycle changes
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
   (required ones are `builtin`, the rest optional preinstalls, off in every org until switched on);
-  hooks observe or deny, never rewrite. An extension call made for an org carries `config`, the
+  hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
+  extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields), and policy
+  hooks fail closed. An extension call made for an org carries `config`, the
   effective config (platform deployment config plus the org's copy of overridable fields: never an
   overridable platform secret, hidden secrets stay); an org whose effective config is invalid gets
   no call (`needsConfig`); org admins may switch off single extension tools.
@@ -118,12 +120,23 @@ Each line is the rule you must not miss; the skill has the rest.
   creates a private copy from it (a missing connector becomes a pending entry, a setup request goes
   to the org admins), org admins save agents as org templates; spec §15 of
   `docs/superpowers/specs/2026-11-05-plugin-component-management-design.md`. [writing-plugins](.agents/skills/writing-plugins/SKILL.md)
-- **Platform tool:** a new HTTP route gets a Platform operation or an exclusion with a reason; operations call the controllers' services, never new logic (`pnpm check:platform-ops`).
+- **Platform tool:** add a route = a Platform operation built from the route's exported schemas, or
+  an exclusion with a reason (never `later`; the one exception is the agent profile route in
+  `LATER_ALLOWED`, tracked in #91); change a route's input = change the shared schema (the
+  parity test fails on drift); remove a route = its operation and exclusion go with it. Operations
+  call the controllers' services, never new logic (`pnpm check:platform-ops`, `platform-parity.test.ts`).
+  [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
-  kernel's. [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
-- **Sandboxes:** abort must kill the command; locking, suspension and destruction are the kernel's;
+  kernel's. A model has a kind (`ModelInfo.kind`, absent = `chat`); only `chat` (`stream`) and
+  `embedding` (`embed`) are callable, other kinds are list-only. Models are enabled by default and
+  disabled on demand by the platform and per org (the kernel refuses a disabled model for agents,
+  purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
+  through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
+  recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
+- **Sandboxes:** work happens in environments (one instance + a file system kept until the environment
+  is deleted); abort must kill the command; locking, suspension and destruction are the kernel's;
   never publish the socket proxy on a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the

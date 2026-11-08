@@ -10,6 +10,7 @@ import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api"
 import {
   AGENTS,
   CONV,
+  ENVIRONMENTS,
   ev,
   FakeEventSource,
   LIMITS,
@@ -1166,7 +1167,7 @@ describe("server-decided failures (ruling R5)", () => {
   it("a secondary read the kernel fails draws its section's error state; the browser reads nothing", async () => {
     const calls = api({
       [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "hi")] }),
-      [`GET ${BASE}/sandbox`]: failed,
+      [`GET ${BASE}/environment`]: failed,
       [`GET ${BASE}/files`]: failed,
       [`GET ${BASE}/queue`]: failed,
       "GET /api/v1/orgs/o1/ui/contributions": failed,
@@ -1176,7 +1177,7 @@ describe("server-decided failures (ruling R5)", () => {
     window.history.replaceState(null, "", "/chat/c1#properties");
     await renderChat();
     const props = await screen.findByRole("complementary", { name: "Properties" });
-    expect(within(props).getByText(new RegExp(en.chatPanel.sandboxFailed))).toBeTruthy();
+    expect(within(props).getByText(new RegExp(en.chatPanel.environmentFailed))).toBeTruthy();
     expect(screen.getByText("hi")).toBeTruthy();
     expect(calls).toEqual([]);
     window.history.replaceState(null, "", "/");
@@ -1223,7 +1224,7 @@ describe("the first open after the server's snapshot (web query cache spec §6)"
     });
     await vi.waitFor(() =>
       expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
-        new Set([BASE, `${BASE}/queue`, `${BASE}/files`]),
+        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, `${BASE}/environment`]),
       ),
     );
     expect(await screen.findByText("while away")).toBeTruthy();
@@ -1285,6 +1286,7 @@ const NEW_CHAT = {
   "GET /api/v1/orgs/o1/attachments/limits": () => json(200, LIMITS),
   "GET /api/v1/orgs/o1/agents": () => json(200, AGENTS),
   "GET /api/v1/orgs/o1/models": () => json(200, MODELS),
+  "GET /api/v1/orgs/o1/environments": () => json(200, ENVIRONMENTS),
   "GET /api/v1/orgs/o1/conversations/groups": () => json(200, { groups: [], next: null }),
 };
 
@@ -1305,7 +1307,7 @@ describe("a new conversation (/)", () => {
     expect(server.map((c) => c.url)).toEqual(
       expect.arrayContaining([
         "/api/v1/orgs/o1/agents",
-        "/api/v1/orgs/o1/models",
+        "/api/v1/orgs/o1/models?kind=chat",
         "/api/v1/orgs/o1/conversations/groups",
         "/api/v1/orgs/o1/attachments/limits",
       ]),
@@ -1406,7 +1408,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     expect(d.client.getQueryData(c.events())).toEqual({ events: [event], turnsBefore: 0 });
     expect(d.client.getQueryData(c.queue())).toEqual({ items: [], paused: false });
     expect(d.client.getQueryData(c.files())).toEqual([]);
-    expect(d.client.getQueryData(c.sandbox())).toBeNull();
+    expect(d.client.getQueryData(c.environment())).toBeNull();
 
     // /chat/c9 paints from the seeded cache: no read of the row, events, queue or files, and
     // the stream opens after the event's seq
@@ -1423,7 +1425,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     expect(document.querySelector('[data-part="working-line"]')).not.toBeNull();
     await new Promise((r) => setTimeout(r, 20));
     const reads = calls.filter((x) => x.method === "GET").map((x) => x.url.split("?")[0]);
-    for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/sandbox`])
+    for (const path of [C9, `${C9}/events`, `${C9}/queue`, `${C9}/files`, `${C9}/environment`])
       expect(reads).not.toContain(path);
   });
 

@@ -21,57 +21,22 @@ import { ZBody } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { AgentProfileService } from "./agent-profile.service.js";
 import {
-  AGENT_VISIBILITIES,
+  AgentCreateBody,
+  AgentFromTemplateBody,
+  AgentFromTemplatePreviewBody,
+  AgentUpdateBody,
+} from "./agents.schemas.js";
+import {
   AgentsService,
   type AgentVersionSummary,
   type AgentView,
   type AgentWarning,
 } from "./agents.service.js";
-import { AgentDefinitionSchema, ModelRef } from "./definition.js";
 import { AgentsFromTemplate, type TemplatePreview } from "./from-template.service.js";
-import { type AgentProfile, PRESET_IDS, ProfileInputSchema } from "./profile.js";
+import { type AgentProfile, ProfileInputSchema } from "./profile.js";
 
-const MemberIds = z.array(z.string().min(1).max(100)).max(1000);
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
-/**
- * `instructions` has no default in a request: with `instructionFiles` the kernel derives it, and a
- * new agent given neither gets the `AGENTS.md` starter (`deriveInstructions`).
- */
-const RequestInstructions = z.string().max(100_000).optional();
-/**
- * Fields a request may not carry (tools default-on spec §2): the old enabled list, and a
- * sub-agent's key filter (written only at dispatch).
- */
-const RequestOnly = {
-  tools: z
-    .undefined({
-      error: "tools was replaced by disabledTools: an agent has every tool unless it turns it off",
-    })
-    .optional(),
-  subagentTools: z
-    .undefined({ error: "subagentTools is set only on a sub-agent's definition at dispatch" })
-    .optional(),
-};
-/** Pending connectors come only from a template (ruling P4-6): a create request's are dropped. */
-const CreateDefinition = AgentDefinitionSchema.omit({ pendingConnectors: true }).extend({
-  instructions: RequestInstructions,
-  ...RequestOnly,
-});
-const UpdateDefinition = AgentDefinitionSchema.extend({
-  instructions: RequestInstructions,
-  ...RequestOnly,
-});
-
-const CreateBody = z
-  .object({
-    definition: CreateDefinition,
-    visibility: z.enum(AGENT_VISIBILITIES),
-    memberIds: MemberIds.optional(),
-    /** Without an avatar the agent gets a random preset. */
-    profile: ProfileInputSchema.optional(),
-  })
-  .strict();
 // the description is part of the agent's definition (run context spec §3.5): saved with the agent
 const ProfileBody = ProfileInputSchema.omit({ description: true })
   .extend({
@@ -90,54 +55,22 @@ const AvatarUploadBody = z
     size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
   })
   .strict();
-const UpdateBody = z
-  .object({
-    definition: UpdateDefinition.optional(),
-    visibility: z.enum(AGENT_VISIBILITIES).optional(),
-    memberIds: MemberIds.optional(),
-    /**
-     * 乐观并发：编辑页打开时读到的 `currentVersion`。给出且与当前版本不同（别人已保存过）→ 409
-     * `agent.version_conflict`，不覆盖别人的改动。不给时不检查（旧客户端）。
-     */
-    expectedVersion: z.number().int().positive().optional(),
-  })
-  .strict();
-
-const TemplateId = z.string().min(1).max(100);
-const FromTemplatePreviewBody = z.object({ templateId: TemplateId }).strict();
-const FromTemplateBody = z
-  .object({
-    templateId: TemplateId,
-    name: z.string().min(1).max(80),
-    /** Default `private`; anything else needs `agents.manage` (ruling P4-3). */
-    visibility: z.enum(AGENT_VISIBILITIES).optional(),
-    /** The accounts of a `members` agent. */
-    members: MemberIds.optional(),
-    /** The person's choice; absent = the template's model resolution (P4-4). */
-    model: ModelRef.strict().optional(),
-    /** A preset avatar; absent = a random one. */
-    avatar: z
-      .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
-      .strict()
-      .optional(),
-    /** The preview's `previewHash`; another one → 409 `agent.template_preview_stale`. */
-    previewHash: z.string().regex(/^[0-9a-f]{64}\.[0-9a-f]{16}$/),
-  })
-  .strict();
-
 /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
 const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
 
-class AgentCreateBodyDto extends createZodDto(CreateBody, "AgentCreateBody") {}
-class AgentUpdateBodyDto extends createZodDto(UpdateBody, "AgentUpdateBody") {}
+class AgentCreateBodyDto extends createZodDto(AgentCreateBody, "AgentCreateBody") {}
+class AgentUpdateBodyDto extends createZodDto(AgentUpdateBody, "AgentUpdateBody") {}
 class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
 class AgentAvatarUploadBodyDto extends createZodDto(AvatarUploadBody, "AgentAvatarUploadBody") {}
 class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
 class AgentFromTemplatePreviewBodyDto extends createZodDto(
-  FromTemplatePreviewBody,
+  AgentFromTemplatePreviewBody,
   "AgentFromTemplatePreviewBody",
 ) {}
-class AgentFromTemplateBodyDto extends createZodDto(FromTemplateBody, "AgentFromTemplateBody") {}
+class AgentFromTemplateBodyDto extends createZodDto(
+  AgentFromTemplateBody,
+  "AgentFromTemplateBody",
+) {}
 
 /**
  * Agent 定义（`/api/v1/orgs/:orgId/agents`）。读用 `agents.use`（访客与服务令牌可用），
@@ -168,7 +101,7 @@ export class AgentsController {
   @OrgAction("agents.create")
   async previewFromTemplate(
     @CurrentOrg() org: OrgContext,
-    @ZBody(AgentFromTemplatePreviewBodyDto) body: z.infer<typeof FromTemplatePreviewBody>,
+    @ZBody(AgentFromTemplatePreviewBodyDto) body: z.infer<typeof AgentFromTemplatePreviewBody>,
   ): Promise<TemplatePreview> {
     return this.fromTemplate.preview(org.orgId, body.templateId);
   }
@@ -184,7 +117,7 @@ export class AgentsController {
   async createFromTemplate(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(AgentFromTemplateBodyDto) body: z.infer<typeof FromTemplateBody>,
+    @ZBody(AgentFromTemplateBodyDto) body: z.infer<typeof AgentFromTemplateBody>,
   ): Promise<{ agent: AgentView }> {
     const p = requireUser(principal);
     const { agent } = await this.fromTemplate.create(
@@ -209,7 +142,7 @@ export class AgentsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(AgentCreateBodyDto) body: z.infer<typeof CreateBody>,
+    @ZBody(AgentCreateBodyDto) body: z.infer<typeof AgentCreateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
     return this.agents.create(
@@ -256,7 +189,7 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-    @ZBody(AgentUpdateBodyDto) body: z.infer<typeof UpdateBody>,
+    @ZBody(AgentUpdateBodyDto) body: z.infer<typeof AgentUpdateBody>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const p = requireUser(principal);
     const r = await this.agents.update(org.orgId, agentId, p.account.id, body, patTokenId(p));

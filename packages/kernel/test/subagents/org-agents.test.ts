@@ -907,7 +907,7 @@ describe("replay (spec §15.3)", () => {
     const call = toEvents(snap)
       .filter((e) => e.type === "model_call")
       .at(-1) as ConversationEvent;
-    const info = (await k.app.get(ProviderRegistry).resolve(SCRIPT)).info;
+    const info = (await k.app.get(ProviderRegistry).resolve(snap.orgId, SCRIPT)).info;
     const base = reconstructRequest(snap, call.seq, { model: info });
     expect(base.drift).toEqual([]);
     const v2 = await db

@@ -362,7 +362,7 @@ async function lastRunId(convId: string): Promise<string> {
 }
 
 async function modelInfo(provider: string, model: string): Promise<ModelInfo> {
-  return (await k.app.get(ProviderRegistry).resolve({ provider, model })).info;
+  return (await k.app.get(ProviderRegistry).resolve(orgId, { provider, model })).info;
 }
 
 /** 还原用的媒体：按快照里的引用取当前的附件行与字节（与运行时一样，只取该模型用得到的）。 */
@@ -1010,8 +1010,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  // The map texts written before the tool-naming change and before background Bash, frozen: old
-  // snapshots keep them
+  // The map texts written before the tool-naming change, before background Bash and before the
+  // versioned skill directories of environments, frozen: old snapshots keep them
   const OLD_MAPS: [string, string][] = [
     [
       "the tool-naming change",
@@ -1041,6 +1041,21 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
         "- Task -> Agent; SendMessage to a sub-agent -> Agent with resume; model names haiku / sonnet / opus -> fast / standard / capable",
         "- TaskOutput, TaskStop -> not available",
         "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
+        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
+      ].join("\n"),
+    ],
+    [
+      "environments (skills in /skills/<name>@<version-id>/)",
+      [
+        "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit,",
+        "Glob, Grep, Skill, AskUserQuestion, ToolSearch, Agent, SendMessage, WebFetch and WebSearch have the same names here, when they are",
+        "in your tools. For the others:",
+        "- MultiEdit -> several Edit calls",
+        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
+        "- Task -> Agent; model names haiku / sonnet / opus -> fast / standard / capable",
+        "- TaskOutput -> TaskOutput, TaskStop -> TaskStop",
+        "- Any other tool a skill names (for example NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
         // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
         "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
       ].join("\n"),
@@ -1191,8 +1206,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await waitForTerminal(db, conv, 2, 30_000);
     const invoked = (await eventsOf(db, conv)).filter((e) => e.type === "user_message").at(-1);
     const first = invoked?.type === "user_message" ? invoked.payload.content[0] : undefined;
-    expect(first?.type === "text" && first.text).toContain(
-      'call Skill with "deploy" to copy them to /skills/deploy/',
+    expect(first?.type === "text" && first.text).toMatch(
+      /call Skill with "deploy" to copy them to \/skills\/deploy@[0-9a-f]{12}\//,
     );
     expect(sent[1]?.tools.map((t) => t.name)).toContain("Skill");
     await postMessage(owner, orgId, conv, 'tool:Skill:{"skill":"deploy"}');

@@ -1,4 +1,4 @@
-# Tool naming
+# Authoring: tool naming
 
 The model-visible tool key grammar:
 

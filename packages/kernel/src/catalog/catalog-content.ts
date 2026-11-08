@@ -17,6 +17,7 @@ import { normalizeToolKeys } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import type { ExtensionRegistry } from "../extensions/registry.js";
+import type { ExtensionUnavailableReason } from "../extensions/unavailable.js";
 import type { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgAction } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
@@ -35,6 +36,9 @@ import type { OrgPluginState, PluginScope } from "./scope.js";
 import { satisfiesRange } from "./versions.js";
 
 /** A catalog item from an organization's view (`GET /orgs/:orgId/catalog`). */
+/** Why an org's plugin is `unavailable` ({@link OrgCatalogItem.reason}). */
+export type PluginUnavailableReason = "plugin_disabled" | ExtensionUnavailableReason;
+
 export interface OrgCatalogItem
   extends Omit<
     CatalogItemView,
@@ -60,10 +64,17 @@ export interface OrgCatalogItem
   /**
    * The effective state in this org: `on`, `off`, `needs_config` (installed with an on connector
    * template that has no connector here, ruling P2-10; or wanted but not installed, and the
-   * install needs inputs), `unavailable` (disabled by the super admin; members don't see it)
-   * or `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
+   * install needs inputs), `unavailable` (disabled by the super admin, members don't see it; or
+   * not installed here and its extension cannot run on the deployment, see `reason`) or
+   * `not_offered` (a `named` item shown to orgs outside its list: requestable, not usable).
    */
   state: OrgPluginState;
+  /**
+   * Only when `unavailable`: why (Platform tool spec §14.2 problem 1). `plugin_disabled`: the super
+   * admin disabled the item; otherwise its extension's {@link ExtensionUnavailableReason}, the same
+   * one the org's 扩展 page shows.
+   */
+  reason?: PluginUnavailableReason;
   /** The org admin may switch it (never for `all` and builtin items). */
   switchable: boolean;
   /** The plugin's extension (or a template's connector extension) is not on the deployment. */

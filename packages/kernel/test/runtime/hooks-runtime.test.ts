@@ -1,7 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type {
-  ModelProvider,
-  ModelRequestHookPayload,
+  ModelCallRequestHookPayload,
   ModelResponseHookPayload,
   ToolPostHookPayload,
 } from "@capybara-hq/plugin-sdk";
@@ -17,7 +16,7 @@ import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail } from "../../src/evals/trajectory.service.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { hookRequestOf } from "../../src/runtime/hook-calls.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { type BoundProvider, ProviderRegistry } from "../../src/runtime/providers.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -65,11 +64,10 @@ let orgId: string;
 let agentId: string;
 
 beforeAll(async () => {
-  ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, ref) {
-    const r = await originalResolve.call(this, ref);
+  ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, org, ref) {
+    const r = await originalResolve.call(this, org, ref);
     const inner = r.provider;
-    const provider: ModelProvider = {
-      listModels: () => inner.listModels(),
+    const provider: BoundProvider = {
       stream(req, opts) {
         sentCount++;
         return inner.stream(req, opts);
@@ -179,7 +177,7 @@ describe("model hooks", { timeout: 60_000 }, () => {
     const { conv, events } = await turn("echo:hello hooks");
     await countReaches("model.request", before + 1);
     // the step's request (the conversation's title call may come after it)
-    const seen = (await counts("step")).last["model.request"] as ModelRequestHookPayload;
+    const seen = (await counts("step")).last["model.request"] as ModelCallRequestHookPayload;
     const [call] = ofType(events, "model_call");
     expect(call).toBeDefined();
     expect(seen).toMatchObject({
@@ -195,7 +193,7 @@ describe("model hooks", { timeout: 60_000 }, () => {
     });
     const snap = await takeSnapshot(db, orgId, conv, call?.runId as string, 4_194_304);
     const info = (
-      await k.app.get(ProviderRegistry).resolve({ provider: "model-fake", model: "fake-1" })
+      await k.app.get(ProviderRegistry).resolve(orgId, { provider: "model-fake", model: "fake-1" })
     ).info;
     const out = reconstructRequest(snap, call?.seq as number, {
       model: info,

@@ -5,12 +5,11 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { type OrgPreviewerItem, type PreviewerItem, PreviewerRegistry } from "./previewers.js";
+import { FilePreviewersOrderBody } from "./previewers.schemas.js";
 
 const Id = z.string().min(1).max(100);
 const PreviewQuery = z.object({ locale: z.enum(["zh", "en"]).default("en") });
-const OrderBody = z.object({
-  items: z.array(z.object({ plugin: Id, id: Id, disabled: z.boolean().default(false) })).max(500),
-});
+const OrderBody = FilePreviewersOrderBody;
 /** The previewer named in a preview path (the other path parameters are read as they are). */
 const PreviewParams = z.object({ plugin: Id, previewerId: Id });
 

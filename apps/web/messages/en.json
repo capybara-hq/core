@@ -46,6 +46,16 @@
     },
     "insecureOrigin": "You are using an insecure http address, so you may not stay signed in. Use the HTTPS address or contact your administrator."
   },
+  "changePassword": {
+    "title": "Set a new password",
+    "subtitle": "You signed in with an initial password. Choose your own to continue.",
+    "current": "Initial password",
+    "next": "New password",
+    "confirm": "Repeat the new password",
+    "mismatch": "The two new passwords differ.",
+    "tooShort": "Use at least 12 characters.",
+    "submit": "Save and continue"
+  },
   "setup": {
     "title": "Setup",
     "intro": "Create the first super admin. You will be signed in when it is done.",
@@ -100,12 +110,15 @@
       "refresh_invalid": "Your session is no longer valid. Please sign in again.",
       "refresh_race": "Your session was just updated. Please try again.",
       "csrf": "The request was rejected. Refresh the page and try again.",
-      "session_required": "This action needs a signed-in web session."
+      "session_required": "This action needs a signed-in web session.",
+      "password_change_required": "Set a new password first: you signed in with an initial password."
     },
     "account": {
       "login_taken": "This username is already taken.",
       "not_found": "The account does not exist.",
-      "last_super_admin": "The last super admin cannot be revoked or deactivated."
+      "last_super_admin": "The last super admin cannot be revoked or deactivated.",
+      "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved.",
+      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -296,6 +309,14 @@
       "unavailable": "No sandbox is available in this deployment.",
       "busy": "The sandbox is busy; try again shortly."
     },
+    "environment": {
+      "not_found": "The environment does not exist or has been deleted.",
+      "name_taken": "You already have an environment with this name. Choose another name.",
+      "limit_reached": "You have reached the limit of environments. Delete one to create another.",
+      "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
+      "files_lost": "The files of this environment were lost. Rebuild its files on the environments page to use it again.",
+      "forbidden": "You can no longer use this environment."
+    },
     "skill": {
       "not_found": "The skill does not exist or has been deleted.",
       "invalid_package": "The skill package is invalid:",
@@ -336,6 +357,8 @@
     "model": {
       "unconfigured": "No model is mapped to this purpose yet.",
       "purpose_unknown": "There is no such model purpose.",
+      "hook_denied": "An organization policy denied this model call",
+      "provider_not_found": "No such model provider",
       "rate_limited": "The model provider is rate limiting.",
       "overloaded": "The model provider is overloaded.",
       "server": "The model provider returned an error.",
@@ -1302,6 +1325,10 @@
     "contextPct": "Context {n}%",
     "toolLines": "lines {from}–{to}",
     "pickModel": "Switch model",
+    "pickEnvironment": "Environment",
+    "environmentNote": "Fixed once the first message is sent",
+    "environmentLocked": "A conversation keeps its environment",
+    "environmentDeleted": "Environment deleted",
     "pickEffort": "Effort",
     "nextMessage": "Applies from the next message",
     "agentDefault": "agent default",
@@ -1413,17 +1440,78 @@
     "download": "Download",
     "previewTruncated": "Showing the beginning only; download for the full file.",
     "previewFailed": "Preview failed to load.",
-    "sandbox": "Sandbox",
-    "sandboxNone": "Not created",
-    "sandboxRunning": "Running",
-    "sandboxSuspended": "Suspended",
-    "sandboxLastUsed": "Last used",
-    "sandboxFailed": "Status unavailable",
+    "environmentLine": "Environment: {name} · {state}",
+    "environmentNone": "No environment",
+    "environmentDeleted": "Environment deleted",
+    "environmentFailed": "Environment status unavailable",
     "lastRun": "Last run · {parts}"
   },
   "pluginPage": {
     "pathLabel": "Extension page",
     "liveLost": "Live updates stopped. Reload the page for the latest content."
+  },
+  "environments": {
+    "title": "Environments",
+    "listLabel": "Your environments",
+    "personal": "Personal",
+    "new": "New environment",
+    "none": "None",
+    "source": { "cloud": "Cloud sandbox" },
+    "state": {
+      "running": "Running",
+      "suspended": "Suspended",
+      "notStarted": "Not started",
+      "filesLost": "Files lost",
+      "unavailable": "Unavailable"
+    },
+    "isolation": {
+      "isolated": "Processes isolated between sessions",
+      "shared": "Processes not isolated between sessions"
+    },
+    "egress": { "none": "no network", "allowlist": "allowlisted hosts", "open": "open network" },
+    "empty": "You have no environments yet.",
+    "noCloud": {
+      "text": "The platform has no cloud sandbox.",
+      "hint": "Ask the super admin to set up a sandbox provider.",
+      "notice": "The platform has no cloud sandbox, so these environments are unavailable. You can still delete them. Ask the super admin to set up a sandbox provider."
+    },
+    "create": {
+      "title": "New environment",
+      "name": "Name",
+      "nameHelp": "Up to 64 characters. Your environment names are unique.",
+      "cancel": "Cancel",
+      "submit": "Create",
+      "created": "Environment {name} created."
+    },
+    "detail": {
+      "tabsLabel": "Environment sections",
+      "tabs": { "summary": "Summary" },
+      "source": "Source",
+      "provider": "Provider",
+      "state": "State",
+      "isolation": "Isolation",
+      "limits": "Limits",
+      "limitsValue": "{cpu} CPU · {memory} memory · {disk} disk · {egress}",
+      "files": "Files",
+      "filesNote": "Files are kept until the environment is deleted.",
+      "suspendNote": "Suspending ends the processes that are running.",
+      "filesLostNote": "The files of this environment are gone at the provider. Rebuild the files to use it again.",
+      "created": "Created",
+      "rename": "Rename",
+      "renameTitle": "Rename environment",
+      "renameSubmit": "Save",
+      "renamed": "Environment renamed to {name}.",
+      "delete": "Delete environment",
+      "deleteTitle": "Delete environment",
+      "deleteHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. Type its name to confirm.",
+      "deleteDefaultHint": "Deleting {name} also deletes its files and ends its processes. This cannot be undone. A new, empty {name} environment is created the next time one is needed. Type its name to confirm.",
+      "deleted": "Environment {name} deleted.",
+      "resetFiles": "Rebuild files",
+      "resetTitle": "Rebuild the files of {name}?",
+      "resetHint": "The workspace is wiped and the next use starts with empty files.",
+      "resetSubmit": "Rebuild files",
+      "resetScheduled": "File reset scheduled for {name}; this page updates when it is done."
+    }
   },
   "nav": {
     "agents": "Agents",
@@ -1431,6 +1519,7 @@
     "actions": "Actions",
     "inbox": "Inbox",
     "connectors": "Connectors",
+    "environments": "Environments",
     "channels": "Channels",
     "skills": "Skills",
     "evals": "Evals & runs",
@@ -1461,6 +1550,11 @@
     }
   },
   "approval": {
+    "initialPassword": {
+      "show": "Show the initial password",
+      "label": "Initial password of {login}",
+      "hint": "The platform generated it for the new account. It is shown only once; the account must change it at first sign-in."
+    },
     "title": "Approval required",
     "waiting": "Waiting",
     "tool": "Tool",
@@ -2214,6 +2308,24 @@
     "disabled": "Not enabled",
     "unavailable": "Unavailable",
     "unavailableHint": "Unavailable on this deployment · the organization setting is kept",
+    "unavailableWith": "Unavailable · {reason}",
+    "reasons": {
+      "not_deployed": "not installed on the platform",
+      "needs_deployment_config": "deployment config missing",
+      "pending_approval": "permissions awaiting approval",
+      "pending_migration": "being prepared",
+      "loading": "loading",
+      "dependency": "a required extension is missing",
+      "failed": "failed to load",
+      "deployment_disabled": "disabled on the platform"
+    },
+    "unavailableNext": {
+      "superAdmin": "Fix it on the admin console's Extensions page and it becomes usable.",
+      "orgAdmin": "Only the super admin can fix this; contact them.",
+      "member": "Contact an org admin; the super admin fixes it on the platform.",
+      "wait": "The platform is loading it; check again in a moment."
+    },
+    "openAdmin": "Open in the admin console",
     "enabledToast": "\"{plugin}\" enabled.",
     "disabledToast": "\"{plugin}\" disabled.",
     "dependencyMissing": "Enable an extension that provides these extension points first:",
@@ -2960,6 +3072,35 @@
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
         "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's)."
       }
+    },
+    "catalog": {
+      "title": "Models",
+      "orgDescription": "The models this organization can use. A model that is off does not appear in agent and purpose pickers.",
+      "search": "Search models",
+      "publisher": "Publisher",
+      "allPublishers": "All publishers",
+      "turnAllOff": "Turn all off",
+      "turnAllOn": "Turn all on",
+      "retiring": "Retiring",
+      "following": "Following the platform",
+      "orgConfigured": "This org's configuration",
+      "orgsConfigure": "Orgs configure their own",
+      "configure": "Configure",
+      "enabled": "Enabled",
+      "none": "This provider has no models available.",
+      "noMatch": "No models match.",
+      "undo": "Undo",
+      "affected": "These agents or purposes use these models:"
+    },
+    "kind": {
+      "chat": "Chat",
+      "embedding": "Embedding",
+      "rerank": "Rerank",
+      "image_generation": "Image generation",
+      "video_generation": "Video generation",
+      "speech_to_text": "Speech to text",
+      "text_to_speech": "Text to speech",
+      "other": "Other"
     }
   },
   "admin": {

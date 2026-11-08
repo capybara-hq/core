@@ -1,12 +1,14 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@1 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, concurrentExec and exec tags, same-name replacement, read-only /skills), effective org limits and egress (sandboxLimitOverrides, sandboxEgress, allowOpenEgress), the SandboxService lifecycle (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (environments, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags and actor, optional image, same-name replacement), effective org limits and egress (sandboxLimitOverrides, sandboxEgress), the SandboxService lifecycle keyed by environment id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, environments-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
-# Sandboxes: the kernel side of `sandbox@1`
+# Sandboxes: the kernel side of `sandbox@2`
 
-One sandbox per conversation (D4), shared by its sub-agents. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
-attachment sync and `Skill` all use it through `SandboxService`. `sandbox@1` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
+Work happens in **environments** (spec `docs/superpowers/specs/2026-11-07-environments-design.md`): an environment is one instance plus a file system, shared by all
+conversations bound to it (and their sub-agents). Instances are disposable, files are not: suspension and destruction act on the instance, and the files stay until the
+environment is deleted. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
+attachment sync and `Skill` all use it through `SandboxService`. `sandbox@2` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
 and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
 This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`),
@@ -16,30 +18,48 @@ specifics and tests) is in [writing-sandbox-providers in capybara-hq/plugins](ht
 Implementations:
 
 - `packages/kernel/test/fixtures/plugins/sandbox-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); every kernel sandbox test runs on it.
-- The official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) (one container per conversation, runc or gVisor's runsc, Docker only through
-  a socket proxy, an egress proxy container per sandbox) and [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) (E2B cloud or self-hosted)
+- The official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) (one container per environment, runc or gVisor's runsc, Docker only through
+  a socket proxy, an egress proxy container per instance) and [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) (E2B cloud or self-hosted)
   plugins in capybara-hq/plugins; their READMEs list every platform trade-off.
 
-## Contract: `sandbox@1` (`packages/plugin-sdk/src/sandbox.ts`)
+## Contract: `sandbox@2` (`packages/plugin-sdk/src/sandbox.ts`)
 
-A change here is an SDK change (API snapshot + changeset) and must keep the official providers working; check them in capybara-hq/plugins.
+`@2` replaces `@1` with no overlap (no compatibility before 0.1.0): a kernel refuses to load a provider still on `@1`. A change here is an SDK change (API snapshot +
+changeset) and must keep the official providers working; check them in capybara-hq/plugins.
 
 ```ts
 interface SandboxProvider {
-  create({ name, image, limits, signal }): Promise<SandboxHandle>;  // name = cap-<conversationId>
+  createFileSystem({ name, limits, signal }): Promise<FileSystemHandle>;  // name = cap-env-<environmentId>
+  destroyFileSystem(fs, signal): Promise<void>;          // not being there counts as success
+  destroyFileSystemByName(name, signal): Promise<void>;  // no handle: a crash mid-create, the legacy cleanup
+  create({ name, image?, limits, fileSystem, signal }): Promise<SandboxHandle>;  // an instance attached to the file system
   resume(h, signal): Promise<"resumed" | "gone">;
   suspend(h, signal): Promise<void>;          // files must be kept; an instance that is not there also counts as success
-  destroy(h, signal): Promise<void>;          // not being there counts as success
-  destroyByName?(name, signal): Promise<void>;
-  killAll?(h, signal): Promise<void>;
-  readonly concurrentExec?: boolean;          // exec / readFile / writeFile / stat may run concurrently on one instance
-  killTagged?(h, tags, signal): Promise<void>; // kill only the exec commands labelled with one of tags
-  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag? }): Promise<ExecResult>;
+  destroy(h, signal): Promise<void>;          // the instance only, never the file system; not being there counts as success
+  destroyByName(name, signal): Promise<void>; // the instance only
+  killAll(h, signal): Promise<void>;
+  readonly concurrentExec: true;              // required: exec / readFile / writeFile / stat run concurrently on one instance
+  killTagged(h, tags, signal): Promise<void>; // required: kill only the exec commands labelled with one of tags
+  exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag, actor }): Promise<ExecResult>;  // actor = { accountId, conversationId }
   readFile(h, path, { maxBytes, signal }): Promise<{ data; truncated } | null>;  // missing or a directory → null
   writeFile(h, path, data, signal): Promise<void>;                               // parent directories are created automatically
   stat(h, path, signal): Promise<{ size; isDir } | null>;
 }
 ```
+
+Instance name: `cap-env-<environmentId>` for both the file system and the instance. Old per-conversation instances (`cap-<conversationId>`) are removed by the one-off
+job `environments-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystemByName` on every `sandboxes` row (see Lifecycle).
+
+### File system versus instance
+
+- The **file system** is the environment's files (a volume, a template's persistent disk) and lives until the environment is deleted. The **instance** is the process
+  host attached to it: it is suspended when idle, destroyed after long disuse (`destroyAfterInactiveDays`), and recreated on the next use with the same files.
+  `destroy` / `destroyByName` therefore never touch the file system; only `destroyFileSystem` / `destroyFileSystemByName` do.
+- `create` with a file system that is gone throws **`FileSystemGoneError`** (duck-typed like `SandboxGoneError`; use `isFileSystemGoneError`) instead of making an empty one.
+  A Docker provider must check that the volumes exist before mounting them, because Docker would otherwise create empty ones. The kernel reports it to the model and
+  the environment page rather than silently rebuilding: the files are lost.
+- `image` is optional; without it the provider uses its own published image. The kernel passes one only when an environment pins a custom image.
+- `exec` carries `actor: { accountId, conversationId }` for audit and attribution; providers record it and must not use it for anything else in phase 1.
 
 `glob` / `grep` / `edit` are composed by the kernel from `exec` + `readFile` / `writeFile`; the provider does not implement them. So the image must have GNU `find`
 (`-print0`) and `grep` (`-rnHIE`, `--include`), `timeout`, `setsid`, `pkill` / `pgrep`.
@@ -53,8 +73,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   **An aborted `exec` must kill the command and its child processes**, not merely stop waiting for output; an `exec` aborted after the command has started resolves normally with
   `{ exitCode: null, timedOut: false }` (with the output collected so far) and does not reject. A timeout resolves `timedOut: true, exitCode: null`.
 - **gone versus ordinary errors**: when the instance is **definitely** no longer there on the provider's side (container deleted, E2B sandbox expired), `exec` / `readFile` /
-  `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then rebuilds an empty sandbox and retries once,
-  and the model sees `Sandbox was recreated; previous files are gone.`. If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
+  `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then recreates the instance on the same file system and retries once; the model sees a recreated notice (processes are gone, files are kept).
+  Losing the file system is a different error, `FileSystemGoneError` (above). If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
   throw an **ordinary error**; otherwise one network blip wipes the user's files. Use `isSandboxGoneError` to decide (duck-typed, compatible with an extension bundling its own copy of the SDK).
   E2B treats only E2B-format 404s (`{code: 404, …}`) as gone; failing to obtain the envd access token is also reported as gone (better to rebuild than to send a request without the token).
 - **Auto-start**: when the instance still exists but is stopped / paused (host or daemon restart, the suspension sweep stopped it before it could record `suspended`, someone ran
@@ -64,30 +84,27 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
-  The kernel calls it only where no live sibling can be running a command (see "Takeover per holder" below): under the exclusive lease when it finds records of
-  crashed holders or an older kernel's busy marker, under a shared lease only for a provider without `killTagged` while it is the one holder, and right after
-  recovering from `suspended` (an E2B pause preserves processes too). When the exec that kills processes cannot even start (process table exhausted),
+  The kernel calls it only where no other holder (any session of the environment) can be running a command (see "Takeover per holder" below): under the exclusive lease,
+  before the downgrade, right after recovering from `suspended` (an E2B pause preserves processes too). Crashed holders are killed by tag, never with `killAll`. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
-- **Concurrent use (`concurrentExec`, `killTagged`, `tag`; phase C)**: parallel sub-agents share their parent conversation's sandbox, so the kernel may call
-  `exec` / `readFile` / `writeFile` / `stat` concurrently on one instance when the provider declares `concurrentExec: true`. Then those methods must be safe
+- **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of an environment and their sub-agents share one instance, so the kernel calls
+  `exec` / `readFile` / `writeFile` / `stat` concurrently on it. Those methods must be safe
   concurrently, and **auto-start must be idempotent under concurrent calls** (two calls that both find the instance stopped both start it without failing:
   Docker's `start` on a running container answers 304, E2B `connect` on a running sandbox only extends its timeout). Every `exec` gets the holder's `tag`
   (`SANDBOX_TAG_RE`, `^[a-z0-9-]{1,64}$`, checked by the provider before it goes near a command line): label the command with it (the official providers name
   the control file `/tmp/.capybara-exec-<tag>-<uuid>`), and implement `killTagged(h, tags)` to kill only those commands' process trees, matching the
   whole tag: `capybara-exec /tmp/[.]capybara-exec-<tag>-<uuid>( |$)` with the UUID's exact shape, because a tag may be a prefix of another (`ab` of `ab-cd`;
-  the kernel's tags are UUIDs, but the contract allows any `SANDBOX_TAG_RE` tag). An aborted or timed-out `exec` still kills only its own command. `concurrentExec` requires `killTagged`: a
-  provider that declares one without the other, or neither, gets one call at a time (a startup warn for the half-declared case), so providers written before
-  phase C keep working unchanged. Concurrent commands share the sandbox's pids and memory limits; say so in the README.
-- **Same-name replacement**: `create` first deletes an old instance of the same name and then builds (the kernel may exit after the provider has built it but before it has recorded the handle). Likewise implement
-  `destroyByName`: when the kernel has no handle, it cleans up by `cap-<conversation>` (conversation deletion, test cleanup).
+  the kernel's tags are UUIDs, but the contract allows any `SANDBOX_TAG_RE` tag). An aborted or timed-out `exec` still kills only its own command. A provider that does not declare `concurrentExec: true` and implement `killTagged` fails to load. Concurrent commands share the sandbox's pids and memory limits; say so in the README.
+- **Same-name replacement**: `create` first deletes an old instance of the same name (never its file system) and then builds (the kernel may exit after the provider has built it but before it has recorded the handle). Likewise
+  `createFileSystem` replaces nothing: it must fail or return the existing one if the name exists, and `destroyByName` / `destroyFileSystemByName` clean up by `cap-env-<environmentId>` when the kernel has no handle (environment deletion, test cleanup).
 - **Output**: `maxOutputBytes` is the **combined** limit on stdout + stderr; excess is discarded and `truncated` is set; truncation backs off to a full UTF-8 character boundary.
 - **`/skills` is read-only**: mounted read-only for the sandbox user (or owned by root with 0755), and `writeFile("/skills/…")` is written by the provider as root,
   and must not be redirected elsewhere by a symlink the sandbox user places. The kernel's `/skills` write protection judges only the path string and can be bypassed by symlinks; the real
   defense is in the provider. Skill files have no executable bit, and `Skill` tells the model to run them with an interpreter (`sh /skills/x/run.sh`).
 - **File operations resolve as the sandbox user**: permissions and symlinks are resolved as the non-root user, never as root through the daemon.
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
-  `/workspace/attachments/`.
+  `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id).
 - **Background tasks** (`Bash` `run_in_background`, spec `docs/superpowers/specs/2026-11-05-background-bash-design.md` §4; no contract
   change): the kernel launches a task with one short `exec` (`cwd: /workspace`, relative paths `.capybara/tasks/<id>.*`) that runs
   `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit'` in the background and prints the session id; liveness is
@@ -108,8 +125,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
   The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
   "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.
-- `cpu` / `memoryMb` / `diskMb` / `egress` / `allowHosts` **take effect only at `create`**: changing config affects only sandboxes created afterwards,
-  and existing ones (including those recovered from suspension) keep the settings from creation until they are destroyed and rebuilt. When an item cannot be done, say so in the README (Docker's default local volume driver
+- `cpu` / `memoryMb` / `egress` / `allowHosts` **take effect only at `create`** (instance), and `diskMb` at `createFileSystem`: changing config affects only instances created afterwards,
+  and existing ones (including those recovered from suspension) keep the settings from creation until the instance is destroyed and recreated. When an item cannot be done, say so in the README (Docker's default local volume driver
   does not limit `diskMb`; E2B's cpu / memory / disk are decided by the template).
 - `egress`:
   - `none`: loopback only.
@@ -125,50 +142,70 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 
 The kernel owns it; the extension implements only primitives. **Do not do scheduling, timing or state tables in the extension**:
 
-- **State** lives in the PG table `sandboxes` (status `creating` / `running` / `suspended` / `destroyed`, handle, owning provider),
-  created lazily: `create` runs only on the first sandbox tool call.
+- **State** lives in the environment's row (instance status `creating` / `running` / `suspended` / `destroyed`, instance handle, file system handle, owning provider), keyed by
+  **environment id**, never by conversation. The file system is created with the environment; the instance is created lazily on the first sandbox tool call of any session.
+  The old `sandboxes` table is no longer used (a later migration drops it).
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
-  `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot; 1 for a provider without `concurrentExec` + `killTagged`):
-  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create, first use, rebuild after `gone`, `resume`, provider switch,
-  `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<conv>` (the old lock key, kept for rolling
-  upgrades: an exclusive token or the literal `shared`), `capk:sandbox-users:<conv>` (zset of shared tokens by expiry), `capk:sandbox-intent:<conv>`
-  (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<conv>` (holder records), `capk:sandbox-path:<conv>:<sha256>`.
-  Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<conv>`, `capk:sandbox-users:<conv>`)
+  `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot, shared by all sessions of the environment):
+  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`, provider switch,
+  `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
+  (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<env>` (holder records), `capk:sandbox-path:<env>:<sha256>`.
+  Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
   60 s (`SANDBOX_LOCK_TTL_MS`; the lease is a `LockService` shared lease, `tryShared` / `tryExclusive` in `infra/lock`, renewed every TTL/3 and lost at
   the deadline of decision R19 of the Nest kernel spec: send time of the last successful renewal + 2/3 TTL, which aborts that holder's signal); the holder records
-  and the `v2` busy marker `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
+  `sandbox.limits.maxCommandSeconds` + 10 min; the intent max(4 × poll, 2 s); a path lease 30 s (renewed); the seen key
   below `destroyAfterInactiveDays` + 1 day. A caller loops: sandbox `running` → one try at a shared lease; otherwise one try at the exclusive lease with
   intent (same token, so it can switch to shared under its own intent once someone else made the sandbox run); the exclusive holder makes it run and
   **downgrades** to a shared lease to run its own command (always release the view `downgrade` returned; any view's `release` releases the lease's current kind).
   Waiting is capped at `sandbox.lockWaitSeconds` (default 75, **must be greater than the lease TTL**, Ruling M15), then `sandbox.busy`. Two replicas using it
   for the first time at once build only one; several holders hitting `gone` together rebuild once (the others find the new instance and see "recreated").
   A holder that was not there for the rebuild (the parent, or a sibling sub-agent, on its next call) also sees "recreated": the kernel keeps the
-  instance each agent conversation last used (`capk:sandbox-seen:<conv>:<holder conv>`, its `created_at`, TTL `destroyAfterInactiveDays` + 1 day)
+  instance each agent conversation last used (`capk:sandbox-seen:<env>:<holder conv>`, its `created_at`, TTL `destroyAfterInactiveDays` + 1 day)
   and reports a change once.
   An instance is named by its handle **and** the row's `created_at` (set by the fenced write after each `create`): sandbox-docker's handle is the instance
   name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
-- **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<conv>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
+- **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<env>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
   refreshes the record before every `exec`, and deletes it **before** releasing its lease. Every acquirer claims records without a live lease (crashed
-  holders) atomically and kills their commands: `killTagged` under a shared lease whenever the provider has it (even with cap 1: a hot change of
-  `maxConcurrentCommands` may have let a sibling in on another replica), `killAll` under the exclusive lease, or under a shared lease for a provider without
-  `killTagged` only while it is the one holder (otherwise a warn; the in-sandbox time limit ends them). The claim removes the records before the kill: an
-  acquirer that crashes in between leaves those commands to the in-sandbox time limit. The single marker `capk:sandbox-busy:<conv>` of kernels before phase C
-  is still read, and claimed only by the caller holding the exclusive lease: it sends the next use down the exclusive path, which `killAll`s. Holders of this
-  kernel also write that marker with the value `v2` while any holder record exists (this kernel ignores `v2`), so a replica from before phase C that takes
-  the lock after a new holder crashed still kills the leftovers during a rolling upgrade. A sandbox just resumed from `suspended` is `killAll`ed too.
+  holders) atomically and kills only their commands with `killTagged` (every provider has it; other conversations of the environment may be running commands).
+  `killAll` runs only under the exclusive lease, before the downgrade, on an instance that acquirer just resumed from `suspended`: nobody else can hold
+  it, and that one call also covers the crashed holders' records it claims. A newly created instance has nothing to kill (records found then are only
+  claimed). The claim removes the records before the kill: an acquirer that crashes in between leaves those commands to the in-sandbox time limit.
+  There is no single-holder path and no single "sandbox in use" marker (the `capk:sandbox-busy:<env>` key of earlier kernels is neither read nor written);
+  the cap is always `sandbox.maxConcurrentCommands`.
 - **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path
   lease (30 s, renewed, waited for up to 30 s, then the tool error "Another sub-agent is writing this file; wait a moment and retry."). What shell commands write is not
   serialized; the `Bash` description says other sub-agents may run commands at the same time.
 - **Fencing generation**: each lease acquisition (shared ones too) first increments `generation`, and later state writes (exclusive holders only; shared holders only move `last_used_at` forward with `GREATEST`) compare against it, so an old exclusive holder's writes necessarily fail (`SandboxLockLostError`).
-- **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on sandboxes idle longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
+- **Access**: the kernel checks the conversation owner's access to the environment when it acquires the instance for a tool call; a loss fails the tool with `environment.forbidden` / `environment.not_found`.
+- **Suspension**: a `@LockedCron` (`sandbox-suspend-idle`, once per minute across replicas) calls `suspend` on instances idle (no command from any session of the environment) longer than `suspendAfterIdleMinutes` (default 10), or running continuously longer than `maxRunningMinutes`
   (default 120, Ruling M1). Those with any holder are skipped until the next time (one try at the exclusive lease, no intent); one past `maxRunningMinutes`
   gets the intent for about a second so new commands wait briefly and the suspension can get in when the running ones end. `last_used_at` is set when each
   holder leaves, so the idle clock starts when the last concurrent holder finishes.
-- **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); sandboxes inactive longer than `destroyAfterInactiveDays` (default 7), whose org is deleted, or whose conversation is deleted get `destroy`;
-  a departing member's (or a deleted agent's) are destroyed immediately through the one-off maintenance job `sandbox-destroy-for` (producer
-  `SandboxJobs`).
-- **Transparent recovery**: a suspended sandbox is `resume`d on next use; on `gone`, destroyed, or a recorded provider that is not the current provider, an empty sandbox is rebuilt and the tool result carries
-  an English notice. Switching providers leaks old instances (the new provider cannot destroy them; they are recorded in the `prev_*` columns and cleaned up only while the old extension is still loaded).
+- **Destruction**: a `@LockedCron` (`sandbox-destroy-inactive`, hourly); instances inactive longer than `destroyAfterInactiveDays` (default 7) get `destroy` (instance only; the files stay); a deleted environment or org gets `destroy` and `destroyFileSystem`;
+  a deleted environment (also a departing member's) is destroyed immediately, instance and file system, through the one-off maintenance job
+  `sandbox-destroy-for` (producer `SandboxJobs.destroy(environmentIds)`, data `{ environmentIds }`, consumer `SandboxService.destroyEnvironment`).
+- **File reset**: `POST …/environments/:id/files/reset` records the audit row and, after the commit, enqueues the one-off maintenance job `sandbox-reset-files`
+  (producer `SandboxJobs.resetFiles(environmentId)`, job id `sandbox-reset-files-<environmentId>`: a second request while one waits or runs joins it; removed when
+  it ends, so a later request is a new job; consumer `SandboxService.resetFileSystem`, which waits for the exclusive lease) and answers 202.
+- **Legacy cleanup**: the `@LockedInterval` job `environments-legacy-cleanup` (every 5 minutes, once per tick across replicas, `LegacySandboxCleanupJob`) takes up to 50 rows of the legacy
+  `sandboxes` table per tick and destroys each old per-conversation instance and file system through the row's provider (`lookup(provider)`: `destroyByName` and
+  `destroyFileSystemByName` on `cap-<conversationId>`, and `destroyByName` on a loaded `prev_provider`), then deletes the row. No lease: nothing holds a legacy row.
+  Rows of a provider that is not loaded are kept (warned on the first tick of each hour); a failed row gets `sweep_failed_at` and is retried after the others. With
+  no rows a tick is one `SELECT … LIMIT 1`; nothing else reads that table, and a later migration drops it.
+- **Skill directories accumulate**: `Skill` copies each skill version to its own `/skills/<name>@<digest12>/` in the environment's file system, which every
+  conversation of the environment shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
+  version). They are small and stay until the files are reset or the environment is deleted.
+- **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
+  (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset the next use is a fresh start (`restarted: false`):
+  the seen key records `<created_at>:<file system id>`. A file system gone at the provider is never replaced: `fs_status = 'lost'` and `environment.files_lost` until reset.
+- **Provider switch**: an environment whose files or instance belong to a provider that is not the current one cannot be used (`environment.unavailable`, nothing changes; its
+  files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
+  is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).
+  A row the old provider left mid-create (`status = 'creating'`, no file system recorded) is taken over by the current one, which first calls the old
+  provider's `destroyFileSystemByName` (it may have made the file system by name); with the old provider not loaded, or on failure, it only warns.
+- **Live environments only**: the instance row is created only for a live environment (`deleted_at IS NULL`) of the caller's org, with the environment's own `org_id`, and
+  the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyEnvironment` gets `environment.not_found` instead of bringing
+  the provider resources back. A row of another org is also reported as `environment.not_found`.
 - **Per-command** limit `sandbox.limits.maxCommandSeconds` (default 7200); `Bash` defaults to 120 seconds. A command timeout is also tightened to
   the time remaining in the owning run minus 30 seconds (`runtime.maxRunSeconds`, default 900, Ruling M20; the built-in tool context's `runDeadline`), and the result
   tells the model it was due to the run time limit. Long commands need `maxRunSeconds ≥ maxCommandSeconds`, otherwise startup logs a warn.
@@ -206,6 +243,6 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   `concurrent.dual.test.ts`; the Redis protocol: `leases.test.ts`; takeover after killing the executing replica and recovery after suspension:
   `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts`. See `packages/kernel/test/sandbox/*`,
   `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/m5-segment3.dual.test.ts` for cases.
-- `@capybara-hq/testing` exports what provider tests in capybara-hq/plugins assert on (`SANDBOX_STARTED_NOTICE`, `SANDBOX_RECREATED_NOTICE`, `SANDBOX_LOCK_TTL_MS`,
+- `@capybara-hq/testing` exports what provider tests in capybara-hq/plugins assert on (`SANDBOX_STARTED_NOTICE`, `SANDBOX_RESTARTED_NOTICE`, `SANDBOX_LOCK_TTL_MS`,
   `SANDBOX_SUSPEND_JOB`) and `startFakeE2B`; changing those texts or keys breaks the official providers' tests, so treat them as part of the contract.
 - Real Docker, runsc and E2B are tested in capybara-hq/plugins; manual acceptance on real runtimes is in `docs/superpowers/plans/m5-live-acceptance-checklist.md`.

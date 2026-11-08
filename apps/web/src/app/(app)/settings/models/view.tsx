@@ -1,19 +1,32 @@
 "use client";
 
-import { FormSection, SettingsPage } from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { FormSection, LinkButton, SettingsPage, Stack, Text } from "@capybara-hq/design";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
+import { FormError } from "../../../../components/form-error";
+import { ModelCatalog } from "../../../../components/ModelCatalog";
+import { useModelDisabling } from "../../../../components/ModelDisabling";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePurposeDrafts } from "../../../../components/PurposeEditor";
 import { useOrgSettingsNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import type { ProviderModels } from "../../../../lib/agents";
-import { type PurposeTarget, type PurposeView, putOrgPurpose } from "../../../../lib/models";
-import { modelsQuery } from "../../../../lib/query/conversation";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import {
+  type AdminProvider,
+  type ModelDisableChange,
+  type PurposeTarget,
+  type PurposeView,
+  putOrgPurpose,
+} from "../../../../lib/models";
+import { orgExtensionsQuery } from "../../../../lib/query/channels";
+import { retryOnMountOf } from "../../../../lib/query/client";
+import { allModelsQuery } from "../../../../lib/query/conversation";
+import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
-import { orgPurposesQuery } from "../../../../lib/query/settings";
+import { modelsCatalogQuery, orgPurposesQuery } from "../../../../lib/query/settings";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import NotFound from "../../not-found";
 
@@ -47,15 +60,19 @@ function OrgModels({ orgId }: { orgId: string }) {
   const t = useTranslations("models");
   const nav = useOrgSettingsNav();
   const purposes = usePageQuery(orgPurposesQuery(orgId));
-  const models = usePageQuery(modelsQuery(orgId));
+  const models = usePageQuery(allModelsQuery(orgId));
+  const catalog = usePageQuery(modelsCatalogQuery(orgId));
   const header = {
     path: [...scope, { label: "settings", href: "/settings/organization" }, { label: "models" }],
     title: t("org.title"),
   };
-  if (purposes.kind === "notFound" || models.kind === "notFound") return <NotFound />;
+  if (purposes.kind === "notFound" || models.kind === "notFound" || catalog.kind === "notFound") {
+    return <NotFound />;
+  }
   if (purposes.kind === "error") return <ErrorFrame reset={purposes.retry} />;
   if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
-  if (purposes.kind === "loading" || models.kind === "loading") {
+  if (catalog.kind === "error") return <ErrorFrame reset={catalog.retry} />;
+  if (purposes.kind === "loading" || models.kind === "loading" || catalog.kind === "loading") {
     return (
       <SettingsPage
         header={header}
@@ -63,6 +80,7 @@ function OrgModels({ orgId }: { orgId: string }) {
         activeNav="models"
         loading={{
           sections: [
+            { title: t("catalog.title"), description: t("catalog.orgDescription"), fields: 2 },
             {
               items: LOADING_PURPOSES,
               title: t("org.title"),
@@ -79,6 +97,7 @@ function OrgModels({ orgId }: { orgId: string }) {
       header={header}
       purposes={purposes.data.purposes}
       providers={models.data.providers}
+      catalog={catalog.data.providers}
     />
   );
 }
@@ -88,15 +107,22 @@ function Purposes({
   header,
   purposes,
   providers,
+  catalog,
 }: {
   orgId: string;
   header: { path: { label: string; href?: string }[]; title: string };
   purposes: PurposeView[];
   providers: ProviderModels[];
+  catalog: AdminProvider[];
 }) {
   const t = useTranslations("models");
   const nav = useOrgSettingsNav();
   const qc = useQueryClient();
+  const disabling = useModelDisabling({
+    scope: { orgId },
+    purposes,
+    invalidates: () => [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()],
+  });
   const key = orgPurposesQuery(orgId).queryKey;
   // The answer is the saved purpose: it replaces that purpose in the cache (a functional update:
   // the ActionRow saves several purposes at once).
@@ -125,9 +151,100 @@ function Purposes({
       activeNav="models"
       {...(actionRow !== undefined ? { actionRow } : {})}
     >
+      {disabling.notice}
+      <FormSection
+        id="models"
+        title={t("catalog.title")}
+        description={t("catalog.orgDescription")}
+        flush
+      >
+        {catalog.map((p) => (
+          <OrgProvider
+            key={p.provider}
+            orgId={orgId}
+            provider={p}
+            pending={disabling.pending}
+            onChange={disabling.change}
+          />
+        ))}
+      </FormSection>
       <FormSection id="purposes" title={t("org.title")} description={t("org.description")} flush>
         {list(t("org.title"))}
       </FormSection>
     </SettingsPage>
+  );
+}
+
+/**
+ * One provider of the org's catalog: its models with the org's switches, and under its name how it
+ * is configured here (跟随平台 / 本组织配置, from the extension's `overrideState`) with a link to the
+ * extension's config. A provider that cannot list its models here shows its error instead.
+ */
+function OrgProvider({
+  orgId,
+  provider: p,
+  pending,
+  onChange,
+}: {
+  orgId: string;
+  provider: AdminProvider;
+  pending: boolean;
+  onChange(provider: string, change: ModelDisableChange): void;
+}) {
+  const t = useTranslations("models");
+  const locale = useLocale();
+  const extensionsQ = orgExtensionsQuery(orgId);
+  // The state line is a hint: a failed or slow read leaves it out, never blocks the models.
+  const extensions = useQuery({
+    ...extensionsQ,
+    retryOnMount: retryOnMountOf(extensionsQ.queryKey),
+  });
+  const ext = extensions.data?.extensions.find((e) => e.plugin === p.plugin);
+  const name = extensionLabel(
+    { name: p.provider, displayName: p.displayName },
+    labelLocale(locale),
+  );
+  const state =
+    ext?.overrideState === "following"
+      ? t("catalog.following")
+      : ext?.overrideState === "copy"
+        ? t("catalog.orgConfigured")
+        : undefined;
+  const id = p.displayName ? p.provider : undefined;
+  const description =
+    p.status === "ok" ? (
+      <Stack direction="row" gap={8} align="center" wrap>
+        {id !== undefined ? (
+          <Text variant="small" tone="muted">
+            {id}
+          </Text>
+        ) : null}
+        {state !== undefined ? (
+          <>
+            <Text variant="small" tone="muted">
+              {state}
+            </Text>
+            <LinkButton href="/extensions?tab=model" density="dense">
+              {t("catalog.configure")}
+            </LinkButton>
+          </>
+        ) : null}
+      </Stack>
+    ) : (
+      <FormError
+        message={t("admin.providerError", { provider: name })}
+        extra={p.error === undefined ? [] : [p.error]}
+      />
+    );
+  return (
+    <ModelCatalog
+      provider={name}
+      title={name}
+      description={description}
+      models={p.status === "ok" ? p.models : []}
+      failed={p.status !== "ok"}
+      pending={pending}
+      onChange={(change) => onChange(p.provider, change)}
+    />
   );
 }

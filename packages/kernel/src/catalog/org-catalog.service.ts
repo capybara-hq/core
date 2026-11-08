@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import { ExtensionAvailability } from "../extensions/unavailable.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -22,6 +23,7 @@ import {
   type OrgInstallInput,
   type OrgInstallResult,
   orgTemplateView,
+  type PluginUnavailableReason,
   readCatalogIcon,
   readCatalogTemplates,
   type TemplateDeps,
@@ -79,6 +81,8 @@ export class OrgCatalogService {
     @Inject(PluginInstaller) private readonly pluginInstaller: PluginInstaller,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Why a plugin's extension cannot run (the `unavailable` state's reason). */
+    @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
   ) {}
 
   /** The kernel-schema handle of the current context (the transaction, else the pool). */
@@ -189,6 +193,18 @@ export class OrgCatalogService {
       items.flatMap((i) => (i.owner_org_id === null ? [] : [i.owner_org_id])),
     );
     const loaded = new Map(this.registry.manifests().map((x) => [x.name, x]));
+    // the extensions of the latest versions that are not loaded: why (the `unavailable` reason)
+    const extensionOf = (i: (typeof items)[number]): string | undefined => {
+      const v = versions.find((x) => x.item_id === i.id && x.version === i.latest_version);
+      const m = v?.manifest as PluginManifest | undefined;
+      return m?.extension ? m.name : undefined;
+    };
+    const unloaded = await this.availability.unavailable(
+      items.flatMap((i) => {
+        const n = extensionOf(i);
+        return n === undefined ? [] : [n];
+      }),
+    );
     const out: OrgCatalogItem[] = [];
     for (const i of items) {
       // Another org sees only an org-owned plugin's applied version, never one its owner
@@ -219,10 +235,20 @@ export class OrgCatalogService {
       const scope = i.builtin ? "all" : i.scope;
       const wanted = wantedOn(i, inList.has(i.id), sw.get(i.id) ?? null);
       let state: OrgPluginState;
+      let reason: PluginUnavailableReason | undefined;
+      const extName = extensionOf(i);
+      const why = extName === undefined ? undefined : unloaded.get(extName);
       if (i.awaiting_confirmation) state = "awaiting_confirmation";
-      else if (i.disabled) state = "unavailable";
-      else if (requestable(i, inList.has(i.id))) state = "not_offered";
-      else if (a) {
+      else if (i.disabled) {
+        state = "unavailable";
+        reason = "plugin_disabled";
+      } else if (requestable(i, inList.has(i.id))) state = "not_offered";
+      // not installed here and its extension cannot run: switching it on would fail (spec §14.2
+      // problem 1); an installed one keeps its state (an org admin can still switch it off)
+      else if (!a && why !== undefined) {
+        state = "unavailable";
+        reason = why.reason;
+      } else if (a) {
         // An on connector template without a connector here (ruling P2-10)
         const missing = await this.pluginInstaller.missingConnectors(orgId, i.id);
         state = (missing?.templates.length ?? 0) > 0 ? "needs_config" : "on";
@@ -250,6 +276,7 @@ export class OrgCatalogService {
         scope,
         builtin: i.builtin,
         state,
+        ...(reason !== undefined && { reason }),
         switchable: state !== "not_offered" && state !== "awaiting_confirmation" && switchable(i),
         notDeployed: latest !== undefined && undeployed.has(i.id),
         installed: a
@@ -529,6 +556,8 @@ export class OrgCatalogService {
     actor: string,
     installId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId))
       throw new ApiError("plugin.install_not_found", "Plugin install not found");
@@ -551,7 +580,10 @@ export class OrgCatalogService {
       orgId,
       actor,
       installId,
-      actorTokenId !== undefined ? { actorTokenId } : {},
+      {
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        ...(auditDetail !== undefined && { auditDetail }),
+      },
       // only a live install was on: removing a failed or stale one writes no switch row, so an
       // item its scope wants stays wanted and the sync installs it again
       row !== undefined && live ? {} : undefined,

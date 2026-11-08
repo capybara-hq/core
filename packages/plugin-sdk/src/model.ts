@@ -4,10 +4,42 @@
  * 见 `model-params.ts`）；旧契约 `model-provider@1`（`ModelProviderV1` 等）由内核经适配层继续支持。
  */
 import type { Effort, ModelParameter, ParamValue } from "./model-params.js";
+import type { LocalizedName } from "./plugin-package.js";
+
+/** What a model does. Absent on a `ModelInfo` means `chat`. */
+export type ModelKind =
+  | "chat"
+  | "embedding"
+  | "rerank"
+  | "image_generation"
+  | "video_generation"
+  | "speech_to_text"
+  | "text_to_speech";
+
+/** Embedding facts of a model whose `kind` is `embedding`. */
+export interface ModelEmbeddingInfo {
+  /** The output dimensions the model can produce (a single entry when not adjustable). */
+  dimensions: number[];
+  defaultDimensions: number;
+  /** Most tokens one input may hold. */
+  maxInputTokens: number;
+  /** Most inputs one `embed` call may carry. */
+  maxBatch: number;
+}
 
 export interface ModelInfo {
   id: string;
   displayName: string;
+  /** Defaults to `chat`. Chat-only fields below stay required for every kind. */
+  kind?: ModelKind;
+  /** Who made the model (display only). */
+  publisher?: string;
+  /** Display only. */
+  description?: LocalizedName | string;
+  /** ISO date after which the model is retired (display only). */
+  retiresAt?: string;
+  /** Set when `kind` is `embedding`. */
+  embedding?: ModelEmbeddingInfo;
   contextWindow: number;
   maxOutputTokens: number;
   capabilities: {
@@ -300,12 +332,71 @@ export class ModelError extends Error {
   }
 }
 
+/**
+ * Options of a model call made for an organization.
+ * `config` is the extension's effective deployment config for this org: the platform's deployment
+ * config with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+ * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`, for
+ * work done for this org. Optional in the type so older providers compile; the kernel always passes
+ * both.
+ */
+export interface ModelCallOptions {
+  orgId?: string;
+  config?: unknown;
+}
+
+export interface EmbedRequest {
+  model: string;
+  input: string[];
+  /** One of the model's `embedding.dimensions`; the model's default when absent. */
+  dimensions?: number;
+  inputType?: "query" | "document";
+}
+
+export interface EmbedResult {
+  /** One vector per input, in input order. */
+  vectors: number[][];
+  usage: { inputTokens: number };
+}
+
+/**
+ * Checks an embedding result against its request and the model's embedding facts. Returns null when
+ * valid, else the reason: wrong vector count, wrong dimension, or a non-finite number.
+ */
+export function validateEmbedResult(
+  req: EmbedRequest,
+  info: ModelEmbeddingInfo,
+  res: EmbedResult,
+): string | null {
+  if (res.vectors.length !== req.input.length) {
+    return `vector count ${res.vectors.length} does not match input count ${req.input.length}`;
+  }
+  const dims = req.dimensions ?? info.defaultDimensions;
+  for (let i = 0; i < res.vectors.length; i++) {
+    const v = res.vectors[i] as number[];
+    if (v.length !== dims) {
+      return `vector ${i} has dimension ${v.length}, expected ${dims}`;
+    }
+    for (const x of v) {
+      if (typeof x !== "number" || !Number.isFinite(x)) {
+        return `vector ${i} holds a non-finite number`;
+      }
+    }
+  }
+  return null;
+}
+
 /** `model-provider@2` 的实现。 */
 export interface ModelProvider {
   /** 每个模型的 `parameters` 须通过 `assertValidDeclarations`，否则内核不使用该供应商。 */
-  listModels(): Promise<ModelInfo[]>;
+  listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
   /** 事件序列必须以且仅以一个 message_complete 结束；出错抛 ModelError。 */
-  stream(req: ModelRequest, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
+  stream(
+    req: ModelRequest,
+    opts: { signal: AbortSignal } & ModelCallOptions,
+  ): AsyncIterable<ModelStreamEvent>;
+  /** Present only on a provider that lists `embedding` models. */
+  embed?(req: EmbedRequest, opts: { signal: AbortSignal } & ModelCallOptions): Promise<EmbedResult>;
 }
 
 /** `model-provider@1` 的实现（旧契约，内核经适配层接入：effort 由 `capabilities.effort` 推导）。 */

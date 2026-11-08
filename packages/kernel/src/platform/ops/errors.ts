@@ -1,26 +1,34 @@
-import { ToolError } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
+import type { PrecheckResult } from "../operation.js";
 
 /**
- * Runs a service call for an operation: an {@link ApiError} (the service's refusal: forbidden,
- * not found, a stale preview) becomes a {@link ToolError} naming its code, so the model reads what
- * to do next instead of a generic failure. Anything else is a bug and propagates.
+ * An operation's precheck from a service read that throws the write's own refusal: the
+ * {@link ApiError} it throws becomes the failure (its code and message), a return passes. Anything
+ * else propagates, and the tool skips the precheck.
  */
-export async function asToolError<T>(call: () => Promise<T>): Promise<T> {
+export async function precheckBy(read: () => Promise<unknown>): Promise<PrecheckResult> {
   try {
-    return await call();
+    await read();
+    return { ok: true };
   } catch (e) {
-    if (e instanceof ApiError) {
-      throw new ToolError(`${e.code}: ${e.message}`);
-    }
+    if (e instanceof ApiError) return { ok: false, code: e.code, message: e.message };
     throw e;
   }
 }
 
-/** The audit detail of a write made through the tool (spec §6): who, where and which operation. */
+/**
+ * The audit detail of a write made through the tool (spec §6): who, where and which operation. The
+ * keys are distinct from any business field (`agentConversationId`, not `conversationId`), so
+ * merging it into a write's own detail never overwrites the conversation or run the write is about.
+ */
 export function viaAgent(
   operation: string,
   ctx: { conversationId: string; runId: string | null },
 ): Record<string, unknown> {
-  return { via: "agent", conversationId: ctx.conversationId, runId: ctx.runId, operation };
+  return {
+    via: "agent",
+    operation,
+    agentConversationId: ctx.conversationId,
+    agentRunId: ctx.runId,
+  };
 }

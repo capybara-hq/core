@@ -51,6 +51,10 @@ export const keys = {
         "agentTemplateDeletePreview",
         id,
       ],
+      /** The person's environments in the org. */
+      environments: (): readonly unknown[] => [...all, "environments"],
+      /** One of the person's environments. */
+      environment: (id: string): readonly unknown[] => [...all, "environment", id],
       /** The org skill library. */
       skills: (): readonly unknown[] => [...all, "skills"],
       /** One org skill (its body, files and versions). */
@@ -212,8 +216,11 @@ export const keys = {
         conversationId,
         before,
       ],
-      /** The org's models (by provider). */
-      models: (): readonly unknown[] => [...all, "models"],
+      /** The org's enabled models (by provider), of one kind (`all`: every kind). */
+      models: (kind?: string): readonly unknown[] =>
+        kind === undefined ? [...all, "models"] : [...all, "models", kind],
+      /** The org's model catalog: every provider with its models and the org's own switches. */
+      modelsCatalog: (): readonly unknown[] => [...all, "modelsCatalog"],
       /** The org's connectors. */
       connectors: (): readonly unknown[] => [...all, "connectors"],
       /** The connector kinds whose extension is enabled in the org (the install wizard). */
@@ -267,7 +274,7 @@ export const keys = {
           events: (): readonly unknown[] => [...c, "events"],
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
-          sandbox: (): readonly unknown[] => [...c, "sandbox"],
+          environment: (): readonly unknown[] => [...c, "environment"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],

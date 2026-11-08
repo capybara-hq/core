@@ -3,6 +3,8 @@ import {
   isSkillName,
   parseSkillMd,
   SKILL_LIMITS,
+  skillDigest,
+  skillSandboxDir,
   skillSandboxPath,
   validateSkillPackage,
 } from "../src/skill.js";
@@ -267,7 +269,31 @@ describe("validateSkillPackage", () => {
     ]);
   });
 
-  it("沙箱路径在 /skills/<name>/ 下", () => {
-    expect(skillSandboxPath("pdf", "scripts/a.py")).toBe("/skills/pdf/scripts/a.py");
+  it("skillSandboxPath includes the digest", () => {
+    expect(skillSandboxPath("deploy", "0123456789ab", "run.sh")).toBe(
+      "/skills/deploy@0123456789ab/run.sh",
+    );
+    expect(skillSandboxDir("deploy", "0123456789ab")).toBe("/skills/deploy@0123456789ab");
+  });
+});
+
+describe("skillDigest", () => {
+  it("skillDigest is order independent and 12 hex", () => {
+    const a = { path: "SKILL.md", size: 10, sha256: "a".repeat(64) };
+    const b = { path: "scripts/run.sh", size: 20, sha256: "b".repeat(64) };
+    const d = skillDigest([a, b]);
+    expect(d).toMatch(/^[0-9a-f]{12}$/);
+    expect(skillDigest([b, a])).toBe(d);
+    expect(skillDigest([a, { ...b, sha256: "c".repeat(64) }])).not.toBe(d);
+  });
+
+  it("hashes sorted `path size sha256` lines", async () => {
+    const { createHash } = await import("node:crypto");
+    const files = [
+      { path: "b.txt", size: 2, sha256: "2".repeat(64) },
+      { path: "SKILL.md", size: 1, sha256: "1".repeat(64) },
+    ];
+    const lines = `SKILL.md 1 ${"1".repeat(64)}\nb.txt 2 ${"2".repeat(64)}\n`;
+    expect(skillDigest(files)).toBe(createHash("sha256").update(lines).digest("hex").slice(0, 12));
   });
 });

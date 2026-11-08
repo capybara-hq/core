@@ -262,6 +262,8 @@ export class SettingsService {
     patch: DeploymentSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<DeploymentSettings> {
     const check = DEPLOYMENT_SETTINGS_PATCH.safeParse(patch);
     if (!check.success) {
@@ -271,7 +273,7 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.write(check.data, actorAccountId, actorTokenId);
+    await this.write(check.data, actorAccountId, actorTokenId, auditDetail);
     return this.get();
   }
 
@@ -280,6 +282,7 @@ export class SettingsService {
     patch: DeploymentSettingsPatch,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
     // The super admin lock serializes every settings write: the current overrides are read
@@ -326,7 +329,7 @@ export class SettingsService {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "deployment.settings.updated",
-      detail: patch,
+      detail: { ...patch, ...auditDetail },
     });
   }
 }

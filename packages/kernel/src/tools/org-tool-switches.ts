@@ -116,6 +116,28 @@ export class OrgToolSwitches {
     return tools.map((tool) => ({ tool, enabled: !off.has(tool) }));
   }
 
+  /**
+   * What turning one tool off would affect (nothing written): the agents selecting it and the
+   * confirm hash {@link set} takes, or null when it is off already. Unknown tool -> 404
+   * `extension.tool_not_found`.
+   */
+  async previewOff(
+    orgId: string,
+    plugin: string,
+    tool: string,
+  ): Promise<{ affectedAgents: AffectedAgent[]; confirm: string } | null> {
+    const tools = await this.toolsFor(orgId, plugin);
+    if (!tools.includes(tool)) {
+      throw new ApiError(
+        "extension.tool_not_found",
+        `Extension ${plugin} does not register a tool named ${tool}`,
+      );
+    }
+    if (await this.isToolOff(orgId, plugin, tool)) return null;
+    const affectedAgents = await this.agentsSelecting(orgId, plugin, tool);
+    return { affectedAgents, confirm: switchOffHash(orgId, plugin, tool, affectedAgents) };
+  }
+
   /** The model-visible keys (`plugin__<extension>__<tool>`) of the tools turned off in the org. */
   async offKeys(orgId: string): Promise<Set<string>> {
     return new Set((await this.offRows(orgId)).map((r) => extensionToolKey(r.plugin, r.tool)));
@@ -146,7 +168,12 @@ export class OrgToolSwitches {
     plugin: string,
     tool: string,
     enabled: boolean,
-    actor: { accountId: string; tokenId?: string | undefined },
+    actor: {
+      accountId: string;
+      tokenId?: string | undefined;
+      /** Merged into the audit detail (a write made through the Platform tool). */
+      auditDetail?: Record<string, unknown>;
+    },
     confirm?: string,
   ): Promise<OrgToolSwitchResult> {
     await this.orgLock.lockAndAuthorize(orgId, actor.accountId, "org.extensions.manage");
@@ -187,7 +214,7 @@ export class OrgToolSwitches {
       orgId,
       action: "extension.tool_switched",
       target: extensionToolKey(plugin, tool),
-      detail: { plugin, tool, from, to: enabled },
+      detail: { plugin, tool, from, to: enabled, ...actor.auditDetail },
     });
     return { applied: true };
   }

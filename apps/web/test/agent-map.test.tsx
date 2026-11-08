@@ -201,8 +201,7 @@ function api(
     [`GET ${PARENT}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${PARENT}/tools`]: () => json(200, { tools: [] }),
     [`GET ${PARENT}/files`]: () => json(200, { files: [], next: null }),
-    [`GET ${PARENT}/sandbox`]: () =>
-      json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+    [`GET ${PARENT}/environment`]: () => json(200, { environment: null }),
     [`GET ${PARENT}/subagents`]: () => json(200, { subagents: [], next: null }),
     [`GET ${PARENT}/background-tasks`]: () => json(200, { tasks: [] }),
     [`GET ${PARENT}/usage`]: () =>
@@ -470,8 +469,7 @@ describe("the agent map's entry points", () => {
       [`GET ${CHILD}/events`]: () => json(200, { events: childSubagent }),
       [`GET ${CHILD}/queue`]: () => json(200, { items: [], paused: false }),
       [`GET ${CHILD}/files`]: () => json(200, { files: [], next: null }),
-      [`GET ${CHILD}/sandbox`]: () =>
-        json(404, { error: { code: "sandbox.not_found", message: "x" } }),
+      [`GET ${CHILD}/environment`]: () => json(200, { environment: null }),
       [`GET ${CHILD}/subagents`]: () => json(200, { subagents: [], next: null }),
       [`GET ${CHILD}/background-tasks`]: () => json(200, { tasks: [] }),
       [`GET ${CHILD}/usage`]: () =>

@@ -33,6 +33,17 @@ export interface PermissionGroup {
   entries: PermissionItem[];
 }
 
+/** Why an extension cannot run on the platform (kernel `ExtensionUnavailableReason`). */
+export type ExtensionUnavailableReason =
+  | "not_deployed"
+  | "needs_deployment_config"
+  | "pending_approval"
+  | "pending_migration"
+  | "loading"
+  | "dependency"
+  | "failed"
+  | "deployment_disabled";
+
 /** One extension from the org's view (kernel `OrgExtensionView`). */
 export interface OrgExtension {
   plugin: string;
@@ -47,6 +58,11 @@ export interface OrgExtension {
   orgConfigSchema: JsonSchema | null;
   /** false：此插件在部署上当前不可用（如被停用；组织页显示「不可用」，启用设置保留、不能修改）。 */
   available?: boolean;
+  /**
+   * Only when unavailable: why it cannot run on the platform (kernel `OrgExtensionView.reason`),
+   * e.g. `needs_deployment_config`. Older kernels leave it out.
+   */
+  reason?: ExtensionUnavailableReason;
   /**
    * A required bootstrap plugin (kernel `OrgExtensionView.required`): enabled in every org and
    * cannot be disabled (the kernel answers 409 `extension.required`); its org config can still be set.

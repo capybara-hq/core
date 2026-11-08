@@ -19,23 +19,50 @@ import {
  *
  * - platform-op-missing: a route neither mirrored nor excluded;
  * - platform-op-exclusion-reason: an empty reason, or `later` without an `issue` URL;
+ * - platform-op-later: an exclusion of category `later`: phase 2 closed the backlog, so a route
+ *   is either an operation or excluded for good (human-only / secret / transport / internal);
+ *   `LATER_ALLOWED` holds the routes still waiting, each with the reason;
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
- * - platform-op-orphan: a mirror or exclusion naming no route;
+ * - platform-op-double: a route both mirrored by an operation and listed in the exclusions (an
+ *   operation added without removing the route's exclusion, often its old `later` entry);
+ * - platform-op-orphan: a mirror or exclusion naming no route (a removed route takes its
+ *   operations and exclusion entries with it, spec §14.1 item 4);
  * - platform-op-describe: an operation without `description`, `example`, or (not `read`) `summary`;
- * - platform-op-literal: `mirrors` / `authz` that are not literals (the check cannot read them).
+ * - platform-op-literal: `mirrors` / `authz` that are not literals (the check cannot read them);
+ * - platform-op-errors: an `errors` entry without a `next` step (spec §14.5 item 7): `errors` is an
+ *   array literal of `{ code, next }` object literals, `code` a string, `next` a non-empty string
+ *   or an object literal keyed `superAdmin` / `orgAdmin` / `member` (non-empty strings) with an
+ *   `orgAdmin` or `member` step, so every role of the org gets one;
+ * - platform-op-session-only: a `@SessionOnly()` route (a web session only, never a token) mirrored
+ *   by an operation, or excluded under a category other than `human-only` / `secret`: such a route
+ *   is either a person's own act or carries a secret, so the agent never gets it.
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
   "platform-op-exclusion-reason",
+  "platform-op-later",
   "platform-op-authz",
   "platform-op-orphan",
+  "platform-op-double",
   "platform-op-describe",
   "platform-op-literal",
+  "platform-op-errors",
+  "platform-op-session-only",
 ] as const;
 
 const KERNEL_SRC = "packages/kernel/src";
+
+/**
+ * `later` exclusions the `platform-op-later` rule still lets through. Keep it empty: a route lands
+ * here only while its operation waits on other work, with the reason next to it.
+ */
+const LATER_ALLOWED: ReadonlySet<string> = new Set([
+  // until #91 (Platform tool phase 2): the agent profile operation waits for the run-context
+  // work on main, which adds the profile / preferences routes it mirrors
+  "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
+]);
 const HTTP = new Map([
   ["Get", "GET"],
   ["Post", "POST"],
@@ -51,7 +78,11 @@ interface Route {
   file: string;
   line: number;
   authz: Authz | undefined;
+  sessionOnly: boolean;
 }
+
+/** The exclusion categories a `@SessionOnly()` route may take. */
+const SESSION_ONLY_CATEGORIES: ReadonlySet<string> = new Set(["human-only", "secret"]);
 
 interface Op {
   id: string;
@@ -155,6 +186,7 @@ function readRoutes(p: ParsedFile, findings: Finding[]): Route[] {
           file: p.file,
           line,
           authz: authzOf(ds) ?? classAuthz,
+          sessionOnly: ds.some((d) => decoratorName(d) === "SessionOnly"),
         });
       }
     }
@@ -230,6 +262,11 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
         `${id}: a write (confirm \`${confirm ?? "?"}\`) needs a \`summary\``,
       );
     }
+    const errors = prop(obj, "errors");
+    if (errors) {
+      for (const problem of errorProblems(errors.value as Node))
+        add("platform-op-errors", `${id}: ${problem}`);
+    }
     ops.push({
       id,
       file: p.file,
@@ -240,6 +277,48 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
     });
   });
   return ops;
+}
+
+const ROLE_KEYS = new Set(["superAdmin", "orgAdmin", "member"]);
+const nonEmpty = (n: Node | undefined): boolean => (stringValue(n)?.trim() ?? "") !== "";
+
+/** What is wrong with an operation's `errors` literal (rule `platform-op-errors`). */
+function errorProblems(n: Node): string[] {
+  if (n.type !== "ArrayExpression") {
+    return ["`errors` must be an array literal of { code, next } objects"];
+  }
+  const out: string[] = [];
+  for (const e of n.elements as Node[]) {
+    if (e?.type !== "ObjectExpression") {
+      out.push("each `errors` entry must be an object literal { code, next }");
+      continue;
+    }
+    const code = stringValue(prop(e, "code")?.value);
+    const label = code === undefined ? "an `errors` entry" : `error \`${code}\``;
+    if (code === undefined) out.push("an `errors` entry needs a string literal `code`");
+    const next = prop(e, "next")?.value as Node | undefined;
+    if (next === undefined) {
+      out.push(`${label} has no \`next\`: say what to do next`);
+    } else if (next.type === "ObjectExpression") {
+      const keys: string[] = [];
+      for (const q of next.properties as Node[]) {
+        const k = q.type === "Property" ? (nameOf(q.key) ?? stringValue(q.key)) : undefined;
+        if (k === undefined || !ROLE_KEYS.has(k) || !nonEmpty(q.value as Node)) {
+          out.push(
+            `${label}: a role-keyed \`next\` takes only superAdmin / orgAdmin / member, each a non-empty string literal`,
+          );
+          continue;
+        }
+        keys.push(k);
+      }
+      if (!keys.includes("orgAdmin") && !keys.includes("member")) {
+        out.push(`${label}: a role-keyed \`next\` needs an orgAdmin or member step`);
+      }
+    } else if (!nonEmpty(next)) {
+      out.push(`${label}: \`next\` must be a non-empty string literal or a role-keyed object`);
+    }
+  }
+  return out;
 }
 
 interface Exclusion {
@@ -305,6 +384,18 @@ function readRoles(file: string): Map<string, string> {
   return roles;
 }
 
+/** The `<METHOD> <path>` keys of every kernel HTTP route under `root` (the parity test's list). */
+export function kernelRoutes(root: string): Set<string> {
+  const keys = new Set<string>();
+  for (const { file, isTest } of listSourceFiles(join(root, KERNEL_SRC))) {
+    if (isTest || !file.endsWith(".ts")) continue;
+    const p = parseFile(file);
+    if (isParseError(p)) continue;
+    for (const r of readRoutes(p, [])) keys.add(r.key);
+  }
+  return keys;
+}
+
 export function checkPlatformOps(root: string): Finding[] {
   const out: Finding[] = [];
   const src = join(root, KERNEL_SRC);
@@ -336,19 +427,27 @@ export function checkPlatformOps(root: string): Finding[] {
     return r === undefined ? undefined : ROLE_ORDER.indexOf(r);
   };
 
-  const mirrored = new Set<string>();
+  const mirrored = new Map<string, string>();
   for (const op of ops) {
     for (const m of op.mirrors ?? []) {
-      mirrored.add(m);
+      if (!mirrored.has(m)) mirrored.set(m, op.id);
       const route = routes.get(m);
       if (!route) {
         out.push({
           file: op.file,
           line: op.line,
           rule: "platform-op-orphan",
-          message: `${op.id} mirrors \`${m}\`, which is no kernel route`,
+          message: `${op.id}: operation mirrors a route that does not exist: \`${m}\``,
         });
         continue;
+      }
+      if (route.sessionOnly) {
+        out.push({
+          file: op.file,
+          line: op.line,
+          rule: "platform-op-session-only",
+          message: `${op.id}: \`${m}\` is @SessionOnly (a web session only): exclude it as human-only or secret, never mirror it`,
+        });
       }
       if (!op.authz) continue;
       const same = describeAuthz(op.authz) === describeAuthz(route.authz);
@@ -378,11 +477,26 @@ export function checkPlatformOps(root: string): Finding[] {
   for (const e of exclusions) {
     excluded.add(e.route);
     const at = { file: exclusionsFile, line: e.line };
+    const by = mirrored.get(e.route);
+    if (by !== undefined) {
+      out.push({
+        ...at,
+        rule: "platform-op-double",
+        message: `\`${e.route}\` is mirrored by ${by} and excluded too: remove the exclusion`,
+      });
+    }
     if (!routes.has(e.route)) {
       out.push({
         ...at,
         rule: "platform-op-orphan",
-        message: `exclusion \`${e.route}\` is no kernel route`,
+        message: `exclusion names a route that does not exist: \`${e.route}\``,
+      });
+    }
+    if (routes.get(e.route)?.sessionOnly && !SESSION_ONLY_CATEGORIES.has(e.category ?? "")) {
+      out.push({
+        ...at,
+        rule: "platform-op-session-only",
+        message: `\`${e.route}\` is @SessionOnly (a web session only): its category must be human-only or secret, not \`${e.category ?? "none"}\``,
       });
     }
     if (e.reason === undefined || e.reason.trim() === "") {
@@ -390,6 +504,13 @@ export function checkPlatformOps(root: string): Finding[] {
         ...at,
         rule: "platform-op-exclusion-reason",
         message: `\`${e.route}\` has no reason`,
+      });
+    }
+    if (e.category === "later" && !LATER_ALLOWED.has(e.route)) {
+      out.push({
+        ...at,
+        rule: "platform-op-later",
+        message: `\`${e.route}\` is excluded as \`later\`: add its operation, or exclude it for good (human-only / secret / transport / internal) with the reason`,
       });
     }
     if (e.category === "later" && !/^https?:\/\/\S+$/.test(e.issue ?? "")) {

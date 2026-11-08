@@ -21,6 +21,7 @@ describe("file-preview@1", () => {
   it("is a registered, org-scoped, multi-provider extension point", () => {
     expect(FILE_PREVIEW_EXTENSION_POINT).toBe("file-preview@1");
     expect(EXTENSION_POINTS["file-preview"]).toMatchObject({
+      majors: [1],
       cardinality: "multi",
       brokered: false,
       orgScoped: true,

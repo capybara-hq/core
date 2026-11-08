@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type { OrgAction } from "../orgs/roles.js";
+import type { ErrorRole } from "./errors.js";
 
 /**
  * How an operation is confirmed (spec §6.2): `read` runs; `personal` asks each time and may be
@@ -18,8 +19,53 @@ export interface OperationContext {
   agentId: string;
   conversationId: string;
   runId: string | null;
+  /**
+   * The tool call being run (absent at confirmation time): what a result shown only on the web is
+   * keyed by, e.g. the generated password of `accounts.create`, read by the person who approved
+   * that call.
+   */
+  callId?: string;
   signal: AbortSignal;
+  /**
+   * The actor's role for next steps, from the facts the tool read for this call (spec §14.5
+   * item 7). Absent where no tool call is behind the context (a test running `op.run`): read it
+   * then with `roleFor` in ./ops/unavailable.ts.
+   */
+  errorRole?: ErrorRole;
 }
+
+/**
+ * The next step after an error: one text, or one per role where the step differs (spec §14.5
+ * item 7). Only the super admin gets the `superAdmin` text (the admin console path); see
+ * `nextStepFor` in ./errors.ts for the fallbacks.
+ */
+export type OperationErrorNext =
+  | string
+  | { readonly superAdmin?: string; readonly orgAdmin?: string; readonly member?: string };
+
+/** A notable error code of an operation and what to do next (model-visible English). */
+export interface OperationError {
+  code: string;
+  next: OperationErrorNext;
+}
+
+/**
+ * What {@link PlatformOperation.precheck} found: nothing known against the write, or why it fails.
+ * `next` replaces the operation's `errors[]` entry for the code when the step depends on the target
+ * (e.g. the admin console path naming the extension).
+ *
+ * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
+ * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
+ * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
+ * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org), and
+ * `account.self` / `account.no_change` (disabling your own account, a status that is set already).
+ */
+export type PrecheckResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string; next?: OperationErrorNext };
+
+/** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
+export const PRECHECK_TIMEOUT_MS = 2000;
 
 /** One operation of the `Platform` tool (spec §7), defined next to its domain. */
 export interface PlatformOperation<I = unknown> {
@@ -40,7 +86,29 @@ export interface PlatformOperation<I = unknown> {
   authzNote?: "service-enforced";
   /** The HTTP routes it corresponds to, e.g. `POST /api/v1/orgs/:orgId/skills`; [] when synthetic. */
   mirrors: readonly string[];
+  /**
+   * Fields of the mirrored route (body, query, path params but `:orgId`) the input leaves out, e.g.
+   * `uploadId` of `skills.create` (spec §14.5 item 3; the parity test in `tools/checks` holds it).
+   */
+  omits?: readonly string[];
+  /** Input fields the mirrored route lacks, e.g. `cursor` of a paged list. */
+  extras?: readonly string[];
+  /**
+   * Input fields compared with a route field of another name or path: `{ skillId: "id" }`, a
+   * flattened `{ name: "definition.name" }`. The route field counts as present.
+   */
+  renames?: Readonly<Record<string, string>>;
+  /**
+   * Input fields allowed to accept more than the route (bounds, pattern, required-ness, never the
+   * type), each with its reason, e.g. a confirm value that also takes `nothing-installed`.
+   */
+  loosens?: Readonly<Record<string, string>>;
   confirm: ConfirmClass;
+  /**
+   * `false`: a confirmation is never remembered, whatever the class (a destructive personal write
+   * such as deleting a conversation). Static; absent: remembered only for the class `personal`.
+   */
+  rememberable?: false;
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
@@ -50,9 +118,18 @@ export interface PlatformOperation<I = unknown> {
   confirmFor?(input: I, ctx: OperationContext): Promise<ConfirmClass>;
   /**
    * The notable error codes of the operation and what to do next (model-visible English), shown
-   * by `describe` (spec §3).
+   * by `describe` (spec §3) and appended to an `ApiError` of that code (spec §14.5 item 7). `next`
+   * is keyed by role where the step differs (`check:platform-ops` rule `platform-op-errors`).
    */
-  errors?: readonly { code: string; next: string }[];
+  errors?: readonly OperationError[];
+  /**
+   * Preconditions read before the card (spec §14.2 item 2): a write known to fail (a taken name, a
+   * stale preview) is denied with this reason and the person is never asked. Reads only; runs
+   * again when an approved call resumes (a failure then returns the error, nothing runs). Bounded
+   * by the tool ({@link PRECHECK_TIMEOUT_MS}); a timeout or a throw skips it, and the write's own
+   * errors speak.
+   */
+  precheck?(input: I, ctx: OperationContext): Promise<PrecheckResult>;
   /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.
@@ -86,23 +163,91 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   { id: "skills", description: "The org's skill library: list, read, create, switch on or off." },
   {
     id: "agents",
-    description: "Agents in the org: list, read, create private ones, update those you may edit.",
+    description:
+      "Agents in the org: list, read, create private ones, update or delete those you may edit, versions, pending connectors, readiness.",
   },
   {
     id: "agent-templates",
-    description: "Agent templates: list, read, save an agent as a template.",
+    description:
+      "Agent templates: list, read, save an agent as a template, update, share or delete the org's own.",
   },
   {
     id: "plugins",
-    description: "Plugins in the org and on the platform: list, read, enable, disable, update.",
+    description:
+      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
-    description: "Marketplace sources and their entries: list, browse, add, request a plugin.",
+    description:
+      "Marketplace sources and their entries: list, browse, add, edit, refresh, remove, import, request a plugin.",
   },
-  { id: "requests", description: "Requests to admins: list yours, create one." },
-  { id: "connectors", description: "Connectors and connector templates: list and read." },
-  { id: "extensions", description: "Extensions in the org (state only) and extension points." },
+  {
+    id: "requests",
+    description:
+      "Requests to admins: list yours, create one; org admins list the members' pending ones; the super admin lists the platform's.",
+  },
+  {
+    id: "connectors",
+    description: "Connectors and connector templates: list and read, refresh tools, delete.",
+  },
+  {
+    id: "extensions",
+    description:
+      "Extensions in the org (state, tool switches, extension point defaults, file previewers) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
+  },
+  {
+    id: "conversations",
+    description:
+      "Your own conversations: list, read, rename, archive, delete, read their events, list and stop their background tasks.",
+  },
+  {
+    id: "orgs",
+    description:
+      "This org (read, rename, members) and, for the super admin, every org and its limits.",
+  },
+  {
+    id: "accounts",
+    description: "Platform accounts (super admin): list, read, create, disable, enable.",
+  },
+  {
+    id: "admin",
+    description: "The admin console (super admin): dashboard totals and deployment settings.",
+  },
+  {
+    id: "models",
+    description:
+      "The org's model per purpose, the models available and the ones it switched off; for the super admin, the platform's models: catalog and disabled list, prices, default model per purpose.",
+  },
+  {
+    id: "evals",
+    description:
+      "Eval sets, their cases and runs, results and labels (org admins): replay a candidate model or prompt over real cases.",
+  },
+  {
+    id: "inbox",
+    description:
+      "Your inbox (what waits for you, as summaries; dismiss notices) and, for the super admin, the platform inbox. Deciding is done on the web.",
+  },
+  {
+    id: "approvals",
+    description:
+      "Tool call approvals you can decide: list and read them as summaries, never the call's input. Deciding is done on the web.",
+  },
+  {
+    id: "channels",
+    description:
+      "The org's channel connections (IM bots): list, read without credentials, change the binding, remove.",
+  },
+  {
+    id: "org-settings",
+    description:
+      "The org's settings (tool search, language, sandbox policy, the Platform tool switch): read and change.",
+  },
+  {
+    id: "environments",
+    description:
+      "Your own cloud environments (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
+  },
 ];
 
 /**

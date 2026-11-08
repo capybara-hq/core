@@ -156,7 +156,7 @@ export class OwnedItems {
     actor: string,
     ref: OwnedRef,
     shareable: boolean,
-    opts: ActorOpts = {},
+    opts: ActorOpts & { auditDetail?: Record<string, unknown> } = {},
   ): Promise<void> {
     if (ref.kind !== "plugin") {
       await this.setComponentShareable(orgId, actor, ref.kind, ref.id, shareable, opts);
@@ -171,7 +171,7 @@ export class OwnedItems {
       orgId,
       action: "catalog.shareable_changed",
       target: item.id,
-      detail: { name: item.name, shareable },
+      detail: { name: item.name, shareable, ...opts.auditDetail },
     });
   }
 
@@ -182,7 +182,7 @@ export class OwnedItems {
     kind: "skill" | "agent_template",
     id: string,
     shareable: boolean,
-    opts: ActorOpts,
+    opts: ActorOpts & { auditDetail?: Record<string, unknown> },
   ): Promise<void> {
     // the action that manages the kind (the component scope ACTION map; ruling P4-12 for
     // templates, like their edit and delete)
@@ -225,6 +225,7 @@ export class OwnedItems {
         name: row.name,
         shareable,
         ...(row.link !== null && { platformId: row.link }),
+        ...opts.auditDetail,
       },
     });
   }
@@ -288,7 +289,7 @@ export class OwnedItems {
     orgId: string,
     actor: string,
     skillId: string,
-    opts: ActorOpts = {},
+    opts: ActorOpts & { auditDetail?: Record<string, unknown> } = {},
   ): Promise<"transferred" | "removed"> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "skills.manage");
     const row = await this.orgSkill(orgId, skillId, true);
@@ -301,7 +302,7 @@ export class OwnedItems {
             actor,
             opts,
           );
-    await this.skills.deleteOrgSkillIn(orgId, row.id, actor, opts.actorTokenId);
+    await this.skills.deleteOrgSkillIn(orgId, row.id, actor, opts.actorTokenId, opts.auditDetail);
     return outcome;
   }
 
@@ -361,7 +362,12 @@ export class OwnedItems {
       orgId,
       action: "agent_template.deleted",
       target: row.id,
-      detail: { name: row.name, outcome, ...(row.link !== null && { platformId: row.link }) },
+      detail: {
+        name: row.name,
+        outcome,
+        ...(row.link !== null && { platformId: row.link }),
+        ...opts.auditDetail,
+      },
     });
     return outcome;
   }
@@ -618,7 +624,13 @@ export class OwnedItems {
       orgId: owner,
       action: "catalog.ownership_transferred",
       target: item.id,
-      detail: { name: item.name, fromOrgId: owner, reason, usedBy: others.map((o) => o.id) },
+      detail: {
+        name: item.name,
+        fromOrgId: owner,
+        reason,
+        usedBy: others.map((o) => o.id),
+        ...opts.auditDetail,
+      },
     });
     afterCommit(() => this.scope.enqueueSync(item.id));
     return "transferred";

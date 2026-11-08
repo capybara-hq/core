@@ -492,6 +492,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
+  /** The environment it runs in, bound at the first message (null: none, or an older kernel). */
+  environmentId?: string | null;
   /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
   activity?: "running" | "waiting" | null;
 }
@@ -612,6 +614,7 @@ export const createConversationWithMessage = (
   orgId: string,
   agentId: string,
   message: Omit<MessageInput, "retryOf">,
+  environmentId?: string,
 ) =>
   apiFetch<{
     conversation: Conversation;
@@ -620,7 +623,11 @@ export const createConversationWithMessage = (
     events?: ConversationEvent[];
   }>(base(orgId), {
     method: "POST",
-    body: JSON.stringify({ agentId, message: messageBody(message) }),
+    body: JSON.stringify({
+      agentId,
+      message: messageBody(message),
+      ...(environmentId !== undefined ? { environmentId } : {}),
+    }),
   });
 
 /** Rename (owner only): a manual title is never regenerated. */

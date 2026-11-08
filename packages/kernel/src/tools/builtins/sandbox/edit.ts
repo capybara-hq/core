@@ -90,43 +90,46 @@ export function sandboxEditTool(deps: SandboxToolDeps): BuiltinTool {
       const { old_string, new_string, replace_all = false } = input as EditInput;
       const path = checkWritable((input as EditInput).file_path);
       if (old_string === new_string) throw new ToolError(SAME_TEXT);
-      const { value: edit, notices } = await inSandbox(deps, ctx, ({ h, p, signal }) =>
-        // read, replace, write: one holder at a time per file
-        withPathLease(deps, ctx, path, signal, async (signal) => {
-          const st = await p.stat(h, path, signal);
-          if (st === null) throw new ToolError(notFound(path));
-          if (st.isDir) throw new ToolError(notText(path));
-          const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
-          if (got === null) throw new ToolError(notFound(path));
-          if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
-          await assertReadAndUnchanged(
-            deps,
-            ctx.conversationId,
-            path,
-            fileStateOf(got.data, st.size),
-          );
-          const text = new TextDecoder().decode(got.data);
-          const count = occurrences(text, old_string);
-          if (count === 0) throw new ToolError(noMatch(path));
-          if (count > 1 && !replace_all) throw new ToolError(ambiguous(count));
-          // 用函数形式替换：new_string 里的 `$&` 等不被当成替换模式
-          const next = replace_all
-            ? text.split(old_string).join(new_string)
-            : text.replace(old_string, () => new_string);
-          const nextBytes = new TextEncoder().encode(next);
-          await p.writeFile(h, path, nextBytes, signal);
-          return {
-            n: replace_all ? count : 1,
-            before: text,
-            after: next,
-            // over the bytes the next Write / Edit reads back (Read's limit), as Read records it
-            file: recordedFile(
-              normalizeSandboxPath(path),
-              nextBytes.subarray(0, READ_MAX_BYTES),
-              nextBytes.byteLength,
-            ),
-          };
-        }),
+      const { value: edit, notices } = await inSandbox(
+        deps,
+        ctx,
+        ({ environmentId, h, p, signal }) =>
+          // read, replace, write: one holder at a time per file
+          withPathLease(deps, { environmentId }, path, signal, async (signal) => {
+            const st = await p.stat(h, path, signal);
+            if (st === null) throw new ToolError(notFound(path));
+            if (st.isDir) throw new ToolError(notText(path));
+            const got = await p.readFile(h, path, { maxBytes: EDIT_MAX_BYTES, signal });
+            if (got === null) throw new ToolError(notFound(path));
+            if (got.truncated || looksBinary(got.data)) throw new ToolError(notText(path));
+            await assertReadAndUnchanged(
+              deps,
+              ctx.conversationId,
+              path,
+              fileStateOf(got.data, st.size),
+            );
+            const text = new TextDecoder().decode(got.data);
+            const count = occurrences(text, old_string);
+            if (count === 0) throw new ToolError(noMatch(path));
+            if (count > 1 && !replace_all) throw new ToolError(ambiguous(count));
+            // 用函数形式替换：new_string 里的 `$&` 等不被当成替换模式
+            const next = replace_all
+              ? text.split(old_string).join(new_string)
+              : text.replace(old_string, () => new_string);
+            const nextBytes = new TextEncoder().encode(next);
+            await p.writeFile(h, path, nextBytes, signal);
+            return {
+              n: replace_all ? count : 1,
+              before: text,
+              after: next,
+              // over the bytes the next Write / Edit reads back (Read's limit), as Read records it
+              file: recordedFile(
+                normalizeSandboxPath(path),
+                nextBytes.subarray(0, READ_MAX_BYTES),
+                nextBytes.byteLength,
+              ),
+            };
+          }),
       );
       const { n } = edit;
       const text = `Edited ${path}: replaced ${n} occurrence${n === 1 ? "" : "s"}.`;

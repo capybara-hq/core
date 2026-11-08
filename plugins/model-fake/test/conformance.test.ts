@@ -12,9 +12,16 @@ describeModelProviderConformance("model-fake", async () => {
   return {
     contract: 2,
     plugin: "model-fake",
-    provider: createFakeProvider({ kv }),
+    provider: createFakeProvider({
+      kv,
+      models: [{ id: "fake-1" }, { id: "emb-1", kind: "embedding" }],
+    }),
     model: "fake-1",
-    expect: { thinking: false, caching: true },
+    expect: {
+      thinking: false,
+      caching: true,
+      embedding: { model: "emb-1", dimensions: 8 },
+    },
     teardown: async () => {},
   };
 });

@@ -1,4 +1,4 @@
-# Extension point: beta
+# Authoring: beta
 
 <!-- generated:extension-point -->
 - Ref: `beta@1`

@@ -19,6 +19,7 @@ import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js"
 import { createDb } from "../../../src/db/pool.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
+import { SANDBOX_RESTARTED_NOTICE } from "../../../src/tools/builtins/sandbox/common.js";
 import { removeFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -103,7 +104,7 @@ let orgId: string;
 beforeEach(async () => {
   await truncateTables(
     db,
-    "capybara.sandboxes, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+    "capybara.environment_instances, capybara.environments, capybara.attachments, capybara.approvals, capybara.tool_outputs, capybara.conversation_events, capybara.runs, capybara.conversations, capybara.agent_versions, capybara.agent_members, capybara.agents, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
   );
   const accounts = accountsFor(db);
   const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -135,6 +136,26 @@ async function sandboxConversation(): Promise<string> {
   return createConv(owner, orgId, agentId);
 }
 
+/** The environment a conversation is bound to (its owner's default unless one was chosen). */
+async function envOf(convId: string): Promise<string> {
+  const r = await db
+    .selectFrom("conversations")
+    .select("environment_id")
+    .where("id", "=", convId)
+    .executeTakeFirstOrThrow();
+  if (r.environment_id === null) throw new Error(`conversation ${convId} is not bound`);
+  return r.environment_id;
+}
+
+/** The instance row of the conversation's environment. */
+async function instanceOf(convId: string) {
+  return db
+    .selectFrom("environment_instances")
+    .select(["handle", "generation", "status"])
+    .where("environment_id", "=", await envOf(convId))
+    .executeTakeFirst();
+}
+
 type ToolResultEvent = Extract<ConversationEvent, { type: "tool_result" }>;
 
 /** 让模型调用一次工具，等运行结束，返回这次调用的 tool_result。 */
@@ -154,14 +175,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const conv = await sandboxConversation();
     const r = await call(conv, "Bash", { description: "Test step", command: "pwd && echo hi" }, 1);
     expect(r.isError).toBe(false);
-    expect(r.content).toMatch(/^Sandbox started/);
+    expect(r.content).toMatch(/^Environment started/);
     expect(r.content).toContain("/workspace\nhi");
     expect(r.content).toContain("[exit code: 0]");
     expect(r.display?.summary.en).toBeTruthy();
     expect(r.display?.summary.zh).toBeTruthy();
     // 第二次不再提示
     const r2 = await call(conv, "Bash", { description: "Test step", command: "echo again" }, 2);
-    expect(r2.content).not.toMatch(/Sandbox started/);
+    expect(r2.content).not.toMatch(/Environment started/);
     expect(r2.content).toContain("again");
   });
 
@@ -240,9 +261,8 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(r.isError).toBe(true);
     expect(r.content).toContain("description");
     expect(r.view).toBeUndefined();
-    // validation fails before the tool runs: no sandbox is created
-    const rows = db.selectFrom("sandboxes").select("handle").where("conversation_id", "=", conv);
-    expect(await rows.execute()).toEqual([]);
+    // validation fails before the tool runs: no instance is created
+    expect(await instanceOf(conv)).toBeUndefined();
   });
 
   it("bash: a non-zero exit is not isError, the view carries the exit code and description", async () => {
@@ -585,14 +605,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       { description: "Test step", command: "echo keep > /workspace/keep.txt" },
       1,
     );
-    const handle = async () =>
-      (
-        await db
-          .selectFrom("sandboxes")
-          .select(["handle", "generation"])
-          .where("conversation_id", "=", conv)
-          .executeTakeFirstOrThrow()
-      ).handle;
+    const handle = async () => (await instanceOf(conv))?.handle;
     const before = await handle();
     const r = await call(conv, "Read", { file_path: "/workspace/missing.txt" }, 2);
     expect(r.isError).toBe(true);
@@ -810,19 +823,30 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     );
   });
 
-  it("GET .../sandbox: 404 before first use, running after, suspended after the idle sweep", async () => {
+  it("environment route returns the bound environment", async () => {
     const conv = await sandboxConversation();
-    const url = `/api/v1/orgs/${orgId}/conversations/${conv}/sandbox`;
-    const none = await owner({ method: "GET", url });
-    expect(none.statusCode).toBe(404);
-    expect((none.json() as { error: { code: string } }).error.code).toBe("sandbox.not_found");
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv}/environment`;
+    type V = {
+      environment: {
+        id: string;
+        isDefault: boolean;
+        instance: { status: string; lastUsedAt: string } | null;
+      } | null;
+    };
+    const before = await owner({ method: "GET", url });
+    expect(before.statusCode, before.body).toBe(200);
+    const env = (before.json() as V).environment;
+    // bound at create to the owner's default environment, no instance before first use
+    expect(env?.id).toBe(await envOf(conv));
+    expect(env?.isDefault).toBe(true);
+    expect(env?.instance).toBeNull();
     await call(conv, "Bash", { description: "Test step", command: "true" }, 1);
     const running = await owner({ method: "GET", url });
     expect(running.statusCode, running.body).toBe(200);
-    const s = running.json() as { status: string; lastUsedAt: string };
-    expect(s.status).toBe("running");
-    expect(Number.isNaN(Date.parse(s.lastUsedAt))).toBe(false);
-    // 看不到会话的人：与会话流相同，404 conversation.not_found
+    const s = (running.json() as V).environment?.instance;
+    expect(s?.status).toBe("running");
+    expect(Number.isNaN(Date.parse(s?.lastUsedAt ?? ""))).toBe(false);
+    // someone who cannot see the conversation: as for its stream, 404 conversation.not_found
     const denied = await other({ method: "GET", url });
     expect(denied.statusCode).toBe(404);
     expect((denied.json() as { error: { code: string } }).error.code).toBe(
@@ -832,10 +856,14 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
       await k.app.get(SandboxService).suspendIdle(new Date(Date.now() + 24 * 3600_000)),
     ).toBeGreaterThan(0);
     const suspended = await owner({ method: "GET", url });
-    expect((suspended.json() as { status: string }).status).toBe("suspended");
-    // 已销毁的：与未创建一样（文件已不在），404
-    await k.app.get(SandboxService).destroyFor(conv);
-    expect((await owner({ method: "GET", url })).statusCode).toBe(404);
+    expect((suspended.json() as V).environment?.instance?.status).toBe("suspended");
+    // a deleted environment: null (its sandbox tools fail)
+    const del = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/environments/${await envOf(conv)}`,
+    });
+    expect(del.statusCode, del.body).toBe(202);
+    expect(((await owner({ method: "GET", url })).json() as V).environment).toBeNull();
   });
 
   it("deliver refuses files over sandbox.deliverMaxBytes", async () => {
@@ -875,13 +903,18 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect((await eventsOf(db, conv2)).some((e) => e.type === "approval_requested")).toBe(false);
   });
 
-  it("conversation attachments appear under /workspace/attachments", async () => {
-    const conv = await sandboxConversation();
-    const bytes = Buffer.from("name,qty\napple,3\n");
+  /** Uploads a file as the owner and sends it with a message into the conversation's first turn `n`. */
+  async function sendWithAttachment(
+    conv: string,
+    name: string,
+    text: string,
+    bytes: Buffer,
+    n: number,
+  ): Promise<void> {
     const created = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "fruit.csv", contentType: "text/csv", size: bytes.length },
+      payload: { name, contentType: "text/csv", size: bytes.length },
     });
     expect(created.statusCode, created.body).toBe(201);
     const c = created.json() as {
@@ -890,7 +923,7 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     };
     const form = new FormData();
     for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, String(v));
-    form.append("file", new Blob([bytes], { type: "text/csv" }));
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: "text/csv" }));
     const up =
       c.upload.method === "PUT"
         ? await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes })
@@ -904,51 +937,113 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     const sent = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
-      payload: { text: "echo:got it", files: [c.id] },
+      payload: { text, files: [c.id] },
     });
     expect(sent.statusCode, sent.body).toBe(202);
-    await waitForTerminal(db, conv, 1, 30_000);
+    await waitForTerminal(db, conv, n, 30_000);
+  }
+
+  /** A conversation's attachment directory: the first 12 hex digits of its id. */
+  const attDir = (conv: string) =>
+    `/workspace/attachments/${conv.replaceAll("-", "").slice(0, 12)}`;
+
+  it("conversation attachments appear under /workspace/attachments/<conversation>", async () => {
+    const conv = await sandboxConversation();
+    const dir = attDir(conv);
+    await sendWithAttachment(
+      conv,
+      "fruit.csv",
+      "echo:got it",
+      Buffer.from("name,qty\napple,3\n"),
+      1,
+    );
 
     const r = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
       2,
     );
     expect(r.content).toContain("apple,3");
-    expect(r.content).toContain("/workspace/attachments/fruit.csv");
+    expect(r.content).toContain(`${dir}/fruit.csv`);
     // 已同步过的不再提示
-    const r2 = await call(
-      conv,
-      "Bash",
-      { description: "Test step", command: "ls /workspace/attachments" },
-      3,
-    );
+    const r2 = await call(conv, "Bash", { description: "Test step", command: `ls ${dir}` }, 3);
     expect(r2.content).toContain("fruit.csv");
     expect(r2.content).not.toContain("Attachments copied");
     // 标记文件不出现在 glob / grep 结果里（它的内容含 fruit.csv）
     const g = await call(conv, "Glob", { pattern: "**" }, 4);
-    expect(g.content).toContain("/workspace/attachments/fruit.csv");
+    expect(g.content).toContain(`${dir}/fruit.csv`);
     expect(g.content).not.toContain(".capybara-sync.json");
     const gr = await call(conv, "Grep", { pattern: "fruit|apple", output_mode: "content" }, 5);
-    expect(gr.content).toContain("/workspace/attachments/fruit.csv:2:apple,3");
+    expect(gr.content).toContain(`${dir}/fruit.csv:2:apple,3`);
     expect(gr.content).not.toContain(".capybara-sync.json");
 
-    // 实例在提供方那边没了：透明重建，告诉模型文件已不在，并重新复制附件
-    const row = await db
-      .selectFrom("sandboxes")
-      .select("handle")
-      .where("conversation_id", "=", conv)
-      .executeTakeFirstOrThrow();
-    await removeFakeSandbox(root, (row.handle as { id: string }).id);
+    // the instance is gone at the provider: rebuilt on the kept files, the model is told the
+    // instance restarted, and the attachments (still there) are not copied again
+    const row = await instanceOf(conv);
+    await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
     const r3 = await call(
       conv,
       "Bash",
-      { description: "Test step", command: "cat /workspace/attachments/fruit.csv" },
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
       6,
     );
-    expect(r3.content).toMatch(/^Sandbox was recreated; previous files are gone\./);
-    expect(r3.content).toContain("Attachments copied");
+    expect(r3.content).not.toContain("Attachments copied");
     expect(r3.content).toContain("apple,3");
+    expect(r3.content).toContain(SANDBOX_RESTARTED_NOTICE);
+  });
+
+  it("attachments of two conversations do not collide", async () => {
+    const a = await sandboxConversation();
+    const b = await sandboxConversation();
+    expect(await envOf(a)).toBe(await envOf(b));
+    await sendWithAttachment(a, "a.txt", "echo:one", Buffer.from("from A\n"), 1);
+    await sendWithAttachment(b, "a.txt", "echo:two", Buffer.from("from B\n"), 1);
+    const ra = await call(
+      a,
+      "Bash",
+      { description: "Test step", command: `cat ${attDir(a)}/a.txt` },
+      2,
+    );
+    expect(ra.content).toContain("from A");
+    expect(ra.content).toContain(`${attDir(a)}/a.txt`);
+    const rb = await call(
+      b,
+      "Bash",
+      { description: "Test step", command: `cat ${attDir(b)}/a.txt` },
+      2,
+    );
+    expect(rb.content).toContain("from B");
+    expect(attDir(a)).not.toBe(attDir(b));
+    // both directories exist in the one file system
+    const ls = await call(
+      b,
+      "Bash",
+      { description: "Test step", command: "ls /workspace/attachments" },
+      3,
+    );
+    expect(ls.content).toContain(attDir(a).split("/").at(-1) as string);
+    expect(ls.content).toContain(attDir(b).split("/").at(-1) as string);
+  });
+
+  it("restart notice says files are kept", async () => {
+    const conv = await sandboxConversation();
+    await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "echo kept > /workspace/k.txt" },
+      1,
+    );
+    const row = await instanceOf(conv);
+    await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
+    const r = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "cat /workspace/k.txt" },
+      2,
+    );
+    expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
+    expect(SANDBOX_RESTARTED_NOTICE).toContain("files are kept");
+    expect(r.content).toContain("kept");
   });
 });

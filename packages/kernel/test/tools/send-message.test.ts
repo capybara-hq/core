@@ -801,6 +801,8 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
         orgId,
         conversationId: childId,
         sandboxConversationId: ctx.conversationId,
+        // a row without a process: no instance to address
+        environmentId: null,
         runId,
         callId: `call-${id}`,
         triggerAccountId: ownerId,

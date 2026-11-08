@@ -111,6 +111,8 @@ export class PricesService {
     input: ModelPrice | { provider: string; model: string; price: null },
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const check = MODEL_PRICE_PUT.safeParse(input);
     if (!check.success) {
@@ -120,7 +122,7 @@ export class PricesService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    await this.write(check.data, actorAccountId, actorTokenId);
+    await this.write(check.data, actorAccountId, actorTokenId, auditDetail);
   }
 
   /** The write of {@link put}, under the super admin lock. */
@@ -129,6 +131,7 @@ export class PricesService {
     v: ModelPricePut,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
     const target = `${v.provider}/${v.model}`;
@@ -143,7 +146,7 @@ export class PricesService {
         ...(actorTokenId !== undefined && { actorTokenId }),
         action: "model_price.deleted",
         target,
-        detail: { provider: v.provider, model: v.model },
+        detail: { provider: v.provider, model: v.model, ...auditDetail },
       });
       return;
     }
@@ -166,7 +169,7 @@ export class PricesService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "model_price.updated",
       target,
-      detail: { ...v },
+      detail: { ...v, ...auditDetail },
     });
   }
 }

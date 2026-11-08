@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
+import type { ModelEmbeddingInfo, ModelKind } from "./model.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
@@ -56,6 +57,63 @@ export interface ExtensionStorage {
   ): Promise<PresignedUpload>;
 }
 
+/** A `ctx.models.embed` request: texts embedded for one org with the model mapped to a purpose. */
+export interface ExtensionEmbedRequest {
+  orgId: string;
+  /** A purpose this extension declared in `permissions.models` with `kind: "embedding"`. */
+  purpose: string;
+  /** The texts, one vector each; split into batches by the model's `maxBatch` by the kernel. */
+  input: string[];
+  /** One of the model's `embedding.dimensions`; the model's default when absent. */
+  dimensions?: number;
+  inputType?: "query" | "document";
+  /**
+   * Aborts this call (e.g. the tool call's `signal`); combined with `ctx.signal`. Batches not yet
+   * sent are not sent; batches already answered are still recorded as usage.
+   */
+  signal?: AbortSignal;
+}
+
+/** A `ctx.models.embed` result. */
+export interface ExtensionEmbedResult {
+  /** One vector per input, in input order. */
+  vectors: number[][];
+  /** The model that made them (a changed model invalidates stored vectors). */
+  model: { provider: string; id: string };
+  dimensions: number;
+}
+
+/** The model a purpose maps to in an org (`ctx.models.describe`). */
+export interface ExtensionModelTarget {
+  provider: string;
+  id: string;
+  kind: ModelKind;
+  /** Present for an embedding model. */
+  embedding?: ModelEmbeddingInfo;
+}
+
+/**
+ * Models by purpose (`permissions.models`): the purpose → model mapping is chosen by org admins
+ * (and the deployment default by the super admin), never by the extension. Only purposes this
+ * extension declared with `kind: "embedding"` are accepted (`model.purpose_unknown` otherwise), and
+ * only for an org that enabled the extension (`extension.not_enabled`). Usage is recorded by the
+ * kernel and reported through `usage.report` (purpose `embedding`).
+ */
+export interface ExtensionModels {
+  /**
+   * Embeds `input` with the org's effective model for `purpose`. Rejects with `model.unconfigured`
+   * when the purpose maps to no model the org can use, `validation_failed` for dimensions the model
+   * lacks, and a `ModelError` when the provider fails (a result of the wrong count or dimension is a
+   * `ModelError` of kind `server`). Not retried by the kernel. Each call fires the `model.request`
+   * hook first (`purpose: "embedding"`, every text of the call): when a policy hook denies it, the
+   * call rejects with an error whose `code` is `model.hook_denied` (HTTP 403 if it escapes an
+   * extension route), and nothing is sent or billed.
+   */
+  embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+  /** The org's effective model for `purpose`, or null when it maps to no model the org can use. */
+  describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
+}
+
 /** 传给插件 `setup` 的上下文。不提供定时器与进程内共享状态；kv 写入必须带 TTL。 */
 export interface ExtensionContext {
   kv: {
@@ -85,6 +143,8 @@ export interface ExtensionContext {
   };
   /** 对象存储（需 `permissions.storage`，见 {@link ExtensionStorage}）。 */
   storage: ExtensionStorage;
+  /** Models by purpose (requires `permissions.models`, see {@link ExtensionModels}). */
+  models: ExtensionModels;
   /** 已切到本插件 schema（withSchema）的 Kysely 实例。 */
   // biome-ignore lint/suspicious/noExplicitAny: 插件自带表结构，内核无法静态得知
   db: Kysely<any>;

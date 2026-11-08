@@ -153,6 +153,8 @@ export interface CallPolicyContext {
    * (the approval card shows this form). Absent outside the pipeline.
    */
   rawInput?: unknown;
+  /** The run's abort signal (a precheck stops with it). Absent outside the pipeline. */
+  signal?: AbortSignal;
 }
 
 /** {@link BuiltinTool.callPolicy}. */

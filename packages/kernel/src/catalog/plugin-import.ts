@@ -983,6 +983,7 @@ export class PluginImport {
           extension: { sha256: extension.sha256, action: extension.action },
         }),
         ...(owner !== undefined && { orgId: owner.orgId }),
+        ...opts.auditDetail,
       },
     });
   }

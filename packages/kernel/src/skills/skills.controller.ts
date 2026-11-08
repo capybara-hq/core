@@ -1,9 +1,4 @@
-import {
-  hasControlChars,
-  isSkillName,
-  MEDIA_NAME_MAX_CHARS,
-  SKILL_LIMITS,
-} from "@capybara-hq/plugin-sdk";
+import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
@@ -20,7 +15,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { SKILL_WRITE_MAX_BYTES } from "../tools/builtins/skill-write.js";
+import { SkillCreateBody, SkillIdParams, SkillShareableSchema } from "./skills.schemas.js";
 import {
   type SkillDetail,
   type SkillSummary,
@@ -38,30 +33,10 @@ const UploadBody = z
     size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
   })
   .strict();
-const CreateBody = z
-  .object({
-    uploadId: z.string().min(1).max(100).optional(),
-    name: z
-      .string()
-      .refine(isSkillName, "name must be 1-64 lowercase letters, digits and single hyphens")
-      .optional(),
-    description: z.string().min(1).max(SKILL_LIMITS.descriptionMaxChars).optional(),
-    body: z.string().max(SKILL_WRITE_MAX_BYTES).optional(),
-    shareable: z.boolean().optional(),
-  })
-  .strict()
-  .refine(
-    (v) =>
-      v.uploadId !== undefined
-        ? v.name === undefined && v.description === undefined && v.body === undefined
-        : v.name !== undefined && v.description !== undefined && v.body !== undefined,
-    "send either { uploadId } or { name, description, body }",
-  );
 class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
-class SkillCreateBody extends createZodDto(CreateBody, "SkillCreateBody") {}
-const IdParams = z.object({ id: z.string().min(1).max(100) });
-const ShareableBody = z.object({ shareable: z.boolean() }).strict();
-class SkillIdParams extends createZodDto(IdParams, "SkillIdParams") {}
+class SkillCreateBodyDto extends createZodDto(SkillCreateBody, "SkillCreateBody") {}
+const ShareableBody = SkillShareableSchema;
+class SkillIdParamsDto extends createZodDto(SkillIdParams, "SkillIdParams") {}
 class SkillShareableBody extends createZodDto(ShareableBody, "SkillShareableBody") {}
 
 /**
@@ -105,7 +80,7 @@ export class SkillsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(SkillCreateBody) body: z.infer<typeof CreateBody>,
+    @ZBody(SkillCreateBodyDto) body: z.infer<typeof SkillCreateBody>,
   ): Promise<UploadedSkill> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
@@ -152,7 +127,7 @@ export class SkillsController {
   async setShareable(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(SkillIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(SkillIdParamsDto) params: z.infer<typeof SkillIdParams>,
     @ZBody(SkillShareableBody) body: z.infer<typeof ShareableBody>,
   ): Promise<{ id: string; shareable: boolean }> {
     const p = requireUser(principal);
@@ -177,7 +152,7 @@ export class SkillsController {
   async deletePreview(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(SkillIdParams) params: z.infer<typeof IdParams>,
+    @ZParam(SkillIdParamsDto) params: z.infer<typeof SkillIdParams>,
   ): Promise<OwnedSkillDeletePreview> {
     requireUser(principal);
     return this.owned.previewSkillDelete(org.orgId, params.id);

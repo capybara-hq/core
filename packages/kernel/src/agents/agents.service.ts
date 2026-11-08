@@ -8,13 +8,10 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import { rejectAnonymousGuest } from "../orgs/members.service.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { ProviderRegistry } from "../runtime/providers.js";
-import { SandboxJobs } from "../sandbox/jobs.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertOrgSkills, assertPinnedSkills } from "../skills/skills.service.js";
 import { legacyKeySaveText } from "../tools/legacy-keys.js";
@@ -50,8 +47,6 @@ export {
 } from "./agent-lookup.js";
 export { paramIssues, SUBAGENT_ROSTER_MAX } from "./definition.js";
 
-/** 删除 agent 时每个销毁任务带的对话数。 */
-const SANDBOX_DESTROY_BATCH = 500;
 export interface AgentVersion {
   version: number;
   definition: AgentDefinition;
@@ -373,12 +368,6 @@ export class AgentsService {
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     /** Resolves the agent's models (and their parameter declarations) when it is saved. */
     @Inject(ProviderRegistry) private readonly providers: Pick<ProviderRegistry, "resolve">,
-    /**
-     * The sandbox destruction after a delete (内核投递一次性维护任务 `sandbox-destroy-for`，worker
-     * 在锁内逐个销毁，幂等).
-     */
-    @Inject(SandboxJobs) private readonly sandboxJobs: Pick<SandboxJobs, "destroy">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Cancels the deleted agent's running eval runs (in the delete's transaction). */
     @Inject(EvalBudget) private readonly evalBudget: Pick<EvalBudget, "cancelRuns">,
@@ -444,13 +433,15 @@ export class AgentsService {
   }
 
   /**
-   * 校验主模型与兜底都可解析，并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
+   * 校验主模型与兜底都可解析：enabled `chat` models in the org (`resolve`'s default kind; a model the
+   * platform or the org disabled, or an embedding model → 400 `agent.model_unavailable`, spec B
+   * §5.3），并用各自模型的参数声明严格校验 `modelParams` / `fallbackParams`
    * （没有兜底时 `fallbackParams` 必须为空）；不合法 → `validation_failed`，details 逐键点名。返回提示。
    */
-  private async checkModels(def: AgentDefinitionInput): Promise<AgentWarning[]> {
+  private async checkModels(orgId: string, def: AgentDefinitionInput): Promise<AgentWarning[]> {
     const registry = this.providers;
-    const main = await registry.resolve(def.model);
-    const fallback = def.fallback === null ? null : await registry.resolve(def.fallback);
+    const main = await registry.resolve(orgId, def.model);
+    const fallback = def.fallback === null ? null : await registry.resolve(orgId, def.fallback);
     const details = [
       ...paramIssues("modelParams", main.info.parameters, def.modelParams),
       ...paramIssues("fallbackParams", fallback?.info.parameters ?? [], def.fallbackParams),
@@ -564,7 +555,7 @@ export class AgentsService {
       ),
     };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
-    const warnings = await this.checkModels(input.definition);
+    const warnings = await this.checkModels(orgId, input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
     if (input.visibility !== "members" && (input.memberIds?.length ?? 0) > 0) {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
@@ -722,7 +713,7 @@ export class AgentsService {
     auditDetail?: Record<string, unknown>,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
-    const warnings = patch.definition ? await this.checkModels(patch.definition) : [];
+    const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
     const toolKeys = patch.definition
       ? await this.checkTools(orgId, patch.definition, await this.keptDisabled(orgId, agentId))
       : null;
@@ -877,10 +868,16 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    const cancelled = await this.softDeleteIn(orgId, agentId, actorAccountId, actorTokenId);
+    const cancelled = await this.softDeleteIn(
+      orgId,
+      agentId,
+      actorAccountId,
+      actorTokenId,
+      auditDetail,
+    );
     await this.skillChanges.finishCancel(orgId, cancelled);
-    await this.destroySandboxes(orgId, agentId);
   }
 
   @Transactional()
@@ -889,6 +886,7 @@ export class AgentsService {
     agentId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ) {
     const t = this.db.db;
     await this.lockForWrite(orgId, agentId, actorAccountId);
@@ -910,6 +908,7 @@ export class AgentsService {
       orgId,
       action: "agent.deleted",
       target: agentId,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
     // the agent row stays (soft delete), so its setup request is closed here (P4-T6-3)
     await this.setupRequests.settleIn({
@@ -934,26 +933,6 @@ export class AgentsService {
       "agent_deleted",
       actorTokenId,
     );
-  }
-
-  /** 提交后尽力而为：投递销毁这个 agent 各对话还没销毁的沙箱（失败只记日志，留给不活跃销毁扫描）。 */
-  private async destroySandboxes(orgId: string, agentId: string): Promise<void> {
-    try {
-      const rows = await this.db
-        .selectFrom("sandboxes as s")
-        .innerJoin("conversations as c", "c.id", "s.conversation_id")
-        .select("s.conversation_id")
-        .where("c.org_id", "=", orgId)
-        .where("c.agent_id", "=", agentId)
-        .where("s.status", "<>", "destroyed")
-        .execute();
-      const ids = rows.map((r) => r.conversation_id);
-      for (let i = 0; i < ids.length; i += SANDBOX_DESTROY_BATCH) {
-        await this.sandboxJobs.destroy(ids.slice(i, i + SANDBOX_DESTROY_BATCH));
-      }
-    } catch (err) {
-      this.log.warn("cannot schedule sandbox destruction for a deleted agent", { agentId, err });
-    }
   }
 
   /**

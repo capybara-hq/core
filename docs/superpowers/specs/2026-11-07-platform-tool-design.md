@@ -1,7 +1,8 @@
 # The `Platform` tool: agents that understand and operate the platform
 
 - Date: 2026-11-07, written against `main` at `76b32e10`.
-- Status: draft for review.
+- Status: phase 1 implemented (#94, merged 2026-11-08; §13 As built). Phase 2 (§14) decided
+  2026-11-08, in implementation.
 - Amends: the co-build design (`2026-10-29-co-build-design.md`): its `PlatformInfo` builtin (§8.1)
   is replaced by this tool, and its agent docs and `check:agent-docs` gate (§8.2, §8.3) move here.
   The co-build design is rewritten separately on top of this one.
@@ -200,7 +201,9 @@ An operation is defined in kernel code next to its domain **(designer's call)**:
   principal; writes stay `@Transactional()` service methods as today.
 
 Audit rows of writes made through `Platform` record `via: "agent"` with the conversation, run and
-operation **(designer's call)**.
+operation **(designer's call)**, as `{ via, operation, agentConversationId, agentRunId }`: keys
+distinct from the business fields, so a write about another conversation or run (an eval case, a
+background task) keeps its own `conversationId` / `runId` in the row.
 
 Errors are the existing `ApiError` codes, turned into actionable tool errors (the tool error check
 applies). An operation that is unavailable says why and who can do it.
@@ -376,3 +379,265 @@ Decisions made while building, one per bullet (what, and why).
 - A second `Platform` call with different params while another call's approval is pending or
   approved never runs on that approval: approvals bind the exact input and each call has its own
   (`platform-e2e.test.ts`, case g).
+
+## 14. Phase 2: parity with the UI (decided, 2026-11-08)
+
+Source: the maintainer's acceptance of #94 in the running acceptance session (`fix/acceptance`, session
+c9a4e7bf) and the decisions taken there on 2026-11-08. Everything in this section is **(decided,
+2026-11-08)** unless marked **(designer's call)**. Where it changes §1–§13, this section wins.
+
+### 14.1 Principles
+
+1. **Parity with the UI.** What I can do in the UI, my agent can help me do, as me: the identity and
+   rights are the person in the conversation, no more and no less. Reads run; writes use the three
+   classes (`personal` / `org` / `platform`) as in §6.2.
+2. **Sensitive writes stay off; their reads come on.** The §6.4 exclusions stay for writes: deciding
+   approvals and requests, confirming extension permissions, tokens, the values of secrets and
+   credentials, changing roles. Their reads are offered: "what is waiting for my approval", "which
+   requests are pending", "which extensions wait for permission confirmation" — state and summaries
+   only, never a secret or credential value.
+3. **The super admin's agent sees the admin console and does its ordinary writes**: creating
+   accounts, managing orgs, limits, and the like. Only the class of item 2 stays off. Every exclusion
+   states its reason. The §6.1 rule stands: platform-scope operations run only through the super
+   admin's own private agent, and other orgs' private items appear as counts.
+4. **Always in sync.** When a route is added, changed or removed, its Platform capability follows:
+   - **Add**: a new route gets an operation or an exclusion with a reason (the phase-1 fence).
+   - **Change**: an operation's input (and, where it mirrors a route's response, its output) is not
+     written a second time: it uses the route's schema or one derived from it, so a changed route
+     field changes the operation. Where sharing is not possible, the check finds the difference.
+   - **Remove**: when a route is removed, the operations that mirror it and its exclusion entry go
+     too; the check reports "an operation mirrors a route that does not exist" and "an exclusion names
+     a route that does not exist".
+   AGENTS.md and `writing-kernel-api` state the three rules.
+
+### 14.2 Scope
+
+#### Every `later` route
+
+The 138 `later` routes of core#91 are all done in batches by how often they are used, or turned into
+exclusions with a reason. At least:
+
+- **Conversations**: list mine, get, rename, archive / unarchive (`personal`, rememberable); delete is
+  offered and confirmed every time (the maintainer's preference: a destructive personal write, never
+  remembered) **(designer's call** on the class name: `personal` with `remember: false`).
+- **Agent profile**: quick actions and the preset avatar (`personal`; on a shared agent confirmed every
+  time, through `confirmFor` as `agents.update`). Uploading a custom avatar image stays off (byte
+  upload, `transport`). `platform.me` and `agents.get` return the profile (description, quick
+  actions, avatar). The run-context work (`docs/superpowers/specs/2026-11-08-run-context-design.md`,
+  §3.5) moves the description into the versioned agent definition, edited by `agents.update`; the
+  profile operations cover quick actions and the avatar only. This part is built on `main` after the
+  run-context work merges.
+- **Skills**: switch a skill on / off in the org. #94's description named it but the code has only
+  list / get / create; add `skills.set-enabled` (the component switch, `org`).
+- **Admin console (super admin)**: accounts (list, get, create a user, disable), orgs (list, get,
+  limits read and write), extension deployment state, plugins and marketplaces, the platform inbox
+  (read), models and the default model per purpose.
+- **The other pages**: channels, members (read; role changes stay off), org settings, personal
+  settings, evals, connectors (without credentials), and the rest of what core#91 lists.
+
+#### Problems found in the acceptance
+
+1. **State.** An installed extension that is not loaded (e.g. Anthropic without its deployment API
+   key) shows as `off` in `plugins.list`, and `extensions.list` says `available: false` with no reason;
+   the model concluded that switching it on in the org would do. A not-loaded extension is
+   **unavailable with a reason** (e.g. `needs_deployment_config`), the same state and reason the web
+   shows.
+2. **Check before the card.** `plugins.set-enabled` showed the confirmation card and only after the
+   approval failed with `catalog.not_deployed`. Every write runs its preconditions **before** the card:
+   when it is known to fail, the tool returns the reason and no card appears. **(designer's call:** an
+   optional `precheck(input, ctx)` on the operation, run in `callPolicy` after availability; it reads
+   only, and a failure becomes `deny` with the precheck's reason.)
+3. **Errors that are wrong or not actionable.** The error said "extension is not deployed; ask the
+   super admin to install and enable it" while it was installed, only missing deployment config, and
+   the person was the super admin. Errors say what is missing and give the next step for the actor's
+   role (super admin: admin console → Extensions → Anthropic → fill in the API key; org admin: send a
+   request). Every Platform error is checked against this standard.
+4. **Exploration cost.** "How do I enable it" took 8 Platform calls, and `plugins.list` /
+   `plugins.platform-list` returned long results. With accurate state one call should decide it;
+   list results carry a compact row (id, name, state, reason, next step) and details come from `get`.
+5. **Docs that look alike.** After the error the model read the "writing extensions" doc, which was
+   unrelated. Topic titles make "writing an extension / building a plugin" (authoring) clearly
+   different from using the platform; using the platform is covered by operations and errors.
+
+### 14.3 Agent docs
+
+- Their role does not change: how to implement extensions and build plugin packages (plugin format,
+  extension points, skills, templates, tool naming). They do not describe how to use UI features;
+  operations' descriptions and errors cover that.
+- In step with the platform: `check:agent-docs` already reports extension points and fields that are
+  missing or stale. Phase 2 makes sure both directions are caught — "in the code, not in the docs" and
+  "in the docs, gone from the code" — for extension points and every plugin-format field, with a
+  failing fixture for each.
+- Retrieval: 21 topics, about 3,600 words; a table of contents plus reading by topic is enough, so no
+  vector search. When the topics grow markedly, `read` gains keyword search returning matching
+  paragraphs with their source.
+
+### 14.4 Acceptance
+
+In the acceptance session, by a checklist:
+
+- For each domain of §14.2 at least one read and one write, including the card's class.
+- The five problems of §14.2 reproduced and confirmed fixed.
+- The super admin's agent creates a user and reads "waiting for my approval".
+- The sync check has a test that turns it red for each of the three failures: a missing operation; an
+  operation whose fields differ from its route's; a removed route whose operation is still there.
+
+### 14.5 Answers to the builder check (2026-11-08)
+
+1. **Admin console data in full** **(decided, 2026-11-08)**. Admin-console operations return the same
+   data the admin console shows (accounts with login, name and email; orgs with name and member count;
+   the platform inbox), and run only through the super admin's own private agent (§6.1). The org admins
+   of the org that conversation lives in can read it in the trajectory viewer; that is accepted. Other
+   orgs' private **plugins** keep the phase-1 rule (counts only, refused for get / update).
+2. **Creating a user** **(decided, 2026-11-08)**. The agent passes no password. The kernel generates a
+   one-time initial password, the account must change it at first login, and the password is shown
+   only to the person, on the web, after they approve the card; the tool result the model receives
+   carries no password. The super-admin flag on create or update counts as a role change and stays off
+   **(designer's call)**.
+3. **What the sync check compares** **(designer's call)**. Inputs only; outputs come from the same
+   service methods the routes call, so they are not compared. Route body and query schemas move out of
+   the controllers into exported schema modules, and an operation builds its input from them
+   (`pick` / `omit` / `extend`). A runtime test in the checks suite compares each operation's input
+   JSON Schema with its mirrored route's body + query + path params: a field present in both must have
+   the same type; a route field the operation leaves out must be listed in the operation's `omits`; an
+   operation field the route lacks (e.g. `cursor`, a preview hash) must be listed in its `extras`.
+   Bounds may be stricter in the operation, never looser. The red fixtures cover a type mismatch, an
+   undeclared omission and an undeclared extra.
+4. **Not-loaded reasons in the org view** **(designer's call)**. `OrgExtensionView` gains the
+   deployment status and a reason (`needs_deployment_config`, `failed`, `dependency`,
+   `pending_approval`, `pending_migration`), derived like the admin view's; the org extensions API and
+   page show it (state and reason only, never config). Members and org admins see the reason and a
+   next step for their role; only super admins get the admin-console path.
+5. **Every `later` route is done in phase 2**, as an operation or a permanent exclusion
+   (`human-only` / `secret` / `transport` / `internal`) with a reason **(decided** in §14.2; the
+   end state is the **designer's call)**: afterwards the fence rejects the `later` category, so a new
+   route ships with its operation or a permanent exclusion. Delivered as a series of PRs by domain
+   from one plan **(designer's call)**.
+6. **Agent profile operations** are the last wave of this plan and start once the run-context work is
+   on `main` **(designer's call)**.
+7. **Error standard** **(designer's call)**. Enforced by a rule plus review: every operation's
+   `errors[]` entry has a `next` step, role-specific where the next step differs by role (keys
+   `superAdmin` / `orgAdmin` / `member`), and the tool maps an `ApiError` through the operation's
+   entry when one exists. `check:platform-ops` gains `platform-op-errors` for entries without `next`;
+   the acceptance and the final review check the wording.
+
+
+### 14.6 As built (phase 2)
+
+Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four waves (PRs #98,
+#100, #101). One bullet per decision: what was decided — why.
+
+**What was built**
+
+- 178 operations in 20 domains; every other kernel route is excluded for good
+  with a reason (`human-only` / `secret` / `transport` / `internal`). One `later` route remains: the
+  agent profile `PATCH`, until the run-context work is on `main` (#91); `check:platform-ops` rule
+  `platform-op-later` rejects every other `later` entry (the route sits in the check's
+  `LATER_ALLOWED`), and the allow-list empties when #91 lands.
+- Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
+  `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
+  parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
+  patterns / formats and required-ness, recursively, with `omits` / `extras` / `renames` / `loosens`
+  declared on the operation and checked for staleness. New check rules: `platform-op-errors`,
+  `platform-op-orphan` (a mirror or exclusion of a removed route), `platform-op-double` (a route both
+  mirrored and excluded), `platform-op-later`, `platform-op-session-only` (a `@SessionOnly()` route
+  mirrored, or excluded other than `human-only` / `secret`).
+- `precheck` on writes (read only, 2 s bound, skipped on a throw or timeout), run before the card and
+  again when an approved call resumes; role-keyed `next` in `errors[]` (`superAdmin` / `orgAdmin` /
+  `member`); compact list rows paged by 50.
+- Not-loaded extensions are `unavailable` with a reason (`needs_deployment_config`, …) in the org view,
+  `extensions.list`, `plugins.list` / `get`, the same as the web; one call decides "why can't I use
+  it", with the next step for the caller's role.
+- `accounts.create`: the kernel generates a one-time password sealed per run and call (migration
+  0090, hourly `@LockedCron` cleanup of expired copies), the approver reads it once on the web
+  (`POST …/approvals/:id/initial-password`), the account must change it first; it is absent from the
+  tool result, events, approvals, audit and logs.
+- Agent docs: titles say `Authoring:`; both directions (in the code but not the docs, in the docs but
+  gone from the code) are caught for extension points and every plugin-format, connector-template and
+  agent-template field; hand-written tables are checked for orphans only.
+- End to end: `platform-e2e-phase2.test.ts` (the deployment-config repro per role, `accounts.create`,
+  a member's `approvals.waiting`, `conversations.delete` asked every time). The three sync failures
+  are red in the checks suite (§14.4).
+
+**Rulings**
+
+- Parity is a vitest test, not part of `pnpm check` — it imports the kernel's zod schemas, which the
+  tsx source scans cannot evaluate; `tools/checks` runs on every PR that runs tests.
+- A renamed path param (`skillId` → `:id`) is declared through `renames` — the input keeps a
+  readable name while the parity test still compares it.
+- Nested optional route fields left out of an input need no declaration; top-level ones need `omits`
+  — declaring every nested field would add noise without catching real drift.
+- `asToolError` was removed from the operations; a service `ApiError` propagates and the tool maps
+  it — one path for every error. Tool-only codes (`marketplace.already_added`, `plugin.needs_input`,
+  `agent.visibility_web_only`, `catalog.org_owned`, `account.self`, `account.no_change`) exist only
+  as precheck denials — they describe tool policy, no route answers them.
+- `marketplaces.add` refuses a duplicate URL in its precheck although the web accepts duplicates —
+  a duplicate source is never what the person wants.
+- No request kind reaches the super admin about deployment state; the org admin's next step is "tell
+  the super admin" with the extension name and what is missing — a new request kind
+  (`extension_setup`) is a new contract, left for the maintainer.
+- Admin component scope / preview / disable / visibility are `platform` writes, not human-only —
+  they are ordinary admin-console writes (§14.1 item 3).
+- `PlatformOperation.rememberable?: false` (static) makes a write never remembered whatever its
+  class; used by `conversations.delete` / `abort` / `stop-background-task`, `agents.delete`,
+  `agents.delete-skill`, `environments.delete` / `reset-files` — replaces routing destructive personal writes through
+  `confirmFor` → `org`, which mislabelled their rights.
+- `conversations.abort` is offered (`personal`, never remembered, refuses the run's own root
+  conversation) — parity with the web's stop button.
+- Admin data in full: org names are shown for platform-owned items and the conversation org's own
+  items (previews, scope lists, the orgs a component is on in, results); items owned by other orgs
+  are counts and refusals only; this also applies to the phase-1 plugin operations — §14.5 item 1.
+  The admin component list stays compact (orgs counted); write results and previews name them.
+- Org-owned items, shared or not, are managed by their owner org; the super admin's agent refuses
+  them while the console can — the agent acts in one org's log, where another org's items do not
+  belong.
+- A route both mirrored and excluded is a check finding (`platform-op-double`) — a mirrored
+  human-only or secret route is a hole in the fence.
+- Personal preference operations wait for the run-context work, which adds the preferences /
+  timezone routes; folded into #91 — no such kernel route exists on `main` yet.
+- `evals.get-case` / `get-result` return metadata and scores, never conversation content — replay
+  privacy (trajectories 404 to others, no export); copying a case into another log would be an
+  export.
+- Eval case titles (excerpts of a person's message) are conversation content, so results and cards
+  use neutral labels — same privacy rule.
+- `environments.delete` and `environments.reset-files` are offered (`personal`, never remembered,
+  the card warns that files are destroyed and names the conversations that lose their sandbox) —
+  parity, like `conversations.delete`. Both refuse in the precheck (`environment.current`) the
+  environment the run's root conversation is bound to (sub-agents use the root's) — like
+  `conversations.delete` refusing the root; a root still unbound binds at its first sandbox call, so
+  nothing is refused for it.
+- Audit detail of a tool write is `{ via: "agent", operation, agentConversationId, agentRunId }` —
+  `conversationId` / `runId` in the same row stay the write's own business fields (an eval case's
+  source run, a background task's conversation), which the old keys overwrote.
+- A `@SessionOnly()` route is excluded as `human-only` or `secret`, never mirrored
+  (`platform-op-session-only`) — a web-session-only route is a person's own act or carries a
+  secret. A controller switching a mirrored route to a schema outside its `ROUTE_SCHEMAS` entry is
+  caught by review only — tying a `@ZBody` / `@ZQuery` DTO back to the entry needs cross-file
+  resolution the source scan does not do, and the parity test reads only the registered schemas.
+- Two list shapes stay: offset pages (`pageOf`, `params.cursor`, `{ items, total, next }`) for
+  lists read whole, and the route's keyset (`params.after`, `{ <items>, next }`, no total) for
+  `accounts.list`, `conversations.list` / `subagents` / `files` and `evals.list-results` — the
+  keyset routes cannot give a total cheaply, and unifying would change model-visible results for
+  no gain; the skill documents both.
+- The `Platform` tool description names the current families (fixed text; `browse` lists every
+  domain) — tool definitions are read by spec hash from the log, so old requests replay unchanged
+  and the zero-drift fixtures pin no description. The new description changes the tool's specHash
+  once, so remembered `Platform` grants and approvals pending at deploy are asked again — never
+  wrongly allowed.
+- `platformTool` `off` / `read-only` takes effect on the next call — the setting is re-read per call
+  like the actor's facts.
+- `inbox.platform-list` reports the console's `total` (everything waiting, other orgs' items
+  included) plus `listed` and `otherOrgItems` for the newest 100 it reads — past the window, other
+  orgs' items cannot be told apart, so the count is never reduced by a guess.
+- Process: wave 1 ran Tasks 1 and 4 in parallel, then 2, then 3 (they share files); in the domain
+  waves the first task of a wave owned the shared registries (`exclusions.ts`,
+  `platform-ops.module.ts`, `route-schemas.ts`) and the others' entries were merged after the wave —
+  to avoid index collisions, at the cost of merge work.
+
+**Left open**
+
+- Notice dismissals write no audit row (service behaviour, unchanged); whether every Platform write
+  must audit is for the maintainer.
+- A webhook-capable test plugin would cover the channels webhook success path.
+- #91 (agent profile and personal preferences) lands after the run-context work; then
+  `LATER_ALLOWED` empties and the `later` category can be removed from `ExclusionCategory`.

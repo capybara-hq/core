@@ -86,6 +86,8 @@ const SPEC: ToolSpec = {
 
 // async like the real `Platform` tool's (it reads the actor's facts)
 let seen: { input: unknown; rawInput: unknown }[] = [];
+/** `x.flip` asks until its precheck starts failing (the state changed while the card waited). */
+let flipFails = false;
 const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input, ctx) => {
   const op = (input as { op: string }).op;
   const key = `Platform:${op}`;
@@ -102,6 +104,15 @@ const callPolicy: NonNullable<BuiltinTool["callPolicy"]> = async (input, ctx) =>
       return { key, policy: "ask", remember: true, summary: { zh: `做 ${op}`, en: `Do ${op}` } };
     case "x.org":
       return { key, policy: "ask", remember: false, summary: { zh: "组织写", en: "Org write" } };
+    case "x.flip":
+      return flipFails
+        ? {
+            key,
+            policy: "deny",
+            remember: false,
+            denyReason: "Operation x.flip cannot run now: skill.name_exists: Pick another name.",
+          }
+        : { key, policy: "ask", remember: false, summary: { zh: "翻转", en: "Flip" } };
     case "x.gone":
       return {
         key,
@@ -182,6 +193,7 @@ let step: number;
 beforeEach(async () => {
   calls = [];
   seen = [];
+  flipFails = false;
   step = 0;
   await redis.flushdb();
   await truncateTables(raw, "capybara.accounts, capybara.orgs, capybara.audit_events");
@@ -312,6 +324,30 @@ describe("per-call policy keys", () => {
     expect(await resultOf("c1")).toMatchObject({
       isError: true,
       content: "Platform operation x.gone is unavailable: no person is present in this run.",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("a deny is final before the card: no approval is created", async () => {
+    flipFails = true;
+    expect(await runStep([call("c1", "x.flip")])).toEqual({ kind: "done" });
+    expect(await approvalOf("c1")).toBeUndefined();
+    expect(await resultOf("c1")).toMatchObject({ isError: true });
+  });
+
+  it("an approved call whose policy denies on resume returns the reason and never runs (precheck)", async () => {
+    expect((await runStep([call("c1", "x.flip")])).kind).toBe("suspended");
+    const row = await approvalOf("c1");
+    await approvals.decide(seed.orgId, row?.id ?? "", seed.accountId, {
+      decision: "approve",
+      scope: "once",
+    });
+    // the precheck fails by the time the run resumes
+    flipFails = true;
+    expect(await pipeline().runStep(stepCtx())).toEqual({ kind: "done" });
+    expect(await resultOf("c1")).toMatchObject({
+      isError: true,
+      content: "Operation x.flip cannot run now: skill.name_exists: Pick another name.",
     });
     expect(calls).toEqual([]);
   });

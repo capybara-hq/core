@@ -12,7 +12,6 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { roleAtLeast } from "../orgs/roles.js";
-import { CredentialValue } from "../tools/connectors.controller.js";
 import type { ConnectorDetail, ToolIssue } from "../tools/connectors.service.js";
 import type { MarketplaceImportResult } from "./catalog.service.js";
 import type {
@@ -21,6 +20,14 @@ import type {
   OrgCatalogItem,
   OrgInstallResult,
 } from "./catalog-content.js";
+import {
+  CatalogConnectorInput,
+  CatalogMarketplaceRequestBody,
+  CatalogRequestBody,
+  CatalogRequestsListQuery,
+  OrgPluginInstallBody,
+  OrgPluginSwitchBody,
+} from "./org-catalog.schemas.js";
 import { OrgCatalogService, type SwitchResult } from "./org-catalog.service.js";
 import {
   PluginInstaller,
@@ -30,54 +37,10 @@ import {
 } from "./plugin-install.js";
 import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
-const RequestBody = z
-  .object({
-    kind: z.enum(["access", "enable"]),
-    note: z.string().max(1000).optional(),
-  })
-  .strict();
-
-/** An org admin's request for a marketplace entry not in the catalog yet. */
-const MarketplaceRequestBody = z
-  .object({
-    marketplaceId: z.string().min(1).max(100),
-    name: z.string().min(1).max(214),
-    version: z.string().min(1).max(256),
-    note: z.string().max(1000).optional(),
-  })
-  .strict();
-
-const ConnectorInput = z
-  .object({
-    name: z.string().trim().min(1).max(80).optional(),
-    slug: z.string().max(24).optional(),
-    endpoint: z.record(z.string(), z.unknown()).optional(),
-    credential: CredentialValue.optional(),
-    client: z
-      .object({
-        clientId: z.string().min(1).max(500),
-        clientSecret: z.string().min(1).max(4000).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-/**
- * The org install body: template input, the extension's org config. No version: an org installs the
- * platform version (one per deployment, ruling P2-17).
- */
-const InstallBody = z
-  .object({
-    connectors: z.record(z.string(), ConnectorInput).optional(),
-    extensionConfig: z.record(z.string(), z.unknown()).optional(),
-  })
-  .strict();
-
 /** The connectors body (ruling P2-10): the input of missing connectors, by template id, as at install. */
 const ConnectorsBody = z
   .object({
-    inputs: z.object({ connectors: z.record(z.string(), ConnectorInput) }).strict(),
+    inputs: z.object({ connectors: z.record(z.string(), CatalogConnectorInput) }).strict(),
   })
   .strict();
 
@@ -88,19 +51,7 @@ const ConnectorsBody = z
 const TemplateConnectorBody = z
   .object({
     name: z.string().trim().min(1).max(80).optional(),
-    config: ConnectorInput.omit({ name: true }),
-  })
-  .strict();
-
-/** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
-const SwitchBody = z
-  .object({
-    enabled: z.boolean(),
-    inputs: InstallBody.optional(),
-    confirm: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .optional(),
+    config: CatalogConnectorInput.omit({ name: true }),
   })
   .strict();
 
@@ -121,22 +72,18 @@ const DecideBody = z
   .object({ approve: z.boolean(), reason: z.string().max(1000).optional() })
   .strict();
 
-const AdminListQuery = z.object({
-  status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
-});
-
-class CatalogRequestsQuery extends createZodDto(AdminListQuery, "CatalogRequestsQuery") {}
+class CatalogRequestsQuery extends createZodDto(CatalogRequestsListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
-class OrgPluginInstallBody extends createZodDto(InstallBody, "OrgPluginInstallBody") {}
+class OrgPluginInstallBodyDto extends createZodDto(OrgPluginInstallBody, "OrgPluginInstallBody") {}
 class OrgPluginConnectorsBody extends createZodDto(ConnectorsBody, "OrgPluginConnectorsBody") {}
-class OrgPluginSwitchBody extends createZodDto(SwitchBody, "OrgPluginSwitchBody") {}
+class OrgPluginSwitchBodyDto extends createZodDto(OrgPluginSwitchBody, "OrgPluginSwitchBody") {}
 class OrgTemplateConnectorBody extends createZodDto(
   TemplateConnectorBody,
   "OrgTemplateConnectorBody",
 ) {}
-class CatalogRequestBody extends createZodDto(RequestBody, "CatalogRequestBody") {}
-class CatalogMarketplaceRequestBody extends createZodDto(
-  MarketplaceRequestBody,
+class CatalogRequestBodyDto extends createZodDto(CatalogRequestBody, "CatalogRequestBody") {}
+class CatalogMarketplaceRequestBodyDto extends createZodDto(
+  CatalogMarketplaceRequestBody,
   "CatalogMarketplaceRequestBody",
 ) {}
 
@@ -222,7 +169,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
-    @ZBody(CatalogRequestBody) body: z.infer<typeof RequestBody>,
+    @ZBody(CatalogRequestBodyDto) body: z.infer<typeof CatalogRequestBody>,
   ): Promise<{ request: CatalogRequestView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
@@ -247,7 +194,7 @@ export class OrgCatalogController {
   async marketplaceRequest(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(CatalogMarketplaceRequestBody) body: z.infer<typeof MarketplaceRequestBody>,
+    @ZBody(CatalogMarketplaceRequestBodyDto) body: z.infer<typeof CatalogMarketplaceRequestBody>,
   ): Promise<{ request: CatalogRequestView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
@@ -267,7 +214,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
-    @ZBody(OrgPluginSwitchBody) body: z.infer<typeof SwitchBody>,
+    @ZBody(OrgPluginSwitchBodyDto) body: z.infer<typeof OrgPluginSwitchBody>,
   ): Promise<{ item: OrgCatalogItem } | { preview: UninstallPreview; confirm: string }> {
     const p = requireUser(principal);
     const r: SwitchResult = await this.catalog.setSwitch(
@@ -293,7 +240,7 @@ export class OrgCatalogController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("itemId") itemId: string,
-    @ZBody(OrgPluginInstallBody) body: z.infer<typeof InstallBody>,
+    @ZBody(OrgPluginInstallBodyDto) body: z.infer<typeof OrgPluginInstallBody>,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<Omit<OrgInstallResult, "status">> {
     const p = requireUser(principal);
@@ -432,7 +379,7 @@ export class AdminCatalogRequestsController {
 
   @Get()
   async list(
-    @ZQuery(CatalogRequestsQuery) q: z.infer<typeof AdminListQuery>,
+    @ZQuery(CatalogRequestsQuery) q: z.infer<typeof CatalogRequestsListQuery>,
   ): Promise<{ requests: CatalogRequestView[] }> {
     return {
       requests: await this.requests.listDeployment(

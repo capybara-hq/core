@@ -6,8 +6,7 @@ export const PLATFORM_EXCLUSIONS = [
   },
   {
     route: "GET /api/v1/orgs/:orgId/skills/later",
-    category: "later",
-    reason: "Not yet designed.",
-    issue: "https://github.com/capybara-hq/core/issues/1",
+    category: "internal",
+    reason: "Serves the web's own refresh.",
   },
 ];

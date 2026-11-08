@@ -3,7 +3,6 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../src/errors.js";
 import {
-  SANDBOX_BUSY_PREFIX,
   SANDBOX_LOCK_PREFIX,
   type SandboxLease,
   SandboxLockLostError,
@@ -214,6 +213,7 @@ describe("SandboxLeases", () => {
     expect(await l.renew()).toBe(false);
     expect(l.signal.aborted).toBe(true);
     expect(l.signal.reason).toBeInstanceOf(SandboxLockLostError);
+    expect((l.signal.reason as Error).message).toBe("sandbox lock lost for environment c2");
     await l.release();
 
     // the renewal timer notices too
@@ -237,7 +237,7 @@ describe("SandboxLeases", () => {
     await s.release();
   });
 
-  it("an old-style SET NX token on capk:sandbox key blocks shared; a shared value blocks SET NX", async () => {
+  it("an exclusive token on the capk:sandbox key blocks shared; a shared value blocks SET NX", async () => {
     const a = leasesA();
     await redisB.set(`${SANDBOX_LOCK_PREFIX}c1`, "old-replica-token", "PX", 5000, "NX");
     const err = await a.acquireShared("c1", 4, never(), 60).catch((e: unknown) => e);
@@ -258,81 +258,43 @@ describe("SandboxLeases", () => {
   it("claimDeadHolders returns only tags without live leases, once", async () => {
     const a = leasesA();
     const b = leasesB();
-    const live = await a.acquireShared("c1", 4, never(), 1000);
-    await a.registerHolder("c1", live.token, 60_000);
-    // a holder whose lease is gone (its replica crashed)
-    await b.registerHolder("c1", "dead-1", 60_000);
-    await b.registerHolder("c1", "dead-2", 60_000);
-    await redisA.set(`${SANDBOX_BUSY_PREFIX}c1`, "old", "PX", 60_000);
-    const first = await b.claimDeadHolders("c1");
-    expect(first.tags.sort()).toEqual(["dead-1", "dead-2"]);
-    // a shared acquirer never claims the legacy marker (live siblings may run)
-    expect(first.legacyMarker).toBe(false);
-    expect(await redisA.exists(`${SANDBOX_BUSY_PREFIX}c1`)).toBe(1);
-    expect(await b.claimDeadHolders("c1")).toEqual({ tags: [], legacyMarker: false });
-    expect(await redisA.hkeys("capk:sandbox-holders:c1")).toEqual([live.token]);
-    await a.unregisterHolder("c1", live.token);
-    expect(await redisA.hkeys("capk:sandbox-holders:c1")).toEqual([]);
+    const live = await a.acquireShared("e1", 4, never(), 1000);
+    await a.registerHolder("e1", live.token, 60_000);
+    // holders whose leases are gone (their replica crashed)
+    await b.registerHolder("e1", "dead-1", 60_000);
+    await b.registerHolder("e1", "dead-2", 60_000);
+    expect((await b.claimDeadHolders("e1")).sort()).toEqual(["dead-1", "dead-2"]);
+    expect(await b.claimDeadHolders("e1")).toEqual([]);
+    expect(await redisA.hkeys("capk:sandbox-holders:e1")).toEqual([live.token]);
+    await a.unregisterHolder("e1", live.token);
+    expect(await redisA.exists("capk:sandbox-holders:e1")).toBe(0);
     await live.release();
 
-    // the exclusive holder's own record is live; the legacy busy marker is claimed once, and only
-    // by the caller holding the exclusive lease
-    const e = await b.acquireExclusive("c2", never(), 1000);
-    await redisA.set(`${SANDBOX_BUSY_PREFIX}c2`, "old", "PX", 60_000);
-    expect(await a.claimDeadHolders("c2", "not-the-holder")).toEqual({
-      tags: [],
-      legacyMarker: false,
-    });
-    expect(await a.claimDeadHolders("c2")).toEqual({ tags: [], legacyMarker: false });
-    expect(await b.claimDeadHolders("c2", e.token)).toEqual({ tags: [], legacyMarker: true });
-    expect(await b.claimDeadHolders("c2", e.token)).toEqual({ tags: [], legacyMarker: false });
-    await b.registerHolder("c2", e.token, 60_000);
-    await b.unregisterHolder("c2", e.token);
+    // the exclusive holder's own record is live; a dead one beside it is claimed
+    const e = await b.acquireExclusive("e2", never(), 1000);
+    await b.registerHolder("e2", e.token, 60_000);
+    await a.registerHolder("e2", "dead", 60_000);
+    expect(await a.claimDeadHolders("e2")).toEqual(["dead"]);
+    expect(await redisA.hkeys("capk:sandbox-holders:e2")).toEqual([e.token]);
+    await b.unregisterHolder("e2", e.token);
     await e.release();
   });
 
-  it("new holders also write the legacy busy marker as v2: ignored by new code, kept while any holder record is", async () => {
+  it("an expired holder record is dropped without being returned", async () => {
     const a = leasesA();
-    const busy = `${SANDBOX_BUSY_PREFIX}c1`;
-    await a.registerHolder("c1", "h1", 120_000);
-    expect(await redisA.get(busy)).toBe("v2");
-    expect(await redisA.pttl(busy)).toBeGreaterThan(60_000);
-    expect(await a.legacyMarker("c1")).toBe(false);
-    await a.registerHolder("c1", "h2", 60_000);
-    await a.unregisterHolder("c1", "h1");
-    // h2's record is still there: an old replica must still see a marker
-    expect(await redisA.get(busy)).toBe("v2");
-    await a.unregisterHolder("c1", "h2");
-    expect(await redisA.exists(busy)).toBe(0);
+    await a.registerHolder("e1", "old", 50);
+    await sleep(120);
+    expect(await a.claimDeadHolders("e1")).toEqual([]);
+    expect(await redisA.exists("capk:sandbox-holders:e1")).toBe(0);
+  });
 
-    // a crashed new holder leaves v2 behind: an old replica's swap sees a value and kills everything
-    await a.registerHolder("c2", "crashed", 60_000);
-    const swapped = await redisB.eval(
-      "local o = redis.call('GET', KEYS[1]); redis.call('SET', KEYS[1], ARGV[1], 'PX', 60000); return o",
-      1,
-      `${SANDBOX_BUSY_PREFIX}c2`,
-      "old-token",
-    );
-    expect(swapped).toBe("v2");
-    await redisA.del(`${SANDBOX_BUSY_PREFIX}c2`);
-
-    // the new exclusive acquirer claims the dead record; v2 is not a legacy marker, and it goes
-    // with the last record
-    await a.registerHolder("c3", "dead", 60_000);
-    const e = await a.acquireExclusive("c3", never(), 1000);
-    expect(await a.claimDeadHolders("c3", e.token)).toEqual({
-      tags: ["dead"],
-      legacyMarker: false,
-    });
-    expect(await redisA.exists(`${SANDBOX_BUSY_PREFIX}c3`)).toBe(0);
-    await e.release();
-
-    // an old holder's marker (its token) is never overwritten by v2, and never deleted by new code
-    await redisA.set(`${SANDBOX_BUSY_PREFIX}c4`, "old-holder", "PX", 60_000);
-    await a.registerHolder("c4", "h", 60_000);
-    await a.unregisterHolder("c4", "h");
-    expect(await redisA.get(`${SANDBOX_BUSY_PREFIX}c4`)).toBe("old-holder");
-    expect(await a.legacyMarker("c4")).toBe(true);
+  it("holder records write no single busy marker", async () => {
+    const a = leasesA();
+    await a.registerHolder("e1", "h1", 60_000);
+    expect(await redisA.keys("capk:sandbox-busy:*")).toEqual([]);
+    expect(await redisA.keys("*")).toEqual(["capk:sandbox-holders:e1"]);
+    await a.unregisterHolder("e1", "h1");
+    expect(await redisA.keys("*")).toEqual([]);
   });
 
   it("an intent outlives a short poll interval (floor of 2 s)", async () => {

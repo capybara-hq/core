@@ -379,9 +379,16 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
 
   function picker(label, o = {}) {
     if (o.locked)
-      return `<span class="r-picker" data-locked title="${esc(K.agentLocked)}">${esc(label)}</span>`;
+      return `<span class="r-picker" data-locked title="${esc(o.locked === true ? K.agentLocked : o.locked)}">${esc(label)}</span>`;
     // An open picker is the anchor its menu hangs from (the menu is aligned with its trigger).
     return `<button class="r-btn r-picker" data-variant="ghost"${o.open ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${esc(label)}${icon("chevron-down", 12)}</button>`;
+  }
+
+  // The environment picker (§6.16.2) between the agent and the model: "locked" after the first message.
+  function envPicker(o) {
+    const E = F.ENVIRONMENT_FIXTURE;
+    const label = E.items.find((i) => i.id === E.selected).label;
+    return o.env === "locked" ? picker(label, { locked: K.environmentLocked }) : picker(label);
   }
 
   function composer(o = {}) {
@@ -416,7 +423,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.env ? envPicker(o) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   /**

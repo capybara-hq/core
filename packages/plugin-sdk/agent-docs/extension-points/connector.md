@@ -1,4 +1,4 @@
-# Extension point: connector
+# Authoring: extension point connector
 
 <!-- generated:extension-point -->
 - Name: `connector` (a ref is `connector@<major>`)

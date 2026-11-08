@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKILL_INVOCATION_LIMITS } from "@capybara-hq/plugin-sdk";
+import { SKILL_INVOCATION_LIMITS, skillDigest } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -122,6 +122,17 @@ const skillMd = (name: string, body: string, front = "") =>
   `---\nname: ${name}\ndescription: Use for ${name} work.\n${front}---\n${body}`;
 
 /** Writes a skill version's files and row; `skillId` adds a version to that skill. */
+/** The digest of a skill's latest version (names its directory `/skills/<name>@<digest>/`). */
+async function digestOf(skillId: string): Promise<string> {
+  const v = await db
+    .selectFrom("skill_versions")
+    .select("manifest")
+    .where("skill_id", "=", skillId)
+    .orderBy("version", "desc")
+    .executeTakeFirstOrThrow();
+  return skillDigest(v.manifest.files);
+}
+
 async function seedSkill(opts: {
   name: string;
   body: string;
@@ -500,10 +511,11 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     expect(res.statusCode, res.body).toBe(202);
     const [m] = await userMessages(conv);
     const text = firstText(m);
-    expect(text).toContain("Read /skills/brainstorming/notes.md first.");
+    const dir = `/skills/brainstorming@${await digestOf(s.id)}`;
+    expect(text).toContain(`Read ${dir}/notes.md first.`);
     expect(text).toContain('<skill_invocation name="superpowers:brainstorming" version="1">');
     expect(text).toContain(
-      'Its files are not in the sandbox yet: call Skill with "superpowers:brainstorming" to copy them to /skills/brainstorming/ before running its scripts.',
+      `Its files are not in the sandbox yet: call Skill with "superpowers:brainstorming" to copy them to ${dir}/ before running its scripts.`,
     );
     expect(m?.payload.skill).toMatchObject({
       name: "brainstorming",
@@ -581,7 +593,9 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const c1 = await createConv(owner, orgId, withBash);
     expect((await send(c1, { text: "", skill: { name: "tool" } })).statusCode).toBe(202);
     const t1 = firstText((await userMessages(c1))[0]);
-    expect(t1).toContain('call Skill with "tool" to copy them to /skills/tool/');
+    expect(t1).toContain(
+      `call Skill with "tool" to copy them to /skills/tool@${await digestOf(tool.id)}/`,
+    );
     expect(
       t1.endsWith(
         "Lines written as !`command` were meant to run before you read this; run those commands with Bash if you need their output.",
@@ -603,7 +617,7 @@ describe("POST …/messages with skill", { timeout: 60_000 }, () => {
     const t2 = firstText((await userMessages(c2))[0]);
     expect(
       t2.endsWith(
-        '\n\nIts files are not in the sandbox yet: call Skill with "manual" to copy them to /skills/manual/ before running its scripts.',
+        `\n\nIts files are not in the sandbox yet: call Skill with "manual" to copy them to /skills/manual@${await digestOf(manual.id)}/ before running its scripts.`,
       ),
     ).toBe(true);
     expect(t2).not.toContain("Bash");

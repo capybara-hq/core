@@ -1,4 +1,4 @@
-# Plugin format
+# Authoring: the plugin format
 
 A plugin is a directory, packed into a `.tgz` with `capybara-plugin pack` (the published
 `@capybara-hq/plugin-tools`; `npx capybara-plugin check` runs the checks).

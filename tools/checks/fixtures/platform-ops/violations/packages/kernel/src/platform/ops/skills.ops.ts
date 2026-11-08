@@ -1,6 +1,18 @@
 const dynamicMirrors = ["GET /api/v1/orgs/:orgId/skills"];
 
 export const ops = [
+  // platform-op-session-only: mirrors a @SessionOnly route
+  defineOperation({
+    id: "sessions.mirrored",
+    description: "Mirrored.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.read" },
+    mirrors: ["POST /api/v1/orgs/:orgId/sessions/mirrored"],
+    confirm: "personal",
+    summary: () => ({ zh: "x", en: "x" }),
+    run: async () => ({}),
+  }),
   // get is not mirrored anywhere, and list's authz is right
   defineOperation({
     id: "skills.list",
@@ -57,6 +69,21 @@ export const ops = [
     authz: { orgAction: "skills.manage" },
     mirrors: dynamicMirrors,
     confirm: "read",
+    run: async () => ({}),
+  }),
+  // platform-op-errors: an entry without next, and a role-keyed next only the super admin gets
+  defineOperation({
+    id: "skills.errors",
+    description: "Errors.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.read" },
+    mirrors: [],
+    confirm: "read",
+    errors: [
+      { code: "skill.no_next" },
+      { code: "skill.super_only", next: { superAdmin: "Use the admin console." } },
+    ],
     run: async () => ({}),
   }),
   // platform-op-literal: not an object literal

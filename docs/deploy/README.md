@@ -643,14 +643,13 @@ Lark and the test fake deliver exactly once.
 
 ## Sandbox (optional)
 
-Conversation sandboxes use the `sandbox-docker` extension. Its two images are not published: the
-sandbox profile builds them from the
-[`sandbox-docker` plugin](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) of
-capybara-hq/plugins at the commit `docker/compose.yaml` names (a git build context, so the build needs git and access to
-GitHub, but no checkout of that repository):
+Conversation sandboxes use the `sandbox-docker` extension. Its two images,
+`ghcr.io/capybara-hq/capybara-sandbox` and `ghcr.io/capybara-hq/capybara-sandbox-egress`, are
+published; the extension pulls them itself on first use, so the sandbox profile only starts
+`sandbox-proxy`:
 
 ```bash
-docker compose --profile sandbox up -d      # builds capybara-sandbox and capybara-sandbox-egress, starts sandbox-proxy
+docker compose --profile sandbox up -d      # starts sandbox-proxy
 docker compose exec api node /app/bin/capybara.mjs extensions install npm:@capybara-hq/plugin-sandbox-docker --yes
 docker compose exec api node /app/bin/capybara.mjs extensions approve sandbox-docker --yes
 docker compose exec api node /app/bin/capybara.mjs extensions enable sandbox-docker
@@ -667,9 +666,11 @@ configuration).
 
 Isolation (runc or gVisor), egress allowlists and limits are described in
 [the sandbox-docker README](https://github.com/capybara-hq/plugins/blob/main/plugins/sandbox-docker/README.md).
-To build the images elsewhere (another registry, a node without compose), use the same contexts:
-`docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
-and `.../egress-proxy` for `capybara-sandbox-egress:latest`.
+Offline route (no access to ghcr.io): build the images locally with
+`docker compose --profile sandbox-build build` (a git build context, so it needs git and access to
+GitHub), or `docker build -t capybara-sandbox:latest https://github.com/capybara-hq/plugins.git#<commit>:plugins/sandbox-docker/image`
+and `.../egress-proxy` for `capybara-sandbox-egress:latest`; then set `CAPYBARA_SANDBOX__IMAGE` and the
+extension's `egressProxyImage` to those tags.
 
 ## Logs
 

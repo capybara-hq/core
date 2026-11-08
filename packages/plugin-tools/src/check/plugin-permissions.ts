@@ -169,7 +169,11 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     m.secrets = !!secrets && (resolve(secrets.value as Node, decls) as Node).value === true;
     const storage = prop(pe, "storage");
     m.storage = !!storage && (resolve(storage.value as Node, decls) as Node).value === true;
-    m.models = !!prop(pe, "models");
+    // an empty list declares nothing (ctx.models is gated on at least one purpose)
+    const models = prop(pe, "models");
+    const me = models ? resolve(models.value as Node, decls) : undefined;
+    m.models =
+      me !== undefined && !(me.type === "ArrayExpression" && (me.elements as Node[]).length === 0);
     for (const t of strings(prop(pe, "tools")?.value as Node | undefined, decls)) m.tools.add(t);
     for (const h of strings(prop(pe, "hooks")?.value as Node | undefined, decls)) m.hooks.add(h);
     for (const h of strings(prop(pe, "policyHooks")?.value as Node | undefined, decls)) {
@@ -376,11 +380,13 @@ function scanSetup(
             );
           }
         } else if (name === "models") {
-          add(
-            n,
-            "perm-reserved",
-            "ctx.models is reserved and not provided in this release; remove the access",
-          );
+          if (!m.models) {
+            add(
+              n,
+              "perm-models",
+              "ctx.models is used but not declared; declare its purposes in permissions.models in the extension manifest",
+            );
+          }
         } else if (
           name === "http" ||
           name === "tools" ||
@@ -451,7 +457,9 @@ function scanFile(
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
  *   point must be a string literal or a same-file const, like the names below), or the options are
  *   `{ mode: "policy" }` and the mount point is not in permissions.policyHooks;
- * - perm-reserved：用了尚未提供的 ctx.models。
+ * - perm-models: ctx.models is used but permissions.models is not declared (the purposes it may use
+ *   are checked at run time);
+ * - perm-reserved: platform access that cannot be confirmed (a destructured ctx, a computed member).
  * 路由路径、工具名、能力 ref、界面 id 须是字符串字面量或本文件的 const；动态的写法报「无法静态确认」，
  * 豁免：`// capybara:allow-dynamic-permission <原因>`（行尾或紧邻上一行，原因必填）。
  * ctx 会跟踪本地别名，以及按位置传给同文件函数的参数。

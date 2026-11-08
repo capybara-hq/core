@@ -84,7 +84,7 @@ describe("defineExtension", () => {
   });
   it("rejects brokered extension points in requires / optional", () => {
     expect(() => defineExtension(valid({ requires: ["model-provider@2"] }))).toThrow(/brokered/);
-    expect(() => defineExtension(valid({ optional: ["sandbox@1"] }))).toThrow(/brokered/);
+    expect(() => defineExtension(valid({ optional: ["sandbox@2"] }))).toThrow(/brokered/);
   });
   it("validates permissions", () => {
     expect(() => defineExtension(valid({ permissions: { secrets: true } }))).not.toThrow();

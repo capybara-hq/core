@@ -63,7 +63,7 @@ type DisabledToolRef =
 
 ## 3. Migration of existing agents and templates
 
-Migration `0089_tools_default_on.sql` **(decided)**:
+Migration `0092_tools_default_on.sql` **(decided)**:
 
 - every `agent_versions.definition` that has a `tools` key loses it and gets `disabledTools: []`:
   every existing agent (and every older version, so a rollback reads the same shape) has nothing

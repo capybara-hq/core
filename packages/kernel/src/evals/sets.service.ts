@@ -231,8 +231,9 @@ export class EvalSetsService {
     actor: string,
     input: { agentId: string; name: string; description?: string; rubric?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalSetView> {
-    const id = await this.createIn(orgId, actor, input, actorTokenId);
+    const id = await this.createIn(orgId, actor, input, actorTokenId, auditDetail);
     return this.view(orgId, id);
   }
 
@@ -263,9 +264,10 @@ export class EvalSetsService {
     setId: string,
     patch: { name?: string; description?: string; rubric?: string | null },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalSetView> {
     if (!UUID.test(setId)) throw setNotFound();
-    await this.updateIn(orgId, actor, setId, patch, actorTokenId);
+    await this.updateIn(orgId, actor, setId, patch, actorTokenId, auditDetail);
     return this.view(orgId, setId);
   }
 
@@ -273,9 +275,15 @@ export class EvalSetsService {
    * 删除评测集（Ruling S1-a）：集合行软删除，留作审计存根；用例（含快照）硬删，结果随之级联删除，不留复制来的对话内容；
    * 在执行的运行取消，运行行保留（无入口）。
    */
-  async remove(orgId: string, actor: string, setId: string, actorTokenId?: string): Promise<void> {
+  async remove(
+    orgId: string,
+    actor: string,
+    setId: string,
+    actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
+  ): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
-    await this.removeIn(orgId, actor, setId, actorTokenId);
+    await this.removeIn(orgId, actor, setId, actorTokenId, auditDetail);
   }
 
   @Transactional({ propagation: "requires_new" })
@@ -284,6 +292,7 @@ export class EvalSetsService {
     actor: string,
     input: { agentId: string; name: string; description?: string; rubric?: string },
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<string> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     const agent = await this.db
@@ -312,7 +321,7 @@ export class EvalSetsService {
       orgId,
       action: "eval.set_created",
       target: row.id,
-      detail: { agentId: input.agentId, name: input.name },
+      detail: { agentId: input.agentId, name: input.name, ...auditDetail },
     });
     return row.id;
   }
@@ -324,6 +333,7 @@ export class EvalSetsService {
     setId: string,
     patch: { name?: string; description?: string; rubric?: string | null },
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     const r = await this.db
@@ -348,6 +358,7 @@ export class EvalSetsService {
       // 只记改了哪些字段（评分标准可能很长，不进审计）
       detail: {
         fields: (["name", "description", "rubric"] as const).filter((f) => patch[f] !== undefined),
+        ...auditDetail,
       },
     });
   }
@@ -358,6 +369,7 @@ export class EvalSetsService {
     actor: string,
     setId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     const r = await this.db
@@ -375,6 +387,7 @@ export class EvalSetsService {
       orgId,
       action: "eval.set_deleted",
       target: setId,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 
@@ -384,7 +397,7 @@ export class EvalSetsService {
     actor: string,
     setId: string,
     snapshot: CaseSnapshot,
-    extra: { sampled: boolean; actorTokenId?: string },
+    extra: { sampled: boolean; actorTokenId?: string; auditDetail?: Record<string, unknown> },
     prepared: {
       max: number;
       json: string;
@@ -436,6 +449,7 @@ export class EvalSetsService {
         conversationId: snapshot.conversationId,
         runId: snapshot.runId,
         ...(extra.sampled && { sampled: true }),
+        ...extra.auditDetail,
       },
     });
     return toCaseView(row);
@@ -448,6 +462,7 @@ export class EvalSetsService {
     setId: string,
     caseId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     const set = await this.db
@@ -477,6 +492,7 @@ export class EvalSetsService {
         caseId,
         conversationId: r.source_conversation_id,
         runId: r.source_run_id,
+        ...auditDetail,
       },
     });
   }
@@ -513,7 +529,7 @@ export class EvalSetsService {
     actor: string,
     setId: string,
     snapshot: CaseSnapshot,
-    extra: { sampled: boolean; actorTokenId?: string },
+    extra: { sampled: boolean; actorTokenId?: string; auditDetail?: Record<string, unknown> },
   ): Promise<EvalCaseView | "exists" | "full"> {
     const max = this.config.get().evals.maxCasesPerSet;
     const json = JSON.stringify(snapshot);
@@ -539,6 +555,7 @@ export class EvalSetsService {
     setId: string,
     input: { conversationId: string; runId: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalCaseView> {
     const set = await this.liveSet(orgId, setId);
     const conv = await this.db
@@ -575,6 +592,7 @@ export class EvalSetsService {
     const r = await this.insertCase(orgId, actor, setId, snapshot, {
       sampled: false,
       ...(actorTokenId !== undefined && { actorTokenId }),
+      ...(auditDetail !== undefined && { auditDetail }),
     });
     if (r === "exists") throw caseExists();
     if (r === "full") throw tooMany(maxCasesPerSet);
@@ -592,6 +610,7 @@ export class EvalSetsService {
     setId: string,
     input: SampleInput,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ added: number; skipped: number }> {
     const set = await this.liveSet(orgId, setId);
     const { maxCasesPerSet, maxCaseBytes } = this.config.get().evals;
@@ -650,6 +669,7 @@ export class EvalSetsService {
       const r = await this.insertCase(orgId, actor, setId, snapshot, {
         sampled: true,
         ...(actorTokenId !== undefined && { actorTokenId }),
+        ...(auditDetail !== undefined && { auditDetail }),
       });
       if (typeof r === "string") skipped++;
       else added++;
@@ -663,10 +683,11 @@ export class EvalSetsService {
     setId: string,
     caseId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     if (!UUID.test(setId)) throw setNotFound();
     if (!UUID.test(caseId)) throw caseNotFound();
-    await this.removeCaseIn(orgId, actor, setId, caseId, actorTokenId);
+    await this.removeCaseIn(orgId, actor, setId, caseId, actorTokenId, auditDetail);
   }
 
   /**
@@ -679,6 +700,7 @@ export class EvalSetsService {
     setId: string,
     caseId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalCaseDetail> {
     await this.liveSet(orgId, setId);
     if (!UUID.test(caseId)) throw caseNotFound();
@@ -698,7 +720,7 @@ export class EvalSetsService {
       orgId,
       action: "trajectory.viewed",
       target: row.source_conversation_id,
-      detail: { agentId: snapshot.agentId, caseId, setId },
+      detail: { agentId: snapshot.agentId, caseId, setId, ...auditDetail },
     });
     return {
       case: toCaseView(row),

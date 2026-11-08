@@ -1,5 +1,6 @@
 import {
   type ContentBlock,
+  type EmbedRequest,
   ModelError,
   type ModelInfo,
   type ModelParameter,
@@ -35,8 +36,31 @@ function makeProvider(
 ): ModelProvider & ModelProviderV1 {
   const seen = new Set<string>();
   return {
+    async embed(req: EmbedRequest) {
+      return {
+        vectors: req.input.map(() => Array.from({ length: req.dimensions ?? 8 }, () => 0.25)),
+        usage: { inputTokens: req.input.length },
+      };
+    },
     async listModels() {
       return [
+        {
+          id: "e",
+          displayName: "e",
+          kind: "embedding" as const,
+          embedding: { dimensions: [8], defaultDimensions: 8, maxInputTokens: 512, maxBatch: 16 },
+          contextWindow: 0,
+          maxOutputTokens: 0,
+          capabilities: {
+            tools: false,
+            vision: false,
+            reasoning: false,
+            caching: false,
+            midConversationSystem: false,
+            effort: false,
+          },
+          parameters: [],
+        },
         {
           id: "m",
           displayName: "m",
@@ -93,7 +117,7 @@ function makeProvider(
 describeModelProviderConformance("in-memory", async () => ({
   provider: makeProvider(),
   model: "m",
-  expect: { thinking: true, caching: true },
+  expect: { thinking: true, caching: true, embedding: { model: "e", dimensions: 8 } },
   async teardown() {},
 }));
 

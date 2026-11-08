@@ -673,7 +673,8 @@ export class RunWorker {
     }
     if (run.status === "queued" || startedAt === null) {
       if (!existingStart) {
-        if (saved !== undefined) await this.fallBackIfUnavailable(conversationId, runId, saved);
+        if (saved !== undefined)
+          await this.fallBackIfUnavailable(conv.org_id, conversationId, runId, saved);
         const started = await this.appendRunStarted(conversationId, run, agent, saved);
         agent = started.agent;
         const toSeq = started.toSeq;
@@ -909,9 +910,10 @@ export class RunWorker {
    * model removed), writes `model_switched { model: null, effort: null, reason: "unavailable" }`
    * for this run (idempotent) and clears the cached selection: the run and the next ones use the
    * agent's model. A provider that only failed to list its models is not "gone" (the run's ladder
-   * handles it).
+   * handles it). Resolved for the conversation's org (its effective provider config).
    */
   private async fallBackIfUnavailable(
+    orgId: string,
     conversationId: string,
     runId: string,
     agent: AgentDefinition,
@@ -919,7 +921,7 @@ export class RunWorker {
     const sel = await readSelection(this.db, conversationId);
     if (sel.model === null || sameModel(sel.model, agent.model)) return;
     try {
-      await this.models.resolve(sel.model);
+      await this.models.resolve(orgId, sel.model);
       return;
     } catch (e) {
       if (e instanceof ProviderListError) return;

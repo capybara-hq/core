@@ -46,6 +46,16 @@
     },
     "insecureOrigin": "当前通过不安全的 http 地址访问，登录后可能无法保持登录状态。请使用 HTTPS 地址访问，或联系管理员。"
   },
+  "changePassword": {
+    "title": "设置新密码",
+    "subtitle": "你是用初始密码登录的。请先设置自己的密码再继续。",
+    "current": "初始密码",
+    "next": "新密码",
+    "confirm": "再次输入新密码",
+    "mismatch": "两次输入的新密码不一致。",
+    "tooShort": "至少 12 个字符。",
+    "submit": "保存并继续"
+  },
   "setup": {
     "title": "初始化",
     "intro": "新建首个超级管理员账号，完成后将自动登录。",
@@ -100,12 +110,15 @@
       "refresh_invalid": "登录已失效，请重新登录。",
       "refresh_race": "登录状态刚刚更新，请重试。",
       "csrf": "请求被拒绝，请刷新页面后重试。",
-      "session_required": "这个操作需要网页登录会话。"
+      "session_required": "这个操作需要网页登录会话。",
+      "password_change_required": "请先设置新密码：你是用初始密码登录的。"
     },
     "account": {
       "login_taken": "用户名已被占用。",
       "not_found": "账号不存在。",
-      "last_super_admin": "不能撤销或停用最后一个超级管理员。"
+      "last_super_admin": "不能撤销或停用最后一个超级管理员。",
+      "initial_password_unavailable": "没有可显示的初始密码：已经显示过、已过期，或这个账号不是由你批准的调用创建的。",
+      "create_needs_approval": "请在你自己批准调用的会话中创建账号，或在网页上创建。"
     },
     "org": {
       "not_found": "组织不存在或你已不是成员。",
@@ -296,6 +309,14 @@
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
     },
+    "environment": {
+      "not_found": "该环境不存在或已被删除。",
+      "name_taken": "你已有同名环境，请换一个名称。",
+      "limit_reached": "环境数量已达上限，请先删除一个再新建。",
+      "unavailable": "该环境的沙箱提供方当前不可用，请联系超级管理员。",
+      "files_lost": "该环境的文件已丢失。请在环境页面重建文件后再使用。",
+      "forbidden": "你已无法使用该环境。"
+    },
     "skill": {
       "not_found": "技能不存在或已删除。",
       "invalid_package": "技能包不合法：",
@@ -336,6 +357,8 @@
     "model": {
       "unconfigured": "这个用途还没有映射模型。",
       "purpose_unknown": "没有这个模型用途。",
+      "hook_denied": "组织策略拒绝了这次模型调用",
+      "provider_not_found": "没有这个模型供应商",
       "rate_limited": "模型供应商限流。",
       "overloaded": "模型供应商繁忙。",
       "server": "模型供应商出错。",
@@ -1302,6 +1325,10 @@
     "contextPct": "上下文 {n}%",
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
+    "pickEnvironment": "环境",
+    "environmentNote": "发出第一条消息后不能更换",
+    "environmentLocked": "对话开始后环境不再更换",
+    "environmentDeleted": "环境已删除",
     "pickEffort": "思考档位",
     "nextMessage": "从下一条消息起生效",
     "agentDefault": "智能体默认",
@@ -1401,17 +1428,78 @@
     "download": "下载",
     "previewTruncated": "只显示开头部分，完整内容请下载。",
     "previewFailed": "预览加载失败。",
-    "sandbox": "沙箱",
-    "sandboxNone": "未创建",
-    "sandboxRunning": "运行中",
-    "sandboxSuspended": "已休眠",
-    "sandboxLastUsed": "最近使用",
-    "sandboxFailed": "状态读取失败",
+    "environmentLine": "环境：{name} · {state}",
+    "environmentNone": "未绑定环境",
+    "environmentDeleted": "环境已删除",
+    "environmentFailed": "环境状态读取失败",
     "lastRun": "上次运行 · {parts}"
   },
   "pluginPage": {
     "pathLabel": "扩展页",
     "liveLost": "实时刷新已断开，刷新页面以获取最新内容。"
+  },
+  "environments": {
+    "title": "环境",
+    "listLabel": "我的环境",
+    "personal": "个人环境",
+    "new": "新建环境",
+    "none": "无",
+    "source": { "cloud": "云端沙箱" },
+    "state": {
+      "running": "运行中",
+      "suspended": "已暂停",
+      "notStarted": "未启动",
+      "filesLost": "文件已丢失",
+      "unavailable": "不可用"
+    },
+    "isolation": {
+      "isolated": "会话之间隔离进程",
+      "shared": "会话之间不隔离进程"
+    },
+    "egress": { "none": "无网络", "allowlist": "仅允许名单内的主机", "open": "开放网络" },
+    "empty": "你还没有环境。",
+    "noCloud": {
+      "text": "平台没有云端沙箱。",
+      "hint": "请联系超级管理员配置沙箱提供方。",
+      "notice": "平台没有云端沙箱，下列环境不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
+    },
+    "create": {
+      "title": "新建环境",
+      "name": "名称",
+      "nameHelp": "最多 64 个字符，你的环境名称不能重复。",
+      "cancel": "取消",
+      "submit": "创建",
+      "created": "已创建环境 {name}。"
+    },
+    "detail": {
+      "tabsLabel": "环境分区",
+      "tabs": { "summary": "概要" },
+      "source": "来源",
+      "provider": "提供方",
+      "state": "状态",
+      "isolation": "隔离",
+      "limits": "限制",
+      "limitsValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk} · {egress}",
+      "files": "文件",
+      "filesNote": "文件保留到环境被删除。",
+      "suspendNote": "暂停会结束正在运行的进程。",
+      "filesLostNote": "该环境的文件已在提供方丢失。重建文件后才能再次使用。",
+      "created": "创建时间",
+      "rename": "重命名",
+      "renameTitle": "重命名环境",
+      "renameSubmit": "保存",
+      "renamed": "环境已重命名为 {name}。",
+      "delete": "删除环境",
+      "deleteTitle": "删除环境",
+      "deleteHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。输入环境名称以确认。",
+      "deleteDefaultHint": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的{name}。输入环境名称以确认。",
+      "deleted": "已删除环境 {name}。",
+      "resetFiles": "重建文件",
+      "resetTitle": "重建 {name} 的文件？",
+      "resetHint": "工作区会被清空，下次使用时从空文件开始。",
+      "resetSubmit": "重建文件",
+      "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。"
+    }
   },
   "nav": {
     "agents": "智能体",
@@ -1419,6 +1507,7 @@
     "actions": "操作",
     "inbox": "收件箱",
     "connectors": "连接器",
+    "environments": "环境",
     "channels": "渠道",
     "skills": "技能",
     "evals": "评测与运行",
@@ -1449,6 +1538,11 @@
     }
   },
   "approval": {
+    "initialPassword": {
+      "show": "显示初始密码",
+      "label": "{login} 的初始密码",
+      "hint": "平台为新账号生成了这个密码。它只显示这一次；账号首次登录时必须修改。"
+    },
     "title": "需要审批",
     "waiting": "待处理",
     "tool": "工具",
@@ -2202,6 +2296,24 @@
     "disabled": "未启用",
     "unavailable": "不可用",
     "unavailableHint": "部署上当前不可用 · 组织的启用设置会保留",
+    "unavailableWith": "不可用 · {reason}",
+    "reasons": {
+      "not_deployed": "平台未安装",
+      "needs_deployment_config": "缺少部署配置",
+      "pending_approval": "权限待批准",
+      "pending_migration": "正在准备",
+      "loading": "正在加载",
+      "dependency": "缺少依赖的扩展",
+      "failed": "加载失败",
+      "deployment_disabled": "平台已停用"
+    },
+    "unavailableNext": {
+      "superAdmin": "在管理后台的扩展页处理后即可使用。",
+      "orgAdmin": "只有超级管理员能处理，请联系超级管理员。",
+      "member": "请联系组织管理员，由超级管理员在平台上处理。",
+      "wait": "平台正在加载，请稍后再看。"
+    },
+    "openAdmin": "去管理后台处理",
     "enabledToast": "已启用「{plugin}」。",
     "disabledToast": "已停用「{plugin}」。",
     "dependencyMissing": "请先启用提供以下扩展点的扩展：",
@@ -2948,6 +3060,35 @@
         "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
         "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。"
       }
+    },
+    "catalog": {
+      "title": "模型",
+      "orgDescription": "本组织可以使用的模型。关闭的模型不会出现在智能体和用途的选择里。",
+      "search": "搜索模型",
+      "publisher": "发布方",
+      "allPublishers": "全部发布方",
+      "turnAllOff": "全部关闭",
+      "turnAllOn": "全部开启",
+      "retiring": "即将下线",
+      "following": "跟随平台",
+      "orgConfigured": "本组织配置",
+      "orgsConfigure": "组织各自配置",
+      "configure": "配置",
+      "enabled": "启用",
+      "none": "这个供应商没有可用的模型。",
+      "noMatch": "没有符合的模型。",
+      "undo": "撤销",
+      "affected": "以下智能体或用途正在使用这些模型："
+    },
+    "kind": {
+      "chat": "对话模型",
+      "embedding": "向量模型",
+      "rerank": "重排模型",
+      "image_generation": "图像生成",
+      "video_generation": "视频生成",
+      "speech_to_text": "语音识别",
+      "text_to_speech": "语音合成",
+      "other": "其他"
     }
   },
   "admin": {

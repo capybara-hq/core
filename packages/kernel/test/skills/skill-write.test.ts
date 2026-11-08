@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +28,7 @@ import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
+import { fakeEnvFile } from "../helpers/fake-fs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -871,20 +873,16 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     const [d1] = await pending();
     const l1 = await call(member, convM, "Skill", { skill: "delta" }, 3);
     expect(l1.content, l1.content).toContain("version 2");
-    const box = await db
-      .selectFrom("sandboxes")
-      .select("handle")
-      .where("conversation_id", "=", convM)
-      .executeTakeFirstOrThrow();
-    const file = () =>
-      readFile(
-        join(root, "instances", (box.handle as { id: string }).id, "fs", "skills/delta/run.sh"),
-        "utf8",
-      );
-    expect(await file()).toBe("echo d1");
+    const file = async (loaded: string) => {
+      const dir = /\/skills\/delta@[0-9a-f]{12}/.exec(loaded)?.[0] as string;
+      expect(dir, loaded).toBeTruthy();
+      return fakeEnvFile(db, root, convM, `${dir.slice(1)}/run.sh`);
+    };
+    expect(await file(l1.content)).toBe("echo d1");
     expect((await decide(owner, d1?.id as string, "reject")).statusCode).toBe(200);
 
-    // 新草稿与被拒绝的草稿同为版本 2：标记按来源前缀判断，重新复制
+    // the new draft has the rejected draft's version number but other content: its own digest, so
+    // its own directory (the rejected draft's copy stays beside it)
     await sharedWrite(
       member,
       convM,
@@ -893,7 +891,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
     );
     const l2 = await call(member, convM, "Skill", { skill: "delta" }, 5);
     expect(l2.content).toContain("version 2");
-    expect(await file()).toBe("echo d2");
+    expect(await file(l2.content)).toBe("echo d2");
   });
 
   it("A's rejected draft vs B's approved same-numbered version: A reverts at once, then sees B's version as updated; a stale draft entry never resolves to B's content", async () => {
@@ -958,6 +956,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
           throw new Error("unused");
         },
       },
+      environments: { forTool: async () => randomUUID() },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,

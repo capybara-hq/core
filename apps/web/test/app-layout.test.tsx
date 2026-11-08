@@ -66,6 +66,8 @@ function shellRoutes(readiness: typeof READY) {
     [`GET ${O}/ui/contributions`]: () => json(200, { items: [] }),
     // what the setup step /agents/new prefetches (the agent form's reads)
     [`GET ${O}/models`]: () => json(200, { providers: [] }),
+    [`GET ${O}/models/catalog`]: () => json(200, { providers: [] }),
+    [`GET ${O}/extensions`]: () => json(200, { extensions: [] }),
     [`GET ${O}/connectors`]: () => json(200, { connectors: [] }),
     [`GET ${O}/skills`]: () => json(200, { skills: [] }),
     [`GET ${O}/agent-templates`]: () => json(200, { templates: [] }),
@@ -103,6 +105,17 @@ describe("the (app) layout's setup redirect", () => {
     }
     shellRoutes(READY);
     await expect(layoutAt("/connectors")).resolves.toBeTruthy();
+  });
+});
+
+describe("the (app) layout's initial password gate", () => {
+  it("an account that must change its generated password goes to /change-password, reading nothing else", async () => {
+    const calls = serverRoutes({
+      "GET /api/v1/me": () =>
+        json(200, { ...ME, account: { ...ME.account, mustChangePassword: true } }),
+    });
+    await expect(layoutAt("/agents")).rejects.toThrow("REDIRECT /change-password");
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
   });
 });
 

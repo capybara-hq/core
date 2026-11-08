@@ -1,12 +1,14 @@
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   defineExtension,
   type ExecResult,
+  FileSystemGoneError,
+  type FileSystemHandle,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
   SandboxGoneError,
@@ -18,22 +20,31 @@ import {
 import { z } from "zod";
 
 /**
- * 测试用 `sandbox@1`（只用于测试，绝不能用于生产）。
+ * Test `sandbox@2` (for tests only, never for production: it has **no isolation** and runs the
+ * commands tests write on the host).
  *
- * 「提供方那边」的状态全在部署配置 `root` 目录里（像 Docker 守护进程，多个内核副本共用一个 root 即共用同一批实例）：
- * - `root/instances/<id>/state`：`running` / `suspended`；`meta.json`：create 收到的 name、image、limits；
- * - `root/instances/<id>/fs/{workspace,skills,tmp}`：沙箱内 `/workspace`、`/skills`、`/tmp` 的内容（休眠后保留）；
- * - `root/ops.log`：每个操作一行 `<op> <id> [name]`（create / resume / resume-gone / suspend / destroy /
- *   destroy-by-name `<name>`），测试据此计数；
- * - 实例目录不在时 exec / readFile / writeFile / stat / killAll 抛 `SandboxGoneError`；实例在但 `suspended` 时
- *   它们先把它启动起来（契约的自动启动，ops.log 记 `autostart <id>`）；
+ * The "provider side" lives under the deployment config `root` (like a Docker daemon: kernel
+ * replicas sharing one root share the same file systems and instances):
+ * - `root/filesystems/<fsId>/{workspace,skills}` and `meta.json` (`{ name, limits }`): an
+ *   environment's files, kept until `destroyFileSystem`; `createFileSystem` on a name that exists
+ *   returns the existing one; `create` on a missing file system throws `FileSystemGoneError`
+ *   ({@link removeFakeFileSystem} simulates the loss);
+ * - `root/instances/<id>/{state,meta.json,tmp,procs,sessions,groups}`: an instance mounts its file
+ *   system's `workspace` / `skills` as `/workspace` / `/skills` and its own `tmp` as `/tmp`;
+ *   `state` is `running` / `suspended`; `meta.json` = `{ name, image | null, fileSystem, limits }`
+ *   as `create` got them; `destroy` drops the instance and keeps the file system;
+ * - `root/ops.log`: one line per operation, `<op> <id> [...]`: `create <id> <name>`, `resume`,
+ *   `resume-gone`, `suspend`, `destroy`, `destroy-by-name <name>`, `autostart`, `create-fs <fsId>
+ *   <name>`, `destroy-fs <fsId>`, `destroy-fs-by-name <name>`, `kill-all <id>`, `kill-tagged <id>
+ *   <tag,…>`, and for every finished exec `exec <id> <tag> <startMs> <endMs> <accountId>
+ *   <conversationId>` (tests count operations and check overlaps and actors);
+ * - a missing instance makes exec / readFile / writeFile / stat / killAll / killTagged throw
+ *   `SandboxGoneError` and `resume` return `gone` ({@link removeFakeSandbox}); a suspended one is
+ *   started first (the contract's auto-start, logged as `autostart`);
  * - `root/instances/<id>/procs/<pid>`: running exec commands (process group id), content = the
- *   holder tag (empty without one); `killAll` kills them all (ops.log `kill-all <id>`),
- *   `killTagged` only those with one of the tags (ops.log `kill-tagged <id> <tag,…>`);
- * - every finished exec logs `exec <id> <tag or -> <startMs> <endMs>` (tests check overlap);
- * - concurrent use is declared (`concurrentExec`, `killTagged`);
+ *   holder tag; `killAll` kills them all, `killTagged` only those with one of the tags;
  * - `root/delays.json` (optional): `{ create?, resume?, suspend?, destroy?, exec? }` in ms, slow
- *   operations (read at each operation); `exec` holds the command open before it starts.
+ *   operations (read at each operation, abortable); `exec` holds the command open before it starts;
  * - `root/bin`: node shims for `setsid`, `timeout`, `pgrep -s` and `pkill -s` (background tasks,
  *   spec 2026-11-05-background-bash-design §4.2), first on every exec's PATH, so the tests also run
  *   on macOS, which has no `setsid` or `timeout`. A shim session is a process group: `setsid` starts
@@ -46,11 +57,11 @@ import { z } from "zod";
  *   carries only the entry.
  * - `suspend` and `destroy` kill every process the instance started (exec commands and sessions),
  *   as stopping a container does.
- * 模拟 `gone`：测试删掉 `root/instances/<id>`（{@link removeFakeSandbox}），之后 resume 返回 `gone`。
  *
- * `exec` 用 `/bin/sh -c` 在实例目录里真的执行命令：命令里的 `/workspace`、`/skills`、`/tmp` 换成实例目录下的对应目录，
- * 输出里再换回来；超时或中止时杀掉整个进程组（SIGKILL）。每个操作开始前已中止的 signal 让它立即失败，慢操作的延迟也响应中止。
- * 只执行测试自己写的命令，**没有任何隔离**。
+ * `exec` runs the command with `/bin/sh -c` in the instance's directories: `/workspace`, `/skills`
+ * and `/tmp` in the command are replaced by their host directories and mapped back in the output;
+ * a timeout or an abort kills the whole process group (SIGKILL). An already aborted signal fails an
+ * operation at once.
  */
 
 const Deployment = z.object({ root: z.string().min(1) });
@@ -68,11 +79,36 @@ export interface FakeSandboxDelays {
 /** create 时记下的参数（`root/instances/<id>/meta.json`）。 */
 export interface FakeSandboxMeta {
   name: string;
-  image: string;
+  /** null when `create` got no image. */
+  image: string | null;
+  /** The id of the file system the instance mounts. */
+  fileSystem: string;
   limits: SandboxLimits;
 }
 
 const instanceDir = (root: string, id: string) => join(root, "instances", id);
+const fileSystemDir = (root: string, id: string) => join(root, "filesystems", id);
+
+/** Ids of the file systems that exist under `root`. */
+export async function fakeFileSystems(root: string): Promise<string[]> {
+  return (await readdir(join(root, "filesystems")).catch(() => [] as string[])).sort();
+}
+
+/**
+ * The host directory of `/workspace` of an instance (its file system's `workspace`), for tests
+ * that read files directly. Throws when the instance is missing.
+ */
+export function fakeWorkspaceDir(root: string, instanceId: string): string {
+  const meta = JSON.parse(
+    readFileSync(join(instanceDir(root, instanceId), "meta.json"), "utf8"),
+  ) as FakeSandboxMeta;
+  return join(fileSystemDir(root, meta.fileSystem), "workspace");
+}
+
+/** Simulates the provider losing a file system (a later `create` throws `FileSystemGoneError`). */
+export async function removeFakeFileSystem(root: string, fsId: string): Promise<void> {
+  await rm(fileSystemDir(root, fsId), { recursive: true, force: true });
+}
 
 /** The env var that tells the shims their instance directory (the session records). */
 const INSTANCE_ENV = "CAPYBARA_FAKE_SANDBOX_INSTANCE";
@@ -341,7 +377,26 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     const raw = await readFile(join(root, "delays.json"), "utf8").catch(() => "{}");
     await sleep((JSON.parse(raw) as FakeSandboxDelays)[op] ?? 0, signal);
   };
-  const fsRoot = (h: SandboxHandle) => join(instanceDir(root, h.id), "fs");
+  /** Where `/workspace`, `/skills` and `/tmp` of the instance live on the host. */
+  const mounts = async (h: SandboxHandle): Promise<Record<string, string>> => {
+    const meta = await fakeSandboxMeta(root, h.id);
+    if (meta === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
+    const fs = fileSystemDir(root, meta.fileSystem);
+    return {
+      "/workspace": join(fs, "workspace"),
+      "/skills": join(fs, "skills"),
+      "/tmp": join(instanceDir(root, h.id), "tmp"),
+    };
+  };
+  const fsIdByName = async (name: string): Promise<string | null> => {
+    for (const id of await fakeFileSystems(root)) {
+      const raw = await readFile(join(fileSystemDir(root, id), "meta.json"), "utf8").catch(
+        () => "",
+      );
+      if (raw !== "" && (JSON.parse(raw) as { name: string }).name === name) return id;
+    }
+    return null;
+  };
   const requireRunning = async (h: SandboxHandle) => {
     const s = await fakeSandboxState(root, h.id);
     if (s === null) throw new SandboxGoneError(`fake sandbox ${h.id} is gone`);
@@ -397,23 +452,57 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       }
     }
   };
-  const real = (h: SandboxHandle, p: string) => {
+  const real = async (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPath(p);
     if (errors.length > 0) throw new Error(errors.join("; "));
-    return join(fsRoot(h), p);
+    const m = await mounts(h);
+    const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`)) as string;
+    return join(m[r] as string, p.slice(r.length));
   };
 
   return {
-    concurrentExec: true,
+    concurrentExec: true as const,
 
-    async create({ name, image, limits, signal }) {
+    async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
       await delay("create", signal);
+      const existing = await fsIdByName(name);
+      if (existing !== null) return { id: existing };
+      const id = `fs-${randomUUID().slice(0, 8)}`;
+      const dir = fileSystemDir(root, id);
+      for (const r of ["workspace", "skills"]) await mkdir(join(dir, r), { recursive: true });
+      await writeFile(join(dir, "meta.json"), JSON.stringify({ name, limits }));
+      await log(`create-fs ${id} ${name}`);
+      return { id };
+    },
+
+    async destroyFileSystem(fs, signal) {
+      await delay("destroy", signal);
+      await rm(fileSystemDir(root, fs.id), { recursive: true, force: true });
+      await log(`destroy-fs ${fs.id}`);
+    },
+
+    async destroyFileSystemByName(name, signal) {
+      await delay("destroy", signal);
+      const id = await fsIdByName(name);
+      if (id !== null) await rm(fileSystemDir(root, id), { recursive: true, force: true });
+      await log(`destroy-fs-by-name ${name}`);
+    },
+
+    async create({ name, image, limits, fileSystem, signal }) {
+      await delay("create", signal);
+      if (!(await stat(fileSystemDir(root, fileSystem.id)).catch(() => null))) {
+        throw new FileSystemGoneError(`fake file system ${fileSystem.id} is gone`);
+      }
       const id = `fake-${randomUUID().slice(0, 8)}`;
       const dir = instanceDir(root, id);
-      for (const r of ["workspace", "skills", "tmp"]) {
-        await mkdir(join(dir, "fs", r), { recursive: true });
-      }
-      await writeFile(join(dir, "meta.json"), JSON.stringify({ name, image, limits }));
+      await mkdir(join(dir, "tmp"), { recursive: true });
+      const meta: FakeSandboxMeta = {
+        name,
+        image: image ?? null,
+        fileSystem: fileSystem.id,
+        limits,
+      };
+      await writeFile(join(dir, "meta.json"), JSON.stringify(meta));
       await writeFile(join(dir, "state"), "running");
       await log(`create ${id} ${name}`);
       return { id };
@@ -467,18 +556,22 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
       await requireRunning(h);
       const startedAt = Date.now();
       await delay("exec", args.signal);
-      const base = fsRoot(h);
+      const m = await mounts(h);
       const command = args.command.replace(
         ROOT_RE,
-        (_m, pre: string, r: string) => `${pre}${base}${r}`,
+        (_m, pre: string, r: string) => `${pre}${m[r] as string}`,
       );
-      const cwd = real(h, args.cwd ?? "/workspace");
-      const back = (s: string) => s.split(base).join("");
+      const cwd = await real(h, args.cwd ?? "/workspace");
+      const back = (s: string) => {
+        let out = s;
+        for (const [r, dir] of Object.entries(m)) out = out.split(dir).join(r);
+        return out;
+      };
       return new Promise<ExecResult>((resolve) => {
         const child = spawn("/bin/sh", ["-c", command], {
           cwd,
           env: {
-            HOME: join(base, "workspace"),
+            HOME: m["/workspace"],
             ...args.env,
             PATH: `${binDir}:${args.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin"}`,
             [INSTANCE_ENV]: instanceDir(root, h.id),
@@ -539,7 +632,8 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
             truncated,
             timedOut,
           };
-          void log(`exec ${h.id} ${args.tag ?? "-"} ${startedAt} ${Date.now()}`)
+          const who = `${args.actor?.accountId ?? "-"} ${args.actor?.conversationId ?? "-"}`;
+          void log(`exec ${h.id} ${args.tag ?? "-"} ${startedAt} ${Date.now()} ${who}`)
             .catch(() => {})
             .finally(() => resolve(result));
         });
@@ -581,7 +675,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async readFile(h, path, opts) {
       opts.signal.throwIfAborted();
       await requireRunning(h);
-      const p = real(h, path);
+      const p = await real(h, path);
       const data = await readFile(p).catch(() => null);
       if (data === null) return null;
       const truncated = data.byteLength > opts.maxBytes;
@@ -594,7 +688,7 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async writeFile(h, path, data, signal) {
       signal.throwIfAborted();
       await requireRunning(h);
-      const p = real(h, path);
+      const p = await real(h, path);
       await mkdir(dirname(p), { recursive: true });
       await writeFile(p, data);
     },
@@ -602,13 +696,13 @@ export function createFakeSandbox(rootDir: string): SandboxProvider {
     async stat(h, path, signal) {
       signal.throwIfAborted();
       await requireRunning(h);
-      const s = await stat(real(h, path)).catch(() => null);
+      const s = await stat(await real(h, path)).catch(() => null);
       return s === null ? null : { size: s.size, isDir: s.isDirectory() };
     },
   };
 }
 
-/** 测试用 `sandbox@1`：部署配置 `{ root }`，见文件头注释。 */
+/** 测试用 `sandbox@2`：部署配置 `{ root }`，见文件头注释。 */
 export default defineExtension({
   name: "sandbox-fake",
   version: "0.1.0",

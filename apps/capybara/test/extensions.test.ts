@@ -201,12 +201,12 @@ describe("capybara extensions review / approve", () => {
     expect(approveView.stdout).toMatch(/no new permissions/i);
   }, 120_000);
 
-  it("provides sandbox@1 / object-store@1 are marked (sensitive); a config-declared object store awaits approval like any other", async () => {
+  it("provides sandbox@2 / object-store@1 are marked (sensitive); a config-declared object store awaits approval like any other", async () => {
     const plugins = [SANDBOX_FAKE, OBJECT_STORE];
     const review = await run(["extensions", "review"], "", plugins);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
-    expect(lines).toContain("  + provides:sandbox@1  (sensitive)");
+    expect(lines).toContain("  + provides:sandbox@2  (sensitive)");
     expect(lines).toContain("  + provides:object-store@1  (sensitive)");
     expect(review.stdout).toContain("sandbox-fake 0.1.0");
     expect(review.stdout).toContain("fake-object-store 0.1.0");

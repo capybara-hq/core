@@ -1,0 +1,15 @@
+# Authoring: agent-templates
+
+<!-- generated:agent-template -->
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | The name. |
+| `retired` | string | no | Gone from the code. |
+<!-- /generated -->
+
+Hand-written notes.
+
+| Field | Meaning |
+|---|---|
+| `name` | Real, kept. |
+| `bygone` | Gone from the code. |

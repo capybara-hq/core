@@ -793,7 +793,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       await invoke(conv, "review", "src");
       const r = await childLoad(conv);
       expect(r.isError, r.content).toBe(false);
-      expect(r.content).toContain("/skills/review/");
+      expect(r.content).toMatch(/\/skills\/review@[0-9a-f]{12}\//);
     });
 
     it("an org-agent child loads the invoked skill (checked against the parent's agent)", async () => {
@@ -827,7 +827,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       expect(msg?.payload.skill).toMatchObject({ mode: "fork", agentType: "analyst" });
       const r = await childLoad(conv);
       expect(r.isError, r.content).toBe(false);
-      expect(r.content).toContain("/skills/review/");
+      expect(r.content).toMatch(/\/skills\/review@[0-9a-f]{12}\//);
     });
 
     it("a trial draft of the parent conversation loads in the child", async () => {
@@ -857,7 +857,7 @@ describe("forked skills (phase D Task 6)", { timeout: 90_000 }, () => {
       await invoke(conv, "review", "src");
       const r = await childLoad(conv);
       expect(r.isError, r.content).toBe(false);
-      expect(r.content).toContain("/skills/review/");
+      expect(r.content).toMatch(/\/skills\/review@[0-9a-f]{12}\//);
     });
 
     it("Review Focus 5 in the child: deleted after the dispatch -> removed", async () => {

@@ -191,6 +191,8 @@ export class OrgsService {
     patch: { name?: string | undefined; slug?: string | undefined },
     actor: Account,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<Org> {
     const values: { name?: string; slug?: string } = {};
     if (patch.name !== undefined) values.name = checkName(patch.name);
@@ -198,7 +200,7 @@ export class OrgsService {
       checkSlug(patch.slug);
       values.slug = patch.slug;
     }
-    return slugGuard(this.updateIn(orgId, values, actor, actorTokenId));
+    return slugGuard(this.updateIn(orgId, values, actor, actorTokenId, auditDetail));
   }
 
   @Transactional()
@@ -207,6 +209,7 @@ export class OrgsService {
     values: { name?: string; slug?: string },
     actor: Account,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<Org> {
     const { org: before } = await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.update");
     if (Object.keys(values).length === 0) {
@@ -229,7 +232,7 @@ export class OrgsService {
       orgId,
       action: "org.updated",
       target: orgId,
-      detail: { before, after: values },
+      detail: { before, after: values, ...auditDetail },
     });
     return toOrg(row);
   }

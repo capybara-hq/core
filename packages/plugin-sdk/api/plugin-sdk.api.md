@@ -730,6 +730,25 @@ export interface EmbedClaims {
 }
 
 // @public
+export interface EmbeddingRequestHookPayload {
+    accountId?: undefined;
+    agentId?: undefined;
+    agentVersion?: undefined;
+    conversationId?: undefined;
+    dimensions?: number;
+    embeddingPurpose: string;
+    extension: string;
+    input: readonly string[];
+    inputType?: "query" | "document";
+    model: string;
+    orgId: string;
+    parent?: undefined;
+    provider: string;
+    purpose: "embedding";
+    runId?: undefined;
+}
+
+// @public
 export type EmbedParentMessage = {
     protocol: typeof EMBED_PROTOCOL;
     type: "init";
@@ -763,6 +782,22 @@ export type EmbedParentMessage = {
     size: number;
     data: ArrayBuffer;
 };
+
+// @public
+export interface EmbedRequest {
+    dimensions?: number;
+    input: string[];
+    inputType?: "query" | "document";
+    model: string;
+}
+
+// @public
+export interface EmbedResult {
+    usage: {
+        inputTokens: number;
+    };
+    vectors: number[][];
+}
 
 // @public
 export interface EntryImport {
@@ -841,6 +876,7 @@ export interface ExtensionContext {
         }): Promise<Lease | null>;
     };
     log: Logger;
+    models: ExtensionModels;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -873,6 +909,26 @@ export interface ExtensionContext {
 }
 
 // @public
+export interface ExtensionEmbedRequest {
+    dimensions?: number;
+    input: string[];
+    inputType?: "query" | "document";
+    orgId: string;
+    purpose: string;
+    signal?: AbortSignal;
+}
+
+// @public
+export interface ExtensionEmbedResult {
+    dimensions: number;
+    model: {
+        provider: string;
+        id: string;
+    };
+    vectors: number[][];
+}
+
+// @public
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
@@ -894,6 +950,23 @@ export interface ExtensionManifest {
 // @public
 export class ExtensionManifestError extends Error {
     constructor(plugin: string, message: string);
+}
+
+// @public
+export interface ExtensionModels {
+    describe(req: {
+        orgId: string;
+        purpose: string;
+    }): Promise<ExtensionModelTarget | null>;
+    embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+}
+
+// @public
+export interface ExtensionModelTarget {
+    embedding?: ModelEmbeddingInfo;
+    id: string;
+    kind: ModelKind;
+    provider: string;
 }
 
 // @public
@@ -933,6 +1006,7 @@ export interface ExtensionPointInfo {
     brokered: boolean;
     cardinality: Cardinality;
     description: string;
+    majors: readonly number[];
     orgScoped: boolean;
     selection?: "org-default";
 }
@@ -1037,6 +1111,20 @@ export interface FilePreviewer {
 export interface FilePreviewProvider {
     previewers: FilePreviewer[];
 }
+
+// @public
+export class FileSystemGoneError extends Error {
+    constructor(message: string, opts?: {
+        cause?: unknown;
+    });
+    readonly fileSystemGone: true;
+}
+
+// @public
+interface FileSystemHandle_2 {
+    id: string;
+}
+export { FileSystemHandle_2 as FileSystemHandle }
 
 // @public
 export const FORBIDDEN_INSTALL_SCRIPTS: readonly ["preinstall", "install", "postinstall", "prepare"];
@@ -1234,6 +1322,9 @@ export function isAttachmentId(s: unknown): s is string;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
+
+// @public
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
@@ -1401,7 +1492,31 @@ export const MODEL_PROVIDER_EXTENSION_POINT = "model-provider@1";
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
 
 // @public
+export interface ModelCallOptions {
+    config?: unknown;
+    orgId?: string;
+}
+
+// @public
 export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch";
+
+// @public
+export interface ModelCallRequestHookPayload extends HookScope {
+    attempt: number;
+    model: string;
+    provider: string;
+    purpose: ModelCallPurpose;
+    request: Readonly<HookModelRequest>;
+    step: number;
+}
+
+// @public
+export interface ModelEmbeddingInfo {
+    defaultDimensions: number;
+    dimensions: number[];
+    maxBatch: number;
+    maxInputTokens: number;
+}
 
 // @public
 export class ModelError extends Error {
@@ -1429,10 +1544,15 @@ export interface ModelInfo {
         effort?: boolean;
     };
     contextWindow: number;
+    description?: LocalizedName | string;
     displayName: string;
+    embedding?: ModelEmbeddingInfo;
     id: string;
+    kind?: ModelKind;
     maxOutputTokens: number;
     parameters: ModelParameter[];
+    publisher?: string;
+    retiresAt?: string;
     streamIdleTimeoutMs?: number;
 }
 
@@ -1442,6 +1562,9 @@ export type ModelInfoV1 = Omit<ModelInfo, "parameters" | "capabilities"> & {
         effort: boolean;
     };
 };
+
+// @public
+export type ModelKind = "chat" | "embedding" | "rerank" | "image_generation" | "video_generation" | "speech_to_text" | "text_to_speech";
 
 // @public
 export type ModelMessage = {
@@ -1475,10 +1598,13 @@ export interface ModelParameter {
 
 // @public
 export interface ModelProvider {
-    listModels(): Promise<ModelInfo[]>;
+    embed?(req: EmbedRequest, opts: {
+        signal: AbortSignal;
+    } & ModelCallOptions): Promise<EmbedResult>;
+    listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
     stream(req: ModelRequest, opts: {
         signal: AbortSignal;
-    }): AsyncIterable<ModelStreamEvent>;
+    } & ModelCallOptions): AsyncIterable<ModelStreamEvent>;
 }
 
 // @public
@@ -1506,14 +1632,7 @@ export interface ModelRequest {
 }
 
 // @public
-export interface ModelRequestHookPayload extends HookScope {
-    attempt: number;
-    model: string;
-    provider: string;
-    purpose: ModelCallPurpose;
-    request: Readonly<HookModelRequest>;
-    step: number;
-}
+export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
 
 // @public
 export type ModelRequestV1 = Omit<ModelRequest, "params" | "toolChoice">;
@@ -1875,7 +1994,7 @@ export interface RenderedPrompt {
 }
 
 // @public
-export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string): string;
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string): string;
 
 // @public
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
@@ -1884,6 +2003,7 @@ export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
 export interface RenderSkillInvocationInput {
     args: string;
     body: string;
+    digest: string;
     invocation: SkillInvocation;
     lead?: boolean;
     lines: {
@@ -1896,13 +2016,19 @@ export interface RenderSkillInvocationInput {
 }
 
 // @public
-export const SANDBOX_EXTENSION_POINT = "sandbox@1";
+export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public
 export const SANDBOX_TAG_RE: RegExp;
+
+// @public
+export interface SandboxActor {
+    accountId: string;
+    conversationId: string;
+}
 
 // @public
 export class SandboxGoneError extends Error {
@@ -1928,15 +2054,23 @@ export interface SandboxLimits {
 
 // @public
 export interface SandboxProvider {
-    readonly concurrentExec?: boolean;
+    readonly concurrentExec: true;
     create(args: {
         name: string;
-        image: string;
+        image?: string;
         limits: SandboxLimits;
+        fileSystem: FileSystemHandle_2;
         signal: AbortSignal;
     }): Promise<SandboxHandle>;
+    createFileSystem(args: {
+        name: string;
+        limits: SandboxLimits;
+        signal: AbortSignal;
+    }): Promise<FileSystemHandle_2>;
     destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName?(name: string, signal: AbortSignal): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
+    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
     exec(h: SandboxHandle, args: {
         command: string;
         cwd?: string;
@@ -1944,10 +2078,11 @@ export interface SandboxProvider {
         timeoutMs: number;
         maxOutputBytes: number;
         signal: AbortSignal;
-        tag?: string;
+        tag: string;
+        actor: SandboxActor;
     }): Promise<ExecResult>;
-    killAll?(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    killTagged?(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
     readFile(h: SandboxHandle, path: string, opts: {
         maxBytes: number;
         signal: AbortSignal;
@@ -1956,6 +2091,7 @@ export interface SandboxProvider {
         truncated: boolean;
     } | null>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    readonly sessionIsolation?: boolean;
     stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
         size: number;
         isDir: boolean;
@@ -1971,7 +2107,7 @@ export function sanitizeParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.2";
+export const SDK_VERSION = "0.1.0-rc.4";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -2006,6 +2142,13 @@ export const SKILL_LIMITS: {
 };
 
 // @public
+export function skillDigest(files: {
+    path: string;
+    size: number;
+    sha256: string;
+}[]): string;
+
+// @public
 export interface SkillInvocation {
     argumentHint?: string;
     arguments?: string[];
@@ -2023,7 +2166,10 @@ export function skillInvocation(frontmatter: Readonly<Record<string, unknown>>):
 export const SKILLS_SANDBOX_ROOT = "/skills";
 
 // @public
-export function skillSandboxPath(name: string, path: string): string;
+export function skillSandboxDir(name: string, digest: string): string;
+
+// @public
+export function skillSandboxPath(name: string, digest: string, path: string): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
@@ -2325,22 +2471,23 @@ export interface UiView {
 }
 
 // @public
-export type UsagePurpose = ModelCallPurpose;
+export type UsagePurpose = ModelCallPurpose | "embedding";
 
 // @public
 export interface UsageReportPayload {
-    accountId: string;
-    agentId: string;
-    conversationId: string;
-    conversationKind: "chat" | "eval";
+    accountId?: string;
+    agentId?: string;
+    conversationId?: string;
+    conversationKind?: "chat" | "eval";
     eventId: string;
+    extension?: string;
     model: string;
     occurredAt: string;
     orgId: string;
     parent?: HookParentScope;
     provider: string;
     purpose: UsagePurpose;
-    runId: string;
+    runId?: string;
     usage: ModelUsage;
 }
 
@@ -2358,6 +2505,9 @@ export function validateConfigUi(schema: JsonSchema, level: "deployment" | "org"
 
 // @public
 export function validateConnectorTemplate(t: unknown): string[];
+
+// @public
+export function validateEmbedResult(req: EmbedRequest, info: ModelEmbeddingInfo, res: EmbedResult): string | null;
 
 // @public
 export function validateFilePreviewProvider(p: unknown): string[];

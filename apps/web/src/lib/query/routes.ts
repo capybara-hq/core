@@ -46,11 +46,13 @@ import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
 import { adminComponentsQuery, componentVersionsQuery, orgComponentsQuery } from "./components";
 import {
+  allModelsQuery,
   attachmentLimitsQuery,
   connectorKindsQuery,
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
+  conversationEnvironmentQuery,
   conversationFollowUps,
   conversationQuery,
   type EventWindow,
@@ -58,8 +60,8 @@ import {
   filesQuery,
   modelsQuery,
   queueQuery,
-  sandboxQuery,
 } from "./conversation";
+import { environmentQuery, environmentsQuery } from "./environments";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -74,6 +76,7 @@ import { membersQuery } from "./members";
 import {
   extensionPointDefaultsQuery,
   invitationsQuery,
+  modelsCatalogQuery,
   orgFilePreviewersQuery,
   orgPurposesQuery,
   orgSettingsQuery,
@@ -433,6 +436,11 @@ export const ROUTES: readonly RouteEntry[] = [
       params.token === undefined ? [] : [q(pendingBindingQuery(params.token))],
   },
   {
+    pattern: "/change-password",
+    // The session: signed out goes to sign-in, an account with nothing to change goes home.
+    queries: () => [q(maybeMeQuery())],
+  },
+  {
     pattern: "/channels",
     // Org admins; the agents name the connections' agents (a section).
     queries: ({ orgId, me }) =>
@@ -477,9 +485,12 @@ export const ROUTES: readonly RouteEntry[] = [
       const readiness = await qc.fetchQuery({ ...readinessQuery(orgId), retry: false });
       if (!setupReady(readiness)) return;
       await Promise.all(
-        [q(agentsQuery(orgId)), q(modelsQuery(orgId)), q(attachmentLimitsQuery(orgId))].map((o) =>
-          qc.prefetchQuery({ ...o, retry: false }),
-        ),
+        [
+          q(agentsQuery(orgId)),
+          q(modelsQuery(orgId)),
+          q(attachmentLimitsQuery(orgId)),
+          q(environmentsQuery(orgId)),
+        ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
   },
@@ -496,7 +507,7 @@ export const ROUTES: readonly RouteEntry[] = [
         q(queueQuery(orgId, id)),
         q(contributionsQuery(orgId)),
         q(filesQuery(orgId, id)),
-        q(sandboxQuery(orgId, id)),
+        q(conversationEnvironmentQuery(orgId, id)),
         q(connectorsQuery(orgId)),
         q(attachmentLimitsQuery(orgId)),
       ];
@@ -526,6 +537,15 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || params.connectorId === undefined
         ? []
         : [q(connectorQuery(orgId, params.connectorId))],
+  },
+  {
+    pattern: "/environments",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(environmentsQuery(orgId))]),
+  },
+  {
+    pattern: "/environments/[id]",
+    queries: ({ orgId, params }) =>
+      orgId === null || params.id === undefined ? [] : [q(environmentQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",
@@ -731,7 +751,12 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin")
         ? []
-        : [q(orgPurposesQuery(orgId)), q(modelsQuery(orgId))],
+        : [
+            q(orgPurposesQuery(orgId)),
+            q(allModelsQuery(orgId)),
+            q(modelsCatalogQuery(orgId)),
+            q(orgExtensionsQuery(orgId)),
+          ],
   },
   {
     pattern: "/settings/organization",

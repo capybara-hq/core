@@ -21,5 +21,5 @@ export const CLAUDE_CODE_TOOL_MAP = [
   "- TaskOutput -> TaskOutput, TaskStop -> TaskStop",
   "- Any other tool a skill names (for example NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
-  "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
+  "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>@<version-id>/... after Skill has copied that skill into the sandbox.",
 ].join("\n");

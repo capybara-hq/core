@@ -1,4 +1,4 @@
-import type { SkillInvocation } from "@capybara-hq/plugin-sdk";
+import type { FileSystemHandle, SkillInvocation } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 
 /** 带默认值的时间戳列：插入可省略，读出为 Date。 */
@@ -18,8 +18,26 @@ export interface AccountsTable {
   updated_at: Ts;
   /** 0064: the org the account last chose as current; a new session starts in it. */
   last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0088: the person's time zone (IANA); null follows the browser (run context spec §3.4). */
+  /** 0091: the person's time zone (IANA); null follows the browser (run context spec §3.4). */
   time_zone: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0090: the account must set its own password first (a generated initial password). */
+  must_change_password: Generated<boolean>;
+}
+
+/**
+ * 0090: a generated initial password sealed for the person who approved the account's creation,
+ * read once on the web (Platform tool spec §14.5 item 2).
+ */
+export interface AccountInitialPasswordsTable {
+  account_id: string;
+  recipient_account_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  master_key_id: string;
+  ciphertext: Buffer;
+  expires_at: Date | string;
+  created_at: Ts;
 }
 
 export interface IdentitiesTable {
@@ -264,6 +282,8 @@ export interface ConversationsTable {
   deleted_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
   /** 0074: levels below the root conversation (0 = a root; a sub-agent's is its parent's + 1). */
   subagent_depth: ColumnType<number, number | undefined, number>;
+  /** 0088: the environment the conversation runs in; null = not chosen yet. */
+  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /** 0060: an org's order of file-preview@1 previewers (UI refresh B Task 11). */
@@ -805,10 +825,12 @@ export interface BackgroundTasksTable {
   read_offset: ColumnType<string, number | string | undefined, number | string>;
   /** Set while a stop is under way (0072); the poller skips such a task. */
   stopping_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null>;
+  /** 0088: the environment the task runs in. */
+  environment_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 0023_sandboxes.sql：按对话的沙箱（见 sandbox/sandbox.service.ts）。 */
-export interface SandboxesTable {
+/** 0023_sandboxes.sql: the legacy per-conversation sandbox; kept only for the cleanup job (0088). */
+export interface LegacySandboxesTable {
   conversation_id: string;
   org_id: string;
   provider: string;
@@ -836,6 +858,68 @@ export interface SandboxesTable {
     string | null
   >;
   sweep_failed_at: TsNullable;
+}
+
+type InstanceHandle = ColumnType<
+  { id: string; [k: string]: unknown } | null,
+  string | null | undefined,
+  string | null
+>;
+
+/** 0088_environments.sql: a long-lived environment (one instance plus a kept file system). */
+export interface EnvironmentsTable {
+  id: string;
+  org_id: string;
+  owner_kind: "personal";
+  owner_account_id: string;
+  name: ColumnType<string | null, string | null | undefined, string | null>;
+  is_default: ColumnType<boolean, boolean | undefined, boolean>;
+  source: "cloud";
+  provider: ColumnType<string | null, string | null | undefined, string | null>;
+  created_at: Ts;
+  updated_at: Ts;
+  deleted_at: TsNullable;
+}
+
+/** 0088_environments.sql: the instance and file system of an environment (replaces sandboxes). */
+export interface EnvironmentInstancesTable {
+  environment_id: string;
+  org_id: string;
+  provider: ColumnType<string | null, string | null | undefined, string | null>;
+  /** The provider's `FileSystemHandle`; null before the file system exists or after a reset. */
+  fs_handle: ColumnType<FileSystemHandle | null, string | null | undefined, string | null>;
+  fs_status: ColumnType<
+    "none" | "ready" | "lost",
+    "none" | "ready" | "lost" | undefined,
+    "none" | "ready" | "lost"
+  >;
+  handle: InstanceHandle;
+  status: ColumnType<
+    "none" | "creating" | "running" | "suspended" | "destroyed",
+    "none" | "creating" | "running" | "suspended" | "destroyed" | undefined,
+    "none" | "creating" | "running" | "suspended" | "destroyed"
+  >;
+  last_used_at: Ts;
+  running_since: TsNullable;
+  created_at: Ts;
+  suspended_at: TsNullable;
+  destroyed_at: TsNullable;
+  /** Fencing number: every status / handle write under the lock compares and increments it. */
+  generation: ColumnType<number, number | undefined, number>;
+  /** An instance was created at least once (only ever set to true). */
+  had_instance: ColumnType<boolean, boolean | undefined, boolean>;
+  /** The old provider's instance left behind by a provider change. */
+  prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
+  prev_handle: InstanceHandle;
+  sweep_failed_at: TsNullable;
+}
+
+/** 0088_environments.sql: the environment a member's new conversations use by default. */
+export interface EnvironmentDefaultsTable {
+  org_id: string;
+  account_id: string;
+  environment_id: string;
+  updated_at: Ts;
 }
 
 /** pg numeric：驱动读出为字符串（精确小数），读取方自行 `Number()`。 */
@@ -1053,8 +1137,33 @@ export interface UsageReportSweepTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** A model disabled on the platform (`org_id` null) or in one org (0089, spec B §5.3). */
+export interface ModelDisabledTable {
+  org_id: string | null;
+  provider: string;
+  model: string;
+  disabled_by: string | null;
+  disabled_at: Ts;
+}
+
+/** One model call outside a conversation, e.g. an extension's embed call (0089, spec B §5.4). */
+export interface ModelUsageTable {
+  id: Generated<string>;
+  org_id: string;
+  extension: string;
+  purpose: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  occurred_at: Ts;
+  reported_at: TsNullable;
+  /** Set when the row's `usage.report` job gave up after its last attempt (the sweep skips it). */
+  report_failed_at: TsNullable;
+}
+
 export interface KernelDatabase {
   accounts: AccountsTable;
+  account_initial_passwords: AccountInitialPasswordsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
   orgs: OrgsTable;
@@ -1098,7 +1207,10 @@ export interface KernelDatabase {
   org_anonymous_accounts: OrgAnonymousAccountsTable;
   directory_exclusions: DirectoryExclusionsTable;
   attachments: AttachmentsTable;
-  sandboxes: SandboxesTable;
+  sandboxes: LegacySandboxesTable;
+  environments: EnvironmentsTable;
+  environment_instances: EnvironmentInstancesTable;
+  environment_defaults: EnvironmentDefaultsTable;
   background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
@@ -1109,6 +1221,8 @@ export interface KernelDatabase {
   eval_runs: EvalRunsTable;
   eval_results: EvalResultsTable;
   model_purpose_mappings: ModelPurposeMappingsTable;
+  model_disabled: ModelDisabledTable;
+  model_usage: ModelUsageTable;
   extension_packages: ExtensionPackagesTable;
   extension_blobs: ExtensionBlobsTable;
   extension_installs: ExtensionInstallsTable;

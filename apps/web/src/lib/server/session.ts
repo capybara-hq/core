@@ -16,7 +16,7 @@ import {
   meQuery,
   readinessQuery,
 } from "../query/shell";
-import type { Me, Membership } from "../session";
+import { CHANGE_PASSWORD_PATH, type Me, type Membership } from "../session";
 import type { UiContributionItem } from "../ui";
 import { SESSION_STATE_HEADER } from "./kernel";
 import { currentPath, isKernelUnavailable, isSignedOut } from "./page";
@@ -89,6 +89,8 @@ export async function getShell(
     if (isKernelUnavailable(e)) return { kind: "unavailable" };
     throw e;
   }
+  // signed in with a generated initial password: the kernel answers nothing else until it changes
+  if (me.account.mustChangePassword === true) redirect(CHANGE_PASSWORD_PATH);
   const org = me.memberships.find((m) => m.orgId === me.currentOrgId) ?? null;
   const orgId = org?.orgId ?? null;
   const route = alongside?.({ me, orgId });

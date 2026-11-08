@@ -402,11 +402,12 @@ export class EvalRunsService {
 
   /**
    * 解析模型；不存在 / 不可用 → `eval.candidate_invalid`（供应商列表暂时失败照常抛出）。
-   * 按部署范围解析，与运行时一致；组织级模型准入若在第二段落地，须同样覆盖评测候选。
+   * Resolved for the org (its effective provider config), as the runtime does; per-org model
+   * admission must cover eval candidates the same way.
    */
-  private async resolveModel(ref: ModelRef) {
+  private async resolveModel(orgId: string, ref: ModelRef) {
     try {
-      return await this.d.registry.resolve(ref);
+      return await this.d.registry.resolve(orgId, ref);
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {
@@ -423,6 +424,7 @@ export class EvalRunsService {
    * 所用模型 = 候选模型，否则候选版本的模型，否则 agent 当前版本的模型。返回候选版本的定义。
    */
   private async checkCandidate(
+    orgId: string,
     agentId: string,
     c: EvalCandidate,
   ): Promise<AgentDefinition | undefined> {
@@ -445,7 +447,7 @@ export class EvalRunsService {
       model = (current?.definition as unknown as AgentDefinition | undefined)?.model;
     }
     if (model === undefined) return versionDef;
-    const { info } = await this.resolveModel(model);
+    const { info } = await this.resolveModel(orgId, model);
     if (c.modelParams !== undefined) {
       const issues = paramIssues("candidate.modelParams", info.parameters, c.modelParams);
       if (issues.length > 0) throw candidateInvalid("Invalid candidate model parameters", issues);
@@ -458,6 +460,7 @@ export class EvalRunsService {
    * 给了候选参数时按每个用例实际所用的模型严格校验（同一模型在一次调用里只解析一次）。
    */
   private async plan(
+    orgId: string,
     setId: string,
     mode: "step" | "run",
     c: EvalCandidate,
@@ -505,7 +508,7 @@ export class EvalRunsService {
         const key = priceKey(model.provider, model.model);
         if (!infos.has(key)) {
           try {
-            infos.set(key, (await this.d.registry.resolve(model)).info);
+            infos.set(key, (await this.d.registry.resolve(orgId, model)).info);
           } catch (e) {
             if (e instanceof ProviderListError) throw e;
             if (!(e instanceof ApiError && e.code === "agent.model_unavailable")) throw e;
@@ -556,7 +559,7 @@ export class EvalRunsService {
     }
     let maxOutputTokens = configured;
     try {
-      const { info } = await this.d.registry.resolve(target.model);
+      const { info } = await this.d.registry.resolve(orgId, target.model);
       maxOutputTokens = Math.min(configured, info.maxOutputTokens);
     } catch (e) {
       if (e instanceof ProviderListError) throw e;
@@ -630,8 +633,8 @@ export class EvalRunsService {
     const set = await this.liveSet(orgId, setId);
     await this.assertAgentLive(set.agent_id);
     const caps = this.tokenCaps(input.tokenCap);
-    const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
-    const plans = await this.plan(setId, input.mode, input.candidate, versionDef);
+    const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
+    const plans = await this.plan(orgId, setId, input.mode, input.candidate, versionDef);
     const judge = await this.judgePricing(orgId, set.rubric, input.judge);
     return { estimate: await this.summarize(plans, judge), ...caps };
   }
@@ -661,14 +664,15 @@ export class EvalRunsService {
     setId: string,
     input: { mode: "step" | "run"; candidate: EvalCandidate; judge: boolean; tokenCap?: number },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalRunView> {
     const set = await this.liveSet(orgId, setId);
     await this.assertAgentLive(set.agent_id);
     const tokenCap = this.tokenCaps(input.tokenCap).effectiveTokenCap;
-    const versionDef = await this.checkCandidate(set.agent_id, input.candidate);
+    const versionDef = await this.checkCandidate(orgId, set.agent_id, input.candidate);
     if (input.judge) await this.d.purposes.resolve(orgId, "eval");
     const judge = await this.judgePricing(orgId, set.rubric, input.judge);
-    const planned = await this.plan(setId, input.mode, input.candidate, versionDef);
+    const planned = await this.plan(orgId, setId, input.mode, input.candidate, versionDef);
     if (planned.length === 0) {
       throw new ApiError("eval.nothing_to_replay", "The eval set has nothing to replay");
     }
@@ -688,6 +692,7 @@ export class EvalRunsService {
       planned,
       judge,
       actorTokenId,
+      auditDetail,
     );
 
     try {
@@ -711,6 +716,7 @@ export class EvalRunsService {
     planned: PlannedCase[],
     judge: JudgePricing | null,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ runId: string; plans: PlannedCase[] }> {
     const db = this.d.db;
     await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
@@ -785,7 +791,14 @@ export class EvalRunsService {
       orgId,
       action: "eval.run_started",
       target: run.id,
-      detail: { setId, mode: input.mode, judge: input.judge, tokenCap, cases: plans.length },
+      detail: {
+        setId,
+        mode: input.mode,
+        judge: input.judge,
+        tokenCap,
+        cases: plans.length,
+        ...auditDetail,
+      },
     });
     await this.d.budget.recountCases(run.id);
     return { runId: run.id, plans: plans.filter((p) => p.problem === null) };
@@ -915,6 +928,7 @@ export class EvalRunsService {
     runId: string,
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     let first = true;
     try {
@@ -933,6 +947,7 @@ export class EvalRunsService {
       orgId,
       action: "eval.results_viewed",
       target: runId,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 
@@ -969,11 +984,12 @@ export class EvalRunsService {
     runId: string,
     q: { after?: string; limit: number; updatedSince?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ results: EvalResultView[]; next: string | null }> {
     await this.get(orgId, runId);
     const rows = await this.resultsQuery(orgId, runId, q).selectAll().execute();
     const page = rows.slice(0, q.limit);
-    await this.viewed(orgId, runId, actor, actorTokenId);
+    await this.viewed(orgId, runId, actor, actorTokenId, auditDetail);
     return {
       results: page.map(resultView),
       next: rows.length > q.limit ? (page.at(-1)?.id ?? null) : null,
@@ -990,6 +1006,7 @@ export class EvalRunsService {
     runId: string,
     q: { after?: string; limit: number; updatedSince?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ results: EvalResultLight[]; next: string | null; asOf: string }> {
     await this.get(orgId, runId);
     const now = await sql<{ now: Date }>`SELECT now() AS now`.execute(this.d.db);
@@ -998,7 +1015,7 @@ export class EvalRunsService {
     );
     const rows = await this.resultsQuery(orgId, runId, q).select(LIGHT_COLUMNS).execute();
     const page = rows.slice(0, q.limit);
-    await this.viewed(orgId, runId, actor, actorTokenId);
+    await this.viewed(orgId, runId, actor, actorTokenId, auditDetail);
     return {
       results: page.map(
         (r): EvalResultLight => ({
@@ -1029,6 +1046,7 @@ export class EvalRunsService {
     runId: string,
     resultId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalResultView> {
     await this.get(orgId, runId);
     if (!UUID.test(resultId)) throw resultNotFound();
@@ -1040,7 +1058,7 @@ export class EvalRunsService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!row) throw resultNotFound();
-    await this.viewed(orgId, runId, actor, actorTokenId);
+    await this.viewed(orgId, runId, actor, actorTokenId, auditDetail);
     return resultView(row);
   }
 
@@ -1053,10 +1071,11 @@ export class EvalRunsService {
     actor: string,
     runId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalRunView> {
     if (!UUID.test(runId)) throw runNotFound();
     await this.get(orgId, runId);
-    await this.cancelIn(orgId, actor, runId, actorTokenId);
+    await this.cancelIn(orgId, actor, runId, actorTokenId, auditDetail);
     return this.get(orgId, runId);
   }
 
@@ -1070,9 +1089,10 @@ export class EvalRunsService {
     resultId: string,
     input: { label: "pass" | "fail" | null; note?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<EvalResultView> {
     if (!UUID.test(resultId)) throw resultNotFound();
-    const row = await this.labelIn(orgId, actor, resultId, input, actorTokenId);
+    const row = await this.labelIn(orgId, actor, resultId, input, actorTokenId, auditDetail);
     return resultView(row);
   }
   @Transactional({ propagation: "requires_new" })
@@ -1081,6 +1101,7 @@ export class EvalRunsService {
     actor: string,
     runId: string,
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     const r = await this.d.db
@@ -1101,6 +1122,7 @@ export class EvalRunsService {
       orgId,
       action: "eval.run_cancelled",
       target: runId,
+      ...(auditDetail !== undefined && { detail: auditDetail }),
     });
   }
 
@@ -1111,6 +1133,7 @@ export class EvalRunsService {
     resultId: string,
     input: { label: "pass" | "fail" | null; note?: string },
     actorTokenId: string | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<ResultRow> {
     await this.d.orgLock.lockAndAuthorize(orgId, actor, "evals.manage");
     // 先锁住这条结果、读出原标注（写进审计）
@@ -1153,7 +1176,12 @@ export class EvalRunsService {
       orgId,
       action: "eval.result_labeled",
       target: resultId,
-      detail: { runId: r.run_id, label: input.label, previousLabel: before.label },
+      detail: {
+        runId: r.run_id,
+        label: input.label,
+        previousLabel: before.label,
+        ...auditDetail,
+      },
     });
     return r;
   }

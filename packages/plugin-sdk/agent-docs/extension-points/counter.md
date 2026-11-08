@@ -1,4 +1,4 @@
-# Extension point: counter
+# Authoring: extension point counter
 
 <!-- generated:extension-point -->
 - Name: `counter` (a ref is `counter@<major>`)

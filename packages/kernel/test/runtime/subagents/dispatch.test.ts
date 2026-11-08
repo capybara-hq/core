@@ -284,8 +284,17 @@ describe("dispatch", () => {
     const read = toolResults(events).find((r) => r.payload.toolKey === "Read");
     expect(read?.payload.content).toContain("hi from child");
     const [child] = await children(conv);
-    const sandboxes = await db.selectFrom("sandboxes").select("conversation_id").execute();
-    expect(sandboxes.map((s) => s.conversation_id)).toEqual([conv]);
+    // one instance, in the root conversation's environment
+    const sandboxes = await db
+      .selectFrom("environment_instances")
+      .select("environment_id")
+      .execute();
+    const { environment_id: rootEnv } = await db
+      .selectFrom("conversations")
+      .select("environment_id")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(sandboxes.map((s) => s.environment_id)).toEqual([rootEnv]);
     expect(child).toBeDefined();
   }, 60_000);
 

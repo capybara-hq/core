@@ -232,6 +232,8 @@ export interface CatalogItemDetail {
 /** Audits carry the PAT when a personal token made the call. */
 export interface ActorOpts {
   actorTokenId?: string;
+  /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
+  auditDetail?: Record<string, unknown>;
 }
 
 /**
@@ -405,6 +407,7 @@ export class CatalogService {
     }
     const prepareOpts = {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+      ...(opts.auditDetail !== undefined && { auditDetail: opts.auditDetail }),
       expect: {
         marketplace: {
           name: entry.name,
@@ -581,6 +584,7 @@ export class CatalogService {
       { kind: "git", ref: where.ref, detail: where.detail },
       {
         ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
+        ...(opts.auditDetail !== undefined && { auditDetail: opts.auditDetail }),
         fallback: {
           name: pluginNameFrom(segment),
           version: gitFallbackVersion(read.commit),
@@ -849,6 +853,7 @@ export class CatalogService {
         name: row.name,
         ...(row.owner_org_id !== null && { ownerOrgId: row.owner_org_id }),
         ...(opts.reason !== undefined && { reason: opts.reason }),
+        ...opts.auditDetail,
       },
     });
     return { name: row.name };

@@ -54,6 +54,7 @@ export function OrgExtensionSheet({
   extension: plugin,
   label,
   canEdit,
+  superAdmin = false,
   capabilities,
   state,
   platform,
@@ -76,6 +77,8 @@ export function OrgExtensionSheet({
   extension: OrgExtension;
   label: string;
   canEdit: boolean;
+  /** The viewer is the super admin: an unavailable extension's next step links to the admin console. */
+  superAdmin?: boolean;
   capabilities: string[];
   state: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   platform: boolean;
@@ -211,9 +214,11 @@ export function OrgExtensionSheet({
             </Text>
           )}
           {unavailable && (
-            <Text variant="small" tone="muted">
-              {t("unavailableHint")}
-            </Text>
+            <UnavailableNext
+              reason={plugin.reason}
+              plugin={plugin.plugin}
+              role={superAdmin ? "superAdmin" : canEdit ? "orgAdmin" : "member"}
+            />
           )}
           {problem?.kind === "dependency_missing" && (
             <FormError message={t("dependencyMissing")} extra={problem.extensionPoints} />
@@ -273,5 +278,48 @@ export function OrgExtensionSheet({
         )}
       </Stack>
     </Sheet>
+  );
+}
+
+/**
+ * Why an unavailable extension cannot be used and what the viewer does next (Platform tool spec
+ * §14.5 item 4): the super admin gets the admin console link, org admins and members a step for
+ * their role; state only, never a config field. Without a reason (an older kernel) the old hint.
+ */
+function UnavailableNext({
+  reason,
+  plugin,
+  role,
+}: {
+  reason: OrgExtension["reason"];
+  plugin: string;
+  role: "superAdmin" | "orgAdmin" | "member";
+}) {
+  const t = useTranslations("extensions");
+  if (reason === undefined) {
+    return (
+      <Text variant="small" tone="muted">
+        {t("unavailableHint")}
+      </Text>
+    );
+  }
+  if (reason === "loading" || reason === "pending_migration") {
+    return (
+      <Text variant="small" tone="muted">
+        {t("unavailableNext.wait")}
+      </Text>
+    );
+  }
+  return (
+    <Stack gap={4}>
+      <Text variant="small" tone="muted">
+        {t(`unavailableNext.${role}`)}
+      </Text>
+      {role === "superAdmin" && (
+        <Text>
+          <Link href={`/admin/extensions/${encodeURIComponent(plugin)}`}>{t("openAdmin")}</Link>
+        </Text>
+      )}
+    </Stack>
   );
 }
