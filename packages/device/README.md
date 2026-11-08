@@ -32,3 +32,9 @@ network at all. Only you edit the policy, the platform can never widen it:
 capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
 capybara-device policy show   # changes apply at the next start
 ```
+
+Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings, and `allowCredentials` (commands
+get no local credentials at all). Processes a command leaves running are killed with it by tag;
+on macOS a child that leaves the command's process group and runs only Apple system binaries
+cannot be found again (Linux runs each command in its own pid namespace, which takes every child
+down with it).

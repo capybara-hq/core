@@ -247,6 +247,6 @@ describe("platform", () => {
     expect(await run(["policy", "set", "allowedDomains", "a.com"])).toBe(0);
     out.length = 0;
     expect(await run(["policy"])).toBe(0);
-    expect(JSON.parse(out.join("\n")).allowedDomains).toEqual(["a.com"]);
+    expect(JSON.parse(out[0] ?? "").allowedDomains).toEqual(["a.com"]);
   });
 });

@@ -4,8 +4,10 @@ import type { SandboxLimits, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { Policy } from "./state.js";
 
 /**
- * Paths no command may read (spec §13.6): SSH keys, cloud CLI credentials, container and
- * Kubernetes credentials, netrc, GnuPG, and the browser profile directories. Relative to `~`.
+ * Paths no command may read (spec §13.6, extended by ruling R19): SSH keys, cloud CLI
+ * credentials, container and Kubernetes credentials, netrc, GnuPG, git / npm / PyPI tokens, the
+ * macOS keychains, and the browser profile directories (Chrome, Firefox, Chromium, Safari, Brave,
+ * Edge, Arc). Relative to `~`.
  */
 export const DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.ssh",
@@ -21,6 +23,19 @@ export const DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
   "~/.mozilla",
   "~/.config/google-chrome",
   "~/.config/chromium",
+  // Ruling R19: more credential stores and browser data.
+  "~/.config/gh",
+  "~/.git-credentials",
+  "~/.npmrc",
+  "~/.pypirc",
+  "~/Library/Keychains",
+  "~/Library/Cookies",
+  "~/Library/Safari",
+  "~/Library/Application Support/BraveSoftware",
+  "~/Library/Application Support/Microsoft Edge",
+  "~/Library/Application Support/Arc",
+  "~/.config/BraveSoftware",
+  "~/.config/microsoft-edge",
 ]);
 
 /** {@link DENIED_SECRET_PATHS} with `~` expanded to `home`. */

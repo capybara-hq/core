@@ -77,10 +77,23 @@ describe("srtConfig", () => {
       "/h/.mozilla",
       "/h/.config/google-chrome",
       "/h/.config/chromium",
+      "/h/.config/gh",
+      "/h/.git-credentials",
+      "/h/.npmrc",
+      "/h/.pypirc",
+      "/h/Library/Keychains",
+      "/h/Library/Cookies",
+      "/h/Library/Safari",
+      "/h/Library/Application Support/BraveSoftware",
+      "/h/Library/Application Support/Microsoft Edge",
+      "/h/Library/Application Support/Arc",
+      "/h/.config/BraveSoftware",
+      "/h/.config/microsoft-edge",
     ]) {
       expect(d).toContain(p);
     }
-    expect(d).toHaveLength(DENIED_SECRET_PATHS.length);
+    expect(d).toHaveLength(25);
+    expect(DENIED_SECRET_PATHS).toHaveLength(25);
   });
 
   it("extra denied paths (the program's own state directory) are added", () => {
@@ -112,7 +125,8 @@ describe("policy command", () => {
 
   it("show prints the defaults when there is no file", () => {
     expect(run({ command: "policy", action: "show" })).toBe(0);
-    expect(JSON.parse(out.join("\n"))).toEqual(DEFAULT_POLICY);
+    expect(JSON.parse(out[0] ?? "")).toEqual(DEFAULT_POLICY);
+    expect(out[1]).toMatch(/cpu and memoryMb are not enforced.*no local credentials/);
   });
 
   it("set allowedDomains stores the list; show prints it", () => {
@@ -122,7 +136,7 @@ describe("policy command", () => {
     expect(readPolicy(dir).allowedDomains).toEqual(["a.com", "*.b.com"]);
     out.length = 0;
     run({ command: "policy", action: "show" });
-    expect(JSON.parse(out.join("\n")).allowedDomains).toEqual(["a.com", "*.b.com"]);
+    expect(JSON.parse(out[0] ?? "").allowedDomains).toEqual(["a.com", "*.b.com"]);
   });
 
   it("set cpu and memoryMb take a positive number or none", () => {

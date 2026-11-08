@@ -10,6 +10,11 @@ export interface PolicyDeps {
 
 const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
 
+/** What the OS mode does not enforce yet, shown with every `show` and `set`. */
+export const NOT_ENFORCED_NOTE =
+  "Note: in OS mode cpu and memoryMb are not enforced yet, and allowCredentials is not used: " +
+  "commands get no local credentials.";
+
 function list(value: string): string[] {
   return value
     .split(",")
@@ -44,6 +49,7 @@ export function policyCommand(
   }
   if (cmd.action === "show") {
     out(JSON.stringify(policy, null, 2));
+    out(NOT_ENFORCED_NOTE);
     return 0;
   }
   const { key, value } = cmd;
@@ -75,5 +81,6 @@ export function policyCommand(
   }
   writePolicy(stateDir, next);
   out(`Saved ${policyPath(stateDir)}. Restart capybara-device for it to take effect.`);
+  out(NOT_ENFORCED_NOTE);
   return 0;
 }

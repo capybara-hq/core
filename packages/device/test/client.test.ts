@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { backoffMs, type Connection, connect } from "../src/client.js";
+import { backoffMs, type Connection, type ConnectOptions, connect } from "../src/client.js";
 import { CommandLog } from "../src/command-log.js";
 import type { Credential } from "../src/state.js";
 import { execArgs, FakeExecutor, FakeKernel, OK_EXEC, ROOTS, req } from "./fake-kernel.js";
