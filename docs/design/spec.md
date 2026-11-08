@@ -2206,7 +2206,9 @@ States: `default`, `panel`, `no-match`
 design §4.3); `items` are `{ id, title }` and the page keeps the bodies. It sits in the composer's
 control row (`ComposerBox.quickActions`, §6.16.2), right after the effort picker (after the model
 picker when the effort picker is hidden), so the new conversation's column holds no line of its own
-between the agents row and the composer (maintainer decision, 2026-11-07).
+between the agents row and the composer (maintainer decision, 2026-11-07). A conversation under way
+offers its agent's quick actions in the same place; picking one fills the composer, never sends
+(maintainer decision, 2026-11-08).
 
 - **Button**: a ghost `IconButton` like the ＋ (`control.default` square, `muted` icon, `ink` on
   hover), the `zap` icon 16 (the line set, §3), named "常用任务" / "Common tasks" (its accessible name
