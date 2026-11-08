@@ -37,7 +37,11 @@ export type SlotArgs = {
     conversationId: string;
     card: { callId: string; key?: string };
   };
-  "org.page": { orgId: string };
+  /**
+   * `direct`: the page's contribution when an arrangement hides it from the list (hidden means not
+   * listed; the direct URL still renders, UI slots spec §5).
+   */
+  "org.page": { orgId: string; direct?: UiContributionItem };
   "file.preview": { orgId: string; conversationId: string; fileId: string };
   "agent.detail.section": { orgId: string; agentId: string };
   "org.settings.section": { orgId: string };
@@ -255,7 +259,7 @@ function OrgPageSlot({
 }) {
   const locale = uiLocale(useLocale());
   const { items } = useSlotContributions(args.orgId, "org.page");
-  const c = items.find((x) => matches(x, select));
+  const c = items.find((x) => matches(x, select)) ?? args.direct;
   if (!c) return null;
   const key = uiKey(c.plugin, c.id);
   return (

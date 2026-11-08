@@ -1,5 +1,11 @@
-import type { Query, QueryClient } from "@tanstack/react-query";
-import { getUiView, listAdminUiContributions, type UiLocale } from "../ui";
+import { hashKey, type Query, type QueryClient } from "@tanstack/react-query";
+import {
+  getAdminUiArrangement,
+  getUiArrangement,
+  getUiView,
+  listAdminUiContributions,
+  type UiLocale,
+} from "../ui";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -57,6 +63,40 @@ export const adminUiContributionsQuery = () =>
     fn: () => listAdminUiContributions().then((r) => r.items),
     freshness: "orgConfig",
   });
+
+/** The org's arrangement listing (every arrangeable slot with its items, hidden ones marked). */
+export const uiArrangementQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).uiArrangement(),
+    fn: () => getUiArrangement(orgId).then((r) => r.slots),
+    freshness: "orgConfig",
+  });
+
+/** The platform default arrangement listing (super admins). */
+export const adminUiArrangementQuery = () =>
+  defineQuery({
+    key: keys.deployment().uiArrangement(),
+    fn: () => getAdminUiArrangement().then((r) => r.slots),
+    freshness: "deployment",
+  });
+
+/**
+ * A platform default arrangement changes what every org lists: marks the contribution lists, the
+ * sidebar's pages and the arrangement listings of every cached org stale (active ones refetch).
+ */
+export function invalidateOrgUiLists(qc: QueryClient): Promise<unknown> {
+  const lists = (id: string) => [
+    keys.org(id).contributions(),
+    keys.org(id).extensionPages(),
+    keys.org(id).uiArrangement(),
+  ];
+  return qc.invalidateQueries({
+    predicate: ({ queryKey: k }) =>
+      k[0] === "org" &&
+      typeof k[1] === "string" &&
+      lists(k[1]).some((p) => p.every((x, i) => hashKey([k[i]]) === hashKey([x]))),
+  });
+}
 
 /** Per client: views with a read in flight, and those a refresh arrived for meanwhile. */
 const coalescing = new WeakMap<QueryClient, { inflight: Set<string>; again: Set<string> }>();

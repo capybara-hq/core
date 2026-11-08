@@ -132,6 +132,7 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
   return [
     k.readiness(),
     k.contributions(),
+    k.uiArrangement(),
     k.connectorKinds(),
     k.extensionPages(),
     k.orgFilePreviewers(),

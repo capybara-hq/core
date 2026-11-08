@@ -149,6 +149,26 @@ export const listUiContributions = (orgId: string) =>
 export const listAdminUiContributions = () =>
   apiFetch<{ items: UiContributionItem[] }>(`${base(null)}/contributions`);
 
+/** One slot's arrangement entry: the hidden contributions and the order, keyed `<plugin>/<id>`. */
+export interface UiArrangementEntry {
+  hidden: string[];
+  order: string[];
+}
+
+/** One slot of `GET .../ui/arrangement`: where its entry comes from and its items in order. */
+export interface UiArrangementSlot {
+  slot: UiSlotId;
+  source: "org" | "platform" | "none";
+  items: (UiContributionItem & { hidden: boolean })[];
+}
+
+export const getUiArrangement = (orgId: string) =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(orgId)}/arrangement`);
+
+/** The platform default arrangement (super admins). */
+export const getAdminUiArrangement = () =>
+  apiFetch<{ slots: UiArrangementSlot[] }>(`${base(null)}/arrangement`);
+
 /** How long one extension block may take to load before it shows "Failed to load · Retry". */
 export const UI_VIEW_TIMEOUT_MS = 10_000;
 

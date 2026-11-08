@@ -4551,6 +4551,36 @@
       "platform": "Platform"
     }
   },
+  "uiArrangement": {
+    "title": "UI placement",
+    "description": "Where extensions show their pages and sections. Hide a contribution to stop listing it, or change its order. Hidden only means not listed: a direct link still opens.",
+    "descriptionReadonly": "Where extensions show their pages and sections. Only org admins change it. Hidden means not listed: a direct link still opens.",
+    "followsPlatform": "Follows the platform",
+    "resetOrg": "Follow the platform",
+    "resetPlatform": "Reset to default",
+    "resetLabel": "Reset {slot}",
+    "hideLabel": "Hide {name}",
+    "hiddenState": "Hidden",
+    "shownState": "Shown",
+    "moveUp": "Move {name} up",
+    "moveDown": "Move {name} down",
+    "columns": {
+      "title": "Title",
+      "extension": "Extension",
+      "hidden": "Hidden",
+      "move": "Order"
+    },
+    "slots": {
+      "conversationPanel": "Conversation panels",
+      "conversationProperties": "Conversation properties",
+      "conversationCard": "Tool result cards",
+      "orgPage": "Org pages",
+      "filePreview": "File previews",
+      "agentSection": "Agent page sections",
+      "orgSettingsSection": "Org settings sections",
+      "platformPage": "Platform pages"
+    }
+  },
   "filePreviewers": {
     "title": "File previewers",
     "description": "Extensions that preview files in conversations, tried in this order. A person can switch previewer in the file panel.",

@@ -27,6 +27,7 @@ const BASE = "/api/v1/orgs/o1";
 const api = (routes: Parameters<typeof stubApi>[0]) =>
   stubApi({
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
+    [`GET ${BASE}/ui/arrangement`]: () => json(200, { slots: [] }),
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
     "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     ...routes,

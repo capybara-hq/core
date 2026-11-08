@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { UiArrangementEntry } from "./ui";
 
 /**
  * 超级管理员后台（`/api/v1/admin/*`，内核 `admin/admin.controller.ts`）。只有超级管理员能调用，
@@ -91,6 +92,8 @@ export type DeploymentSettingsPatch = Partial<
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
   runConcurrencyOverrides?: Record<string, number | null>;
   sandboxLimitOverrides?: Record<string, SandboxLimitOverride | null>;
+  /** Per slot: the entry replaces the platform default, null removes it. */
+  uiArrangement?: Record<string, UiArrangementEntry | null>;
 };
 
 export interface NewAccountInput {

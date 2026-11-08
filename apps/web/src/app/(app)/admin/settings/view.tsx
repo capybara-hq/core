@@ -17,6 +17,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
+import { UiArrangementSection } from "../../../../components/UiArrangementSection";
 import {
   type CustomPolicy,
   type DeploymentSettings,
@@ -278,6 +279,7 @@ function AdminSettings({
           onChange={(v) => setThemeDraft(v === BUILTIN ? null : v)}
         />
       </FormSection>
+      <UiArrangementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
   );
 }

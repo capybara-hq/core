@@ -89,7 +89,12 @@ import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
-import { adminUiContributionsQuery, uiViewQuery } from "./ui";
+import {
+  adminUiArrangementQuery,
+  adminUiContributionsQuery,
+  uiArrangementQuery,
+  uiViewQuery,
+} from "./ui";
 
 /** What a route's queries are built from. */
 export interface RouteCtx {
@@ -375,7 +380,13 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin/settings",
     // The settings and the themes (外观's eligible ones, with their names and swatches).
     queries: ({ me }) =>
-      superAdmin(me) ? [q(deploymentSettingsQuery()), q(adminComponentsQuery("theme"))] : [],
+      superAdmin(me)
+        ? [
+            q(deploymentSettingsQuery()),
+            q(adminComponentsQuery("theme")),
+            q(adminUiArrangementQuery()),
+          ]
+        : [],
   },
   {
     pattern: "/agents",
@@ -708,16 +719,17 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/extensions",
     // Members: the extensions' state; org admins also the default providers and the file
-    // previewers (sections).
+    // previewers (sections); everyone the 界面位置 listing.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
         : !atLeast(me, "admin")
-          ? [q(orgExtensionsQuery(orgId))]
+          ? [q(orgExtensionsQuery(orgId)), q(uiArrangementQuery(orgId))]
           : [
               q(orgExtensionsQuery(orgId)),
               q(extensionPointDefaultsQuery(orgId)),
               q(orgFilePreviewersQuery(orgId)),
+              q(uiArrangementQuery(orgId)),
             ],
   },
   {
@@ -756,6 +768,11 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || plugin === undefined || id === undefined) return;
       const items = qc.getQueryData<UiContributionItem[]>(contributionsQuery(orgId).queryKey);
       const page = items?.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
+      // not listed: an arrangement may hide it (the direct URL still renders), which the view reads
+      if (items !== undefined && page === undefined) {
+        await qc.prefetchQuery({ ...uiArrangementQuery(orgId), retry: false });
+        return;
+      }
       if (page?.kind !== "view") return;
       await qc.prefetchQuery({ ...uiViewQuery(orgId, { plugin, id }, { locale }), retry: false });
     },
