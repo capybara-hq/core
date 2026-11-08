@@ -17,6 +17,7 @@ import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   containerName,
+  containerUser,
   DockerExecutor,
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
@@ -86,9 +87,11 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
   afterAll(() => {});
 
   it("docker exec runs in /workspace and files land in the environment dir", async () => {
-    const r = await ex.exec(execArgs("pwd; id -un; echo hi > made.txt; echo t > /tmp/x"), live);
+    const r = await ex.exec(execArgs("pwd; id -u; echo hi > made.txt; echo t > /tmp/x"), live);
     expect(r.exitCode).toBe(0);
-    expect(r.stdout.split("\n").slice(0, 2)).toEqual(["/workspace", "sandbox"]);
+    // the host user on Linux, the image's sandbox user (1000) elsewhere
+    const uid = containerUser().split(":")[0];
+    expect(r.stdout.split("\n").slice(0, 2)).toEqual(["/workspace", uid]);
     expect(readFileSync(join(dir, "workspace", "made.txt"), "utf8")).toBe("hi\n");
     expect(readFileSync(join(dir, "tmp", "x"), "utf8")).toBe("t\n");
     expect(ex.mode).toBe("docker");
@@ -449,7 +452,6 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
 
 describe("containerUser", () => {
   it("runs as the host user on Linux, never root, and as the image's user elsewhere", async () => {
-    const { containerUser } = await import("../src/exec/docker.js");
     expect(containerUser("linux", 1001, 127)).toBe("1001:127");
     expect(containerUser("linux", 0, 0)).toBe("1000:1000");
     expect(containerUser("darwin", 501, 20)).toBe("1000:1000");
