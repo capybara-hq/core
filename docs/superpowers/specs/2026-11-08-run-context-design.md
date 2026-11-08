@@ -98,7 +98,8 @@ ev("run_context", z.object({
   what the run executes and a new version is what the next run's comparison picks up (§3.5). The
   description is whitespace-collapsed and cut to 200 code points with `…` **(designer's call)**.
   `org.name` from `orgs.name`; `timeZone` and `locale` from the latest `user_message` at or before
-  the run's trigger that recorded them (§3.4; none: the org's defaults); `date` from the
+  the run's trigger (§3.4; a message without them: its author's own settings, then the org's
+  defaults); `date` from the
   replica's clock in that zone.
 
 ### 3.2 `user_message.sender` (new optional field)
@@ -151,10 +152,27 @@ the next run's `run_context`, kept in the log so the snapshot is derived from re
   `GET` / `PUT /api/v1/me/preferences` `{ timeZone: string | null }`. Null (the default) means
   "follow the browser"; a set value overrides what the browser sends. The personal settings get a
   preferences page with a 时区 select whose first option is 跟随浏览器.
-- **Resolution** at send time: time zone = the account setting, else the browser's, else the
-  org default (§3.3), else UTC; language = the browser's UI language, else the org's `locale`.
-  IM senders bound to an account therefore get their account setting or the org defaults;
-  anonymous IM guests (no setting on the shared guest account) get the org defaults.
+- **IM** (maintainer decision 2026-11-08, acceptance): an IM message carries no browser values,
+  so falling back to the org's made an English org answer a Chinese speaker in English. channel@1
+  `InboundSender` gains optional `timeZone` (IANA) and `locale` (`zh` / `en` or a BCP 47 tag) that
+  a channel fills from the platform's profile when it has one (Slack `users.info` with
+  `include_locale=true`: `user.tz`, `user.locale`, cached per user). The kernel drops a zone it
+  does not know and normalizes the language: `zh` and `zh-*` are Chinese, any other tag English.
+- **Resolution** at send time, recorded on the message:
+  - time zone: an IM message's platform zone, else the account setting, else the browser's, else
+    the org default (§3.3), else UTC;
+  - language: an IM message's platform language, else the browser's UI language, else the UI
+    language of the person's most recent web message in the org (no account language column
+    exists: the latest `user_message` they wrote in each of their 20 most recently updated chat
+    conversations that are not IM threads, the newest with a `locale`; bounded and index-friendly),
+    else the org's `locale`.
+  IM senders bound to an account therefore get the platform's values, else their account setting
+  and web language, else the org defaults; anonymous IM guests (the shared guest account has no
+  setting and no web messages) get the platform's values or the org defaults.
+- **Run start** reads them from the latest message at or before the trigger. A message from an
+  older log without them falls back the same way from its author (account setting, latest web
+  language), then the org defaults. Replay: these fields are not model-visible and the values
+  used are in the log (`run_context`), so no `DriftReason`; old logs rebuild unchanged.
 - The snapshot's `timeZone` / `locale` are those of the person whose message started the run.
   When another person with another zone or language starts a later run, that is a change like any
   other (the date rule applies to the date).
