@@ -18,10 +18,10 @@ import {
  * its `mirrors`) or excluded in `platform/exclusions.ts` with a reason. The rules:
  *
  * - platform-op-missing: a route neither mirrored nor excluded;
- * - platform-op-exclusion-reason: an empty reason, or `later` without an `issue` URL;
- * - platform-op-later: an exclusion of category `later`: phase 2 closed the backlog, so a route
- *   is either an operation or excluded for good (human-only / secret / transport / internal);
- *   `LATER_ALLOWED` holds the routes still waiting, each with the reason;
+ * - platform-op-exclusion-reason: an exclusion with an empty reason;
+ * - platform-op-later: an exclusion of category `later`, with or without an issue: phase 2 closed
+ *   the backlog, so a route is either an operation or excluded for good (human-only / secret /
+ *   transport / internal), with no allow-list;
  * - platform-op-authz: an operation's `authz` differs from the route's (`@OrgAction` / `@SuperAdmin`
  *   on the method or the class); with `authzNote: "service-enforced"` its role must be at least
  *   the route's;
@@ -54,15 +54,6 @@ export const PLATFORM_OP_RULES = [
 
 const KERNEL_SRC = "packages/kernel/src";
 
-/**
- * `later` exclusions the `platform-op-later` rule still lets through. Keep it empty: a route lands
- * here only while its operation waits on other work, with the reason next to it.
- */
-const LATER_ALLOWED: ReadonlySet<string> = new Set([
-  // until #91 (Platform tool phase 2): the agent profile operation waits for the run-context
-  // work on main, which adds the profile / preferences routes it mirrors
-  "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
-]);
 const HTTP = new Map([
   ["Get", "GET"],
   ["Post", "POST"],
@@ -325,7 +316,6 @@ interface Exclusion {
   route: string;
   category: string | undefined;
   reason: string | undefined;
-  issue: string | undefined;
   line: number;
 }
 
@@ -354,7 +344,6 @@ function readExclusions(p: ParsedFile, findings: Finding[]): Exclusion[] {
         route,
         category: stringValue(prop(e, "category")?.value),
         reason: stringValue(prop(e, "reason")?.value),
-        issue: stringValue(prop(e, "issue")?.value),
         line: p.lineOf(e.start),
       });
     }
@@ -506,18 +495,11 @@ export function checkPlatformOps(root: string): Finding[] {
         message: `\`${e.route}\` has no reason`,
       });
     }
-    if (e.category === "later" && !LATER_ALLOWED.has(e.route)) {
+    if (e.category === "later") {
       out.push({
         ...at,
         rule: "platform-op-later",
         message: `\`${e.route}\` is excluded as \`later\`: add its operation, or exclude it for good (human-only / secret / transport / internal) with the reason`,
-      });
-    }
-    if (e.category === "later" && !/^https?:\/\/\S+$/.test(e.issue ?? "")) {
-      out.push({
-        ...at,
-        rule: "platform-op-exclusion-reason",
-        message: `\`${e.route}\` is \`later\` and needs an \`issue\` URL`,
       });
     }
   }

@@ -1,9 +1,9 @@
 export const PLATFORM_EXCLUSIONS = [
   // platform-op-exclusion-reason: empty reason
   { route: "GET /api/v1/orgs/:orgId/skills/a", category: "internal", reason: "" },
-  // platform-op-exclusion-reason: later without an issue (and platform-op-later)
+  // platform-op-later: later without an issue
   { route: "GET /api/v1/orgs/:orgId/skills/b", category: "later", reason: "Later." },
-  // platform-op-later: later, even with an issue URL
+  // platform-op-later: later, even with an issue URL (there is no allow-list)
   {
     route: "GET /api/v1/orgs/:orgId/skills/c",
     category: "later",
