@@ -164,6 +164,9 @@ A channel connection already belongs to one agent (`channel_connections.agent_id
 gets a 渠道 section listing the connections bound to it (kind, name, state) with "接入渠道", which opens
 the channel form with the agent preset and returns to the agent afterwards. The section is shown to users who may manage channels (org admins);
 members see none, because the kernel's channel list requires `channels.manage`. The 更多 · 渠道 page stays as the org-wide list.
+The section draws the connections as the same cards as the 更多 · 渠道 page (`ObjectCard`s in a `CardGrid`,
+maintainer decision 2026-11-08, replacing the earlier `ItemList` rows): no outer card, the heading and
+description on the page ground with 接入渠道 beside them, design spec §6.34.
 
 ### 3.4 Settings (canvas "组织 · 设置 / 成员")
 

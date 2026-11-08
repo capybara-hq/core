@@ -34,7 +34,7 @@
   pointer-events: none;
   transition: opacity var(--cb-motion-hover) ease-out;
 }
-.cb-object-card:not([data-skeleton="true"]):hover::before {
+.cb-object-card:has(.cb-object-card-link):hover::before {
   opacity: 1;
 }
 /* Keyboard focus is on the link; the ring goes around the card (spec §2.5, `:focus-visible` only). */
@@ -118,6 +118,14 @@
 .cb-object-card[data-skeleton="true"] .cb-object-card-desc {
   display: flex;
   flex-direction: column;
+  cursor: default;
+}
+/* A card without a link (a read-only list): the name in the link's look, the description opens nothing. */
+.cb-object-card-name[data-static="true"] {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.cb-object-card:not(:has(.cb-object-card-link)) .cb-object-card-desc {
   cursor: default;
 }
 .cb-object-card-foot {

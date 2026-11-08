@@ -44,8 +44,12 @@ export type ObjectCardLoaded = {
    */
   avatar?: AvatarValue | { icon: IconName } | { image: string | null };
   title: string;
-  /** The detail page: the whole card opens it (the name is the card's one link). */
-  href: string;
+  /**
+   * The detail page: the whole card opens it (the name is the card's one link). Left out for a
+   * viewer who may not open the detail (a read-only list): the name is plain text, the card has
+   * no hover and opens nothing.
+   */
+  href?: string;
   /** Prose, clamped to two lines; the full text is the line's `title` when it is cut off. */
   description?: string;
   /**
@@ -443,23 +447,36 @@ function LoadedCard({
     >
       <span className="cb-object-card-head" data-part="object-card-head">
         <CardAvatar avatar={avatar} title={title} />
-        <Link
-          href={href}
-          className="cb-object-card-link"
-          data-part="object-card-link"
-          {...(tabIndex !== undefined ? { tabIndex } : {})}
-        >
+        {href === undefined ? (
           <span
             ref={nameRef}
             id={nameId}
             className="cb-object-card-name"
             data-part="object-card-name"
+            data-static="true"
             {...(nameClamped ? { title } : {})}
           >
             {title}
           </span>
-          <LinkPendingMark />
-        </Link>
+        ) : (
+          <Link
+            href={href}
+            className="cb-object-card-link"
+            data-part="object-card-link"
+            {...(tabIndex !== undefined ? { tabIndex } : {})}
+          >
+            <span
+              ref={nameRef}
+              id={nameId}
+              className="cb-object-card-name"
+              data-part="object-card-name"
+              {...(nameClamped ? { title } : {})}
+            >
+              {title}
+            </span>
+            <LinkPendingMark />
+          </Link>
+        )}
         {state ? (
           <span
             className="cb-object-card-state"

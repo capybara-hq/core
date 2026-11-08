@@ -43,7 +43,9 @@ function withNav(ui: ReactElement) {
   return { nav, ...view };
 }
 
-const card = (over: Partial<Extract<ObjectCardProps, { href: string }>> = {}): ObjectCardProps => ({
+const card = (
+  over: Partial<Extract<ObjectCardProps, { title: string }>> = {},
+): ObjectCardProps => ({
   avatar: { kind: "preset", id: "capybara" },
   title: "研究助手",
   href: "/agents/a",
@@ -207,9 +209,29 @@ describe("ObjectCard", () => {
   });
 
   it("without a description draws no description line", () => {
-    const { description: _omit, ...rest } = card() as Extract<ObjectCardProps, { href: string }>;
+    const { description: _omit, ...rest } = card() as Extract<ObjectCardProps, { title: string }>;
     withNav(grid([rest]));
     expect(document.querySelector('[data-part="object-card-description"]')).toBeNull();
+  });
+
+  it("without href (a read-only list) the name is plain text: no link, the description opens nothing", async () => {
+    const {
+      href: _h,
+      primary: _p,
+      menu: _m,
+      ...rest
+    } = card({ avatar: { image: null } }) as Extract<ObjectCardProps, { title: string }>;
+    const { nav } = withNav(grid([rest]));
+    expect(screen.queryByRole("link")).toBeNull();
+    const name = document.querySelector('[data-part="object-card-name"]');
+    expect(name?.getAttribute("data-static")).toBe("true");
+    expect(name?.textContent).toBe("研究助手");
+    await userEvent
+      .setup()
+      .click(document.querySelector('[data-part="object-card-description"]') as HTMLElement);
+    expect(nav).not.toHaveBeenCalled();
+    // the plugin icon slot falls back to the initial
+    expect(document.querySelector('[data-part="object-card-avatar"]')?.textContent).toBe("研");
   });
 
   it("an icon in place of the avatar, or the initial square when there is no avatar", () => {

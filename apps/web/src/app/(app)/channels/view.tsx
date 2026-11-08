@@ -1,14 +1,13 @@
 "use client";
 
-import { ListPage, ObjectCard } from "@capybara-hq/design";
+import { ListPage } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
+import { ChannelCard } from "../../../components/ChannelCard";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import { channelPluginLabel } from "../../../lib/channels";
-import { labelLocale } from "../../../lib/extension-label";
 import { agentsQuery } from "../../../lib/query/agents";
 import { channelsQuery } from "../../../lib/query/channels";
 import { retryOnMountOf } from "../../../lib/query/client";
@@ -20,7 +19,8 @@ import NotFound from "../not-found";
  * `/channels`: the org's channel connections as cards (admins; maintainer decision 2026-11-08,
  * design spec §6.34): each card draws its plugin's icon (the initial without one), the connection
  * name as the link to its detail, the platform's display name (while it fails, the last error, and
- * the platform leads the meta), the bound agent and the unbound-person mode, and the running state. From the query cache
+ * the platform leads the meta), the bound agent and the unbound-person mode, and the running state
+ * (`ChannelCard`, shared with the agent page's 渠道 section). From the query cache
  * (the layout prefetched it on a first load): the connections, and the agents' names by id (a
  * section, display only: a connection shows its agent id when the name is unknown).
  */
@@ -34,7 +34,6 @@ export default function ChannelsView() {
 function Channels({ orgId }: { orgId: string }) {
   const scope = usePagePath("org");
   const t = useTranslations("channels");
-  const lang = labelLocale(useLocale());
   const [tab, setTab] = useState<"all" | "error">("all");
   const list = usePageQuery(channelsQuery(orgId));
   const agentsQ = agentsQuery(orgId);
@@ -79,33 +78,7 @@ function Channels({ orgId }: { orgId: string }) {
   return (
     <ListPage header={header} variant="cards" listLabel={t("title")} {...(empty ? { empty } : {})}>
       {rows.map((c) => (
-        <ObjectCard
-          key={c.id}
-          avatar={{ image: c.pluginIcon ?? null }}
-          title={c.name}
-          href={`/channels/${c.id}`}
-          // While it fails the last error is the description and the platform leads the meta
-          {...(c.status === "error" && c.lastError !== null
-            ? {
-                description: c.lastError,
-                meta: [
-                  channelPluginLabel(c, lang),
-                  agentNames[c.agentId] ?? c.agentId,
-                  t(`policy.${c.unboundPolicy}`),
-                ],
-              }
-            : {
-                description: channelPluginLabel(c, lang),
-                meta: [agentNames[c.agentId] ?? c.agentId, t(`policy.${c.unboundPolicy}`)],
-              })}
-          state={
-            c.status === "active"
-              ? { label: t("status.active"), tone: "ok" }
-              : c.status === "error"
-                ? { label: t("status.error"), tone: "fail" }
-                : { label: t("status.disabled"), tone: "muted" }
-          }
-        />
+        <ChannelCard key={c.id} channel={c} agent={agentNames[c.agentId] ?? c.agentId} />
       ))}
     </ListPage>
   );

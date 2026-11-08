@@ -606,7 +606,7 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     expect(router.push).toHaveBeenCalledWith("/channels/new?agentId=ag1&returnTo=%2Fagents%2Fag1");
   });
 
-  it("each row draws its plugin's icon (the name's initial without one) and the platform's name, no id chip", async () => {
+  it("each card draws its plugin's icon (the name's initial without one), the platform and the unbound mode, no agent", async () => {
     const icon = `${ORG}/catalog/i1/icon?v=1.0.0`;
     stubApi({
       ...channelRoutes(),
@@ -623,22 +623,77 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     });
     await renderEditAgent({ locale: "zh", section: "channels" });
     const section = await screen.findByRole("region", { name: zh.agents.channels.title });
-    const list = await within(section).findByRole("list", { name: zh.agents.channels.title });
-    const [slack, bare] = within(list).getAllByRole("listitem") as HTMLElement[];
-    expect(slack?.querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(icon);
-    expect(
-      within(slack as HTMLElement).getByText(`Slack · ${zh.channels.policy.bind}`),
-    ).toBeTruthy();
-    expect(bare?.querySelector('[data-part="object-mark"]')?.textContent).toBe("B");
-    // the plugin id is no longer a chip
-    expect(
-      within(bare as HTMLElement).getByText(`slack · ${zh.channels.policy.bind}`),
-    ).toBeTruthy();
-    expect(list.querySelector(".cb-item-list-tag")).toBeNull();
-    expect(findNestedBoxes(section)).toEqual([]);
+    // the same cards as the org 渠道 page: an ObjectCard per connection in a CardGrid
+    const grid = await within(section).findByRole("list", { name: zh.agents.channels.title });
+    expect(grid.getAttribute("data-part")).toBe("card-grid");
+    const [slack, bare] = within(grid).getAllByRole("listitem") as HTMLElement[];
+    expect(slack?.getAttribute("data-part")).toBe("object-card");
+    const mark = (c: HTMLElement | undefined) =>
+      c?.querySelector('[data-part="object-card-avatar"]') as HTMLElement;
+    expect(mark(slack).querySelector('img[data-part="mark-image"]')?.getAttribute("src")).toBe(
+      icon,
+    );
+    expect(mark(bare).querySelector("img")).toBeNull();
+    expect(mark(bare).textContent).toBe("B");
+    expect(within(slack as HTMLElement).getByRole("link", { name: "Team Slack" })).toBeTruthy();
+    // the platform's display name (the plugin id without one) is the description; the meta is the
+    // unbound mode alone: the agent is implicit here
+    expect(slack?.querySelector('[data-part="object-card-description"]')?.textContent).toBe(
+      "Slack",
+    );
+    expect(bare?.querySelector('[data-part="object-card-description"]')?.textContent).toBe("slack");
+    expect(slack?.querySelector('[data-part="object-card-meta"]')?.textContent).toBe(
+      zh.channels.policy.bind,
+    );
+    expect(slack?.querySelector('[data-part="object-card-state"]')?.textContent).toBe(
+      zh.channels.status.active,
+    );
+    // one box only: no section card around the grid; 接入渠道 beside the heading
+    expect(section.querySelector('[data-part="form-card"]')).toBeNull();
+    expect(within(section).getByRole("heading", { level: 2 }).textContent).toBe(
+      zh.agents.channels.title,
+    );
+    expect(within(section).getByText(zh.agents.channels.hint)).toBeTruthy();
+    expect(within(section).getByRole("button", { name: zh.agents.channels.connect })).toBeTruthy();
+    expect(findNestedBoxes(document.body)).toEqual([]);
   });
 
-  it("members see the list read-only: no connect button, no links", async () => {
+  it.each([
+    ["the agent", `GET ${ORG}/agents/ag1`],
+    ["the channels", `GET ${ORG}/channels`],
+  ])(
+    "an empty cache, %s on the way: the section's frame with skeleton cards, then the cards",
+    async (_, held) => {
+      let release: () => void = () => {};
+      const wait = new Promise<void>((r) => {
+        release = r;
+      });
+      const routes: Record<string, unknown> = {
+        ...channelRoutes(),
+        [`GET ${ORG}/channels`]: ok({ channels: [channel("c1", "Team Slack", "ag1")] }),
+      };
+      const answer = routes[held] as () => Response | Promise<Response>;
+      await renderRouteEmptyCache("/agents/ag1?s=channels", {
+        ...(routes as ReturnType<typeof channelRoutes>),
+        [held]: async () => {
+          await wait;
+          return answer();
+        },
+      });
+      const grid = await vi.waitFor(() => {
+        const el = document.querySelector('[data-part="card-grid"]');
+        if (el === null) throw new Error("no loading frame yet");
+        return el as HTMLElement;
+      });
+      expect(grid.querySelectorAll('[data-skeleton="true"]').length).toBeGreaterThan(0);
+      expect(document.querySelector('[data-part="form-card"]')).toBeNull();
+      expect(findNestedBoxes(document.body)).toEqual([]);
+      await act(async () => release());
+      expect(await screen.findByRole("link", { name: "Team Slack" })).toBeTruthy();
+    },
+  );
+
+  it("members see the cards read-only: no connect button, no links", async () => {
     stubApi(channelRoutes());
     await renderEditAgent({ me: as("member"), section: "channels" });
     const section = await screen.findByRole("region", { name: en.agents.channels.title });
@@ -647,13 +702,14 @@ describe("the agent page lists its channels (spec 3.3.1)", () => {
     expect(within(section).queryByRole("link")).toBeNull();
   });
 
-  it("no connections: the panel empty state carries 接入渠道 for an admin, never a loose sentence", async () => {
+  it("no connections: the settings area's empty state carries 接入渠道 for an admin, never a loose sentence", async () => {
     stubApi({ ...channelRoutes(), [`GET ${ORG}/channels`]: ok({ channels: [] }) });
     await renderEditAgent({ locale: "zh", section: "channels" });
     const section = await screen.findByRole("region", { name: zh.agents.channels.title });
     const empty = await within(section).findByText(zh.agents.channels.empty);
     const state = empty.closest('[data-part="empty-state"]') as HTMLElement;
-    expect(state.getAttribute("data-size")).toBe("panel");
+    // on the page ground (no card around it): the page style
+    expect(state.getAttribute("data-size")).toBe("page");
     // the one 接入渠道 is the empty state's action
     const buttons = within(section).getAllByRole("button", { name: zh.agents.channels.connect });
     expect(buttons).toHaveLength(1);
