@@ -3508,7 +3508,14 @@
         "listSep": ", ",
         "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds",
         "appliesNow": "These changes apply as soon as they are saved",
-        "noteSep": "; "
+        "noteSep": "; ",
+        "clear": "Clear config",
+        "cleared": "Config cleared.",
+        "clearConfirm": {
+          "title": "Clear the deployment config of “{name}”",
+          "hint": "Clearing deletes the deployment config and secrets saved here. The extension becomes pending configuration and stops loading; agents using its models or tools lose them until it is configured again. Values set in the startup config or environment variables are not affected and stay in effect.",
+          "confirm": "Clear config"
+        }
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",

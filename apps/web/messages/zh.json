@@ -3496,7 +3496,14 @@
         "listSep": "、",
         "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒",
         "appliesNow": "这些改动保存后立即生效",
-        "noteSep": "；"
+        "noteSep": "；",
+        "clear": "清空配置",
+        "cleared": "配置已清空。",
+        "clearConfirm": {
+          "title": "清空「{name}」的部署配置",
+          "hint": "清空会删除这里保存的部署配置和密钥。扩展会变为待配置并停止加载，使用它的模型或工具的智能体在重新配置之前无法使用它们。启动配置或环境变量里设置的值不受影响，仍然生效。",
+          "confirm": "清空配置"
+        }
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",

@@ -1,10 +1,18 @@
 "use client";
 
-import { Button, Callout, Skeleton, Stack, Text, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Callout,
+  DangerConfirm,
+  Skeleton,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useMemo, useState } from "react";
-import { putExtensionConfig } from "../lib/admin-extensions";
+import { clearExtensionConfig, putExtensionConfig } from "../lib/admin-extensions";
 import { ApiClientError, configIssues } from "../lib/api";
 import type { ConfigIssue } from "../lib/json-schema";
 import { extensionConfigQuery } from "../lib/query/admin";
@@ -37,7 +45,10 @@ export interface DeploymentConfigParts {
   notice: ReactNode;
   /** The form with its hints and errors; `null` when the extension has no deployment config. */
   form: ReactNode;
-  /** The save action; `null` until the form is there. */
+  /**
+   * The save action, with 清空配置 beside it while something is stored here (it asks first);
+   * `null` until the form is there.
+   */
   save: ReactNode;
   /**
    * The orgs holding their own copy of the overridable fields (read only); `null` when the
@@ -113,6 +124,12 @@ export function useDeploymentConfig({
     // a platform change moves what each org copy differs in
     invalidates: (v) => [keys.deployment().extensionOrgOverrides(v[0])],
   });
+  const [clearing, setClearing] = useState(false);
+  const clear = useAppMutation({
+    fn: (plugin: string) => clearExtensionConfig(plugin),
+    // the org copies now differ from an emptier platform config
+    invalidates: (plugin) => [keys.deployment().extensionOrgOverrides(plugin)],
+  });
 
   if (!enabled) return { notice: null, form: null, save: null, copies: null, dirty: false };
   if (view === undefined) {
@@ -155,6 +172,8 @@ export function useDeploymentConfig({
     ? view.issues.filter((i) => !isMissingIssue(i, form.value))
     : [];
   const readonly = Object.values(form.meta).some((m) => m.readonly !== undefined);
+  // Something saved here (values or secrets): only that can be cleared, never the startup config.
+  const stored = view.fields.some((f) => f.source === "db");
 
   const save = async () => {
     setBusy(true);
@@ -217,6 +236,11 @@ export function useDeploymentConfig({
     // What saving does sits beside the save (one quiet line), never as a sentence in the form
     save: (
       <Stack direction="row" gap={12} align="center">
+        {stored && (
+          <Button disabled={busy} onClick={() => setClearing(true)}>
+            {t("clear")}
+          </Button>
+        )}
         {changed && (
           <Text variant="small" tone="muted">
             {busy && reloads(view, body)
@@ -234,6 +258,23 @@ export function useDeploymentConfig({
         >
           {t("save")}
         </Button>
+        <DangerConfirm
+          open={clearing}
+          onOpenChange={setClearing}
+          title={t("clearConfirm.title", { name: view.plugin })}
+          description={t("clearConfirm.hint")}
+          confirmName={view.plugin}
+          confirmLabel={t("clearConfirm.confirm")}
+          onConfirm={async () => {
+            const next = await clear.mutateAsync(view.plugin);
+            setClearing(false);
+            toast.success(t("cleared"));
+            // The answer is the config as it is now: it replaces the cached one.
+            qc.setQueryData(q.queryKey, next);
+            setSaves((n) => n + 1);
+            onChanged();
+          }}
+        />
       </Stack>
     ),
     copies,
