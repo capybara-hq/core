@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { SkeletonGroup } from "../display/skeleton";
+import { Tabs } from "../display/tabs";
 import { Stack } from "../layout/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
@@ -23,8 +24,9 @@ export type SettingsNavGroup = {
  * T5 Settings (spec §5, canvas "组织 · 设置"): the head (path, title, actions) across the full
  * content width, then a 200 px sub-nav (mono group labels, 30 px items, the current one on
  * `sidebar-active`, mono counts) beside the section content; ActionRow on changes. The header's
- * `description` opens the content column instead of the head, so the head has one height and the
- * sub-nav sits at the same y on every settings page, its top aligned with the content's. Below
+ * `description` and `tabs` open the content column instead of the head (tabs first), so the head
+ * has one height and the sub-nav sits at the same y on every settings page, its top aligned with
+ * the content's. Below
  * 640 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
  * labels, 40 px tap targets) above the content, the current item scrolled into view.
  *
@@ -65,7 +67,9 @@ export function SettingsPage({
   };
   children?: ReactNode;
 }) {
-  const { description, ...head } = header;
+  // The tabs and the description belong to this section, not to the settings frame: both open
+  // the content column, beside the sub-nav, so the head keeps one height on every settings page.
+  const { description, tabs, activeTab, ...head } = header;
   const Link = useDesignLink();
   const t = useDesignT();
   // On phones the sub-nav is one scrolling row above the content: keep the current item in view.
@@ -112,6 +116,16 @@ export function SettingsPage({
         <div className="cb-settings-grid">
           {rail}
           <div className="cb-settings-content">
+            {tabs !== undefined && tabs.length > 0 ? (
+              <div className="cb-settings-tabs" data-part="settings-tabs">
+                <Tabs
+                  label={t("shell.pageViews")}
+                  items={tabs.map(({ onSelect: _o, ...it }) => it)}
+                  value={activeTab ?? tabs[0]?.id ?? ""}
+                  onChange={(id) => tabs.find((x) => x.id === id)?.onSelect?.()}
+                />
+              </div>
+            ) : null}
             {description ? (
               <p className="cb-settings-description" data-part="settings-description">
                 {description}

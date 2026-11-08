@@ -79,6 +79,10 @@
   font-size: var(--cb-type-prose-small-size);
   line-height: var(--cb-type-prose-small-line);
 }
+/* A section's own tabs (the models page's 模型 / 用途默认) sit atop the content column. */
+.cb-settings-content > .cb-settings-tabs + * {
+  margin-top: calc(var(--cb-space-4) - var(--cb-space-6));
+}
 .cb-settings-content > .cb-settings-description + * {
   margin-top: calc(var(--cb-space-3) - var(--cb-space-6));
 }
