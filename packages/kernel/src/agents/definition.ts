@@ -256,10 +256,13 @@ export const AgentDefinitionSchema = z.object({
    */
   subagentTools: SubagentToolsSchema.optional(),
   /**
-   * Tightened policies by tool key (`ask` / `deny` only, never `allow`); keys are tools the agent
-   * could have (on or turned off). Older definitions without it read as empty.
+   * Policies by tool key; keys are tools the agent could have (on or turned off). `ask` / `deny`
+   * tighten any tool. `allow` counts only for a connector tool (decision 2026-11-09): it overrides
+   * the org default and the member's own 询问, never the org's or the member's 禁止
+   * (`tools/policy.ts` `connectorPolicy`); on any other tool it changes nothing. Older definitions
+   * without it read as empty.
    */
-  toolPolicies: z.record(z.string(), z.enum(["ask", "deny"])).default({}),
+  toolPolicies: z.record(z.string(), z.enum(["allow", "ask", "deny"])).default({}),
   /**
    * 技能（M5 T13）：`orgSkills` 是引用的组织技能 id（保存时校验属于本组织且未删除，不可重复）。
    * agent 自己的技能（`scope=agent`）自动对它生效，不进定义。可省略（较早保存的定义也没有），按空处理；

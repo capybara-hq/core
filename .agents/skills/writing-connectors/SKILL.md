@@ -129,6 +129,23 @@ A connector template spares the org from endpoint details: a super admin imports
 - No credentials in the endpoint (a template's presets are visible to every org); anything that needs a credential goes through the auth settings.
 - When the deployment setting `customConnectors` is `deny`, an org can create connectors only from the catalog (templates), and manual install returns 403 `catalog.custom_disabled`.
 
+## A member's own tool policies (decision 2026-11-09)
+
+Spec `docs/superpowers/specs/2026-11-09-connector-cards-and-member-policies-design.md`. On a
+personal-credential connector each member sets their own 允许 / 询问 / 禁止 per tool for their own
+connection (`connector_tool_account_policies`, `tools/connector-account-policies.ts`, routes
+`GET` / `PUT …/connectors/:connectorId/tool-policies/me`, always the session's account; an
+org-credential connector -> 409 `connector.not_personal`; both routes are Platform exclusions, the
+write `human-only`). A connector tool call resolves highest first (`connectorPolicy` in
+`tools/policy.ts`): the org switched the tool off (unavailable) or its default is `deny`; the
+member's 禁止 (a floor no agent lifts); the agent's `toolPolicies` setting (`allow` allowed for
+connector tools only); the member's 允许 / 询问; the org default (`connector_tools.default_policy`,
+the annotation default unless an admin changed it). "The member" is `ctx.accountId`, the account
+whose personal credential the pipeline injects (a sub-agent: its tree's account; a channel run: the
+sender's). Fixed asks, role escalation and grants apply after this. Tests:
+`test/tools/member-policies.test.ts` (levels, locks, defaults, isolation, acting accounts) and the
+`tool-policies/me` cases of `test/tools/connectors.http.test.ts`.
+
 ## OAuth and credentials: all in the kernel
 
 A connector only needs to follow "call `auth()` before every request, call `onUnauthorized()` once on 401" above; OAuth itself (`packages/kernel/src/tools/oauth/`) is not in the connector:

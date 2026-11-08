@@ -245,11 +245,13 @@ describe("agent definition tools (tools default-on spec §2)", () => {
     expect(noExtension.statusCode).toBe(400);
   });
 
-  it("toolPolicies loosened (allow) → 400; a key that is no tool the agent could have → 400", async () => {
+  it("toolPolicies: allow only on a connector's tool (decision 2026-11-09); a key that is no tool the agent could have → 400", async () => {
     await installConnector("docs");
-    const loosen = await createAgent({ toolPolicies: { mcp__docs__write: "allow" } });
+    const connectorAllow = await createAgent({ toolPolicies: { mcp__docs__write: "allow" } });
+    expect(connectorAllow.statusCode, connectorAllow.body).toBe(201);
+    const loosen = await createAgent({ toolPolicies: { AskUserQuestion: "allow" } });
     expect(loosen.statusCode).toBe(400);
-    expect(detailPaths(loosen)).toEqual(["definition.toolPolicies.mcp__docs__write"]);
+    expect(detailPaths(loosen)).toEqual(["toolPolicies.AskUserQuestion"]);
 
     const unknown = await createAgent({
       toolPolicies: { mcp__docs__nope: "deny", AskUserQuestion: "ask", mcp__other__x: "ask" },

@@ -55,7 +55,14 @@ export interface ToolDisplay {
 }
 
 /** Which rule asked for an approval (kernel `ApprovalPolicySource`). */
-export type ApprovalPolicy = "agent" | "connector" | "default" | "role" | "org" | "fixed";
+export type ApprovalPolicy =
+  | "agent"
+  | "connector"
+  | "member"
+  | "default"
+  | "role"
+  | "org"
+  | "fixed";
 
 /** `tool_result.view` (kernel `ToolViewSchema`): display only. */
 export type ToolView =

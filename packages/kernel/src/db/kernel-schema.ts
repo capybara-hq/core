@@ -461,6 +461,19 @@ export interface ConnectorsTable {
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
+/**
+ * 0104: a member's own policy for one tool of a personal-credential connector, for calls made with
+ * their own connection (maintainer decision 2026-11-09).
+ */
+export interface ConnectorToolAccountPoliciesTable {
+  org_id: string;
+  connector_id: string;
+  account_id: string;
+  tool_name: string;
+  policy: "allow" | "ask" | "deny";
+  updated_at: Ts;
+}
+
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
 export interface ConnectorToolsTable {
   connector_id: string;
@@ -1255,6 +1268,7 @@ export interface KernelDatabase {
   lg_checkpoint_writes: LgCheckpointWritesTable;
   connectors: ConnectorsTable;
   connector_tools: ConnectorToolsTable;
+  connector_tool_account_policies: ConnectorToolAccountPoliciesTable;
   tool_grants: ToolGrantsTable;
   conversation_tool_grants: ConversationToolGrantsTable;
   approvals: ApprovalsTable;

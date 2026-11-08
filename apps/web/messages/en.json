@@ -512,6 +512,7 @@
       "extensionToolOffInOrg": "Turned off in this org",
       "policiesLabel": "Policies",
       "policy": {
+        "allow": "Allow",
         "default": "Default",
         "ask": "Ask for approval",
         "deny": "Deny"
@@ -635,6 +636,7 @@
       "sheetTools": "Tools of {name}",
       "sheetDone": "Done",
       "sheetHint": "Everything is on by default; untick a tool to turn it off for this agent, or untick all to turn the whole group off (tools it gains later too). A policy can only be tightened. The changes are saved with this page.",
+      "connectorPolicyHint": "A connector's tools can also be allowed for this agent, over the org default and a member's own Ask; a tool a member set to Deny on their own connection stays denied for them.",
       "loadingTools": "Reading the tools…",
       "connectorToolsUnreadable": "This connector's tools could not be read. Try again later."
     },
@@ -1655,6 +1657,7 @@
     "policy": {
       "agent": "The agent's settings ask for approval",
       "connector": "The connector's policy asks for approval",
+      "member": "Your own setting on this connector asks for approval",
       "default": "This tool asks for approval by default",
       "role": "A member with permission must approve",
       "org": "The org's policy asks for approval",
@@ -2080,6 +2083,35 @@
     "tabs": {
       "all": "All",
       "disabled": "Disabled"
+    },
+    "cards": {
+      "connect": "Connect",
+      "connected": "Connected",
+      "notConnected": "Not connected",
+      "permissions": "Permissions"
+    },
+    "permissions": {
+      "title": "Permissions for {name}",
+      "hint": "Applies to your own connection, in every agent you use. An agent can override them, except the tools you set to Deny.",
+      "listLabel": "Tool permissions",
+      "allow": "Allow",
+      "ask": "Ask",
+      "deny": "Deny",
+      "defaultMark": "{label} (default)",
+      "default": "Default: {label}",
+      "locked": {
+        "disabled": "Turned off by the organization",
+        "org_deny": "Denied by the organization"
+      },
+      "empty": "This connector has no tools.",
+      "save": "Save",
+      "cancel": "Cancel",
+      "saved": "Permissions saved.",
+      "loading": "Reading the tools…"
+    },
+    "templates": {
+      "needsConfig": "Needs setup",
+      "configure": "Set up"
     }
   },
   "connections": {

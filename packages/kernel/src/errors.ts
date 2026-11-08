@@ -226,6 +226,8 @@ export const ERROR_CODES = {
   "connector.tool_not_found": 404,
   "connector.tool_not_pending": 409,
   "connector.resources_disabled": 409,
+  /** Per-member tool policies on a connector with one org credential (decision 2026-11-09). */
+  "connector.not_personal": 409,
   "approval.not_found": 404,
   "approval.already_decided": 409,
   "approval.scope_not_allowed": 409,

@@ -13,6 +13,7 @@ import {
   Grid,
   Input,
   KeyValue,
+  ObjectMark,
   Select,
   Stack,
   StatusMark,
@@ -131,7 +132,12 @@ function Connector({
   if (read.kind === "loading") {
     return (
       <DetailPage
-        header={{ path: [...scope, { label: "connectors", href: "/connectors" }], title: "" }}
+        header={{
+          path: [...scope, { label: "connectors", href: "/connectors" }],
+          title: "",
+          // the template's plugin mark keeps its place
+          loading: { title: true, avatar: true },
+        }}
         tabs={{
           label: t("detail.tabsLabel"),
           items: TABS.map((id) => ({ id, label: t(`detail.tabs.${id}`) })),
@@ -168,6 +174,8 @@ function Connector({
     <DetailPage
       header={{
         path: [...scope, { label: "connectors", href: "/connectors" }, { label: app.name }],
+        // its template's plugin icon (the name's initial without one)
+        avatar: <ObjectMark size={40} text={app.name} image={app.icon ?? null} />,
         title: app.name,
         count: app.slug,
         status:

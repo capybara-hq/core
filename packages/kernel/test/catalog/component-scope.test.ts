@@ -738,6 +738,88 @@ describe("fix round 1", { timeout: 60_000 }, () => {
     expect(off.statusCode, off.body).toBe(200);
     expect(await liveConnectors()).toEqual([conn]);
   });
+
+  it("templates and their connectors carry the display name and the plugin's icon on the reader's route", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    const itemId = await seedPlugin(env, { name: "github", skills: [], defaultOff: ["gh"] });
+    tplId = await templateId();
+    type Row = { id: string; displayName: unknown; icon: string | null; on: boolean };
+    const offered = async (req: OrgEnv["boss"]) => {
+      const r = await req({
+        method: "GET",
+        url: `/api/v1/orgs/${env.orgId}/components?kind=connector_template`,
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { components: Row[] }).components;
+    };
+    const admin = async () => {
+      const r = await env.root({
+        method: "GET",
+        url: "/api/v1/admin/components?kind=connector_template",
+      });
+      expect(r.statusCode, r.body).toBe(200);
+      return (r.json() as { components: Row[] }).components;
+    };
+    // offered to the org while off (defaultEnabled false); no icon yet
+    expect(await offered(env.boss)).toEqual([
+      expect.objectContaining({
+        id: tplId,
+        displayName: { zh: "GitHub", en: "GitHub" },
+        icon: null,
+        on: false,
+      }),
+    ]);
+    expect((await admin())[0]).toMatchObject({ displayName: { zh: "GitHub", en: "GitHub" } });
+    // the plugin's latest version declares an icon its files hold
+    const v = await env.db
+      .selectFrom("catalog_item_versions")
+      .select(["manifest", "files"])
+      .where("item_id", "=", itemId)
+      .executeTakeFirstOrThrow();
+    await env.db
+      .updateTable("catalog_item_versions")
+      .set({
+        manifest: JSON.stringify({ ...(v.manifest as object), icon: "./icon.svg" }),
+        files: JSON.stringify([
+          ...(v.files as { path: string }[]),
+          { path: "icon.svg", size: 10, sha256: "0".repeat(64) },
+        ]),
+      })
+      .where("item_id", "=", itemId)
+      .execute();
+    const orgUrl = `/api/v1/orgs/${env.orgId}/catalog/${itemId}/icon?v=1.0.0`;
+    expect((await offered(env.boss))[0]?.icon).toBe(orgUrl);
+    expect((await offered(env.mem))[0]?.icon).toBe(orgUrl);
+    expect((await admin())[0]?.icon).toBe(`/api/v1/admin/catalog/items/${itemId}/icon?v=1.0.0`);
+    // the connector made from it shows its plugin's icon in the list and the detail
+    expect((await install(env.boss, env, itemId)).statusCode).toBe(201);
+    expect((await tplSwitch(true)).statusCode).toBe(200);
+    const made = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/catalog/${itemId}/connectors`,
+      payload: { inputs: ghBody },
+    });
+    expect(made.statusCode, made.body).toBe(201);
+    const list = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    const [conn] = (list.json() as { connectors: { id: string; icon: string | null }[] })
+      .connectors;
+    expect(conn?.icon).toBe(orgUrl);
+    const one = await env.mem({
+      method: "GET",
+      url: `/api/v1/orgs/${env.orgId}/connectors/${conn?.id}`,
+    });
+    expect(one.json().connector.icon).toBe(orgUrl);
+    // a plugin the org's catalog no longer shows (a hidden `named` list without the org): no icon
+    // URL, the connector stays the org's own
+    await setScope(env, itemId, "named", [org2]);
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    const after = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/connectors` });
+    expect(after.json().connectors[0].icon).toBeNull();
+  });
 });
 
 describe("the admin component list: builtin and org-owned (Task 9 fix round 1)", {

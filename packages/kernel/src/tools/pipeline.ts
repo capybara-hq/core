@@ -170,7 +170,14 @@ export interface AskRequest {
  * policy, a fixed ask (R3, `requiresUserInteraction`), the org's `sandboxToolPolicy`, or the tool's
  * own default. `org` and `fixed` were added after the first B events (older logs say `default`).
  */
-export type ApprovalPolicySource = "agent" | "connector" | "default" | "role" | "org" | "fixed";
+export type ApprovalPolicySource =
+  | "agent"
+  | "connector"
+  | "member"
+  | "default"
+  | "role"
+  | "org"
+  | "fixed";
 
 /**
  * `unavailable`：调用那一刻工具已不可用（连接器 / 工具不存在、停用、删除、待审核），值为事实原因；

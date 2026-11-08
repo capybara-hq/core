@@ -314,6 +314,9 @@ export async function templateFromAgent(
     { key: string; tool: string; policy: "ask" | "deny" }[]
   >();
   for (const [k, v] of Object.entries(def.toolPolicies ?? {})) {
+    // a template only tightens: an agent's `allow` (a connector tool's, decision 2026-11-09)
+    // is not carried into it
+    if (v === "allow") continue;
     const parsed = parseToolKey(k);
     if (parsed !== null && parsed.kind !== "connector" && TOOL_KEY_RE.test(k)) {
       toolPolicies[k] = v;

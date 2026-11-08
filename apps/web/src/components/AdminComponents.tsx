@@ -9,6 +9,7 @@ import {
   KeyValue,
   type MenuItem,
   ObjectCard,
+  ObjectMark,
   Stack,
   Text,
   useToast,
@@ -21,6 +22,7 @@ import { Link, useRouter } from "../i18n/navigation";
 import {
   COMPONENT_ROUTES,
   type ComponentVersion,
+  componentLabel,
   isOrgRow,
   moveTo,
   type PlatformComponent,
@@ -114,19 +116,44 @@ export function ComponentsTable({
   rows: PlatformComponent[] | null;
 }) {
   const t = useTranslations("adminComponents");
+  const locale = useLocale();
   const scopeText = useComponentScopeText();
   const ownerText = useOwnerText();
   const blockText = useShareBlockText();
+  // A connector template reads by its display name with its plugin's mark, its id under it
+  const marked = kind === "connector_template";
   const columns: Column<PlatformComponent>[] = [
     {
       key: "name",
       header: t("columns.name"),
-      cell: (c) => (
-        <Stack direction="row" gap={8} align="center">
-          <Link href={`${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`}>{c.name}</Link>
-          <StateBadges c={c} />
-        </Stack>
-      ),
+      cell: (c) => {
+        const href = `${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`;
+        if (!marked) {
+          return (
+            <Stack direction="row" gap={8} align="center">
+              <Link href={href}>{c.name}</Link>
+              <StateBadges c={c} />
+            </Stack>
+          );
+        }
+        const label = componentLabel(c, locale);
+        return (
+          <Stack direction="row" gap={8} align="center">
+            <ObjectMark size={24} text={label} image={c.icon ?? null} />
+            <Stack gap={0}>
+              <Stack direction="row" gap={8} align="center" wrap>
+                <Link href={href}>{label}</Link>
+                <StateBadges c={c} />
+              </Stack>
+              {label !== c.name && (
+                <Text variant="small" tone="muted">
+                  {c.name}
+                </Text>
+              )}
+            </Stack>
+          </Stack>
+        );
+      },
     },
     { key: "from", header: t("columns.from"), tone: "muted", cell: (c) => <ComponentFrom c={c} /> },
     {
@@ -166,6 +193,7 @@ export function ComponentsTable({
       columns={columns}
       rows={rows ?? []}
       rowKey={(c) => c.id}
+      {...(marked ? { rowHeight: "roomy" as const } : {})}
       state={rows === null ? "loading" : "ready"}
       empty={{ title: t(`empty.${kind}`) }}
     />

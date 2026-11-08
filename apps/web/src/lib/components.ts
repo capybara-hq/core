@@ -1,5 +1,5 @@
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
-import type { PluginScope, ScopeConflict } from "./catalog";
+import type { LocalizedName, PluginScope, ScopeConflict } from "./catalog";
 
 /**
  * Platform components (kernel `catalog/component-scope.controller.ts`, super admins): the
@@ -35,7 +35,12 @@ export type Owner = { kind: "platform" } | { kind: "org"; orgId: string; name: s
 export interface PlatformComponent {
   kind: PlatformComponentKind;
   id: string;
+  /** Skill or template name; a connector template's id. */
   name: string;
+  /** A connector template's localized display name (null or absent: show `name`). */
+  displayName?: LocalizedName | null;
+  /** Its plugin's icon (the admin icon route; null without one). */
+  icon?: string | null;
   description: string | null;
   /** The plugin it came from (null: none). */
   plugin: string | null;
@@ -138,6 +143,12 @@ export interface UploadedComponentVersion {
   version: number;
 }
 
+/** A component's name in the reader's language: a connector template's display name, else its name. */
+export const componentLabel = (
+  c: { name: string; displayName?: LocalizedName | null },
+  locale: string,
+): string => (c.displayName ? (locale === "zh" ? c.displayName.zh : c.displayName.en) : c.name);
+
 const enc = encodeURIComponent;
 const base = "/api/v1/admin/components";
 const one = (kind: PlatformComponentKind, id: string) => `${base}/${kind}/${enc(id)}`;
@@ -214,7 +225,12 @@ export const uploadAgentTemplateVersion = (id: string, content: string) =>
 export interface OrgComponent {
   kind: PlatformComponentKind;
   id: string;
+  /** Skill or template name; a connector template's id. */
   name: string;
+  /** A connector template's localized display name (null or absent: show `name`). */
+  displayName?: LocalizedName | null;
+  /** Its plugin's icon on the org's icon route (null without one or when the org cannot see it). */
+  icon?: string | null;
   description: string | null;
   plugin: string | null;
   itemId: string | null;

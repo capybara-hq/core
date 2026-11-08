@@ -252,6 +252,12 @@ export const keys = {
       connectorKinds: (): readonly unknown[] => [...all, "connectorKinds"],
       /** One connector's detail. */
       connector: (connectorId: string): readonly unknown[] => [...all, "connector", connectorId],
+      /** The viewer's own tool policies for their connection of one connector (权限). */
+      connectorMyPolicies: (connectorId: string): readonly unknown[] => [
+        ...all,
+        "connectorMyPolicies",
+        connectorId,
+      ],
       /** The connectors' prompts (`/` menu) or resources (`@` menu). */
       connectorItems: (kind: "prompts" | "resources"): readonly unknown[] => [
         ...all,

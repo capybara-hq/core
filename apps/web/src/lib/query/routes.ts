@@ -546,8 +546,31 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/connectors",
-    // Guests read the list too.
-    queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
+    // Guests read the list too; members up also the connector templates offered to the org (a
+    // section: the cards of the ones without a connector here, with the admins' switches)
+    queries: ({ orgId, me }) =>
+      orgId === null
+        ? []
+        : [
+            q(connectorsQuery(orgId)),
+            ...(atLeast(me, "member")
+              ? [q(orgComponentsQuery(orgId, { kind: "connector_template" }))]
+              : []),
+          ],
+    // The personal connectors' cards show the viewer's own connection: their details
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ orgId }, qc) => {
+      if (orgId === null) return;
+      const list = qc.getQueryData<{ connectors: ConnectorSummary[] }>(
+        connectorsQuery(orgId).queryKey,
+      );
+      if (list === undefined) return;
+      await Promise.all(
+        personalConnectors(list.connectors).map((a) =>
+          qc.prefetchQuery({ ...connectorQuery(orgId, a.id), retry: false }),
+        ),
+      );
+    },
   },
   {
     pattern: "/connectors/[connectorId]",

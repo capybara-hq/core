@@ -8,6 +8,7 @@ import {
   R3_SHARED_AGENT_ONLY_TOOL_KEYS,
   SANDBOX_ASK_TOOL_NAMES,
 } from "./builtin-names.js";
+import { personalAuth } from "./connector-account-policies.js";
 import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { AskRequest, DecidePolicy } from "./pipeline.js";
 import type { ResolvedTool, ToolPolicy } from "./registry.js";
@@ -61,22 +62,59 @@ export function isFixedAsk(
   return !(builtinOnly && visibility === "private" && skillWritePolicy !== "ask");
 }
 
-const asOverride = (v: unknown): "ask" | "deny" | undefined =>
-  v === "ask" || v === "deny" ? v : undefined;
+const asSetting = (v: unknown): ToolPolicy | undefined =>
+  v === "allow" || v === "ask" || v === "deny" ? v : undefined;
+
+/** The stricter of the settings that are set (none set: undefined). */
+function combine(...xs: (ToolPolicy | undefined)[]): ToolPolicy | undefined {
+  let out: ToolPolicy | undefined;
+  for (const x of xs) if (x !== undefined) out = out === undefined ? x : stricter(out, x);
+  return out;
+}
 
 /**
- * An agent's tightening for a call: its policy on the tool key and, for a per-call key
- * (`Platform:<operation>`), on that key, the stricter of the two (a policy can only tighten).
+ * An agent's setting for a call: its policy on the tool key and, for a per-call key
+ * (`Platform:<operation>`), on that key, the stricter of the two; undefined when neither is set.
+ * `allow` counts only for a connector tool ({@link connectorPolicy}); elsewhere an agent's policy
+ * can only tighten ({@link tighteningOf}).
  */
-function overrideOf(
+function settingOf(
   policies: Record<string, unknown> | undefined,
   toolKey: string,
   policyKey: string,
-): "ask" | "deny" | undefined {
-  const own = asOverride(policies?.[toolKey]);
+): ToolPolicy | undefined {
+  const own = asSetting(policies?.[toolKey]);
   if (policyKey === toolKey) return own;
-  const s = stricter(own ?? "allow", asOverride(policies?.[policyKey]));
-  return s === "allow" ? undefined : s;
+  return combine(own, asSetting(policies?.[policyKey]));
+}
+
+/** An agent setting as a tightening (`allow` tightens nothing). */
+const tighteningOf = (s: ToolPolicy | undefined): "ask" | "deny" | undefined =>
+  s === "ask" || s === "deny" ? s : undefined;
+
+/** Which level decided a connector tool's policy ({@link connectorPolicy}). */
+export type ConnectorPolicySource = "org" | "member" | "agent";
+
+/**
+ * A connector tool's policy for one call (maintainer decisions 2026-11-09), highest first:
+ * 1. the org's default `deny` (a tool the org switched off never gets here: it is unavailable);
+ * 2. the member's own `deny` for calls with their connection (`member`): a floor no agent lifts;
+ * 3. the agent's setting (`agent`, from its tools page): `allow` / `ask` / `deny`;
+ * 4. the member's own `allow` / `ask`;
+ * 5. the org's default (`connector_tools.default_policy`, the annotation default unless an org
+ *    admin changed it: `readOnlyHint: true` allows, anything else asks).
+ * Fixed asks (R3, `requiresUserInteraction`), role escalation and grants apply after this.
+ */
+export function connectorPolicy(input: {
+  orgDefault: ToolPolicy;
+  member?: ToolPolicy | undefined;
+  agent?: ToolPolicy | undefined;
+}): { policy: ToolPolicy; source: ConnectorPolicySource } {
+  if (input.orgDefault === "deny") return { policy: "deny", source: "org" };
+  if (input.member === "deny") return { policy: "deny", source: "member" };
+  if (input.agent !== undefined) return { policy: input.agent, source: "agent" };
+  if (input.member !== undefined) return { policy: input.member, source: "member" };
+  return { policy: input.orgDefault, source: "org" };
 }
 
 /**
@@ -90,7 +128,7 @@ function overrideOf(
  *   parent's current version still tightens it (sub-agents spec §5.3, §9); its "this conversation"
  *   grants are the root conversation's (agent map spec §7); an org agent sub-agent (§5.5): `ctx.agentId` is the
  *   dispatched agent (its current version, its "always" grants) and the parent agent's current
- *   policies apply on top ({@link parentAgentOverride});
+ *   policies apply on top ({@link parentAgentSetting});
  * - 授权表（`conversation_tool_grants` / `tool_grants`），`spec_hash` 与当前定义不一致视为无效（D8），
  *   `connector_id` 与工具的来源连接器不一致也无效（删除后用同一 slug 重新安装的连接器不继承旧授权）；
  * - 工具声明了 `requiredRole`（R1）时，发起人在组织中的当前角色：不是成员 → 拒绝；角色不足 → 按角色升级的审批
@@ -107,11 +145,13 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     let connectorDefault: ToolPolicy = call?.policy ?? tool.defaultPolicy;
     let connectorId: string | null = null;
     let hashCurrent = true;
+    /** The member's own setting for a call with their connection (a personal-credential connector). */
+    let memberSetting: ToolPolicy | undefined;
     if (tool.source.kind === "connector") {
       connectorId = tool.source.connectorId;
       const app = await db
         .selectFrom("connectors")
-        .select(["slug", "status", "deleted_at"])
+        .select(["slug", "status", "deleted_at", "auth"])
         .where("id", "=", tool.source.connectorId)
         .where("org_id", "=", ctx.orgId)
         .executeTakeFirst();
@@ -132,6 +172,18 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       if (row.status !== "enabled") return { unavailable: "Tool is pending review" };
       connectorDefault = row.default_policy;
       hashCurrent = row.spec_hash === tool.specHash;
+      // The call is made with the acting account's own connection (the credential the pipeline
+      // injects for `ctx.accountId`): that account's settings apply, never another's
+      if (personalAuth(app.auth)) {
+        const mine = await db
+          .selectFrom("connector_tool_account_policies")
+          .select("policy")
+          .where("connector_id", "=", tool.source.connectorId)
+          .where("account_id", "=", ctx.accountId)
+          .where("tool_name", "=", tool.source.name)
+          .executeTakeFirst();
+        memberSetting = mine?.policy;
+      }
     }
     // 沙箱工具的组织默认（M5 T8）：组织设置 sandboxToolPolicy 为 ask 时，有副作用的沙箱工具至少 ask
     // `orgAsk`: the org setting, not the tool's own default, is what makes it ask
@@ -144,7 +196,7 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
     }
 
     // 运行所用版本可能是加 toolPolicies 字段之前保存的：缺省为空
-    const runOverride = overrideOf(
+    const runSetting = settingOf(
       agentDef.toolPolicies as Record<string, unknown> | undefined,
       tool.key,
       policyKey,
@@ -165,12 +217,32 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
         ? undefined
         : await normalizeStoredDefinitionIn(db, ctx.orgId, current.definition);
     const currentPolicies = currentDef?.toolPolicies as Record<string, unknown> | undefined;
-    const currentOverride = overrideOf(currentPolicies, tool.key, policyKey);
-    let strictest = stricter(runOverride ?? "allow", currentOverride);
+    const currentSetting = settingOf(currentPolicies, tool.key, policyKey);
+    // the run's version, the agent's current version and (a sub-agent) its parent agent's
+    // current version: the stricter of the ones that are set
+    // (an `allow` the owner removed since the run started no longer applies: removing it tightens)
+    const runKept =
+      runSetting === "allow" && current !== undefined && currentSetting === undefined
+        ? undefined
+        : runSetting;
+    let agentSetting = combine(runKept, currentSetting);
     if (ctx.parentConversationId !== undefined && ctx.parentAgentDiffers !== false) {
-      strictest = stricter(strictest, await parentAgentOverride(db, tool.key, policyKey, ctx));
+      agentSetting = combine(agentSetting, await parentAgentSetting(db, tool.key, policyKey, ctx));
     }
-    const agentOverride = strictest === "allow" ? undefined : strictest;
+    let agentOverride = tighteningOf(agentSetting);
+    // A connector tool: the levels of `connectorPolicy` decide its base policy (an agent's
+    // `allow` counts here, below the org's and the member's deny)
+    let decidedBy: ConnectorPolicySource | null = null;
+    if (tool.source.kind === "connector") {
+      const r = connectorPolicy({
+        orgDefault: connectorDefault,
+        member: memberSetting,
+        agent: agentSetting,
+      });
+      connectorDefault = r.policy;
+      decidedBy = r.source;
+      agentOverride = undefined;
+    }
 
     let escalateTo: OrgRole | null = null;
     if (tool.requiredRole !== undefined) {
@@ -220,15 +292,17 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
       policy:
         escalateTo !== null
           ? "role"
-          : agentOverride === "ask"
+          : agentOverride === "ask" || (decidedBy === "agent" && connectorDefault === "ask")
             ? "agent"
-            : tool.source.kind === "connector" && connectorDefault === "ask"
-              ? "connector"
-              : fixedAsk
-                ? "fixed"
-                : orgAsk
-                  ? "org"
-                  : "default",
+            : decidedBy === "member" && connectorDefault === "ask"
+              ? "member"
+              : tool.source.kind === "connector" && connectorDefault === "ask"
+                ? "connector"
+                : fixedAsk
+                  ? "fixed"
+                  : orgAsk
+                    ? "org"
+                    : "default",
     };
     return { ask };
   };
@@ -240,12 +314,12 @@ export function createDecidePolicy(db: KernelSchemaDb): DecidePolicy {
  * policy for the same key applies on top, so the parent's owner can tighten a running child too.
  * For a template or general-purpose child the parent conversation has the same agent, already read.
  */
-async function parentAgentOverride(
+async function parentAgentSetting(
   db: KernelSchemaDb,
   toolKey: string,
   policyKey: string,
   ctx: { orgId: string; agentId: string; parentConversationId?: string },
-): Promise<"ask" | "deny" | undefined> {
+): Promise<ToolPolicy | undefined> {
   const row = await db
     .selectFrom("conversations as c")
     .innerJoin("agents as a", "a.id", "c.agent_id")
@@ -259,7 +333,7 @@ async function parentAgentOverride(
   // stored raw: an rc version's keys read as current keys, so its deny keeps applying (§8.3)
   const policies = (await normalizeStoredDefinitionIn(db, ctx.orgId, row.definition))
     .toolPolicies as Record<string, unknown> | undefined;
-  return overrideOf(policies, toolKey, policyKey);
+  return settingOf(policies, toolKey, policyKey);
 }
 
 /**

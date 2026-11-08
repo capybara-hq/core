@@ -234,6 +234,63 @@ describe("admin component lists", () => {
     expect(within(table).getByText(C.owner.platform)).toBeTruthy();
   });
 
+  const SLACK_ICON = "/api/v1/admin/catalog/items/i-slack/icon?v=0.1.0";
+  const SLACK = comp({
+    kind: "connector_template",
+    id: "c2",
+    name: "slack",
+    displayName: { zh: "Slack 工作区", en: "Slack workspace" },
+    plugin: "slack",
+    itemId: "i-slack",
+    description: null,
+    version: "0.1.0",
+    icon: SLACK_ICON,
+  });
+
+  it.each(["zh", "en"] as const)(
+    "/admin/connector-templates: the display name with the plugin's mark, the id under it (%s)",
+    async (locale) => {
+      const routes = {
+        ...base,
+        "GET /api/v1/admin/components?kind=connector_template": () =>
+          json(200, { components: [...TEMPLATES, SLACK] }),
+      };
+      stubApi(routes);
+      await renderRouteWithCache("/admin/connector-templates", routes, { locale });
+      const table = await screen.findByRole("table", {
+        name: { zh, en }[locale].adminComponents.titles.connector_template,
+      });
+      const label = locale === "zh" ? "Slack 工作区" : "Slack workspace";
+      const link = within(table).getByRole("link", { name: label });
+      expect(link.getAttribute("href")).toBe("/admin/connector-templates/c2");
+      const row = link.closest("tr") as HTMLElement;
+      // the id stays as meta, never the title
+      const lead = row.querySelector('[data-lead="true"]') as HTMLElement;
+      expect(within(lead).getByText("slack")).toBeTruthy();
+      expect(within(lead).queryByRole("link", { name: "slack" })).toBeNull();
+      expect(row.querySelector('[data-part="mark-image"]')?.getAttribute("src")).toBe(SLACK_ICON);
+      // without a display name or an icon: the id is the name, the initial the mark
+      const gh = within(table).getByRole("link", { name: "gh" }).closest("tr") as HTMLElement;
+      expect(gh.querySelector('[data-part="object-mark"]')?.textContent).toBe("G");
+      expect(gh.querySelector('[data-part="mark-image"]')).toBeNull();
+    },
+  );
+
+  it("/admin/connector-templates/<id>: the display name as the title with the plugin's mark", async () => {
+    await open("/admin/connector-templates/c2", {
+      "GET /api/v1/admin/components?kind=connector_template": () =>
+        json(200, { components: [...TEMPLATES, SLACK] }),
+      "GET /api/v1/admin/components/connector_template/c2/versions": () =>
+        json(200, { versions: [] }),
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: "Slack workspace" })).toBeTruthy();
+    expect(
+      document
+        .querySelector('[data-part="object-mark"] [data-part="mark-image"]')
+        ?.getAttribute("src"),
+    ).toBe(SLACK_ICON);
+  });
+
   it("/admin/agent-templates: cards with source · owner · scope · v, the primary 查看 and ⋯ (ruling P4-17)", async () => {
     await open("/admin/agent-templates");
     expect(screen.queryByRole("table")).toBeNull();

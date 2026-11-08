@@ -119,6 +119,11 @@ export interface ComponentRow extends ComponentScopeFacts {
   /** The current version (a connector template: the catalog version that last changed it). */
   version: string;
   description: string | null;
+  /**
+   * A connector template's localized display name (its file's `displayName`); null for skills and
+   * agent templates, whose name is what they are shown by.
+   */
+  displayName: { zh: string; en: string } | null;
   shownToOthers: boolean;
   /** The owning org (null: the platform; ruling P3-1). */
   ownerOrgId: string | null;
@@ -126,6 +131,12 @@ export interface ComponentRow extends ComponentScopeFacts {
   originOrgId: string | null;
   /** Its owner shares it with other orgs (the share gate, P3-1). */
   shareable: boolean;
+}
+
+/** A `{ zh, en }` display name from stored JSON (a template file's), else null. */
+function localizedName(v: unknown): { zh: string; en: string } | null {
+  const n = v as { zh?: unknown; en?: unknown } | null | undefined;
+  return typeof n?.zh === "string" && typeof n.en === "string" ? { zh: n.zh, en: n.en } : null;
 }
 
 /** The live platform components of `kind` (`ids` / `itemId`: only those). */
@@ -178,17 +189,23 @@ export async function loadComponents(
     if (filter.itemId !== undefined) q = q.where("p.catalog_item_id", "=", filter.itemId);
     if (filter.name !== undefined) q = q.where("p.template_id", "=", filter.name);
     if (filter.forUpdate) q = q.forUpdate("p");
-    return (await q.orderBy("p.id").execute()).map((r) => ({
-      ...common(r),
-      ...((r.file as { defaultEnabled?: unknown } | null)?.defaultEnabled === false && {
-        defaultOff: true,
-      }),
-      name: r.template_id,
-      plugin: r.item_name,
-      version: r.current_version,
-      description: null,
-      originOrgId: null,
-    }));
+    return (await q.orderBy("p.id").execute()).map((r) => {
+      const file = r.file as {
+        defaultEnabled?: unknown;
+        displayName?: unknown;
+        description?: unknown;
+      } | null;
+      return {
+        ...common(r),
+        ...(file?.defaultEnabled === false && { defaultOff: true }),
+        name: r.template_id,
+        plugin: r.item_name,
+        version: r.current_version,
+        description: typeof file?.description === "string" ? file.description : null,
+        displayName: localizedName(file?.displayName),
+        originOrgId: null,
+      };
+    });
   }
   const table = kind === "skill" ? "platform_skills" : "platform_agent_templates";
   let q = db
@@ -219,6 +236,7 @@ export async function loadComponents(
     plugin: r.plugin_name,
     version: String(r.current_version),
     description: r.description as string | null,
+    displayName: null,
     originOrgId: r.origin_org_id,
   }));
 }

@@ -642,6 +642,18 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Writes the caller's connector credentials",
   },
   {
+    route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
+    category: "internal",
+    reason:
+      "Display list of the connector card's 权限 sheet; connectors.get gives an agent the tools and their org defaults",
+  },
+  {
+    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
+    category: "human-only",
+    reason:
+      "A member's own tool policies decide what agents may call with their connection without asking; an agent must never loosen them for itself",
+  },
+  {
     route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
     category: "secret",
     reason: "Deletes the caller's connector credentials",

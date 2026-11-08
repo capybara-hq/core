@@ -26,6 +26,13 @@ export type DisabledToolRef =
 export type TightenedPolicy = "ask" | "deny";
 
 /**
+ * An agent's own tool policy (kernel `definition.toolPolicies`): `ask` / `deny` tighten any tool;
+ * `allow` counts only for a connector tool, over the org default and a member's own 询问, never
+ * over the org's or the member's 禁止 (decision 2026-11-09).
+ */
+export type AgentToolPolicy = "allow" | TightenedPolicy;
+
+/**
  * The builtins the Tools section switches (the kernel's `AGENT_BUILTIN_NAMES` without `Agent`,
  * which the Sub-agents section switches; `ToolSearch` and `Skill` are added by the kernel, and
  * `TaskOutput` / `TaskStop` come with `Bash`). All are on unless turned off. The web tools
@@ -82,8 +89,8 @@ export interface AgentDefinitionInput {
   fallbackParams?: Record<string, ParamValue>;
   /** The tools turned off; absent or `[]` = every tool the org offers (tools default-on spec). */
   disabledTools?: DisabledToolRef[];
-  /** 按工具 key 收紧策略。 */
-  toolPolicies?: Record<string, TightenedPolicy>;
+  /** 按工具 key 的策略（连接器工具可设 `allow`，见 {@link AgentToolPolicy}）。 */
+  toolPolicies?: Record<string, AgentToolPolicy>;
   /** 选用的组织技能（id）；不用技能时省略。 */
   /**
    * 技能设置；表单只管 `orgSkills` 与 `writePolicy`（私有 agent 的 SkillWrite 确认开关，缺省不写），
