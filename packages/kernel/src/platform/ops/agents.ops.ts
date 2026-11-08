@@ -2,12 +2,14 @@ import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
+import { AgentProfileService } from "../../agents/agent-profile.service.js";
 import {
   AgentCreateBody,
   AgentCreateDefinition,
   AgentFromTemplateBody,
   AgentFromTemplatePreviewBody,
   AgentPathParams,
+  AgentProfileBody,
   AgentUpdateBody,
   PendingConnectorBindBody,
   PendingConnectorParams,
@@ -22,6 +24,7 @@ import {
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
+import { AvatarInputSchema } from "../../agents/profile.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
@@ -72,6 +75,41 @@ const Fields = {
   subagents: Def.subagents.unwrap(),
 };
 
+/**
+ * The profile fields the tool sets: a preset avatar (or none) and the quick actions. An uploaded
+ * image is the web's (byte upload); the description moves into the agent definition (run-context
+ * spec §3.5), so it is not mirrored here.
+ */
+const Profile = AgentProfileBody.shape;
+const [PresetAvatar] = AvatarInputSchema.options;
+
+/** One change of `agents.update-profile` as the card says it. */
+function profileChanges(i: {
+  avatar?: { id: string } | null | undefined;
+  quickActions?: { title: string }[] | undefined;
+}): { zh: string[]; en: string[] } {
+  const zh: string[] = [];
+  const en: string[] = [];
+  if (i.avatar === null) {
+    zh.push("移除头像");
+    en.push("remove the avatar");
+  } else if (i.avatar !== undefined) {
+    zh.push(`头像设为预设「${i.avatar.id}」`);
+    en.push(`set the avatar to preset "${i.avatar.id}"`);
+  }
+  if (i.quickActions !== undefined && i.quickActions.length === 0) {
+    zh.push("清空快捷操作");
+    en.push("clear the quick actions");
+  } else if (i.quickActions !== undefined) {
+    const titles = i.quickActions.map((q) => named(q.title));
+    zh.push(`快捷操作设为 ${titles.length} 条：${titles.map((t) => `「${t}」`).join("")}`);
+    en.push(
+      `set ${titles.length} quick action${titles.length === 1 ? "" : "s"}: ${titles.map((t) => `"${t}"`).join(", ")}`,
+    );
+  }
+  return { zh, en };
+}
+
 const WEB_ONLY =
   "Agents created with the Platform tool are private, and no agent's visibility can be changed with it; sharing an agent with the org or with members is done on the agents page of the web app.";
 
@@ -93,6 +131,7 @@ export class AgentsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(AgentsService) private readonly agents: AgentsService,
+    @Inject(AgentProfileService) private readonly profiles: AgentProfileService,
     @Inject(AgentsFromTemplate) private readonly fromTemplate: AgentsFromTemplate,
     @Inject(OrgAgentTemplates) private readonly orgTemplates: OrgAgentTemplates,
     @Inject(PendingConnectorsService) private readonly pending: PendingConnectorsService,
@@ -168,7 +207,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.get",
         description:
-          "Read one agent you can see with its full definition: instructions, model, tools, skills and sub-agents. Takes the agent id from agents.list.",
+          "Read one agent you can see with its full definition (instructions, model, tools, skills and sub-agents) and its profile (avatar, description, quick actions). Takes the agent id from agents.list.",
         input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
@@ -325,6 +364,93 @@ export class AgentsOperations implements OnModuleInit {
             undefined,
             viaAgent("agents.update", ctx),
           );
+        },
+      }),
+      defineOperation({
+        id: "agents.update-profile",
+        description:
+          "Change how an agent you may edit looks to people: its avatar (one of the preset animals, or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. A custom avatar image and the description are set on the agents page of the web app. A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
+        input: z
+          .object({
+            agentId: AgentId,
+            // a preset only: the route's `upload` kind needs a byte upload, which stays on the web
+            avatar: PresetAvatar.nullable().optional(),
+            quickActions: Profile.quickActions,
+          })
+          .strict()
+          .refine((i) => i.avatar !== undefined || i.quickActions !== undefined, {
+            message: "Send avatar, quickActions or both",
+          }),
+        example: {
+          agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",
+          avatar: { kind: "preset", id: "owl" },
+          quickActions: [
+            { title: "Weekly report", body: "Write this week's report from my notes." },
+          ],
+        },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId/profile"],
+        // the description is edited with the definition (agents.update); `expectedUpdatedAt` is
+        // read by the operation itself. The narrower avatar (no `upload` kind) needs no
+        // declaration: an input that accepts less than the route passes the parity test.
+        omits: ["description", "expectedUpdatedAt"],
+        confirm: "personal",
+        confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
+        errors: [
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list; only agents you can see can be changed.",
+          },
+          {
+            code: "forbidden",
+            next: {
+              orgAdmin: "Only the agent's owner or an org admin can change its profile.",
+              member:
+                "Only the agent's owner or an org admin can change its profile; ask the owner, or an org admin.",
+            },
+          },
+          {
+            code: "agent.profile_conflict",
+            next: "Someone changed the profile while you were waiting: read it again with agents.get, then call again.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
+          return check;
+        },
+        summary: async (i, ctx) => {
+          const a = await orElse(
+            () => this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId),
+            null,
+          );
+          const n = named(a?.definition.name ?? i.agentId);
+          const c = profileChanges(i);
+          return a?.visibility === "private"
+            ? {
+                zh: `修改私有智能体「${n}」的资料：${c.zh.join("；")}`,
+                en: `Update the profile of private agent "${n}": ${c.en.join("; ")}`,
+              }
+            : {
+                zh: `修改共享智能体「${n}」的资料：${c.zh.join("；")}`,
+                en: `Update the profile of shared agent "${n}": ${c.en.join("; ")}`,
+              };
+        },
+        run: async (input, ctx) => {
+          // the profile as of now: the person approved this change, not a guard on an earlier read
+          const current = await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId);
+          const profile = await this.profiles.update(
+            ctx.orgId,
+            input.agentId,
+            ctx.actorAccountId,
+            {
+              ...(input.avatar !== undefined && { avatar: input.avatar }),
+              ...(input.quickActions !== undefined && { quickActions: input.quickActions }),
+            },
+            current.profile.updatedAt,
+            undefined,
+            viaAgent("agents.update-profile", ctx),
+          );
+          return { id: input.agentId, profile };
         },
       }),
       defineOperation({

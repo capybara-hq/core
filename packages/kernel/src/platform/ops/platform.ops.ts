@@ -110,7 +110,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, tools by the keys you call them by (connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), skills (org and pinned), sub-agents, whether it runs in a sandbox, and the sandbox network mode. Secrets are never shown.",
+          "Show this agent as configured: its model, tools by the keys you call them by (connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), skills (org and pinned), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -145,6 +145,11 @@ export class PlatformOperationsProvider implements OnModuleInit {
             },
             subagents: d.subagents ?? null,
             sandbox: sandbox ? { enabled: true, egress: egress.egress } : { enabled: false },
+            profile: {
+              avatar: agent.profile.avatar,
+              description: agent.profile.description,
+              quickActions: agent.profile.quickActions,
+            },
           };
         },
       }),

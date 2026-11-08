@@ -72,6 +72,12 @@ export const AgentFromTemplateBody = z
   })
   .strict();
 
+/** The profile PATCH: display data only (avatar, description, quick actions), no agent version. */
+export const AgentProfileBody = ProfileInputSchema.extend({
+  /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
+  expectedUpdatedAt: z.string().min(1).max(40),
+}).strict();
+
 /** `:agentId` as the routes take it (`@Param`). */
 export const AgentPathParams = z.object({ agentId: z.string().min(1) });
 
@@ -99,6 +105,11 @@ export const AGENT_ROUTES: readonly RouteSchemas[] = [
   },
   { route: "POST /api/v1/orgs/:orgId/agents/from-template", body: AgentFromTemplateBody },
   { route: "DELETE /api/v1/orgs/:orgId/agents/:agentId", params: AgentPathParams },
+  {
+    route: "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
+    params: AgentPathParams,
+    body: AgentProfileBody,
+  },
   { route: "GET /api/v1/orgs/:orgId/agents/:agentId/versions", params: AgentPathParams },
   {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/pending-connectors/:key/bind",

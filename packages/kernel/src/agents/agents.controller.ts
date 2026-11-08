@@ -24,6 +24,7 @@ import {
   AgentCreateBody,
   AgentFromTemplateBody,
   AgentFromTemplatePreviewBody,
+  AgentProfileBody,
   AgentUpdateBody,
 } from "./agents.schemas.js";
 import {
@@ -33,14 +34,10 @@ import {
   type AgentWarning,
 } from "./agents.service.js";
 import { AgentsFromTemplate, type TemplatePreview } from "./from-template.service.js";
-import { type AgentProfile, ProfileInputSchema } from "./profile.js";
+import type { AgentProfile } from "./profile.js";
 
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
-const ProfileBody = ProfileInputSchema.extend({
-  /** The `profile.updatedAt` the client read; a different one → 409 `agent.profile_conflict`. */
-  expectedUpdatedAt: z.string().min(1).max(40),
-}).strict();
 const AvatarUploadBody = z
   .object({
     name: z
@@ -57,7 +54,7 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
 
 class AgentCreateBodyDto extends createZodDto(AgentCreateBody, "AgentCreateBody") {}
 class AgentUpdateBodyDto extends createZodDto(AgentUpdateBody, "AgentUpdateBody") {}
-class AgentProfileBodyDto extends createZodDto(ProfileBody, "AgentProfileBody") {}
+class AgentProfileBodyDto extends createZodDto(AgentProfileBody, "AgentProfileBody") {}
 class AgentAvatarUploadBodyDto extends createZodDto(AvatarUploadBody, "AgentAvatarUploadBody") {}
 class AgentOwnerBodyDto extends createZodDto(OwnerBody, "AgentOwnerBody") {}
 class AgentFromTemplatePreviewBodyDto extends createZodDto(
@@ -200,7 +197,7 @@ export class AgentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("agentId") agentId: string,
-    @ZBody(AgentProfileBodyDto) body: z.infer<typeof ProfileBody>,
+    @ZBody(AgentProfileBodyDto) body: z.infer<typeof AgentProfileBody>,
   ): Promise<{ profile: AgentProfile }> {
     const p = requireUser(principal);
     const { expectedUpdatedAt, ...patch } = body;
