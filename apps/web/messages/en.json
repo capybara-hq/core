@@ -264,7 +264,8 @@
       "extension_enabled": "This plugin's extension is still enabled on the deployment: disable it on the Extensions page first, then delete the plugin.",
       "item_removed": "This plugin has been removed.",
       "preview_stale": "What deleting this plugin does has changed since the preview. Preview it again and confirm.",
-      "not_owned": "Only your organization's own skills and agent templates can be shared."
+      "not_owned": "Only your organization's own skills and agent templates can be shared.",
+      "guide_not_found": "The plugin has no such setup guide."
     },
     "directory": {
       "not_configured": "This extension's directory is not configured. Fill in its directory settings in the organization config first."
@@ -281,7 +282,8 @@
       "verify_failed": "The platform rejected the bot credentials. Check them and try again.",
       "webhook_unavailable": "Webhooks are not available for this channel: the extension does not support them or the deployment has no webhook address.",
       "webhook_not_found": "No webhook is registered at this address.",
-      "webhook_retry": "The event could not be accepted; retry later."
+      "webhook_retry": "The event could not be accepted; retry later.",
+      "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming."
     },
     "identity": {
       "taken": "This IM account is already linked to another Capybara account.",
@@ -2302,6 +2304,16 @@
     "tabs": {
       "all": "All",
       "error": "Errors"
+    },
+    "guide": {
+      "title": "Setup guide",
+      "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
+      "modeLabel": "Inbound mode",
+      "stepsLabel": "Setup steps",
+      "unresolved": "{names} have no value yet and are shown as written: they are filled in once the channel is saved (the webhook URL also needs the deployment's webhook address).",
+      "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
+      "driftAck": "I updated the {plugin} app",
+      "driftAcked": "Recorded: the app matches the plugin's setup."
     }
   },
   "extensions": {

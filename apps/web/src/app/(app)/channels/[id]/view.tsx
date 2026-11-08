@@ -2,6 +2,7 @@
 
 import {
   Button,
+  Callout,
   Card,
   DangerConfirm,
   DateTime,
@@ -15,6 +16,7 @@ import {
   Stack,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -25,11 +27,13 @@ import { channelConfig, channelFormMeta } from "../../../../components/config-fo
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { SetupGuideBody } from "../../../../components/SetupGuide";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { Agent } from "../../../../lib/agents";
-import { configIssues, issueLines } from "../../../../lib/api";
+import { ApiClientError, configIssues, issueLines } from "../../../../lib/api";
 import {
+  ackChannelGuide,
   type ChannelConnection,
   channelPluginLabel,
   deleteChannel,
@@ -41,7 +45,7 @@ import {
 import { labelLocale } from "../../../../lib/extension-label";
 import type { ConfigIssue, JsonSchema } from "../../../../lib/json-schema";
 import { agentsQuery } from "../../../../lib/query/agents";
-import { channelQuery, channelSchemaQuery } from "../../../../lib/query/channels";
+import { channelQuery, channelSchemaQuery, setupGuideQuery } from "../../../../lib/query/channels";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -150,7 +154,7 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
       facts={<ChannelFacts data={data} />}
     >
       {tab === "overview" ? (
-        <OverviewTab channel={data.channel} update={update} />
+        <OverviewTab orgId={orgId} channel={data.channel} update={update} />
       ) : tab === "credentials" ? (
         <CredentialsTab
           key={data.channel.updatedAt}
@@ -193,8 +197,16 @@ function ChannelFacts({ data }: { data: ChannelData }) {
   );
 }
 
-/** 概览：状态、最近错误与启停。 */
-function OverviewTab({ channel, update }: { channel: ChannelConnection; update: Update }) {
+/** 概览：状态、最近错误与启停；入站方式；接入指南。 */
+function OverviewTab({
+  orgId,
+  channel,
+  update,
+}: {
+  orgId: string;
+  channel: ChannelConnection;
+  update: Update;
+}) {
   const t = useTranslations("channels");
   const toast = useToast();
   const errorMessage = useErrorMessage();
@@ -244,6 +256,80 @@ function OverviewTab({ channel, update }: { channel: ChannelConnection; update: 
         </Stack>
       </Card>
       <InboundCard key={channel.inboundMode} channel={channel} update={update} />
+      {channel.setupGuide ? (
+        <GuideSection
+          // a mode switch renders the guide of the new mode
+          key={`${channel.inboundMode}-${channel.setupGuide.version}`}
+          orgId={orgId}
+          channel={channel}
+          guide={channel.setupGuide}
+        />
+      ) : null}
+    </Stack>
+  );
+}
+
+/**
+ * 接入指南 (spec 2026-11-08-plugin-setup-guides-design.md §5, §6): the plugin's setup guide
+ * rendered for this connection, and above it the notice when an upgrade changed the templates of
+ * its mode since it was set up, with 「我已更新应用」 (records the guide shown, by its hash).
+ */
+function GuideSection({
+  orgId,
+  channel,
+  guide,
+}: {
+  orgId: string;
+  channel: ChannelConnection;
+  guide: NonNullable<ChannelConnection["setupGuide"]>;
+}) {
+  const t = useTranslations("channels");
+  const lang = labelLocale(useLocale());
+  const qc = useQueryClient();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  // The guide of the connection's own mode (the section's default view shares this read)
+  const shown = useQuery(setupGuideQuery(orgId, guide, { connectionId: channel.id }));
+  const ack = useAppMutation({
+    fn: (hash: string) => ackChannelGuide(orgId, channel.id, hash),
+    invalidates: () => [keys.org(orgId).channels()],
+    onSuccess: (r) => qc.setQueryData(channelQuery(orgId, channel.id).queryKey, r.channel),
+  });
+  const plugin = channelPluginLabel(channel, lang);
+  const drift = channel.guideDrift ?? null;
+
+  async function confirm() {
+    const hash = shown.data?.hash;
+    if (hash === undefined) return;
+    try {
+      await ack.mutateAsync(hash);
+      toast.success(t("guide.driftAcked"));
+    } catch (e) {
+      // the guide moved on since it was read: read it again before confirming
+      if (e instanceof ApiClientError && e.code === "channel.guide_changed") {
+        void qc.invalidateQueries({ queryKey: keys.org(orgId).setupGuidesAll() });
+      }
+      toast.error(errorMessage(e));
+    }
+  }
+
+  return (
+    <Stack gap={8}>
+      {drift !== null && (
+        <Callout
+          tone="warn"
+          action={{ label: t("guide.driftAck", { plugin }), onSelect: () => void confirm() }}
+        >
+          {t("guide.driftNotice", {
+            plugin,
+            from: versionLabel(drift.from),
+            to: versionLabel(drift.to),
+          })}
+        </Callout>
+      )}
+      <Card title={t("guide.title")}>
+        <SetupGuideBody orgId={orgId} guide={guide} query={{ connectionId: channel.id }} />
+      </Card>
     </Stack>
   );
 }

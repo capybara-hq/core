@@ -2,6 +2,7 @@ import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
 import { extensionLabel } from "./extension-label";
 import type { JsonSchema } from "./json-schema";
+import type { SetupGuideRef } from "./setup-guides";
 
 /** 渠道连接的状态（`error`：长连接最近一次失败，见 `lastError`）。 */
 export type ChannelStatus = "active" | "disabled" | "error";
@@ -36,6 +37,13 @@ export interface ChannelConnection {
   tenantId: string | null;
   config: Record<string, unknown>;
   secrets: { path: string; set: boolean }[];
+  /** Its plugin's setup guide the org may see (the 接入指南 section); null without one. */
+  setupGuide?: (SetupGuideRef & { version: string }) | null;
+  /**
+   * The plugin changed the guide's templates since the connection was set up: the versions (the
+   * notice and 「我已更新应用」); null otherwise.
+   */
+  guideDrift?: { from: string; to: string } | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -74,9 +82,12 @@ export const listChannels = (orgId: string) =>
 export const getChannel = (orgId: string, id: string) =>
   apiFetch<{ channel: ChannelConnection }>(one(orgId, id));
 
-/** 插件的连接配置 JSON Schema（密钥字段带 `x-secret`）。 */
+/**
+ * 插件的连接配置 JSON Schema（密钥字段带 `x-secret`），and where its setup guide is (`guide`, null
+ * or absent without one).
+ */
 export const getChannelSchema = (orgId: string, plugin: string) =>
-  apiFetch<{ plugin: string; schema: JsonSchema }>(
+  apiFetch<{ plugin: string; schema: JsonSchema; guide?: SetupGuideRef | null }>(
     `${base(orgId)}/schema/${encodeURIComponent(plugin)}`,
   );
 
@@ -90,6 +101,13 @@ export const updateChannel = (orgId: string, id: string, input: UpdateChannelInp
   apiFetch<{ channel: ChannelConnection }>(one(orgId, id), {
     method: "PATCH",
     body: JSON.stringify(input),
+  });
+
+/** 「我已更新应用」: the template hash of the guide shown (409 `channel.guide_changed` when stale). */
+export const ackChannelGuide = (orgId: string, id: string, hash: string) =>
+  apiFetch<{ channel: ChannelConnection }>(`${one(orgId, id)}/guide-ack`, {
+    method: "POST",
+    body: JSON.stringify({ hash }),
   });
 
 export const deleteChannel = (orgId: string, id: string) =>

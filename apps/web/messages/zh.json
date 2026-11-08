@@ -264,7 +264,8 @@
       "extension_enabled": "这个插件的扩展仍在部署上启用：请先在扩展页停用它，再删除插件。",
       "item_removed": "这个插件已被删除。",
       "preview_stale": "删除这个插件的影响在预览之后发生了变化，请重新预览后再确认。",
-      "not_owned": "只能共享本组织自己的技能和智能体模板。"
+      "not_owned": "只能共享本组织自己的技能和智能体模板。",
+      "guide_not_found": "插件没有这份接入指南。"
     },
     "directory": {
       "not_configured": "该扩展的通讯录尚未配置，请先在组织配置中填写通讯录设置。"
@@ -281,7 +282,8 @@
       "verify_failed": "平台拒绝了机器人凭据，请检查后重试。",
       "webhook_unavailable": "该渠道无法使用 Webhook：扩展不支持，或部署未配置回调地址。",
       "webhook_not_found": "这个地址没有注册 Webhook。",
-      "webhook_retry": "事件暂时无法接收，请稍后重试。"
+      "webhook_retry": "事件暂时无法接收，请稍后重试。",
+      "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。"
     },
     "identity": {
       "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
@@ -2290,6 +2292,16 @@
     "tabs": {
       "all": "全部",
       "error": "出错"
+    },
+    "guide": {
+      "title": "接入指南",
+      "hint": "按插件提供的步骤在平台上创建应用；下面的文件已按这个渠道填好，复制后粘贴即可。",
+      "modeLabel": "接入方式",
+      "stepsLabel": "接入步骤",
+      "unresolved": "{names} 现在还没有值，原样显示：保存渠道后才会填上（Webhook 地址还需要部署配置回调地址）。",
+      "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
+      "driftAck": "我已更新 {plugin} 应用",
+      "driftAcked": "已记录：应用与插件的接入配置一致。"
     }
   },
   "extensions": {

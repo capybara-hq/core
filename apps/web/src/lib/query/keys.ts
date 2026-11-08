@@ -73,6 +73,18 @@ export const keys = {
       channel: (channelId: string): readonly unknown[] => [...all, "channel", channelId],
       /** A channel plugin's connection schema. */
       channelSchema: (plugin: string): readonly unknown[] => [...all, "channelSchema", plugin],
+      /** Where a channel plugin's setup guide is. */
+      channelGuideRef: (plugin: string): readonly unknown[] => [...all, "channelGuideRef", plugin],
+      /** Every rendered setup guide (an invalidation prefix). */
+      setupGuidesAll: (): readonly unknown[] => [...all, "setupGuide"],
+      /** A plugin's setup guide rendered for a connection / mode / name. */
+      setupGuide: (
+        itemId: string,
+        guideId: string,
+        connectionId: string,
+        mode: string,
+        name: string,
+      ): readonly unknown[] => [...all, "setupGuide", itemId, guideId, connectionId, mode, name],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
       /** One extension's two-level config in the org: following or a copy, per-field levels. */
