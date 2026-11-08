@@ -185,6 +185,7 @@
     "connector": {
       "not_found": "连接器不存在或已被删除。",
       "slug_taken": "该 slug 已被其他连接器使用。",
+      "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。",
       "kind_unavailable": "该连接器类型所属的插件未在本组织启用。",
       "connect_failed": "无法访问连接器的服务，请检查 URL 与凭据。",
       "tool_not_found": "该连接器没有这个工具。",
