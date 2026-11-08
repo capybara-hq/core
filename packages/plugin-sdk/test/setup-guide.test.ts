@@ -209,6 +209,23 @@ describe("validateSetupGuide: the document", () => {
     expect(v(doc(`${F}sh`, "curl {{webhookUrl}}", F))).toEqual([]);
   });
 
+  it("warns about a text variable outside double quotes in a yaml or json fence", () => {
+    const bare = v(doc(`${F}yaml`, "name: {{connectionName}}", F));
+    expect(errors(bare)).toEqual([]);
+    expect(warnings(bare).join()).toMatch(/connectionName.*double quotes/);
+    expect(warnings(v(doc(`${F}json`, '{ "a": "x", "n": {{orgName}} }', F))).join()).toMatch(
+      /orgName.*double quotes/,
+    );
+    expect(v(doc(`${F}yaml`, 'name: "a \\" {{connectionName}}"', F))).toEqual([]);
+    expect(v(doc(`${F}json`, '{ "n": "{{orgName}}", "u": {{publicUrl}} }', F))).toEqual([]);
+  });
+
+  it("refuses a check line inside raw HTML", () => {
+    expect(errors(v(doc("<div>", "::check bot-token Works", "</div>"))).join()).toMatch(
+      /check bot-token.*HTML/,
+    );
+  });
+
   it("refuses check ids missing from pluginChecks when given", () => {
     const en = doc("::check bot-token Works", "::check capybara:public-url Public URL");
     expect(v(en, { pluginChecks: ["bot-token"] })).toEqual([]);
@@ -298,5 +315,13 @@ describe("validateSetupGuide: language parity", () => {
     expect(errors(v(en, { zh: zh(manifest("name: x"), `${F}text\nx\n${F}`) })).join()).toMatch(
       /code blocks/,
     );
+  });
+
+  it("refuses a code block that sits in another section", () => {
+    const enDoc = doc("::: mode webhook", `${F}yaml`, "a: 1", F, ":::");
+    const zhDoc = doc(`${F}yaml`, "a: 1", F, "::: mode webhook", ":::");
+    expect(errors(v(enDoc, { zh: zhDoc }))).toEqual([
+      "guides/slack-app.zh.md: code block 1 is in another section than guides/slack-app.md block 1; code blocks must be identical in every language",
+    ]);
   });
 });

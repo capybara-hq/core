@@ -431,6 +431,20 @@ export function analyzeSetupGuide(source: string): GuideAnalysis {
       section: sectionOf(line),
     });
   });
+  // a check line swallowed by an HTML block is no block of its own: its row would be missing
+  const placed = new Set<number>();
+  for (const n of tree.children) {
+    const c = checkMarkerIndex(n);
+    if (c !== undefined) placed.add(c);
+  }
+  scan.checks.forEach((c, i) => {
+    if (!placed.has(i)) {
+      err(
+        c.line,
+        `check ${c.id} is inside raw HTML and would not show; end the HTML with a blank line before the check line`,
+      );
+    }
+  });
   if (deepest > LIMITS.depth) err(deepLine, `content is nested deeper than ${LIMITS.depth} levels`);
   if (codeBlocks.length > LIMITS.codeBlocks) {
     err(

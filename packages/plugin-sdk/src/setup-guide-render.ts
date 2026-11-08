@@ -49,7 +49,11 @@ export interface RenderedSetupGuideDoc {
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is replaced
-const CONTROL_RE = /[\u0000-\u001f\u007f]/g;
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+/** What `JSON.stringify` leaves raw but a YAML parser may refuse or read as a line break. */
+const JSON_RAW_RE = /[\u007f-\u009f\u2028\u2029]/g;
+/** U+2060 WORD JOINER: invisible, and breaks a GFM autolink literal where it stands. */
+const WORD_JOINER = "\u2060";
 const AUTOLINKABLE_RE = /https?:\/\/|www\.|\S@\S+\.\S/i;
 const QUOTING_LANGUAGES = new Set(["yaml", "yml", "json"]);
 
@@ -60,6 +64,42 @@ interface Entry {
 }
 
 const clean = (s: string) => s.replace(CONTROL_RE, " ");
+
+/** A value as the inside of a JSON / YAML double-quoted string. */
+const quoted = (s: string) =>
+  JSON.stringify(s)
+    .slice(1, -1)
+    .replace(JSON_RAW_RE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
+/**
+ * Text no GFM parser links (spec §7.1): a word joiner after the colon of `scheme://`, inside `www.`
+ * and before `@`, the three places where a GFM autolink literal (URL, `www.` domain, email) starts.
+ * Applied to every text node outside a link before serializing, so a name such as
+ * `https://evil.example` stays text when the web parses the Markdown again, whoever consumes it.
+ */
+const breakAutolinks = (s: string) =>
+  s
+    .replace(/:(?=\/)/g, `:${WORD_JOINER}`)
+    .replace(/(www)\./gi, `$1${WORD_JOINER}.`)
+    .replace(/@/g, `${WORD_JOINER}@`);
+
+/** Merges adjacent text nodes and breaks autolinks in every text node outside a link. */
+function unlinkText(node: Nodes): void {
+  if (node.type === "link" || !("children" in node)) return;
+  const children = node.children as Nodes[];
+  for (let i = children.length - 1; i > 0; i--) {
+    const a = children[i - 1];
+    const b = children[i];
+    if (a?.type === "text" && b?.type === "text") {
+      a.value += b.value;
+      children.splice(i, 1);
+    }
+  }
+  for (const c of children) {
+    if (c.type === "text") c.value = breakAutolinks(c.value);
+    else unlinkText(c);
+  }
+}
 
 function httpUrl(url: string, allowHttp: boolean): boolean {
   if (!(allowHttp ? /^https?:\/\//i : /^https:\/\//i).test(url)) return false;
@@ -75,8 +115,8 @@ function httpUrl(url: string, allowHttp: boolean): boolean {
  * Renders a guide document for a place, mode and audience (spec §6, §7): sections selected, known
  * variables with a value substituted and escaped for where they stand, unknown and unresolved ones
  * left as written, the tree sanitized (raw HTML as text, images as links or alt text, links only to
- * absolute https URLs or http(s) URLs built from a `url` variable), and cut into blocks. Pure and
- * deterministic.
+ * absolute https URLs or http(s) URLs built from a `url` variable, text kept from being auto-linked)
+ * and cut into blocks. Pure and deterministic.
  */
 export function renderSetupGuide(
   source: string,
@@ -136,6 +176,13 @@ export function renderSetupGuide(
             children: [{ type: "text", value: clean(e.value) }],
           });
         } else push(`<${clean(e.value)}>`);
+      } else if (!inLink && e.type === "url" && httpUrl(e.value, true)) {
+        // a url variable in prose is an explicit link: the text around it never re-parses into one
+        out.push({
+          type: "link",
+          url: e.value,
+          children: [{ type: "text", value: clean(e.value) }],
+        });
       } else push(clean(e.value));
     }
     push(value.slice(at));
@@ -146,7 +193,7 @@ export function renderSetupGuide(
     value.replace(/(\d+)/g, (whole, n: string) => {
       const e = entries[Number(n)];
       if (e === undefined) return whole;
-      return QUOTING_LANGUAGES.has(lang) ? JSON.stringify(e.value).slice(1, -1) : clean(e.value);
+      return QUOTING_LANGUAGES.has(lang) ? quoted(e.value) : clean(e.value);
     });
 
   const substInline = (value: string): string =>
@@ -323,6 +370,7 @@ export function renderSetupGuide(
   const flush = () => {
     if (group.length === 0) return;
     const root: Root = { type: "root", children: group };
+    unlinkText(root);
     const md = toMarkdown(root, { extensions: [gfmToMarkdown()], bullet: "-" }).replace(/\n+$/, "");
     if (md.trim() !== "") blocks.push({ kind: "markdown", text: md });
     group = [];

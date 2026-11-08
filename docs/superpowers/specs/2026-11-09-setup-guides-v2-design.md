@@ -154,7 +154,8 @@ variables, mode and audience sections, check lines, and a `title` on code fences
   its own (the scanner splits it from the paragraph around it, so no blank lines are needed).
   `<check-id>` is `^[a-z0-9][a-z0-9-]{0,47}$` for the plugin's own checks or
   `capybara:<id>` for a kernel check (§10.6); `<label>` (≤ 80 characters, plain text, no
-  variables) is the row's label in the document's language. A check line inside a mode section
+  variables) is the row's label in the document's language. A check line that an open HTML block
+  would swallow is refused (end the HTML with a blank line). A check line inside a mode section
   runs only for that mode. **(designer's call: the label lives in the document, the code lives in
   the extension; the zh document carries the zh label, so the extension never needs i18n for
   labels, and the row shows its label even when the extension is not loaded.)**
@@ -174,8 +175,8 @@ variables, mode and audience sections, check lines, and a `title` on code fences
 - `guides/<id>.md` is the canonical English document; `guides/<id>.zh.md` the Chinese one.
   The page renders the viewer's locale and falls back to English.
 - **The two documents carry the same material (decided 2026-11-09)**: the same sections in the
-  same order, the same check ids in the same sections, and byte-equal fenced code blocks (title
-  excepted; comments inside code are not translated). `capybara-plugin pack` / `check` and the
+  same order, the same check ids in the same sections, and byte-equal fenced code blocks in the
+  same sections (title excepted; comments inside code are not translated). `capybara-plugin pack` / `check` and the
   importer refuse a zh document that differs, with an error that names the block and the first
   differing line: `guides/slack-app.zh.md: code block 2 ("应用 manifest（Socket Mode）") differs
   from guides/slack-app.md block 2 at line 14; code blocks must be identical in every language`. Then the pasted
@@ -603,9 +604,9 @@ blocks byte for byte.
 
 | Where the variable stands | What is inserted |
 |---|---|
-| Text (paragraph, list item, heading, table cell, emphasis) | The value as a text node; control characters become spaces. Serialization escapes Markdown syntax. |
+| Text (paragraph, list item, heading, table cell, emphasis) | The value as a text node; control characters (C0, C1, U+2028, U+2029) become spaces. Serialization escapes Markdown syntax, and the text is kept from being auto-linked (§7.1). A `url` variable holding an http(s) URL becomes an explicit link. |
 | Inline code | Control characters and newlines become spaces; the serializer picks a fence longer than any backtick run in the value. |
-| Fenced code, language `yaml` / `yml` / `json` | JSON-string-escaped without the quotes (`"` → `\"`, newline → `\n`), as v1: authors put the variable inside double quotes, and the value stays one string whatever it holds (YAML double-quoted scalars take JSON escapes). |
+| Fenced code, language `yaml` / `yml` / `json` | JSON-string-escaped without the quotes (`"` → `\"`, newline → `\n`; C1 controls, U+2028 and U+2029 as `\uXXXX`), as v1: authors put the variable inside double quotes, and the value stays one string whatever it holds (YAML double-quoted scalars take JSON escapes). The toolchain warns when a `text` variable stands outside double quotes there. |
 | Fenced code, any other language (`text`, `sh`, `toml`, `ini`, …) | Control characters (newline included) become spaces. The toolchain warns when such a variable is a `text` variable (§6.3), since nothing quotes it. |
 | Link destination (`[text]({{webhookUrl}})`, `<{{publicUrl}}>`) | Only `url` variables (§6.3) at the start of the destination; the result must be an absolute http(s) URL or the link renders as its text. |
 | Anywhere else (fence info string, directive line, link title, image) | Refused by the toolchain; left as the literal `{{name}}` by the kernel. |
@@ -673,6 +674,14 @@ out), paragraph, text, emphasis, strong, delete, inline code, code, blockquote, 
   links are https anyway, and refusing plain http keeps third-party pages out of a downgrade)**.
 - Definitions and footnotes are resolved into links or dropped; HTML entities are decoded to
   text.
+- **No autolinks from text**: a GFM parser links bare `https://…`, `www.…` and `a@b.c` in text,
+  and a backslash escape does not stop it. So before serializing, every text node outside a link
+  (a substituted name, raw HTML shown as text, content flattened past the depth limit) gets an
+  invisible U+2060 WORD JOINER after the colon of `scheme://`, inside `www.` and before `@`; a
+  connection named `https://evil.example` then reads the same but is no link when the web parses
+  the block again, whatever renderer consumes it. The only links in a `markdown` block are the
+  explicit ones the policy above kept. Code blocks and inline code are never changed (GFM does not
+  link inside them), so the value a person copies from them is exact **(designer's call)**.
 
 The web renders the result with the design system's `Markdown`, which independently renders raw
 HTML as text, loads no image and links only absolute http(s). Two layers, each enough on its own.
@@ -1267,9 +1276,11 @@ Pre-0.1.0: the format changes directly, with no compatibility layer (decided).
 - **SDK** (pure): parsing (title, sections, nesting rule, check lines, fence titles, indented code
   refused, private-use refused), validation messages, language parity, escaping per context
   (table-driven: a hostile name with `` ` ``, `"`, newlines, `[x](javascript:…)`, `<script>`,
-  `{{other}}` in every context; YAML and JSON blocks parse back to the exact value), link policy,
-  HTML as text, images as links, determinism, the hash (rename and URL change keep it, a code or
-  prose change moves it, a check line does not).
+  `{{other}}` in every context; YAML and JSON blocks parse back to the exact value; URL-, `www.`-
+  and email-looking names stay text when the output is parsed again), link policy, HTML as text,
+  images as links, determinism, the hash (rename, URL change, prose, heading and check label edits
+  keep it; a code change, an added or removed code block and an added or removed check line move
+  it, §11).
 - **Toolchain**: `pack` / `check` fixtures for every refusal, proven red; `guide` command output.
 - **Kernel**: rendering for both places, all audiences and modes, with and without targets;
   visibility and role refusals (member on admin audience, org without the item, other org's

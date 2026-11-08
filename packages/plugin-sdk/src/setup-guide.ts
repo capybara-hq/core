@@ -284,7 +284,23 @@ export function validateSetupGuide(input: {
       switch (node.type) {
         case "code": {
           const lang = (node.lang ?? "").toLowerCase();
-          if (QUOTING_LANGUAGES.has(lang)) return;
+          if (QUOTING_LANGUAGES.has(lang)) {
+            // values are JSON-escaped without the quotes: only safe inside a "…" string
+            for (const lineText of node.value.split("\n")) {
+              for (const m of lineText.matchAll(SENTINEL_RE)) {
+                const n = Number(m[1]);
+                if (typeOf(n) !== "text") continue;
+                const before = lineText.slice(0, m.index).replace(/\\./g, "");
+                if ((before.match(/"/g)?.length ?? 0) % 2 === 1) continue;
+                err(
+                  line,
+                  `the text variable ${nameOf(n)} in a ${lang} code block is not inside double quotes; its value is escaped as a string and may break the block or change its type ("${nameOf(n)}")`,
+                  "warning",
+                );
+              }
+            }
+            return;
+          }
           for (const n of sentinelIndexes(node.value)) {
             if (typeOf(n) === "text") {
               err(
@@ -349,9 +365,17 @@ export function validateSetupGuide(input: {
     } else {
       en.codeBlocks.forEach((e, i) => {
         const z = zh.codeBlocks[i];
-        if (z === undefined || (z.language === e.language && z.text === e.text)) return;
+        if (z === undefined) return;
         const n = i + 1;
         const name = `code block ${n}${z.title !== null ? ` ("${z.title}")` : ""}`;
+        if (z.section !== e.section) {
+          out.push({
+            level: "error",
+            message: `${zhFile}: ${name} is in another section than ${enFile} block ${n}; code blocks must be identical in every language`,
+          });
+          return;
+        }
+        if (z.language === e.language && z.text === e.text) return;
         if (z.language !== e.language) {
           out.push({
             level: "error",

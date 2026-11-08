@@ -188,6 +188,103 @@ describe("renderSetupGuide", () => {
       expect(all(parseMd(md(r))).some((n) => n.type === "link")).toBe(false);
     });
 
+    it("never become links when the output is parsed again (GFM autolinks)", () => {
+      const WJ = /\u2060/g;
+      const urlish = [
+        "https://evil.example",
+        "HTTP://EVIL.EXAMPLE/x",
+        "www.evil.example",
+        "a@evil.example",
+        "mailto:a@evil.example",
+        "xmpp:a@evil.example",
+        "see https://evil.example/p?q=1 now",
+      ];
+      const contexts = [
+        ["{{connectionName}} tail"],
+        ["## {{connectionName}}"],
+        ["*{{connectionName}}*"],
+        ["| a |", "|---|", "| {{connectionName}} |"],
+        ["- {{connectionName}}"],
+        ["<{{connectionName}}>"],
+        ["Hi <span>{{connectionName}}</span>"],
+        ["> > {{connectionName}}"],
+      ];
+      for (const value of urlish) {
+        for (const ctx of contexts) {
+          const r = render(doc(...ctx), { values: { connectionName: value } });
+          const tree = parseMd(md(r));
+          const label = `${value} in ${ctx.join(" / ")}`;
+          expect(
+            all(tree).filter((n) => n.type === "link"),
+            label,
+          ).toEqual([]);
+          const shown = all(tree)
+            .filter((n) => n.type === "text")
+            .map((n) => (n as { value: string }).value)
+            .join("")
+            .replace(WJ, "");
+          expect(shown, label).toContain(value);
+        }
+      }
+      // author text around a value
+      for (const [line, value] of [
+        ["user@{{connectionName}}", "evil.example"],
+        ["https://{{connectionName}}", "evil.example"],
+        ["www.{{connectionName}}", "evil.example"],
+      ] as const) {
+        const r = render(doc(line), { values: { connectionName: value } });
+        expect(
+          all(parseMd(md(r))).filter((n) => n.type === "link"),
+          line,
+        ).toEqual([]);
+      }
+      // the copy-paste value stays intact in code
+      const code = render(
+        doc(`${F}yaml`, 'name: "{{connectionName}}"', F, "", "`{{connectionName}}`"),
+        {
+          values: { connectionName: "https://evil.example" },
+        },
+      );
+      expect((code.blocks[0] as { text: string }).text).toBe('name: "https://evil.example"');
+      expect(md(code)).toBe("`https://evil.example`");
+    });
+
+    it("raw HTML holding a URL is no link", () => {
+      const r = render(doc("<div>http://author.example a@b.example</div>"));
+      expect(all(parseMd(md(r))).some((n) => n.type === "link")).toBe(false);
+    });
+
+    it("a url variable in prose is an explicit link", () => {
+      const r = render(doc("Open {{publicUrl}} now."), {
+        values: { publicUrl: "http://localhost:3000" },
+      });
+      const links = all(parseMd(md(r))).filter((n) => n.type === "link") as { url: string }[];
+      expect(links.map((l) => l.url)).toEqual(["http://localhost:3000"]);
+    });
+
+    it("C1 controls and line separators never reach the output raw", () => {
+      const value = "a\u0085b\u2028c\u2029d\u0090e";
+      const r = render(
+        doc(
+          "{{connectionName}}",
+          "",
+          `${F}yaml`,
+          'name: "{{connectionName}}"',
+          F,
+          "",
+          `${F}sh`,
+          "echo {{connectionName}}",
+          F,
+        ),
+        { values: { connectionName: value } },
+      );
+      const [y, sh] = r.blocks.filter((b) => b.kind === "code") as { text: string }[];
+      expect(parseYaml(y?.text ?? "")).toEqual({ name: value });
+      for (const t of [md(r), y?.text ?? "", sh?.text ?? ""]) {
+        expect(t).not.toMatch(/[\u0080-\u009f\u2028\u2029]/);
+      }
+    });
+
     it("in a sh fence", () => {
       const r = render(doc(`${F}sh`, "echo {{connectionName}}", F), { values });
       const code = r.blocks.find((b) => b.kind === "code") as { text: string };
