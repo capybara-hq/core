@@ -225,7 +225,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 /**
- * The sidebar's Extensions group: the page contributions (`place: "page"`) of the current org's
+ * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
  * enabled extensions, schema views and embeds alike, labelled by the page title; when two pages
  * share a title, each label gets its plugin name. Empty while loading, without pages or on a failed
  * read (the group is then hidden).

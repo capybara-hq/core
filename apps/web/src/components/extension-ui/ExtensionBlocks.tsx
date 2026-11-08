@@ -13,15 +13,15 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ApiClientError } from "../../lib/api";
 import { type UiContributionItem, type UiIcon, type UiOpen, uiKey, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
-import { EmbedTab } from "../extension-ui/EmbedTab";
+import { BlockBoundary } from "../conversation/BlockBoundary";
+import { UiViewRenderer } from "../ui-view/UiViewRenderer";
+import { EmbedTab } from "./EmbedTab";
 import {
   useExtensionViews,
   useUiAction,
   type ViewState,
   type ViewTarget,
-} from "../extension-ui/ExtensionViewTab";
-import { UiViewRenderer } from "../ui-view/UiViewRenderer";
-import { BlockBoundary } from "./BlockBoundary";
+} from "./ExtensionViewTab";
 
 /** A contribution's icon (SDK `UI_ICONS`) as a design icon. */
 export const ICON_OF: Record<UiIcon, IconName> = {
@@ -190,32 +190,27 @@ function ViewCard({
 }
 
 /**
- * An inline card under a tool call (`tool_result.card`): shown only while its extension's `inline`
- * contribution is listed (enabled in the org).
+ * An inline card under a tool call (`ToolResult.card`, slot `conversation.tool-result.card`);
+ * `panel` is its extension's first `conversation.panel` contribution (the card's ⤢ fallback).
  */
 export function ExtensionCard({
   ctx,
-  contributions,
-  plugin,
-  view,
+  c,
+  panel,
   callId,
   cardKey,
 }: {
   ctx: BlockContext;
-  contributions: UiContributionItem[];
-  plugin: string;
-  view: string;
+  c: UiContributionItem;
+  panel: UiContributionItem | undefined;
   callId: string;
   cardKey?: string;
 }): ReactNode {
   const locale = uiLocale(useLocale());
   const [el, setEl] = useState<HTMLDivElement | null>(null);
   const visible = useInView(el);
-  const c = contributions.find((x) => x.plugin === plugin && x.id === view && x.place === "inline");
-  if (!c) return null;
-  const panel = contributions.find((x) => x.plugin === plugin && x.place === "panel");
   return (
-    <div data-extension-card={uiKey(plugin, view)} ref={setEl}>
+    <div data-extension-card={uiKey(c.plugin, c.id)} ref={setEl}>
       <BlockBoundary name={c.title[locale]}>
         <InlineCardBody
           ctx={ctx}
@@ -254,7 +249,7 @@ function SectionBody({ ctx, c }: { ctx: BlockContext; c: UiContributionItem }) {
   );
 }
 
-/** An extension's properties section (`place: "section"`), failing alone. */
+/** An extension's properties section (slot `conversation.properties.section`), failing alone. */
 export function ExtensionSection({ ctx, c }: { ctx: BlockContext; c: UiContributionItem }) {
   const locale = uiLocale(useLocale());
   if (c.kind === "embed") {
@@ -336,7 +331,7 @@ function ViewPanel({
 }
 
 /**
- * An extension's right panel (`place: "panel"`, the old `conversation` place too): a rendered view
+ * An extension's right panel (slot `conversation.panel`): a rendered view
  * (scrolled to the open target's item) or an embed page. Fails alone.
  */
 export function ExtensionPanel({

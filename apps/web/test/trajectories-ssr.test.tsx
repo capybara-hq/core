@@ -93,7 +93,7 @@ const BOARD = {
   plugin: "board",
   id: "overview",
   title: { zh: "看板", en: "Board" },
-  place: "page",
+  slot: "org.page",
   kind: "view",
 };
 const LIVE = { ...BOARD, id: "live", title: { zh: "实时", en: "Live" }, kind: "embed" };

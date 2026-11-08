@@ -736,7 +736,7 @@ export const ROUTES: readonly RouteEntry[] = [
       const { plugin, id } = params;
       if (orgId === null || plugin === undefined || id === undefined) return;
       const items = qc.getQueryData<UiContributionItem[]>(contributionsQuery(orgId).queryKey);
-      const page = items?.find((c) => c.plugin === plugin && c.id === id && c.place === "page");
+      const page = items?.find((c) => c.plugin === plugin && c.id === id && c.slot === "org.page");
       if (page?.kind !== "view") return;
       await qc.prefetchQuery({ ...uiViewQuery(orgId, { plugin, id }, { locale }), retry: false });
     },

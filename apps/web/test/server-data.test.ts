@@ -204,15 +204,15 @@ describe("getShell", () => {
       "/api/v1/orgs/o1/ui/contributions": () =>
         json(200, {
           items: [
-            { id: "p", place: "page" },
-            { id: "s", place: "section" },
+            { id: "p", slot: "org.page" },
+            { id: "s", slot: "conversation.properties.section" },
           ],
         }),
     });
     expect(await getShell()).toMatchObject({
       groups: null,
       pending: null,
-      extensions: [{ id: "p", place: "page" }],
+      extensions: [{ id: "p", slot: "org.page" }],
     });
   });
 

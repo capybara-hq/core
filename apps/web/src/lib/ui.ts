@@ -1,14 +1,14 @@
 import { ApiClientError, apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
+import type { UiSlotId } from "./ui-slots.generated";
+
+export type { UiSlotId } from "./ui-slots.generated";
 
 /**
  * 插件界面（第一档：渲染 schema；第二档：嵌入应用的令牌）的类型与接口。
  * 类型照抄 `packages/plugin-sdk/src/ui.ts`（`UiBlock` / `UiView` / `UiContribution`）：Web 层只依赖 design，
  * 不 import SDK，SDK 改了这里要同步。接口见内核 `packages/kernel/src/ui/views.controller.ts`。
  */
-
-/** Listed places (the kernel lists the old `conversation` as `panel` with `legacyPlace`). */
-export type UiPlace = "panel" | "section" | "inline" | "page";
 
 /** A contribution's icon (SDK `UI_ICONS`; `puzzle` is drawn as the design `extension` icon). */
 export type UiIcon =
@@ -30,17 +30,19 @@ export interface UiOpen {
 }
 export type UiKind = "view" | "embed";
 
-/** `GET .../ui/contributions` 的一项（已启用、已加载的插件的界面贡献）。 */
+/** One item of `GET .../ui/contributions` (the kernel's `UiContributionItem`, `ui/views.ts`). */
 export interface UiContributionItem {
   plugin: string;
   id: string;
   title: { zh: string; en: string };
-  place: UiPlace;
-  /** `"conversation"` when the extension still declares the old place. */
-  legacyPlace?: "conversation";
+  /** The catalog slot the contribution resolved to. */
+  slot: UiSlotId;
+  /** For a slot with anchors: the anchor it goes after (resolved: the slot's first by default). */
+  after?: string;
   kind: UiKind;
-  /** 仅 embed：插件路由下 `/ui/` 开头的路径。 */
+  /** Embed only: a path under the plugin's routes starting with `/ui/`. */
   path?: string;
+  /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
 }
 
