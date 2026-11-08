@@ -1468,3 +1468,79 @@ a.cb-attachment:hover {
   line-height: var(--cb-type-prose-small-line);
   overflow-wrap: anywhere;
 }
+
+/* A rendered setup guide (spec §6.9): prose, copyable code and check rows in document order, no
+   box of its own (it sits in the page's section card). */
+.cb-guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+
+/* A setup check (spec §6.9): the status icon, the label, its status word and checked-at time, the
+   dense ghost 重新检查 at the right, then the reason and fix as muted prose lines. No box. */
+.cb-check-row {
+  display: flex;
+  gap: var(--cb-space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+.cb-check-row-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: var(--cb-control-dense);
+  color: var(--cb-faint);
+}
+.cb-check-row[data-status="ok"] .cb-check-row-mark {
+  color: var(--cb-ok);
+}
+.cb-check-row[data-status="failing"] .cb-check-row-mark {
+  color: var(--cb-fail);
+}
+.cb-check-row[data-status="unknown"] .cb-check-row-mark {
+  color: var(--cb-muted);
+}
+.cb-check-row[data-status="running"] .cb-check-row-mark {
+  color: var(--cb-accent);
+}
+.cb-check-row-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-check-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cb-space-2);
+  align-items: center;
+  min-height: var(--cb-control-dense);
+}
+.cb-check-row-label {
+  min-width: 0;
+  color: var(--cb-ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.cb-check-row-word,
+.cb-check-row-time {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+}
+.cb-check-row[data-status="failing"] .cb-check-row-word {
+  color: var(--cb-fail);
+}
+.cb-check-row-recheck {
+  margin-left: auto;
+}
+.cb-check-row-line {
+  margin: 0;
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-small-size);
+  line-height: var(--cb-type-prose-small-line);
+  overflow-wrap: anywhere;
+}
