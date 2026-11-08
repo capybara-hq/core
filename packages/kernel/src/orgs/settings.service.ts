@@ -11,6 +11,11 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
+import {
+  mergeArrangement,
+  OrgUiArrangementPatchSchema,
+  UiArrangementSchema,
+} from "../ui/arrangement.js";
 import { OrgLock } from "./org-lock.js";
 
 /**
@@ -29,6 +34,8 @@ import { OrgLock } from "./org-lock.js";
  *   own (run context spec §3.3); an invalid stored value reads as absent.
  * - `theme`: the org's default theme and whether members may pick their own (themes spec §7);
  *   absent (or an invalid stored value) = follow the platform, personal picks allowed.
+ * - `uiArrangement`: per slot, the extension contributions the org hides and their order (UI slots
+ *   spec §5); a slot with no entry follows the platform's; an invalid stored value reads as absent.
  */
 
 /** 组织沙箱出站白名单的主机数上限。 */
@@ -89,6 +96,8 @@ export const OrgSettingsSchema = z.object({
   timeZone: IanaTimeZone.optional().catch(undefined),
   /** The org's default theme and personal lock (themes spec §7); absent = {@link DEFAULT_ORG_THEME}. */
   theme: OrgThemeSettingSchema.optional().catch(undefined),
+  /** Hidden and ordered extension contributions per slot; absent = follow the platform. */
+  uiArrangement: UiArrangementSchema.optional().catch(undefined),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -111,6 +120,11 @@ export const OrgSettingsPatchSchema = z
      * follows the platform) and whether members may pick their own; null clears it.
      */
     theme: OrgThemeSettingSchema.nullable().optional(),
+    /**
+     * Per slot, the entry to hide / order contributions with (replaces that slot's stored entry);
+     * null removes a slot's entry (it follows the platform again). `platform.page` is refused.
+     */
+    uiArrangement: OrgUiArrangementPatchSchema.optional(),
   })
   .strict();
 
@@ -284,11 +298,18 @@ export class OrgSettingsService {
         // null clears sandboxEgress / wakeOnBackgroundTask: follow the deployment default again
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
+    const arrangementPatch = patch.uiArrangement;
+    delete changes.uiArrangement;
     const after: OrgSettings = { ...before, ...changes };
+    if (arrangementPatch !== undefined) {
+      after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
+      if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
+    }
     if (after.sandboxEgress === undefined) delete after.sandboxEgress;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
+    if (after.uiArrangement === undefined) delete after.uiArrangement;
     if (sameSettings(before, after)) return before;
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
     // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
@@ -301,6 +322,7 @@ export class OrgSettingsService {
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
       theme: _oldTheme,
+      uiArrangement: _oldArrangement,
       ...rest
     } = stored;
     await this.db

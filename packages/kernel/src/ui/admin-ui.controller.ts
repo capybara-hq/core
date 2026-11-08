@@ -17,7 +17,7 @@ import { EMBED_TOKEN_TTL_SECONDS, EmbedTokens } from "./embed-token.js";
 import { ContributionParams, PlatformActionBody, PlatformViewQuery } from "./ui.schemas.js";
 import { OrgUiStreams } from "./ui-stream.js";
 import { BEARER_RE, embedSrc } from "./views.controller.js";
-import { type UiContributionItem, UiViews } from "./views.js";
+import { type UiArrangementSlot, type UiContributionItem, UiViews } from "./views.js";
 
 class AdminUiContributionParamsDto extends createZodDto(
   ContributionParams,
@@ -33,6 +33,8 @@ class AdminUiActionBodyDto extends createZodDto(PlatformActionBody, "AdminUiActi
  * given the platform's deployment config; its render args carry `scope: "platform"`, `role:
  * "superAdmin"` and no `orgId`.
  * - `GET  /api/v1/admin/ui/contributions` → `{ items }` (`platform.page` only, base order);
+ * - `GET  /api/v1/admin/ui/arrangement` → `{ slots }` over every arrangeable slot, the platform's
+ *   entries only, with every running extension's contributions (hidden ones marked);
  * - `GET  /api/v1/admin/ui/views/:plugin/:id?locale=` → `{ view }`;
  * - `POST /api/v1/admin/ui/actions/:plugin/:id` (`{ actionId, payload?, answer?, locale? }`) →
  *   `{ toast }` | `{ view }`;
@@ -61,6 +63,14 @@ export class AdminUiController {
   ): Promise<{ items: UiContributionItem[] }> {
     requireUser(principal);
     return { items: await this.views.platformContributions() };
+  }
+
+  @Get("arrangement")
+  async arrangement(
+    @CurrentPrincipal() principal: Principal,
+  ): Promise<{ slots: UiArrangementSlot[] }> {
+    requireUser(principal);
+    return { slots: await this.views.platformArrangementView() };
   }
 
   @Get("views/:plugin/:id")

@@ -1,6 +1,7 @@
 import {
   type FormAnswer,
   type Logger,
+  UI_ARRANGEABLE_SLOTS,
   type UiActionResult,
   type UiBlock,
   type UiContribution,
@@ -20,9 +21,19 @@ import { ApiError } from "../errors.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { ExtensionHost, type LoadedUiContribution } from "../extensions/host.js";
 import { PreviewerRegistry } from "../files/previewers.js";
+import { readUiArrangement } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { readOrgSettings } from "../orgs/settings.service.js";
+import {
+  arrange,
+  arrangeBySlot,
+  effectiveEntry,
+  ORG_ARRANGEABLE,
+  orderItems,
+  type UiArrangement,
+} from "./arrangement.js";
 import { callExtension } from "./call-extension.js";
 import { canUseSlot, UUID_RE } from "./registry.js";
 
@@ -45,6 +56,13 @@ export interface UiContributionItem {
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
+}
+
+/** One slot of an arrangement listing: where its entry comes from and its items in order. */
+export interface UiArrangementSlot {
+  slot: UiSlotId;
+  source: "org" | "platform" | "none";
+  items: (UiContributionItem & { hidden: boolean })[];
 }
 
 /** 嵌入应用的签发目标：已核对组织启用与对话访问。 */
@@ -99,6 +117,10 @@ interface UiViewsDeps {
     conversationId: string,
     callId: string,
   ): Promise<{ plugin: string; view: string; key?: string } | null>;
+  /** The org's stored arrangement, read live (lists only; never the access gate). */
+  orgArrangement(orgId: string): Promise<UiArrangement | undefined>;
+  /** The platform default arrangement, read live (lists only; never the access gate). */
+  platformArrangement(): Promise<UiArrangement>;
   log: Pick<Logger, "warn">;
 }
 
@@ -242,6 +264,15 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
     }));
 }
 
+/** The items in effective order, each marked hidden or not (hidden ones stay in place). */
+function withHidden(
+  items: UiContributionItem[],
+  entry: { hidden: string[]; order: string[] },
+): (UiContributionItem & { hidden: boolean })[] {
+  const hidden = new Set(entry.hidden);
+  return orderItems(items, entry).map((i) => ({ ...i, hidden: hidden.has(`${i.plugin}/${i.id}`) }));
+}
+
 /** A platform route's contribution: found, and in `platform.page`; else 404. */
 function platformEntry(entry: LoadedUiContribution | undefined): LoadedUiContribution {
   if (entry === undefined || entry.slot.id !== "platform.page") throw notFound();
@@ -310,6 +341,8 @@ export class UiViews {
       },
       previewEmbedAllowed: (t) => previewers.embedAllowed(t),
       recordedCard: (conversationId, callId) => recordedCard(db.db, conversationId, callId),
+      orgArrangement: async (orgId) => (await readOrgSettings(db.db, orgId)).uiArrangement,
+      platformArrangement: () => readUiArrangement(db.db),
       log,
     };
   }
@@ -324,6 +357,21 @@ export class UiViews {
     orgId: string,
     role: OrgRole,
     slot?: UiSlotId,
+  ): Promise<UiContributionItem[]> {
+    const items = await this.orgBase(orgId, role, slot);
+    if (items.length === 0) return items;
+    const [org, platform] = await Promise.all([
+      this.d.orgArrangement(orgId),
+      this.d.platformArrangement(),
+    ]);
+    return arrangeBySlot(items, (s) => effectiveEntry(org, platform, s).entry);
+  }
+
+  /** {@link contributions} before the arrangement: what the role may use, in base order. */
+  private async orgBase(
+    orgId: string,
+    role: OrgRole,
+    slot: UiSlotId | undefined,
   ): Promise<UiContributionItem[]> {
     const all = this.d.host.uiContributions();
     if (all.length === 0) return [];
@@ -340,12 +388,67 @@ export class UiViews {
   }
 
   /**
+   * The arrangement page of an org: every org-arrangeable slot with the contributions the role may
+   * use, in effective order with the hidden ones in place, and where the entry comes from.
+   */
+  async arrangementView(orgId: string, role: OrgRole): Promise<UiArrangementSlot[]> {
+    // the page is for people who arrange or at least see the org's UI, not for a guest
+    if (role === "guest") throw notFound();
+    const [base, org, platform] = await Promise.all([
+      this.orgBase(orgId, role, undefined),
+      this.d.orgArrangement(orgId),
+      this.d.platformArrangement(),
+    ]);
+    return ORG_ARRANGEABLE.map((slot) => {
+      const { entry, source } = effectiveEntry(org, platform, slot);
+      return {
+        slot,
+        source,
+        items: withHidden(
+          base.filter((i) => i.slot === slot),
+          entry,
+        ),
+      };
+    });
+  }
+
+  /**
+   * The platform's arrangement page: every arrangeable slot with the contributions of every running
+   * extension (whatever its org enablement), ordered by the platform entry, hidden ones in place.
+   */
+  async platformArrangementView(): Promise<UiArrangementSlot[]> {
+    const [base, platform] = await Promise.all([
+      listed(this.d.host.uiContributions().filter((c) => c.slot.id !== "file.preview")),
+      this.d.platformArrangement(),
+    ]);
+    return UI_ARRANGEABLE_SLOTS.map((slot) => {
+      const { entry, source } = effectiveEntry(undefined, platform, slot);
+      return {
+        slot,
+        source,
+        items: withHidden(
+          base.filter((i) => i.slot === slot),
+          entry,
+        ),
+      };
+    });
+  }
+
+  /**
    * The `platform.page` contributions of the running extensions, for the admin console (super
    * admins; no org enablement applies): no alias, a view's render registered. Base order like
    * {@link contributions}.
    */
   async platformContributions(): Promise<UiContributionItem[]> {
-    return listed(this.d.host.uiContributions().filter((c) => c.slot.id === "platform.page"));
+    const items = listed(
+      this.d.host.uiContributions().filter((c) => c.slot.id === "platform.page"),
+    );
+    const { entry } = effectiveEntry(
+      undefined,
+      await this.d.platformArrangement(),
+      "platform.page",
+    );
+    return arrange(items, entry);
   }
 
   /**

@@ -18,7 +18,7 @@ import {
   ViewQuery,
 } from "./ui.schemas.js";
 import { OrgUiStreams } from "./ui-stream.js";
-import { type UiContributionItem, UiViews } from "./views.js";
+import { type UiArrangementSlot, type UiContributionItem, UiViews } from "./views.js";
 
 export const BEARER_RE = /^Bearer\s+(\S+)$/i;
 
@@ -39,6 +39,10 @@ class UiEmbedTokenBodyDto extends createZodDto(EmbedTokenBody, "UiEmbedTokenBody
  *   (all but `platform.page`) or one slot; `after` is the resolved anchor of a slot with anchors,
  *   `path` only for an embed; aliases and `file.preview` contributions are not listed; ordered by
  *   extension name, then manifest order;
+ * - `GET  /api/v1/orgs/:orgId/ui/arrangement` → `{ slots: { slot, source, items }[] }`: every
+ *   org-arrangeable slot with the contributions the caller's role may use, in effective order, each
+ *   marked `hidden` (the listing for the 界面位置 page; the lists above omit hidden ones, the
+ *   view / action / embed routes below ignore the arrangement);
  * - `GET  /api/v1/orgs/:orgId/ui/views/:plugin/:id?conversationId=&agentId=&locale=&item=&callId=&key=`
  *   → `{ view }`（`item`: the panel item to scroll to; `callId` / `key`: an inline card's tool call）；
  * - `POST /api/v1/orgs/:orgId/ui/actions/:plugin/:id`
@@ -76,6 +80,16 @@ export class UiController {
   ): Promise<{ items: UiContributionItem[] }> {
     requireUser(principal);
     return { items: await this.views.contributions(org.orgId, org.role, q.slot) };
+  }
+
+  @Get("arrangement")
+  @OrgAction("ui.use")
+  async arrangement(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ slots: UiArrangementSlot[] }> {
+    requireUser(principal);
+    return { slots: await this.views.arrangementView(org.orgId, org.role) };
   }
 
   @Get("views/:plugin/:id")
