@@ -1,7 +1,9 @@
 # Setup guides v2: Markdown guides, connector templates, live checks and agent-assisted setup
 
 - Date: 2026-11-09, written against `main` at `3c853865`.
-- Status: draft for maintainer review. Supersedes `2026-11-08-plugin-setup-guides-design.md` (v1,
+- Status: approved by the maintainer on 2026-11-09, with the answers to the review questions
+  recorded in §18 and folded into the sections they change. Plan:
+  `docs/superpowers/plans/2026-11-09-setup-guides-v2.md`. Supersedes `2026-11-08-plugin-setup-guides-design.md` (v1,
   shipped) wherever they differ; v1's routes, ack semantics and visibility rules carry over unless
   a section here says otherwise.
 - Related: the plugin format (`2026-10-22-package-ecosystem-design.md` §4,
@@ -74,6 +76,9 @@ Non-goals:
   delivery. The place registry leaves room for them (§9.4); each is a later, small change.
 - Translating guides. A plugin ships English and optionally Chinese; nothing is machine-translated.
 - Checks that change anything (a check never writes, on the platform or at the third party).
+- Background re-checks and notifying org admins about failing checks (decided 2026-11-09, §18
+  item 5): checks run only when a person or an agent asks. Later: a periodic locked job per org
+  that re-runs the checks of live targets and notifies org admins when one turns failing.
 
 Anti-goals (a failure even if it works):
 
@@ -168,9 +173,12 @@ variables, mode and audience sections, check lines, and a `title` on code fences
 
 - `guides/<id>.md` is the canonical English document; `guides/<id>.zh.md` the Chinese one.
   The page renders the viewer's locale and falls back to English.
-- **The two documents carry the same material (designer's call)**: the same sections in the same
-  order, the same check ids in the same sections, and byte-equal fenced code blocks (title
-  excepted). The toolchain and the importer refuse a zh document that differs. Then the pasted
+- **The two documents carry the same material (decided 2026-11-09)**: the same sections in the
+  same order, the same check ids in the same sections, and byte-equal fenced code blocks (title
+  excepted; comments inside code are not translated). `capybara-plugin pack` / `check` and the
+  importer refuse a zh document that differs, with an error that names the block and the first
+  differing line: `guides/slack-app.zh.md: code block 2 ("应用 manifest（Socket Mode）") differs
+  from guides/slack-app.md block 2 at line 14; code blocks must be identical in every language`. Then the pasted
   manifest is the same whatever the admin's language, and drift (§11) needs only the English
   document. Comments inside a manifest stay English, as they are now.
 
@@ -521,6 +529,7 @@ Copy **Basic Information → App Credentials → Client ID** and **Client Secret
 below. The secret is stored encrypted and reads back only as "set".
 
 ::check capybara:oauth-client The client id and secret are entered
+::check capybara:oauth-token-endpoint Slack accepts the client id and secret
 ::check capybara:connector-tools A member connected and the tool list was read
 
 ### Reusing the bot app instead
@@ -793,8 +802,15 @@ The connector template place has four pages (designer's call on which; all of th
   connections. The template resolves to the plugin's latest version's guide whose `template` is
   the template id; a connector resolves through `connectors.platform_template_id` (or its catalog
   source for org-owned plugins) to its template.
-- The super admin's `/admin/connector-templates/<id>` shows no guide in this delivery (it is
-  org-scoped material; see open question 6).
+- **The super admin's `/admin/connector-templates/<id>`** shows the template's guide, admin
+  audience, with no org and no target (decided 2026-11-09): `orgName` and `connectorName` are
+  unresolved, checks are not shown (they need a target), there is no drift notice. Route:
+  `GET /api/v1/admin/catalog/:itemId/guides/:guideId?locale=` (`@SuperAdmin`), the same renderer
+  with the platform visibility of the item.
+- **Org admins on the member sheet** (decided 2026-11-09): the 如何连接 sheet on
+  `/account/connections` shows an org admin (role ≥ admin, `connectors.manage`) a link
+  「查看管理员接入指南」 / "Open the admin setup guide" to `/connectors/<connectorId>` (the admin
+  text with its checks); members do not see it.
 
 ### 9.4 Later places (designed, not built)
 
@@ -913,11 +929,11 @@ ctx.setup.check("bot-token", {
 - **Static check** `perm-setup-check` in `pnpm check:extension-permissions`: the id of
   `ctx.setup.check(id, …)` is a literal or same-file const listed in `permissions.setupChecks`
   (same rules and exemption comment as `perm-ui`), proven red on a fixture first.
-- **What a connector check does not get (designer's call)**: the OAuth client secret and members'
-  tokens stay with the kernel and the connector extension's `auth()`. The template's plugin
-  (slack) is not the connector extension (connector-mcp) and has never held them. Whether a
-  plugin check may receive the client secret is open question 3. The kernel checks in §10.6
-  cover "entered" and "works" for connectors without it.
+- **What a connector check does not get (decided 2026-11-09)**: plugin checks never get the OAuth
+  client secret or members' tokens; they stay with the kernel and the connector extension's
+  `auth()`. The template's plugin (slack) is not the connector extension (connector-mcp) and has
+  never held them. The kernel check `capybara:oauth-token-endpoint` (§10.6) verifies the stored
+  client against the token endpoint with the secret staying in the kernel.
 - The plugin's checks run only in its own extension, and only for targets of its own plugin (a
   channel connection on the plugin, a connector made from one of its templates).
 
@@ -972,8 +988,8 @@ interface SetupCheckState {
 - **Never before a target exists.** On 新建渠道 and in the wizard the rows say "checked after
   saving"; no request carries secrets typed into an unsaved form.
 - **Not in the background.** Nothing runs checks on a schedule in this delivery (no queue, no
-  cron); a check runs only when a person or an agent asks. Turning failing checks into
-  notifications is open question 5.
+  cron); a check runs only when a person or an agent asks. Background re-checks and admin
+  notifications are later work (§2 non-goals, decided 2026-11-09).
 
 ### 10.5 Timeouts, limits and errors
 
@@ -1003,6 +1019,26 @@ code **(designer's call on the list)**:
 | `capybara:oauth-client` | connector-template | the connector's manual OAuth client id and secret are both stored |
 | `capybara:connector-tools` | connector-template | the connector has a tool snapshot (some member connected and the tool list was read) |
 | `capybara:connector-connected` | connector-template (member) | the viewing member holds a credential for the connector |
+| `capybara:oauth-token-endpoint` | connector-template | the token endpoint authenticates the stored client (below) |
+
+**`capybara:oauth-token-endpoint` (decided 2026-11-09: the secret stays in the kernel).** For a
+connector whose auth is `oauth_code` with `client: "manual"`, the kernel resolves the token
+endpoint as a member's connect would (discovery for `discovery: "mcp"`, the template's `tokenUrl`
+for `manual`), then posts one authorization-code exchange with the stored client and a fixed,
+invalid code (`code=capybara-setup-probe`, the connector's redirect URI, the template's
+`tokenAuthMethod`), through `packages/kernel/src/net` (no redirects, the deployment's egress
+rules), 10 s. The answer is read with the OAuth flow's existing refusal parser:
+
+| Token endpoint answers | Status | Reason / fix |
+|---|---|---|
+| `invalid_grant`, Slack `invalid_code` (the client authenticated, the code is bad, as intended) | ok | "The token endpoint accepted the client." |
+| `invalid_client`, `unauthorized_client`, Slack `invalid_client_id`, `bad_client_secret`, HTTP 401 | failing | "The token endpoint refused the client id or secret." / "Copy the Client ID and Client Secret again from the app's Basic Information page." |
+| `redirect_uri_mismatch`, Slack `bad_redirect_uri` | failing | "The app does not list the callback URL." / "Add `{{oauthCallbackUrl}}` to the app's redirect URLs." (rendered) |
+| anything else, 429, 5xx, a network error, a 2xx with a token (never expected) | unknown | "Could not verify the client; retry later." A token in a 2xx body is discarded unread and not stored. |
+
+It never logs the request body, never stores what it receives and is subject to every limit in
+§10.5. Clients from dynamic registration (`client: "dcr"`) answer `unknown` ("Registered
+automatically; nothing to check").
 
 `capybara:webhook-received` needs one new fact: when the gateway accepts a verified webhook
 (`onWebhook` returned `accept`) it sets the Redis key `capk:channel-webhook-seen:<connectionId>`
@@ -1039,14 +1075,16 @@ call: Redis, not a PG write per webhook)**.
 
 v1's rules carry over (decided); what changes is the hash and the second place.
 
-- **The hash** = sha256 over `"capybara-guide-v2" NUL place NUL guideId NUL (mode or "") NUL
-  audience NUL source`, where `source` is the **English document after section selection for that
-  mode and audience, with check lines removed and variables not substituted**, line endings
-  normalized to LF **(designer's call)**. This is the maintainer's "rendered-doc content hash per
-  mode / place" with two deliberate cuts: variable values are left out (renaming a connection or
-  moving the public URL is not plugin drift, as v1 held) and check lines are left out (adding a
-  check asks nothing of the third-party app). The Chinese document is left out because its code
-  blocks equal the English ones (§4.3). Whether prose edits should count is open question 1.
+- **The hash covers code blocks and check lines only (decided 2026-11-09)**: sha256 over
+  `"capybara-guide-v2" NUL place NUL guideId NUL (mode or "") NUL audience NUL` followed, in
+  document order, by each item of the English document after section selection for that mode and
+  audience: a fenced code block as `"code" NUL language NUL text NUL` (title excluded) and a check
+  line as `"check" NUL checkId NUL`; variables are not substituted and line endings are normalized
+  to LF. Prose and typo edits, headings and check labels never raise a notice; a changed manifest,
+  an added, removed or moved code block, or an added or removed check does. Variable values are
+  left out (renaming a connection or moving the public URL is not plugin drift, as v1 held). The
+  Chinese document is left out because its code blocks equal the English ones and it carries the
+  same checks (§4.3).
 - **Acks**: `channel_connections.guide_ack` stays; `connectors.guide_ack jsonb` is added. Both
   hold `{ guideId, version, hash, mode: string | null }`.
 - **Channel connections**: exactly v1 §6: recorded on create (the current guide of the default
@@ -1084,8 +1122,11 @@ guide operations scattered over `channels`, `connectors` and `plugins`)**:
 
 - The new list route serves the web too (a "needs setup" list on the plugins page later) and is
   what `setup.guides` mirrors, since an operation mirrors a route and adds no logic (Platform spec
-  §7, `check:platform-ops`). The v1 exclusion of the guide route is removed (it is mirrored now).
-- **`setup.check` is a read (designer's call)**: it changes nothing anywhere (contract §10.1), its
+  §7, `check:platform-ops`). The v1 exclusion of the guide route is removed (it is mirrored now). The super admin's
+  template guide route (`GET /api/v1/admin/catalog/:itemId/guides/:guideId`, §9.3) is an
+  exclusion, category `internal`: a preview for the admin console, while `setup.read` serves the
+  org guides an agent assists with.
+- **`setup.check` is a read-class operation with no confirmation (decided 2026-11-09)**: it changes nothing anywhere (contract §10.1), its
   cost is bounded by the cache, the cooldown and the throttle, and a confirmation card for "check
   the bot token" would teach people to click through cards. `force` is available to agents with
   the same cooldown.
@@ -1109,8 +1150,42 @@ values)**:
 What an agent may do in the flow: read guides and checks, run checks, switch a channel's inbound
 mode (`channels.update`, class `org`, confirmed) and other existing confirmed operations. What an
 agent sees: the rendered guide (public URLs, names, the manifest; no secret by §6.3), check
-results (redacted, §10.8) and states; never config values or credentials. If a person pastes a
-secret into the chat anyway, that is outside this design (open question 7).
+results (redacted, §10.8) and states; never config values or credentials. A person who pastes a
+secret into the chat anyway is warned before it is sent (§12.1).
+
+### 12.1 Token paste warning in the composer (decided 2026-11-09)
+
+The conversation composer warns, client side and before sending, when the draft holds something
+that looks like a credential. It is a guard against a slip, not a security boundary: nothing is
+sent to the kernel to decide, and nothing blocks sending.
+
+- **When**: on paste into the composer and again on send; the draft is scanned in the browser
+  (a pure function `findTokenLikeSpans(text): { start; end; kind }[]` in `packages/design`,
+  next to the composer). Typed text is checked only on send.
+- **Patterns** (case-sensitive, each on a word boundary; `kind` in parentheses):
+  - Slack: `xox[bpae]-[0-9A-Za-z-]{10,}` (slack-token), `xoxr-[0-9A-Za-z-]{10,}` (slack-token),
+    `xapp-[0-9]-[0-9A-Za-z-]{10,}` (slack-app-token);
+  - GitHub: `ghp_[0-9A-Za-z]{36}`, `gho_`, `ghu_`, `ghs_`, `ghr_` with the same tail
+    (github-token), `github_pat_[0-9A-Za-z_]{22,}` (github-token);
+  - model and cloud keys: `sk-[0-9A-Za-z_-]{20,}` (covers `sk-ant-…`, `sk-proj-…`; api-key),
+    `AKIA[0-9A-Z]{16}` (aws-key), `AIza[0-9A-Za-z_-]{35}` (google-key);
+  - private keys: `-----BEGIN [A-Z ]*PRIVATE KEY-----` (private-key);
+  - JWTs: `eyJ[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}\.[0-9A-Za-z_-]{10,}` (jwt);
+  - **long high-entropy strings**: a run of ≥ 32 characters from `[A-Za-z0-9+/=_-]` with Shannon
+    entropy ≥ 4.0 bits per character that contains at least one digit and one letter, outside
+    a fenced or inline code span that also holds whitespace-separated words, and not a URL path,
+    a UUID (`8-4-4-4-12` hex), a 40- or 64-character lowercase hex string (commit and content
+    hashes) or a `data:` URI (high-entropy).
+- **UX**: a non-blocking warn `Callout` above the composer: 「这段内容看起来像密钥或令牌（Slack
+  令牌）。密钥只应填在设置页的对应字段里，不要发到对话中。」 / "This looks like a secret or token
+  (Slack token). Secrets belong in the setting's field, not in the conversation." with two
+  actions: 「移除」 / "Remove" (deletes the matched spans from the draft) and 「仍然发送」 / "Send
+  anyway" (sends the draft unchanged). On send with a match, the first Enter shows the warning
+  instead of sending; 「仍然发送」 or a second Enter sends. Editing the draft so no span matches
+  clears the warning. The matched spans are not highlighted in the textarea (no overlay
+  component). Nothing is logged or reported; the match never leaves the browser.
+- Everywhere the composer is used (new conversation, a conversation, sub-agent replies), not
+  only in assisted setup: a pasted token is equally wrong anywhere.
 
 An entry point from the page **(designer's call)**: the 接入指南 section has 让智能体协助 / Ask an
 agent, which opens a new conversation with the person's default agent and a draft (not sent)
@@ -1163,7 +1238,8 @@ Pre-0.1.0: the format changes directly, with no compatibility layer (decided).
   `capybara-plugin guide` command is added.
 - **Kernel**: `PluginGuides` renders documents (§6, §7), resolves both places and computes v2
   hashes; the check runner, the two check routes, the list route, the connector ack route, the
-  webhook-seen marker and the `setup` operations are added; the guide route's exclusion is
+  webhook-seen marker, `capybara:oauth-token-endpoint`, the super admin's template guide route and
+  the `setup` operations are added; the guide route's exclusion is
   removed.
 - **Migration** `0102_setup_guides_v2.sql`: `ALTER TABLE capybara.connectors ADD COLUMN IF NOT
   EXISTS guide_ack jsonb;` and `UPDATE capybara.channel_connections SET guide_ack = NULL WHERE
@@ -1207,7 +1283,15 @@ Pre-0.1.0: the format changes directly, with no compatibility layer (decided).
   change; cooldown; throttle; the dual-replica harness for single flight (two replicas, one
   third-party call, the other sees `running` then the result) and the per-org semaphore; Redis
   down.
-- **Kernel checks**: each `capybara:*` check, the webhook-seen marker set once per minute.
+- **Kernel checks**: each `capybara:*` check, the webhook-seen marker set once per minute;
+  `capybara:oauth-token-endpoint` against `startFakeOAuthServer` (default and `dialect: "slack"`)
+  for each row of its table, asserting the client secret is absent from logs and results and a
+  token in a 2xx body is not stored.
+- **Composer token warning**: `findTokenLikeSpans` table tests (every pattern, and the
+  non-matches: UUIDs, commit hashes, URLs, prose, code with words); composer tests for paste,
+  Enter, 移除 and 仍然发送.
+- **Admin template guide**: the super admin route renders with `orgName` unresolved and no checks;
+  an org admin gets 403.
 - **Platform**: parity and `check:platform-ops` for the four operations; `setup.read` contains no
   secret; ack routes stay excluded; the docs topic passes `check:agent-docs`.
 - **Static check**: `perm-setup-check` red on a fixture first, documented in
@@ -1227,49 +1311,48 @@ layer builds on the one before:
 
 1. **Format, rendering and places.** SDK parser, validator, renderer and place registry; toolchain
    (`pack`, `check`, `guide`); kernel rendering for `channel-connection` and
-   `connector-template`, target lookups, the list route, v2 hashes, the connector ack and drift,
-   the migration; design `GuideDocument` (check rows rendered as static rows until wave 2) and the
-   web section on all channel and connector pages; the Slack guides with their check lines (they
-   render as "not available yet" until wave 2 lands in the same delivery). Everything later depends
-   on the parsed document and the place registry.
+   `connector-template` (org pages and the super admin's template page), target lookups, the list
+   route, v2 hashes, the connector ack and drift, the migration; design `GuideDocument` and the web
+   section on every channel and connector page, with check rows drawn as static rows until wave 2.
+   Everything later depends on the parsed document and the place registry.
 2. **The checks contract.** `ctx.setup.check`, `permissions.setupChecks` and `perm-setup-check`;
    the runner, Redis cache, single flight, cooldown, semaphore, redaction; the two check routes;
-   the `capybara:*` checks and the webhook-seen marker; `CheckRow` live states; the Slack checks.
-   Depends on wave 1's rendered `checks` list and targets. **This wave is a trust-boundary change
-   (extension code receiving secrets for a new purpose, results crossing to the browser and to
-   agents, multi-replica state): its tasks are reviewed on their own, on the most capable model,
-   per the wave-planned-subagent-development skill.**
-3. **The `Platform` operations.** The `setup` domain and its four operations, the docs topic, the
-   exclusion changes, the 让智能体协助 entry. Depends on wave 1's routes and wave 2's check routes,
-   since operations only mirror routes.
+   the `capybara:*` checks (including `oauth-token-endpoint`) and the webhook-seen marker;
+   `CheckRow` live states. Depends on wave 1's rendered `checks` list and targets. **This wave is
+   a trust-boundary change (extension code receiving secrets for a new purpose, the kernel calling
+   a token endpoint with a stored client secret, results crossing to the browser and to agents,
+   multi-replica state): its tasks are reviewed on their own, on the most capable model, per the
+   wave-planned-subagent-development skill.**
+3. **The `Platform` operations and the assisted flow.** The `setup` domain and its four
+   operations, the docs topic, the exclusion changes, the 让智能体协助 entry and the composer's token
+   paste warning. Depends on wave 1's routes and wave 2's check routes, since operations only
+   mirror routes.
+4. **Docs, skills and visual baselines** in core, after the code waves: the skills and design spec
+   entries of §15, baselines rendered by the `visual-update` workflow.
+5. **The Slack plugin** in `capybara-hq/plugins`, after a core release publishes the SDK, the
+   toolchain and `@capybara-hq/testing` with v2: `slack-app.md`, `slack-connector.md` and their zh
+   documents, the three Slack checks, the removed v1 files, README, version bump and changeset.
 
-Waves may overlap where files are disjoint (the web of wave 1 and the SDK contract of wave 2), but
-none merges out of order.
+Waves may overlap where files are disjoint, but none merges out of order; the plan
+(`docs/superpowers/plans/2026-11-09-setup-guides-v2.md`) splits the waves into tasks with
+disjoint files.
 
-## 18. Open questions for the maintainer
+## 18. Decisions on the review questions (maintainer, 2026-11-09)
 
-1. **What drift covers.** The design hashes the whole mode-selected English document (minus
-   variables and check lines), as decided. Then a typo fix in prose shows every connection a notice
-   asking to update the third-party app. The alternative is to hash only the fenced code blocks
-   (the material pasted into the third party), which is closer to v1's template hash. Which one?
-2. **Chinese code blocks byte-equal to English** (§4.3). This keeps one manifest and lets drift
-   ignore zh, but forbids translating comments inside a manifest. Acceptable?
-3. **Connector checks and the client secret.** A plugin check for a connector template gets the
-   client id but not the client secret or members' tokens (§10.2), so "the OAuth app accepts this
-   client" can only be learned when a member connects (`capybara:connector-tools`). Should a
-   plugin whose template it is receive the client secret for checks (a blocking permission,
-   reviewed at approval), or should the kernel offer a generic token-endpoint probe instead?
-4. **`setup.check` without confirmation** (§12). It is classed as a read because checks never
-   write. Agree, or should running a check (which calls the third party with org credentials) be a
-   `personal` write with "remember for this conversation"?
-5. **Background checks.** Checks run only when a person or agent asks. Should a failing check on a
-   live connection (a revoked bot token) eventually notify org admins (a periodic locked job per
-   org), or stay on-demand?
-6. **Platform-level preview.** Should the super admin see a template's guide on
-   `/admin/connector-templates/<id>` (rendered without an org: `orgName` unresolved), e.g. to judge
-   an update?
-7. **A secret pasted into the chat.** Agents never ask for secrets, but a person may paste one
-   while being assisted. Should the assisted flow detect obvious token shapes (per plugin, e.g.
-   `xoxb-`) and warn, or is that out of scope?
-8. **Audience for org admins on the member page.** An org admin on `/account/connections` sees the
-   member text (§8). Should they also get a link to the admin text there?
+The maintainer approved the design and answered the questions the draft left open; each answer is
+folded into the section it changes.
+
+1. **Drift** hashes code blocks and check lines only; prose and typo edits raise no notice (§11).
+2. **Chinese code blocks** are byte-equal to the English ones; `pack` / `check` and the importer
+   enforce it with an error naming the block and line (§4.3).
+3. **Plugin checks never get the OAuth client secret**; the kernel check
+   `capybara:oauth-token-endpoint` probes the token endpoint with the stored client, the secret
+   staying in the kernel (§10.2, §10.6).
+4. **`setup.check`** is a read-class operation with no confirmation (§12).
+5. **No background re-checks or admin notifications** in this delivery; listed as later under
+   non-goals (§2).
+6. **The super admin's `/admin/connector-templates/<id>`** shows the template's guide, admin
+   audience (§9.3).
+7. **Token paste warning**: the composer warns client side before sending when the draft holds
+   something token-like, with a pattern list and a non-blocking warn with 「仍然发送」 (§12.1).
+8. **Org admins on the member sheet** get a link to the admin guide (§9.3).
