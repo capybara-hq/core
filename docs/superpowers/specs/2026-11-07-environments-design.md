@@ -149,6 +149,29 @@ Anti-goals (a failure even if it works):
     environments of the old one show 「不可用」 until it is back (their files are not migrated);
     deleting such an environment still works while the old plugin is loaded (`lookup(plugin)`)
     **(designer's call)**.
+    **A person's default across a switch (decided 2026-11-08, acceptance):** a live default whose
+    files or instance the old provider keeps is *demoted*: it stops being the default and records
+    the provider it was demoted from (`environments.demoted_from_provider`, migration 0094); its
+    name stays NULL (a name the person gave it stays). The UI and the API derive its label from
+    that mark: the default's name plus the provider extension's display name, 「个人环境（Docker
+    沙箱）」 / "Personal (Docker sandbox)" (the plugin id when the extension has no display name,
+    e.g. uninstalled), never a stored generated name; the list / get views carry
+    `demotedFrom: { provider, displayName, ordinal }`. Model-facing text (the `Platform` tool) is
+    English; the IM `/env` list follows the org's language like the rest of its phrases. When the
+    default is ensured under provider P and the person has a live former default demoted from P
+    that P can use, that row is **restored** as the default (mark cleared, same row, its files and
+    instance record untouched) instead of a new one being inserted; the stranded default is demoted
+    in the same transaction, before the promotion (the partial unique index on the live default).
+    A default that holds no files yet is likewise swapped for a former default holding files at P
+    (it is demoted from the provider it was made under, so it comes back in turn), so switching back
+    and forth never accumulates environments. Several former defaults of P (left by earlier
+    switches): the one holding files wins, then the most recently used, then the most recently
+    demoted; the others stay demoted and are labelled with " 2", " 3", … in creation order.
+    **Renaming** a former default takes it over: the mark is cleared and it is an ordinary
+    environment from then on, never restored. "Demoted" is never inferred from a name: a
+    person-made environment named "Personal (x)" is never restored. The defaults demoted before
+    0094 (named `Personal (<plugin id>)`, ` 2`, …) were backfilled from that name, accepted before
+    0.1.0.
 
 ## 5. Cloud environments
 
