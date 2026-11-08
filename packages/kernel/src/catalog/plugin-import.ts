@@ -1963,6 +1963,8 @@ export class PluginImport {
       if (data !== undefined && !stored.has(path)) stored.set(path, fileOf(path, data));
     };
     if (m.icon !== undefined) keep(packagePath(m.icon));
+    // Setup guide templates, stored with the version like the icon (rendered by PluginGuides)
+    for (const g of m.setupGuides ?? []) for (const f of g.files ?? []) keep(packagePath(f.path));
 
     const skills: PluginReview["skills"] = [];
     for (const s of pkg.skills) {

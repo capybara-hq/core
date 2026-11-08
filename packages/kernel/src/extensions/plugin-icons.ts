@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { requestable } from "../catalog/scope.js";
+import { type PluginScope, requestable } from "../catalog/scope.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { packagePath } from "../packages/tgz.js";
@@ -16,6 +16,58 @@ export const orgIconScope = (org: { orgId: string; role: OrgRole }): PluginIconS
 });
 
 const enc = encodeURIComponent;
+
+/** The catalog item columns {@link orgVisibleItems} reads. */
+export interface OrgVisibilityRow {
+  id: string;
+  scope: PluginScope;
+  builtin: boolean;
+  disabled: boolean;
+  shown_to_others: boolean;
+  owner_org_id: string | null;
+  shareable: boolean;
+  awaiting_confirmation: boolean;
+}
+
+/**
+ * The rows of live catalog items the org's catalog shows (one query for the org's list rows):
+ * members never see disabled items, an upload waiting for confirmation only its owner, another
+ * org's item only when shareable or listed here (the share gate), a `named` item only its listed
+ * orgs or as requestable. Shared by the plugin icons and the setup guides.
+ */
+export async function orgVisibleItems<T extends OrgVisibilityRow>(
+  db: KernelDb,
+  rows: T[],
+  orgId: string,
+  isAdmin: boolean,
+): Promise<T[]> {
+  if (rows.length === 0) return [];
+  const listed = new Set(
+    (
+      await db
+        .selectFrom("catalog_item_scope_orgs")
+        .select("item_id")
+        .where("org_id", "=", orgId)
+        .where(
+          "item_id",
+          "in",
+          rows.map((r) => r.id),
+        )
+        .execute()
+    ).map((r) => r.item_id),
+  );
+  return rows.filter((r) => {
+    const inList = listed.has(r.id);
+    const own = r.owner_org_id === orgId;
+    return (
+      (isAdmin || !r.disabled) &&
+      (!r.awaiting_confirmation || own) &&
+      // the share gate: another org's item reaches this org only when shareable or listed here
+      (r.owner_org_id === null || own || r.shareable || inList) &&
+      (r.builtin || r.scope !== "named" || inList || requestable(r, inList))
+    );
+  });
+}
 
 /**
  * Plugin icons for the things a plugin brings (channels, extensions, model providers; maintainer
@@ -87,34 +139,9 @@ export class PluginIcons {
       }
       return out;
     }
-    const { orgId, isAdmin } = scope;
-    const listed = new Set(
-      (
-        await this.db
-          .selectFrom("catalog_item_scope_orgs")
-          .select("item_id")
-          .where("org_id", "=", orgId)
-          .where(
-            "item_id",
-            "in",
-            withIcon.map((r) => r.id),
-          )
-          .execute()
-      ).map((r) => r.item_id),
-    );
-    for (const r of withIcon) {
-      const inList = listed.has(r.id);
-      const own = r.owner_org_id === orgId;
-      const visible =
-        (isAdmin || !r.disabled) &&
-        (!r.awaiting_confirmation || own) &&
-        // the share gate: another org's item reaches this org only when shareable or listed here
-        (r.owner_org_id === null || own || r.shareable || inList) &&
-        (r.builtin || r.scope !== "named" || inList || requestable(r, inList));
-      if (visible) {
-        const url = `/api/v1/orgs/${enc(orgId)}/catalog/${enc(r.id)}/icon?v=${enc(r.latest_version)}`;
-        out.push({ id: r.id, name: r.name, url });
-      }
+    for (const r of await orgVisibleItems(this.db, withIcon, scope.orgId, scope.isAdmin)) {
+      const url = `/api/v1/orgs/${enc(scope.orgId)}/catalog/${enc(r.id)}/icon?v=${enc(r.latest_version)}`;
+      out.push({ id: r.id, name: r.name, url });
     }
     return out;
   }

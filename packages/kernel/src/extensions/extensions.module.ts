@@ -19,6 +19,7 @@ import {
 } from "./locks.js";
 import { OrgExtensionConfigs } from "./org-config.js";
 import { OrgOverrides } from "./org-overrides.js";
+import { PluginGuides } from "./plugin-guides.js";
 import { PluginIcons } from "./plugin-icons.js";
 import { ExtensionPointDefaults } from "./point-defaults.js";
 import { ExtensionRegistryModule } from "./registry.js";
@@ -58,6 +59,7 @@ import { ExtensionAvailability } from "./unavailable.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     PluginIcons,
+    PluginGuides,
     ExtensionDeploymentConfigService,
     OrgExtensionConfigs,
     OrgOverrides,
@@ -77,6 +79,7 @@ import { ExtensionAvailability } from "./unavailable.js";
     ExtensionAdminOps,
     ExtensionDisplayNames,
     PluginIcons,
+    PluginGuides,
     ExtensionDeploymentConfigService,
     OrgExtensionConfigs,
     OrgOverrides,

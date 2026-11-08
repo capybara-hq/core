@@ -607,6 +607,14 @@ export interface LgCheckpointWritesTable {
 }
 
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
+/** `channel_connections.guide_ack` (0097): the setup guide a connection was set up with. */
+export interface GuideAckJson {
+  guideId: string;
+  version: string;
+  hash: string;
+  mode: string;
+}
+
 export interface ChannelConnectionsTable {
   id: string;
   org_id: string;
@@ -621,6 +629,11 @@ export interface ChannelConnectionsTable {
   last_error: string | null;
   bot_user_id: string | null;
   tenant_id: string | null;
+  /**
+   * 0097_channel_connection_guide_ack.sql: the setup guide last set up with,
+   * `{ guideId, version, hash, mode }`; null when unknown.
+   */
+  guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
   created_by: string;
   created_at: Ts;
   updated_at: Ts;
