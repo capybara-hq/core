@@ -85,6 +85,7 @@ export class BuiltinTools {
       storage,
       eventLog,
       config,
+      log,
     };
     this.tools = [
       askUserTool({ config }),
@@ -105,6 +106,7 @@ export class BuiltinTools {
         environments,
         attachments,
         eventLog,
+        log,
         get db() {
           return db.db;
         },

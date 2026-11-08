@@ -11,16 +11,24 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ARTIFACT_PREVIEW_MAX_LINES } from "../../../src/conversations/artifacts.js";
 import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
+import { createLogger } from "../../../src/log.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
-import { SANDBOX_RESTARTED_NOTICE } from "../../../src/tools/builtins/sandbox/common.js";
-import { removeFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
+import {
+  SANDBOX_CONNECTION_DROPPED_TEXT,
+  SANDBOX_RESTARTED_NOTICE,
+  SANDBOX_UNREACHABLE_TEXT,
+} from "../../../src/tools/builtins/sandbox/common.js";
+import {
+  removeFakeSandbox,
+  setFakeSandboxFault,
+} from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -60,6 +68,8 @@ let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let root: string;
+/** The kernel's warn and error records (JSON lines). */
+const logLines: string[] = [];
 
 beforeAll(async () => {
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -87,6 +97,7 @@ beforeAll(async () => {
         sandbox: { deliverMaxBytes: 1024 },
       },
     ),
+    { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
   );
 }, 180_000);
 
@@ -1045,5 +1056,77 @@ describe("sandbox tools", { timeout: 60_000 }, () => {
     expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
     expect(SANDBOX_RESTARTED_NOTICE).toContain("files are kept");
     expect(r.content).toContain("kept");
+  });
+});
+
+describe("sandbox provider unreachable", { timeout: 90_000 }, () => {
+  afterEach(() => setFakeSandboxFault(root, null));
+
+  /** The warn records of unreachable-provider tool calls. */
+  const unreachableWarns = () =>
+    logLines
+      .map((l) => JSON.parse(l) as { level?: unknown; msg?: string; err?: { message?: string } })
+      .filter((l) => l.msg === "sandbox provider unreachable");
+  /** How many tool calls ended in the pipeline's generic failure. */
+  const genericFailures = () =>
+    logLines.filter((l) => l.includes('"msg":"tool call failed"')).length;
+
+  it("connection refused before the instance exists: Bash gets the actionable error, the cause is logged", async () => {
+    const conv = await sandboxConversation();
+    await setFakeSandboxFault(root, { code: "ECONNREFUSED" });
+    const before = unreachableWarns().length;
+    const failedBefore = genericFailures();
+    const r = await call(conv, "Bash", { description: "Test step", command: "echo hi" }, 1);
+    expect(r.isError).toBe(true);
+    expect(r.content).toBe(SANDBOX_UNREACHABLE_TEXT);
+    const warns = unreachableWarns().slice(before);
+    expect(warns).toHaveLength(1);
+    // the provider's own error, unchanged
+    expect(warns[0]?.err?.message).toBe("connect ECONNREFUSED 127.0.0.1:2375");
+    // the generic pipeline failure is not used
+    expect(genericFailures()).toBe(failedBefore);
+    await setFakeSandboxFault(root, null);
+    const ok = await call(conv, "Bash", { description: "Test step", command: "echo back" }, 2);
+    expect(ok.isError).toBe(false);
+    expect(ok.content).toContain("back");
+  });
+
+  it("every sandbox tool on a running instance maps a refused connection; nothing is written", async () => {
+    const conv = await sandboxConversation();
+    let n = 0;
+    await call(conv, "Write", { file_path: "/workspace/u.txt", content: "one\n" }, ++n);
+    await call(conv, "Read", { file_path: "/workspace/u.txt" }, ++n);
+    await setFakeSandboxFault(root, { code: "ECONNREFUSED" });
+    const calls: [string, unknown][] = [
+      ["Bash", { description: "Test step", command: "echo two > /workspace/u.txt" }],
+      ["Read", { file_path: "/workspace/u.txt" }],
+      ["Write", { file_path: "/workspace/u.txt", content: "three\n" }],
+      ["Edit", { file_path: "/workspace/u.txt", old_string: "one", new_string: "four" }],
+      ["Glob", { pattern: "*.txt" }],
+      ["Grep", { pattern: "one" }],
+      ["Deliver", { file_path: "/workspace/u.txt" }],
+    ];
+    for (const [key, input] of calls) {
+      const r = await call(conv, key, input, ++n);
+      expect(r.isError, key).toBe(true);
+      expect(r.content, key).toBe(SANDBOX_UNREACHABLE_TEXT);
+    }
+    await setFakeSandboxFault(root, null);
+    const after = await call(conv, "Read", { file_path: "/workspace/u.txt" }, ++n);
+    expect(after.content).toContain("one");
+  });
+
+  it("a fetch-wrapped refused connection maps the same; a reset connection says it may have run", async () => {
+    const conv = await sandboxConversation();
+    await call(conv, "Bash", { description: "Test step", command: "echo up" }, 1);
+    await setFakeSandboxFault(root, { code: "ECONNREFUSED", wrap: "fetch" });
+    const refused = await call(conv, "Bash", { description: "Test step", command: "echo x" }, 2);
+    expect(refused.content).toBe(SANDBOX_UNREACHABLE_TEXT);
+    await setFakeSandboxFault(root, { code: "ECONNRESET" });
+    const before = unreachableWarns().length;
+    const reset = await call(conv, "Bash", { description: "Test step", command: "echo x" }, 3);
+    expect(reset.isError).toBe(true);
+    expect(reset.content).toBe(SANDBOX_CONNECTION_DROPPED_TEXT);
+    expect(unreachableWarns().slice(before)[0]?.err?.message).toBe("read ECONNRESET");
   });
 });
