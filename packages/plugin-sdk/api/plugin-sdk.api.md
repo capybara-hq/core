@@ -1914,12 +1914,22 @@ export interface PluginManifest {
     name: string;
     publisher: string;
     schemaVersion: 1;
+    setupGuides?: PluginSetupGuide[];
     skills?: PluginSkillRef[];
     version: string;
 }
 
 // @public
 export const PluginManifestSchema: z.ZodType<PluginManifest>;
+
+// @public
+export interface PluginSetupGuide {
+    files?: SetupGuideFile[];
+    id: string;
+    place: SetupGuidePlace;
+    steps?: SetupGuideStep[];
+    title: SetupGuideText;
+}
 
 // @public
 export interface PluginSkillRef {
@@ -1992,6 +2002,12 @@ export interface RenderedPrompt {
         content: ToolContent[];
     }[];
 }
+
+// @public
+export function renderSetupGuideText(text: string, values: Readonly<Record<string, string | null | undefined>>, language: SetupGuideLanguage, known?: readonly string[]): {
+    text: string;
+    unresolved: string[];
+};
 
 // @public
 export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string): string;
@@ -2114,6 +2130,65 @@ export function secret<T extends z.ZodTypeAny>(schema: T): T;
 
 // @public
 export const SEMVER_VERSION_RE: RegExp;
+
+// @public
+export const SETUP_GUIDE_FILE_RE: RegExp;
+
+// @public
+export const SETUP_GUIDE_LANGUAGES: readonly ["yaml", "json", "text"];
+
+// @public
+export const SETUP_GUIDE_LIMITS: {
+    readonly guides: 8;
+    readonly steps: 20;
+    readonly files: 8;
+    readonly stepChars: 2000;
+    readonly titleChars: 100;
+    readonly fileBytes: number;
+};
+
+// @public
+export const SETUP_GUIDE_MODES: Readonly<Record<SetupGuidePlace, readonly string[]>>;
+
+// @public
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection"];
+
+// @public
+export const SETUP_GUIDE_VARIABLES: Readonly<Record<SetupGuidePlace, readonly string[]>>;
+
+// @public
+export interface SetupGuideFile {
+    language: SetupGuideLanguage;
+    mode?: string;
+    path: string;
+    title: SetupGuideText;
+}
+
+// @public
+export function setupGuideFileProblem(path: string, data: Uint8Array | undefined): string | undefined;
+
+// @public
+export type SetupGuideLanguage = (typeof SETUP_GUIDE_LANGUAGES)[number];
+
+// @public
+export function setupGuideModes(guide: PluginSetupGuide): string[];
+
+// @public
+export type SetupGuidePlace = (typeof SETUP_GUIDE_PLACES)[number];
+
+// @public
+export function setupGuidePlaceholders(text: string): string[];
+
+// @public
+export interface SetupGuideStep extends SetupGuideText {
+    mode?: string;
+}
+
+// @public
+export interface SetupGuideText {
+    en: string;
+    zh?: string;
+}
 
 // @public
 export const SHA512_INTEGRITY_RE: RegExp;
@@ -2469,6 +2544,9 @@ export interface UiView {
     blocks: UiBlock[];
     open?: UiOpen;
 }
+
+// @public
+export function unknownSetupGuidePlaceholders(text: string, place: SetupGuidePlace): string[];
 
 // @public
 export type UsagePurpose = ModelCallPurpose | "embedding";
