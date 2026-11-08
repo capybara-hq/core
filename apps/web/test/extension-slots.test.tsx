@@ -262,7 +262,10 @@ describe("embed panels (tier two)", () => {
       frame.dispatchEvent(new Event("load"));
     });
     expect(sent).toEqual([
-      expect.objectContaining({ type: "init", context: { orgId: "o1", conversationId: "c1" } }),
+      expect.objectContaining({
+        type: "init",
+        context: { scope: "org", orgId: "o1", conversationId: "c1" },
+      }),
     ]);
     const fromFrame = (data: unknown) =>
       act(() => {
