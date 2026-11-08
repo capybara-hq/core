@@ -158,7 +158,7 @@ Today's places as slots, with their behavior unchanged:
 | `org.page` | `page` | org / — | view, embed | member and above; `/p/<plugin>/<id>`; under 扩展 |
 | `file.preview` | `file-preview` | file / read grant | embed | only through `file-preview@1`, as today |
 
-New slots in this spec (designer's call; each one an existing template region, so no new layout):
+New slots in this spec **(decided, 2026-11-08)**; each one an existing template region, so no new layout:
 
 | Slot | Where | Scope / args | Accepts | Min role |
 |---|---|---|---|---|
@@ -228,11 +228,9 @@ inbox, the overview of an org, connector and skill detail pages.
 2. The new slots of §6 and the slot catalog route and `Platform` mirror.
 3. Org and platform arrangement (hide, reorder) and its page.
 
-## 11. Open questions for review
+## 11. Review decisions
 
-1. Are the four new slots of §6 the right first set, or should the composer action row come
-   first?
-
-Answered on 2026-11-08: `slot` replaces `place` with no alias, the plugins repository moving in
+Answered on 2026-11-08, no open questions left: the four new slots of §6 are the first set, the
+composer action row goes to a later spec; `slot` replaces `place` with no alias, the plugins repository moving in
 step (§4); people cannot rearrange slots, only org admins and the platform (§5); a contribution to
 an unknown slot is dropped with a warning, the extension still loads (§3.2).
