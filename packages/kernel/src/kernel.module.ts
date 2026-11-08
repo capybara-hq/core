@@ -7,6 +7,7 @@ import { CatalogModule } from "./catalog/catalog.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { TitlesModule } from "./conversations/titles.js";
+import { DevicesModule } from "./devices/devices.module.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
@@ -109,6 +110,8 @@ export class KernelModule {
         TitlesModule,
         UsageReportModule,
         ChannelsModule,
+        // the @device sandbox provider, registered on every role (any replica may relay to a machine)
+        DevicesModule,
         // the Platform tool's operation registry and actor facts
         PlatformModule,
         // its operations (skills, agents, ...), registered at start on every role
