@@ -7,10 +7,15 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { ApprovalsService, ApprovalView } from "../tools/approvals.service.js";
+import { type ToolInfo, toolInfo } from "../tools/info.js";
+import type { ToolRegistry } from "../tools/registry.js";
 import { type ChannelLocale, phrase } from "./phrases.js";
 
-/** 审批卡片里工具参数预览的最大长度（字符）。 */
-export const INPUT_PREVIEW_MAX = 500;
+/** The longest call line of an approval card (characters, the ellipsis included). */
+export const CARD_SUMMARY_MAX = 300;
+
+/** The longest key argument quoted in a call line without a summary (its first line). */
+export const KEY_ARG_MAX = 120;
 
 /** 打码后替换成的文本。 */
 const MASK = "***";
@@ -71,35 +76,74 @@ export function maskSecrets(value: unknown): unknown {
   return value;
 }
 
-/**
- * 工具参数预览：凭据样式的键打码后序列化为 JSON，再经 `redact`（连接密钥的按值打码）处理，
- * 截断到 {@link INPUT_PREVIEW_MAX} 字符（含省略号）。
- */
-export function inputPreview(input: unknown, redact: (s: string) => string = (s) => s): string {
-  let s: string;
+const cut = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
+
+const firstLine = (s: string) =>
+  s
+    .split(/\r?\n/)
+    .find((l) => l.trim() !== "")
+    ?.trim() ?? "";
+
+const valueText = (v: unknown): string => {
+  if (typeof v === "string") return v;
   try {
-    s = redact(JSON.stringify(maskSecrets(input ?? {})) ?? "");
+    return JSON.stringify(v) ?? "";
   } catch {
-    s = "";
+    return "";
   }
-  return s.length <= INPUT_PREVIEW_MAX ? s : `${s.slice(0, INPUT_PREVIEW_MAX - 1)}…`;
+};
+
+/**
+ * The key argument of a call, as the web's tool row picks it: the first declared key argument
+ * present, else the first string input other than `description`. Credential-like keys are skipped
+ * (see {@link isSecretKey}); the value's first line, cut to {@link KEY_ARG_MAX}.
+ */
+export function keyArgument(input: unknown, keyArgs: readonly string[]): string | undefined {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined;
+  const rec = input as Record<string, unknown>;
+  // a structured value is shown as compact JSON with nested credential-like keys masked
+  const pick = (v: unknown) => {
+    const line = firstLine(valueText(maskSecrets(v)));
+    return line === "" ? undefined : cut(line, KEY_ARG_MAX);
+  };
+  for (const k of keyArgs) {
+    if (Object.hasOwn(rec, k) && rec[k] !== undefined && !isSecretKey(k)) {
+      const v = pick(rec[k]);
+      if (v !== undefined) return v;
+    }
+  }
+  for (const [k, v] of Object.entries(rec)) {
+    if (typeof v === "string" && k !== "description" && !isSecretKey(k)) {
+      const line = pick(v);
+      if (line !== undefined) return line;
+    }
+  }
+  return undefined;
 }
 
 /**
- * The card's input line: the kernel-rendered summary of the call (Platform operations) in the
- * card's language first, then the params; the card has no separate summary field.
+ * The approval card's one line about the call (maintainer decision 2026-11-08: what the web
+ * shows, never the raw input, which may hold a whole prompt and is seen by everyone in a group):
+ * the kernel-rendered summary in the card's language (Platform operations, per-call policies),
+ * else the tool's declared title and key argument (`Title: arg`, either alone), else "". Redacted
+ * by `redact` (the connection's secret values), cut to {@link CARD_SUMMARY_MAX}. The full input is
+ * behind the card's web link.
  */
-function previewWithSummary(
+export function callSummary(
   v: Pick<ApprovalView, "summary" | "input">,
+  display: Pick<ToolInfo, "title" | "keyArgs"> | undefined,
   locale: ChannelLocale,
-  redact?: (s: string) => string,
+  redact: (s: string) => string = (s) => s,
 ): string {
-  const params = inputPreview(v.input, redact);
-  if (v.summary === null) return params;
-  const text = redact ? redact(v.summary[locale]) : v.summary[locale];
-  const summary =
-    text.length <= INPUT_PREVIEW_MAX ? text : `${text.slice(0, INPUT_PREVIEW_MAX - 1)}…`;
-  return `${summary}\n${params}`;
+  let line: string;
+  if (v.summary !== null) {
+    line = v.summary[locale];
+  } else {
+    const title = display?.title?.trim() || undefined;
+    const arg = keyArgument(v.input, display?.keyArgs ?? []);
+    line = title !== undefined && arg !== undefined ? `${title}: ${arg}` : (title ?? arg ?? "");
+  }
+  return cut(redact(line), CARD_SUMMARY_MAX);
 }
 
 /** 去掉末尾斜杠的 `http.publicUrl`；未配置返回 undefined。 */
@@ -141,6 +185,8 @@ export function approvalToolName(
 export interface CardDeps {
   db: KernelSchemaDb;
   approvals: Pick<ApprovalsService, "describe">;
+  /** The tools' display metadata (title, key arguments) for a call without a summary. */
+  registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">;
 }
 
 /** 账号显示名；不存在返回 undefined。 */
@@ -158,8 +204,8 @@ async function displayName(
 }
 
 /**
- * 审批卡片（按审批的当前状态）；审批不存在返回 undefined。按角色升级的审批只能「仅此一次」。
- * `webUrl` = `http.publicUrl` + 会话路径。
+ * The approval card in the approval's current state; undefined when the approval does not exist.
+ * A role escalation offers only "once". `webUrl` = `http.publicUrl` + the conversation path.
  */
 export async function approvalCard(
   d: CardDeps,
@@ -171,6 +217,10 @@ export async function approvalCard(
   const v = await d.approvals.describe(approvalId);
   if (!v) return undefined;
   const decidedBy = await displayName(d.db, v.decidedBy);
+  const display =
+    v.summary === null
+      ? (await toolInfo({ db: d.db, registry: d.registry }, v.orgId, [v.toolKey]))[0]
+      : undefined;
   return {
     kind: "approval",
     id: v.id,
@@ -178,7 +228,8 @@ export async function approvalCard(
     // the label carries the source, so no separate appName (renderers would repeat it)
     toolName: approvalToolName(v, locale),
     agentName: v.agent.name || "Agent",
-    inputPreview: previewWithSummary(v, locale, redact),
+    // the field keeps its contract name; it carries the call line, never the raw input
+    inputPreview: callSummary(v, display, locale, redact),
     // the scopes the approval allows (the kernel stores them for per-call policies)
     scopes: v.scopes,
     expiresAt: v.expiresAt,

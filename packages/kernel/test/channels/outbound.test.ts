@@ -435,7 +435,7 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   let target: ChannelTarget;
   let conv: string;
 
-  it("审批卡片（打码的参数预览、网页链接）→ 有权者点批准 → 卡片更新为已批准，运行续跑并继续投递", async () => {
+  it("approval card (the call line, no raw input; web link) → 有权者点批准 → 卡片更新为已批准，运行续跑并继续投递", async () => {
     const chat = "dm-u-owner";
     const before = sentTo("cli_out", chat).length;
     im.push(connId, dm("a1", "u-owner", ECHO));
@@ -461,12 +461,9 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
       scopes: ["once", "session", "always"],
       webUrl: `https://cap.example/chat/${conv}`,
     });
-    expect(card.inputPreview).toContain('"text":"hi"');
+    // the call line only (no summary: the tool's title and key argument), never the raw input
+    expect(card.inputPreview).toBe("Echo: hi");
     expect(card.inputPreview).not.toContain("sk-live-0123456789abcdef");
-    // 按值打码（连接的密钥）；max_tokens 这类键不误伤
-    expect(card.inputPreview).not.toContain("app-secret-1234567");
-    expect(card.inputPreview).toContain('"max_tokens":42');
-    expect(card.inputPreview.length).toBeLessThanOrEqual(500);
     // The card is recorded as pending before the send; its message id is filled in, and the row
     // marked sent, in the transaction that advances last_seq after the send
     const rows = await waitFor(

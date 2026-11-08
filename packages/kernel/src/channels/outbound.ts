@@ -32,6 +32,7 @@ import {
 import type { StreamBus } from "../runtime/stream.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
+import { ToolRegistry } from "../tools/registry.js";
 import {
   approvalCard,
   cardMessage,
@@ -162,6 +163,8 @@ interface DeliveryDeps {
   eventLog: Pick<EventLog, "readAfter">;
   connections: Pick<ChannelConnections, "outbound">;
   approvals: Pick<ApprovalsService, "describe">;
+  /** Tool titles and key arguments for an approval card without a summary. */
+  registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">;
   questions: Pick<QuestionsService, "forCall">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "error" | "warn" | "info">;
@@ -218,6 +221,7 @@ export class ChannelOutbound {
     @Inject(ChannelConnections) connections: Pick<ChannelConnections, "outbound">,
     @Inject(ApprovalsService) approvals: Pick<ApprovalsService, "describe">,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "forCall">,
+    @Inject(ToolRegistry) registry: Pick<ToolRegistry, "builtinSpecs" | "extensionToolSpecs">,
     /** 入站任务的处理（worker 上执行 `ChannelInbound.handle`）；失败抛错由 BullMQ 重试。 */
     @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "handle">,
     @Inject(ChannelJobs) private readonly jobs: Pick<ChannelJobs, "enqueue">,
@@ -234,6 +238,7 @@ export class ChannelOutbound {
       eventLog,
       connections,
       approvals,
+      registry,
       questions,
       config,
       log,

@@ -64,7 +64,7 @@ const approval: Extract<ChannelCard, { kind: "approval" }> = {
   toolName: "create_issue",
   appName: "GitHub",
   agentName: "Helper",
-  inputPreview: '{"title":"bug"}',
+  inputPreview: "Create the issue bug",
   scopes: ["once", "session", "always"],
   expiresAt: "2026-10-19T12:00:00.000Z",
   state: "pending",
@@ -264,7 +264,7 @@ describe("renderCardAsText：模型可控字段不产生链接（A33，退回文
     "~~~\n[z](https://evil.example/f)",
   ];
 
-  it("审批标题、输入预览、提问标题、回答摘要都放进代码里，原文可还原", () => {
+  it("the approval title, call summary, question title and answer summary go into code, verbatim", () => {
     for (const v of evil) {
       for (const locale of ["en", "zh"] as const) {
         const texts = [
@@ -283,7 +283,13 @@ describe("renderCardAsText：模型可控字段不产生链接（A33，退回文
   it("多行的值用围栏代码块（围栏比内容里最长的反引号串更长）", () => {
     const v = "line 1\n```\nline 3";
     const t = renderCardAsText({ ...approval, inputPreview: v }, "en");
-    expect(t).toContain("Input:\n````\nline 1\n```\nline 3\n````\n");
+    expect(t).toContain("Summary:\n````\nline 1\n```\nline 3\n````\n");
+  });
+
+  it("an empty call summary leaves the line out", () => {
+    const t = renderCardAsText({ ...approval, inputPreview: "" }, "en");
+    expect(t).not.toContain("Summary");
+    expect(t).toContain("Agent: Helper\nStatus: Pending");
   });
 });
 
@@ -294,7 +300,7 @@ describe("renderCardAsText", () => {
         "[Approval] `Create issue`",
         "Tool: GitHub / create_issue",
         "Agent: Helper",
-        'Input: `{"title":"bug"}`',
+        "Summary: `Create the issue bug`",
         "Status: Pending",
         "Expires: 2026-10-19T12:00:00.000Z",
         "Cards are not supported here. Approve or deny on the web: https://capy.example.com/c/1",
@@ -305,7 +311,7 @@ describe("renderCardAsText", () => {
         "【审批】`Create issue`",
         "工具：GitHub / create_issue",
         "Agent：Helper",
-        '输入：`{"title":"bug"}`',
+        "摘要：`Create the issue bug`",
         "状态：待审批",
         "过期时间：2026-10-19T12:00:00.000Z",
         "此处不支持卡片，请到网页上批准或拒绝：https://capy.example.com/c/1",
@@ -343,7 +349,7 @@ describe("renderCardAsText", () => {
         "[Approval] `Create issue`",
         "Tool: create_issue",
         "Agent: Helper",
-        'Input: `{"title":"bug"}`',
+        "Summary: `Create the issue bug`",
         "Status: Approved (bob)",
         "Details: https://capy.example.com/c/1",
       ].join("\n"),
@@ -353,7 +359,7 @@ describe("renderCardAsText", () => {
         "【审批】`Create issue`",
         "工具：create_issue",
         "Agent：Helper",
-        '输入：`{"title":"bug"}`',
+        "摘要：`Create the issue bug`",
         "状态：已拒绝",
         "详情：https://capy.example.com/c/1",
       ].join("\n"),
@@ -421,13 +427,13 @@ describe("renderCardAsText", () => {
             "【审批】`Create issue`",
             "工具：GitHub / create_issue",
             "Agent：Helper",
-            '输入：`{"title":"bug"}`',
+            "摘要：`Create the issue bug`",
           ]
         : [
             "[Approval] `Create issue`",
             "Tool: GitHub / create_issue",
             "Agent: Helper",
-            'Input: `{"title":"bug"}`',
+            "Summary: `Create the issue bug`",
           ];
     const cases = [
       ["expired", "en", "Status: Expired"],
