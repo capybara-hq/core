@@ -28,6 +28,8 @@ export interface PluginCheckScope {
   plugins: string[];
   /** Package directories held to the SDK's boundary (core: `packages/plugin-sdk`). */
   sdkDirs?: string[];
+  /** Package directories that may depend on `@capybara-hq/plugin-sdk` only (core: `packages/device`). */
+  deviceDirs?: string[];
   /** More directories the tool design rules scan (core: the kernel's builtin tools). */
   toolDesignDirs?: string[];
   /** More migration directories (core: the kernel's migrations). */
@@ -55,7 +57,10 @@ export function pluginChecks(scope: PluginCheckScope): NamedCheck[] {
           ...plugins.map((p) => join(p, "migrations")),
         ]),
     },
-    { name: "Dependency boundary", run: () => checkDeps(plugins, scope.sdkDirs ?? []) },
+    {
+      name: "Dependency boundary",
+      run: () => checkDeps(plugins, scope.sdkDirs ?? [], scope.deviceDirs ?? []),
+    },
     { name: "Extension state", run: () => checkPluginState(plugins) },
     { name: "Extension permissions", run: () => checkPluginPermissions(plugins) },
     { name: "Plugin pack", run: () => checkPluginPack(plugins) },
