@@ -95,7 +95,7 @@ interface UiSlotSpec {
   versions per slot; while a slot moves from `@1` to `@2`, the web renders both forms for one
   minor release after 0.1.0 (before 0.1.0 there are no compatibility layers, AGENTS.md).
 - A contribution to an unknown slot or an unsupported version **does not fail the extension**
-  (designer's call): the contribution is dropped, the kernel logs one warning per extension
+  **(decided, 2026-11-08)**: the contribution is dropped, the kernel logs one warning per extension
   version, and the admin extension detail lists it under 未生效的界面 with the reason. The rest of
   the extension loads. `capybara-plugin check` reports it as an error (`ui-slot-unknown`) so it
   is caught before release.
@@ -109,7 +109,7 @@ interface UiSlotSpec {
 
 ## 4. Contributions
 
-The manifest's `place` becomes `slot` (designer's call; before 0.1.0, so no alias for `place`):
+The manifest's `place` becomes `slot`, with no alias for `place` **(decided, 2026-11-08)**:
 
 ```ts
 ui: [
@@ -142,7 +142,7 @@ ui: [
   org setting `ui.arrangement: { [slotId]: { hidden: string[]; order: string[] } }` keyed by
   `<extension>/<contribution>`. A platform arrangement (super admin) sets the default the org
   starts from, following the platform / org layering precedent. The person cannot rearrange
-  (designer's call: one layout per org keeps support simple); the conversation page keeps its own
+  **(decided, 2026-11-08)**: one layout per org keeps support simple; the conversation page keeps its own
   per-person state (which panel is open, sections collapsed) as today.
 - Hiding is not disabling: the extension, its tools and its other contributions stay on.
 
@@ -230,10 +230,9 @@ inbox, the overview of an org, connector and skill detail pages.
 
 ## 11. Open questions for review
 
-1. Is `slot` replacing `place` in the manifest (no alias, before 0.1.0) acceptable, given the
-   plugins repository has to move in step (§4)?
-2. Are the four new slots of §6 the right first set, or should the composer action row come
+1. Are the four new slots of §6 the right first set, or should the composer action row come
    first?
-3. Org admins hide and reorder contributions per slot; should people be able to as well (§5)?
-4. Should a contribution to an unknown slot fail the extension's load instead of being dropped
-   with a warning (§3.2)?
+
+Answered on 2026-11-08: `slot` replaces `place` with no alias, the plugins repository moving in
+step (§4); people cannot rearrange slots, only org admins and the platform (§5); a contribution to
+an unknown slot is dropped with a warning, the extension still loads (§3.2).
