@@ -1,5 +1,6 @@
 import { UI_LIMITS, UI_SLOT_IDS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import type { RouteSchemas } from "../platform/route-schemas.js";
 
 /** The DTO schemas of the org UI routes (`views.controller.ts`). */
 
@@ -75,3 +76,6 @@ export const PlatformViewQuery = z.object({ locale: Locale });
 
 /** `POST /api/v1/admin/ui/actions/:plugin/:id`: an action of a platform page (no context id). */
 export const PlatformActionBody = ActionBody.omit({ conversationId: true, agentId: true });
+
+/** The slot catalog route the Platform operation `ui.slots` mirrors (`check:platform-ops` key). */
+export const UI_ROUTES: readonly RouteSchemas[] = [{ route: "GET /api/v1/ui/slots" }];

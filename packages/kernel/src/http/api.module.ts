@@ -103,6 +103,7 @@ import {
 import { QuestionsController } from "../tools/questions.controller.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AdminUiController } from "../ui/admin-ui.controller.js";
+import { SlotsController } from "../ui/slots.controller.js";
 import { UiModule } from "../ui/ui.module.js";
 import { UiController } from "../ui/views.controller.js";
 
@@ -157,6 +158,7 @@ const CONTROLLERS: Type[] = [
   DirectorySyncController,
   UiController,
   AdminUiController,
+  SlotsController,
   FilePreviewersController,
   ExtensionPointDefaultsController,
   TrajectoryController,
