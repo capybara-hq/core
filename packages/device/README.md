@@ -38,3 +38,27 @@ get no local credentials at all). Processes a command leaves running are killed 
 on macOS a child that leaves the command's process group and runs only Apple system binaries
 cannot be found again (Linux runs each command in its own pid namespace, which takes every child
 down with it).
+
+## Docker mode
+
+`login --mode docker` runs every command with `docker exec` in one container per environment
+(`capybara-device-<environmentId>`, started on first use from
+`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release) as the image's
+`sandbox` user (uid 1000). `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
+at `/workspace`, `/skills` and `/tmp`; the container drops all capabilities. The policy's `cpu` and
+`memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and limits
+match and recreated when they change; it stays running (idle) between starts.
+
+Docker mode has no domain allowlist: a command has either no network (`--network none`, when the
+local policy or the environment's egress allows no domain) or the default bridge, with the whole
+internet. Use OS mode to limit commands to the domains of the local policy. On Linux the mounted
+directories must be writable by uid 1000.
+
+## Running at login
+
+`capybara-device service install` makes the program start at login: on macOS a launchd agent
+(`~/Library/LaunchAgents/top.capybara.device.plist`, log `service.log` in the state directory), on
+Linux a systemd user unit (`~/.config/systemd/user/capybara-device.service`, restarted on
+failure; run `loginctl enable-linger $USER` to start it at boot instead of at login). The service
+runs `node <bin> start` with the `PATH` of the shell that installed it (so `docker` is found).
+`service uninstall` reverses it.

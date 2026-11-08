@@ -239,10 +239,6 @@ describe("platform", () => {
     }
   });
 
-  it("service is not implemented yet and exits 2", async () => {
-    expect(await run(["service", "install"])).toBe(2);
-  });
-
   it("policy set and show go through the state directory", async () => {
     expect(await run(["policy", "set", "allowedDomains", "a.com"])).toBe(0);
     out.length = 0;

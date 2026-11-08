@@ -1,0 +1,293 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { DeviceExecArgs, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  containerName,
+  DockerExecutor,
+  SANDBOX_IMAGE,
+  SANDBOX_IMAGE_TAG,
+} from "../src/exec/docker.js";
+import { DeviceOpError } from "../src/exec/types.js";
+import { DEFAULT_POLICY } from "../src/state.js";
+
+const hasDocker = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const LIMITS: SandboxLimits = {
+  cpu: 1,
+  memoryMb: 512,
+  diskMb: 1024,
+  egress: "none",
+  allowHosts: [],
+};
+
+function execArgs(command: string, over: Partial<DeviceExecArgs> = {}): DeviceExecArgs {
+  return {
+    command,
+    timeoutMs: 20_000,
+    maxOutputBytes: 64 * 1024,
+    tag: "t1",
+    actor: { accountId: "acc", conversationId: "conv" },
+    limits: LIMITS,
+    ...over,
+  } as DeviceExecArgs;
+}
+
+describe("docker executor constants", () => {
+  it("pins the published sandbox image tag", () => {
+    expect(SANDBOX_IMAGE_TAG).toBe("0.1.0-rc.5");
+    expect(SANDBOX_IMAGE).toBe("ghcr.io/capybara-hq/capybara-sandbox:0.1.0-rc.5");
+    expect(containerName("env_1")).toBe("capybara-device-env_1");
+  });
+});
+
+describe.skipIf(!hasDocker)("DockerExecutor", () => {
+  let base: string;
+  let dir: string;
+  let envId: string;
+  let ex: DockerExecutor;
+  const live = new AbortController().signal;
+
+  beforeAll(() => {
+    const have = spawnSync("docker", ["image", "inspect", SANDBOX_IMAGE], { stdio: "ignore" });
+    if (have.status !== 0) execFileSync("docker", ["pull", SANDBOX_IMAGE], { stdio: "ignore" });
+  }, 300_000);
+
+  beforeEach(async () => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), "device-docker-")));
+    dir = join(base, "env");
+    mkdirSync(dir);
+    envId = `t${randomBytes(6).toString("hex")}`;
+    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    await ex.ensureRoot();
+  });
+
+  afterEach(async () => {
+    await ex.dispose();
+    spawnSync("docker", ["rm", "-f", containerName(envId)], { stdio: "ignore" });
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  afterAll(() => {});
+
+  it("docker exec runs in /workspace and files land in the environment dir", async () => {
+    const r = await ex.exec(execArgs("pwd; id -un; echo hi > made.txt; echo t > /tmp/x"), live);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.split("\n").slice(0, 2)).toEqual(["/workspace", "sandbox"]);
+    expect(readFileSync(join(dir, "workspace", "made.txt"), "utf8")).toBe("hi\n");
+    expect(readFileSync(join(dir, "tmp", "x"), "utf8")).toBe("t\n");
+    expect(ex.mode).toBe("docker");
+    expect(ex.roots).toEqual({ workspace: "/workspace", skills: "/skills", tmp: "/tmp" });
+    const marker = execFileSync(
+      "docker",
+      ["exec", containerName(envId), "sh", "-c", "touch /skills/a 2>&1; true"],
+      { encoding: "utf8" },
+    );
+    expect(marker).toMatch(/Read-only/i);
+  });
+
+  it("reuses the container and recreates it when the mounts differ", async () => {
+    await ex.exec(execArgs("true"), live);
+    const id1 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
+      encoding: "utf8",
+    });
+    const again = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    await again.exec(execArgs("true"), live);
+    const id2 = execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)], {
+      encoding: "utf8",
+    });
+    expect(id2).toBe(id1);
+    const other = join(base, "env2");
+    mkdirSync(other);
+    const moved = new DockerExecutor({ dir: other, environmentId: envId, policy: DEFAULT_POLICY });
+    await moved.exec(execArgs("touch here"), live);
+    expect(existsSync(join(other, "workspace", "here"))).toBe(true);
+    await moved.dispose();
+  });
+
+  it("applies the policy's cpu and memory ceilings", async () => {
+    const limited = new DockerExecutor({
+      dir,
+      environmentId: envId,
+      policy: { ...DEFAULT_POLICY, cpu: 1.5, memoryMb: 256 },
+    });
+    await limited.exec(execArgs("true"), live);
+    const out = execFileSync(
+      "docker",
+      ["inspect", "-f", "{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}", containerName(envId)],
+      { encoding: "utf8" },
+    ).trim();
+    expect(out).toBe(`1500000000 ${256 * 1024 * 1024}`);
+  });
+
+  it("killTagged stops only that tag", async () => {
+    const a = ex.exec(execArgs("sleep 60", { tag: "a", timeoutMs: 60_000 }), live);
+    const b = ex.exec(execArgs("sleep 3; echo done", { tag: "b", timeoutMs: 60_000 }), live);
+    await sleep(1500);
+    await ex.killTagged(["a"]);
+    const ra = await a;
+    expect(ra.exitCode).toBeNull();
+    const rb = await b;
+    expect(rb.exitCode).toBe(0);
+    expect(rb.stdout).toBe("done\n");
+  });
+
+  it("killTagged reaches background children; killAll stops everything", async () => {
+    const r = await ex.exec(execArgs("(sleep 300 &) ; echo started", { tag: "bg" }), live);
+    expect(r.stdout).toBe("started\n");
+    const count = () =>
+      execFileSync(
+        "docker",
+        ["exec", containerName(envId), "sh", "-c", "pgrep -c -x sleep; true"],
+        { encoding: "utf8" },
+      ).trim();
+    // The container's own PID 1 is `sleep infinity`; the background child makes two.
+    expect(count()).toBe("2");
+    await ex.killTagged(["bg"]);
+    await sleep(300);
+    expect(count()).toBe("1");
+    await ex.exec(execArgs("(sleep 300 &)", { tag: "bg2" }), live);
+    await ex.killAll();
+    await sleep(300);
+    expect(count()).toBe("1");
+  });
+
+  it("times out, aborts, and refuses to start on an aborted signal", async () => {
+    const t = await ex.exec(execArgs("sleep 30", { timeoutMs: 1000 }), live);
+    expect(t.timedOut).toBe(true);
+    expect(t.exitCode).toBeNull();
+    const ac = new AbortController();
+    const p = ex.exec(execArgs("sleep 30", { timeoutMs: 60_000 }), ac.signal);
+    await sleep(1000);
+    ac.abort();
+    expect((await p).exitCode).toBeNull();
+    const done = new AbortController();
+    done.abort();
+    await expect(ex.exec(execArgs("touch never"), done.signal)).rejects.toThrow();
+    expect(existsSync(join(dir, "workspace", "never"))).toBe(false);
+  });
+
+  it("caps output on a UTF-8 boundary and reports exit codes", async () => {
+    const r = await ex.exec(
+      execArgs("printf '€€€€€€€€'; echo err >&2; exit 3", { maxOutputBytes: 7 }),
+      live,
+    );
+    expect(r.truncated).toBe(true);
+    expect(r.exitCode).toBe(3);
+    expect(r.stdout).not.toContain("�");
+    expect(Buffer.byteLength(r.stdout) + Buffer.byteLength(r.stderr)).toBeLessThanOrEqual(7);
+  });
+
+  it("passes env and a cwd inside the roots; refuses a cwd outside", async () => {
+    mkdirSync(join(dir, "workspace", "sub"));
+    const r = await ex.exec(
+      execArgs("pwd; echo $FOO", { cwd: "/workspace/sub", env: { FOO: "a b" } }),
+      live,
+    );
+    expect(r.stdout).toBe("/workspace/sub\na b\n");
+    await expect(ex.exec(execArgs("true", { cwd: "/etc" }), live)).rejects.toMatchObject({
+      kind: "policy",
+    });
+    await expect(
+      ex.exec(execArgs("true", { env: { "BAD-NAME": "x" } }), live),
+    ).rejects.toMatchObject({ kind: "policy" });
+  });
+
+  it("has no network unless the effective egress is non-empty", async () => {
+    const probe = "getent hosts example.com >/dev/null 2>&1 && echo net || echo nonet";
+    expect((await ex.exec(execArgs(probe), live)).stdout).toBe("nonet\n");
+    const open = new DockerExecutor({
+      dir,
+      environmentId: envId,
+      policy: { ...DEFAULT_POLICY, allowedDomains: ["example.com"] },
+    });
+    const state = async () =>
+      execFileSync(
+        "docker",
+        [
+          "inspect",
+          "-f",
+          "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+          containerName(envId),
+        ],
+        { encoding: "utf8" },
+      ).trim();
+    expect(await state()).toBe("");
+    await open.exec(execArgs("true", { limits: { ...LIMITS, egress: "open" } }), live);
+    expect(await state()).toBe("bridge");
+    await open.exec(execArgs("true"), live);
+    expect(await state()).toBe("");
+  });
+
+  it("reads, writes and stats files in workspace and tmp, null when missing", async () => {
+    await ex.writeFile("/workspace/a/b.txt", Buffer.from("héllo"));
+    expect(readFileSync(join(dir, "workspace", "a", "b.txt"), "utf8")).toBe("héllo");
+    const r = await ex.readFile("/workspace/a/b.txt", 100);
+    expect(Buffer.from(r?.data ?? []).toString()).toBe("héllo");
+    expect(r?.truncated).toBe(false);
+    const cut = await ex.readFile("/workspace/a/b.txt", 2);
+    expect(cut?.data.length).toBe(2);
+    expect(cut?.truncated).toBe(true);
+    expect(await ex.readFile("/workspace/none", 10)).toBeNull();
+    expect(await ex.readFile("/workspace/a", 10)).toBeNull();
+    expect(await ex.stat("/workspace/a/b.txt")).toEqual({ size: 6, isDir: false });
+    expect(await ex.stat("/workspace/a")).toMatchObject({ isDir: true });
+    expect(await ex.stat("/workspace/nope")).toBeNull();
+    await ex.writeFile("/tmp/t.bin", new Uint8Array(0));
+    expect(await ex.stat("/tmp/t.bin")).toEqual({ size: 0, isDir: false });
+  });
+
+  it("refuses paths outside the roots and links that leave them", async () => {
+    await expect(ex.readFile("/etc/passwd", 10)).rejects.toMatchObject({ kind: "policy" });
+    await expect(ex.writeFile("/workspace/../etc/x", Buffer.from("x"))).rejects.toMatchObject({
+      kind: "policy",
+    });
+    await expect(ex.readFile("relative", 10)).rejects.toBeInstanceOf(DeviceOpError);
+    await ex.exec(execArgs("ln -s /etc/passwd leak; ln -s /etc etc; ln -s /skills sk"), live);
+    await expect(ex.readFile("/workspace/leak", 10)).rejects.toMatchObject({ kind: "policy" });
+    await expect(ex.stat("/workspace/leak")).rejects.toMatchObject({ kind: "policy" });
+    await expect(ex.writeFile("/workspace/leak", Buffer.from("x"))).rejects.toMatchObject({
+      kind: "policy",
+    });
+    await expect(ex.writeFile("/workspace/etc/x", Buffer.from("x"))).rejects.toMatchObject({
+      kind: "policy",
+    });
+    expect(existsSync("/etc/x")).toBe(false);
+  });
+
+  it("skills are read and written through the host directory, with link checks", async () => {
+    await ex.writeFile("/skills/s/SKILL.md", Buffer.from("# s"));
+    expect(readFileSync(join(dir, "skills", "s", "SKILL.md"), "utf8")).toBe("# s");
+    const r = await ex.readFile("/skills/s/SKILL.md", 100);
+    expect(Buffer.from(r?.data ?? []).toString()).toBe("# s");
+    expect(await ex.stat("/skills/s")).toMatchObject({ isDir: true });
+    expect(await ex.readFile("/skills/none", 10)).toBeNull();
+    symlinkSync("/etc/passwd", join(dir, "skills", "bad"));
+    await expect(ex.readFile("/skills/bad", 10)).rejects.toMatchObject({ kind: "policy" });
+    // Commands see the skills read only and cannot plant links there.
+    const w = await ex.exec(execArgs("ln -s /etc/passwd /skills/plant"), live);
+    expect(w.exitCode).not.toBe(0);
+  });
+
+  it("ensureRoot creates the marker and roots; a vanished directory is gone", async () => {
+    expect(existsSync(join(dir, ".capybara-device"))).toBe(true);
+    expect(existsSync(join(dir, "tmp"))).toBe(true);
+    writeFileSync(join(dir, "workspace", "k"), "x");
+    rmSync(dir, { recursive: true });
+    expect(await ex.ensureRoot()).toBe("gone");
+    expect(existsSync(dir)).toBe(false);
+  });
+});

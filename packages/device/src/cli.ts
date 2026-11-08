@@ -4,6 +4,7 @@ import { drain } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { policyCommand } from "./commands/policy.js";
+import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
@@ -21,13 +22,20 @@ export interface CliEnv {
   err?: (line: string) => void;
   createExecutor?: (cred: Credential, policy: Policy) => Promise<Executor> | Executor;
   kill?: typeof process.kill;
+  /** Runs a system command for `service` (default: execFileSync). */
+  runSystem?: (cmd: string, args: string[]) => void;
 }
 
 /** The executor for the credential's mode; the program's state directory is unreadable to commands. */
 function defaultCreateExecutor(stateDir: string, home: string) {
   return async (cred: Credential, policy: Policy): Promise<Executor> => {
     if (cred.mode === "docker") {
-      throw new Error("Docker mode is not available in this build; log in again with --mode os");
+      const { createDockerExecutor } = await import("./exec/docker.js");
+      return createDockerExecutor({
+        dir: cred.dir,
+        environmentId: cred.environmentId,
+        policy,
+      });
     }
     // Loaded on demand: the sandbox runtime is only needed by start.
     const { createOsExecutor } = await import("./exec/os.js");
@@ -87,9 +95,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       return drain(dir, out, err, io.kill);
     case "policy":
       return policyCommand(cmd, { stateDir: dir, out, err });
-    default:
-      // service arrives with a later task of the plan.
-      err(`capybara-device ${cmd.command}: not implemented yet`);
-      return 2;
+    case "service":
+      return serviceCommand(cmd.action, {
+        stateDir: dir,
+        home,
+        platform,
+        env: io.env ?? process.env,
+        out,
+        err,
+        ...(io.runSystem && { run: io.runSystem }),
+      });
   }
 }
