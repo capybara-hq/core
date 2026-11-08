@@ -801,6 +801,59 @@ describe("出站投递：卡片与卡片操作", { timeout: 40_000 }, () => {
   });
 });
 
+describe("cards speak the requester's language (run context spec §3.4)", {
+  timeout: 40_000,
+}, () => {
+  it("a person whose latest web message is Chinese gets a Chinese approval card in an en org", async () => {
+    const mem = await session(k, "mem");
+    const web = await mem({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "from the web", clientMessageId: "web-zh-1", locale: "zh" },
+      },
+    });
+    expect(web.statusCode, web.body).toBe(201);
+    const chat = "dm-u-member";
+    const before = sentTo("cli_out", chat).length;
+    im.push(connId, dm("zh-1", "u-member", ECHO));
+    const cardMsg = await waitFor(
+      async () =>
+        sentTo("cli_out", chat)
+          .slice(before)
+          .find((s) => cardOf(s)?.kind === "approval"),
+      10_000,
+      "approval card",
+    );
+    expect(cardMsg.locale).toBe("zh");
+    expect(cardMsg.message.text).toBe("需要你的批准");
+    const card = cardOf(cardMsg) as Extract<ChannelCard, { kind: "approval" }>;
+    expect(card.title).toBe("需要你的批准");
+    await cardRecorded(db, cardMsg);
+    im.push(
+      connId,
+      cardAction(
+        "zh-1-act",
+        "u-member",
+        { cardKind: "approval", cardId: card.id, action: "deny" },
+        cardMsg.target,
+      ),
+    );
+    const up = await waitFor(
+      async () =>
+        updatesOf(cardMsg.messageId).find(
+          (u) => (cardOf(u) as { state?: string } | undefined)?.state === "denied",
+        ),
+      10_000,
+      "card denied",
+    );
+    expect(up.locale).toBe("zh");
+    expect((cardOf(up) as { title: string }).title).toBe("需要你的批准");
+    await settled(await convOf(connId, chat));
+  });
+});
+
 describe("T5a: cards are recorded before they are sent", { timeout: 40_000 }, () => {
   const cardRow = async (approvalId: string) =>
     (

@@ -766,3 +766,55 @@ describe("IM sender time zone and language (run context spec §3.4)", () => {
     }
   });
 });
+
+describe("kernel IM text in the person's language (run context spec §3.4)", () => {
+  /** Sends a direct message (optionally with a platform language) and returns the bot's reply. */
+  const sendDm = async (id: string, text: string, locale?: string): Promise<FakeChannelSent> => {
+    const n = im.sent.length;
+    const key = idempotencyKey(`${connId}-${id}-reply`);
+    im.push(connId, dm(id, "u-owner", text, "t1", locale === undefined ? undefined : { locale }));
+    return sentAfter(n, "dm-u-owner", (x) => x.idempotencyKey === key);
+  };
+
+  it("/env replies: IM language, else the latest web message's, else the org's", async () => {
+    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+    // nothing known (the owner's web conversations hidden): the org's language (en)
+    await sql`UPDATE capybara.conversations SET deleted_at = now()
+      WHERE org_id = ${orgId} AND account_id = ${ownerId} AND kind = 'chat' AND deleted_at IS NULL
+        AND id NOT IN (SELECT conversation_id FROM capybara.channel_threads)`.execute(raw);
+    const plain = await sendDm("loc-1", "/env");
+    expect(plain.message.text).toContain("Your environments:");
+    expect(plain.locale).toBe("en");
+    // the person's latest web message is in Chinese: replies in Chinese, org still en
+    const web = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations`,
+      payload: {
+        agentId,
+        message: { text: "from the web", clientMessageId: "web-loc-1", locale: "zh" },
+      },
+    });
+    expect(web.statusCode, web.body).toBe(201);
+    const zh = await sendDm("loc-2", "/env");
+    expect(zh.message.text).toContain("你的环境：");
+    expect(zh.message.text).toContain("（当前）");
+    expect(zh.locale).toBe("zh");
+    expect((await sendDm("loc-3", "/env lab")).message.text).toBe(
+      "下一个新对话将使用环境「Lab」，发送 /new 开始。",
+    );
+    expect((await sendDm("loc-4", "/new")).message.text).toBe("已开始新对话");
+    // the IM platform's language wins over the web one
+    const en = await sendDm("loc-5", "/env", "en-US");
+    expect(en.message.text).toContain("Your environments:");
+    expect(en.locale).toBe("en");
+    await db.deleteFrom("environment_defaults").where("account_id", "=", ownerId).execute();
+  });
+
+  it("an unbound sender's bind prompt follows the IM language, else the org's", async () => {
+    const n = im.sent.length;
+    im.push(connId, dm("loc-6", "nobody-zh", "hi", "t1", { locale: "zh-CN" }));
+    const s = await sentAfter(n, "dm-nobody-zh");
+    expect(s.message.text).toBe("请先绑定你的 Capybara 账号，再与我对话。");
+    expect(s.locale).toBe("zh");
+  });
+});

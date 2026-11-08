@@ -4,9 +4,9 @@ import type {
   InboundEvent,
   InboundSender,
 } from "@capybara-hq/plugin-sdk";
+import { imLocale, recipientLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import type { ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
@@ -64,7 +64,10 @@ export class ChannelCardActions {
     const row = await connections.row(connectionId);
     // 连接停用、组织已删除或插件在该组织停用（停用广播与长连接断开之间仍可能有事件到达）：什么都不做
     if (row?.status !== "active" || !row.pluginEnabled) return;
-    const { locale } = await readOrgSettings(this.deps.db, row.orgId);
+    // the clicker's language (maintainer decision 2026-11-08): the platform's, else the org's
+    // until the clicker is resolved, then their latest web message's (see below)
+    const im = imLocale(e.sender.locale);
+    let locale: ChannelLocale = await recipientLocale(this.deps.db, { orgId: row.orgId, im });
     const a = e.action;
     // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）。
     // A `pending` row counts (T5a): delivery records the card before sending it, so a click that
@@ -88,6 +91,7 @@ export class ChannelCardActions {
           t,
           { text: phrase(k, locale), ...(cards !== undefined && { cards }) },
           key,
+          locale,
         );
       };
     // Ruling A13：卡片必须是本连接发在这个 chat 里的（防止伪造卡片 id 去处理别处的请求）。在解析发言人之前判断：
@@ -115,6 +119,9 @@ export class ChannelCardActions {
     const isGroup = target.chatType === "group";
     const who = await this.deps.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (who === undefined) return;
+    if (im === undefined && who.threadAccount !== null) {
+      locale = await recipientLocale(this.deps.db, { orgId: row.orgId, accountId: who.accountId });
+    }
     // 匿名访客共用一个账号：只能处理自己话题里的卡片，且不能留下「本会话 / 以后都允许」的授权
     const anonymous = who.threadAccount === null;
     if (anonymous) {

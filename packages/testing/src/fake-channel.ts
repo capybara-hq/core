@@ -52,7 +52,7 @@ export interface FakeChannelSent {
   pid: number;
   /** 内核给的幂等键（`ChannelSendArgs.idempotencyKey`）。 */
   idempotencyKey?: string;
-  /** 内核给的组织语言（`ChannelSendArgs.locale`）。 */
+  /** The language the kernel gave (`ChannelSendArgs.locale`: the recipient's, else the org's). */
   locale?: "zh" | "en";
   at: number;
 }

@@ -16,6 +16,7 @@ import {
   EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import { recipientLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -23,7 +24,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import {
   type ConversationLeases,
   ConversationLock,
@@ -145,6 +145,47 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
   const k = (m as { kind?: unknown }).kind;
   if (k === "events") return typeof (m as { toSeq?: unknown }).toSeq === "number";
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
+}
+
+/**
+ * The language of the kernel text a conversation's IM thread gets (cards, notices; maintainer
+ * decision 2026-11-08: in IM, language is per person). The person who triggered the run speaks:
+ * the `locale` recorded on the conversation's latest `user_message` at or before `uptoSeq`, which
+ * already follows the order IM language, latest web message language, org language
+ * (`readMessageContext`). In a group thread that is whoever wrote last, i.e. the requester of the
+ * approvals and questions that follow. A message from an older log without one: its author's
+ * language by {@link recipientLocale}; no user message at all: the conversation owner's.
+ * Read from PG, so any replica derives the same value.
+ */
+export async function conversationLocale(
+  db: KernelSchemaDb,
+  orgId: string,
+  conversationId: string,
+  uptoSeq: number,
+): Promise<ChannelLocale> {
+  const m = await db
+    .selectFrom("conversation_events")
+    .select([
+      sql<string | null>`payload->>'locale'`.as("locale"),
+      sql<string | null>`payload->>'authorAccountId'`.as("author"),
+    ])
+    .where("conversation_id", "=", conversationId)
+    .where("type", "=", "user_message")
+    .where("seq", "<=", String(uptoSeq))
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (m?.locale === "zh" || m?.locale === "en") return m.locale;
+  let accountId = m?.author ?? null;
+  if (accountId === null) {
+    const c = await db
+      .selectFrom("conversations")
+      .select("account_id")
+      .where("id", "=", conversationId)
+      .executeTakeFirst();
+    accountId = c?.account_id ?? null;
+  }
+  return recipientLocale(db, { orgId, accountId });
 }
 
 /** BullMQ 退避：平台给了等待时长就用它，否则指数退避。 */
@@ -577,7 +618,12 @@ class Delivery {
       this.seen = Number(row.last_seq);
       this.persisted = this.seen;
       this.draftId = row.draft_message_id;
-      this.locale = (await readOrgSettings(this.d.db, this.s.row.orgId)).locale;
+      this.locale = await conversationLocale(
+        this.d.db,
+        this.s.row.orgId,
+        this.conversationId,
+        this.seen,
+      );
       this.base = webBase(this.d.config.get().http.publicUrl);
       return await this.loop();
     } catch (err) {
@@ -831,11 +877,17 @@ class Delivery {
   }
 
   private send(message: OutboundMessage, idempotencyKey: string): Promise<{ messageId: string }> {
-    return this.s.send(this.target, message, idempotencyKey);
+    return this.s.send(this.target, message, idempotencyKey, this.locale);
   }
 
   private async handle(e: ConversationEvent): Promise<void> {
     switch (e.type) {
+      case "user_message": {
+        // a new message: what follows speaks its author's language (see conversationLocale)
+        const l = e.payload.locale;
+        if (l === "zh" || l === "en") this.locale = l;
+        return;
+      }
       case "assistant_message":
         return this.finalize(e.runId, e.payload.step, e.payload.content, e.seq);
       case "approval_requested":
@@ -1062,7 +1114,13 @@ class Delivery {
         const marker = phrase(how === "failed" ? "runFailed" : "runStopped", this.locale);
         await this.send({ text: marker }, this.key(seq, `-close-${how}`));
       } else {
-        await this.s.update(this.target, this.draftId, { text }, this.key(seq, `-close-${how}`));
+        await this.s.update(
+          this.target,
+          this.draftId,
+          { text },
+          this.key(seq, `-close-${how}`),
+          this.locale,
+        );
       }
     }
     return true;
@@ -1118,9 +1176,9 @@ class Delivery {
     idempotencyKey: string,
   ): Promise<void> {
     if (this.s.features.edit) {
-      await this.s.update(at.target, at.messageId, message, idempotencyKey);
+      await this.s.update(at.target, at.messageId, message, idempotencyKey, this.locale);
     } else {
-      await this.s.send(at.target, message, idempotencyKey);
+      await this.s.send(at.target, message, idempotencyKey, this.locale);
     }
   }
 
@@ -1152,7 +1210,13 @@ class Delivery {
     }
     if (useDraft && !this.draftBroken) {
       try {
-        await this.s.update(this.target, this.draftId as string, { text }, this.key(seq));
+        await this.s.update(
+          this.target,
+          this.draftId as string,
+          { text },
+          this.key(seq),
+          this.locale,
+        );
       } catch (err) {
         if (!editRejected(err)) throw err;
         // 编辑草稿被拒（消息太旧不能再改、内容被拒等）：把完整文本作为新消息发出，不计毒事件
@@ -1218,7 +1282,7 @@ class Delivery {
       const interval = Math.max(DRAFT_INTERVAL_MS, this.s.features.minEditIntervalMs ?? 0);
       if (now - this.lastDraftAt < interval) return;
       try {
-        await this.s.update(this.target, this.draftId, { text: cur.text });
+        await this.s.update(this.target, this.draftId, { text: cur.text }, undefined, this.locale);
       } catch (err) {
         if (!editRejected(err)) throw err;
         // 中途编辑被拒：不再编辑草稿，定稿时改发新消息

@@ -95,7 +95,11 @@ export interface ChannelSendArgs {
    */
   message: OutboundMessage;
   signal: AbortSignal;
-  /** 连接所属组织的界面语言：插件自己渲染的文案（卡片按钮、降级文本里的固定词）按它选择。 */
+  /**
+   * The recipient's language (the sender's platform language, else their latest web language,
+   * else the org's): the wording the extension renders itself (card buttons, fixed words in the
+   * text fallback) follows it.
+   */
   locale: Locale;
   /**
    * 幂等键（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符，同一条逻辑消息的每次重试（崩溃后其他副本续投、

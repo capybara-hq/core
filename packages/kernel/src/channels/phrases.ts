@@ -1,8 +1,9 @@
-/** 组织默认语言（`orgs.settings.locale`）。 */
+/** The language of kernel IM text: the recipient's, else the org's (`orgs.settings.locale`). */
 export type ChannelLocale = "zh" | "en";
 
 /**
- * 机器人在 IM 里说的固定话术（全部集中在这里，zh / en 同步）：按连接所属组织的默认语言选择。
+ * 机器人在 IM 里说的固定话术（全部集中在这里，zh / en 同步）. Chosen per recipient (run context spec
+ * §3.4): the sender's platform language, else their latest web language, else the org's.
  * 模型回复不经过这里，原样转换为 IM 富文本、不翻译。
  */
 export const CHANNEL_PHRASES = {

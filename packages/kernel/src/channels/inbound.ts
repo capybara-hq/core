@@ -10,7 +10,11 @@ import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import { type ImSenderContext, imSenderContext } from "../conversations/message-context.js";
+import {
+  type ImSenderContext,
+  imSenderContext,
+  recipientLocale,
+} from "../conversations/message-context.js";
 import { EnvironmentsService, type EnvironmentView } from "../environments/environments.service.js";
 import { DEFAULT_ENVIRONMENT_ALIASES, environmentLabel } from "../environments/label.js";
 import { ApiError } from "../errors.js";
@@ -20,7 +24,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { DirectorySync } from "../orgs/directory-sync.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import { parseSlashCommand } from "../skills/invoke.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -209,7 +212,11 @@ export class ChannelInbound {
     const threadKey = threadKeyOf(e.target, e.sender.externalId, e.messageId);
     // 群里回在话题里（新话题以这条消息为根）
     const replyTarget: ChannelTarget = isGroup ? { ...e.target, threadId: threadKey } : e.target;
-    const { locale } = await readOrgSettings(db, row.orgId);
+    // the sender's zone and language as the platform gives them (run context spec §3.4)
+    const im = imSenderContext(e.sender);
+    // kernel text speaks the person's language (maintainer decision 2026-11-08): before the
+    // speaker is known, the platform's language, else the org's
+    let locale: ChannelLocale = await recipientLocale(db, { orgId: row.orgId, im: im.locale });
     // 回复带幂等键：任务重试时平台不会重复显示（一条消息至多一句回复）
     const replyKey = idempotencyKey(`${connectionId}-${e.messageId}-reply`);
     const replyText = async (text: string, cards?: ChannelCard[]) => {
@@ -218,6 +225,7 @@ export class ChannelInbound {
         replyTarget,
         { text, ...(cards !== undefined && { cards }) },
         replyKey,
+        locale,
       );
     };
     const reply = (key: ChannelPhrase, cards?: ChannelCard[]) =>
@@ -226,6 +234,10 @@ export class ChannelInbound {
     const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (speaker === undefined) return;
     const { accountId, threadAccount } = speaker;
+    // a bound person without a platform language: their latest web message's, else the org's
+    if (im.locale === undefined && threadAccount !== null) {
+      locale = await recipientLocale(db, { orgId: row.orgId, accountId: threadAccount });
+    }
 
     const k: ThreadKey = {
       connectionId,
@@ -279,8 +291,7 @@ export class ChannelInbound {
         // person by their account's name (the kernel reads it)
         ...(threadAccount === null &&
           e.sender.displayName !== undefined && { senderName: e.sender.displayName }),
-        // the sender's zone and language as the platform gives them (run context spec §3.4)
-        im: imSenderContext(e.sender),
+        im,
       });
       seq = posted.event.seq;
       // best-effort (batch 5 review m4): a failed note must not fail the job before the thread

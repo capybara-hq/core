@@ -178,6 +178,26 @@ the next run's `run_context`, kept in the log so the snapshot is derived from re
   other (the date rule applies to the date).
 - Leftover queue rows entering the log get the author's account setting or the org defaults (no
   browser values were stored with them).
+- **Kernel-generated IM text** (maintainer decision 2026-11-08, acceptance item 115): the fixed
+  phrases and cards the kernel sends to IM follow the same language order per recipient, not the
+  org's `locale`. Every value is read from PG when it is needed (no in-process cache), so any
+  replica derives the same language.
+  - Inbound replies (`/new`, `/env`, bind prompts and the other notices, `channels/inbound.ts`):
+    the sender's platform language; else, once the sender is resolved to a bound account, the
+    language of their latest web message (`latestWebLocale`); else the org's. A reply sent before
+    the sender is known (bind prompt, "not a member") has only the platform language or the org's.
+  - Card-click replies ("already handled", "can't handle", `channels/actions.ts`): the same order
+    for the person who clicked.
+  - Delivery to a conversation's thread (approval, question and connect cards, card updates, run
+    failure and skip notices, `channels/outbound.ts` `conversationLocale`): the `locale` recorded on
+    the conversation's latest `user_message`, which is already the IM, web, org order for its
+    author; a delivery that reads a newer `user_message` switches to that one. In a group thread
+    the card therefore speaks the language of the person who triggered the run, the requester of
+    its approvals and questions (a sub-agent's card: the root conversation's latest message). An
+    older log's message without a `locale` falls back to its author's language as above.
+  - The language is passed to the extension as `ChannelSendArgs.locale` with every send and
+    update, and the card text fallback (`renderCardAsText`) and the card summary a tool renders
+    (the Platform operation summary, per-call policies) use it too.
 
 ### 3.5 Versioned agent description (decided, 2026-11-08)
 

@@ -85,6 +85,26 @@ export async function latestWebLocale(
   return locale === "zh" || locale === "en" ? locale : undefined;
 }
 
+/**
+ * The language of kernel-generated IM text for one person (run context spec §3.4, maintainer
+ * decision 2026-11-08: in IM, language is per person): `im` (what the IM platform gave for the
+ * sender, already normalized by {@link imLocale}), else the UI language of the person's most recent
+ * web message in the org ({@link latestWebLocale}; no account, e.g. a speaker not resolved yet or
+ * the shared anonymous guest: skipped), else the org's `locale`. Read from PG on every call: no
+ * cache, so every replica answers the same.
+ */
+export async function recipientLocale(
+  t: KernelSchemaDb,
+  input: { orgId: string; accountId?: string | null | undefined; im?: "zh" | "en" | undefined },
+): Promise<"zh" | "en"> {
+  if (input.im !== undefined) return input.im;
+  if (input.accountId) {
+    const web = await latestWebLocale(t, input.orgId, input.accountId);
+    if (web !== undefined) return web;
+  }
+  return (await readOrgSettings(t, input.orgId)).locale;
+}
+
 /** The `user_message` fields {@link readMessageContext} fills. */
 export type MessageContext = Pick<EventPayload<"user_message">, "sender" | "timeZone" | "locale">;
 

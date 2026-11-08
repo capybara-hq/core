@@ -37,6 +37,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
+import type { ChannelLocale } from "./phrases.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
 
 /** 内核 secrets 命名空间（插件名不能取 `kernel`）。 */
@@ -920,40 +921,46 @@ export class ChannelConnections implements OnApplicationShutdown {
    */
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
     const { row, channel, config } = await this.runtime(connectionId);
-    // 组织语言随每次发送 / 更新交给插件（Ruling A22）；本次会话内不变
+    // the language handed to the extension with each send / update (Ruling A22): the recipient's
+    // when the caller gives it (IM language is per person, run context spec §3.4), else the org's
     const { locale } = await readOrgSettings(this.db.db, row.orgId);
     return {
       row,
       features: channel.features,
       redact: createRedactor(secretValues(channel.connectionSchema, config), 4),
-      send: (target, message, idempotencyKey) =>
+      send: (target, message, idempotencyKey, to = locale) =>
         channel.send({
           config,
-          ...adaptToFeatures(channel.features, target, message, locale),
+          ...adaptToFeatures(channel.features, target, message, to),
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
-          locale,
+          locale: to,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
-      update: (target, messageId, message, idempotencyKey) =>
+      update: (target, messageId, message, idempotencyKey, to = locale) =>
         channel.update({
           config,
-          ...adaptToFeatures(channel.features, target, message, locale),
+          ...adaptToFeatures(channel.features, target, message, to),
           messageId,
           signal: AbortSignal.timeout(PLUGIN_CALL_TIMEOUT_MS),
-          locale,
+          locale: to,
           ...(idempotencyKey !== undefined && { idempotencyKey }),
         }),
     };
   }
 
-  /** 经连接的插件直接发一条消息（入站处理回绑定卡片、固定话术，卡片操作回说明）；`idempotencyKey` 原样交给插件。 */
+  /**
+   * Sends one message through the connection's extension (inbound replies: bind cards, fixed
+   * phrases, card-action notes); `idempotencyKey` is passed through as is, `locale` is the
+   * recipient's language (else the org's).
+   */
   async send(
     connectionId: string,
     target: ChannelTarget,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<{ messageId: string }> {
-    return (await this.outbound(connectionId)).send(target, message, idempotencyKey);
+    return (await this.outbound(connectionId)).send(target, message, idempotencyKey, locale);
   }
 }
 
@@ -962,17 +969,23 @@ export interface ChannelOutboundSession {
   row: ChannelConnectionRow;
   features: Channel["features"];
   redact: (s: string) => string;
-  /** `idempotencyKey` 原样交给插件（见 `ChannelSendArgs.idempotencyKey`）。 */
+  /**
+   * `idempotencyKey` is passed through (see `ChannelSendArgs.idempotencyKey`); `locale` is the
+   * recipient's language for the extension's own wording and the card text fallback (default: the
+   * org's).
+   */
   send(
     target: ChannelTarget,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<{ messageId: string }>;
-  /** 只在 `features.edit` 为 true 时调用。 */
+  /** Called only when `features.edit` is true; `locale` as for `send`. */
   update(
     target: ChannelTarget,
     messageId: string,
     message: OutboundMessage,
     idempotencyKey?: string,
+    locale?: ChannelLocale,
   ): Promise<void>;
 }
