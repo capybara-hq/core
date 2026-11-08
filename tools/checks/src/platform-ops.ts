@@ -34,7 +34,10 @@ import {
  * - platform-op-errors: an `errors` entry without a `next` step (spec §14.5 item 7): `errors` is an
  *   array literal of `{ code, next }` object literals, `code` a string, `next` a non-empty string
  *   or an object literal keyed `superAdmin` / `orgAdmin` / `member` (non-empty strings) with an
- *   `orgAdmin` or `member` step, so every role of the org gets one.
+ *   `orgAdmin` or `member` step, so every role of the org gets one;
+ * - platform-op-session-only: a `@SessionOnly()` route (a web session only, never a token) mirrored
+ *   by an operation, or excluded under a category other than `human-only` / `secret`: such a route
+ *   is either a person's own act or carries a secret, so the agent never gets it.
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
@@ -46,6 +49,7 @@ export const PLATFORM_OP_RULES = [
   "platform-op-describe",
   "platform-op-literal",
   "platform-op-errors",
+  "platform-op-session-only",
 ] as const;
 
 const KERNEL_SRC = "packages/kernel/src";
@@ -55,7 +59,7 @@ const KERNEL_SRC = "packages/kernel/src";
  * here only while its operation waits on other work, with the reason next to it.
  */
 const LATER_ALLOWED: ReadonlySet<string> = new Set([
-  // until Task 12 (Platform tool phase 2): the agent profile operation waits for the run-context
+  // until #91 (Platform tool phase 2): the agent profile operation waits for the run-context
   // work on main, which adds the profile / preferences routes it mirrors
   "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
 ]);
@@ -74,7 +78,11 @@ interface Route {
   file: string;
   line: number;
   authz: Authz | undefined;
+  sessionOnly: boolean;
 }
+
+/** The exclusion categories a `@SessionOnly()` route may take. */
+const SESSION_ONLY_CATEGORIES: ReadonlySet<string> = new Set(["human-only", "secret"]);
 
 interface Op {
   id: string;
@@ -178,6 +186,7 @@ function readRoutes(p: ParsedFile, findings: Finding[]): Route[] {
           file: p.file,
           line,
           authz: authzOf(ds) ?? classAuthz,
+          sessionOnly: ds.some((d) => decoratorName(d) === "SessionOnly"),
         });
       }
     }
@@ -432,6 +441,14 @@ export function checkPlatformOps(root: string): Finding[] {
         });
         continue;
       }
+      if (route.sessionOnly) {
+        out.push({
+          file: op.file,
+          line: op.line,
+          rule: "platform-op-session-only",
+          message: `${op.id}: \`${m}\` is @SessionOnly (a web session only): exclude it as human-only or secret, never mirror it`,
+        });
+      }
       if (!op.authz) continue;
       const same = describeAuthz(op.authz) === describeAuthz(route.authz);
       if (same) continue;
@@ -473,6 +490,13 @@ export function checkPlatformOps(root: string): Finding[] {
         ...at,
         rule: "platform-op-orphan",
         message: `exclusion names a route that does not exist: \`${e.route}\``,
+      });
+    }
+    if (routes.get(e.route)?.sessionOnly && !SESSION_ONLY_CATEGORIES.has(e.category ?? "")) {
+      out.push({
+        ...at,
+        rule: "platform-op-session-only",
+        message: `\`${e.route}\` is @SessionOnly (a web session only): its category must be human-only or secret, not \`${e.category ?? "none"}\``,
       });
     }
     if (e.reason === undefined || e.reason.trim() === "") {
