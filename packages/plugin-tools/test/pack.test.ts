@@ -4,12 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import {
-  computePermissionSet,
-  permissionKeys,
-  permissionSetOfPackage,
-  readPluginPackage,
-} from "@capybara-hq/kernel";
+import { computePermissionSet, permissionKeys, permissionSetOfPackage } from "@capybara-hq/kernel";
 import {
   configJsonSchema,
   type ExtensionManifest,
@@ -325,41 +320,6 @@ describe("packPlugin: other behavior", () => {
       await expect(packPlugin(dir, out)).rejects.toThrow(/connectors\/bad\.json/);
     });
 
-    const GUIDE = {
-      id: "app",
-      place: "channel-connection",
-      title: { en: "Create the app" },
-      files: [{ path: "./guides/manifest.yaml.tmpl", title: { en: "Manifest" }, language: "yaml" }],
-    };
-
-    it("a setup guide file that is missing, binary or uses an unknown placeholder fails", async () => {
-      await writeManifest({ ...base, setupGuides: [GUIDE] });
-      await expect(packPlugin(dir, out)).rejects.toThrow(
-        /setup guide app file \.\/guides\/manifest\.yaml\.tmpl does not exist/,
-      );
-      await mkdir(join(dir, "guides"));
-      await writeFile(join(dir, "guides/manifest.yaml.tmpl"), "a\u0000b");
-      await expect(packPlugin(dir, out)).rejects.toThrow(/setupGuides app: .*NUL/);
-      await writeFile(
-        join(dir, "guides/manifest.yaml.tmpl"),
-        'url: "{{webhookUrl}}"\nkey: {{appSecret}}\n',
-      );
-      await expect(packPlugin(dir, out)).rejects.toThrow(
-        /setupGuides app: \.\/guides\/manifest\.yaml\.tmpl uses \{\{appSecret\}\}, which place channel-connection does not define/,
-      );
-      await writeFile(join(dir, "guides/manifest.yaml.tmpl"), 'url: "{{webhookUrl}}"\n');
-      await writeManifest({
-        ...base,
-        setupGuides: [{ ...GUIDE, steps: [{ en: "Paste {{botToken}}" }] }],
-      });
-      await expect(packPlugin(dir, out)).rejects.toThrow(/step 1 uses \{\{botToken\}\}/);
-      // known placeholders only, but no channel extension (a skills plugin)
-      await writeManifest({ ...base, setupGuides: [GUIDE] });
-      await expect(packPlugin(dir, out)).rejects.toThrow(
-        /channel-connection setup guide needs the plugin's extension to provide channel@1/,
-      );
-    });
-
     it("a plugin with no extension, skill, connector template or agent template fails", async () => {
       await rm(join(dir, "skills"), { recursive: true });
       await writeManifest(base);
@@ -548,26 +508,5 @@ describe("packPlugin: config schemas (extension config forms spec §4.5)", () =>
   it("missing labels do not stop the packer (that is the check's rule)", async () => {
     const r = await packPlugin(cfg("plugin-config-labels"), out);
     expect(r.manifest.extension?.configSchemas?.deployment).toBeDefined();
-  }, 60_000);
-});
-
-describe("packPlugin: setup guides (spec 2026-11-08-plugin-setup-guides-design.md)", () => {
-  it("fake-im ships its guide templates and the packed plugin passes the kernel's reader", async () => {
-    const r = await packPlugin(plugin("fake-im"), join(out, "guides"));
-    const entries = await readTgz(r.file);
-    expect([...entries.keys()]).toEqual(
-      expect.arrayContaining([
-        "guides/app.long-connection.yaml.tmpl",
-        "guides/app.webhook.json.tmpl",
-      ]),
-    );
-    const m = manifestOf(entries);
-    expect(m.setupGuides?.[0]).toMatchObject({ id: "fake-im-app", place: "channel-connection" });
-    expect(m.extension?.manifest.provides).toContain("channel@1");
-    const pkg = await readPluginPackage(new Uint8Array(await readFile(r.file)), {
-      maxBytes: 20 * 1024 * 1024,
-      hostSdkVersion: SDK_VERSION,
-    });
-    expect(pkg.manifest.setupGuides).toHaveLength(1);
   }, 60_000);
 });

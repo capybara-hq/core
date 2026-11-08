@@ -27,6 +27,9 @@ export const PLUGIN_PACK_MAX_BYTES = PACKAGES_MAX_BYTES_DEFAULT;
  * pack or validate (rule `plugin-pack`, located at the plugin's package.json).
  * package.json `files` lists something the package can't carry (a directory, a glob, a missing path):
  * rule `plugin-pack-dropped`, one per entry.
+ * A setup guide validator warning (e.g. a text variable outside quotes in a yaml block): rule
+ * `plugin-pack-guide`, severity `warning` (printed, never fails the check); guide errors fail the
+ * pack and so are `plugin-pack` findings.
  */
 export async function checkPluginPack(pluginDirs: string[]): Promise<Finding[]> {
   const out = await mkdtemp(join(tmpdir(), "check-plugin-pack-"));
@@ -43,6 +46,15 @@ export async function checkPluginPack(pluginDirs: string[]): Promise<Finding[]> 
             line: 1,
             rule: "plugin-pack-dropped",
             message: `"files" entry "${d}" is not in the plugin package (only plain root files, README.md, LICENSE, migrations/, ui/, skills/ and connectors/ are shipped): remove it or make it a plain file`,
+          });
+        }
+        for (const w of r.warnings) {
+          findings.push({
+            file,
+            line: 1,
+            rule: "plugin-pack-guide",
+            message: w,
+            severity: "warning",
           });
         }
         const bytes = new Uint8Array(await readFile(r.file));

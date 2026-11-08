@@ -329,6 +329,11 @@ Wave notes:
 - [ ] **Step 2: Run** `pnpm exec vitest run packages/plugin-tools/test/pack-guides.test.ts packages/plugin-tools/test/guide-cli.test.ts` → FAIL.
 - [ ] **Step 3: Implement** pack and check over `validateSetupGuide` (errors fail, warnings
   printed); the `guide` command.
+  **Decided (designer's call, 2026-11-09):** validator warnings (e.g. a text variable outside
+  quotes in a yaml / json block, or in an unquoted fence) are printed by `capybara-plugin pack`
+  (`PackResult.warnings`) and `check` (rule `plugin-pack-guide`, severity warning) and fail
+  neither; errors fail both. The fake-im fixture's v1 guide becomes `guides/fake-im-app.md` +
+  `.zh.md` in this task (its packing test lives here).
 - [ ] **Step 4: Run** `pnpm exec vitest run packages/plugin-tools && pnpm check:plugin-pack` → PASS.
 - [ ] **Step 5: Commit** (`feat(plugin-tools): pack, check and preview markdown guides`).
 

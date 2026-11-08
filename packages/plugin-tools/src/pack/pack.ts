@@ -30,11 +30,14 @@ import {
   parseAgentTemplate,
   parseConnectorTemplateFile,
   parsePluginManifest,
+  parseSetupGuide,
   SDK_VERSION,
-  setupGuideFileProblem,
+  type StaticExtensionManifest,
+  setupGuideDocPath,
+  setupGuideDocProblem,
   staticManifestOf,
-  unknownSetupGuidePlaceholders,
   validatePluginPackageJsonFor,
+  validateSetupGuide,
 } from "@capybara-hq/plugin-sdk";
 import { init as lexerInit, parse as lexerParse } from "es-module-lexer";
 import { build, type Plugin } from "esbuild";
@@ -57,6 +60,12 @@ export interface PackResult {
    * `dist` / `migrations` / `ui` / `skills` / `connectors` / `.capybara-plugin`, globs, missing paths). Callers print them; `check:plugin-pack` fails.
    */
   dropped: string[];
+  /**
+   * Setup guide validator warnings (e.g. a text variable outside quotes in a yaml block), each
+   * `<label>: setupGuides <id>: <file>:<line>: <message>`. Callers print them; they fail neither
+   * `pack` nor `check` (errors do: {@link packPlugin} throws).
+   */
+  warnings: string[];
 }
 
 /**
@@ -228,7 +237,7 @@ const SHIPPED_ELSEWHERE = [
   "skills",
   "connectors",
   "agents",
-  // setup guide templates: the listed files are shipped by contentFiles
+  // setup guide documents: guides/<id>.md and guides/<id>.zh.md are shipped by contentFiles
   "guides",
   ".capybara-plugin",
   "README.md",
@@ -325,7 +334,7 @@ const stripDot = (p: string) => p.replace(/^\.\//, "");
  * Reads and validates the source `.capybara-plugin/plugin.json` (without `extension`, which the
  * packer writes).
  */
-async function readSourceManifest(dir: string, label: string): Promise<PluginManifest> {
+export async function readSourceManifest(dir: string, label: string): Promise<PluginManifest> {
   const file = join(dir, PLUGIN_MANIFEST_FILE);
   if (!existsSync(file)) {
     throw new Error(`${label}: missing ${PLUGIN_MANIFEST_FILE} (the plugin manifest)`);
@@ -436,30 +445,22 @@ async function contentFiles(
     agentNames.set(t.template.name, rel);
   }
 
-  // Setup guides (spec 2026-11-08-plugin-setup-guides-design.md §2): the listed template files,
-  // text within the size limit, and only placeholders the place defines (the kernel leaves an
-  // unknown one visible; the toolchain refuses it so a typo never ships)
+  // Setup guides (spec 2026-11-09-setup-guides-v2-design.md §4): guides/<id>.md (required) and
+  // guides/<id>.zh.md (optional) of each declared guide, usable as text; the documents are
+  // validated in packPlugin once the extension's manifest (permissions.setupChecks) is known
   for (const g of m.setupGuides ?? []) {
     const at = `${label}: setupGuides ${g.id}`;
-    const unknown = (text: string, where: string) => {
-      const names = unknownSetupGuidePlaceholders(text, g.place);
-      if (names.length > 0) {
-        throw new Error(
-          `${at}: ${where} uses ${names.map((n) => `{{${n}}}`).join(", ")}, which place ${g.place} does not define`,
-        );
+    for (const locale of ["en", "zh"] as const) {
+      const rel = setupGuideDocPath(g.id, locale);
+      const p = join(dir, rel);
+      if (!existsSync(p) || !(await stat(p)).isFile()) {
+        if (locale === "zh") continue;
+        throw new Error(`${at}: ${rel} does not exist (each guide needs its English document)`);
       }
-    };
-    g.steps?.forEach((step, i) => {
-      unknown(step.en, `step ${i + 1}`);
-      if (step.zh !== undefined) unknown(step.zh, `step ${i + 1} (zh)`);
-    });
-    for (const f of g.files ?? []) {
-      const rel = stripDot(f.path);
-      await addFile(rel, `setup guide ${g.id} file`);
-      const data = files.get(rel) as Buffer;
-      const problem = setupGuideFileProblem(f.path, new Uint8Array(data));
+      const data = await readFile(p);
+      const problem = setupGuideDocProblem(rel, new Uint8Array(data));
       if (problem !== undefined) throw new Error(`${at}: ${problem}`);
-      unknown(data.toString("utf8"), f.path);
+      files.set(rel, data);
     }
   }
 
@@ -637,6 +638,7 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
       `${label}: a channel-connection setup guide needs the plugin's extension to provide channel@1 (src/index.ts)`,
     );
   }
+  const warnings = checkSetupGuides(label, source, content.files, ext?.extension.manifest);
 
   const files = new Map<string, Buffer>([...(ext?.files ?? []), ...content.files]);
   const extra = await extraFiles(dir, srcPkg.files);
@@ -693,5 +695,52 @@ export async function packPlugin(pluginDir: string, outDir: string): Promise<Pac
     sha256: createHash("sha256").update(tgz).digest("hex"),
     manifest: parsed,
     dropped: extra.dropped,
+    warnings,
   };
+}
+
+/**
+ * Runs the SDK's guide validator ({@link validateSetupGuide}) over the shipped documents of every
+ * declared guide: throws on the first guide with errors (all its errors in the message), returns
+ * the warnings (decided 2026-11-09: warnings are printed, never fail pack or check). Plugin check
+ * ids must be declared in the extension's `permissions.setupChecks`; a plugin without an extension
+ * may only use `capybara:` checks.
+ */
+function checkSetupGuides(
+  label: string,
+  m: PluginManifest,
+  files: ReadonlyMap<string, Buffer>,
+  extension: StaticExtensionManifest | undefined,
+): string[] {
+  const warnings: string[] = [];
+  const declared = (extension?.permissions as { setupChecks?: unknown } | undefined)?.setupChecks;
+  const pluginChecks = Array.isArray(declared)
+    ? declared.filter((c): c is string => typeof c === "string")
+    : [];
+  for (const g of m.setupGuides ?? []) {
+    const at = `${label}: setupGuides ${g.id}`;
+    const enPath = setupGuideDocPath(g.id, "en");
+    const en = (files.get(enPath) as Buffer).toString("utf8");
+    const zh = files.get(setupGuideDocPath(g.id, "zh"))?.toString("utf8");
+    const issues = validateSetupGuide({
+      id: g.id,
+      place: g.place,
+      en,
+      ...(zh !== undefined && { zh }),
+      ...(extension !== undefined && { pluginChecks }),
+    });
+    if (extension === undefined) {
+      for (const c of parseSetupGuide(en).checks) {
+        if (c.source !== "plugin") continue;
+        issues.push({
+          level: "error",
+          message: `${enPath}:${c.line}: check ${c.id} needs the plugin's extension (src/index.ts) to register it and declare it in permissions.setupChecks; a plugin without an extension may only use capybara: checks`,
+        });
+      }
+    }
+    const errors = issues.filter((i) => i.level === "error").map((i) => i.message);
+    if (errors.length > 0) throw new Error(`${at}: ${errors.join("; ")}`);
+    for (const i of issues) warnings.push(`${at}: ${i.message}`);
+  }
+  return warnings;
 }

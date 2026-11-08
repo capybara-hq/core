@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-guides-channel",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: a channel plugin with a setup guide",
+  "setupGuides": [{ "id": "app", "place": "channel-connection" }]
+}

@@ -57,6 +57,7 @@ export async function packCommand(args: string[], cwd: string): Promise<number> 
       for (const d of r.dropped) {
         console.warn(`${shown(dir)}: warning: "files" entry "${d}" is not in the package`);
       }
+      for (const w of r.warnings) console.warn(`${shown(dir)}: warning: ${w}`);
     } catch (e) {
       failed++;
       console.error(`${shown(dir)}: ${e instanceof Error ? e.message : String(e)}`);
