@@ -34,12 +34,12 @@ export interface SandboxRoots {
   tmp: string;
 }
 
-/** The roots every container-like provider uses. */
-export const DEFAULT_SANDBOX_ROOTS: SandboxRoots = {
+/** The roots every container-like provider uses; the same paths as {@link SANDBOX_ROOTS}. */
+export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots> = Object.freeze({
   workspace: "/workspace",
   skills: "/skills",
   tmp: "/tmp",
-};
+});
 
 /** The provider's instance handle. */
 export interface SandboxHandle {

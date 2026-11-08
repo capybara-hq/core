@@ -632,7 +632,7 @@ export type ContentBlock =
 };
 
 // @public
-export const DEFAULT_SANDBOX_ROOTS: SandboxRoots;
+export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 
 // @public
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
@@ -693,6 +693,18 @@ export interface DeviceKillTaggedArgs {
 
 // @public
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop";
+
+// @public
+export interface DeviceOpResults {
+    create: DeviceCreateResult;
+    exec: DeviceExecResult;
+    killAll: null;
+    killTagged: null;
+    readFile: DeviceReadFileResult;
+    stat: DeviceStatResult;
+    stop: null;
+    writeFile: DeviceWriteFileResult;
+}
 
 // @public
 export class DeviceProtocolError extends Error {
@@ -1954,6 +1966,9 @@ export function parseExtensionPoint(ref: string): {
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
     errors: string[];
 };
+
+// @public
+export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {

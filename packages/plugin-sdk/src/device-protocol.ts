@@ -129,6 +129,48 @@ function nonEmptyStr(o: Record<string, unknown>, k: string): string {
   return v;
 }
 
+function posInt(o: Record<string, unknown>, k: string): number {
+  const v = o[k];
+  if (typeof v !== "number" || !Number.isInteger(v) || v <= 0) {
+    throw new DeviceProtocolError(`field "${k}" must be a positive integer`);
+  }
+  return v;
+}
+
+function obj(v: unknown, what: string): Record<string, unknown> {
+  if (!isRecord(v)) throw new DeviceProtocolError(`${what} must be an object`);
+  return v;
+}
+
+function bool(o: Record<string, unknown>, k: string): boolean {
+  const v = o[k];
+  if (typeof v !== "boolean") throw new DeviceProtocolError(`field "${k}" must be a boolean`);
+  return v;
+}
+
+function strArray(o: Record<string, unknown>, k: string): string[] {
+  const v = o[k];
+  if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
+    throw new DeviceProtocolError(`field "${k}" must be an array of strings`);
+  }
+  return v as string[];
+}
+
+function parseLimits(v: unknown): SandboxLimits {
+  const o = obj(v, 'field "limits"');
+  const egress = str(o, "egress");
+  if (egress !== "none" && egress !== "allowlist" && egress !== "open") {
+    throw new DeviceProtocolError(`unknown egress "${egress}"`);
+  }
+  return {
+    cpu: num(o, "cpu"),
+    memoryMb: num(o, "memoryMb"),
+    diskMb: num(o, "diskMb"),
+    egress,
+    allowHosts: strArray(o, "allowHosts"),
+  };
+}
+
 function num(o: Record<string, unknown>, k: string): number {
   const v = o[k];
   if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -142,7 +184,7 @@ function parseRoots(v: unknown): SandboxRoots {
   const roots = {} as Record<string, string>;
   for (const k of ["workspace", "skills", "tmp"] as const) {
     const p = str(v, k);
-    if (!p.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(p)) {
+    if (!p.startsWith("/")) {
       throw new DeviceProtocolError(`root "${k}" must be an absolute path`);
     }
     roots[k] = p;
@@ -162,7 +204,7 @@ function parseHello(o: Record<string, unknown>): DeviceHello {
   }
   return {
     type: "hello",
-    protocol: num(o, "protocol"),
+    protocol: posInt(o, "protocol"),
     programVersion: str(o, "programVersion"),
     os,
     arch: str(o, "arch"),
@@ -188,13 +230,114 @@ function parseRes(o: Record<string, unknown>): DeviceRes {
 function parseReq(o: Record<string, unknown>): KernelReq {
   const op = str(o, "op");
   if (!DEVICE_OPS.includes(op as DeviceOp)) throw new DeviceProtocolError(`unknown op "${op}"`);
+  const args = obj(o.args, 'field "args"');
+  validateArgs(op as DeviceOp, args);
   return {
     type: "req",
     id: nonEmptyStr(o, "id"),
     op: op as DeviceOp,
-    args: o.args,
-    deadlineMs: num(o, "deadlineMs"),
+    args,
+    deadlineMs: posInt(o, "deadlineMs"),
   };
+}
+
+function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
+  switch (op) {
+    case "exec": {
+      nonEmptyStr(a, "command");
+      posInt(a, "timeoutMs");
+      posInt(a, "maxOutputBytes");
+      str(a, "tag");
+      const actor = obj(a.actor, 'field "actor"');
+      str(actor, "accountId");
+      str(actor, "conversationId");
+      parseLimits(a.limits);
+      if (a.cwd !== undefined) str(a, "cwd");
+      if (a.env !== undefined) {
+        const env = obj(a.env, 'field "env"');
+        for (const k of Object.keys(env)) str(env, k);
+      }
+      return;
+    }
+    case "readFile": {
+      str(a, "path");
+      const m = a.maxBytes;
+      if (typeof m !== "number" || !Number.isInteger(m) || m < 0) {
+        throw new DeviceProtocolError('field "maxBytes" must be a non-negative integer');
+      }
+      return;
+    }
+    case "writeFile":
+      str(a, "path");
+      str(a, "dataB64");
+      return;
+    case "stat":
+      str(a, "path");
+      return;
+    case "killTagged":
+      strArray(a, "tags");
+      return;
+    case "killAll":
+      return;
+    case "create":
+      parseLimits(a.limits);
+      return;
+    case "stop": {
+      const r = str(a, "reason");
+      if (r !== "revoked" && r !== "deleted") {
+        throw new DeviceProtocolError(`unknown stop reason "${r}"`);
+      }
+      return;
+    }
+  }
+}
+
+/** Result type per op. */
+export interface DeviceOpResults {
+  create: DeviceCreateResult;
+  exec: DeviceExecResult;
+  readFile: DeviceReadFileResult;
+  writeFile: DeviceWriteFileResult;
+  stat: DeviceStatResult;
+  killTagged: null;
+  killAll: null;
+  stop: null;
+}
+
+/** Validates the `result` of a successful `res` for `op`; throws {@link DeviceProtocolError}. */
+export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
+export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[DeviceOp] {
+  switch (op) {
+    case "exec": {
+      const r = obj(result, "exec result");
+      const exitCode = r.exitCode;
+      if (exitCode !== null && (typeof exitCode !== "number" || !Number.isFinite(exitCode))) {
+        throw new DeviceProtocolError('field "exitCode" must be a number or null');
+      }
+      return {
+        exitCode: exitCode as number | null,
+        stdout: str(r, "stdout"),
+        stderr: str(r, "stderr"),
+        truncated: bool(r, "truncated"),
+        timedOut: bool(r, "timedOut"),
+      };
+    }
+    case "readFile": {
+      if (result === null) return null;
+      const r = obj(result, "readFile result");
+      return { dataB64: str(r, "dataB64"), truncated: bool(r, "truncated") };
+    }
+    case "stat": {
+      if (result === null) return null;
+      const r = obj(result, "stat result");
+      return { size: num(r, "size"), isDir: bool(r, "isDir") };
+    }
+    case "create":
+      return { roots: parseRoots(obj(result, "create result").roots) };
+    default:
+      if (result !== null) throw new DeviceProtocolError(`${op} result must be null`);
+      return null;
+  }
 }
 
 /**
