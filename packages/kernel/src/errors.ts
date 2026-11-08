@@ -91,6 +91,8 @@ export const ERROR_CODES = {
   "catalog.not_owned": 409,
   /** The item (or the version asked for) waits for the super admin's confirmation (P3-9). */
   "catalog.item_pending": 409,
+  /** Deleting a platform plugin whose extension is still enabled on the deployment. */
+  "catalog.extension_enabled": 409,
   /** A super admin confirmation raced the item's removal (P3-21). */
   "catalog.item_removed": 409,
   /** What deleting an org's own plugin does changed since its preview (P3-19). */

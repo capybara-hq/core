@@ -510,8 +510,20 @@ describe("直接启用来自目录的插件（C22，按全部来源条目判定�
     expect(kept.catalog_item_id).toBe(pluginItem);
     await setPolicy(env, pluginItem, "disabled");
     expect((await enable(true)).json().error.code).toBe("catalog.item_disabled");
-    // 删除条目即撤回它的约束
-    await env.root({ method: "DELETE", url: `/api/v1/admin/catalog/items/${pluginItem}` });
+    // Deleting the item withdraws its constraint (an enabled extension refuses the delete: disable
+    // it first, then enable it again)
+    const refused = await env.root({
+      method: "DELETE",
+      url: `/api/v1/admin/catalog/items/${pluginItem}`,
+    });
+    expect(refused.json().error.code).toBe("catalog.extension_enabled");
+    await env.root({ method: "POST", url: "/api/v1/admin/extensions/dirplug/disable" });
+    const del = await env.root({
+      method: "DELETE",
+      url: `/api/v1/admin/catalog/items/${pluginItem}`,
+    });
+    expect(del.statusCode, del.body).toBe(204);
+    await env.root({ method: "POST", url: "/api/v1/admin/extensions/dirplug/enable" });
     expect((await enable(true)).statusCode).toBe(200);
   });
 
