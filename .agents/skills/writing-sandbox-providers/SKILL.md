@@ -138,24 +138,24 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
   Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
 
-## The kernel-internal provider `@device` (connected machines)
+## The kernel-internal provider `@local` (local devices)
 
-Connected devices (spec §6 and §13) run on a person's machine, driven through a program that
-connects to the gateway. Their provider is `@device`, registered by the kernel itself
-(`packages/kernel/src/sandbox/providers.ts`, `packages/kernel/src/devices`); it is not an extension and
+Local devices (spec §6, §13 and §15) run on a person's machine, driven through a program that
+connects to the gateway. Their provider is `@local`, registered by the kernel itself
+(`packages/kernel/src/sandbox/providers.ts`, `packages/kernel/src/local-devices`); it is not an extension and
 no plugin can take the name.
 
 - **Per-device resolution.** The provider is chosen by the device's row
-  (`devices.provider`), not by the deployment's one sandbox extension, so cloud and connected
+  (`devices.provider`), not by the deployment's one sandbox extension, so cloud and local
   devices coexist. Handle ids are the device id (parsed from `cap-device-<deviceId>`).
 - **Relay.** Calls become requests on `capk:device-req:<deviceId>` and results come back under
   `capk:device-res:<requestId>`; no holder means `device.offline` at once. See
-  `packages/kernel/src/devices` and spec §13.4. The handle carries the org's limits from `create`; a
+  `packages/kernel/src/local-devices` and spec §13.4. The handle carries the org's limits from `create`; a
   handle without them answers `SandboxGoneError`, which rebuilds the instance.
 - **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and
   `destroyFileSystemByName` never fail because the machine is away (a stop is relayed only when it is
   online and is fire-and-forget). Files on the machine are never removed.
-- **Never swept.** Idle suspension, `maxRunning` eviction and inactivity destruction skip `@device`;
+- **Never swept.** Idle suspension, `maxRunning` eviction and inactivity destruction skip `@local`;
   the only sweep that includes its rows is the gone-sweep for a deleted org or device.
 - **Roots and real paths.** `SandboxHandle.roots` (`{ workspace, skills, tmp }`, absolute paths in the
   instance) is optional; absent means `SANDBOX_ROOTS`. A device reports its roots in `hello`. Every

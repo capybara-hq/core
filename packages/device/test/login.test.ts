@@ -63,7 +63,7 @@ beforeEach(async () => {
           deviceCode: "cap_dvc_x",
           userCode: "BCDF-GHJK",
           verificationUri: `${base}/device`,
-          verificationUriComplete: `${base}/device?code=BCDF-GHJK`,
+          verificationUriComplete: `${base}/devices/link?code=BCDF-GHJK`,
           interval: 5,
           expiresIn: 600,
         });
@@ -118,8 +118,8 @@ describe("login", () => {
     expect(await run(["login", "--url", `${base}/`])).toBe(0);
     expect(sleeps).toEqual([5000, 5000, 5000]);
     expect(out[0]).toContain("BCDF-GHJK");
-    expect(out[0]).toContain(`${base}/device?code=BCDF-GHJK`);
-    expect(opened).toEqual([`${base}/device?code=BCDF-GHJK`]);
+    expect(out[0]).toContain(`${base}/devices/link?code=BCDF-GHJK`);
+    expect(opened).toEqual([`${base}/devices/link?code=BCDF-GHJK`]);
     expect(seen.every((s) => s.csrf === "1")).toBe(true);
     expect(seen[0]?.body).toMatchObject({ os: "linux", name: expect.any(String) });
     expect(seen[1]?.body).toEqual({ deviceCode: "cap_dvc_x" });

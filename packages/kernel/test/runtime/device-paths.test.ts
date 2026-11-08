@@ -340,7 +340,7 @@ describe("device_paths: full-run replay", () => {
 });
 
 describe("device_paths: a migrated row", () => {
-  it("a migrated device_paths row renders the same system line in build and replay", () => {
+  it("a migrated device_paths row renders one deterministic system line in build and replay", () => {
     const log = new Log();
     log.user("write a file");
     log.modelCall(1, 1);

@@ -16,7 +16,7 @@ capybara-device status [--json]
 capybara-device logout
 ```
 
-`login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/device`) and
+`login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/devices/link`) and
 the code to enter on any signed-in browser, where you pick the org and the device (a new one or
 an existing connected one of yours) after reading what the program can do. Logging in again from
 another machine into the same device replaces the first machine (its credential is revoked).

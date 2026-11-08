@@ -26,7 +26,7 @@ export interface DeviceView {
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
-  /** `device`: a connected machine (provider `@local`). */
+  /** `local`: a machine connected with capybara-device (provider `@local`). */
   source: "cloud" | "local";
   /** The provider keeping its files, or the one its first use will create them with. */
   provider: string | null;
