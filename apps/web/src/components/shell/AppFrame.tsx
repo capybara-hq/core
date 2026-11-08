@@ -42,6 +42,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
+import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
 import {
   activeAdminOf,
@@ -232,6 +233,9 @@ function ShellFrame({
     plugins: usePluginPendingCount(adminContext),
   });
   const preferences = usePreferences();
+  // The account row's scheme toggle, hidden under a single-scheme theme (themes spec §10): its
+  // stylesheet draws the one scheme whatever the toggle says.
+  const schemeToggle = useResolvedTheme()?.singleScheme ? {} : { theme: preferences.theme };
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
   // The org dialogs stay open (pending) until the new org's frame arrives, then close.
@@ -466,7 +470,7 @@ function ShellFrame({
               activeNav: activeStepOf(pathname, steps),
               // The org has its own menu in the switcher.
               account: { name: me.account.displayName, menu: personalMenu },
-              theme: preferences.theme,
+              ...schemeToggle,
               ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
             }}
             status={{
@@ -540,7 +544,7 @@ function ShellFrame({
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
         account: { name: me.account.displayName, menu: personalMenu },
-        theme: preferences.theme,
+        ...schemeToggle,
       }}
       commands={commands}
       status={status}

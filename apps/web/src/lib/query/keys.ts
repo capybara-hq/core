@@ -153,6 +153,8 @@ export const keys = {
       members: (): readonly unknown[] => [...all, "members"],
       /** The org's settings (with the deployment's defaults and the sandbox limits). */
       orgSettings: (): readonly unknown[] => [...all, "orgSettings"],
+      /** The themes on in the org, the viewer's resolved theme and the org's theme setting. */
+      themes: (): readonly unknown[] => [...all, "themes"],
       /** The org's invitations (admins). */
       invitations: (): readonly unknown[] => [...all, "invitations"],
       /** The org's model purposes and what each maps to. */
@@ -347,6 +349,8 @@ export const keys = {
       adminOrgs: (): readonly unknown[] => [...all, "adminOrgs"],
       /** The deployment settings. */
       settings: (): readonly unknown[] => [...all, "settings"],
+      /** The platform default theme (public: the pages before sign-in). */
+      platformTheme: (): readonly unknown[] => [...all, "platformTheme"],
       /** The providers with their models and the price table. */
       adminModels: (): readonly unknown[] => [...all, "adminModels"],
       /** The purposes' deployment defaults. */

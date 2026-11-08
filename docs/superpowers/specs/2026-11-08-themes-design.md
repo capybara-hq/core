@@ -256,8 +256,11 @@ Three levels, most specific first:
   (`{ id, version, schemes, logo } | null`). The layout renders
   `<link rel="stylesheet" href=… precedence="theme">` after the design stylesheet (React hoists
   it into `<head>` and the streamed document waits for it; the builder confirms this holds with
-  the layout's streaming and the query cache's dehydration), so the first paint is themed. The
-  auth layout reads the public `GET /api/v1/platform/theme` the same way.
+  the layout's streaming and the query cache's dehydration), so the first paint is themed
+  **(confirmed 2026-11-09 with Next 16 / React 19: the link is in the streamed `<head>` and the
+  theme's tokens apply at `DOMContentLoaded`, `apps/web/e2e/themes.spec.ts`; no cookie fallback)**.
+  The auth layout reads the public `GET /api/v1/platform/theme` the same way (without a current org
+  the workspace layout reads it too).
 - **Changes**: setting a theme at any level invalidates the themes read (`useAppMutation`), the
   link swaps, and the browser loads the new immutable stylesheet. Another tab follows its
   freshness class; an org switch re-reads as today.
