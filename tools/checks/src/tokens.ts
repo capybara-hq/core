@@ -468,6 +468,13 @@ export function checkTokens(root: string): Finding[] {
           rule: "tokens-separation",
           message: `${issue.pair} (${theme}): ${issue.detail} differs by ${issue.ratio.toFixed(2)} in OKLab L x100, below the floor ${issue.floor}`,
         });
+      } else if (issue.kind === "unevaluable") {
+        out.push({
+          file: jsonFile,
+          line: lineOf(text, `color.${issue.pair}`),
+          rule: "tokens-invalid",
+          message: `color.${issue.pair} (${theme}): "${issue.detail}" cannot be evaluated for contrast`,
+        });
       } else {
         out.push({
           file: jsonFile,

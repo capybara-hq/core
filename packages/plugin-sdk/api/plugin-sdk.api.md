@@ -2005,7 +2005,7 @@ export function questionRenderableInline(form: InputForm): boolean;
 
 // @public
 export type ReadabilityIssue = {
-    kind: "contrast" | "separation" | "separation-order";
+    kind: "contrast" | "separation" | "separation-order" | "unevaluable";
     pair: string;
     ratio: number;
     floor: number;

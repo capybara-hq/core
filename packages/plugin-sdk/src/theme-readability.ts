@@ -10,18 +10,19 @@ export type MergedScheme = {
 };
 
 export type ReadabilityIssue = {
-  kind: "contrast" | "separation" | "separation-order";
+  kind: "contrast" | "separation" | "separation-order" | "unevaluable";
   /** `<fg> on <bg>` (with ` over <surface>` for a surface pair) or `<ground> on <surface>`. */
   pair: string;
   /** The measured value: contrast ratio, or OKLab lightness difference x100. */
   ratio: number;
   /** The floor it had to reach (for `separation-order`: the hover difference selected must beat). */
   floor: number;
-  /** The composited colors compared, for reports. */
+  /** The composited colors compared, or for `unevaluable` the offending value. */
   detail?: string;
 };
 
 const HEX_RE = /^#[0-9A-F]{6}$/;
+const LOOSE_HEX_RE = /^#[0-9A-Fa-f]{6}$/;
 const RGBA_PARTS_RE = /^rgba\((\d{1,3}),(\d{1,3}),(\d{1,3}),(0|1|0?\.\d+)\)$/;
 
 function luminance(hex: string): number {
@@ -86,18 +87,40 @@ export function checkThemeReadability(
   } = { contrast: THEME_CONTRAST, separation: THEME_SEPARATION },
 ): ReadabilityIssue[] {
   const issues: ReadabilityIssue[] = [];
-  const bg = merged.color.bg ?? "";
+  // Hex case is not significant in CSS: evaluate `#rrggbb` like `#RRGGBB`.
+  const color: Record<string, string> = Object.fromEntries(
+    Object.entries(merged.color).map(([n, v]) => [n, LOOSE_HEX_RE.test(v) ? v.toUpperCase() : v]),
+  );
+  const bg = color.bg ?? "";
+  // A value the rules read that cannot be evaluated is reported, never silently skipped. A
+  // color-mix value is legitimate (it derives) and is skipped; `bg` must be a plain hex ground.
+  const used = new Set<string>(["bg"]);
+  for (const [fg, back, , surface] of rules.contrast) {
+    for (const n of [fg, back, surface]) if (n !== undefined) used.add(n);
+  }
+  for (const [ground, surface] of rules.separation) {
+    used.add(ground);
+    used.add(surface);
+  }
+  for (const name of used) {
+    const v = color[name];
+    if (v === undefined || v.startsWith("color-mix(")) continue;
+    const ok = name === "bg" ? HEX_RE.test(v) : HEX_RE.test(v) || RGBA_PARTS_RE.test(v);
+    if (!ok) {
+      issues.push({ kind: "unevaluable", pair: name, ratio: Number.NaN, floor: 0, detail: v });
+    }
+  }
   /** The opaque value of a surface token: an rgba surface is composited over `bg`. */
   const surfaceOf = (name: string): string | undefined => {
-    const raw = merged.color[name];
+    const raw = color[name];
     return raw === undefined ? undefined : compositeOver(raw, bg);
   };
 
   for (const [fg, back, floor, surface] of rules.contrast) {
     const ground = surfaceOf(surface ?? "bg");
     if (ground === undefined) continue;
-    const rawA = merged.color[fg];
-    const rawB = merged.color[back];
+    const rawA = color[fg];
+    const rawB = color[back];
     if (rawA === undefined || rawB === undefined) continue;
     const a = compositeOver(rawA, ground);
     const b = compositeOver(rawB, ground);
@@ -119,7 +142,7 @@ export function checkThemeReadability(
   const delta = new Map<string, number>();
   for (const [ground, surface, floor] of rules.separation) {
     const s = surfaceOf(surface);
-    const raw = merged.color[ground];
+    const raw = color[ground];
     const g = s === undefined || raw === undefined ? undefined : compositeOver(raw, s);
     if (s === undefined || g === undefined) continue;
     const d = Math.abs(oklabL(g) - oklabL(s));

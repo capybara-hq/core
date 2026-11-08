@@ -31,6 +31,25 @@ describe("checkThemeReadability", () => {
     expect(hit?.ratio).toBeLessThan(hit?.floor ?? 0);
   });
 
+  it("a lowercase-hex bg is evaluated, not skipped", () => {
+    const m = merged("dark");
+    m.color.bg = "#8e8e89";
+    const issues = checkThemeReadability("dark", m);
+    expect(issues.some((i) => i.kind === "contrast" && i.pair === "muted on bg")).toBe(true);
+    const ok = merged("dark");
+    ok.color.bg = (ok.color.bg as string).toLowerCase();
+    expect(checkThemeReadability("dark", ok)).toEqual([]);
+  });
+
+  it("an unevaluable value produces an issue; color-mix does not", () => {
+    const m = merged("dark");
+    m.color.bg = "tomato";
+    m.color.muted = "rgb(1,2,3)";
+    const issues = checkThemeReadability("dark", m).filter((i) => i.kind === "unevaluable");
+    expect(issues.map((i) => i.pair).sort()).toEqual(["bg", "muted"]);
+    expect(merged("dark").color["accent-tint"]).toContain("color-mix(");
+  });
+
   it("hover equal to bg -> a separation issue", () => {
     const m = merged("dark");
     m.color.hover = m.color.bg as string;
