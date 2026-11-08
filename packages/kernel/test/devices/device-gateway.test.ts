@@ -120,6 +120,38 @@ async function connected() {
   return { accountId, ...m };
 }
 
+/**
+ * Sends `GET path` with `Connection: connection` and `Upgrade: protocol` over raw TCP; resolves
+ * what came back and whether the server closed the socket (within 3 s).
+ */
+function rawUpgrade(
+  path: string,
+  protocol: string,
+  connection = "Upgrade",
+): Promise<{ data: string; closed: boolean }> {
+  return new Promise((resolve, reject) => {
+    const sock = tcpConnect(k.port as number, "127.0.0.1");
+    let data = "";
+    const timer = setTimeout(() => {
+      sock.destroy();
+      resolve({ data, closed: false });
+    }, 3000);
+    sock.on("data", (c) => {
+      data += c.toString("utf8");
+    });
+    sock.on("close", () => {
+      clearTimeout(timer);
+      resolve({ data, closed: true });
+    });
+    sock.on("error", reject);
+    sock.write(
+      `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: ${connection}\r\n` +
+        `Upgrade: ${protocol}\r\n` +
+        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+    );
+  });
+}
+
 const held = (environmentId: string) =>
   waitFor(() => redis.get(deviceLeaseKey(environmentId)), 10_000, "lease held");
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
@@ -321,25 +353,19 @@ describe("GET /device/connect", () => {
     second.close();
   });
 
+  it("a non-WebSocket Upgrade header (h2c) on an ordinary API call is answered by its route", async () => {
+    // with Connection: upgrade (Node's upgrade path): answered, then the socket is closed
+    const declined = await rawUpgrade("/healthz", "h2c");
+    expect(declined.data.startsWith("HTTP/1.1 200"), declined.data).toBe(true);
+    expect(declined.closed).toBe(true);
+    // without it: an ordinary keep-alive request
+    const plain = await rawUpgrade("/healthz", "h2c", "keep-alive");
+    expect(plain.data.startsWith("HTTP/1.1 200"), plain.data).toBe(true);
+  }, 15_000);
+
   it("an upgrade request to another path is answered 404 and its socket closed", async () => {
     for (const path of ["/healthz", "/api/v1/setup"]) {
-      const answer = await new Promise<{ data: string; closed: boolean }>((resolve, reject) => {
-        const sock = tcpConnect(k.port as number, "127.0.0.1");
-        let data = "";
-        const timer = setTimeout(() => resolve({ data, closed: false }), 5000);
-        sock.on("data", (c) => {
-          data += c.toString("utf8");
-        });
-        sock.on("close", () => {
-          clearTimeout(timer);
-          resolve({ data, closed: true });
-        });
-        sock.on("error", reject);
-        sock.write(
-          `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n` +
-            "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-        );
-      });
+      const answer = await rawUpgrade(path, "WebSocket");
       expect(answer.data.startsWith("HTTP/1.1 404"), `${path}: ${answer.data}`).toBe(true);
       expect(answer.closed, path).toBe(true);
     }

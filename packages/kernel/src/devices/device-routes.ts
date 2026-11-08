@@ -21,6 +21,30 @@ export interface DeviceRoutesOptions {
   maxFrameBytes: number;
 }
 
+/** The comma-separated tokens of a header, lowercased. */
+function tokens(v: string | string[] | undefined): string[] {
+  return [v ?? []]
+    .flat()
+    .flatMap((x) => x.split(","))
+    .map((t) => t.trim().toLowerCase());
+}
+
+/**
+ * A WebSocket upgrade: `Upgrade` lists `websocket` and `Connection` lists `upgrade` (both
+ * case-insensitive). Other upgrades (`h2c`, …) are ordinary requests here.
+ */
+export function isWebSocketUpgrade(req: FastifyRequest): boolean {
+  return viaUpgrade(req) && tokens(req.headers.upgrade).includes("websocket");
+}
+
+/**
+ * A request Node handed to the server's `upgrade` listeners (`Connection: upgrade` and an
+ * `Upgrade` header, any protocol): its socket belongs to no HTTP connection any more.
+ */
+function viaUpgrade(req: FastifyRequest): boolean {
+  return req.headers.upgrade !== undefined && tokens(req.headers.connection).includes("upgrade");
+}
+
 /** The `Bearer` credential of the request, or "". */
 function bearer(req: FastifyRequest): string {
   const h = req.headers.authorization;
@@ -36,22 +60,23 @@ function bearer(req: FastifyRequest): string {
  * Must be called before Nest `app.init()`, on the root instance.
  *
  * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
- * root hooks below keep that from reaching any other route: an upgrade to another path is
- * answered 404 and its socket closed once answered (Node would have dropped it without a
- * listener).
+ * root hooks below keep that from reaching any other route: a WebSocket upgrade to another path
+ * is answered 404 and its socket closed once answered (Node would have dropped it without a
+ * listener). Other upgrades (`h2c`) reach their route as ordinary requests; their socket, which
+ * no HTTP connection owns any more, is closed once answered as well (the upgrade is declined).
  */
 export async function registerDeviceConnectRoute(
   fastify: FastifyInstance,
   opts: DeviceRoutesOptions,
 ): Promise<void> {
   fastify.addHook("onRequest", async (req, reply) => {
-    if (req.headers.upgrade === undefined || req.routeOptions.url === DEVICE_CONNECT_ROUTE) return;
+    if (!isWebSocketUpgrade(req) || req.routeOptions.url === DEVICE_CONNECT_ROUTE) return;
     return reply
       .code(404)
       .send(errorBody("not_found", "This path does not accept a protocol upgrade"));
   });
   fastify.addHook("onResponse", async (req) => {
-    if (req.headers.upgrade !== undefined) req.raw.socket?.destroy();
+    if (viaUpgrade(req)) req.raw.socket?.destroy();
   });
   await fastify.register(async (scope) => {
     await scope.register(websocket, { options: { maxPayload: opts.maxFrameBytes } });
@@ -79,7 +104,8 @@ export async function registerDeviceConnectRoute(
               .send(
                 errorBody(
                   "environment.program_outdated",
-                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}. Update capybara-device.`,
+                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}. ` +
+                    "Update capybara-device.",
                 ),
               );
           }

@@ -75,9 +75,11 @@ return 1
 
 /**
  * Pops the next frame of the request list (`KEYS[1]`) and, when it is a `req`, marks it taken in
- * the same step: `<ARGV[1]><id>` → the environment id `ARGV[2]`, for the reconnect grace `ARGV[3]`
- * ms plus the request's deadline plus the margin `ARGV[4]` ms (ruling R20). Returns the frame, or
- * false when the list is empty. A frame that is not JSON is returned as is (the caller drops it).
+ * the same step: `<ARGV[1]><id>` → the environment id `ARGV[2]`, for the reconnect grace
+ * `ARGV[3]` ms plus the request's deadline plus the margin `ARGV[4]` ms (ruling R20). Returns the
+ * frame, or false when the list is empty. A frame that is not JSON is returned as is (the caller
+ * drops it). The taken key cannot be declared in KEYS (its id is known only after the pop): like
+ * the rest of the kernel, this assumes a single-node Valkey / Redis, not a cluster.
  */
 const TAKE = `
 local raw = redis.call('LPOP', KEYS[1])
@@ -488,8 +490,9 @@ class DeviceConnection {
  * once after claiming and on every ping, marking each forwarded request taken for its environment
  * (`capk:device-taken:<id>`, TTL the reconnect grace plus the request's deadline plus a margin).
  * A `res` is accepted only for a request taken for the socket's environment: it is stored under
- * `capk:device-res:<id>` for the rest of that TTL and published on `device.res.<id>`. `device.revoked.<environmentId>` closes the connection of that machine only
- * (ruling R16). The sockets are this process's own; everything other replicas need is in Redis.
+ * `capk:device-res:<id>` for the rest of that TTL and published on `device.res.<id>`.
+ * `device.revoked.<environmentId>` closes the connection of that machine only (ruling R16). The
+ * sockets are this process's own; everything other replicas need is in Redis.
  */
 @Injectable()
 export class DeviceGateway {
