@@ -529,11 +529,13 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 
 **What was built**
 
-- 178 operations in 20 domains; every other kernel route is excluded for good
-  with a reason (`human-only` / `secret` / `transport` / `internal`). One `later` route remains: the
-  agent profile `PATCH`, until the run-context work is on `main` (#91); `check:platform-ops` rule
-  `platform-op-later` rejects every other `later` entry (the route sits in the check's
-  `LATER_ALLOWED`), and the allow-list empties when #91 lands.
+- 179 operations in 20 domains; every other kernel route is excluded for good
+  with a reason (`human-only` / `secret` / `transport` / `internal`). The `later` category is gone:
+  `platform-op-later` rejects any `later` entry, with no allow-list.
+- Agent profile (#91, after the run-context work): `agents.update-profile` sets quick actions and a
+  preset avatar (`personal` on your own private agent, `org` otherwise via `confirmFor`; precheck on
+  edit rights and `profile.updatedAt`); the description goes through `agents.update`; avatar
+  uploads stay `transport`; `platform.me` and `agents.get` return the profile.
 - Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
   `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
   parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
@@ -639,5 +641,3 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 - Notice dismissals write no audit row (service behaviour, unchanged); whether every Platform write
   must audit is for the maintainer.
 - A webhook-capable test plugin would cover the channels webhook success path.
-- #91 (agent profile and personal preferences) lands after the run-context work; then
-  `LATER_ALLOWED` empties and the `later` category can be removed from `ExclusionCategory`.

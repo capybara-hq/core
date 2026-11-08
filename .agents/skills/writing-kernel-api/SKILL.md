@@ -360,8 +360,7 @@ route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). 
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry
 would need cross-file resolution the source scan does not do. `later` is closed:
-`platform-op-later` fails it, except the routes in `LATER_ALLOWED` of the check (today the agent profile
-route, until its operation lands). An operation that would touch a secret refuses with a pointer to the
+`platform-op-later` fails every `later` entry, with no allow-list. An operation that would touch a secret refuses with a pointer to the
 web page.
 
 **Adding a domain.** Add the id and its one-line description to `PLATFORM_DOMAINS`
