@@ -45,7 +45,7 @@
      clips its overflow, so nothing in it can make the document scrollable (review fix L3). */
   position: relative;
   display: flex;
-  height: 100vh;
+  height: 100dvh;
   min-height: 0;
   overflow: clip;
   background: var(--cb-bg);
