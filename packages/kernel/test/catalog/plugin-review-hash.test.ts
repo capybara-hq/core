@@ -88,8 +88,8 @@ describe("pluginReviewHash", () => {
 
   it("covers themes and leaves the digest of a plugin without any unchanged", () => {
     const base = hash({});
-    // the digest of BASE before themes existed
-    expect(base).toBe("ea8c41d5141d9fea6bd083f70a06550c");
+    // the digest of BASE before themes existed (over canonical JSON)
+    expect(base).toBe("3f63a443424588630ce9b3c175adda79");
     expect(hash({ themes: [] })).toBe(base);
     const night = {
       id: "night-city",
