@@ -97,6 +97,23 @@ describe("ThemeRoot in the workspace frame", () => {
   });
 });
 
+describe("the scheme toggle under a single-scheme theme (usePreferences)", () => {
+  const NO_ORG = { ...ME, currentOrgId: null };
+  const chooserToggle = () => screen.queryByRole("radiogroup", { name: "主题" });
+
+  it("the org chooser (no org: the platform theme) keeps the toggle under a two-scheme theme", () => {
+    renderFrame(shellOf(NO_ORG, { theme: PAPER }));
+    expect(screen.getByRole("main")).toBeTruthy();
+    expect(chooserToggle()).not.toBeNull();
+  });
+
+  it("the org chooser has no toggle under a single-scheme platform theme", () => {
+    renderFrame(shellOf(NO_ORG, { theme: NIGHT_CITY }));
+    expect(screen.getAllByText("NIGHT CITY").length).toBeGreaterThan(0);
+    expect(chooserToggle()).toBeNull();
+  });
+});
+
 describe("themeIcons", () => {
   it("a theme's favicon is the page icon; none leaves the app's icon", () => {
     const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";

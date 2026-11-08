@@ -7,7 +7,8 @@ import { signIn } from "./support/sign-in";
  * Themes (spec `docs/superpowers/specs/2026-11-08-themes-design.md`). First paint (§8): the layouts
  * link the resolved theme's stylesheet in the streamed `<head>`, so the document is themed before
  * any client code runs: the workspace with the org default, the sign-in page with the platform
- * default and its wordmark (§3, through the design context).
+ * default and its wordmark (§3, through the design context), without the scheme toggle under a
+ * single-scheme theme (§10).
  *
  * Seeding: the super admin imports the fixture plugin `fake-theme` (`CAPYBARA_E2E_THEME_TGZ`,
  * packed by global-setup; themes `night-city`: dark only, wordmark `NIGHT CITY`; `paper`: light and
@@ -156,6 +157,9 @@ test.describe("first paint", () => {
       expect(seen).toMatchObject({ bg: NIGHT_CITY_BG, themeLinkInHead: true });
       expect(seen.text).toContain("NIGHT CITY");
       expect(seen.text).not.toContain("CAPYBARA");
+      // a single-scheme theme: the PreferenceBar keeps the language, without the scheme toggle
+      await expect(visitor.locator('[data-part="preferences"]')).toBeVisible();
+      await expect(visitor.getByRole("radiogroup")).toHaveCount(0);
     } finally {
       await visitor.context().close();
       await setPlatformTheme(page, null);
