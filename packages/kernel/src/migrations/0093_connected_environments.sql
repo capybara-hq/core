@@ -8,11 +8,11 @@ ALTER TABLE environments DROP CONSTRAINT IF EXISTS environments_source_check;
 ALTER TABLE environments
   ADD CONSTRAINT environments_source_check CHECK (source IN ('cloud', 'device'));
 
--- The machine connected to a device environment. credential_hash is a hash of the machine's long-lived
--- credential (cap_dev_...), never the credential itself; revoking a machine sets revoked_at and keeps the row, so
--- only one unrevoked machine exists per environment. program_version, mode, roots and
--- session_isolation are what the program reported on its last connection; last_seen_at is the
--- last time it connected or pinged.
+-- The machine connected to a device environment. credential_hash is a hash of the machine's
+-- long-lived credential (cap_dev_...), never the credential itself; revoking a machine sets
+-- revoked_at and keeps the row, so only one unrevoked machine exists per environment.
+-- program_version, mode, roots and session_isolation are what the program reported on its last
+-- connection; last_seen_at is the last time it connected or pinged.
 CREATE TABLE IF NOT EXISTS environment_machines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id text NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
@@ -33,3 +33,5 @@ CREATE TABLE IF NOT EXISTS environment_machines (
 CREATE UNIQUE INDEX IF NOT EXISTS environment_machines_active_uq
   ON environment_machines (environment_id)
   WHERE revoked_at IS NULL;
+-- The org cascade delete looks rows up by org (as environment_instances_org_idx in 0088).
+CREATE INDEX IF NOT EXISTS environment_machines_org_idx ON environment_machines (org_id);

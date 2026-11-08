@@ -22,9 +22,18 @@ describe("environments.device config", () => {
   });
 
   it("rejects a lease TTL below 6000 ms", () => {
-    expect(() =>
-      KernelConfigSchema.parse({ ...base, environments: { device: { leaseTtlMs: 1000 } } }),
-    ).toThrow();
+    const r = KernelConfigSchema.safeParse({
+      ...base,
+      environments: { device: { leaseTtlMs: 1000 } },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error?.issues).toEqual([
+      expect.objectContaining({
+        code: "too_small",
+        minimum: 6000,
+        path: ["environments", "device", "leaseTtlMs"],
+      }),
+    ]);
     const c = KernelConfigSchema.parse({ ...base, environments: { device: { leaseTtlMs: 6000 } } });
     expect(c.environments.device.leaseTtlMs).toBe(6000);
   });

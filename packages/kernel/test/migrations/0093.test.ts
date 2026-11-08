@@ -82,6 +82,9 @@ describe("0093_connected_environments", () => {
     expect(rows[0]?.id).toMatch(/^[0-9a-f-]{36}$/);
     expect(rows[0]?.session_isolation).toBe(false);
     expect(rows[0]?.mode).toBeNull();
+    const idx = await sql<{ indexname: string }>`select indexname from pg_indexes
+      where schemaname = 'capybara' and indexname = 'environment_machines_org_idx'`.execute(db);
+    expect(idx.rows).toHaveLength(1);
     await expect(
       sql`update capybara.environment_machines set mode = 'vm' where credential_hash = 'h1'`.execute(
         db,
