@@ -226,11 +226,15 @@ gone surfaces as `SandboxGoneError` from `resume`, and the environment shows its
 (`environment.files_lost`), never a silent empty workspace (§3 anti-goals).
 
 **Template.** The provider creates from a template. When the plugin's `template` setting is empty
-it builds one on first use from the image (`create`'s `image`, else its published image, §5.4)
-with E2B's template build API (the calls `Template().fromImage(...)` makes in the `e2b` SDK,
-amd64), aliased after the image tag, and reuses it until the tag changes **(designer's call)**, so
-E2B credentials alone are enough (§3 goal 5). The provider keeps its hand-written REST client (its
-README explains why it does not use the `e2b` package).
+it builds one on first use from its own published image
+(`ghcr.io/capybara-hq/capybara-sandbox:<plugin version>`; the two sandbox plugins share one version
+through a changesets fixed group) with E2B's template build API (the calls
+`Template().fromImage(...)` makes in the `e2b` SDK, amd64), aliased after that tag, and reuses it
+until the tag changes **(designer's call)**, so E2B credentials alone are enough (§3 goal 5).
+`create`'s `image` cannot reach E2B, because the template is fixed at `createFileSystem`; a custom
+image needs a custom `template`. The alias must be non-public and owned by the team: the plugin
+refuses a public or foreign alias. The provider keeps its hand-written REST client (its README
+explains why it does not use the `e2b` package).
 
 **Limits on E2B** are fixed when the E2B sandbox is created, that is at `createFileSystem`. If E2B
 cannot change a paused sandbox's network rules, a later change of the org's egress setting reaches

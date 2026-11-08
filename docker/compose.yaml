@@ -296,8 +296,10 @@ services:
       - "${CAPYBARA_WEB_BIND:-0.0.0.0}:${CAPYBARA_WEB_PORT:-3000}:3000"
 
   # ---- Conversation sandboxes (optional): docker compose --profile sandbox up -d
-  # sandbox-image and sandbox-egress-image build the two images (they are not published) from
-  # plugins/sandbox-docker of https://github.com/capybara-hq/plugins at the commit
+  # The plugin pulls the published images ghcr.io/capybara-hq/capybara-sandbox and
+  # capybara-sandbox-egress itself; the profile only starts sandbox-proxy. Offline route: build the
+  # images locally (profile sandbox-build, below), set CAPYBARA_SANDBOX__IMAGE and the plugin's
+  # egressProxyImage. The build services use plugins/sandbox-docker of https://github.com/capybara-hq/plugins at the commit
   # packages/kernel/bootstrap.json pins as marketplace.commit (pnpm check: bootstrap-compose-ref), so
   # building needs git and network access to GitHub. First install the plugin
   # @capybara-hq/plugin-sandbox-docker
@@ -323,19 +325,19 @@ services:
     networks:
       - sandbox
 
-  # One-shot: build the sandbox image (tag = the default of the kernel setting sandbox.image) and
-  # the egress proxy image, then exit.
+  # One-shot, profile sandbox-build: offline route: build the images locally and set
+  # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
-    profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/image
+    profiles: ["sandbox-build"]
+    build: https://github.com/capybara-hq/plugins.git#81e46839eb7eae14fc7bb331721889de85e96db8:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
     network_mode: none
 
   sandbox-egress-image:
-    profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/egress-proxy
+    profiles: ["sandbox-build"]
+    build: https://github.com/capybara-hq/plugins.git#81e46839eb7eae14fc7bb331721889de85e96db8:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

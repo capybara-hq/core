@@ -65,19 +65,19 @@ services:
     ports:
       - "127.0.0.1:2375:2375"
 
-  # One-shot: build the sandbox image (tag = the default of the kernel setting sandbox.image) and
-  # the egress proxy image, then exit. Both build from plugins/sandbox-docker of
+  # One-shot, profile sandbox-build: offline route: build the images locally and set
+  # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage. Both build from plugins/sandbox-docker of
   # capybara-hq/plugins at bootstrap.json's marketplace.commit (pnpm check: bootstrap-compose-ref).
   sandbox-image:
-    profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/image
+    profiles: ["sandbox-build"]
+    build: https://github.com/capybara-hq/plugins.git#81e46839eb7eae14fc7bb331721889de85e96db8:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
 
   sandbox-egress-image:
-    profiles: ["sandbox"]
-    build: https://github.com/capybara-hq/plugins.git#77f0ac0c0bbb1e7e3ea66ae3bd7931f0ed06b777:plugins/sandbox-docker/egress-proxy
+    profiles: ["sandbox-build"]
+    build: https://github.com/capybara-hq/plugins.git#81e46839eb7eae14fc7bb331721889de85e96db8:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"
