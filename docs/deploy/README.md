@@ -641,6 +641,35 @@ worker crashes after Slack accepted an approval or question card but before the 
 the retry can post the card a second time. This is rare, and both copies act on the same request.
 Lark and the test fake deliver exactly once.
 
+## Connected devices
+
+People can connect their own laptop or server as an environment with `@capybara-hq/device`
+(`capybara-device`, see [its README](../../packages/device/README.md)). The program opens one
+long-lived WebSocket connection to the kernel's `gateway` role.
+
+- **Route and origin.** The program connects to `wss://<http.publicUrl host>/device/connect`
+  (`GET`, outside `/api`, `Authorization: Bearer cap_dev_...`). Your reverse proxy or load balancer
+  must route that path on the public origin (`CAPYBARA_PUBLIC_URL`) to the **gateway** replicas, not
+  to `web` or `api`, and must serve it over TLS (`wss://`). Only a real WebSocket upgrade is served;
+  an upgrade to any other path gets 404.
+- **WebSocket upgrade.** The proxy must pass `Upgrade` and `Connection: upgrade` and not buffer the
+  stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
+  `proxy_set_header Connection "upgrade"`).
+- **Long idle connections.** A connection stays open for as long as the machine is online. The
+  program and the gateway ping every 20 s, so a proxy idle timeout of at least 60 s is enough; do not
+  set a maximum connection age shorter than a few hours (the program reconnects, but a command in
+  flight waits out the reconnect grace).
+- **Replicas.** Any gateway replica can hold the connection; one lease per environment
+  (`capk:device-lease:<environmentId>`) keeps it to one connection across replicas, and the newest
+  connection wins. Requests from api and worker replicas reach the holder through Redis.
+- **Config.** `environments.device.reconnectGraceSeconds` (how long a disconnected machine is not yet
+  reported offline, default 120; also sent to the program at sign-in), `leaseTtlMs`,
+  `authCodeTtlSeconds`, `pollIntervalSeconds` and `maxFrameBytes`; names and defaults in
+  [docs/config.md](../config.md). Environment variables follow the usual rule
+  (`CAPYBARA_ENVIRONMENTS__DEVICE__RECONNECT_GRACE_SECONDS`).
+- **Sign-in** uses the public routes `POST /api/v1/device/authorize` and `/device/token` and the web
+  page `/device`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
+
 ## Sandbox (optional)
 
 Conversation sandboxes use the `sandbox-docker` extension. Its two images,

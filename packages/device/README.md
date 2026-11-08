@@ -4,13 +4,25 @@
 deployment as an environment: the platform's agents run commands and read and write files on this
 machine, inside a sandbox, while the program is online.
 
-Runs on macOS and Linux (on Windows use WSL or Docker). Node 22.12 or newer.
+Runs on macOS and Linux. Native Windows is refused: use WSL (then it is a Linux machine) or Docker
+mode inside WSL. Node 22.12 or newer.
 
 ```bash
+npm i -g @capybara-hq/device
 capybara-device login --url https://capybara.example.com   # approve in the browser
+capybara-device login --url https://capybara.example.com --no-browser   # headless: prints a code
+capybara-device start      # connect and serve commands (runs in the foreground)
 capybara-device status [--json]
 capybara-device logout
 ```
+
+`login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/device`) and
+the code to enter on any signed-in browser, where you pick the org and the environment (a new one or
+an existing connected one of yours) after reading what the program can do. Logging in again from
+another machine into the same environment replaces the first machine (its credential is revoked).
+`stop` ends the running program, `drain` makes it accept no new commands and exit when the running
+ones finish. Deleting the environment in the web app revokes the machine and stops the program; the
+files in the working directory stay on your machine.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]`, `start`, `stop`, `drain`, `policy [show|set <key> <value>]` and
@@ -33,6 +45,9 @@ capybara-device policy set allowedDomains registry.npmjs.org,*.github.com
 capybara-device policy show   # changes apply at the next start
 ```
 
+Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
+Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
+
 Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings, and `allowCredentials` (commands
 get no local credentials at all). Processes a command leaves running are killed with it by tag;
 on macOS a child that leaves the command's process group and runs only Apple system binaries
@@ -45,8 +60,8 @@ down with it).
 (`capybara-device-<environmentId>`, started on first use from
 `ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release) as the image's
 `sandbox` user (uid 1000). `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
-at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit, no swap beyond `memoryMb`, and drops
-all capabilities. The policy's `cpu` and
+at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit of 1024, `--memory-swap` equal to
+`memoryMb`, `--cap-drop ALL` and `no-new-privileges`. The policy's `cpu` and
 `memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and limits
 match and recreated when they change; it stays running (idle) between starts.
 

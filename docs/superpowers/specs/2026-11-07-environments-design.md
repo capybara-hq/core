@@ -507,10 +507,15 @@ tell the model the real paths (2026-11-08):
 - The kernel's sandbox tools, attachment copies, skill files and background tasks build paths from
   the held instance's roots, never from constants. Tool descriptions say "the workspace directory"
   instead of naming `/workspace`.
-- When an environment's roots differ from the defaults, the first sandbox tool call of a
-  conversation records an `environment_paths` event (the three roots) in the event log, rendered to
-  the model as a system line. It is in the log, so it needs no `DriftReason`; tool descriptions are
-  replayed from their recorded spec hash (replay-evals skill).
+- Every conversation's first sandbox tool call records an `environment_paths` event (the three
+  roots) in the event log, rendered to the model as a system line, and so does the first call after
+  the roots change (including a change back to the defaults). It is in the log, so it needs no
+  `DriftReason`; tool descriptions are replayed from their recorded spec hash (replay-evals skill).
+  Migration 0094 adds a partial index on `conversation_events` (`type = 'environment_paths'`) so the
+  latest event is read without scanning the log.
+- Tool descriptions never name `/workspace` (or any other root). Path checks that do not depend on
+  the roots (non-empty, absolute, no traversal) run before the call enters the instance, through
+  `validateSandboxPathShape`; checks against the roots run with the held instance's roots.
 
 ### 13.2 Machines and credentials
 
@@ -524,6 +529,8 @@ tell the model the real paths (2026-11-08):
 - The kernel provider name of connected environments is `@device` (a name no plugin can take),
   stored in `environments.provider` and `environment_instances.provider`. `environments.source`
   gains `device`.
+- The `@device` `SandboxHandle` is created with the org's effective limits and carries them; a
+  handle without limits answers `SandboxGoneError`, so the kernel rebuilds the instance.
 
 ### 13.3 Authorization
 
@@ -552,6 +559,14 @@ The shape of RFC 8628 for both cases (browser or not):
 - One lease per environment (`capk:device-lease:<environmentId>`, LockService `hold`, the channel
   supervisor's TTL and renewal). **The newest connection wins**: a second connection publishes a
   takeover on the bus; the holder closes its socket and releases; the new one claims within 5 s.
+  Takeover compares no clocks: a holder yields to any takeover, and a claimer retries for 5 s, then
+  closes with 4409.
+- The route is a real WebSocket upgrade only: an upgrade to any other path gets 404, and a plain
+  HTTP request to `/device/connect` is not an upgrade. Revocation is by machine: on
+  `device.revoked.<environmentId>` the gateway closes the socket only if the payload's `machineId`
+  is that socket's machine (a replacement login publishes it without a stop frame). `connectUrl` is
+  built on `http.publicUrl`, so the deployment's proxy must route `/device/connect` on that origin
+  to the `gateway` role (docs/deploy/README.md).
 - Frames are JSON. Device → kernel: `hello` (protocol, program version, OS, arch, mode, roots,
   session isolation), `res` (`id`, `ok`, `result` or `error: { kind: "gone" | "fs_gone" | "policy" |
   "error", message }`). Kernel → device: `req` (`id`, `op`, `args`, `deadlineMs`), `cancel` (`id`).
@@ -562,11 +577,17 @@ The shape of RFC 8628 for both cases (browser or not):
   `environments.device.reconnectGraceSeconds` + the command timeout) and publishes
   `device.res.<requestId>`; the caller subscribes before it sends and reads the key once after
   subscribing (the run-abort pattern). The caller waits within its own tool call.
+- The gateway accepts a `res` only for a request id it took for that environment (it records
+  `capk:device-taken:<id>` when it forwards the request), so a connected machine cannot write results
+  for requests of other environments.
 - No holder at send time → `environment.offline` at once. A holder lost mid-command → the caller
   waits until the command's deadline plus the grace; the program keeps results of commands that
-  finished while disconnected for the grace and sends them after reconnecting. Grace exceeded or
-  the caller aborted → the caller queues a `cancel` for that request, delivered on the next
-  connect.
+  finished while disconnected for the grace and sends them after reconnecting. When the caller gives
+  up (grace exceeded or aborted), a request still in the queue is removed from it; only a request the
+  machine already took gets a `cancel`, delivered on the next connect. The program treats a cancel
+  for an unknown or not-yet-started request as "never start it".
+- `stop` (the program's stop on environment deletion) is fire-and-forget: it is pushed and nudged
+  only while a holder is live, and never awaited.
 
 ### 13.5 Instance lifecycle on a machine
 
@@ -574,7 +595,10 @@ The shape of RFC 8628 for both cases (browser or not):
   environment directory on first use. A directory that existed and is gone answers `fs_gone`
   (`environment.files_lost`).
 - `create` and `resume` need the machine online; `suspend` and `destroy` do nothing (the machine is
-  not the platform's to stop); idle suspension and inactivity destruction skip `@device`.
+  not the platform's to stop); idle suspension and inactivity destruction never act on `@device`.
+  `destroy` and `destroyFileSystem` (and the by-name variants) are offline-safe no-ops: a stop is
+  relayed only when the machine is online. The one sweep that does include `@device` rows is the
+  gone-sweep (org or environment deleted); machine authentication also requires the org not deleted.
 - Deleting a connected environment revokes the machine and tells the program to stop; the files on
   the machine stay where they are (they are the machine owner's). The delete dialog says so.
 
@@ -590,8 +614,21 @@ The shape of RFC 8628 for both cases (browser or not):
   environment directory, reads denied for `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.azure`,
   `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.gnupg` and the browser profile directories,
   and network allowed for the intersection of the policy's domains and the environment's egress.
-  Docker mode: the published image, the environment directory mounted at `/workspace`, default
-  roots.
+  The denied list (`DENIED_SECRET_PATHS` in `packages/device/src/policy.ts`) also covers
+  `~/.config/gh`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/Library/Keychains`,
+  `~/Library/Cookies`, `~/Library/Safari` and the Chrome, Firefox, Brave, Edge and Arc profile
+  directories (macOS and Linux locations).
+  File operations (Read, Write, Edit, Glob, Grep helpers) also run inside the sandbox, in a helper
+  process, never as host-side path operations; the request's environment is applied inside the
+  sandbox only, not to the program.
+  Limits: `cpu`, `memoryMb` and `allowCredentials` are not enforced in OS mode (commands get no
+  local credentials). Processes a command leaves behind are found by an environment marker; on
+  macOS a child that leaves the process group and runs only Apple system binaries (which drop the
+  marker) cannot be found again. Linux runs each command in its own pid namespace.
+- Docker mode: the published image, the environment directory mounted at `/workspace`, default
+  roots. The container has a read-only root file system, `--pids-limit 1024`, `--memory-swap`
+  equal to `--memory`, `--cap-drop ALL`, `no-new-privileges` and runs as uid 1000. Docker mode has
+  no domain allowlist: a command has the full default bridge or no network at all.
 - Native Windows is refused with a message pointing at WSL or Docker.
 
 ## 14. Projects as a plugin (2026-11-08, decided)
