@@ -56,6 +56,12 @@ export const LIST_FAILURE_TTL_SECONDS = 15;
 const DROPPED_WARN_TTL_SECONDS = 24 * 3600;
 
 /**
+ * The shape of a cached model list. 2: every entry carries its normalised `kind` (model platform
+ * providers); a format-1 entry has none, and a kernel reading it found no chat model at all.
+ */
+const MODELS_CACHE_FORMAT = 2;
+
+/**
  * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the provider's
  * contract major: after a plugin moves from `@1` to `@2` it never reads the list written through
  * the `@1` adapter (both are `@2`-shaped, the shape cannot tell them apart). It also carries the
@@ -64,9 +70,11 @@ const DROPPED_WARN_TTL_SECONDS = 24 * 3600;
  * config change (models added or removed) every replica validates the new list at once instead of
  * waiting for the old entry's TTL. The digest is only a hash, never config text (no secret in the
  * key). Old keys expire by TTL. Entries without a version / digest (test doubles) use `-`.
+ * `f<n>` is the shape of the cached entry ({@link MODELS_CACHE_FORMAT}): a kernel that changes what
+ * it caches bumps it, so during a rolling upgrade it never reads a list an older kernel wrote.
  */
 const modelsKey = (p: ProviderEntry, hash: string | undefined) =>
-  `capk:models:${p.plugin}:v${p.major}:${p.version ?? "-"}:${hash ?? "-"}`;
+  `capk:models:${p.plugin}:v${p.major}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
 /** 列表视图的失败标记（{@link LIST_FAILURE_TTL_SECONDS}），与模型列表同样按版本与配置摘要区分。 */
 const listFailedKey = (p: ProviderEntry, hash: string | undefined) =>
   `capk:models-failed:${p.plugin}:v${p.major}:${p.version ?? "-"}:${hash ?? "-"}`;
