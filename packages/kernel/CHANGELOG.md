@@ -1,5 +1,12 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.8
+
+### Patch Changes
+
+- b98e6d1: Platform: `platform.preferences` and `platform.set-preferences` read and set your own time zone
+  (mirroring `GET` / `PUT /api/v1/me/preferences`); the set is a personal, rememberable write.
+
 ## 0.1.0-rc.7
 
 ### Minor Changes
