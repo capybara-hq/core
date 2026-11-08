@@ -20,6 +20,14 @@
   --cb-type-body-size: 13px;
   --cb-type-body-line: 20px;
   --cb-layout-sidebar: 256px;
+  --cb-builtin-dark-bg: #0A0A0A;
+  --cb-builtin-dark-panel: #111110;
+  --cb-builtin-dark-ink: #E6E6E3;
+  --cb-builtin-dark-accent: #FF6A13;
+  --cb-builtin-light-bg: #F7F6F2;
+  --cb-builtin-light-panel: #FFFFFF;
+  --cb-builtin-light-ink: #1A1A18;
+  --cb-builtin-light-accent: #CC4609;
 }
 
 :root[data-theme="dark"] {

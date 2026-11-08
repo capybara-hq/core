@@ -42,6 +42,10 @@ export interface OrgThemes {
   org: { id: string | null; personal: "allowed" | "locked" };
 }
 
+/** A theme's name in the UI locale (its English name when it has none in Chinese). */
+export const themeName = (t: Pick<ThemeRef, "name">, locale: string): string =>
+  locale === "zh" ? (t.name.zh ?? t.name.en) : t.name.en;
+
 export const getOrgThemes = (orgId: string) =>
   apiFetch<OrgThemes>(`/api/v1/orgs/${encodeURIComponent(orgId)}/themes`);
 

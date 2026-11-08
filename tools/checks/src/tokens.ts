@@ -271,6 +271,9 @@ export function parseTokens(
 
 const px = (n: number) => `${n}px`;
 
+/** The four colors a theme swatch draws (design spec §6.37). */
+const BUILTIN_SWATCH_TOKENS = ["bg", "panel", "ink", "accent"] as const;
+
 /** The generated tokens.css. */
 export function renderTokensCss(t: DesignTokens): string {
   const root: string[] = [`--cb-font: ${t.font.mono};`, `--cb-font-prose: ${t.font.prose};`];
@@ -286,6 +289,15 @@ export function renderTokensCss(t: DesignTokens): string {
         root.push(`--cb-${group}-${step}-${pair[0]}: ${px(a)};`);
         root.push(`--cb-${group}-${step}-${pair[1]}: ${px(b)};`);
       }
+    }
+  }
+  // The built-in theme's swatch colors (design spec §6.37, `BUILTIN_THEME_SWATCHES`): outside the
+  // token names, so a theme never overrides them and a picker can draw the built-in theme under any
+  // theme.
+  for (const th of ["dark", "light"] as const) {
+    for (const name of BUILTIN_SWATCH_TOKENS) {
+      const v = t.color[name];
+      if (v !== undefined) root.push(`--cb-builtin-${th}-${name}: ${v[th]};`);
     }
   }
   const theme = (th: Theme) => {

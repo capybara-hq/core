@@ -3028,6 +3028,7 @@ States: `default`, `select-all`
 - **Card**: `space.2` padding, a 1px `line` border, `radius.md`; the preview over a foot row, `space.2` apart. Hover takes `line-strong`.
 - **Preview**: 48 high, `radius.sm`, a 1px `line` hairline (so a ground close to the page's own still reads), filled with the theme's `bg`; on it a rounded block in the theme's `panel` (the left 40%), a 4 px bar in `ink` and a 16 × 8 block in `accent` (the right half). The four colors are the theme's data, applied as `--cb-swatch-*` custom properties by the component; this is the only place a theme's color values reach the DOM, and pages pass them as props, never as literals (`web-ui-color`).
 - **Foot**: the theme's name (`body`, `ink`, one line with an ellipsis, its full text as the title) and a 12 px `moon` or `sun` icon in `muted` for the scheme (`data-scheme`).
+- **The built-in theme** in a picker draws `BUILTIN_THEME_SWATCHES[scheme]`: references to `--cb-builtin-<scheme>-{bg,panel,ink,accent}`, which `pnpm gen:tokens` writes into tokens.css from the built-in values, outside the token names, so a theme on the page never changes them.
 - **Selected** (`data-state="selected"`): the `selected` ground and a `line-strong` border; selection is neutral (§2.3), the focus ring (2 px `accent`, offset 2) carries the accent. `disabled` greys the card and the pointer shows not-allowed.
 
 <!-- states: theme-swatch -->

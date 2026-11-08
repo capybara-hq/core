@@ -166,3 +166,187 @@ test.describe("first paint", () => {
     }
   });
 });
+
+/** UI copy from the zh messages (the specs read zh). */
+const zh = JSON.parse(
+  readFileSync(new URL("../messages/zh.json", import.meta.url), "utf8"),
+) as typeof import("../messages/zh.json");
+const AP = zh.appearance;
+
+async function setOrgSetting(
+  page: Page,
+  theme: { id: string | null; personal: "allowed" | "locked" },
+): Promise<void> {
+  const r = await page.request.patch(`/api/v1/orgs/${await currentOrg(page)}/settings`, {
+    headers: CSRF,
+    data: { theme },
+  });
+  expect(r.ok(), await r.text()).toBe(true);
+}
+
+/**
+ * A member of the admin's org in a new browser context, signed in through an invitation (the
+ * accept call signs the new account in). The org has an agent the member can see, else the
+ * workspace shows the setup layout.
+ */
+async function newMember(page: Page, browser: Browser): Promise<Page> {
+  const run = Date.now().toString(36);
+  const orgId = await currentOrg(page);
+  const agent = await page.request.post(`/api/v1/orgs/${orgId}/agents`, {
+    headers: CSRF,
+    data: {
+      definition: {
+        name: `Themes shared ${run}`,
+        instructions: "Help.",
+        model: { provider: "model-fake", model: "fake-1" },
+      },
+      visibility: "org",
+    },
+  });
+  expect(agent.status(), await agent.text()).toBe(201);
+  const invite = await page.request.post(`/api/v1/orgs/${orgId}/invitations`, {
+    headers: CSRF,
+    data: { role: "member", expiresInHours: 24 },
+  });
+  expect(invite.status(), await invite.text()).toBe(201);
+  const { token } = (await invite.json()) as { token: string };
+  const context = await browser.newContext({
+    baseURL: process.env.CAPYBARA_E2E_BASE_URL as string,
+    locale: "zh-CN",
+  });
+  const accept = await context.request.post(`/api/v1/invitations/${token}/accept`, {
+    headers: CSRF,
+    data: {
+      login: `theme-member-${run}`,
+      password: "member-password-123",
+      displayName: `M ${run}`,
+    },
+  });
+  expect(accept.status(), await accept.text()).toBeLessThan(300);
+  return context.newPage();
+}
+
+/** The root's value of a theme token now. */
+const rootToken = (page: Page, name: string) =>
+  page.evaluate(
+    (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim().toLowerCase(),
+    name,
+  );
+
+test.describe("appearance pages", () => {
+  test("a member picks Paper in 偏好设置 › 外观: the page's tokens change without a reload", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page);
+    await themeIds(page);
+    await setOrgSetting(page, { id: null, personal: "allowed" });
+    const member = await newMember(page, browser);
+    try {
+      await member.goto("/account/preferences");
+      const picker = member.getByRole("radiogroup", { name: AP.personal.label });
+      await expect(picker.getByRole("radio", { name: /纸张/ })).toBeVisible();
+      // the built-in dark accent first (no cb-theme cookie: dark)
+      const before = await rootToken(member, "--cb-accent");
+      expect(before).not.toBe(PAPER_DARK_ACCENT);
+      const navigations: string[] = [];
+      member.on("framenavigated", (f) => {
+        if (f === member.mainFrame()) navigations.push(f.url());
+      });
+      await picker.getByRole("radio", { name: /纸张/ }).click();
+      await member.getByRole("button", { name: zh.preferences.save }).click();
+      // Paper overrides the dark accent only (its bg stays the built-in one)
+      await expect.poll(() => rootToken(member, "--cb-accent")).toBe(PAPER_DARK_ACCENT);
+      expect(navigations).toEqual([]);
+    } finally {
+      await member.context().close();
+    }
+  });
+
+  test("an org admin sets Night City with 允许成员自选 off: the member sees the lock line, 组织设置 › 外观 read only, no scheme toggle", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page);
+    await themeIds(page);
+    await setOrgSetting(page, { id: null, personal: "allowed" });
+    const member = await newMember(page, browser);
+    try {
+      // the admin, in 组织设置 › 外观 (the built-in theme: the account row's scheme toggle is there)
+      await page.goto("/settings/appearance");
+      const schemeToggle = page
+        .locator('[data-part="sidebar"]')
+        .getByRole("radiogroup", { name: zh.common.theme });
+      await expect(schemeToggle).toBeVisible();
+      await page
+        .getByRole("radiogroup", { name: AP.org.label })
+        .getByRole("radio", { name: /夜之城/ })
+        .click();
+      await page.getByRole("switch", { name: AP.org.personal }).click();
+      await page.getByRole("button", { name: AP.save }).click();
+      await expect(page.getByText(AP.saved)).toBeVisible();
+      // the whole workspace is Night City now: dark only, so the account row has no scheme toggle
+      await expect.poll(() => rootToken(page, "--cb-bg")).toBe(NIGHT_CITY_BG);
+      await expect(schemeToggle).toHaveCount(0);
+
+      // the member: the lock line instead of the cards
+      await member.goto("/account/preferences");
+      await expect(member.getByText(AP.personal.locked)).toBeVisible();
+      await expect(member.getByRole("radiogroup", { name: AP.personal.label })).toHaveCount(0);
+
+      // 组织设置 › 外观, read only: the choice shown, every control disabled, no save
+      await member.goto("/settings/appearance");
+      const picker = member.getByRole("radiogroup", { name: AP.org.label });
+      await expect(picker.getByRole("radio", { name: /夜之城/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+      for (const radio of await picker.getByRole("radio").all()) await expect(radio).toBeDisabled();
+      await expect(member.getByRole("switch", { name: AP.org.personal })).toBeDisabled();
+      await expect(member.getByText(zh.orgSettings.readonly)).toBeVisible();
+      await expect(member.getByRole("button", { name: AP.save })).toHaveCount(0);
+    } finally {
+      await member.context().close();
+      await setOrgSetting(page, { id: null, personal: "allowed" });
+    }
+  });
+
+  test("the super admin: 主题 in the admin nav, the fixture's themes on /admin/themes, only `all` themes as 平台默认主题", async ({
+    page,
+  }) => {
+    await signIn(page);
+    const { paper } = await themeIds(page);
+    await setPlatformTheme(page, null);
+    await page.goto("/admin");
+    await page.getByRole("link", { name: zh.admin.nav.themes, exact: true }).click();
+    await expect(page).toHaveURL(/\/admin\/themes$/);
+    const table = page.getByRole("table", { name: zh.adminComponents.titles.theme });
+    await expect(table.getByRole("link", { name: "night-city", exact: true })).toBeVisible();
+    await expect(table.getByRole("link", { name: "paper", exact: true })).toBeVisible();
+
+    // Paper gets its own `optional` scope: no longer offered as the platform default
+    const scope = async (target: object) => {
+      const preview = await page.request.post(
+        `/api/v1/admin/components/theme/${paper.id}/scope/preview`,
+        { headers: CSRF, data: target },
+      );
+      expect(preview.ok(), await preview.text()).toBe(true);
+      const { scopeHash } = (await preview.json()) as { scopeHash: string };
+      const put = await page.request.put(`/api/v1/admin/components/theme/${paper.id}/scope`, {
+        headers: CSRF,
+        data: { ...target, scopeHash },
+      });
+      expect(put.ok(), await put.text()).toBe(true);
+    };
+    await scope({ scope: "optional" });
+    try {
+      await page.goto("/admin/settings");
+      const picker = page.getByRole("radiogroup", { name: AP.platform.label });
+      await expect(picker.getByRole("radio", { name: /夜之城/ })).toBeVisible();
+      await expect(picker.getByRole("radio", { name: AP.builtin })).toBeVisible();
+      await expect(picker.getByRole("radio")).toHaveCount(2);
+    } finally {
+      await scope({ follow: true });
+    }
+  });
+});

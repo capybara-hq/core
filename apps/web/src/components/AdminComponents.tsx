@@ -30,7 +30,7 @@ import {
   shareBlockOf,
 } from "../lib/components";
 import { lockWhileRunning } from "../lib/header-actions";
-import { adminOrgsQuery } from "../lib/query/admin";
+import { adminOrgsQuery, deploymentSettingsQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
 import { componentChangeKeys } from "../lib/query/components";
 import { useAppMutation } from "../lib/query/mutation";
@@ -41,6 +41,12 @@ import {
   ComponentUploadDialog,
 } from "./ComponentScopeDialog";
 import { useScopeLabel } from "./PluginsHead";
+
+/** The platform default theme's id (a section: null while it loads or failed). */
+export function usePlatformDefaultTheme(): string | null {
+  const sq = deploymentSettingsQuery();
+  return useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) }).data?.uiTheme?.id ?? null;
+}
 
 /** The deployment's orgs by id (a section: empty while it loads or failed). */
 function useOrgNames(): (id: string) => string {
@@ -90,11 +96,21 @@ export function useOwnerText(): (c: PlatformComponent) => string {
   return (c) => (c.owner.kind === "platform" ? t("owner.platform") : c.owner.name);
 }
 
-/** The state chips of a component: 内置, 已停用, 插件已停用. */
-export function StateBadges({ c }: { c: PlatformComponent }) {
+/**
+ * The state chips of a component: 平台默认主题 (the theme `uiTheme` names), 内置, 已停用,
+ * 插件已停用.
+ */
+export function StateBadges({
+  c,
+  platformDefault = false,
+}: {
+  c: PlatformComponent;
+  platformDefault?: boolean;
+}) {
   const t = useTranslations("adminComponents.state");
   return (
     <>
+      {platformDefault && <Badge>{t("platformDefault")}</Badge>}
       {c.builtin && <Badge>{t("builtin")}</Badge>}
       {c.disabled && <Badge tone="warn">{t("disabled")}</Badge>}
       {c.pluginStopped && <Badge tone="warn">{t("pluginStopped")}</Badge>}
@@ -104,14 +120,17 @@ export function StateBadges({ c }: { c: PlatformComponent }) {
 
 /**
  * The admin list of one kind's platform components (spec §9): name (linking to its detail), 来自,
- * 归属, 范围, 版本 and how many orgs use it. `rows` null: loading.
+ * 归属, 范围, 版本 and how many orgs use it. `rows` null: loading. `platformDefault`: the theme
+ * that is the platform default (marked).
  */
 export function ComponentsTable({
   kind,
   rows,
+  platformDefault = null,
 }: {
   kind: PlatformComponentKind;
   rows: PlatformComponent[] | null;
+  platformDefault?: string | null;
 }) {
   const t = useTranslations("adminComponents");
   const scopeText = useComponentScopeText();
@@ -124,7 +143,7 @@ export function ComponentsTable({
       cell: (c) => (
         <Stack direction="row" gap={8} align="center">
           <Link href={`${COMPONENT_ROUTES[kind]}/${encodeURIComponent(c.id)}`}>{c.name}</Link>
-          <StateBadges c={c} />
+          <StateBadges c={c} platformDefault={c.id === platformDefault} />
         </Stack>
       ),
     },
@@ -364,7 +383,8 @@ export function useComponentActions(
     ...(shared && c.scope === "named" && !c.shownToOthers ? [showAction] : []),
     ...(scope ? [scopeAction] : []),
     ...(disable ? [disableAction] : []),
-    ...(platform && c.kind !== "connector_template" ? [uploadAction] : []),
+    // a new version on its own: skills and agent templates (a theme comes with its plugin)
+    ...(platform && (c.kind === "skill" || c.kind === "agent_template") ? [uploadAction] : []),
   ];
   // The same actions as a card's ⋯ menu (ruling P4-17): 上传新版本 stays on the detail, and 停用
   // is the menu's destructive item, last. A running call disables its item (and the call guards
@@ -436,11 +456,22 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
 }
 
 /** The detail's notes: org-owned (and why it is not shared), disabled, plugin stopped, builtin. */
-export function ComponentNotes({ c }: { c: PlatformComponent }) {
+export function ComponentNotes({
+  c,
+  platformDefault = false,
+}: {
+  c: PlatformComponent;
+  platformDefault?: boolean;
+}) {
   const t = useTranslations("adminComponents.detail");
   const blocked = useShareBlockText()(c);
   return (
     <>
+      {platformDefault && (
+        <Text variant="prose" tone="muted">
+          {t("platformDefaultNote")}
+        </Text>
+      )}
       {c.owner.kind === "org" && (
         <Text variant="prose" tone="muted">
           {t("orgOwnedNote", { org: c.owner.name })}

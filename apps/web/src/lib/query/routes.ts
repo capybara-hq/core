@@ -85,6 +85,7 @@ import {
 } from "./settings";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
+import { orgThemesQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
 import { uiViewQuery } from "./ui";
 
@@ -171,8 +172,14 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/account/preferences",
-    // No org needed: my preferences.
-    queries: ({ me }) => (me === null ? [] : [q(preferencesQuery(me.account.id))]),
+    // No org needed: my preferences; with an org, its themes (外观: the cards or the lock).
+    queries: ({ me, orgId }) =>
+      me === null
+        ? []
+        : [
+            q(preferencesQuery(me.account.id)),
+            ...(orgId === null ? [] : [q(orgThemesQuery(orgId))]),
+          ],
   },
   {
     pattern: "/admin",
@@ -225,6 +232,26 @@ export const ROUTES: readonly RouteEntry[] = [
             q(adminComponentsQuery("skill")),
             q(componentVersionsQuery("skill", params.id)),
             q(adminOrgsQuery()),
+          ]
+        : [],
+  },
+  {
+    pattern: "/admin/themes",
+    // The themes, the orgs (named scopes) and the settings (which one is the platform default).
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [q(adminComponentsQuery("theme")), q(adminOrgsQuery()), q(deploymentSettingsQuery())]
+        : [],
+  },
+  {
+    pattern: "/admin/themes/[id]",
+    queries: ({ me, params }) =>
+      superAdmin(me) && params.id !== undefined
+        ? [
+            q(adminComponentsQuery("theme")),
+            q(componentVersionsQuery("theme", params.id)),
+            q(adminOrgsQuery()),
+            q(deploymentSettingsQuery()),
           ]
         : [],
   },
@@ -327,7 +354,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    queries: ({ me }) => (superAdmin(me) ? [q(deploymentSettingsQuery())] : []),
+    // The settings, the themes (外观's eligible ones) and the current org's (their names and swatches).
+    queries: ({ me, orgId }) =>
+      superAdmin(me)
+        ? [
+            q(deploymentSettingsQuery()),
+            q(adminComponentsQuery("theme")),
+            ...(orgId === null ? [] : [q(orgThemesQuery(orgId))]),
+          ]
+        : [],
   },
   {
     pattern: "/agents",
@@ -762,6 +797,14 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/settings/organization",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
+  {
+    pattern: "/settings/appearance",
+    // Members read it: the org's themes and setting, and the theme components with their switches.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member")
+        ? []
+        : [q(orgThemesQuery(orgId)), q(orgComponentsQuery(orgId, { kind: "theme" }))],
   },
   {
     pattern: "/settings/sandbox",

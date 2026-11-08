@@ -6,6 +6,26 @@ export type ThemeScheme = "dark" | "light";
 
 export type ThemeSwatchColors = { bg: string; panel: string; ink: string; accent: string };
 
+/**
+ * The built-in theme's swatches for each scheme (spec §6.37): references to the `--cb-builtin-*`
+ * values tokens.css keeps outside the token names, so a theme on the page never changes them and a
+ * picker draws the built-in theme as it is.
+ */
+export const BUILTIN_THEME_SWATCHES: Record<ThemeScheme, ThemeSwatchColors> = {
+  dark: {
+    bg: "var(--cb-builtin-dark-bg)",
+    panel: "var(--cb-builtin-dark-panel)",
+    ink: "var(--cb-builtin-dark-ink)",
+    accent: "var(--cb-builtin-dark-accent)",
+  },
+  light: {
+    bg: "var(--cb-builtin-light-bg)",
+    panel: "var(--cb-builtin-light-panel)",
+    ink: "var(--cb-builtin-light-ink)",
+    accent: "var(--cb-builtin-light-accent)",
+  },
+};
+
 export type ThemeSwatchProps = {
   /** The theme's display name. */
   name: string;

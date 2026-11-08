@@ -95,6 +95,7 @@ export interface ComponentCounts {
   skills: number;
   connectorTemplates: number;
   agentTemplates: number;
+  themes: number;
 }
 
 /** The static manifest of a plugin's extension (SDK `StaticExtensionManifest`, the parts shown). */

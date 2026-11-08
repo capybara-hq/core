@@ -22,8 +22,8 @@ export const orgCatalogItemQuery = (orgId: string, itemId: string) =>
 /**
  * What installing (or upgrading) a plugin in the org changes: the catalog's view of it (and of the
  * dependencies installed with it), the installed plugins, and the components a plugin brings
- * (connectors, skills, agent templates, extensions and what they change: readiness, UI, models and
- * purposes, see {@link orgExtensionChangeKeys}).
+ * (connectors, skills, agent templates, themes, extensions and what they change: readiness, UI,
+ * models and purposes, see {@link orgExtensionChangeKeys}).
  */
 export const pluginChangeKeys = (orgId: string): (readonly unknown[])[] => [
   keys.org(orgId).catalogItemsAll(),
@@ -45,6 +45,8 @@ export const pluginChangeKeysButDetail = (orgId: string): (readonly unknown[])[]
     k.skills(),
     k.agentTemplates(),
     k.componentsAll(),
+    // the themes on in the org (its pickers) and the resolved one
+    k.themes(),
   ];
 };
 

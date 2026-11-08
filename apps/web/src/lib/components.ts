@@ -3,12 +3,17 @@ import type { PluginScope, ScopeConflict } from "./catalog";
 
 /**
  * Platform components (kernel `catalog/component-scope.controller.ts`, super admins): the
- * deployment's skills, connector templates and agent templates, each with the plugin it came from,
+ * deployment's skills, connector templates, agent templates and themes, each with the plugin it came from,
  * its scope (its plugin's, or its own), disable and visibility, its versions, and a new version of a
  * skill or agent template uploaded on its own (spec §5, §7.2).
  */
 
-export const PLATFORM_COMPONENT_KINDS = ["skill", "connector_template", "agent_template"] as const;
+export const PLATFORM_COMPONENT_KINDS = [
+  "skill",
+  "connector_template",
+  "agent_template",
+  "theme",
+] as const;
 export type PlatformComponentKind = (typeof PLATFORM_COMPONENT_KINDS)[number];
 
 /** Where each kind's admin pages live. */
@@ -16,6 +21,7 @@ export const COMPONENT_ROUTES: Record<PlatformComponentKind, string> = {
   skill: "/admin/skills",
   connector_template: "/admin/connector-templates",
   agent_template: "/admin/agent-templates",
+  theme: "/admin/themes",
 };
 
 /** The path segment each kind's pages show (`/admin/skills` -> `skills`). */
@@ -23,6 +29,7 @@ export const COMPONENT_SEGMENTS: Record<PlatformComponentKind, string> = {
   skill: "skills",
   connector_template: "connector-templates",
   agent_template: "agent-templates",
+  theme: "themes",
 };
 
 /** Who owns an item or component (kernel `catalog/ownership.ts`): the platform, or one org. */

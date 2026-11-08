@@ -106,6 +106,7 @@ export { type Step, StepList } from "./step-list";
 export { LoadingSubsection, Subsection, type SubsectionProps } from "./subsection";
 export { Segmented, type TabItem, Tabs, type TabsProps } from "./tabs";
 export {
+  BUILTIN_THEME_SWATCHES,
   type ThemeScheme,
   ThemeSwatch,
   type ThemeSwatchColors,

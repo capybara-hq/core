@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesignProvider, ThemeSwatch } from "../src/index";
+import { BUILTIN_THEME_SWATCHES, DesignProvider, ThemeSwatch, TOKEN_NAMES } from "../src/index";
 
 afterEach(cleanup);
 
@@ -43,5 +45,19 @@ describe("ThemeSwatch", () => {
     r.focus();
     await userEvent.keyboard(" ");
     expect(onSelect).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("BUILTIN_THEME_SWATCHES", () => {
+  it("names tokens.css values outside the token names, so a theme never overrides them", () => {
+    const css = readFileSync(join(import.meta.dirname, "../src/styles/tokens.css"), "utf8");
+    for (const scheme of ["dark", "light"] as const) {
+      for (const [part, ref] of Object.entries(BUILTIN_THEME_SWATCHES[scheme])) {
+        const name = /^var\(--cb-(.+)\)$/.exec(ref)?.[1];
+        expect(name).toBe(`builtin-${scheme}-${part}`);
+        expect(css).toMatch(new RegExp(`--cb-${name}: #[0-9A-F]{6};`));
+        expect((TOKEN_NAMES as readonly string[]).includes(name as string)).toBe(false);
+      }
+    }
   });
 });

@@ -55,6 +55,8 @@ export const componentSwitchKeys = (orgId: string) => {
     k.connectors(),
     k.catalog(),
     k.catalogItemsAll(),
+    // a theme switched on or off changes the org's pickers and maybe its resolved theme
+    k.themes(),
   ];
 };
 

@@ -79,6 +79,14 @@
   --cb-layout-head-content: 24px;
   --cb-layout-card-min: 280px;
   --cb-layout-policy-select: 160px;
+  --cb-builtin-dark-bg: #0A0A0A;
+  --cb-builtin-dark-panel: #111110;
+  --cb-builtin-dark-ink: #E6E6E3;
+  --cb-builtin-dark-accent: #FF6A13;
+  --cb-builtin-light-bg: #FAF9F6;
+  --cb-builtin-light-panel: #FFFFFF;
+  --cb-builtin-light-ink: #1A1A18;
+  --cb-builtin-light-accent: #CC4609;
 }
 
 :root[data-theme="dark"] {

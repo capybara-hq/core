@@ -14,7 +14,7 @@
     "cancel": "取消",
     "retry": "重试",
     "language": "语言",
-    "theme": "主题",
+    "theme": "配色",
     "themeLight": "浅色",
     "themeDark": "深色",
     "back": "返回",
@@ -2025,7 +2025,8 @@
       "models": "模型",
       "members": "成员",
       "tokens": "服务令牌",
-      "preferences": "偏好设置"
+      "preferences": "偏好设置",
+      "appearance": "外观"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -3129,6 +3130,7 @@
       "skills": "技能",
       "connector-templates": "连接器模板",
       "agent-templates": "智能体模板",
+      "themes": "主题",
       "models": "模型",
       "plugins": "插件"
     },
@@ -4096,6 +4098,7 @@
           "skills": "{n} 个技能",
           "connectorTemplates": "{n} 个连接器模板",
           "agentTemplates": "{n} 个智能体模板",
+          "themes": "{n} 个主题",
           "none": "没有组件"
         }
       },
@@ -4677,12 +4680,14 @@
     "titles": {
       "skill": "技能",
       "connector_template": "连接器模板",
-      "agent_template": "智能体模板"
+      "agent_template": "智能体模板",
+      "theme": "主题"
     },
     "descriptions": {
       "skill": "整个部署的技能：插件带来的和平台上的。范围、停用和版本在这里管理。",
       "connector_template": "组织按模板填入地址和凭据，得到自己的连接器。范围和停用在这里管理。",
-      "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。"
+      "agent_template": "预先配好的智能体定义，也可以作为子智能体类型使用。范围、停用和版本在这里管理。",
+      "theme": "整个部署的主题：插件带来的配色、字体和标志。范围、停用和版本在这里管理；平台默认主题在平台设置的「外观」里选择。"
     },
     "tabs": {
       "all": "全部",
@@ -4692,7 +4697,8 @@
     "empty": {
       "skill": "还没有技能。引入带技能的插件后，它们会出现在这里。",
       "connector_template": "还没有连接器模板。引入带连接器模板的插件后，它们会出现在这里。",
-      "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。"
+      "agent_template": "还没有智能体模板。引入带智能体模板的插件后，它们会出现在这里。",
+      "theme": "还没有主题。引入带主题的插件后，它们会出现在这里。"
     },
     "emptyTab": {
       "agent_template": "这一栏下没有智能体模板。"
@@ -4720,7 +4726,8 @@
     "state": {
       "disabled": "已停用",
       "pluginStopped": "插件已停用",
-      "builtin": "内置"
+      "builtin": "内置",
+      "platformDefault": "平台默认主题"
     },
     "detail": {
       "tabsLabel": "组件",
@@ -4763,7 +4770,8 @@
         "named": "指定组织：只有下面的组织能用。"
       },
       "orgOwnedNote": "它归 {org} 所有，新版本由该组织上传。",
-      "builtinNote": "它来自内置插件：在所有组织启用，范围不能改，也不能停用。"
+      "builtinNote": "它来自内置插件：在所有组织启用，范围不能改，也不能停用。",
+      "platformDefaultNote": "这是平台默认主题：每个组织都启用它，不能收窄范围或停用；先在平台设置的「外观」里选择其他主题。"
     },
     "scopeDialog": {
       "title": "设置 {name} 的范围",
@@ -4824,7 +4832,8 @@
       "conflict": {
         "skill": "本组织已有名为 {name} 的技能，同一组织里技能名称不能重复。请先删除或重命名那个技能，再启用。",
         "agent_template": "本组织已有类型为 {name} 的智能体模板，同一组织里智能体模板的类型不能重复。",
-        "connector_template": "本组织已有名为 {name} 的连接器模板，不能再启用同名的。"
+        "connector_template": "本组织已有名为 {name} 的连接器模板，不能再启用同名的。",
+        "theme": "本组织已启用了 ID 为 {name} 的另一个主题，同一组织里主题 ID 不能重复。请先关闭那个主题。"
       },
       "locked": "{name} 由平台对所有组织统一启用，这里不能停用。"
     },
@@ -4833,7 +4842,8 @@
       "hint": {
         "skill": "停用后，本组织的智能体不能再加载这个技能。",
         "agent_template": "停用后，本组织的智能体不能再把这个模板用作子智能体。",
-        "connector_template": "停用后，本组织不能再用这个模板新建连接器。"
+        "connector_template": "停用后，本组织不能再用这个模板新建连接器。",
+        "theme": "关闭后，本组织不能再选用这个主题；以它为默认主题或自选了它的人改用下一级的主题。"
       },
       "agents": "这些智能体在用它，停用后将无法再用：",
       "noAgents": "本组织没有智能体在用它。",
@@ -4845,7 +4855,8 @@
     "kind": {
       "skill": "技能",
       "agent_template": "智能体模板",
-      "connector_template": "连接器模板"
+      "connector_template": "连接器模板",
+      "theme": "主题"
     },
     "unavailable": "暂时读不到组件在本组织的状态。",
     "inOrg": "在本组织",
@@ -4863,6 +4874,44 @@
       "label": "时区",
       "help": "选择一个时区后，它优先于浏览器的时区。",
       "follow": "跟随浏览器"
+    }
+  },
+  "appearance": {
+    "title": "外观",
+    "save": "保存",
+    "saved": "外观设置已保存。",
+    "builtin": "内置主题",
+    "followPlatform": "跟随平台",
+    "themes": {
+      "title": "主题",
+      "description": "本组织启用的主题，可在下面选为默认主题。平台默认主题在每个组织都启用，不能关闭。",
+      "label": "本组织的主题",
+      "empty": "还没有可用的主题。超级管理员引入带主题的插件后，它们会出现在这里。",
+      "lockedDefault": "平台默认主题 · 不能关闭"
+    },
+    "org": {
+      "title": "默认主题",
+      "description": "本组织成员看到的主题，成员自己选了主题时除外。跟随平台时使用平台默认主题。",
+      "label": "组织默认主题",
+      "unavailable": "原来的默认主题「{name}」在本组织已不可用，现在跟随平台。",
+      "personal": "允许成员自选",
+      "personalOn": "允许",
+      "personalOff": "由组织统一设置",
+      "personalHelp": "关闭后，成员的偏好设置里不再显示主题选择，所有人都使用组织的默认主题。配色（深色 / 浅色）仍由每个人自己选择。"
+    },
+    "personal": {
+      "title": "外观",
+      "description": "你看到的主题。这一选择对你所在的所有组织有效；在没有启用它的组织里，使用该组织的默认主题。",
+      "label": "我的主题",
+      "default": "默认",
+      "locked": "由组织统一设置：本组织的管理员为所有成员选定了主题。",
+      "unavailable": "你选的主题在本组织不可用，现在使用组织的默认主题。"
+    },
+    "platform": {
+      "title": "外观",
+      "description": "平台默认主题：组织没有设置默认主题时使用它，登录页也使用它。只能选择平台拥有、范围为全部组织且未停用的主题。",
+      "label": "平台默认主题",
+      "notAvailable": "这个主题没有在所有组织启用，不能作为平台默认主题。未启用它的组织：{orgs}。"
     }
   }
 }

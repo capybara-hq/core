@@ -20,6 +20,8 @@ const api = (routes: Parameters<typeof stubApi>[0]) =>
   stubApi({
     [`GET ${BASE}/file-previewers`]: () => json(200, { items: [] }),
     [`GET ${BASE}/extension-points`]: () => json(200, { points: [] }),
+    [`GET ${BASE}/themes`]: () =>
+      json(200, { themes: [], resolved: null, org: { id: null, personal: "allowed" } }),
     ...routes,
   });
 

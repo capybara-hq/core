@@ -110,6 +110,7 @@ export function useComponentsLabel(): (c: ComponentCounts) => string {
       ...(c.skills > 0 ? [t("skills", { n: c.skills })] : []),
       ...(c.connectorTemplates > 0 ? [t("connectorTemplates", { n: c.connectorTemplates })] : []),
       ...(c.agentTemplates > 0 ? [t("agentTemplates", { n: c.agentTemplates })] : []),
+      ...(c.themes > 0 ? [t("themes", { n: c.themes })] : []),
     ];
     return parts.length === 0 ? t("none") : parts.join(" · ");
   };

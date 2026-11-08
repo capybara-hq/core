@@ -3,6 +3,7 @@
 
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import zh from "../messages/zh.json";
 import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
@@ -39,7 +40,7 @@ const PAPER: ThemeRef = {
 const sidebar = () => screen.getByRole("complementary");
 const brandRow = () =>
   within(sidebar()).getByText((_, e) => e?.getAttribute("data-part") === "brand-row");
-const schemeToggle = () => within(sidebar()).queryByRole("radiogroup", { name: "主题" });
+const schemeToggle = () => within(sidebar()).queryByRole("radiogroup", { name: zh.common.theme });
 /**
  * The theme stylesheets React hoisted into `<head>` (`precedence="theme"`). React keeps a hoisted
  * stylesheet for the document's life, so each case names its own theme version.
@@ -99,7 +100,7 @@ describe("ThemeRoot in the workspace frame", () => {
 
 describe("the scheme toggle under a single-scheme theme (usePreferences)", () => {
   const NO_ORG = { ...ME, currentOrgId: null };
-  const chooserToggle = () => screen.queryByRole("radiogroup", { name: "主题" });
+  const chooserToggle = () => screen.queryByRole("radiogroup", { name: zh.common.theme });
 
   it("the org chooser (no org: the platform theme) keeps the toggle under a two-scheme theme", () => {
     renderFrame(shellOf(NO_ORG, { theme: PAPER }));
