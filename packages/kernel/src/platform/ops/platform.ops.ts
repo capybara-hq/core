@@ -6,6 +6,7 @@ import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { effectiveSandboxEgress, OrgSettingsService } from "../../orgs/settings.service.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { SANDBOX_TOOL_NAMES } from "../../tools/builtin-names.js";
 import { ToolRegistry } from "../../tools/registry.js";
 import { PlatformActor } from "../actor.js";
@@ -45,6 +46,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(OrgSettingsService) private readonly settings: OrgSettingsService,
     @Inject(ToolRegistry) private readonly tools: ToolRegistry,
     @Inject(AccountsService) private readonly accounts: AccountsService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   /**
@@ -155,7 +157,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.preferences",
         description:
-          "Read your own preferences: your time zone (an IANA name such as Asia/Shanghai), or null when it follows the time zone of the browser you send messages from. The run context already tells you the zone in effect for this message.",
+          "Read your own preferences: your time zone (an IANA name such as Asia/Shanghai, or null when it follows the time zone of the browser you send messages from; the run context already tells you the zone in effect for this message) and your theme (a theme id, or null when you follow the org's theme; themes.list names them).",
         input: EMPTY,
         example: {},
         // any signed-in person may call the route; every run's actor is a member of this org
@@ -167,8 +169,10 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.set-preferences",
         description:
-          "Set your own time zone (an IANA name such as Europe/Berlin), or null to follow the time zone of the browser you send messages from. It applies to the messages you send afterwards, on the web and in IM; the current run keeps its zone.",
-        input: PreferencesSchema,
+          "Change your own preferences; give only the ones to change, the others keep their values. timeZone: an IANA name such as Europe/Berlin, or null to follow the time zone of the browser you send messages from; it applies to the messages you send afterwards, on the web and in IM (the current run keeps its zone). theme: a theme id from themes.list (it applies in every org where that theme is on and personal picks are allowed), or null to follow the org's theme.",
+        input: PreferencesSchema.refine((i) => Object.values(i).some((v) => v !== undefined), {
+          message: "give timeZone, theme or both",
+        }),
         example: { timeZone: "Asia/Shanghai" },
         authz: { orgAction: "agents.use" },
         mirrors: ["PUT /api/v1/me/preferences"],
@@ -178,21 +182,41 @@ export class PlatformOperationsProvider implements OnModuleInit {
             code: "validation_failed",
             next: "Use an IANA time zone name such as Asia/Shanghai or America/New_York, or null.",
           },
+          {
+            code: "theme.not_available",
+            next: "Pick a theme id that themes.list shows for this org, or null to follow the org's theme.",
+          },
         ],
         summary: async (input, ctx) => {
-          const now = (await this.accounts.preferences(ctx.actorAccountId)).timeZone;
-          const from = { zh: now ?? "跟随浏览器", en: now ?? "follow the browser" };
-          const to = {
-            zh: input.timeZone ?? "跟随浏览器",
-            en: input.timeZone ?? "follow the browser",
-          };
-          return {
-            zh: `把你的时区从「${from.zh}」改为「${to.zh}」`,
-            en: `Change your time zone from "${from.en}" to "${to.en}"`,
-          };
+          const now = await this.accounts.preferences(ctx.actorAccountId);
+          const zh: string[] = [];
+          const en: string[] = [];
+          if (input.timeZone !== undefined) {
+            const from = now.timeZone;
+            zh.push(
+              `把你的时区从「${from ?? "跟随浏览器"}」改为「${input.timeZone ?? "跟随浏览器"}」`,
+            );
+            en.push(
+              `Change your time zone from "${from ?? "follow the browser"}" to "${input.timeZone ?? "follow the browser"}"`,
+            );
+          }
+          if (input.theme !== undefined) {
+            const name = async (id: string | null) =>
+              id === null ? null : ((await this.themes.nameOf(id)) ?? { en: id, zh: id });
+            const from = await name(now.theme);
+            const to = await name(input.theme);
+            const inZh = (n: typeof from) => (n === null ? "跟随组织" : n.zh);
+            const inEn = (n: typeof from) => (n === null ? "follow the org" : n.en);
+            zh.push(`把你的主题从「${inZh(from)}」改为「${inZh(to)}」`);
+            en.push(`Change your theme from "${inEn(from)}" to "${inEn(to)}"`);
+          }
+          return { zh: zh.join("；"), en: en.join("; ") };
         },
         run: async (input, ctx) =>
-          this.accounts.setPreferences(ctx.actorAccountId, { timeZone: input.timeZone }),
+          this.accounts.setPreferences(ctx.actorAccountId, {
+            timeZone: input.timeZone,
+            theme: input.theme,
+          }),
       }),
     ]);
   }

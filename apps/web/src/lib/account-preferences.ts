@@ -1,17 +1,19 @@
 import { apiFetch } from "./api";
 
 /**
- * A person's preferences (`GET` / `PUT /api/v1/me/preferences`, run context spec §3.4):
- * `timeZone` null follows the browser's time zone, which every message sends; a set zone overrides
- * it for the agent's dates.
+ * A person's preferences (`GET` / `PUT /api/v1/me/preferences`): `timeZone` null follows the
+ * browser's time zone, which every message sends; a set zone overrides it for the agent's dates
+ * (run context spec §3.4). `theme` null follows the org's theme (themes spec §7).
  */
 export interface Preferences {
   timeZone: string | null;
+  theme: string | null;
 }
 
 export const getPreferences = () => apiFetch<Preferences>("/api/v1/me/preferences");
 
-export const putPreferences = (prefs: Preferences) =>
+/** A partial update: only the fields given change; the response has every field. */
+export const putPreferences = (prefs: Partial<Preferences>) =>
   apiFetch<Preferences>("/api/v1/me/preferences", {
     method: "PUT",
     body: JSON.stringify(prefs),

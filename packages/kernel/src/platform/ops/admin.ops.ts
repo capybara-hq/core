@@ -31,6 +31,7 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   customConnectors: true,
   customSkills: true,
   orgMarketplaceBrowse: true,
+  uiTheme: true,
 }).strict();
 
 const ProviderId = ModelProviderParams.shape.provider.describe(
@@ -110,7 +111,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -125,6 +126,10 @@ export class AdminOperations implements OnModuleInit {
             code: "validation_failed",
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
+          {
+            code: "theme.not_available",
+            next: "Choose a platform theme whose scope is all and that is not disabled (plugins.components with kind theme lists them), or { id: null } for the built-in theme.",
+          },
         ],
         precheck: async (i) => {
           const r = DeploymentSettingsBody.safeParse(i);
@@ -133,7 +138,10 @@ export class AdminOperations implements OnModuleInit {
             : { ok: false, code: "validation_failed", message: r.error.issues[0]?.message ?? "" };
         },
         summary: (i) => {
-          const parts = Object.entries(i).map(([k, v]) => `${k}=${String(v)}`);
+          const parts = Object.entries(i).map(
+            ([k, v]) =>
+              `${k}=${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}`,
+          );
           return {
             zh: `修改平台部署设置：${parts.join("，")}`,
             en: `Change the deployment settings: ${parts.join(", ")}`,

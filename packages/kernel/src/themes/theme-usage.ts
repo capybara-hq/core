@@ -2,13 +2,13 @@
 // key `uiTheme`), the orgs whose default it is (`orgs.settings.theme.id`) and the people who picked
 // it (`accounts.theme`); the previews of changes that take a theme away list them, and the guard
 // refuses any change that takes the platform default away from an org. Plain reads in the caller's
-// context (a transaction's connection when there is one).
+// context (a transaction's connection when there is one). The settings are read through the same
+// readers and schemas as their services (`readUiTheme`, `parseOrgSettings`), so the two never drift.
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-
-/** The deployment setting that holds the platform default theme (`{ id: string | null }`). */
-export const UI_THEME_SETTING = "uiTheme";
+import { readUiTheme, UI_THEME_SETTING } from "../identity/settings.js";
+import { parseOrgSettings } from "../orgs/settings.service.js";
 
 /** Where a theme is chosen (spec §7). */
 export interface ThemeUsage {
@@ -36,32 +36,32 @@ export interface ThemePreview {
 export type ThemeAfter = "all" | "narrower" | "gone";
 
 /**
- * The platform default theme's id (null: the built-in theme, or not set). Read from the raw row so
- * this works whatever writes the setting; `lock`: the row is read FOR SHARE, so a concurrent write
- * of the setting waits for the caller's transaction (and the reverse).
+ * The platform default theme's id (null: the built-in theme, or not set), through the setting's
+ * typed reader; `lock`: the row is read FOR SHARE, so a concurrent write of the setting (which
+ * locks it FOR UPDATE first, see `SettingsService`) waits for the caller's transaction, and the
+ * reverse.
  */
 export async function platformDefaultThemeId(
   db: KernelSchemaDb,
   opts: { lock?: boolean } = {},
 ): Promise<string | null> {
-  let q = db.selectFrom("deployment_settings").select("value").where("key", "=", UI_THEME_SETTING);
-  if (opts.lock) q = q.forShare();
-  const row = await q.executeTakeFirst();
-  const v = row?.value as { id?: unknown } | null | undefined;
-  return typeof v?.id === "string" ? v.id : null;
+  return (await readUiTheme(db, opts)).id;
 }
 
 /** Where theme `themeId` (a `platform_themes` id) is chosen: see {@link ThemeUsage}. */
 export async function themeUsage(db: KernelSchemaDb, themeId: string): Promise<ThemeUsage> {
   const platformDefault = (await platformDefaultThemeId(db)) === themeId;
-  const orgs = await db
-    .selectFrom("orgs")
-    .select(["id", "name"])
-    .where("deleted_at", "is", null)
-    .where(sql<string>`settings -> 'theme' ->> 'id'`, "=", themeId)
-    .orderBy("name")
-    .orderBy("id")
-    .execute();
+  // the jsonb filter narrows the rows; the typed parse decides (an invalid stored value is no default)
+  const orgs = (
+    await db
+      .selectFrom("orgs")
+      .select(["id", "name", "settings"])
+      .where("deleted_at", "is", null)
+      .where(sql<string>`settings -> 'theme' ->> 'id'`, "=", themeId)
+      .orderBy("name")
+      .orderBy("id")
+      .execute()
+  ).filter((o) => parseOrgSettings(o.settings).theme?.id === themeId);
   const picked = await db
     .selectFrom("accounts")
     .select((eb) => eb.fn.countAll<string>().as("n"))

@@ -44,7 +44,7 @@ function PreferencesForm({ accountId }: { accountId: string }) {
   const read = usePageQuery(preferencesQuery(accountId));
   const [draft, setDraft] = useState<string | undefined>(undefined);
   const update = useAppMutation({
-    fn: (prefs: Preferences) => putPreferences(prefs),
+    fn: (prefs: Partial<Preferences>) => putPreferences(prefs),
     invalidates: () => [],
     onSuccess: (res) => qc.setQueryData(preferencesQuery(accountId).queryKey, res),
   });

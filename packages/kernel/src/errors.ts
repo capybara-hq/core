@@ -101,6 +101,12 @@ export const ERROR_CODES = {
   /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
   "theme.unreadable": 400,
   /**
+   * A settings write names a theme that is not available where it is set (§7, §9): an org default
+   * off in the org, a platform default that is not a platform theme with scope `all`, or a
+   * person's pick on in none of their orgs; details `[{ theme }]`.
+   */
+  "theme.not_available": 400,
+  /**
    * The change would take the platform default theme (`uiTheme`) away from an org: narrowing,
    * disabling, removing it or its plugin (§7); details `[{ theme, setting: "uiTheme" }]`.
    */

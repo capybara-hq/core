@@ -130,12 +130,15 @@ describe("message sender, time zone and language", { timeout: 60_000 }, () => {
 
   it("the account setting overrides the browser; null follows it again", async () => {
     const prefs = "/api/v1/me/preferences";
-    expect((await owner({ method: "GET", url: prefs })).json()).toEqual({ timeZone: null });
+    expect((await owner({ method: "GET", url: prefs })).json()).toEqual({
+      timeZone: null,
+      theme: null,
+    });
     const bad = await owner({ method: "PUT", url: prefs, payload: { timeZone: "Mars/Olympus" } });
     expect(bad.statusCode).toBe(400);
     const set = await owner({ method: "PUT", url: prefs, payload: { timeZone: "Europe/Berlin" } });
     expect(set.statusCode, set.body).toBe(200);
-    expect(set.json()).toEqual({ timeZone: "Europe/Berlin" });
+    expect(set.json()).toEqual({ timeZone: "Europe/Berlin", theme: null });
     const conv = await createConv(owner, orgId, agentId);
     const a = await send(conv, "echo:a", { timeZone: "Asia/Shanghai", locale: "zh" });
     expect((a.payload as UserPayload).timeZone).toBe("Europe/Berlin");
