@@ -386,6 +386,19 @@ function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
   return out as unknown as SandboxProvider;
 }
 
+/**
+ * The tags of the instance's exec commands that have started and not ended (`""` for an untagged
+ * one): once a tag is listed, `killTagged` / `killAll` / `suspend` reach its command.
+ */
+export async function fakeSandboxRunningTags(root: string, id: string): Promise<string[]> {
+  const dir = join(instanceDir(root, id), "procs");
+  const pids = await readdir(dir).catch(() => [] as string[]);
+  const tags = await Promise.all(
+    pids.map((pid) => readFile(join(dir, pid), "utf8").catch(() => null)),
+  );
+  return tags.filter((t): t is string => t !== null);
+}
+
 /** 模拟提供方那边的实例被删（之后 resume 返回 `gone`）。 */
 export async function removeFakeSandbox(root: string, id: string): Promise<void> {
   await rm(instanceDir(root, id), { recursive: true, force: true });
