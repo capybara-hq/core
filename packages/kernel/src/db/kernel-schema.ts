@@ -614,7 +614,8 @@ export interface LgCheckpointWritesTable {
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
 /**
  * `channel_connections.guide_ack` (0099) and `connectors.guide_ack` (0105): the setup guide a
- * target was set up with; `hash` is the v2 drift hash (`setupGuideHash`, admin audience) of `mode` (null for a place without modes).
+ * target was set up with; `hash` is the v2 drift hash (`setupGuideHash`, admin audience) of
+ * `mode` (null for a place without modes).
  */
 export interface GuideAckJson {
   guideId: string;

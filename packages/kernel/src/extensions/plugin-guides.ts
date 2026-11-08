@@ -35,9 +35,8 @@ export { PLACE_ACTIONS, type UnresolvedReason } from "./guide-places.js";
 
 /**
  * The setup guide a target was set up with (`channel_connections.guide_ack`,
- * `connectors.guide_ack`): the guide, the
- * plugin version, the drift hash of the admin audience and the mode (null for a place without
- * modes).
+ * `connectors.guide_ack`): the guide, the plugin version, the drift hash of the admin audience and
+ * the mode (null for a place without modes).
  */
 export type GuideAck = GuideAckJson;
 

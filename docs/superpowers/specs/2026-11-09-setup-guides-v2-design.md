@@ -1250,7 +1250,7 @@ Pre-0.1.0: the format changes directly, with no compatibility layer (decided).
   webhook-seen marker, `capybara:oauth-token-endpoint`, the super admin's template guide route and
   the `setup` operations are added; the guide route's exclusion is
   removed.
-- **Migration** `0102_setup_guides_v2.sql`: `ALTER TABLE capybara.connectors ADD COLUMN IF NOT
+- **Migration** `0105_setup_guides_v2.sql`: `ALTER TABLE capybara.connectors ADD COLUMN IF NOT
   EXISTS guide_ack jsonb;` and `UPDATE capybara.channel_connections SET guide_ack = NULL WHERE
   guide_ack IS NOT NULL;` **(designer's call)**: a v1 ack holds a v1 template hash that no v2 hash
   can equal, so keeping it would show every existing Slack connection a false notice; clearing it

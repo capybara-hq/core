@@ -229,6 +229,71 @@ describe("setup guides v2: connector templates", { timeout: 60_000 }, () => {
     expect(r.json().error.code).toBe("connector.not_found");
   });
 
+  it("refuses a connector made from another template of the same plugin", async () => {
+    // `gh-two` has the guided `github-mcp` and the unguided `jira-mcp`
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "gh-two",
+          setupGuides: [{ id: "gh", place: "connector-template", template: TEMPLATE }],
+        },
+        files: {
+          ...templateFiles(TEMPLATE, mcpTemplate()),
+          ...templateFiles("jira-mcp", mcpTemplate()),
+          "guides/gh.md": doc(),
+        },
+      }),
+    );
+    const conn = (name: string) => ({
+      name,
+      endpoint: { url: env.mcp.url },
+      credential: { token: MCP_TOKEN },
+    });
+    const r = await install(env.boss, env, itemId, {
+      connectors: { [TEMPLATE]: conn("GitHub"), "jira-mcp": conn("Jira") },
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const jira = await env.db
+      .selectFrom("connectors")
+      .select("id")
+      .where("org_id", "=", env.orgId)
+      .where("name", "=", "Jira")
+      .where("deleted_at", "is", null)
+      .executeTakeFirstOrThrow();
+    const res = await renderReq(itemId, `?connectorId=${jira.id}`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("connector.not_found");
+    // the unguided connector has no guide fields and nothing to confirm
+    expect((await page(jira.id)).setupGuide).toBeNull();
+    const none = await ack(jira.id, adminHash(doc()));
+    expect(none.statusCode).toBe(404);
+    expect(none.json().error.code).toBe("catalog.guide_not_found");
+  });
+
+  it("ack route refuses another org's connector (404 connector.not_found)", async () => {
+    const itemId = await importPlugin(env, await ghPlugin());
+    await installWithConnector(itemId);
+    const foreign = await installWithConnector(itemId, otherOrgId);
+    const r = await ack(foreign, adminHash(doc()));
+    expect(r.statusCode).toBe(404);
+    expect(r.json().error.code).toBe("connector.not_found");
+    const row = await env.db
+      .selectFrom("connectors")
+      .select("guide_ack")
+      .where("id", "=", foreign)
+      .executeTakeFirstOrThrow();
+    // the other org's ack is untouched and no audit names the foreign connector
+    expect(row.guide_ack?.version).toBe("1.0.0");
+    const audits = await env.db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("target", "=", foreign)
+      .where("action", "=", "connector.guide_confirmed")
+      .execute();
+    expect(audits).toEqual([]);
+  });
+
   it("create from template records the ack", async () => {
     const itemId = await importPlugin(env, await ghPlugin());
     const connectorId = await installWithConnector(itemId);

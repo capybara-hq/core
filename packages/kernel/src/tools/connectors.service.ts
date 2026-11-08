@@ -1206,7 +1206,6 @@ export class ConnectorsService {
     };
   }
 
-  /** 本组织未删除的连接器（按创建时间）。 */
   /**
    * The setup guide fields of the org's connectors (`setupGuide`, `guideDrift`; spec
    * 2026-11-09-setup-guides-v2-design.md §9.3, §11): resolved through each connector's platform
@@ -1305,6 +1304,7 @@ export class ConnectorsService {
     return this.detail(t, orgId, connectorId, actorAccountId);
   }
 
+  /** The org's connectors that are not deleted (by creation time). */
   async list(orgId: string): Promise<ConnectorSummary[]> {
     const rows = await this.db
       .selectFrom("connectors")
