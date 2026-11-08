@@ -10,9 +10,12 @@ import { THEME_OVERRIDABLE, THEME_TOKENS } from "./theme-tokens.generated.js";
  *
  * {@link parseThemeFile} is the CSS-injection boundary: every token value is parsed against the
  * grammar `tokens.json` uses (`#RRGGBB`, `rgba(r,g,b,a)`, shadows `<x> <y> <blur> [<spread>]
- * <color>`) and re-rendered from its parts in canonical form, so no string typed into a theme ever
- * reaches CSS. Asset paths (`fonts[].file`, `logo.*`) are relative to the plugin root (an optional
- * leading `./`); whether the files exist and their size / signature / SVG rules are checked by
+ * <color>`) and re-rendered from its parts in canonical form. Asset paths (`fonts[].file`,
+ * `logo.*`) are relative to the plugin root (an optional leading `./`) and every segment is limited
+ * to `[A-Za-z0-9._-]`, so they need no escaping inside `url(...)`. Font families are limited to
+ * letters, digits, spaces and `-`. Free text (`name`, `description`, `logo.wordmark`) carries no
+ * control, format, line / paragraph separator or lone surrogate characters; it is text for the UI,
+ * never CSS. Whether the files exist and their size / signature / SVG rules are checked by
  * the reader of the package, with {@link THEME_LIMITS}.
  *
  * The committed JSON Schema (`schemas/theme.v1.schema.json`) is generated from
@@ -106,7 +109,11 @@ export function themeIdOf(path: string): string {
 
 const MAX_ERRORS = 50;
 const FAMILY_RE = /^[A-Za-z0-9 -]{1,64}$/;
-const CONTROL_OR_FORMAT_RE = /[\p{Cc}\p{Cf}]/u;
+/** Control, format, line / paragraph separator and lone surrogate characters. */
+const FORBIDDEN_CHARS_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u;
+const PATH_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
+const FORBIDDEN_CHARS_MESSAGE =
+  "must not contain control, format, line / paragraph separator or lone surrogate characters";
 const IMAGE_RE = /\.(?:svg|png)$/i;
 const MAX_VALUE_CHARS = 256;
 
@@ -115,14 +122,24 @@ const text = (max: number, what: string) =>
     .string()
     .min(1)
     .max(max)
-    .regex(/\S/, { message: `${what} must not be blank` });
+    .regex(/\S/, { message: `${what} must not be blank` })
+    .refine((t) => !FORBIDDEN_CHARS_RE.test(t), { message: `${what} ${FORBIDDEN_CHARS_MESSAGE}` });
+
+/** A plugin-root relative path (optional `./`), each segment `[A-Za-z0-9._-]`, no `.` / `..`. */
+const isPlainAssetPath = (p: string) => {
+  const rest = p.replace(/^\.\//, "");
+  return (
+    isSafePackagePath(rest) &&
+    rest.split("/").every((seg) => PATH_SEGMENT_RE.test(seg) && seg !== "." && seg !== "..")
+  );
+};
 
 const assetPath = (what: string, ext: RegExp, kind: string) =>
   z
     .string()
     .max(512)
-    .refine((p) => isSafePackagePath(p.replace(/^\.\//, "")) && ext.test(p), {
-      message: `${what} must be a relative ${kind} path inside the plugin`,
+    .refine((p) => isPlainAssetPath(p) && ext.test(p), {
+      message: `${what} must be a relative ${kind} path inside the plugin, each segment of letters, digits, ".", "_" or "-"`,
     });
 
 const tokenValues = z.record(z.string().max(64), z.string().max(MAX_VALUE_CHARS));
@@ -173,8 +190,8 @@ const shape = z.strictObject({
         .refine((w) => [...w].length <= THEME_LIMITS.wordmark, {
           message: `wordmark must be at most ${THEME_LIMITS.wordmark} characters`,
         })
-        .refine((w) => !CONTROL_OR_FORMAT_RE.test(w), {
-          message: "wordmark must not contain control or format characters",
+        .refine((w) => !FORBIDDEN_CHARS_RE.test(w), {
+          message: `wordmark ${FORBIDDEN_CHARS_MESSAGE}`,
         })
         .optional(),
       favicon: assetPath("favicon", IMAGE_RE, ".svg or .png").optional(),
@@ -255,10 +272,21 @@ function builtIn(scheme: ThemeScheme): MergedScheme {
 }
 
 function readJson(json: unknown): { value: unknown } | { errors: string[] } {
-  if (typeof json !== "string") return { value: json };
-  if (new TextEncoder().encode(json).length > THEME_LIMITS.fileBytes) {
+  let text: string;
+  if (typeof json === "string") {
+    text = json;
+  } else {
+    // An already parsed value is measured by its JSON serialization.
+    try {
+      text = JSON.stringify(json) ?? "";
+    } catch {
+      return { errors: ["theme file must be a JSON object"] };
+    }
+  }
+  if (new TextEncoder().encode(text).length > THEME_LIMITS.fileBytes) {
     return { errors: [`theme file is larger than ${THEME_LIMITS.fileBytes} bytes`] };
   }
+  if (typeof json !== "string") return { value: json };
   try {
     return { value: JSON.parse(json.startsWith("\uFEFF") ? json.slice(1) : json) };
   } catch (e) {
@@ -268,8 +296,8 @@ function readJson(json: unknown): { value: unknown } | { errors: string[] } {
 }
 
 /**
- * Parses and validates a theme file: the parsed JSON value or the file text (text larger than
- * {@link THEME_LIMITS}`.fileBytes` is not parsed). Checks the id, the shape, token names against
+ * Parses and validates a theme file: the parsed JSON value or the file text (larger than
+ * {@link THEME_LIMITS}`.fileBytes`, measured as text or as the value's JSON, is refused). Checks the id, the shape, token names against
  * the generated allowlist (an unknown or non-overridable name is an error), the value grammar,
  * fonts and logo; then merges every defined scheme onto the built-in tokens and reports each
  * readability issue as an error starting `unreadable:`. Returned values are canonical (uppercase
@@ -316,11 +344,17 @@ export function parseThemeFile(id: string, json: unknown): ParsedTheme | { error
     if (over === undefined) continue;
     const out: ThemeSchemeOverride = {};
     const m = builtIn(scheme);
+    // Token names come from the raw object's own keys: the zod record drops `__proto__`.
+    const rawScheme = (data as { schemes: Record<string, Record<string, unknown>> }).schemes[
+      scheme
+    ];
     for (const group of ["color", "shadow"] as const) {
       const values = over[group];
       if (values === undefined) continue;
+      const rawGroup = rawScheme?.[group];
+      const names = rawGroup !== null && typeof rawGroup === "object" ? Object.keys(rawGroup) : [];
       const canonical: Record<string, string> = {};
-      for (const [name, raw] of Object.entries(values)) {
+      for (const name of names) {
         const path = `schemes.${scheme}.${group}.${name}`;
         if (!OVERRIDABLE[group].has(name)) {
           errors.push(
@@ -330,7 +364,8 @@ export function parseThemeFile(id: string, json: unknown): ParsedTheme | { error
           );
           continue;
         }
-        const v = GRAMMAR[group].parse(raw);
+        const raw = values[name];
+        const v = raw === undefined ? undefined : GRAMMAR[group].parse(raw);
         if (v === undefined) {
           errors.push(`${path}: must be ${GRAMMAR[group].form}`);
           continue;

@@ -121,6 +121,89 @@ describe("parseThemeFile", () => {
     );
   });
 
+  it("a __proto__ token name is reported, not dropped", () => {
+    expect(
+      errorsOf(
+        JSON.parse(
+          '{"name":{"en":"T","zh":"T"},"schemes":{"dark":{"color":{"__proto__":"#000000"}}}}',
+        ),
+      ).join("\n"),
+    ).toMatch(/unknown token color\.__proto__/);
+    expect(
+      errorsOf(
+        '{"name":{"en":"T","zh":"T"},"schemes":{"dark":{"shadow":{"__proto__":"0 0 1px #000000"}}}}',
+      ).join("\n"),
+    ).toMatch(/unknown token shadow\.__proto__/);
+  });
+
+  it("asset paths: every segment of letters, digits, '.', '_' or '-'", () => {
+    const withFile = (file: string) => ({
+      ...nightCity(),
+      fonts: [{ family: "A", file, weight: 400, role: "prose" }],
+    });
+    for (const file of [
+      "fonts/a');}*{display:none}</style>.woff2",
+      'fonts/a".woff2',
+      "fonts/a'.woff2",
+      "fonts/a(b).woff2",
+      "fonts/a{b}.woff2",
+      "fonts/<a.woff2",
+      "fonts/a b.woff2",
+      "fonts/a%20b.woff2",
+      "./../a.woff2",
+      "fonts/./a.woff2",
+    ]) {
+      expect(errorsOf(withFile(file)).join("\n"), file).toMatch(/^fonts\.0\.file: /m);
+    }
+    expect(errorsOf(withFile("./fonts/Mi_Sans-1.2.woff2"))).toEqual([]);
+    for (const mark of [
+      "./lo go.svg",
+      "./logo(1).svg",
+      "./<logo.svg",
+      "./logo%2e.png",
+      "./'.svg",
+    ]) {
+      expect(errorsOf({ ...nightCity(), logo: { mark } }).join("\n"), mark).toMatch(
+        /^logo\.mark: /m,
+      );
+      expect(errorsOf({ ...nightCity(), logo: { favicon: mark } }).join("\n"), mark).toMatch(
+        /^logo\.favicon: /m,
+      );
+    }
+  });
+
+  it("free text rejects control, format, separator and lone surrogate characters", () => {
+    for (const bad of ["A\u202EB", "A\u0000B", "A\u2028B", "A\u2029B", "A\uD800B"]) {
+      expect(errorsOf({ ...nightCity(), name: { en: bad, zh: "T" } }).join("\n")).toMatch(
+        /^name\.en: /m,
+      );
+      expect(errorsOf({ ...nightCity(), name: { en: "T", zh: bad } }).join("\n")).toMatch(
+        /^name\.zh: /m,
+      );
+      expect(errorsOf({ ...nightCity(), description: { en: bad } }).join("\n")).toMatch(
+        /^description\.en: /m,
+      );
+      expect(errorsOf({ ...nightCity(), description: { en: "x", zh: bad } }).join("\n")).toMatch(
+        /^description\.zh: /m,
+      );
+      expect(errorsOf({ ...nightCity(), logo: { wordmark: bad } }).join("\n")).toMatch(
+        /^logo\.wordmark: /m,
+      );
+    }
+  });
+
+  it("the file size limit holds for an object input too", () => {
+    const big = {
+      ...nightCity(),
+      description: { en: "x".repeat(1000) },
+      pad: "y".repeat(THEME_LIMITS.fileBytes),
+    };
+    expect(errorsOf(big)[0]).toMatch(/larger than 65536 bytes/);
+    const cyclic: Record<string, unknown> = nightCity();
+    cyclic.self = cyclic;
+    expect(errorsOf(cyclic)[0]).toMatch(/must be a JSON object/);
+  });
+
   it("normalizes colors: uppercase hex, rgba without spaces", () => {
     const t = parsed(
       dark({ color: { accent: "#fce300", "focus-ring": "rgba( 252, 227, 0, 0.250 )" } }),
