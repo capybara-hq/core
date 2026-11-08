@@ -75,6 +75,26 @@ body {
     font-size: max(16px, 1em) !important;
   }
 }
+/* iOS Safari by its own feature, should a phone not report a coarse pointer. */
+@supports (-webkit-touch-callout: none) {
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]),
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="file"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="image"],
+    [type="hidden"]
+  ) {
+    font-size: max(16px, 1em) !important;
+  }
+}
 /* biome-ignore-end lint/complexity/noImportantStyles: must beat the components' field sizes */
 
 /* A design link's pending navigation (spec §6.13, LinkPendingMark): a 2px accent underline along
