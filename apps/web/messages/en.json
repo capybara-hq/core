@@ -511,7 +511,6 @@
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
       "ownSkillsLabel": "Skills this agent wrote",
       "noOwnSkills": "This agent hasn't written any skills yet",
-      "ownSkillVersion": "{name} · v{version}",
       "deleteOwnSkill": "Delete",
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",

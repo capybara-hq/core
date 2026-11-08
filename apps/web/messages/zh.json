@@ -511,7 +511,6 @@
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "智能体自己写的技能",
       "noOwnSkills": "这个智能体还没有写过技能",
-      "ownSkillVersion": "{name} · v{version}",
       "deleteOwnSkill": "删除",
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",

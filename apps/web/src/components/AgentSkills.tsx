@@ -6,10 +6,13 @@ import {
   Checkbox,
   DangerConfirm,
   EmptyState,
+  ItemList,
+  ItemListItem,
   Stack,
   Subsection,
   Text,
   useToast,
+  versionLabel,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
@@ -348,29 +351,30 @@ export function OwnSkills({
     <Subsection variant="divided" title={t("ownSkillsLabel")}>
       <Stack gap={8}>
         {children}
-        {skills !== undefined && skills.length === 0 && (
-          <EmptyState size="panel" text={t("noOwnSkills")} />
+        {skills !== undefined && (
+          <ItemList label={t("ownSkillsLabel")} empty={t("noOwnSkills")}>
+            {skills.map((s) => (
+              <ItemListItem
+                key={s.id}
+                title={s.name}
+                code={versionLabel(s.currentVersion)}
+                meta={s.description}
+                actions={
+                  canDelete ? (
+                    <Button
+                      variant="danger"
+                      density="dense"
+                      aria-label={t("deleteOwnSkillLabel", { name: s.name })}
+                      onClick={() => setTarget(s)}
+                    >
+                      {t("deleteOwnSkill")}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ))}
+          </ItemList>
         )}
-        {(skills ?? []).map((s) => (
-          <Stack key={s.id} direction="row" gap={12} align="center" justify="between">
-            <Stack gap={0}>
-              <Text>{t("ownSkillVersion", { name: s.name, version: s.currentVersion })}</Text>
-              <Text variant="small" tone="muted" truncate>
-                {s.description}
-              </Text>
-            </Stack>
-            {canDelete && (
-              <Button
-                variant="danger"
-                density="dense"
-                aria-label={t("deleteOwnSkillLabel", { name: s.name })}
-                onClick={() => setTarget(s)}
-              >
-                {t("deleteOwnSkill")}
-              </Button>
-            )}
-          </Stack>
-        ))}
       </Stack>
       <DangerConfirm
         open={target !== undefined}

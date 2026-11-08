@@ -154,7 +154,8 @@ describe("编辑 agent（FormPage）", () => {
       });
       await renderEditAgent({ locale, section: "skills" });
       const list = await screen.findByRole("region", { name: m.agents.form.ownSkillsLabel });
-      expect(await within(list).findByText("notes-style · v2")).toBeTruthy();
+      expect(await within(list).findByText("notes-style")).toBeTruthy();
+      expect(within(list).getByText("v2")).toBeTruthy();
       expect(within(list).queryByRole("checkbox")).toBeNull();
       const user = userEvent.setup();
       await user.click(
@@ -281,7 +282,7 @@ describe("编辑 agent（FormPage）", () => {
     stubApi(routes({ ownerAccountId: "someone-else" }));
     await renderEditAgent({ section: "skills" });
     const list = await screen.findByRole("region", { name: en.agents.form.ownSkillsLabel });
-    await within(list).findByText("notes-style · v2");
+    await within(list).findByText("notes-style");
     expect(within(list).queryByRole("button")).toBeNull();
   });
 
