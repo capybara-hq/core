@@ -11,5 +11,5 @@ export const PLATFORM_METHOD = [
   "4. An operation you may not call is not a dead end: its reason says who can (an org admin, the super admin) and whether a request operation exists; offer that.",
   "5. Errors say what to do next; follow them.",
   '6. When unsure how the platform works, use action "read" for the docs before acting.',
-  'Find an operation with "browse" (a domain) or "search", then "describe" it before you "call" it; never guess parameters.',
+  'Find an operation with "browse" (a domain) or "search": each lists its input keys in "params" ("?" marks an optional key, an id key takes the id field of the matching list or get result). "describe" gives the types, bounds and an example; describe before a call whose params you are unsure of, and never guess a key that params does not list.',
 ].join("\n");

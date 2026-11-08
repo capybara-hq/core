@@ -6,7 +6,11 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { nextStepFor, OPERATION_ERROR_NEXT, toToolError } from "../../src/platform/errors.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import { PLATFORM_UNAVAILABLE_OFF, platformTool } from "../../src/tools/builtins/platform.js";
+import {
+  PLATFORM_UNAVAILABLE_OFF,
+  paramsLine,
+  platformTool,
+} from "../../src/tools/builtins/platform.js";
 import type {
   BuiltinCallContext,
   BuiltinTool,
@@ -307,6 +311,7 @@ describe("browse, search, describe, read", () => {
         id: "skills.create",
         description: "Create an org skill from a name and a body.",
         kind: "write",
+        params: "name, body",
         available: false,
         reason: expect.stringContaining("admin"),
       },
@@ -314,11 +319,23 @@ describe("browse, search, describe, read", () => {
         id: "skills.list",
         description: "List the org's skills.",
         kind: "read",
+        params: "cursor?",
         available: true,
       },
     ]);
     // the facts come from the runtime context, never from the model's input
     expect(factsCalls).toEqual([policyCtx]);
+  });
+
+  it("params names the input keys: required first, ? for optional, a union's keys merged", () => {
+    const op = (input: z.ZodType) => ({ ...listOp, input }) as PlatformOperation;
+    expect(paramsLine(op(z.object({})))).toBe("");
+    expect(paramsLine(op(z.object({ a: z.string().optional(), b: z.string() })))).toBe("b, a?");
+    const union = z.discriminatedUnion("enabled", [
+      z.object({ tool: z.string(), enabled: z.literal(true) }),
+      z.object({ tool: z.string(), enabled: z.literal(false), confirm: z.string().optional() }),
+    ]);
+    expect(paramsLine(op(union))).toBe("tool, enabled, confirm?");
   });
 
   it("browse an unknown domain names the domains", async () => {

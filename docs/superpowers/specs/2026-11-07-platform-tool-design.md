@@ -635,6 +635,11 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   waves the first task of a wave owned the shared registries (`exclusions.ts`,
   `platform-ops.module.ts`, `route-schemas.ts`) and the others' entries were merged after the wave —
   to avoid index collisions, at the cost of merge work.
+- `browse` and `search` rows carry `params`, the operation's input keys (`plugins.get` shows
+  `itemId`, `?` marks an optional key, a union's keys merged), derived from the shared input schema
+  (decided 2026-11-08, after acceptance showed calls guessing `pluginId` or leaving out `agentId`).
+  Types, bounds and the example stay in `describe`; the method line says to describe when unsure
+  and never to send a key `params` does not list.
 
 **Left open**
 
