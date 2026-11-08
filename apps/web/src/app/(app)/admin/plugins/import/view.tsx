@@ -16,10 +16,11 @@ import {
   WizardPage,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useCatalogErrorLines } from "../../../../../components/CatalogParts";
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
+import { useCapabilityLabel } from "../../../../../components/ExtensionTabs";
 import { FormError } from "../../../../../components/form-error";
 import { NoAccess } from "../../../../../components/NoAccess";
 import { PluginReviewBody } from "../../../../../components/PluginReviewBody";
@@ -39,6 +40,8 @@ import {
   preparePluginNpm,
   uploadPluginPackage,
 } from "../../../../../lib/catalog";
+import { capabilityOfPoint } from "../../../../../lib/extension-capabilities";
+import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
 import {
   deploymentRequestsQuery,
   extensionChangeKeys,
@@ -209,6 +212,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<Problem>();
   const [result, setResult] = useState<PluginConfirmResult | null>(null);
+  const capabilityLabel = useCapabilityLabel();
+  const lang = labelLocale(useLocale());
   const qc = useQueryClient();
   // Prepares only stage the import (nothing cached changes until it is confirmed).
   const prepareNpm = useAppMutation({
@@ -334,7 +339,8 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
         },
       });
       toast.success(t("done", { name: r.item.name }));
-      if (r.deploy === null || r.deploy.result !== "failed") {
+      // Failed, or left disabled for a single-provider point: stay and say so
+      if (r.deploy === null || (r.deploy.result !== "failed" && !r.deploy.singleProvider)) {
         router.push(`/admin/plugins/${r.item.id}`);
       } else setResult(r);
     } catch (e) {
@@ -538,7 +544,35 @@ function PluginImportWizard({ initial, orgId }: { initial: StagedImport; orgId: 
             </Stack>
           )}
           {submitError !== undefined && <ProminentError problem={submitError} />}
-          {result?.deploy && (
+          {result?.deploy?.singleProvider && (
+            <Card title={t("deployResult")}>
+              <Stack gap={4}>
+                <Text tone="warn">
+                  {t("deployLeftDisabled", {
+                    name: result.deploy.name,
+                    version: versionLabel(result.deploy.version),
+                    point: capabilityLabel(
+                      capabilityOfPoint(result.deploy.singleProvider.extensionPoint),
+                    ),
+                    other: extensionLabel(result.deploy.singleProvider.enabled, lang),
+                  })}
+                </Text>
+                <Text>
+                  <Link
+                    href={`/admin/extensions/${encodeURIComponent(result.deploy.singleProvider.enabled.name)}`}
+                  >
+                    {t("openEnabled", {
+                      name: extensionLabel(result.deploy.singleProvider.enabled, lang),
+                    })}
+                  </Link>
+                </Text>
+                <Text>
+                  <Link href={`/admin/plugins/${result.item.id}`}>{t("openItem")}</Link>
+                </Text>
+              </Stack>
+            </Card>
+          )}
+          {result?.deploy && result.deploy.result === "failed" && (
             <Card title={t("deployResult")}>
               <Stack gap={4}>
                 <Text tone="fail">

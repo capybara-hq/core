@@ -119,6 +119,29 @@ export interface AdminExtension {
     extensionPoint: string;
     providers: { name: string; displayName: LocalizedName | null }[];
   };
+  /**
+   * Only on a disabled install: another enabled extension provides a single-provider extension
+   * point this one provides, so the kernel refuses to enable it (409
+   * `extension.single_provider_enabled`, same details) until that one is disabled.
+   */
+  enableBlocked?: SingleProviderBlock;
+}
+
+/** The single-provider point and the enabled extension providing it. */
+export interface SingleProviderBlock {
+  extensionPoint: string;
+  enabled: { name: string; displayName: LocalizedName | null };
+}
+
+/** The block of an `extension.single_provider_enabled` refusal (its first detail), if well formed. */
+export function singleProviderBlockOf(details: unknown[]): SingleProviderBlock | undefined {
+  const d = details[0] as Partial<SingleProviderBlock> | undefined;
+  return typeof d?.extensionPoint === "string" && typeof d.enabled?.name === "string"
+    ? {
+        extensionPoint: d.extensionPoint,
+        enabled: { name: d.enabled.name, displayName: d.enabled.displayName ?? null },
+      }
+    : undefined;
 }
 
 /** 迁移 SQL 的审阅警告（敏感，不拒绝）。 */

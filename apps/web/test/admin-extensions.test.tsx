@@ -590,6 +590,108 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     },
   );
 
+  it.each(LOCALES)(
+    "a second sandbox while another is enabled: 启用 is off, the line names the one to disable first and links to it (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const docker = plugin({
+        name: "sandbox-docker",
+        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+        permissions: [group("provides", ["sandbox@2"])],
+      });
+      const e2b = plugin({
+        name: "sandbox-e2b",
+        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        status: "disabled",
+        desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+        replicas: [],
+        permissions: [group("provides", ["sandbox@2"])],
+        enableBlocked: {
+          extensionPoint: "sandbox@2",
+          enabled: {
+            name: "sandbox-docker",
+            displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+          },
+        },
+      });
+      const calls = listRoutes([docker, e2b]);
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+          selector: ".cb-cell-title-name",
+        }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      const line = fill(p.detail.enableBlocked, {
+        point: msgs[locale].extensions.capability.sandbox,
+        other: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+      });
+      if (locale === "zh") {
+        expect(line).toBe("沙箱只能启用一个提供方：请先停用 Docker 沙箱，再启用 E2B 沙箱。");
+      }
+      expect(within(sheet).getByText(line)).toBeTruthy();
+      const enable = within(sheet).getByRole("button", { name: p.detail.actions.enable });
+      expect((enable as HTMLButtonElement).disabled).toBe(true);
+      await user.click(enable);
+      expect(calls.some((c) => c.method === "POST")).toBe(false);
+      const link = within(sheet).getByRole("link", {
+        name: fill(p.detail.openOther, {
+          name: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+        }),
+      });
+      expect(link.getAttribute("href")).toBe("/admin/extensions/sandbox-docker");
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("an enable the kernel refuses for a single-provider point shows the actionable line, not a raw error", async () => {
+    const disabled = plugin({
+      status: "disabled",
+      desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
+      replicas: [],
+      permissions: [group("provides", ["sandbox@2"])],
+    });
+    detailRoutes(disabled, {
+      "POST /api/v1/admin/extensions/demo/enable": () =>
+        json(409, {
+          error: {
+            code: "extension.single_provider_enabled",
+            message:
+              "Only one extension may provide sandbox@2; disable Other sandbox first, then enable demo",
+            details: [
+              {
+                extensionPoint: "sandbox@2",
+                enabled: {
+                  name: "other-sbx",
+                  displayName: { zh: "别的沙箱", en: "Other sandbox" },
+                },
+              },
+            ],
+          },
+        }),
+    });
+    await renderRouteWithCache(detailPage(), lastStubRoutes());
+    const p = en.admin.extensions;
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
+    const line = fill(p.detail.enableBlocked, {
+      point: en.extensions.capability.sandbox,
+      other: "Other sandbox",
+      name: "demo",
+    });
+    expect(await screen.findByText(line)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: p.detail.actions.enable }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("link", { name: fill(p.detail.openOther, { name: "Other sandbox" }) })
+        .getAttribute("href"),
+    ).toBe("/admin/extensions/other-sbx");
+  });
+
   it("in the Sheet the failed replicas are the fail line, not the tinted callout (spec §6.19)", async () => {
     const split = plugin({
       status: "failed",

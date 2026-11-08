@@ -1,4 +1,4 @@
-import type { PackageWarning } from "./admin-extensions";
+import type { PackageWarning, SingleProviderBlock } from "./admin-extensions";
 import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from "./api";
 import type { Owner } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
@@ -477,11 +477,17 @@ export interface PluginDeployResult {
   action: "install" | "upgrade";
   version: string;
   sha256: string;
-  result: "enabled" | "failed";
+  /** `installed`: left disabled, see `singleProvider`. */
+  result: "enabled" | "installed" | "failed";
   code?: string;
   message?: string;
   /** e.g. `snapshot_not_restored: …` when an upgrade failed and the snapshot had changed since. */
   note?: string;
+  /**
+   * Installed but left disabled (code `extension.single_provider_enabled`): another enabled
+   * extension provides this single-provider extension point; disable it first, then enable this.
+   */
+  singleProvider?: SingleProviderBlock;
 }
 
 export interface PluginConfirmResult {

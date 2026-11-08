@@ -34,6 +34,8 @@ import {
   enableExtension,
   replicaSummary,
   reviewSensitive,
+  type SingleProviderBlock,
+  singleProviderBlockOf,
   uninstallExtension,
 } from "../lib/admin-extensions";
 import { ApiClientError } from "../lib/api";
@@ -196,8 +198,21 @@ export function AdminExtensionOverview({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [confirm, setConfirm] = useState<"disable" | "uninstall" | null>(null);
+  /** An enable the kernel refused for a single-provider point (before the list caught up). */
+  const [refused, setRefused] = useState<SingleProviderBlock>();
   const installed = plugin.source === "install";
   const desiredState = plugin.desired?.state;
+  // A single-provider point another enabled extension provides: 启用 is off, the line says which
+  // one to disable first and links to it.
+  const blocked = desiredState === "disabled" ? (plugin.enableBlocked ?? refused) : undefined;
+  const blockedLine =
+    blocked === undefined
+      ? null
+      : t("detail.enableBlocked", {
+          point: capabilityLabel(capabilityOfPoint(blocked.extensionPoint)),
+          other: extensionLabel(blocked.enabled, lang),
+          name: extensionLabel(plugin, lang),
+        });
   const { failed } = replicaSummary(plugin);
   const lifecycle = useAppMutation({
     fn: (op: "enable" | "disable") =>
@@ -237,9 +252,15 @@ export function AdminExtensionOverview({
     try {
       await lifecycle.mutateAsync(op);
       toast.success(t(`detail.done.${op}`));
+      setRefused(undefined);
       setConfirm(null);
     } catch (e) {
-      setError(errorMessage(e));
+      const block =
+        e instanceof ApiClientError && e.code === "extension.single_provider_enabled"
+          ? singleProviderBlockOf(e.rawDetails)
+          : undefined;
+      if (block !== undefined) setRefused(block);
+      else setError(errorMessage(e));
       setConfirm(null);
     } finally {
       setBusy(false);
@@ -371,7 +392,12 @@ export function AdminExtensionOverview({
         <Stack gap={8}>
           <Stack direction="row" gap={8}>
             {desiredState === "disabled" ? (
-              <Button variant="primary" loading={busy} onClick={() => void run("enable")}>
+              <Button
+                variant="primary"
+                loading={busy}
+                disabled={blocked !== undefined}
+                onClick={() => void run("enable")}
+              >
                 {t("detail.actions.enable")}
               </Button>
             ) : (
@@ -402,6 +428,17 @@ export function AdminExtensionOverview({
         </Stack>
       )}
       {error !== undefined && <FormError message={error} />}
+      {blocked !== undefined && blockedLine !== null && (
+        <Callout
+          tone="warn"
+          action={{
+            label: t("detail.openOther", { name: extensionLabel(blocked.enabled, lang) }),
+            href: `/admin/extensions/${encodeURIComponent(blocked.enabled.name)}`,
+          }}
+        >
+          {blockedLine}
+        </Callout>
+      )}
       {conflictLine !== null && <Callout tone="warn">{conflictLine}</Callout>}
       {moving && (
         <Stack direction="row" gap={8} align="center">
