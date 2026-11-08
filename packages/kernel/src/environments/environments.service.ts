@@ -80,9 +80,9 @@ const nameTaken = (): ApiError =>
   new ApiError("environment.name_taken", "You already have an environment with this name");
 
 /**
- * Personal environments (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9): cloud
- * ones on the deployment's sandbox provider and `device` ones on a connected machine; a person's
- * environments in an org, visible and usable only by their owner (anyone else gets
+ * Personal environments (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9):
+ * cloud ones on the deployment's sandbox provider and `device` ones on a connected machine; a
+ * person's environments in an org, visible and usable only by their owner (anyone else gets
  * `environment.not_found`). Deleting one soft-deletes it and destroys its instance and files in a
  * `sandbox-destroy-for` job after the commit.
  */
@@ -166,9 +166,15 @@ export class EnvironmentsService {
   ): Promise<string> {
     const current = this.providers.cloud();
     if (!current) throw environmentUnavailable(null);
-    return this.insertNamed(orgId, accountId, name, "cloud", current.plugin, actorTokenId, {
-      ...auditDetail,
-    });
+    return this.insertNamed(
+      orgId,
+      accountId,
+      name,
+      "cloud",
+      current.plugin,
+      actorTokenId,
+      auditDetail ?? {},
+    );
   }
 
   /**
@@ -634,6 +640,7 @@ export class EnvironmentsService {
         "m.mode as machine_mode",
         "m.program_version as machine_program_version",
         "m.last_seen_at as machine_last_seen_at",
+        "m.session_isolation as machine_session_isolation",
         "i.provider as instance_provider",
         "i.fs_status",
         "i.handle",
@@ -697,7 +704,8 @@ export class EnvironmentsService {
                 lastSeenAt: r.machine_last_seen_at?.toISOString() ?? null,
               }
             : null,
-        sessionIsolation: false,
+        // a device environment's machine decides it; cloud environments have none in phase 2
+        sessionIsolation: r.machine_session_isolation ?? false,
         filesLost: r.fs_status === "lost",
         instance: live
           ? {

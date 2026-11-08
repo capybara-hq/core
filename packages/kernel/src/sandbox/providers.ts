@@ -31,7 +31,7 @@ export class SandboxProviders {
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
   ) {}
 
-  /** Registers a kernel-internal provider (an `@…` name); the last registration of a name wins. */
+  /** Registers a kernel-internal provider (an `@…` name); a later registration replaces it. */
   register(entry: SandboxProviderEntry): void {
     if (!isInternalProvider(entry.plugin)) {
       throw new Error(`an internal sandbox provider name starts with @: ${entry.plugin}`);
@@ -56,11 +56,6 @@ export class SandboxProviders {
       .list("sandbox")
       .find((x) => x.capability === SANDBOX_EXTENSION_POINT && x.plugin === name);
     return e ? { plugin: e.plugin, impl: e.impl as SandboxProvider } : undefined;
-  }
-
-  /** The provider an environment recording `provider` works with ({@link providerForEnvironment}). */
-  forEnvironment(provider: string | null): SandboxProviderEntry | undefined {
-    return providerForEnvironment(this, provider);
   }
 }
 

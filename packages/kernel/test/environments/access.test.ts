@@ -250,6 +250,10 @@ describe("device environments", () => {
     plugin: DEVICE_PROVIDER,
     impl: createFakeSandbox(join(root, "device")),
   });
+  // the kernel serves @device for every test here (DevicesModule does this on init, Task 4)
+  beforeAll(() => {
+    k.app.get(SandboxProviders).register(deviceEntry());
+  });
 
   it("createDevice records source device on @device, counted against maxPersonal", async () => {
     const service = k.app.get(EnvironmentsService);
@@ -281,17 +285,20 @@ describe("device environments", () => {
     const access = k.app.get(EnvironmentAccess);
     const me = await member();
     const { id } = await service.createDevice(orgId, me.id, "box");
-    const err = await access.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
+    // a kernel that does not serve @device (the cloud provider is still there)
+    const unserved = new EnvironmentAccess(k.app.get(KernelDb), {
+      cloud: () => k.app.get(SandboxProviders).cloud(),
+      forName: () => undefined,
+    });
+    const err = await unserved.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
     expect(err).toMatchObject({ code: "environment.unavailable" });
     expect((err as ApiError).message).toContain("connected machine");
-    k.app.get(SandboxProviders).register(deviceEntry());
     expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@device" });
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("environment.not_found");
   });
 
   it("list shows source, online null for cloud; a device environment's online and machine", async () => {
     const service = k.app.get(EnvironmentsService);
-    k.app.get(SandboxProviders).register(deviceEntry());
     const me = await member();
     const { id } = await service.createDevice(orgId, me.id, "workstation");
     const list = async () => {
@@ -304,6 +311,7 @@ describe("device environments", () => {
     expect(body.items.find((e) => e.id === body.defaultId)).toMatchObject({
       source: "cloud",
       online: null,
+      sessionIsolation: false,
       machine: null,
       available: true,
     });
@@ -312,15 +320,16 @@ describe("device environments", () => {
       provider: "@device",
       available: true,
       online: false,
+      sessionIsolation: false,
       machine: null,
     });
     const seen = new Date("2026-11-08T10:00:00.000Z");
     const machineId = randomUUID();
     await sql`INSERT INTO capybara.environment_machines
         (id, org_id, environment_id, account_id, credential_hash, name, os, arch, program_version,
-         mode, last_seen_at)
+         mode, last_seen_at, session_isolation)
       VALUES (${machineId}, ${orgId}, ${id}, ${me.id}, 'h', 'grant-mbp', 'darwin', 'arm64', '0.1.0',
-        'os', ${seen})`.execute(raw);
+        'os', ${seen}, true)`.execute(raw);
     // a revoked machine of the same environment is not shown
     await sql`INSERT INTO capybara.environment_machines
         (org_id, environment_id, account_id, credential_hash, name, os, arch, revoked_at)
@@ -329,6 +338,7 @@ describe("device environments", () => {
     body = await list();
     expect(body.items.find((e) => e.id === id)).toMatchObject({
       online: true,
+      sessionIsolation: true,
       machine: {
         id: machineId,
         name: "grant-mbp",

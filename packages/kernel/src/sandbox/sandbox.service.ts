@@ -46,6 +46,7 @@ import {
   sandboxBusy,
 } from "./leases.js";
 import {
+  DEVICE_PROVIDER,
   providerForEnvironment,
   type SandboxProviderEntry,
   SandboxProviders,
@@ -340,11 +341,12 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
- * - **Provider per environment** (environments spec §6): each call resolves the provider from the
- *   environment's `environments.provider` ({@link providerForEnvironment}): a `device` environment
- *   runs on the kernel-internal `@device` provider (never the cloud one), a cloud environment on the
- *   loaded `sandbox@2` extension. The sweeps work on cloud environments only: `@device` is never
- *   suspended or destroyed by them.
+ * - **Provider per environment** (environments spec §6): each call resolves the provider from
+ *   the environment's `environments.provider` ({@link providerForEnvironment}): a `device`
+ *   environment runs on the kernel-internal `@device` provider (never the cloud one), a cloud
+ *   environment on the loaded `sandbox@2` extension. A `@device` instance is never suspended or
+ *   destroyed for inactivity; a deleted `@device` environment (or one of a deleted org) is
+ *   destroyed by the sweep like any other.
  *
  * Files kept by another provider than the current one make the environment unusable
  * (`environment.unavailable`) until that provider is back; deleting it still works while that
@@ -957,28 +959,46 @@ export class SandboxService {
    * (the instance only; the file system is kept and the next use builds a new instance on it); an
    * environment that was deleted, or whose org was deleted, loses its instance and its file system
    * and its row is deleted (as {@link destroyEnvironment} does). Environments with any holder are
-   * skipped, and so are rows on a kernel-internal provider (`@device`). Returns how many it destroyed. Called hourly by the `sandbox-destroy-inactive` cron.
+   * skipped. Inactivity never destroys a `@device` instance; a gone `@device` environment is
+   * destroyed like any other while `@device` is registered. Returns how many it destroyed. Called
+   * hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
     const p = this.providers.cloud();
-    if (!p) return 0;
+    const device = this.providers.forName(DEVICE_PROVIDER) !== undefined;
     let n = 0;
+    // Gone environments (deleted, or of a deleted org) on every provider that is here, `@device`
+    // too (its destroy calls never need the machine online); rows whose provider is missing wait.
+    const here = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
+      eb.or([
+        ...(p ? [this.cloudRow(eb)] : []),
+        ...(device ? [eb("provider", "=", DEVICE_PROVIDER)] : []),
+      ]);
     const gone = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
-      eb.and([this.cloudRow(eb), this.environmentGone(eb)]);
-    await inPool(await this.candidates(gone), SWEEP_CONCURRENCY, async ({ environment_id: id }) => {
-      const done = await this.tryLocked(id, async (lease) => {
-        const row = await this.db
-          .selectFrom("environment_instances")
-          .selectAll()
-          .where("environment_id", "=", id)
-          .where(gone)
-          .executeTakeFirst();
-        if (!row) return false;
-        await this.destroyRow(row, p, lease, "environment");
-        return true;
-      });
-      if (done) n++;
-    });
+      eb.and([here(eb), this.environmentGone(eb)]);
+    if (p || device) {
+      await inPool(
+        await this.candidates(gone),
+        SWEEP_CONCURRENCY,
+        async ({ environment_id: id }) => {
+          const done = await this.tryLocked(id, async (lease) => {
+            const row = await this.db
+              .selectFrom("environment_instances")
+              .selectAll()
+              .where("environment_id", "=", id)
+              .where(gone)
+              .executeTakeFirst();
+            const owner = row && this.rowProvider(row);
+            if (!row || !owner) return false;
+            await this.destroyRow(row, owner, lease, "environment");
+            return true;
+          });
+          if (done) n++;
+        },
+      );
+    }
+    // inactivity destroys cloud instances only: `@device` instances are never swept
+    if (!p) return n;
     const due = this.instanceDue(now);
     const idle = (eb: ExpressionBuilder<KernelDatabase, "environment_instances">) =>
       eb.and([this.cloudRow(eb), due(eb)]);
@@ -1002,9 +1022,11 @@ export class SandboxService {
   /**
    * Destroys the environment's instance, then its file system, then deletes its instance row
    * (environment deletion, offboarding); nothing to do without a row. Waits for the exclusive lease
-   * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without a
-   * provider it only warns (the destruction sweep finishes a deleted environment later). Files kept
-   * by another provider that is not loaded cannot be destroyed: it throws and the row stays.
+   * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without the
+   * environment's provider it throws and the row stays, marked `sweep_failed_at` (the job is
+   * retried, and the destruction sweep finishes a deleted environment once the provider is back).
+   * Files kept by another provider that is not loaded cannot be destroyed: it throws and the row
+   * stays.
    */
   async destroyEnvironment(environmentId: string): Promise<void> {
     const row = await this.db
@@ -1015,10 +1037,15 @@ export class SandboxService {
     if (!row) return;
     const p = await this.providerOf(environmentId);
     if (!p) {
-      this.log.warn("cannot destroy environment: its sandbox provider is not there", {
-        environmentId,
-      });
-      return;
+      await this.db
+        .updateTable("environment_instances")
+        .set({ sweep_failed_at: sql<Date>`now()` })
+        .where("environment_id", "=", environmentId)
+        .execute();
+      throw new Error(
+        `cannot destroy environment ${environmentId}: its sandbox provider is not there; ` +
+          "the destruction sweep retries it",
+      );
     }
     const lease = await this.leases.acquireExclusive(
       environmentId,
@@ -1632,9 +1659,14 @@ export class SandboxService {
       ]);
   }
 
+  /** The provider of an instance row: an internal one (`@device`) by name, else the cloud one. */
+  private rowProvider(row: Row): SandboxProviderEntry | undefined {
+    return providerForEnvironment(this.providers, row.provider);
+  }
+
   /**
-   * A row the sweeps may touch: not on a kernel-internal provider (`@device` instances live on
-   * people's machines; their environment's own deletion job destroys them).
+   * A row the idle sweeps may touch: not on a kernel-internal provider (`@device` instances live on
+   * people's machines and are never suspended or destroyed for inactivity).
    */
   private cloudRow(
     eb: ExpressionBuilder<KernelDatabase, "environment_instances">,

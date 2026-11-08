@@ -172,17 +172,6 @@ describe("SandboxProviders", () => {
     // an internal provider is never the cloud provider
     expect(new SandboxProviders(registry([])).cloud()).toBeUndefined();
   });
-
-  it("forEnvironment: an internal provider name resolves by name, anything else to the cloud provider", () => {
-    const ext = createFakeSandbox(cloudRoot);
-    const p = new SandboxProviders(registry([{ plugin: "sandbox-docker", impl: ext }]));
-    expect(p.forEnvironment(DEVICE_PROVIDER)).toBeUndefined();
-    expect(p.forEnvironment(null)?.plugin).toBe("sandbox-docker");
-    expect(p.forEnvironment("sandbox-old")?.plugin).toBe("sandbox-docker");
-    const internal = createFakeSandbox(deviceRoot);
-    p.register({ plugin: DEVICE_PROVIDER, impl: internal });
-    expect(p.forEnvironment(DEVICE_PROVIDER)?.impl).toBe(internal);
-  });
 });
 
 describe("provider per environment", () => {
@@ -218,18 +207,53 @@ describe("provider per environment", () => {
     expect(await opsOf(cloudRoot)).toEqual([]);
   });
 
-  it("idle sweeps never touch @device environments", async () => {
+  it("an idle device environment is never suspended or destroyed", async () => {
     const s = service(cloud);
     const dev = await seedDevice();
     await run(s, dev);
     const before = await opsOf(deviceRoot);
     expect(await s.suspendIdle(later(DAY))).toBe(0);
     expect(await s.destroyInactive(later(365 * DAY))).toBe(0);
-    // even a deleted device environment is left to its own destruction job
-    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
-    expect(await s.destroyInactive(later(365 * DAY))).toBe(0);
+    // no cloud provider at all: the same
+    expect(await service(undefined).destroyInactive(later(365 * DAY))).toBe(0);
     expect(await opsOf(deviceRoot)).toEqual(before);
     expect(await instanceRow(dev)).toMatchObject({ status: "running" });
+  });
+
+  it("a deleted org's device environment instance is cleaned by the gone-sweep", async () => {
+    const dev = await seedDevice();
+    await run(service(cloud), dev);
+    await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${orgId}`.execute(raw);
+    // without a cloud provider too: the device provider alone serves the sweep
+    expect(await service(undefined).destroyInactive(new Date())).toBe(1);
+    expect(await instanceRow(dev)).toBeUndefined();
+    expect(await opsOf(deviceRoot, "destroy")).toHaveLength(1);
+    expect(await opsOf(deviceRoot, "destroy-fs")).toHaveLength(1);
+    expect(await opsOf(cloudRoot)).toEqual([]);
+  });
+
+  it("a deleted device environment is cleaned by the gone-sweep; not while @device is missing", async () => {
+    const dev = await seedDevice();
+    await run(service(cloud), dev);
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    expect(await service(cloud, []).destroyInactive(new Date())).toBe(0);
+    expect(await instanceRow(dev)).toBeDefined();
+    expect(await service(cloud).destroyInactive(new Date())).toBe(1);
+    expect(await instanceRow(dev)).toBeUndefined();
+  });
+
+  it("destroyEnvironment without the provider leaves the row for the sweep", async () => {
+    const dev = await seedDevice();
+    await run(service(cloud), dev);
+    await sql`UPDATE capybara.environments SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    await expect(service(cloud, []).destroyEnvironment(dev)).rejects.toThrow(
+      /sandbox provider is not there/,
+    );
+    expect((await instanceRow(dev))?.sweep_failed_at).toBeInstanceOf(Date);
+    expect(await opsOf(deviceRoot, "destroy")).toEqual([]);
+    // the provider is back: the sweep finishes it
+    expect(await service(cloud).destroyInactive(new Date())).toBe(1);
+    expect(await instanceRow(dev)).toBeUndefined();
   });
 
   it("a device environment stays available when no cloud provider is loaded", async () => {
