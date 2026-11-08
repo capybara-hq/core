@@ -2298,7 +2298,10 @@
       "hint": "按插件提供的步骤在平台上创建应用；下面的文件已按这个渠道填好，复制后粘贴即可。",
       "modeLabel": "接入方式",
       "stepsLabel": "接入步骤",
-      "unresolved": "{names} 现在还没有值，原样显示：保存渠道后才会填上（Webhook 地址还需要部署配置回调地址）。",
+      "unresolved": "{names} 现在还没有值，原样显示。",
+      "unresolvedOnSave": "{names} 现在还没有值，原样显示：保存渠道后才会填上。",
+      "unresolvedPublicUrl": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置平台的公开地址（http.publicUrl）。",
+      "unresolvedWebhookBase": "{names} 现在还没有值，原样显示：需要超级管理员在部署设置里配置 Webhook 回调地址（channels.webhookBaseUrl）。",
       "driftNotice": "{plugin} 插件更新了接入配置（{from} → {to}）：需要在 {plugin} 应用里更新 manifest 并重新安装。",
       "driftAck": "我已更新 {plugin} 应用",
       "driftAcked": "已记录：应用与插件的接入配置一致。"

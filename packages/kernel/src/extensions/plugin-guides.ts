@@ -169,6 +169,17 @@ export class PluginGuides {
   }
 
   /**
+   * Whether an ack is behind the plugin's current guide (the drift rule of spec §6, as the
+   * connection pages compute it): the same guide whose templates for the ack's mode changed. False
+   * without an ack, a catalog item or the guide. Kernel-internal: no org visibility.
+   */
+  async ackDrifted(plugin: string, ack: GuideAck | null): Promise<boolean> {
+    if (ack === null) return false;
+    const current = await this.currentAck(plugin, ack.mode);
+    return current !== null && current.guideId === ack.guideId && current.hash !== ack.hash;
+  }
+
+  /**
    * Plugin name -> its channel-connection guide, for plugins whose item the org's catalog shows
    * (`GET channels/schema/:plugin` and the connection pages); others are absent.
    */

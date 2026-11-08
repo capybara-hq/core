@@ -44,7 +44,14 @@ export const setupGuideQuery = (orgId: string, ref: SetupGuideRef, q: SetupGuide
   defineQuery({
     key: keys
       .org(orgId)
-      .setupGuide(ref.itemId, ref.guideId, q.connectionId ?? "", q.mode ?? "", q.name ?? ""),
+      .setupGuide(
+        ref.itemId,
+        ref.guideId,
+        ref.version ?? "",
+        q.connectionId ?? "",
+        q.mode ?? "",
+        q.name ?? "",
+      ),
     fn: () => getSetupGuide(orgId, ref, q).then((r) => r.guide),
     freshness: "orgConfig",
   });

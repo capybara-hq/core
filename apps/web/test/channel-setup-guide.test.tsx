@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { setupGuideQuery } from "../src/lib/query/channels";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -162,7 +163,10 @@ describe("新建渠道: 接入指南 once the plugin is picked", () => {
     // the webhook mode: its file, and the unresolved URL said once
     await user.click(screen.getByRole("radio", { name: zh.channels.inboundMode.webhook }));
     expect(await screen.findByText(/request_url/)).toBeTruthy();
-    expect(screen.getByText(/\{\{webhookUrl\}\} 现在还没有值/)).toBeTruthy();
+    // not saved yet: saving fills it in
+    expect(
+      screen.getByText(zh.channels.guide.unresolvedOnSave.replace("{names}", "{{webhookUrl}}")),
+    ).toBeTruthy();
     expect(findNestedBoxes(container)).toEqual([]);
   });
 
@@ -215,6 +219,41 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: /我已更新/ })).toBeNull());
     expect(screen.getByText(g.title)).toBeTruthy();
     expect(findNestedBoxes(container)).toEqual([]);
+  });
+
+  it("a saved connection's unresolved variables point to the deployment settings", async () => {
+    stubApi({
+      [`GET ${BASE}/channels/ch1`]: () =>
+        json(200, { channel: { ...CHANNEL, inboundMode: "webhook", guideDrift: null } }),
+      [`GET ${BASE}/agents`]: () => json(200, { agents: AGENTS }),
+      [`GET ${BASE}/channels/schema/slack`]: () =>
+        json(200, { plugin: "slack", schema: SCHEMA, guide: { itemId: "item1", guideId: "app" } }),
+      [`GET ${GUIDE_URL}`]: () =>
+        json(200, {
+          guide: {
+            ...rendered("webhook"),
+            unresolved: ["publicUrl", "webhookUrl", "signInCallbackUrl"],
+          },
+        }),
+    });
+    await renderRouteWithCache("/channels/ch1", lastStubRoutes(), { locale: "zh" });
+    const g = zh.channels.guide;
+    expect(
+      await screen.findByText(g.unresolvedWebhookBase.replace("{names}", "{{webhookUrl}}")),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        g.unresolvedPublicUrl.replace("{names}", "{{publicUrl}}, {{signInCallbackUrl}}"),
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/保存渠道后/)).toBeNull();
+  });
+
+  it("the guide read is keyed by the item version, so an upgrade reads the new guide", () => {
+    const ref = { itemId: "item1", guideId: "app" };
+    const at = (version: string) =>
+      setupGuideQuery("o1", { ...ref, version }, { connectionId: "ch1" }).queryKey;
+    expect(at("0.2.0")).not.toEqual(at("0.3.0"));
   });
 
   it("no setup guide: no section, no notice", async () => {

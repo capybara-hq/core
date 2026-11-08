@@ -189,6 +189,15 @@ interface RenderedSetupGuide {
 - Recorded on create (the guide the 新建渠道 page showed, the current one), on a PATCH that
   switches `inboundMode` (the person sets the app up for the new mode, the guide of that mode is on
   the page) and by the ack route.
+- **A mode switch never clears drift.** The PATCH re-baselines the ack to the new mode's current
+  guide only when there is no ack or the ack shows no drift; a drifted ack stays as it is, so the
+  notice stays until a person confirms through the ack route. Otherwise switching modes there and
+  back would clear the notice unconfirmed, and `channels.update` is reachable by an agent through
+  the Platform tool while the ack route is human-only.
+- The ack route always records the guide for the connection's **current** mode, and checks the
+  posted hash against that mode's current guide (the one the page shows), so it never 409s because
+  the kept ack names another mode. Drift is judged on `guide_ack.mode`: after a switch with a kept
+  ack, the notice keeps reporting the change to the guide the connection was set up with.
 - **Drift** = `guide_ack` is set, the plugin's current `channel-connection` guide has the same id
   and its hash for `guide_ack.mode` differs. The view carries `guideDrift: { from, to } | null`
   (versions). A connection without an ack (created before 0097, or before the plugin had a guide)

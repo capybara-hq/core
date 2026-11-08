@@ -14,6 +14,8 @@ export const guideText = (t: GuideText, locale: "zh" | "en"): string =>
 export interface SetupGuideRef {
   itemId: string;
   guideId: string;
+  /** The item's latest version when known (a connection's `setupGuide`): part of the read's key. */
+  version?: string;
 }
 
 /**

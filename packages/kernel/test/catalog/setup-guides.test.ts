@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { KernelConfig } from "../../src/config/schema.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
-import { createAgent } from "../helpers/runs.js";
+import { createAgent, createOrg } from "../helpers/runs.js";
 import {
   importPlugin,
   type OrgEnv,
@@ -15,9 +17,12 @@ import {
 // import, rendered by the kernel with the place's safe variables, scoped like the catalog icon.
 
 let env: OrgEnv;
+/** A second org (the super admin owns it). */
+let otherOrgId: string;
 
 beforeAll(async () => {
   env = await startOrgEnv();
+  otherOrgId = await createOrg(env.root, "Globex");
 }, 240_000);
 
 afterAll(async () => {
@@ -96,6 +101,25 @@ type Rendered = {
   files: { title: { en: string }; language: string; fileName: string; content: string }[];
   unresolved: string[];
   hash: string;
+};
+
+/** Inserts a live channel connection row (no extension needed: the guide route reads the row). */
+const insertConnection = async (orgId: string, plugin: string, name = "Support bot") => {
+  const id = randomUUID();
+  await env.db
+    .insertInto("channel_connections")
+    .values({
+      id,
+      org_id: orgId,
+      plugin,
+      name,
+      agent_id: await createAgent(env.root, orgId),
+      config: JSON.stringify({ appId: "A1" }),
+      inbound_mode: "webhook",
+      created_by: env.rootId,
+    })
+    .execute();
+  return id;
 };
 
 const render = async (itemId: string, query = "", req = env.boss): Promise<Rendered> => {
@@ -185,6 +209,66 @@ describe("plugin setup guides", { timeout: 60_000 }, () => {
     });
     expect(other.statusCode).toBe(404);
     expect(other.json().error.code).toBe("channel.not_found");
+  });
+
+  it("a connection of another org, or of another plugin in this org: 404", async () => {
+    const itemId = await importPlugin(env, await guidePlugin());
+    for (const connectionId of [
+      await insertConnection(otherOrgId, "im-guide"),
+      await insertConnection(env.orgId, "other-im"),
+    ]) {
+      const r = await env.boss({
+        method: "GET",
+        url: guideUrl(itemId, "app", `?connectionId=${connectionId}`),
+      });
+      expect(r.statusCode, r.body).toBe(404);
+      expect(r.json().error.code).toBe("channel.not_found");
+    }
+  });
+
+  it("resolves webhookUrl when channels.webhookBaseUrl is set", async () => {
+    const itemId = await importPlugin(env, await guidePlugin());
+    const connectionId = await insertConnection(env.orgId, "im-guide");
+    const config = env.k.app.get(KernelConfigService);
+    const real = config.get.bind(config);
+    // channels.webhookBaseUrl is not hot: stub the config the renderer reads
+    const spy = vi.spyOn(config, "get").mockImplementation(() => {
+      const c = real();
+      return {
+        ...c,
+        channels: { ...c.channels, webhookBaseUrl: "https://hooks.example.com/" },
+      } as KernelConfig;
+    });
+    try {
+      const g = await render(itemId, `?connectionId=${connectionId}`);
+      const url = `https://hooks.example.com/channels/webhook/${connectionId}`;
+      expect(g.mode).toBe("webhook");
+      expect(g.unresolved).toEqual([]);
+      expect(g.files[0]?.content).toContain(`request_url: "${url}"`);
+      expect(g.steps[1]?.en).toBe(`Mode webhook: set the URL to ${url}.`);
+      // 新建渠道 has no connection yet: still unresolved there
+      expect((await render(itemId, "?mode=webhook")).unresolved).toEqual(["webhookUrl"]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("the share gate: another org's item is visible only when shareable", async () => {
+    const itemId = await importPlugin(env, await guidePlugin());
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: otherOrgId, shareable: false })
+      .where("id", "=", itemId)
+      .execute();
+    const hidden = await env.boss({ method: "GET", url: guideUrl(itemId) });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().error.code).toBe("catalog.item_not_found");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ shareable: true })
+      .where("id", "=", itemId)
+      .execute();
+    expect((await render(itemId)).version).toBe("1.0.0");
   });
 
   it("scoped like the catalog icon: members, unknown guides and modes, hidden items", async () => {

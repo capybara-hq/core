@@ -2310,7 +2310,10 @@
       "hint": "Create the app on the platform with the plugin's steps; the files below are filled in for this channel, ready to copy and paste.",
       "modeLabel": "Inbound mode",
       "stepsLabel": "Setup steps",
-      "unresolved": "{names} have no value yet and are shown as written: they are filled in once the channel is saved (the webhook URL also needs the deployment's webhook address).",
+      "unresolved": "{names} have no value yet and are shown as written.",
+      "unresolvedOnSave": "{names} have no value yet and are shown as written: they are filled in once the channel is saved.",
+      "unresolvedPublicUrl": "{names} have no value yet and are shown as written: a super admin needs to set the platform's public address (http.publicUrl) in the deployment settings.",
+      "unresolvedWebhookBase": "{names} has no value yet and is shown as written: a super admin needs to set the webhook address (channels.webhookBaseUrl) in the deployment settings.",
       "driftNotice": "The {plugin} plugin changed its setup ({from} → {to}): update the manifest in your {plugin} app and reinstall it.",
       "driftAck": "I updated the {plugin} app",
       "driftAcked": "Recorded: the app matches the plugin's setup."

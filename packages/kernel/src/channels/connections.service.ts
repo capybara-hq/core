@@ -218,7 +218,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn" | "addOrgSecrets">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** The setup guide acks (spec 2026-11-08-plugin-setup-guides-design.md §6). */
-    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "currentAck">,
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "currentAck" | "ackDrifted">,
   ) {
     this.unsubscribe = [
       // a deleted org's channel connections drop their long connections at once
@@ -599,9 +599,13 @@ export class ChannelConnections implements OnApplicationShutdown {
     if (modeChanged && patch.inboundMode === "webhook") this.assertWebhookAvailable(current.plugin);
     if (patch.agentId !== undefined) await this.assertAgent(orgId, patch.agentId);
     // A mode switch sets the platform app up for the new mode: the guide of that mode is the one
-    // on the page (spec 2026-11-08-plugin-setup-guides-design.md §6)
+    // on the page. Only an ack without drift moves on: a drifted one stays until the person
+    // confirms through guide-ack, so switching modes never clears the update notice (spec
+    // 2026-11-08-plugin-setup-guides-design.md §6)
     const guideAck =
-      modeChanged && patch.inboundMode !== undefined
+      modeChanged &&
+      patch.inboundMode !== undefined &&
+      !(await this.guides.ackDrifted(current.plugin, current.guide_ack ?? null))
         ? await this.guides.currentAck(current.plugin, patch.inboundMode)
         : undefined;
     const row = await this.updateIn({
