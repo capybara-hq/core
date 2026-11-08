@@ -1268,6 +1268,7 @@ export interface KernelDatabase {
   catalog_files: CatalogFilesTable;
   marketplaces: MarketplacesTable;
   marketplace_entries: MarketplaceEntriesTable;
+  marketplace_icons: MarketplaceIconsTable;
   plugin_import_staging: PluginImportStagingTable;
   catalog_requests: CatalogRequestsTable;
   catalog_org_grants: CatalogOrgGrantsTable;
@@ -1638,6 +1639,19 @@ export interface MarketplaceEntriesTable {
   /** 0051: the Claude marketplace entry's overlay (`ClaudeEntryOverlay`; null for a Capybara entry). */
   claude: ColumnType<unknown | null, string | null | undefined, string | null>;
   updated_at: Ts;
+}
+
+/**
+ * 0099: marketplace entry icons, one per (marketplace, the entry's `icon` as written), downloaded
+ * on refresh (`catalog/marketplace-icons.ts`).
+ */
+export interface MarketplaceIconsTable {
+  source_id: string;
+  ref: string;
+  sha256: string;
+  content_type: "image/svg+xml" | "image/png";
+  data: Buffer;
+  fetched_at: Ts;
 }
 
 /**

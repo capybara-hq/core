@@ -121,6 +121,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Uploads a platform skill package as raw bytes",
   },
   // marketplaces
+  {
+    route: "GET /api/v1/admin/marketplaces/:id/icons/:sha256",
+    category: "transport",
+    reason: "Serves icon image bytes",
+  },
   // org-catalog
   {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",

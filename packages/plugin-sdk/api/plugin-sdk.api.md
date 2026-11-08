@@ -1382,6 +1382,9 @@ export interface Logger {
 }
 
 // @public
+export const MARKETPLACE_ICON_RE: RegExp;
+
+// @public
 export const MARKETPLACE_LIMITS: {
     readonly nameChars: 100;
     readonly summaryChars: 280;
@@ -1390,6 +1393,7 @@ export const MARKETPLACE_LIMITS: {
     readonly plugins: 5000;
     readonly permissionKeys: 500;
     readonly urlChars: 2000;
+    readonly iconBytes: number;
 };
 
 // @public
@@ -1405,6 +1409,7 @@ export interface MarketplaceEntry {
         en: string;
     };
     homepage?: string;
+    icon?: string;
     minKernel?: string;
     name: string;
     permissions?: {
@@ -1422,6 +1427,13 @@ export interface MarketplaceEntry {
 // @public
 export function marketplaceEntryDeprecation(e: MarketplaceEntry): {
     reason: string | null;
+} | null;
+
+// @public
+export function marketplaceEntryIcon(e: Pick<MarketplaceEntry, "icon">): {
+    url: string;
+} | {
+    path: string;
 } | null;
 
 // @public

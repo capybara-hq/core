@@ -595,6 +595,12 @@ export interface MarketplaceEntry {
   /** host_not_allowed: outside `marketplaces.allowedHosts`; a path entry of an http marketplace. */
   reason?: "host_not_allowed" | "path_needs_git_marketplace";
   adopted: { itemId: string; versions: string[] } | null;
+  /**
+   * The icon's kernel URL (super admins): an imported plugin's catalog icon (the one 已安装
+   * shows), else the icon the marketplace gives for the entry; null (or absent from older kernels)
+   * without one: the row draws the initial.
+   */
+  icon?: string | null;
   newerAvailable: boolean;
   /**
    * A version of this release is imported, but the entry now points at other content (a moved

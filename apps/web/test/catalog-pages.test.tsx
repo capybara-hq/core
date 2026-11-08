@@ -1896,6 +1896,40 @@ describe("/admin/plugins and marketplace entries", () => {
     expect(within(git).queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("entries: a row's mark is the icon the kernel gives (installed or marketplace), else the initial", async () => {
+    const c = en.catalog.admin.entries;
+    stubApi({
+      "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+      "GET /api/v1/admin/marketplaces/entries": () =>
+        json(200, {
+          items: [
+            // imported: the catalog item's icon
+            entry({ icon: `/api/v1/admin/catalog/items/${ID}/icon?v=1.0.0` }),
+            // not imported: the marketplace's icon
+            entry({
+              name: "cat-m",
+              adopted: null,
+              newerAvailable: false,
+              icon: `/api/v1/admin/marketplaces/official/icons/${"a".repeat(64)}`,
+            }),
+            // none: the initial
+            entry({ name: "plain", adopted: null, newerAvailable: false, icon: null }),
+          ],
+          truncated: false,
+        }),
+    });
+    await renderRouteWithCache(entriesPath(), lastStubRoutes());
+    const list = await screen.findByRole("list", { name: c.title });
+    const rows = within(list).getAllByRole("listitem") as HTMLElement[];
+    const src = (name: string) => {
+      const row = rows.find((r) => within(r).queryByText(name) !== null) as HTMLElement;
+      return row.querySelector("img")?.getAttribute("src") ?? null;
+    };
+    expect(src("cat-a")).toBe(`/api/v1/admin/catalog/items/${ID}/icon?v=1.0.0`);
+    expect(src("cat-m")).toBe(`/api/v1/admin/marketplaces/official/icons/${"a".repeat(64)}`);
+    expect(src("plain")).toBeNull();
+  });
+
   it("entries: importing stages the plugin and opens the import review; an integrity mismatch is a prominent error", async () => {
     const c = en.catalog.admin.entries;
     let fail = true;
