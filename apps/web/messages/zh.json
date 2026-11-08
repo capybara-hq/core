@@ -309,24 +309,24 @@
       "unavailable": "当前部署没有可用的沙箱。",
       "busy": "沙箱正忙，请稍后再试。"
     },
-    "environment": {
-      "not_found": "该环境不存在或已被删除。",
-      "name_taken": "你已有同名环境，请换一个名称。",
-      "limit_reached": "环境数量已达上限，请先删除一个再新建。",
-      "unavailable": "该环境的沙箱提供方当前不可用，请联系超级管理员。",
-      "files_lost": "该环境的文件已丢失。云端沙箱请在环境页面重建文件；接入设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
-      "forbidden": "你已无法使用该环境。",
-      "files_on_device": "接入设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个环境。",
-      "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
-      "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。"
-    },
     "device": {
+      "not_found": "该设备不存在或已被删除。",
+      "name_taken": "你已有同名设备，请换一个名称。",
+      "limit_reached": "设备数量已达上限，请先删除一个再新建。",
+      "unavailable": "该设备的沙箱提供方当前不可用，请联系超级管理员。",
+      "files_lost": "该设备的文件已丢失。云端设备请在设备页面重建文件；本地设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
+      "forbidden": "你已无法使用该设备。",
+      "files_on_device": "本地设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
+      "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
+      "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
+      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。"
+    },
+    "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
       "slow_down": "请求过于频繁，请稍后再试。",
       "expired": "连接码已过期，请在电脑上重新发起连接。",
       "denied": "连接请求已被拒绝。",
       "code_invalid": "连接码无效或已使用，请核对电脑上显示的连接码。",
-      "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "unavailable": "未能连接这台机器，请在机器上重新运行 capybara-device login。"
     },
     "skill": {

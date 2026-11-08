@@ -8,34 +8,34 @@ const base = {
   masterKey: Buffer.alloc(32, 1).toString("base64"),
 };
 
-describe("environments.device config", () => {
-  it("environments.device defaults", () => {
+describe("devices.local config", () => {
+  it("devices.local defaults", () => {
     const c = KernelConfigSchema.parse(base);
-    expect(c.environments.device).toEqual({
+    expect(c.devices.local).toEqual({
       reconnectGraceSeconds: 120,
       leaseTtlMs: 30000,
       authCodeTtlSeconds: 600,
       pollIntervalSeconds: 5,
       maxFrameBytes: 16777216,
     });
-    expect(c.environments.maxPersonal).toBe(10);
+    expect(c.devices.maxPersonal).toBe(10);
   });
 
   it("rejects a lease TTL below 6000 ms", () => {
     const r = KernelConfigSchema.safeParse({
       ...base,
-      environments: { device: { leaseTtlMs: 1000 } },
+      devices: { local: { leaseTtlMs: 1000 } },
     });
     expect(r.success).toBe(false);
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         code: "too_small",
         minimum: 6000,
-        path: ["environments", "device", "leaseTtlMs"],
+        path: ["devices", "local", "leaseTtlMs"],
       }),
     ]);
-    const c = KernelConfigSchema.parse({ ...base, environments: { device: { leaseTtlMs: 6000 } } });
-    expect(c.environments.device.leaseTtlMs).toBe(6000);
+    const c = KernelConfigSchema.parse({ ...base, devices: { local: { leaseTtlMs: 6000 } } });
+    expect(c.devices.local.leaseTtlMs).toBe(6000);
   });
 
   it("environment variables override single fields", () => {
@@ -45,10 +45,10 @@ describe("environments.device config", () => {
         CAPYBARA_DB__URL: base.db.url,
         CAPYBARA_REDIS__URL: base.redis.url,
         CAPYBARA_MASTER_KEY: base.masterKey,
-        CAPYBARA_ENVIRONMENTS__DEVICE__RECONNECT_GRACE_SECONDS: "60",
+        CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS: "60",
       },
     );
-    expect(c.environments.device.reconnectGraceSeconds).toBe(60);
-    expect(c.environments.device.pollIntervalSeconds).toBe(5);
+    expect(c.devices.local.reconnectGraceSeconds).toBe(60);
+    expect(c.devices.local.pollIntervalSeconds).toBe(5);
   });
 });

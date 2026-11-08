@@ -1287,7 +1287,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Image for environment instances, passed to the sandbox extension; unset (the default), each extension uses the image published with its own version (ghcr.io/capybara-hq/capybara-sandbox). Set it to a locally built or mirrored image for offline deployments; an extension that builds instances from its own template may ignore it",
+              "Image for cloud device instances, passed to the sandbox extension; unset (the default), each extension uses the image published with its own version (ghcr.io/capybara-hq/capybara-sandbox). Set it to a locally built or mirrored image for offline deployments; an extension that builds instances from its own template may ignore it",
           }),
         ),
       lockWaitSeconds: z
@@ -1297,7 +1297,7 @@ export const KernelConfigSchema = z.object({
         .meta(
           meta({
             description:
-              "Seconds a sandbox call waits for the environment's instance (while it is being created, resumed or suspended, or all its concurrent command slots are taken) before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
+              "Seconds a sandbox call waits for the device's instance (while it is being created, resumed or suspended, or all its concurrent command slots are taken) before failing with sandbox.busy; keep it above the 60-second sandbox lock TTL so a call after a replica crash waits for the dead replica's lock to expire",
           }),
         ),
       maxConcurrentCommands: z
@@ -1310,7 +1310,7 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Sandbox commands and file operations that may run at the same time in one environment, shared by all its conversations and their sub-agents; 1 runs them one at a time",
+              "Sandbox commands and file operations that may run at the same time in one device, shared by all its conversations and their sub-agents; 1 runs them one at a time",
           }),
         ),
       deliverMaxBytes: z
@@ -1335,7 +1335,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Most background Bash tasks (run_in_background) that may run at once in one conversation, its sub-agents included (counted per root conversation, not per environment); a launch beyond it is refused",
+                  "Most background Bash tasks (run_in_background) that may run at once in one conversation, its sub-agents included (counted per root conversation, not per device); a launch beyond it is refused",
               }),
             ),
           maxSeconds: z
@@ -1357,7 +1357,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "How often the worker checks the running background Bash tasks of every environment for a finish, in seconds; read when the worker starts",
+                  "How often the worker checks the running background Bash tasks of every device for a finish, in seconds; read when the worker starts",
               }),
             ),
         })
@@ -1371,7 +1371,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "CPU cores for each environment instance; applies to instances created after the change (an extension that sizes instances by its own template, such as E2B, may not apply it)",
+                  "CPU cores for each cloud device instance; applies to instances created after the change (an extension that sizes instances by its own template, such as E2B, may not apply it)",
               }),
             ),
           memoryMb: z
@@ -1382,7 +1382,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Memory limit of each environment instance in MiB; applies to instances created after the change (an extension that sizes instances by its own template, such as E2B, may not apply it)",
+                  "Memory limit of each cloud device instance in MiB; applies to instances created after the change (an extension that sizes instances by its own template, such as E2B, may not apply it)",
               }),
             ),
           diskMb: z
@@ -1393,7 +1393,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Disk limit of each environment's file system in MiB; applies to file systems created after the change (Docker: only with a volume driver that supports size; an extension whose storage cannot be sized may not apply it)",
+                  "Disk limit of each cloud device's file system in MiB; applies to file systems created after the change (Docker: only with a volume driver that supports size; an extension whose storage cannot be sized may not apply it)",
               }),
             ),
           maxCommandSeconds: z
@@ -1415,7 +1415,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Minutes without a command from any conversation of the environment before its running instance is suspended (files are kept, processes end)",
+                  "Minutes without a command from any conversation of the device before its running instance is suspended (files are kept, processes end)",
               }),
             ),
           destroyAfterInactiveDays: z
@@ -1426,7 +1426,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Days without use before an environment's instance is destroyed; its files are kept until the environment is deleted, and the next use starts a new instance on them",
+                  "Days without use before a device's instance is destroyed; its files are kept until the device is deleted, and the next use starts a new instance on them",
               }),
             ),
           maxRunningMinutes: z
@@ -1437,7 +1437,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Minutes an environment's instance may run continuously before it is suspended even while in use (skipped while a command is running)",
+                  "Minutes a device's instance may run continuously before it is suspended even while in use (skipped while a command is running)",
               }),
             ),
           egress: z
@@ -1446,7 +1446,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Outbound network from environment instances: none, allowlist (only allowHosts) or open; applies to instances created after the change, existing ones keep theirs until destroyed",
+                  "Outbound network from cloud device instances: none, allowlist (only allowHosts) or open; applies to instances created after the change, existing ones keep theirs until destroyed",
               }),
             ),
           allowHosts: z
@@ -1462,14 +1462,14 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Hosts environment instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
+                  "Hosts cloud device instances may reach when egress is allowlist: lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
         })
         .prefault({} as never),
     })
     .prefault({} as never),
-  environments: z
+  devices: z
     .object({
       maxPersonal: z
         .number()
@@ -1480,10 +1480,10 @@ export const KernelConfigSchema = z.object({
           meta({
             hot: true,
             description:
-              "Most personal environments a member may have in one org, the default one included; creating one more fails with environment.limit_reached",
+              "Most personal devices a member may have in one org, the default one and local devices included; creating one more fails with device.limit_reached",
           }),
         ),
-      device: z
+      local: z
         .object({
           reconnectGraceSeconds: z
             .number()
@@ -1494,7 +1494,7 @@ export const KernelConfigSchema = z.object({
               meta({
                 hot: true,
                 description:
-                  "Seconds a connected machine may stay disconnected before its environment is reported offline; also sent to the device program at sign-in",
+                  "Seconds a local device's machine may stay disconnected before the device is reported offline; also sent to capybara-device at sign-in",
               }),
             ),
           leaseTtlMs: z
@@ -1505,7 +1505,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Milliseconds the replica holding a machine's connection keeps its lease without renewing it; at least 6000",
+                  "Milliseconds the replica holding a local device's connection keeps its lease without renewing it; at least 6000",
               }),
             ),
           authCodeTtlSeconds: z
@@ -1516,7 +1516,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Seconds a device sign-in code stays valid before the program must start over (device.expired)",
+                  "Seconds a device sign-in code stays valid before capybara-device must start over (device_sign_in.expired)",
               }),
             ),
           pollIntervalSeconds: z
@@ -1527,7 +1527,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Seconds the device program waits between token polls during sign-in; polling faster gets device.slow_down",
+                  "Seconds capybara-device waits between token polls during sign-in; polling faster gets device_sign_in.slow_down",
               }),
             ),
           maxFrameBytes: z
@@ -1538,7 +1538,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Largest WebSocket frame in bytes accepted from or sent to a connected machine",
+                  "Largest WebSocket frame in bytes accepted from or sent to a local device's machine",
               }),
             ),
         })

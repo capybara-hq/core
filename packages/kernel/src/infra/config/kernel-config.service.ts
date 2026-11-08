@@ -26,10 +26,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.embedTimeoutMs": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
-  // The environments service reads the personal limit at every create.
-  "environments.maxPersonal": () => {},
-  // The device relay reads the reconnect grace at every disconnect and token response.
-  "environments.device.reconnectGraceSeconds": () => {},
+  // The devices service reads the personal limit at every create.
+  "devices.maxPersonal": () => {},
+  // The local device relay reads the reconnect grace at every disconnect and token response.
+  "devices.local.reconnectGraceSeconds": () => {},
   // Sub-agent limits are read at every dispatch, child step and tool resolution.
   "subagents.maxDepth": () => {},
   "subagents.maxConcurrentPerConversation": () => {},

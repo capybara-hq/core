@@ -309,24 +309,24 @@
       "unavailable": "No sandbox is available in this deployment.",
       "busy": "The sandbox is busy; try again shortly."
     },
-    "environment": {
-      "not_found": "The environment does not exist or has been deleted.",
-      "name_taken": "You already have an environment with this name. Choose another name.",
-      "limit_reached": "You have reached the limit of environments. Delete one to create another.",
-      "unavailable": "The sandbox provider of this environment is not available. Ask the super admin.",
-      "files_lost": "The files of this environment were lost. For a cloud sandbox, rebuild its files on the environments page; for a connected device, run capybara-device logout, then capybara-device login into the same environment on the machine.",
-      "forbidden": "You can no longer use this environment.",
-      "files_on_device": "A connected device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same environment.",
-      "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
-      "program_outdated": "The device program on this computer is out of date. Update it and connect again."
-    },
     "device": {
+      "not_found": "The device does not exist or has been deleted.",
+      "name_taken": "You already have a device with this name. Choose another name.",
+      "limit_reached": "You have reached the limit of devices. Delete one to create another.",
+      "unavailable": "The sandbox provider of this device is not available. Ask the super admin.",
+      "files_lost": "The files of this device were lost. For a cloud device, rebuild its files on the devices page; for a local device, run capybara-device logout, then capybara-device login into the same device on the machine.",
+      "forbidden": "You can no longer use this device.",
+      "files_on_device": "A local device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same device.",
+      "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
+      "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
+      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer."
+    },
+    "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
       "slow_down": "Too many requests. Try again shortly.",
       "expired": "The connection code has expired. Start connecting again on the computer.",
       "denied": "The connection request was denied.",
       "code_invalid": "The connection code is invalid or already used. Check the code shown on the computer.",
-      "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "unavailable": "The machine could not be connected. Run capybara-device login on it again."
     },
     "skill": {

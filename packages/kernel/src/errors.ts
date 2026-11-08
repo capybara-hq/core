@@ -242,40 +242,40 @@ export const ERROR_CODES = {
   "attachment.too_many_pending": 429,
   "sandbox.unavailable": 503,
   "sandbox.busy": 409,
-  /** The environment is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
-  "environment.not_found": 404,
-  /** The environment's file system is gone at the provider; reset its files to start empty. */
-  "environment.files_lost": 409,
-  /** The caller may see the environment but not use it (project environments, later phases). */
-  "environment.forbidden": 403,
-  /** The environment's provider is not the deployment's current one, or there is none. */
-  "environment.unavailable": 503,
-  /** The person already has a live environment with this name (case-insensitive). */
-  "environment.name_taken": 409,
-  /** The person already has `environments.maxPersonal` live personal environments. */
-  "environment.limit_reached": 409,
+  /** The device is missing, deleted, or not the caller's (never 403, so ids cannot be probed). */
+  "device.not_found": 404,
+  /** The cloud device's file system is gone at the provider; reset its files to start empty. */
+  "device.files_lost": 409,
+  /** The caller may see the device but not use it (shared devices, later phases). */
+  "device.forbidden": 403,
+  /** The device's provider is not the deployment's current one, or there is none. */
+  "device.unavailable": 503,
+  /** The person already has a live device with this name (case-insensitive). */
+  "device.name_taken": 409,
+  /** The person already has `devices.maxPersonal` live personal devices. */
+  "device.limit_reached": 409,
   /**
-   * A connected environment's files are on its machine: they cannot be reset from the platform;
-   * run `capybara-device logout`, then `capybara-device login` into the environment, on the machine
+   * A local device's files are on its machine: they cannot be reset from the platform; run
+   * `capybara-device logout`, then `capybara-device login` into the device, on the machine
    * (ruling R24).
    */
-  "environment.files_on_device": 409,
-  /** The environment's connected machine is not connected now (no replica holds its lease). */
-  "environment.offline": 503,
-  /** The connected machine runs a device program too old for this kernel; update the program. */
-  "environment.program_outdated": 426,
+  "device.files_on_device": 409,
+  /** The local device's machine is not connected now (no replica holds its lease). */
+  "device.offline": 503,
+  /** The local device's machine runs a `capybara-device` too old for this kernel; update it. */
+  "device.program_outdated": 426,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
-  "device.authorization_pending": 400,
+  "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */
-  "device.slow_down": 400,
+  "device_sign_in.slow_down": 400,
   /** Device sign-in: the code expired before it was approved; start over. */
-  "device.expired": 400,
+  "device_sign_in.expired": 400,
   /** Device sign-in: the person denied the code. */
-  "device.denied": 400,
+  "device_sign_in.denied": 400,
   /** Device sign-in: no pending code matches the one given. */
-  "device.code_invalid": 404,
+  "device_sign_in.code_invalid": 404,
   /** Device sign-in: the confirmation could not hand the credential to the program; start over. */
-  "device.unavailable": 503,
+  "device_sign_in.unavailable": 503,
   /** The machine credential is unknown or revoked. */
   "device.credential_invalid": 401,
   "skill.not_found": 404,
