@@ -567,6 +567,7 @@ export interface ConnectorSession {
 
 // @public
 export interface ConnectorTemplateFile {
+    defaultEnabled?: boolean;
     description?: string;
     displayName: LocalizedName;
     icon?: string;

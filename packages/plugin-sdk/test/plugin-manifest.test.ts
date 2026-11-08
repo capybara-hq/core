@@ -326,6 +326,32 @@ describe("parseConnectorTemplateFile", () => {
     const r = parseConnectorTemplateFile(JSON.stringify(file()));
     expect("errors" in r ? r.errors : []).toEqual([]);
   });
+
+  it("defaultEnabled is an optional boolean", () => {
+    const off = parseConnectorTemplateFile({ ...file(), defaultEnabled: false });
+    expect("errors" in off ? off.errors : off.defaultEnabled).toBe(false);
+    const bad = parseConnectorTemplateFile({ ...file(), defaultEnabled: "no" });
+    expect("errors" in bad ? bad.errors.join("\n") : "").toMatch(/defaultEnabled/);
+  });
+
+  it("an OAuth auth preset may list more bearer token types (tokenTypes)", () => {
+    const oauth = (tokenTypes: unknown) =>
+      file({
+        auth: {
+          type: "oauth_code",
+          ownership: "personal",
+          discovery: "mcp",
+          client: "manual",
+          tokenTypes,
+        },
+      });
+    const ok = parseConnectorTemplateFile(oauth(["user", "N_A.v2"]));
+    expect("errors" in ok ? ok.errors : []).toEqual([]);
+    for (const bad of [["bad type"], [""], Array(6).fill("x"), "user"]) {
+      const r = parseConnectorTemplateFile(oauth(bad));
+      expect("errors" in r ? r.errors : [], JSON.stringify(bad)).not.toEqual([]);
+    }
+  });
 });
 
 describe("validatePluginPackageJsonFor", () => {
@@ -517,7 +543,13 @@ describe("JSON Schema (ajv) agrees with zod", () => {
       displayName: { zh: "a", en: "a" },
       template: { plugin: "connector-mcp", connector: "mcp", endpoint: {}, auth: { type: "none" } },
     };
-    for (const json of [ok, { ...ok, extra: 1 }, { ...ok, displayName: { zh: "a" } }]) {
+    for (const json of [
+      ok,
+      { ...ok, extra: 1 },
+      { ...ok, displayName: { zh: "a" } },
+      { ...ok, defaultEnabled: false },
+      { ...ok, defaultEnabled: "no" },
+    ]) {
       expect(template(json)).toBe(ConnectorTemplateFileSchema.safeParse(json).success);
     }
   });

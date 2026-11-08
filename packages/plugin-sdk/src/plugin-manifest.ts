@@ -163,6 +163,12 @@ export interface ConnectorTemplateFile {
   description?: string;
   /** Safe path relative to the plugin root (an optional leading `./`), .svg / .png. */
   icon?: string;
+  /**
+   * `false`: the template starts switched off in every org, even where its plugin is on, until an
+   * org admin switches it on (it then needs no org input while off). Default `true`: on wherever
+   * its plugin is. Ignored for a builtin plugin.
+   */
+  defaultEnabled?: boolean;
   /** Validated by {@link validateConnectorTemplate}. */
   template: ConnectorTemplateSpec;
 }
@@ -507,6 +513,7 @@ const templateFile = z
         message: "icon must be a relative .svg or .png path inside the plugin",
       })
       .optional(),
+    defaultEnabled: z.boolean().optional(),
     template,
   })
   // Field rules (no credentials, auth presets, editableEndpoint, ...) belong to validateConnectorTemplate.

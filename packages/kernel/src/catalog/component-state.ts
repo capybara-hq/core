@@ -22,6 +22,11 @@ export interface ComponentScopeFacts {
   disabled: boolean;
   /** The plugin it came from; null for a component without one. */
   itemId: string | null;
+  /**
+   * A connector template whose file says `defaultEnabled: false`: while it follows its plugin it
+   * is off in an org until the org's switch turns it on (not for a builtin plugin).
+   */
+  defaultOff?: boolean;
 }
 
 /**
@@ -48,7 +53,8 @@ function stopped(c: ComponentScopeFacts, p: PluginFacts | null): boolean {
  * Whether the component is on in the org (`listed`: the org on the component's own `named` list;
  * `sw`: the org's component switch):
  * - never when the component or its plugin is disabled, or its plugin is deleted;
- * - `follow`: its plugin is on in the org (a live install, or builtin) and the switch is not off;
+ * - `follow`: its plugin is on in the org (a live install, or builtin) and the switch is not off
+ *   (a `defaultOff` template of a plugin that is not builtin: the switch is on);
  * - `own`: `wantedOn` over the component's own scope, the list and the switch.
  */
 export function componentOn(
@@ -58,7 +64,10 @@ export function componentOn(
   sw: boolean | null,
 ): boolean {
   if (stopped(c, p)) return false;
-  if (c.scopeMode === "follow") return componentPluginOn(c, p) && sw !== false;
+  if (c.scopeMode === "follow") {
+    const defaultOff = c.defaultOff === true && p?.builtin !== true;
+    return componentPluginOn(c, p) && (defaultOff ? sw === true : sw !== false);
+  }
   return wantedOn({ scope: c.scope, disabled: false, builtin: false }, listed, sw);
 }
 
@@ -161,6 +170,7 @@ export async function loadComponents(
         "p.shown_to_others",
         "p.owner_org_id",
         "p.shareable",
+        "p.file",
         "c.name as item_name",
       ])
       .where("p.deleted_at", "is", null);
@@ -170,6 +180,9 @@ export async function loadComponents(
     if (filter.forUpdate) q = q.forUpdate("p");
     return (await q.orderBy("p.id").execute()).map((r) => ({
       ...common(r),
+      ...((r.file as { defaultEnabled?: unknown } | null)?.defaultEnabled === false && {
+        defaultOff: true,
+      }),
       name: r.template_id,
       plugin: r.item_name,
       version: r.current_version,

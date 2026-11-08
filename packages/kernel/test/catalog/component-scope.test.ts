@@ -1,5 +1,7 @@
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { usableTemplates } from "../../src/agents/templates.js";
+import { connectorTemplateState } from "../../src/catalog/component-state.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
@@ -661,6 +663,34 @@ describe("fix round 1", { timeout: 60_000 }, () => {
       expect(bare.statusCode, `${off}: ${bare.body}`).toBe(201);
       expect(await liveConnectors(), off).toEqual([]);
     }
+  });
+
+  it("a template shipped defaultEnabled false: off in every org (no input needed) until an org admin switches it on", async () => {
+    ghBody.connectors.gh.endpoint.url = env.mcp.url;
+    const itemId = await seedPlugin(env, { name: "github", skills: [] });
+    tplId = await templateId();
+    await env.db
+      .updateTable("platform_connector_templates")
+      .set({ file: sql`file || '{"defaultEnabled": false}'::jsonb` })
+      .execute();
+    const sync = env.k.app.get(PluginScopeSync);
+    expect(await sync.needsInput(env.orgId, itemId, "1.0.0")).toBe(false);
+    const bare = await install(env.boss, env, itemId);
+    expect(bare.statusCode, bare.body).toBe(201);
+    expect(await liveConnectors()).toEqual([]);
+    expect(await connectorTemplateState(env.db, env.orgId, tplId)).toBe("off");
+    const on = await tplSwitch(true);
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json().component).toMatchObject({ switch: true, on: true });
+    expect(await connectorTemplateState(env.db, env.orgId, tplId)).toBe("on");
+    // another org that turns the plugin on still has it off
+    const r2 = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${org2}/catalog/${itemId}/install`,
+      payload: {},
+    });
+    expect(r2.statusCode, r2.body).toBe(201);
+    expect(await connectorTemplateState(env.db, org2, tplId)).toBe("off");
   });
 
   it("a template on in the org: needs input; switched off after the install, its connector stays and the preview counts it", async () => {
