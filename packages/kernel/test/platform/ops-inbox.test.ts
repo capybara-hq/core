@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { ToolError } from "@capybara-hq/plugin-sdk";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { ExtensionAdminOps } from "../../src/extensions/admin-ops.js";
+import {
+  PLATFORM_INBOX_MAX_ITEMS,
+  type PlatformInboxItem,
+  PlatformInboxService,
+} from "../../src/inbox/platform-inbox.service.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
 import { availability } from "../../src/platform/availability.js";
 import { type ErrorRole, nextStepFor, toToolError } from "../../src/platform/errors.js";
@@ -372,6 +377,47 @@ describe("the platform inbox and pending permissions (super admin)", () => {
     );
     expect(out.total).toBeGreaterThanOrEqual(1);
     expectNoSecrets(out);
+  });
+
+  it("a truncated inbox keeps the console's total and says only the newest are listed", async () => {
+    const notice = (n: number): PlatformInboxItem => ({
+      type: "ownership_transferred",
+      id: randomUUID(),
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString(),
+      notice: {
+        id: randomUUID(),
+        kind: "ownership_transferred",
+        createdAt: new Date().toISOString(),
+        detail: {
+          ref: { kind: "skill", id: randomUUID() },
+          name: `skill-${n}`,
+          fromOrg: { id: randomUUID(), name: "Gone Org" },
+          reason: "org_deleted",
+          usedBy: 0,
+        },
+      },
+    });
+    const items = Array.from({ length: PLATFORM_INBOX_MAX_ITEMS }, (_, n) => notice(n));
+    const spy = vi
+      .spyOn(env.k.app.get(PlatformInboxService), "list")
+      .mockResolvedValue({ items, truncated: true, total: PLATFORM_INBOX_MAX_ITEMS + 30 });
+    try {
+      const out = (await run("inbox.platform-list", {}, rootId, "superAdmin")) as Rows & {
+        truncated: boolean;
+        listed: number;
+        otherOrgItems: number;
+      };
+      expect(out).toMatchObject({
+        total: PLATFORM_INBOX_MAX_ITEMS + 30,
+        listed: PLATFORM_INBOX_MAX_ITEMS,
+        truncated: true,
+        otherOrgItems: 0,
+      });
+      expect(out.items).toHaveLength(50);
+      expect(out.next).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("dismisses a platform notice after the precheck; an unknown one is refused before the card", async () => {

@@ -5,7 +5,9 @@ import {
   EnvironmentsService,
   type EnvironmentView,
 } from "../../environments/environments.service.js";
-import { defineOperation } from "../operation.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { rootConversationOf } from "../../runtime/subagents/child.js";
+import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
@@ -55,7 +57,40 @@ export class EnvironmentsOperations implements OnModuleInit {
   constructor(
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(EnvironmentsService) private readonly environments: EnvironmentsService,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /**
+   * Whether `id` is the environment the run works in: the one its root conversation is bound to
+   * (sub-agents use the root's). Deleting or wiping it would pull the sandbox from under the run.
+   */
+  private async isRunsEnvironment(id: string, ctx: OperationContext): Promise<boolean> {
+    const root = await rootConversationOf(this.kdb.db, ctx.conversationId);
+    const row = await this.kdb.db
+      .selectFrom("conversations")
+      .select("environment_id")
+      .where("id", "=", root)
+      .where("org_id", "=", ctx.orgId)
+      .executeTakeFirst();
+    return row?.environment_id === id;
+  }
+
+  /** The precheck of a destructive write: never the run's own environment, then the service's. */
+  private async precheckDestructive(
+    id: string,
+    ctx: OperationContext,
+    verb: "deleted" | "wiped",
+    read: () => Promise<unknown>,
+  ): Promise<PrecheckResult> {
+    if (await this.isRunsEnvironment(id, ctx)) {
+      return {
+        ok: false,
+        code: "environment.current",
+        message: `The environment you are running in cannot be ${verb} from here.`,
+      };
+    }
+    return precheckBy(read);
+  }
 
   /** The environment's name for a card; its id when it cannot be read. */
   private label(ctx: { orgId: string; actorAccountId: string }, id: string): Promise<string> {
@@ -126,6 +161,10 @@ export class EnvironmentsOperations implements OnModuleInit {
             next: "You are at the limit: delete an environment you no longer need with environments.delete, or use an existing one.",
           },
           {
+            code: "environment.current",
+            next: "This conversation works in it: ask the person to wipe it on the web, or wipe a different one.",
+          },
+          {
             code: "environment.unavailable",
             next: {
               superAdmin:
@@ -155,7 +194,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.delete",
         description:
-          "Delete one of your environments, the default one included: its instance and ALL its files are destroyed after the response and cannot be recovered. Conversations bound to it keep pointing at it and their sandbox tools then fail. The person confirms every delete; it is never remembered. Takes the id from environments.list.",
+          "Delete one of your environments, the default one included: its instance and ALL its files are destroyed after the response and cannot be recovered. Conversations bound to it keep pointing at it and their sandbox tools then fail. The person confirms every delete; it is never remembered. The environment this conversation works in cannot be deleted. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -169,9 +208,15 @@ export class EnvironmentsOperations implements OnModuleInit {
             code: "environment.not_found",
             next: "Check the id with environments.list: you only see your own environments.",
           },
+          {
+            code: "environment.current",
+            next: "This conversation works in it: ask the person to delete it on the web, or delete a different one.",
+          },
         ],
         precheck: (i, ctx) =>
-          precheckBy(() => this.environments.get(ctx.orgId, ctx.actorAccountId, i.environmentId)),
+          this.precheckDestructive(i.environmentId, ctx, "deleted", () =>
+            this.environments.get(ctx.orgId, ctx.actorAccountId, i.environmentId),
+          ),
         summary: async (i, ctx) => {
           const n = await this.label(ctx, i.environmentId);
           const c = await orElse(
@@ -198,7 +243,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.reset-files",
         description:
-          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost. The person confirms every reset; it is never remembered. Takes the id from environments.list.",
+          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost. The person confirms every reset; it is never remembered. The environment this conversation works in cannot be wiped. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -212,6 +257,10 @@ export class EnvironmentsOperations implements OnModuleInit {
             next: "Check the id with environments.list: you only see your own environments.",
           },
           {
+            code: "environment.current",
+            next: "This conversation works in it: ask the person to wipe it on the web, or wipe a different one.",
+          },
+          {
             code: "environment.unavailable",
             next: {
               orgAdmin:
@@ -222,7 +271,7 @@ export class EnvironmentsOperations implements OnModuleInit {
           },
         ],
         precheck: (i, ctx) =>
-          precheckBy(() =>
+          this.precheckDestructive(i.environmentId, ctx, "wiped", () =>
             this.environments.checkReset(ctx.orgId, ctx.actorAccountId, i.environmentId),
           ),
         summary: async (i, ctx) => {

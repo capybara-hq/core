@@ -104,8 +104,8 @@ const expectViaAgent = async (action: string, operation: string, ctx: OperationC
     expect.objectContaining({
       via: "agent",
       operation,
-      conversationId: ctx.conversationId,
-      runId: ctx.runId,
+      agentConversationId: ctx.conversationId,
+      agentRunId: ctx.runId,
     }),
   );
 };

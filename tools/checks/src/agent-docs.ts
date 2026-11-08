@@ -22,6 +22,11 @@ import type { Finding } from "./source.js";
  *   aside; using the platform is covered by operations);
  * - agent-docs-orphan: a topic, or a row (generated or in a hand-written table), for an extension
  *   point or plugin-format field that no longer exists in the code.
+ *
+ * Hand-written tables (a `| Field |` table in plugin-format / connector-templates / agent-templates,
+ * an `| Extension point |` table anywhere) are checked for orphans only: a row naming something gone
+ * from the code fails, but a hand table need not list every field. Completeness is the generated
+ * sections' job.
  */
 
 export const AGENT_DOCS_DIR = "packages/plugin-sdk/agent-docs";

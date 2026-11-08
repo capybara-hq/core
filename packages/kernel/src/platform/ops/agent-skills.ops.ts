@@ -146,7 +146,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.delete-skill",
         description:
-          "Delete one of an agent's own skills (soft delete; a pending change of the same name is cancelled and the name can be written again). Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills. On your own private agent the person may remember it; on a shared agent every delete is confirmed.",
+          "Delete one of an agent's own skills (soft delete; a pending change of the same name is cancelled and the name can be written again). Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills. The person confirms every delete; it is never remembered.",
         input: z.object({ agentId: AgentId, skillId: AgentSkillPathParams.shape.skillId }).strict(),
         example: {
           agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",

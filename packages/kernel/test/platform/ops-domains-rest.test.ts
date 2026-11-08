@@ -295,7 +295,15 @@ describe("evals", () => {
     expect(added.case.name).toBe("case 1");
     expect(JSON.stringify(added)).not.toContain("refund window");
     const [caseAudit] = await audits("eval.case_added");
-    expect(caseAudit?.detail).toMatchObject({ via: "agent", operation: "evals.add-case" });
+    // the agent's own conversation and run do not overwrite the case's source ones
+    expect(caseAudit?.detail).toMatchObject({
+      via: "agent",
+      operation: "evals.add-case",
+      conversationId: seeded.conversationId,
+      runId: seeded.runId,
+      agentConversationId: c.conversationId,
+      agentRunId: c.runId,
+    });
     // a known failure is denied before the card
     expect(
       await precheck(
@@ -342,7 +350,13 @@ describe("evals", () => {
 
     await run("evals.remove-case", { setId: set.id, caseId: added.case.id }, c);
     const [gone] = await audits("eval.case_removed");
-    expect(gone?.detail).toMatchObject({ via: "agent", operation: "evals.remove-case" });
+    expect(gone?.detail).toMatchObject({
+      via: "agent",
+      operation: "evals.remove-case",
+      conversationId: seeded.conversationId,
+      runId: seeded.runId,
+      agentConversationId: c.conversationId,
+    });
   });
 
   it("start-run is denied before the card when the set has nothing to replay", async () => {
@@ -442,7 +456,12 @@ describe("evals", () => {
 
     await run("evals.label-result", { resultId, label: "pass", note: "good" }, c);
     const [lab] = await audits("eval.result_labeled");
-    expect(lab?.detail).toMatchObject({ via: "agent", operation: "evals.label-result" });
+    expect(lab?.detail).toMatchObject({
+      via: "agent",
+      operation: "evals.label-result",
+      runId: finished,
+      agentRunId: c.runId,
+    });
     expect(await summarize("evals.label-result", { resultId, label: "fail" }, c)).toMatchObject({
       en: `Label eval result ${resultId} as fail`,
     });
@@ -664,6 +683,9 @@ describe("background tasks and previewers", () => {
         c,
       ),
     ).toBe("personal");
+    // a stop kills the command: asked every time, like conversations.abort
+    expect(op("conversations.stop-background-task").rememberable).toBe(false);
+    expect(op("conversations.stop-background-task").description).toContain("never remembered");
     await expect(
       run("conversations.stop-background-task", { conversationId: conv.id, taskId: "bg-1" }, c),
     ).rejects.toThrow(/conversations\.background-tasks/);

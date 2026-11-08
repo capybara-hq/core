@@ -70,7 +70,7 @@ export class ApprovalsOperations implements OnModuleInit {
       defineOperation({
         id: "approvals.waiting",
         description:
-          "List the tool call approvals you can decide in this org, newest first: your own runs' calls and, for org admins, other people's calls that need an admin. One compact row each (tool, state, the summary the inbox shows, agent, expiry); pending by default, or pass status. Never the call's input. Deciding is done by you on the web, never by an agent. Pages by 50: pass the returned next as params.cursor.",
+          "List the tool call approvals you can decide in this org, newest first: your own runs' calls and, for org admins, other people's calls that need an admin. One compact row each (tool, state, the summary the inbox shows, agent, expiry); pending by default, or pass one status (pending, approved, denied, expired, cancelled; there is no \"all\": call once per status to see more). Never the call's input. Deciding is done by you on the web, never by an agent. Pages by 50: pass the returned next as params.cursor.",
         input: z
           .object({ status: ApprovalsListQuerySchema.shape.status, cursor: Cursor.optional() })
           .strict(),

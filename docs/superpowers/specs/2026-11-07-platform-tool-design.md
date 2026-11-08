@@ -201,7 +201,9 @@ An operation is defined in kernel code next to its domain **(designer's call)**:
   principal; writes stay `@Transactional()` service methods as today.
 
 Audit rows of writes made through `Platform` record `via: "agent"` with the conversation, run and
-operation **(designer's call)**.
+operation **(designer's call)**, as `{ via, operation, agentConversationId, agentRunId }`: keys
+distinct from the business fields, so a write about another conversation or run (an eval case, a
+background task) keeps its own `conversationId` / `runId` in the row.
 
 Errors are the existing `ApiError` codes, turned into actionable tool errors (the tool error check
 applies). An operation that is unavailable says why and who can do it.
@@ -519,3 +521,123 @@ In the acceptance session, by a checklist:
    entry when one exists. `check:platform-ops` gains `platform-op-errors` for entries without `next`;
    the acceptance and the final review check the wording.
 
+
+### 14.6 As built (phase 2)
+
+Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four waves (PRs #98,
+#100, #101). One bullet per decision: what was decided — why.
+
+**What was built**
+
+- 178 operations in 20 domains; every other kernel route is excluded for good
+  with a reason (`human-only` / `secret` / `transport` / `internal`). One `later` route remains: the
+  agent profile `PATCH`, until the run-context work is on `main` (#91); `check:platform-ops` rule
+  `platform-op-later` rejects every other `later` entry (the route sits in the check's
+  `LATER_ALLOWED`), and the allow-list empties when #91 lands.
+- Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
+  `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
+  parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
+  patterns / formats and required-ness, recursively, with `omits` / `extras` / `renames` / `loosens`
+  declared on the operation and checked for staleness. New check rules: `platform-op-errors`,
+  `platform-op-orphan` (a mirror or exclusion of a removed route), `platform-op-double` (a route both
+  mirrored and excluded), `platform-op-later`, `platform-op-session-only` (a `@SessionOnly()` route
+  mirrored, or excluded other than `human-only` / `secret`).
+- `precheck` on writes (read only, 2 s bound, skipped on a throw or timeout), run before the card and
+  again when an approved call resumes; role-keyed `next` in `errors[]` (`superAdmin` / `orgAdmin` /
+  `member`); compact list rows paged by 50.
+- Not-loaded extensions are `unavailable` with a reason (`needs_deployment_config`, …) in the org view,
+  `extensions.list`, `plugins.list` / `get`, the same as the web; one call decides "why can't I use
+  it", with the next step for the caller's role.
+- `accounts.create`: the kernel generates a one-time password sealed per run and call (migration
+  0090, hourly `@LockedCron` cleanup of expired copies), the approver reads it once on the web
+  (`POST …/approvals/:id/initial-password`), the account must change it first; it is absent from the
+  tool result, events, approvals, audit and logs.
+- Agent docs: titles say `Authoring:`; both directions (in the code but not the docs, in the docs but
+  gone from the code) are caught for extension points and every plugin-format, connector-template and
+  agent-template field; hand-written tables are checked for orphans only.
+- End to end: `platform-e2e-phase2.test.ts` (the deployment-config repro per role, `accounts.create`,
+  a member's `approvals.waiting`, `conversations.delete` asked every time). The three sync failures
+  are red in the checks suite (§14.4).
+
+**Rulings**
+
+- Parity is a vitest test, not part of `pnpm check` — it imports the kernel's zod schemas, which the
+  tsx source scans cannot evaluate; `tools/checks` runs on every PR that runs tests.
+- A renamed path param (`skillId` → `:id`) is declared through `renames` — the input keeps a
+  readable name while the parity test still compares it.
+- Nested optional route fields left out of an input need no declaration; top-level ones need `omits`
+  — declaring every nested field would add noise without catching real drift.
+- `asToolError` was removed from the operations; a service `ApiError` propagates and the tool maps
+  it — one path for every error. Tool-only codes (`marketplace.already_added`, `plugin.needs_input`,
+  `agent.visibility_web_only`, `catalog.org_owned`, `account.self`, `account.no_change`) exist only
+  as precheck denials — they describe tool policy, no route answers them.
+- `marketplaces.add` refuses a duplicate URL in its precheck although the web accepts duplicates —
+  a duplicate source is never what the person wants.
+- No request kind reaches the super admin about deployment state; the org admin's next step is "tell
+  the super admin" with the extension name and what is missing — a new request kind
+  (`extension_setup`) is a new contract, left for the maintainer.
+- Admin component scope / preview / disable / visibility are `platform` writes, not human-only —
+  they are ordinary admin-console writes (§14.1 item 3).
+- `PlatformOperation.rememberable?: false` (static) makes a write never remembered whatever its
+  class; used by `conversations.delete` / `abort` / `stop-background-task`, `agents.delete`,
+  `agents.delete-skill`, `environments.delete` / `reset-files` — replaces routing destructive personal writes through
+  `confirmFor` → `org`, which mislabelled their rights.
+- `conversations.abort` is offered (`personal`, never remembered, refuses the run's own root
+  conversation) — parity with the web's stop button.
+- Admin data in full: org names are shown for platform-owned items and the conversation org's own
+  items (previews, scope lists, the orgs a component is on in, results); items owned by other orgs
+  are counts and refusals only; this also applies to the phase-1 plugin operations — §14.5 item 1.
+  The admin component list stays compact (orgs counted); write results and previews name them.
+- Org-owned items, shared or not, are managed by their owner org; the super admin's agent refuses
+  them while the console can — the agent acts in one org's log, where another org's items do not
+  belong.
+- A route both mirrored and excluded is a check finding (`platform-op-double`) — a mirrored
+  human-only or secret route is a hole in the fence.
+- Personal preference operations wait for the run-context work, which adds the preferences /
+  timezone routes; folded into #91 — no such kernel route exists on `main` yet.
+- `evals.get-case` / `get-result` return metadata and scores, never conversation content — replay
+  privacy (trajectories 404 to others, no export); copying a case into another log would be an
+  export.
+- Eval case titles (excerpts of a person's message) are conversation content, so results and cards
+  use neutral labels — same privacy rule.
+- `environments.delete` and `environments.reset-files` are offered (`personal`, never remembered,
+  the card warns that files are destroyed and names the conversations that lose their sandbox) —
+  parity, like `conversations.delete`. Both refuse in the precheck (`environment.current`) the
+  environment the run's root conversation is bound to (sub-agents use the root's) — like
+  `conversations.delete` refusing the root; a root still unbound binds at its first sandbox call, so
+  nothing is refused for it.
+- Audit detail of a tool write is `{ via: "agent", operation, agentConversationId, agentRunId }` —
+  `conversationId` / `runId` in the same row stay the write's own business fields (an eval case's
+  source run, a background task's conversation), which the old keys overwrote.
+- A `@SessionOnly()` route is excluded as `human-only` or `secret`, never mirrored
+  (`platform-op-session-only`) — a web-session-only route is a person's own act or carries a
+  secret. A controller switching a mirrored route to a schema outside its `ROUTE_SCHEMAS` entry is
+  caught by review only — tying a `@ZBody` / `@ZQuery` DTO back to the entry needs cross-file
+  resolution the source scan does not do, and the parity test reads only the registered schemas.
+- Two list shapes stay: offset pages (`pageOf`, `params.cursor`, `{ items, total, next }`) for
+  lists read whole, and the route's keyset (`params.after`, `{ <items>, next }`, no total) for
+  `accounts.list`, `conversations.list` / `subagents` / `files` and `evals.list-results` — the
+  keyset routes cannot give a total cheaply, and unifying would change model-visible results for
+  no gain; the skill documents both.
+- The `Platform` tool description names the current families (fixed text; `browse` lists every
+  domain) — tool definitions are read by spec hash from the log, so old requests replay unchanged
+  and the zero-drift fixtures pin no description. The new description changes the tool's specHash
+  once, so remembered `Platform` grants and approvals pending at deploy are asked again — never
+  wrongly allowed.
+- `platformTool` `off` / `read-only` takes effect on the next call — the setting is re-read per call
+  like the actor's facts.
+- `inbox.platform-list` reports the console's `total` (everything waiting, other orgs' items
+  included) plus `listed` and `otherOrgItems` for the newest 100 it reads — past the window, other
+  orgs' items cannot be told apart, so the count is never reduced by a guess.
+- Process: wave 1 ran Tasks 1 and 4 in parallel, then 2, then 3 (they share files); in the domain
+  waves the first task of a wave owned the shared registries (`exclusions.ts`,
+  `platform-ops.module.ts`, `route-schemas.ts`) and the others' entries were merged after the wave —
+  to avoid index collisions, at the cost of merge work.
+
+**Left open**
+
+- Notice dismissals write no audit row (service behaviour, unchanged); whether every Platform write
+  must audit is for the maintainer.
+- A webhook-capable test plugin would cover the channels webhook success path.
+- #91 (agent profile and personal preferences) lands after the run-context work; then
+  `LATER_ALLOWED` empties and the `later` category can be removed from `ExclusionCategory`.

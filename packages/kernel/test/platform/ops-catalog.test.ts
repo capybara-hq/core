@@ -441,6 +441,15 @@ describe("plugins in the org", () => {
     );
     expect(e.message).toContain("forbidden");
   });
+
+  it("a plugin the super admin stopped gives each role its own next step", () => {
+    const errors = op("plugins.set-enabled").errors;
+    expect(nextStepFor(errors, "plugin.disabled", "superAdmin")).toContain("admin console");
+    expect(nextStepFor(errors, "plugin.disabled", "orgAdmin")).toContain("ask them");
+    const member = nextStepFor(errors, "plugin.disabled", "member");
+    expect(member).toContain("org admin");
+    expect(member).not.toContain("admin console");
+  });
 });
 
 describe("requests", () => {

@@ -41,6 +41,8 @@ describe("checkPlatformOps", () => {
         "platform-op-errors",
         "platform-op-exclusion-reason",
         "platform-op-exclusion-reason",
+        "platform-op-later",
+        "platform-op-later",
         "platform-op-literal",
         "platform-op-literal",
         "platform-op-literal",
@@ -51,6 +53,8 @@ describe("checkPlatformOps", () => {
         "platform-op-missing",
         "platform-op-orphan",
         "platform-op-orphan",
+        "platform-op-session-only",
+        "platform-op-session-only",
       ].sort(),
     );
     const has = (rule: string, file: string, line: number, text: string) =>
@@ -96,6 +100,16 @@ describe("checkPlatformOps", () => {
     );
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/a"'), "reason");
     has("platform-op-exclusion-reason", exc, lineOf(exc, 'skills/b"'), "issue");
+    has("platform-op-later", exc, lineOf(exc, 'skills/b"'), "exclude it for good");
+    has("platform-op-later", exc, lineOf(exc, "even with an issue URL") + 1, "skills/c");
+    // a @SessionOnly route is human-only or secret: never mirrored, never another category
+    has(
+      "platform-op-session-only",
+      ops,
+      lineOf(ops, 'id: "sessions.mirrored"'),
+      "POST /api/v1/orgs/:orgId/sessions/mirrored",
+    );
+    has("platform-op-session-only", exc, lineOf(exc, "sessions/internal"), "human-only or secret");
   });
 
   it("holds on the real kernel tree", () => {

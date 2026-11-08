@@ -39,7 +39,9 @@ import {
 /**
  * The `Platform` tool end to end (Platform tool spec §3–§6): model-fake scripts the calls, the real
  * pipeline decides (policy, approval bound to the input, availability on fresh facts), the real
- * operations run, and the log replays with zero drift.
+ * operations run, and the log replays with zero drift. Phase 2's cases (the deployment-config repro
+ * per role, accounts.create, approvals.waiting, conversations.delete) are in
+ * platform-e2e-phase2.test.ts, on the org catalog environment.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -233,7 +235,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
       WHERE org_id = ${orgId} AND detail->>'operation' = 'skills.create'`.execute(db);
     expect(audit.rows[0]?.detail).toMatchObject({
       via: "agent",
-      conversationId: conv.id,
+      agentConversationId: conv.id,
       operation: "skills.create",
     });
 

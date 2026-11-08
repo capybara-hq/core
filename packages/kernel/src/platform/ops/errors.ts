@@ -16,10 +16,19 @@ export async function precheckBy(read: () => Promise<unknown>): Promise<Precheck
   }
 }
 
-/** The audit detail of a write made through the tool (spec §6): who, where and which operation. */
+/**
+ * The audit detail of a write made through the tool (spec §6): who, where and which operation. The
+ * keys are distinct from any business field (`agentConversationId`, not `conversationId`), so
+ * merging it into a write's own detail never overwrites the conversation or run the write is about.
+ */
 export function viaAgent(
   operation: string,
   ctx: { conversationId: string; runId: string | null },
 ): Record<string, unknown> {
-  return { via: "agent", conversationId: ctx.conversationId, runId: ctx.runId, operation };
+  return {
+    via: "agent",
+    operation,
+    agentConversationId: ctx.conversationId,
+    agentRunId: ctx.runId,
+  };
 }
