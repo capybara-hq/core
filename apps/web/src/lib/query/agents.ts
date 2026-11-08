@@ -104,7 +104,7 @@ const any = <T>(o: UseQueryOptions<T, ApiClientError>) =>
  * the org skills and the members (the role decides whether the kernel answers), the agent
  * templates and the org agents (the sub-agents section), and, editing, the agent's own skills,
  * which web tools the org can serve and the enabled extensions' tools (the Tools section).
- * The tools of the connectors an edited agent uses are {@link agentConnectorQueries}.
+ * The tools of the connectors an edited agent turns tools of off are {@link agentConnectorQueries}.
  */
 export const agentFormQueries = (
   orgId: string,
@@ -128,15 +128,17 @@ export const agentFormQueries = (
 ];
 
 /**
- * The ids of the connectors `agent` uses, whole or by tool name (the Tools section lists their
- * tools).
+ * The ids of the connectors `agent` turns some tools of off (every connector is on by default;
+ * the Tools section lists the tools of these, and of any other one opened).
  */
 export const selectedConnectors = (agent: Agent | undefined): string[] => [
   ...new Set(
-    (agent?.definition.tools ?? []).flatMap((r) => (r.kind === "connector" ? [r.connectorId] : [])),
+    (agent?.definition.disabledTools ?? []).flatMap((r) =>
+      r.kind === "connector" ? [r.connectorId] : [],
+    ),
   ),
 ];
 
-/** The details (tools) of the connectors the edited agent uses. */
+/** The details (tools) of the connectors the edited agent turns tools of off. */
 export const agentConnectorQueries = (orgId: string, agent: Agent) =>
   selectedConnectors(agent).map((id) => any(connectorQuery(orgId, id)));

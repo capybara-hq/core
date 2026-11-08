@@ -21,6 +21,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { seedQueued } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -226,7 +227,7 @@ const definition = (skills: string[], tools: { kind: "builtin"; name: string }[]
   name: "Lead",
   instructions: LEAD,
   model: { provider: "model-script", model: "script-1" },
-  tools,
+  disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
   skills: { orgSkills: skills },
 });
 

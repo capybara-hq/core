@@ -33,6 +33,7 @@ import type { KernelOverride } from "../../src/overrides.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
@@ -347,7 +348,7 @@ describe("a fresh deployment", { timeout: 30_000 }, () => {
     expect(pairs).not.toContainEqual({ org_id: orgId, plugin: "beta" });
     // A required plugin's tools are available to the org's agents
     const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "plugin", plugin: "alpha", name: "wait" }],
+      disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "alpha", name: "wait" }]),
     });
     expect(tools.tools.map((t) => t.key)).toEqual(["plugin__alpha__wait"]);
   });

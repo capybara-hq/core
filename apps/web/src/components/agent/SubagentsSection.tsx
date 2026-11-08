@@ -1,9 +1,9 @@
 "use client";
 
 import { Stack } from "@capybara-hq/design";
-import type { AgentToolRef } from "../../lib/agents";
+import type { DisabledToolRef } from "../../lib/agents";
 import { AGENT_TOOL, useSubagentsForm } from "../AgentSubagents";
-import { replaceToolRefs, savedDefinition } from "./definition-parts";
+import { replaceDisabled, savedDefinition } from "./definition-parts";
 import {
   SaveFeedback,
   useDefinitionSave,
@@ -13,13 +13,14 @@ import {
 import type { AgentFormData } from "./form-data";
 import { AgentSectionFrame, useAgentPage } from "./frame";
 
-const isAgentTool = (r: AgentToolRef) => r.kind === "builtin" && r.name === AGENT_TOOL;
+const isAgentTool = (r: DisabledToolRef) => r.kind === "builtin" && r.name === AGENT_TOOL;
 
 /**
  * 子 Agent Sub-agents (agent profile design §3.2): the `Agent` tool and the `subagents` block.
  * The rules that depend on who can see the agent (the "shared more widely" warning) read the
- * **saved** visibility. Its save sends the saved definition with only the `Agent` tool reference
- * and `subagents` changed (no block when there is nothing and there was nothing).
+ * **saved** visibility. Its save sends the saved definition with only the `Agent` tool's entry in
+ * `disabledTools` (it is on unless turned off) and `subagents` changed (no block when there is
+ * nothing and there was nothing).
  */
 export function SubagentsSection() {
   return <WithFormData>{(data) => <SubagentsEdit data={data} />}</WithFormData>;
@@ -37,10 +38,10 @@ function SubagentsEdit({ data }: { data: AgentFormData }) {
     form.showProblems(undefined);
     const r = await save.send({
       ...rest,
-      tools: replaceToolRefs(
-        agent.definition.tools ?? [],
+      disabledTools: replaceDisabled(
+        agent.definition.disabledTools ?? [],
         isAgentTool,
-        form.agentTool ? [{ kind: "builtin", name: AGENT_TOOL }] : [],
+        form.agentTool ? [] : [{ kind: "builtin", name: AGENT_TOOL }],
       ),
       ...(form.value !== undefined ? { subagents: form.value } : {}),
     });

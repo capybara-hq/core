@@ -1,4 +1,3 @@
-import type { AgentToolRef } from "../agents/definition.js";
 import type { ToolKind } from "./info.js";
 
 /**
@@ -29,6 +28,7 @@ export const BUILTIN = {
   WebSearch: "WebSearch",
   WebFetch: "WebFetch",
   Platform: "Platform",
+  CurrentTime: "CurrentTime",
 } as const;
 
 export type BuiltinName = (typeof BUILTIN)[keyof typeof BUILTIN];
@@ -71,12 +71,13 @@ export const SANDBOX_ASK_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /**
- * Every builtin name. Saving an agent checks builtin refs against this list, not against what is
- * registered now, so the order the implementations land in never affects a saved definition.
- * `SkillWrite` is available only when a definition names it; `ToolSearch` and `Skill` are added
+ * Every builtin name. Saving an agent checks turned-off builtins against this list, not against
+ * what is registered now, so the order the implementations land in never affects a saved
+ * definition. `ToolSearch` and `Skill` are added
  * by the registry; `Agent` dispatches sub-agents and its description is built per agent;
  * `SendMessage` and `SubagentHandback` are added by the registry ({@link SUBAGENT_MESSAGE_TOOLS}).
  * `Platform` calls the platform's own operations as the run's person (Platform tool spec).
+ * `CurrentTime` reads the clock (the run context carries only the date).
  */
 export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.AskUserQuestion,
@@ -90,6 +91,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SubagentHandback,
   ...WEB_TOOL_NAMES,
   BUILTIN.Platform,
+  BUILTIN.CurrentTime,
 ];
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
@@ -140,15 +142,19 @@ export const CHILD_REMOVED_TOOLS = [
 ] as const;
 
 /**
- * The tools of a new agent created without `tools` (`ToolSearch` is added by the registry, never
- * by a definition). Only for create requests; updates and stored versions get no defaults.
- * `Platform` is on by default (Platform tool spec §3: reads are harmless, every write confirmed).
+ * The builtins every agent has unless it turns them off (tools default-on spec §4), in this
+ * order: {@link BUILTIN_TOOL_NAMES} without the ones the registry manages by rule (`ToolSearch`,
+ * `Skill`, `SendMessage`, `SubagentHandback`) and without `TaskOutput` / `TaskStop`, which come
+ * with `Bash` ({@link BASH_COMPANION_TOOLS}). These are also the builtins an agent can turn off.
  */
-export const DEFAULT_AGENT_TOOLS: AgentToolRef[] = [
-  { kind: "builtin", name: BUILTIN.AskUserQuestion },
-  { kind: "builtin", name: BUILTIN.ReadToolOutput },
-  { kind: "builtin", name: BUILTIN.Platform },
-];
+export const AGENT_BUILTIN_NAMES: readonly BuiltinName[] = BUILTIN_TOOL_NAMES.filter(
+  (n) =>
+    n !== BUILTIN.ToolSearch &&
+    n !== BUILTIN.Skill &&
+    n !== BUILTIN.SendMessage &&
+    n !== BUILTIN.SubagentHandback &&
+    !(BASH_COMPANION_TOOLS as readonly string[]).includes(n),
+);
 
 /** Kinds of the builtin tools (display only); a builtin missing here is a plain `tool`. */
 export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
@@ -171,6 +177,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.WebSearch]: "search",
   [BUILTIN.WebFetch]: "read",
   [BUILTIN.Platform]: "tool",
+  [BUILTIN.CurrentTime]: "tool",
 };
 
 /**

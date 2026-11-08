@@ -18,6 +18,7 @@ import {
   shellQuote,
 } from "../../../src/tools/builtins/sandbox/index.js";
 import { BUILTIN_TOOL_NAMES, type BuiltinTool, ToolRegistry } from "../../../src/tools/registry.js";
+import { noRowsDb, onlyBuiltins } from "../../helpers/disabled-tools.js";
 
 /** M5 T8：沙箱工具的纯函数与「没有沙箱提供方」时的不可用说明。 */
 
@@ -294,7 +295,7 @@ describe("registry without a sandbox provider", () => {
     expect(tools.map((t) => t.spec.name)).toEqual(names);
     const host = { tools: () => [], list: () => [] } as unknown as ExtensionHost;
     const registry = new ToolRegistry(
-      {} as KernelDb,
+      noRowsDb() as KernelDb,
       host,
       host,
       { list: () => tools },
@@ -304,13 +305,15 @@ describe("registry without a sandbox provider", () => {
       { offKeys: async () => new Set() },
     );
     const got = await registry.forAgent("org", {
-      tools: [{ kind: "builtin", name: "Bash" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
     });
     expect(got.tools).toEqual([]);
-    expect(got.unavailable).toHaveLength(1);
-    expect(got.unavailable[0]?.ref).toBe("Bash");
-    expect(got.unavailable[0]?.reason).toMatch(/sandbox/i);
-    expect(got.unavailable[0]?.reason).toMatch(/administrator/);
+    // never reported as unavailable (the agent did not ask for it): explained when named
+    expect(got.unavailable).toEqual([]);
+    expect(got.hidden).toHaveLength(1);
+    expect(got.hidden?.[0]?.ref).toBe("Bash");
+    expect(got.hidden?.[0]?.reason).toMatch(/sandbox/i);
+    expect(got.hidden?.[0]?.reason).toMatch(/administrator/);
   });
 });
 

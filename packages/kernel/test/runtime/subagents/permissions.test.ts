@@ -22,6 +22,7 @@ import {
   scriptRules,
 } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -286,11 +287,11 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "builtin", name: "Agent" },
           { kind: "builtin", name: "Read" },
           { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
-        ],
+        ]),
         // the parent denies Read and allows probe_echo
         toolPolicies: { Read: "deny" },
         subagents: {

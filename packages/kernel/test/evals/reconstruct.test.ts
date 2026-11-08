@@ -38,9 +38,11 @@ import type { MediaInfo } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -99,6 +101,9 @@ let ownerId: string;
 let orgId: string;
 let sandboxRoot: string;
 
+/** The run context clock (`RUN_CONTEXT_CLOCK`): real time unless a test sets a day. */
+let clockMs: number | null = null;
+
 beforeAll(async () => {
   capture.install();
   [pgc, rd, s3] = await Promise.all([startTestPostgres(), startTestRedis(), startTestS3()]);
@@ -141,6 +146,8 @@ beforeAll(async () => {
         },
       },
     ),
+    // run context spec §10: the day a run start reads (a test moves it forward)
+    { overrides: [{ provide: RUN_CONTEXT_CLOCK, useValue: () => clockMs ?? Date.now() }] },
   );
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -171,15 +178,31 @@ const PROBE_TOOLS = [
   { kind: "plugin", plugin: "tools-probe", name: "second" },
 ];
 
+/**
+ * An agent with only the tools `extra.tools` names (refs as the old enabled list wrote them):
+ * every other builtin and the probe extensions it does not name turned off (tools default-on
+ * spec), so the recorded requests carry what each case set up.
+ */
 async function createAgent(
   model: { provider: string; model: string },
   extra: Record<string, unknown> = {},
 ): Promise<string> {
+  const { tools, ...rest } = extra as { tools?: Record<string, unknown>[] };
+  const named = new Set((tools ?? []).flatMap((r) => (r.kind === "plugin" ? [r.plugin] : [])));
+  const extensionsOff = ["tools-probe", "hooks-probe"]
+    .filter((p) => !named.has(p))
+    .map((plugin) => ({ kind: "plugin", plugin, tools: "all" }));
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
     payload: {
-      definition: { name: "Helper", instructions: "Be helpful.", model, tools: [], ...extra },
+      definition: {
+        name: "Helper",
+        instructions: "Be helpful.",
+        model,
+        disabledTools: [...onlyBuiltins(tools ?? []), ...extensionsOff],
+        ...rest,
+      },
       visibility: "org",
     },
   });
@@ -422,7 +445,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     await seedSkill("alpha", "Alpha body v2.", alpha);
     await turn("echo:after skill update");
 
-    // 插件在组织停用 → 工具不可用提醒（「已恢复」只在同一运行内写，这里是下一次运行，不写）
+    // the extension switched off in the org: its tools go (tools default-on spec §4: no
+    // unavailable reminder, the next run's tools_changed tells the model), then come back
     await enableProbe(false);
     await turn("echo:probe off");
     await enableProbe(true);
@@ -442,7 +466,7 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(events.filter((e) => e.type === "skills_catalog")).toHaveLength(2);
     expect(types).toContain("reminder");
     const reminders = events.flatMap((e) => (e.type === "reminder" ? [e.payload.text] : []));
-    expect(reminders.some((t) => t.startsWith("The following tools are unavailable"))).toBe(true);
+    expect(reminders.some((t) => t.startsWith("The following tools are unavailable"))).toBe(false);
     expect(reminders.some((t) => t.startsWith("You are close to the step limit"))).toBe(true);
     // the probe switched off and on: each run's first request tells the model (tool naming spec
     // §9.1), rendered as a system message and rebuilt from the log below
@@ -720,6 +744,99 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     expect(calls.some((c) => c.payload.request.summarySeq !== null)).toBe(true);
     expect(compactions.length).toBeGreaterThan(0);
     await expectZeroDrift(conv, await snapshotOf(conv));
+  });
+
+  it("run context: snapshots, a rename, a day change, sender lines and a compaction over them: zero drift", async () => {
+    reset();
+    clockMs = Date.parse("2026-11-08T10:00:00Z");
+    try {
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-small" },
+        { name: "Grant", description: "Answers HR questions." },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      const send = async (text: string, n: number, extra: Record<string, unknown> = {}) => {
+        const res = await owner({
+          method: "POST",
+          url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+          payload: { text, timeZone: "Asia/Shanghai", locale: "zh", ...extra },
+        });
+        expect(res.statusCode, res.body).toBe(202);
+        await waitForTerminal(db, conv, n, 30_000);
+      };
+      await send("long:300", 1);
+      await send("long:301", 2);
+      // a rename of the agent: the next run start writes the new name
+      const agent = (
+        await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/agents/${agentId}` })
+      ).json() as { agent: { currentVersion: number; definition: Record<string, unknown> } };
+      const renamed = await owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/agents/${agentId}`,
+        payload: { definition: { ...agent.agent.definition, name: "Grant 2" } },
+      });
+      expect(renamed.statusCode, renamed.body).toBe(200);
+      await send("long:302", 3);
+      // the next day; and the sender renamed (a changed sender line)
+      clockMs = Date.parse("2026-11-09T10:00:00Z");
+      await db
+        .updateTable("accounts")
+        .set({ display_name: "O2" })
+        .where("id", "=", ownerId)
+        .execute();
+      await send("long:303", 4);
+      await send("long:304", 5);
+
+      const events = await eventsOf(db, conv);
+      const ctxs = events.filter((e) => e.type === "run_context");
+      expect(ctxs.map((e) => e.payload)).toEqual([
+        {
+          agent: { name: "Grant", description: "Answers HR questions." },
+          org: { name: "Acme" },
+          date: "2026-11-08",
+          timeZone: "Asia/Shanghai",
+          locale: "zh",
+        },
+        { agent: { name: "Grant 2", description: "Answers HR questions." } },
+        { date: "2026-11-09" },
+      ]);
+      const users = events.filter((e) => e.type === "user_message");
+      expect(users.map((e) => (e.payload as { sender?: { name: string } }).sender?.name)).toEqual([
+        "O",
+        "O",
+        "O",
+        "O2",
+        "O2",
+      ]);
+      expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
+      // after a summary that covers snapshots: the current context follows it whole, and the
+      // first message after it carries its sender line
+      const afterSummary = sent.filter((r) =>
+        JSON.stringify(r.messages[0]?.content ?? "").includes("<conversation_summary>"),
+      );
+      expect(afterSummary.length).toBeGreaterThan(0);
+      const last = afterSummary.at(-1) as (typeof sent)[number];
+      expect(last.messages[1]?.role).toBe("system");
+      expect(String(last.messages[1]?.content)).toMatch(
+        /^Context from the platform:\n- You are "Grant 2"/,
+      );
+      const firstUser = last.messages.find((m) => m.role === "user" && m !== last.messages[0]);
+      const firstBlocks = (firstUser?.content ?? []) as { text?: string }[];
+      expect(firstBlocks[0]?.text).toMatch(/^From O2? \(owner\)$/);
+      // the system text never carries the run context (the cached prefix stays stable)
+      expect(
+        sent.every((r) => !r.system.some((b) => b.text.includes("Context from the platform"))),
+      ).toBe(true);
+      await expectZeroDrift(conv, await snapshotOf(conv));
+    } finally {
+      clockMs = null;
+      // the owner is shared by the other cases
+      await db
+        .updateTable("accounts")
+        .set({ display_name: "O" })
+        .where("id", "=", ownerId)
+        .execute();
+    }
   });
 
   it("图片：视觉模型收到字节、重试的尝试、供应商拒收后 media_excluded、附件不在的占位；之后被删 → media_missing", async () => {
@@ -1131,6 +1248,8 @@ describe("reconstructRequest：基线零漂移", { timeout: 120_000 }, () => {
     );
     const first = parent[0]?.messages[0]?.content as { type: string; text?: string }[];
     expect(first.map((b) => b.text)).toEqual([
+      // the sender line first (run context spec §4), then the invocation, then its report
+      "From O (owner)",
       'The user ran the skill "review" in a sub-agent (general-purpose) with /review src. The sub-agent gets the skill\'s instructions as its task; its report follows. Do not do the task yourself.',
       report?.type === "skill_fork_result" ? report.payload.text : "",
     ]);
@@ -1806,7 +1925,7 @@ describe("reconstructRequest: a recording from before background sub-agents", ()
     const started = fixture.child.snapshot.events.find((e) => e.type === "subagent_started")
       ?.payload as EventPayload<"subagent_started">;
     const logged = normalizeStoredDefinition(started.definition);
-    const agentTool = { kind: "builtin" as const, name: "Agent" };
+    const noAgent = { ...logged, disabledTools: [{ kind: "builtin" as const, name: "Agent" }] };
     // the general child stays listed: only the roster around it changes
     const roster = { ...logged, subagents: { ...logged.subagents, templates: ["x"] } };
     // a roster-only change is no change, in the same version or another one
@@ -1815,10 +1934,9 @@ describe("reconstructRequest: a recording from before background sub-agents", ()
     // an org agent child logged without Agent (depth limit, or before nesting): a candidate that
     // offers it is the same child
     const asAgent = { ...started, template: { source: "agent" as const, id: "a", version: 1 } };
-    const withAgent = { ...logged, tools: [...logged.tools, agentTool] };
-    expect(subagentChanged(asAgent, logged, withAgent, false)).toBe(false);
+    expect(subagentChanged(asAgent, noAgent, logged, false)).toBe(false);
     // a child logged with Agent keeps it in the comparison: a candidate without it differs
-    expect(subagentChanged(asAgent, withAgent, logged, false)).toBe(true);
+    expect(subagentChanged(asAgent, logged, noAgent, false)).toBe(true);
   });
 
   it("foreground-era log replays with zero drift", () => {

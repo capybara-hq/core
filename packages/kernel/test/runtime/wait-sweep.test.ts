@@ -25,6 +25,7 @@ import {
 import { approvalExpiredText } from "../../src/tools/pipeline.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -155,10 +156,10 @@ beforeEach(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "mem-connector", name: "echo" },
           { kind: "plugin", plugin: "mem-connector", name: "ask" },
-        ],
+        ]),
         toolPolicies: { "plugin__mem-connector__echo": "ask" },
       },
       visibility: "org",

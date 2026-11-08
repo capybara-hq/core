@@ -21,6 +21,13 @@ import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import {
+  currentRunContext,
+  runContextEvents,
+  runContextFullText,
+  runContextText,
+  senderLines,
+} from "./run-context.js";
+import {
   invokedSkillNames,
   invokedSkillsText,
   SKILL_TEXTS,
@@ -537,6 +544,8 @@ export function summaryText(summary: string): string {
  *   `user_message` / `assistant_message`（content 原样，含 opaque；aborted 的也回放；媒体引用按
  *   {@link resolveMedia} 换成 base64 或文字占位）/ `reminder`
  *   （`role: "system"`，放在它所在的位置）/ `tools_changed` (`role: "system"`, the text of {@link toolsChangedText}, at its position) /
+ *   `run_context` (`role: "system"` at its position, `runContextText`; covered by the summary: the
+ *   current context follows the summary whole; a user message's sender line by `senderLines`) /
  *   `background_task_finished`（`role: "system"`, the text of
  *   {@link renderBackgroundFinished}, placed like a user_message）/ `subagent_delivery` (likewise,
  *   the text of {@link renderSubagentDelivery})；`tool_result` 事件还原为紧随其 assistant 消息之后的一条 user 消息
@@ -664,11 +673,21 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }
     racedPending = racedPending.filter((x) => x.seq > toSeq);
   };
-  /** A user message's blocks, with its fork report when it has one. */
+  /** Run context spec §4: the sender lines, by the messages after the summary boundary. */
+  const senders = senderLines(events, after);
+  /**
+   * A user message's blocks: its sender line first when the sender changed (a separate block, so
+   * `content[0]` stays the typed text), then its own blocks, then its fork report when it has one.
+   */
   const userBlocks = (u: ConversationEvent & { type: "user_message" }): ContentBlock[] => {
     const report = forkReports.get(u.seq);
+    const line = senders.get(u.seq);
     const blocks = blocksOf(u.payload.content);
-    return report === undefined ? blocks : [...blocks, { type: "text", text: report }];
+    return [
+      ...(line === undefined ? [] : [{ type: "text" as const, text: line }]),
+      ...blocks,
+      ...(report === undefined ? [] : [{ type: "text" as const, text: report }]),
+    ];
   };
   /** 被某次模型调用跳过（运行中途到达）、尚未被吸收的可吸收事件，按 seq 升序。 */
   let deferred: AbsorbableEvent[] = [];
@@ -723,6 +742,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       role: "user",
       content: [{ type: "text", text: summaryText(summary.payload.text) }],
     });
+    // run context spec §5: snapshots covered by the summary are not rendered; the context in
+    // effect at the summary's boundary follows it whole
+    if (runContextEvents(events).some((e) => e.seq <= after)) {
+      messages.push({
+        role: "system",
+        content: runContextFullText(currentRunContext(events, after)),
+      });
+    }
     // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
     // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
@@ -784,6 +811,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // the summary is dropped: the request's tool list is current anyway
       case "tools_changed":
         messages.push({ role: "system", content: toolsChangedText(e.payload) });
+        break;
+      // who the agent is and the facts of the day (run context spec §4): the first snapshot whole,
+      // a later one as the changes against the fold before it
+      case "run_context":
+        messages.push({ role: "system", content: runContextText(events, e) });
         break;
       // hook_denied is not model-visible: the model sees only the denied tool call's tool_result
       // (and nothing for a denied model request), so request building skips it

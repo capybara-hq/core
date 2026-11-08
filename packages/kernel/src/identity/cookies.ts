@@ -70,3 +70,16 @@ export function refreshCookieValues(header: string | undefined): string[] {
   }
   return out;
 }
+
+/**
+ * The startup warning for an http trial that cannot sign in: session cookies are Secure but the
+ * configured public URL is plain http, so browsers drop them. Null when cookies are not Secure,
+ * or the public URL is https or unset (an unset URL says nothing about how people reach the app).
+ */
+export function insecurePublicUrlWarning(cfg: KernelConfig): string | null {
+  const url = cfg.http.publicUrl;
+  if (!cfg.auth.cookieSecure || url === undefined || !url.startsWith("http://")) return null;
+  const host = new URL(url).hostname;
+  if (host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1") return null;
+  return `http.publicUrl is ${url} (plain http) while auth.cookieSecure is true: browsers drop the Secure session cookies, so sign-in will not stick. Serve the app over HTTPS, or for a short http trial set auth.cookieSecure=false (CAPYBARA_AUTH__COOKIE_SECURE=false; CAPYBARA_COOKIE_SECURE=false in the compose .env)`;
+}

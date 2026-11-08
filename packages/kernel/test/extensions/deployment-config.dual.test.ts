@@ -28,6 +28,8 @@ interface State {
  * 1. 必填字段缺失：两个副本都照常启动，插件待配置；在副本 0 补上后两个副本都不重启地加载；
  * 2. 在副本 1 改 hot 字段：两个副本的 `ctx.config` 都读到新值，setup 次数不变；
  * 3. 在副本 0 改非 hot 字段：两个副本都重新加载（setup 次数各 +1）。
+ * 4. Clearing the config on replica 1 unloads the extension on both replicas (pending config);
+ *    saving it again on replica 0 loads it on both.
  */
 describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
   let pgc: TestContainer;
@@ -151,5 +153,48 @@ describe("部署级插件配置双副本", { timeout: 120_000 }, () => {
     expect([a?.setups, b?.setups]).toEqual([2, 2]);
     expect([a?.generation, b?.generation]).toEqual([2, 2]);
     expect(a?.config.greeting).toBe("hola");
+  });
+
+  it("4. clearing the config on one replica unloads it on both (pending config); saving again loads it on both", async () => {
+    const cleared = await at(1, "DELETE", "/api/v1/admin/extensions/deploycfg/config");
+    expect(cleared.status, JSON.stringify(cleared.json)).toBe(200);
+    await waitFor(
+      async () => (await state(0)) === 503 && (await state(1)) === 503,
+      20_000,
+      "unloaded on both replicas",
+      100,
+    );
+    await waitFor(
+      async () => {
+        const rows = await db
+          .selectFrom("extension_replica_status")
+          .select(["state", "reason"])
+          .where("plugin", "=", "deploycfg")
+          .execute();
+        return (
+          rows.length === 2 && rows.every((r) => r.state === "pending" && r.reason === "config")
+        );
+      },
+      20_000,
+      "both replicas pending config",
+      100,
+    );
+    expect(
+      await db
+        .selectFrom("secrets")
+        .select("key")
+        .where("key", "like", "plugin-deployment-config:deploycfg:%")
+        .execute(),
+    ).toEqual([]);
+
+    await put(0, { endpoint: "https://again.example" });
+    const [a, b] = (await waitFor(
+      () => both((s) => s.config.endpoint === "https://again.example"),
+      20_000,
+      "loaded again on both replicas",
+      100,
+    )) as State[];
+    expect(a?.tokenSet || b?.tokenSet).toBe(false);
+    expect(a?.config.greeting).toBe("hi");
   });
 });

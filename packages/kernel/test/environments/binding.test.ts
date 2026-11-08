@@ -14,6 +14,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationEnvironments } from "../../src/environments/conversation-environments.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -80,7 +81,7 @@ beforeAll(async () => {
         name: "Coder",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: ["Bash", "Read", "Write", "Agent"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: builtinsOff("Bash", "Read", "Write", "Agent"),
       },
       visibility: "org",
     },

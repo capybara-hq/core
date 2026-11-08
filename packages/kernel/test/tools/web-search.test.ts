@@ -19,6 +19,7 @@ import { webToolError } from "../../src/tools/builtins/web/errors.js";
 import { WEB_SEARCH_SPEC, webSearchTool } from "../../src/tools/builtins/web/search.js";
 import { specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -122,7 +123,7 @@ async function createWebAgent(org = orgId): Promise<string> {
         name: "Researcher",
         instructions: "Search the web.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "WebSearch" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "WebSearch" }]),
       },
       visibility: "org",
     },
@@ -397,7 +398,7 @@ describe("WebSearch: availability", { timeout: 90_000 }, () => {
     expect(await t.unavailable?.({ orgId })).toBe(AMBIGUOUS_REASON);
   });
 
-  it("an org without a provider: the tool is listed unavailable and the run continues", async () => {
+  it("an org without a provider: the tool is not offered, nothing is reported, the run continues", async () => {
     const agentId = await createWebAgent();
     const conv = await createConv(owner, orgId, agentId);
     await postMessage(owner, orgId, conv, "echo:hi");
@@ -406,14 +407,23 @@ describe("WebSearch: availability", { timeout: 90_000 }, () => {
     const reminders = (await eventsOf(db, conv)).flatMap((e) =>
       e.type === "reminder" ? [e.payload.text] : [],
     );
-    expect(reminders).toContain(`${TOOLS_UNAVAILABLE_PREFIX}WebSearch (${NONE_REASON})`);
+    // tools are on by default: one that cannot run is left out, never reported as unavailable
+    expect(reminders.some((r) => r.startsWith(TOOLS_UNAVAILABLE_PREFIX))).toBe(false);
+    const calls = (await eventsOf(db, conv)).flatMap((e) =>
+      e.type === "model_call" ? [e.payload.request.tools?.map((t) => t.key) ?? []] : [],
+    );
+    expect(calls[0]).not.toContain("WebSearch");
+    const why = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { disabledTools: builtinsOff("WebSearch") });
+    expect(why.hidden).toEqual([{ ref: "WebSearch", reason: NONE_REASON }]);
   });
 
   it("specHash is the same in two orgs using different providers", async () => {
     await enable(orgId, "fake-web");
     const orgB = await createOrg(owner, "Beta");
     await enable(orgB, "fake-web-2");
-    const def = { tools: [{ kind: "builtin" as const, name: "WebSearch" }] } as never;
+    const def = { disabledTools: builtinsOff("WebSearch") };
     const reg = k.app.get(ToolRegistry);
     const a = (await reg.forAgent(orgId, def)).tools.find((t) => t.key === "WebSearch");
     const b = (await reg.forAgent(orgB, def)).tools.find((t) => t.key === "WebSearch");

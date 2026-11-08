@@ -38,6 +38,16 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`); never before a conversation's first
   request. Rendered as a system message at its position, dropped once a summary covers it. In the log, so no `DriftReason`
   (the `tools_changed` DriftReason is a different thing: a baseline whose rebuilt tool sequence differs from the record).
+- **`run_context`** (run context spec `docs/superpowers/specs/2026-11-08-run-context-design.md`): written at run start by
+  `RunContextService.record` (after `skills_catalog`, under the conversation row lock, idem `run_context:<runId>`): the
+  agent version's name and description, the org, the date (clock seam `RUN_CONTEXT_CLOCK`), the zone and language of the
+  person whose message started the run (`user_message.timeZone` / `locale`, not model-visible); a sub-agent's roster
+  name and `dispatchedBy`. First one full, later ones only changes (a date only forward unless the zone changes).
+  Rendered at its position as a system message (`runtime/context/run-context.ts`); covered by a summary, the fold at
+  the boundary follows the summary whole; left out of the compaction transcript. `user_message.sender` (display name
+  and role at send time) renders as a separate first text block `From <name> (<role>)` only when the sender changes,
+  and again on the first message after a summary (`senderLines`, log only). Both are in the log: no `DriftReason`;
+  old logs (no event, no field) rebuild byte for byte. Full-run replay copies the run's `run_context` as recorded.
 
 ## Queued messages (UI refresh B)
 

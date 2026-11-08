@@ -31,6 +31,7 @@ import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { seedForkedSkill } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -194,7 +195,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: INSTRUCTIONS,
         model: SCRIPT,
-        tools: [{ kind: "builtin", name: "Agent" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
       },
       visibility: "org",
     },
@@ -587,7 +588,7 @@ describe("candidates on child cases (batch 13 review I1, m1)", { timeout: 120_00
           name: "Inline lead",
           instructions: INSTRUCTIONS,
           model: SCRIPT,
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
           subagents: {
             inline: [
               { name: "helper", description: "Helps.", instructions: "Help.", model: "fast" },
@@ -785,7 +786,7 @@ describe("forked skills (phase D)", { timeout: 120_000 }, () => {
           name: "Forker",
           instructions: INSTRUCTIONS,
           model: SCRIPT,
-          tools: [],
+          disabledTools: builtinsOff(),
           skills: { orgSkills: [skillId] },
         },
         visibility: "org",
@@ -976,6 +977,7 @@ describe("follow-ups by SendMessage", { timeout: 60_000 }, () => {
     expect(tasks.at(-1)?.payload.dispatch?.kind).toBe("message");
     expect(narrowed).toBeDefined();
     const snap = await snapshotOf(child.id, second.id);
-    expect(snap.subagent?.definition.tools).toEqual(narrowed?.tools);
+    expect(narrowed?.disabledTools).toBeDefined();
+    expect(snap.subagent?.definition.disabledTools).toEqual(narrowed?.disabledTools);
   });
 });

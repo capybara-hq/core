@@ -4,6 +4,7 @@ import { ApiError } from "../../src/errors.js";
 import { runOutsideTransaction } from "../../src/infra/database/transaction-host.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   auditActions,
@@ -190,7 +191,7 @@ describe("org plugin uninstall", { timeout: 60_000 }, () => {
           name: "Helper",
           instructions: "x",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "connector", connectorId: conn?.id, tools: "all" }],
+          disabledTools: onlyBuiltins([{ kind: "connector", connectorId: conn?.id, tools: "all" }]),
         },
         visibility: "org",
       },

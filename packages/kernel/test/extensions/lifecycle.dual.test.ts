@@ -16,6 +16,7 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
@@ -218,7 +219,7 @@ describe("插件生命周期双副本验收", { timeout: 120_000 }, () => {
         name: "Waiter",
         instructions: "Call the tool.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "life", name: "wait" }],
+        disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "life", name: "wait" }]),
       },
       visibility: "org",
     });

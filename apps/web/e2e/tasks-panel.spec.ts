@@ -19,7 +19,7 @@ test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write �
     data: { enabled: true },
   });
   expect(enable.status(), await enable.text()).toBe(200);
-  // 网页的 agent 表单不列插件工具：经 API 建一个引用 plugin__fake-tools-ui__write 的 agent
+  // an agent through the API: it has plugin__fake-tools-ui__write (tools default-on)
   const agent = await page.request.post(`${base}/agents`, {
     headers: CSRF,
     data: {
@@ -27,7 +27,6 @@ test("扩展视图（假扩展 fake-tools-ui）：plugin__fake-tools-ui__write �
         name: "Planner",
         instructions: "Keep a task list.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
       },
       visibility: "private",
     },

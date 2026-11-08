@@ -2,12 +2,11 @@ import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
 import {
   composer,
+  expectGroupAllOn,
   newAgent,
   openAgentSection,
   replies,
-  saveSection,
   startChat,
-  takeAllGroupTools,
   toolGroup,
 } from "./support/chat";
 import { signIn } from "./support/sign-in";
@@ -46,8 +45,7 @@ const actionRow = (page: Page) => page.getByRole("region", { name: designZh("she
 async function chatWithAgent(page: Page, agentName: string, connectorName: string) {
   await newAgent(page, agentName);
   await openAgentSection(page, "tools");
-  await takeAllGroupTools(page, connectorName);
-  await saveSection(page);
+  await expectGroupAllOn(page, connectorName);
   await startChat(page, agentName);
   return composer(page);
 }

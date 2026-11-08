@@ -1,6 +1,14 @@
 "use client";
 
-import { Field, FormPage, FormSection, Input, RadioGroup, useToast } from "@capybara-hq/design";
+import {
+  Callout,
+  Field,
+  FormPage,
+  FormSection,
+  Input,
+  RadioGroup,
+  useToast,
+} from "@capybara-hq/design";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -18,6 +26,7 @@ import { deploymentSettingsQuery, settingsChangeKeys } from "../../../../lib/que
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { useAdmin } from "../../../../lib/query/workspace";
+import { useSecureCookiesBlocked } from "../../../../lib/secure-origin";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
@@ -101,6 +110,7 @@ function AdminSettings({
   });
   const [draft, setDraft] = useState<Partial<Simple>>({});
   const [pending, setPending] = useState(false);
+  const httpBlocked = useSecureCookiesBlocked();
 
   const value = <K extends keyof Simple>(k: K): Simple[K] | undefined => draft[k] ?? saved[k];
   const currency = value("priceCurrency") ?? "";
@@ -156,6 +166,7 @@ function AdminSettings({
         },
       }}
     >
+      {httpBlocked && <Callout tone="warn">{t("insecureOrigin")}</Callout>}
       <FormSection
         id="org-creation"
         title={t("orgCreation.title")}

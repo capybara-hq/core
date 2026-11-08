@@ -162,11 +162,50 @@ const kindOf = (op: PlatformOperation): "read" | "write" =>
 const availabilityFields = (a: Availability) =>
   a.ok ? { available: true } : { available: false, reason: a.reason };
 
+type JsonObjectSchema = {
+  properties?: Record<string, unknown>;
+  required?: string[];
+  anyOf?: JsonObjectSchema[];
+  oneOf?: JsonObjectSchema[];
+};
+
+/** The most input keys a `params` line names before it ends in `…`. */
+const PARAMS_MAX = 8;
+const paramsCache = new WeakMap<PlatformOperation, string>();
+
+/**
+ * An operation's input keys as `browse` and `search` show them, so a call needs no guess:
+ * `"itemId"`, `"agentId, updatedAt, avatar?, quickActions?"` (`?` = optional), `""` when it takes
+ * none. A union input lists the keys of every branch; a key is required when every branch requires
+ * it. Types, bounds and an example stay in `describe`.
+ */
+export function paramsLine(op: PlatformOperation): string {
+  const cached = paramsCache.get(op);
+  if (cached !== undefined) return cached;
+  const schema = z.toJSONSchema(op.input, {
+    io: "input",
+    unrepresentable: "any",
+  }) as JsonObjectSchema;
+  const branches = schema.anyOf ?? schema.oneOf ?? [schema];
+  const keys: string[] = [];
+  for (const b of branches) {
+    for (const k of Object.keys(b.properties ?? {})) if (!keys.includes(k)) keys.push(k);
+  }
+  const required = (k: string) => branches.every((b) => b.required?.includes(k) ?? false);
+  const ordered = [...keys.filter(required), ...keys.filter((k) => !required(k))];
+  const names = ordered.map((k) => (required(k) ? k : `${k}?`));
+  const text =
+    names.length > PARAMS_MAX ? `${names.slice(0, PARAMS_MAX).join(", ")}, …` : names.join(", ");
+  paramsCache.set(op, text);
+  return text;
+}
+
 /** One operation as `browse` and `search` list it. */
 const line = (op: PlatformOperation, facts: ActorFacts) => ({
   id: op.id,
   description: firstSentence(op.description),
   kind: kindOf(op),
+  params: paramsLine(op),
   ...availabilityFields(availability(op, facts)),
 });
 

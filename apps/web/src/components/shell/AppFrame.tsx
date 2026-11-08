@@ -400,7 +400,7 @@ function ShellFrame({
   };
   const personalMenu: MenuItem[] = [
     languageMenu,
-    { label: t("shell.accountSettings"), href: "/account/connections" },
+    { label: t("shell.accountSettings"), href: "/account/preferences" },
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];

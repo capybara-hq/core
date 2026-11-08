@@ -93,7 +93,7 @@ async function skill(name: string, bytes = 1000, agentId?: string): Promise<stri
 const definition = (skills: Record<string, unknown> | undefined, extra = {}) => ({
   name: "Helper",
   model: { provider: "model-fake", model: "fake-1" },
-  tools: [],
+  disabledTools: [],
   ...(skills !== undefined && { skills }),
   ...extra,
 });

@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { INITIAL_PASSWORD_NOTE } from "../../src/platform/ops/accounts.ops.js";
 import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import {
   createConv,
@@ -53,7 +54,7 @@ async function agent(name: string, visibility: "org" | "private"): Promise<strin
         name,
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Platform" }],
+        disabledTools: builtinsOff("Platform"),
       },
       visibility,
     },

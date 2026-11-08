@@ -165,5 +165,6 @@ export function ExtensionViewTab({
       </Stack>
     );
   }
-  return <UiViewRenderer view={state.view} onAction={onAction} />;
+  // An extension's own page: an empty view draws the page empty state (spec §6.18)
+  return <UiViewRenderer view={state.view} onAction={onAction} emptySize="page" />;
 }

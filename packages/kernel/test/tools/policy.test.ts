@@ -23,6 +23,7 @@ import {
 import { type CallPolicy, type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { eventsOf } from "../helpers/runs.js";
 import { seedConnector, seedConversation } from "../helpers/tool-fixtures.js";
 import { approvalsFor } from "../helpers/tools.js";
@@ -164,7 +165,7 @@ const agentDef: AgentDefinition = {
   fallback: null,
   modelParams: {},
   fallbackParams: {},
-  tools: [],
+  disabledTools: builtinsOff(),
   toolPolicies: {},
 };
 

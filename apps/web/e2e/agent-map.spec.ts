@@ -33,9 +33,8 @@ test("agent map: open a child from its call block, its transcript, back to the t
 }) => {
   await signIn(page);
   const orgId = await currentOrg(page);
-  await createAgent(page, orgId, "Lead with background helpers", [
-    { kind: "builtin", name: "Agent" },
-  ]);
+  // the builtin Agent is on by default (tools default-on)
+  await createAgent(page, orgId, "Lead with background helpers");
   await startChat(page, "Lead with background helpers");
   await send(page, DISPATCH);
 

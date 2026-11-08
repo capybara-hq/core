@@ -27,6 +27,7 @@ import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { specHash } from "../../src/tools/registry.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -224,7 +225,7 @@ async function createSkillAgent(orgSkills: string[], pinned?: string[]): Promise
         name: "Skilled",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Bash" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
         skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
       },
       visibility: "org",
@@ -244,7 +245,7 @@ async function setSkills(agentId: string, orgSkills: string[], pinned?: string[]
         name: "Skilled",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Bash" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
         skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
       },
     },
@@ -1090,10 +1091,10 @@ describe("phase D: Skill for invoked and forked skills", { timeout: 90_000 }, ()
           name: "Forker",
           instructions: "Use skills.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [
+          disabledTools: onlyBuiltins([
             { kind: "builtin", name: "Bash" },
             { kind: "builtin", name: "Agent" },
-          ],
+          ]),
           skills: { orgSkills: [review.id] },
           subagents: { templates: [template] },
         },

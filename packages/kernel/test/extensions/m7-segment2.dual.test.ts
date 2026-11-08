@@ -17,6 +17,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
 import { USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
 import { hookDeniedText } from "../../src/tools/pipeline.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { packPluginDir } from "../helpers/plugin-packages.js";
 import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
@@ -323,7 +324,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", { timeout
         name: "Planner",
         instructions: "Keep a list.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
+        disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }]),
       },
       visibility: "org",
     });

@@ -48,11 +48,7 @@ export function ExtensionOrgCopies({
       <Skeleton rows={2} />
     );
   } else if (read.data.length === 0) {
-    body = (
-      <Text variant="prose" tone="muted">
-        {t("empty")}
-      </Text>
-    );
+    body = <ItemList label={t("title")} empty={t("empty")} />;
   } else {
     body = (
       <ItemList label={t("title")}>

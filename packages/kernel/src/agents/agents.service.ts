@@ -25,6 +25,8 @@ import {
 } from "./agent-lookup.js";
 import {
   type AgentDefinition,
+  canonicalDisabledTools,
+  type DisabledToolRef,
   normalizeStoredDefinition,
   type PendingConnector,
   paramIssues,
@@ -56,6 +58,20 @@ export type AgentVersionSummary = Omit<AgentVersion, "definition">;
 
 /** 创建 / 修改的提示（不拒绝）：`fallback_same_provider` = 兜底与主模型同一供应商（spec 4.5）。 */
 export type AgentWarning = "fallback_same_provider";
+
+/**
+ * The definition with its description (run context spec §3.5): `given` when the save gives one
+ * (trimmed; empty removes it), else `kept` (the current version's).
+ */
+function withDescription(
+  definition: AgentDefinition,
+  given: string | undefined,
+  kept: string | undefined,
+): AgentDefinition {
+  const { description: _drop, ...rest } = definition;
+  const next = given !== undefined ? given.trim() : kept;
+  return next === undefined || next === "" ? rest : { ...rest, description: next };
+}
 
 /** A new agent has no id to bind an upload to yet: a client can only choose a preset on create. */
 export function assertProfileWritable(profile: ProfileInput | undefined): void {
@@ -124,6 +140,11 @@ export function keepPendingConnectors(
     }
   }
   return next.length > 0 ? { ...rest, pendingConnectors: [...next] } : rest;
+}
+
+/** `definition` with `disabledTools` in its canonical form (tools default-on spec §2). */
+function withCanonicalTools(definition: AgentDefinition): AgentDefinition {
+  return { ...definition, disabledTools: canonicalDisabledTools(definition.disabledTools ?? []) };
 }
 
 /** Where an agent created from a template came from (ruling P4-8; set once, never versioned). */
@@ -336,7 +357,7 @@ export class AgentsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AgentLookup) private readonly lookup: AgentLookup,
-    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkRefs">,
+    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "checkDisabled">,
     /** 删除 agent 时取消它待处理的技能改动（T15）。 */
     @Inject(SkillChangesService)
     private readonly skillChanges: Pick<
@@ -356,13 +377,25 @@ export class AgentsService {
   ) {}
 
   /**
-   * 校验工具引用与工具策略：引用的内置 / 插件 / 连接器工具必须存在（见 `ToolRegistry.checkRefs`）；
-   * `toolPolicies` 的键必须是这些引用产生的工具 key（取值只能收紧，已由 schema 保证）。
-   * 不合法 → `validation_failed`，path 为 `tools.<i>` / `toolPolicies.<key>`。
+   * Checks the turned-off tools and the policies (tools default-on spec §2): `disabledTools` must
+   * name existing builtins, extensions and connectors (`ToolRegistry.checkDisabled`); `toolPolicies`
+   * keys must be tools the agent could have, on or off (values only tighten, by the schema); a
+   * sub-agent's key filter is never saved. Invalid → `validation_failed` at `disabledTools.<i>` /
+   * `toolPolicies.<key>` / `subagentTools`. The list is stored in canonical form.
    */
-  private async checkTools(orgId: string, def: AgentDefinitionInput): Promise<Set<string>> {
-    const { keys, issues } = await this.tools.checkRefs(orgId, def.tools);
+  private async checkTools(
+    orgId: string,
+    def: AgentDefinitionInput,
+    kept: readonly DisabledToolRef[] = [],
+  ): Promise<Set<string>> {
+    const { keys, issues } = await this.tools.checkDisabled(orgId, def.disabledTools ?? [], kept);
     const details = [...issues];
+    if (def.subagentTools !== undefined) {
+      details.push({
+        path: "subagentTools",
+        message: "subagentTools is set only on a sub-agent's definition at dispatch",
+      });
+    }
     for (const key of Object.keys(def.toolPolicies)) {
       if (!isToolPolicyKey(key, keys)) {
         // an rc key (tool naming spec §8.3): saving writes current keys only, so name them
@@ -377,6 +410,26 @@ export class AgentsService {
       throw new ApiError("validation_failed", "Invalid tool references", details);
     }
     return keys;
+  }
+
+  /**
+   * The current version's `disabledTools` (empty for an agent that is not there: the update's own
+   * checks report that): entries kept from it are not re-checked, so a connector deleted or an
+   * extension uninstalled later never blocks other edits.
+   */
+  private async keptDisabled(orgId: string, agentId: string): Promise<DisabledToolRef[]> {
+    const row = await this.db.db
+      .selectFrom("agents")
+      .innerJoin("agent_versions", (j) =>
+        j
+          .onRef("agent_versions.agent_id", "=", "agents.id")
+          .onRef("agent_versions.version", "=", "agents.current_version"),
+      )
+      .select("agent_versions.definition")
+      .where("agents.id", "=", agentId)
+      .where("agents.org_id", "=", orgId)
+      .executeTakeFirst();
+    return row === undefined ? [] : (normalizeStoredDefinition(row.definition).disabledTools ?? []);
   }
 
   /**
@@ -489,7 +542,18 @@ export class AgentsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ agent: AgentView; warnings: AgentWarning[]; role: OrgRole }> {
-    const input = { ...request, definition: deriveInstructions(request.definition, null) };
+    const input = {
+      ...request,
+      // run context spec §3.5: version 1 carries the description (the profile's when the
+      // definition gives none)
+      definition: withCanonicalTools(
+        withDescription(
+          deriveInstructions(request.definition, null),
+          request.definition.description ?? request.profile?.description,
+          undefined,
+        ),
+      ),
+    };
     // 先解析模型（可能访问供应商），不在持有组织行锁时做
     const warnings = await this.checkModels(orgId, input.definition);
     const toolKeys = await this.checkTools(orgId, input.definition);
@@ -558,7 +622,7 @@ export class AgentsService {
         profile_avatar: JSON.stringify(
           input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
         ),
-        profile_description: input.profile?.description ?? "",
+        profile_description: input.definition.description ?? "",
         profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
         ...(template !== null && {
           created_from_template_id: template.id,
@@ -650,7 +714,9 @@ export class AgentsService {
   ): Promise<{ agent: AgentView; warnings: AgentWarning[] }> {
     const patch = request;
     const warnings = patch.definition ? await this.checkModels(orgId, patch.definition) : [];
-    const toolKeys = patch.definition ? await this.checkTools(orgId, patch.definition) : null;
+    const toolKeys = patch.definition
+      ? await this.checkTools(orgId, patch.definition, await this.keptDisabled(orgId, agentId))
+      : null;
     const agent = await this.updateIn(
       orgId,
       agentId,
@@ -701,11 +767,25 @@ export class AgentsService {
         .executeTakeFirstOrThrow();
       // the prompt: instructionFiles give instructions; a save given neither keeps the current one
       const currentDefinition = normalizeStoredDefinition(current.definition);
-      const definition = keepPendingConnectors(
-        deriveInstructions(patch.definition, currentDefinition),
-        patch.definition.pendingConnectors,
-        currentDefinition.pendingConnectors,
+      const definition = withCanonicalTools(
+        withDescription(
+          keepPendingConnectors(
+            deriveInstructions(patch.definition, currentDefinition),
+            patch.definition.pendingConnectors,
+            currentDefinition.pendingConnectors,
+          ),
+          patch.definition.description,
+          currentDefinition.description,
+        ),
       );
+      // the display copy follows every description the save gives (run context spec §3.5)
+      if (patch.definition.description !== undefined) {
+        await t
+          .updateTable("agents")
+          .set({ profile_description: definition.description ?? "" })
+          .where("id", "=", agentId)
+          .execute();
+      }
       // 当前版本已有的技能引用保存时合法，不再核对（被删的技能不挡住其他改动）；新加的照常核对
       const kept = new Set((current.definition as AgentDefinition).skills?.orgSkills ?? []);
       await assertOrgSkills(t, orgId, definition.skills?.orgSkills ?? [], kept);

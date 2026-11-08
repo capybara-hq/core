@@ -38,11 +38,13 @@
         "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
       },
       "auth": {
-        "account_disabled": "This account has been disabled."
+        "account_disabled": "This account has been disabled.",
+        "invalid_credentials": "Invalid username or password.",
+        "rate_limited": "Too many attempts. Please try again later."
       },
       "unknown": "Sign-in failed. Please try again."
     },
-    "insecureOrigin": "If sign-in doesn't stick: this page is served over plain http from a host other than localhost, and browsers drop the session cookie here while it is marked Secure (the default). Open the app over HTTPS (or on localhost), or, for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env), and set CAPYBARA_PUBLIC_URL to this address, or attachment uploads and downloads fail."
+    "insecureOrigin": "You are using an insecure http address, so you may not stay signed in. Use the HTTPS address or contact your administrator."
   },
   "changePassword": {
     "title": "Set a new password",
@@ -467,24 +469,29 @@
       "paramsSectionHint": "Parameters you leave untouched use the model defaults.",
       "nameRequired": "Enter a name.",
       "toolsSection": "Tools",
-      "toolsSectionHint": "Tools the agent may call. A policy can only be tightened: ask for approval, or deny.",
+      "toolsSectionHint": "The agent can use every tool the org offers; untick a tool to turn it off. A policy can only be tightened: ask for approval, or deny.",
       "builtinLabel": "Built-in tools",
       "builtin": {
         "AskUserQuestion": "Ask the user",
         "ReadToolOutput": "Read archived tool output",
         "SkillWrite": "Write skills",
+        "Bash": "Run commands",
+        "Read": "Read files",
+        "Write": "Write files",
+        "Edit": "Edit files",
+        "Glob": "Find files by name",
+        "Grep": "Search file contents",
+        "Deliver": "Deliver files",
         "WebSearch": "Search the web",
         "WebFetch": "Read web pages",
-        "Platform": "Use the platform"
+        "Platform": "Use the platform",
+        "CurrentTime": "Current time"
       },
       "connectorsLabel": "Connectors",
       "noConnectors": "No connectors are installed.",
       "extensionToolsLabel": "Extension tools",
       "noExtensionTools": "No extension enabled in this organization provides tools.",
       "extensionToolsUnreadable": "The extension tools could not be read. Refresh the page to retry.",
-      "extensionToolUnavailable": "Unavailable: {reason}",
-      "extensionNotEnabled": "The extension {extension} is not enabled in this organization, or was uninstalled.",
-      "extensionToolGone": "The extension {extension} no longer provides this tool.",
       "extensionToolOffInOrg": "Turned off in this org",
       "policiesLabel": "Policies",
       "policy": {
@@ -495,31 +502,31 @@
       "editTitle": "Edit agent",
       "skillsSection": "Skills",
       "skillsSectionHint": "Skills the agent can load when a task needs them.",
-      "orgSkillsLabel": "Organization skills",
-      "confirmSkillWrite": "Ask me before the agent writes a skill",
-      "confirmSkillWriteHint": "Private agents only. When off, skills the agent writes take effect immediately; when on, each write needs your confirmation and then takes effect immediately too.",
-      "noOrgSkills": "The organization has no skills yet.",
+      "orgSkillsLabel": "Org skills",
+      "goToSkills": "Go to Skills",
+      "confirmSkillWrite": "Ask me before each write",
+      "confirmSkillWriteHint": "Private agents only; on a shared agent the owner approves each change in the inbox",
+      "noOrgSkills": "The organization has no skills yet",
       "deletedSkill": "Deleted skill ({id})",
       "deletedSkillHint": "A deleted skill is ignored when the agent runs. Uncheck it to remove the reference.",
-      "ownSkillsLabel": "Skills written by this agent",
-      "ownSkillsHint": "The agent writes these with SkillWrite. On a shared agent, each change waits for the owner's approval in the inbox.",
-      "noOwnSkills": "This agent has not written any skills.",
-      "ownSkillVersion": "{name} · v{version}",
+      "ownSkillsLabel": "Skills this agent wrote",
+      "noOwnSkills": "This agent hasn't written any skills yet",
       "deleteOwnSkill": "Delete",
       "deleteOwnSkillLabel": "Delete skill {name}",
       "deleteOwnSkillTitle": "Delete skill {name}?",
       "deleteOwnSkillHint": "The agent stops loading this skill, and pending changes to it are cancelled.",
       "ownSkillDeleted": "Skill \"{name}\" deleted.",
-      "pinnedLabel": "Pinned skills",
+      "pinnedLabel": "Pinned",
       "pinnedUnavailable": "The skill lists could not be read; the pinned skills are kept as they are.",
-      "pinnedHint": "A pinned skill's instructions are always in the model's context, without calling Skill. Pin at most 3 of the selected skills, with SKILL.md files of at most 32 KB in total.",
-      "noPinnable": "Select skills above to pin them.",
+      "pinnedHint": "Pinned skills go to the agent every time, so it doesn't have to look them up first",
+      "pinnedCount": "{count} / {max}",
+      "noPinnable": "Select skills first",
       "pinSkill": "Pin {name}",
       "suggested": "Suggested",
       "tokenEstimate": "≈ {n} tokens",
-      "pinnedTotal": "{count} of {max} pinned · ≈ {n} tokens",
+      "pinnedTotal": "≈ {n} tokens in total",
       "tooMany": "At most {max} skills can be pinned. Unpin one to pin another.",
-      "overLimit": "The pinned SKILL.md files total {bytes} bytes, over the {max}-byte limit.",
+      "overLimit": "The pinned skills' instructions total {bytes} bytes, over the {max}-byte limit.",
       "overLimitKept": "Runs keep the pinned skills that fit, in this order, and leave out the rest. Unpin a skill to fix it.",
       "overLimitRefused": "Saving this pinned list is refused until it fits.",
       "skillTag": {
@@ -535,7 +542,7 @@
         "not_found": "{name}: the skill does not exist.",
         "duplicate": "{name} is pinned more than once.",
         "too_many": "{name}: at most {max} skills can be pinned.",
-        "too_large": "{name}: the pinned SKILL.md files would total {bytes} bytes, over the {max}-byte limit.",
+        "too_large": "{name}: the pinned skills' instructions would total {bytes} bytes, over the {max}-byte limit.",
         "manual_only": "{name} is manual-only (people invoke it with /): it is not in the model's catalog, so it cannot be pinned."
       },
       "subagents": {
@@ -592,7 +599,6 @@
         "platform": "Platform",
         "templateUnavailable": "Unavailable: {name} (a platform template turned off in this organization; untick to remove it)"
       },
-      "webUnavailable": "This organization has no usable web provider: an org admin needs to enable and configure one, or, when several are enabled, choose a default provider in the extension settings, before the selected web tools can be used.",
       "unavailableSkill": "Unavailable: {name}",
       "unavailableSkillHint": "These platform skills are off in this organization, so the agent does not load them; they come back when an org admin turns them on again. Untick one to remove the reference.",
       "groupsLabel": "Extensions and connectors",
@@ -600,22 +606,20 @@
         "extension": "Extension",
         "connector": "Connector"
       },
-      "groupSummary": "{on} of {total} tools on",
       "groupAsk": "{count} need approval",
       "groupDeny": "{count} denied",
-      "groupUnused": "Not used",
-      "groupUsed": "In use",
-      "groupUnavailable": "Some tools unavailable",
+      "groupAllOn": "All on",
+      "groupAllOff": "All off",
+      "groupOff": "{count} off",
       "groupNoTools": "There are no usable tools here.",
       "noGroups": "No extension or connector in this organization provides tools yet.",
       "configure": "Configure",
       "configureGroup": "Configure {name}",
       "sheetTools": "Tools of {name}",
       "sheetDone": "Done",
-      "sheetHint": "Tick the tools the agent may call; a policy can only be tightened. The changes are saved with this page.",
+      "sheetHint": "Everything is on by default; untick a tool to turn it off for this agent, or untick all to turn the whole group off (tools it gains later too). A policy can only be tightened. The changes are saved with this page.",
       "loadingTools": "Reading the tools…",
-      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later.",
-      "connectorToolUnavailable": "Unavailable: this tool is off, waiting for review, or gone from the connector."
+      "connectorToolsUnreadable": "This connector's tools could not be read. Try again later."
     },
     "params": {
       "default": "Default",
@@ -705,7 +709,7 @@
       "uploadOff": "Uploading needs object storage, which this deployment has not configured. Pick one of the animals instead.",
       "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
       "descriptionLabel": "Description",
-      "descriptionHelp": "One line about what this agent is for. People see it; the model does not.",
+      "descriptionHelp": "One line about what this agent is for. People see it on the agent's cards, and the agent knows it as its own description.",
       "membersLabel": "Members who can use it",
       "membersLoading": "Loading members…",
       "membersFailed": "The members could not be loaded.",
@@ -803,26 +807,30 @@
       "tools": {
         "list": "Tools",
         "none": "No tools.",
-        "disallowed": "Not allowed",
-        "hint": "An agent created from it gets the tools the organization can use; the rest are listed as unavailable.",
+        "allOn": "All on",
+        "allOnHint": "An agent created from it has every tool the organization offers, except those turned off below",
+        "disallowed": "Off",
+        "hint": "Everything is on by default: an agent created from it has every tool the organization offers; untick a tool to turn it off. A policy can only be tightened.",
         "others": "Other tools",
         "unavailable": "{tool} (not available here)",
-        "othersHint": "The organization cannot use these tools now; untick one to remove it from the template."
+        "othersHint": "The template turns these off and the organization does not have them; tick one to remove it from the template."
       },
       "skills": {
         "list": "Skills",
         "none": "No skills.",
-        "pinned": "Preloaded",
+        "pinned": "Pinned",
         "hint": "A template names its skills; creating an agent looks them up by name among the organization's skills and skips the ones it cannot find.",
-        "selectLabel": "Skills used",
-        "noOrgSkills": "The organization has no skills yet.",
+        "selectLabel": "Org skills",
+        "goToSkills": "Go to Skills",
+        "noOrgSkills": "The organization has no skills yet",
         "unreadable": "The organization's skills could not be read.",
         "missing": "{name} (not in this organization; skipped on create)",
-        "tooMany": "At most {max} skills that are not preloaded.",
-        "pinLabel": "Preloaded",
-        "noneToPin": "Pick skills first, then choose which to preload.",
-        "pin": "Preload {name}",
-        "pinHint": "Preloaded skills go into every run's context; at most {max}."
+        "tooMany": "At most {max} skills that are not pinned.",
+        "pinLabel": "Pinned",
+        "noneToPin": "Select skills first",
+        "pin": "Pin {name}",
+        "pinCount": "{count} / {max}",
+        "pinHint": "Pinned skills go to the agent every time, so it doesn't have to look them up first"
       },
       "connectors": {
         "list": "Connectors",
@@ -1400,6 +1408,7 @@
     }
   },
   "ui": {
+    "empty": "Nothing here yet.",
     "dangerDescription": "The extension performs this action. It may not be reversible.",
     "embedRefreshFailed": "Could not renew the extension page's credentials. Retrying; the page may not load or save data for now.",
     "embedRemountLimit": "The extension page kept navigating away after loading, so it was stopped. Retry, or contact the extension provider."
@@ -2017,9 +2026,10 @@
       "general": "General",
       "sandbox": "Sandbox",
       "identities": "IM identities",
-      "models": "Model purposes",
+      "models": "Models",
       "members": "Members",
-      "tokens": "Service tokens"
+      "tokens": "Service tokens",
+      "preferences": "Preferences"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -2118,6 +2128,11 @@
         "override": "Set for this organization by a super admin"
       },
       "newOnly": "Only applies to newly created sandboxes; existing sandboxes keep the limits they were created with until they are destroyed."
+    },
+    "timeZone": {
+      "title": "Default time zone",
+      "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
+      "label": "Default time zone"
     }
   },
   "configForm": {
@@ -2985,6 +3000,18 @@
     "setMeta": "{agent} · {n, plural, one {# case} other {# cases}}"
   },
   "models": {
+    "tabs": {
+      "models": "Models",
+      "purposes": "Purpose defaults"
+    },
+    "providers": {
+      "label": "Providers",
+      "provider": "Provider",
+      "count": "Models",
+      "failed": "Failed",
+      "option": "{name} · {count, plural, one {# model} other {# models}}",
+      "optionFailed": "{name} · failed to list models"
+    },
     "admin": {
       "title": "Models",
       "providers": {
@@ -2992,7 +3019,8 @@
         "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
       },
       "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
-      "noProviders": "No model providers yet. Install a model provider extension and it will show up here.",
+      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
+      "toPlugins": "Go to plugins",
       "noModels": "This provider has no models.",
       "columns": {
         "model": "Model",
@@ -3001,7 +3029,9 @@
         "input": "Input",
         "output": "Output",
         "cacheRead": "Cache read",
-        "cacheWrite": "Cache write"
+        "cacheWrite": "Cache write",
+        "dimensions": "Dimensions",
+        "maxInput": "Max input"
       },
       "sameAsInput": "Same as input",
       "menu": {
@@ -3027,8 +3057,11 @@
       }
     },
     "org": {
+      "pageTitle": "Models",
       "title": "Model purposes",
-      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default."
+      "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
+      "noProviders": "This org has no model providers yet. Turn on a model provider plugin on the Plugins page, or ask a super admin to install one.",
+      "toPlugins": "Go to plugins"
     },
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {
@@ -3310,6 +3343,7 @@
       "saved": "Deployment settings saved",
       "allow": "Allow",
       "deny": "Deny",
+      "insecureOrigin": "You are opening the console over plain http from a host other than localhost. Session cookies are marked Secure by default and browsers drop them here, so people may not stay signed in. Use HTTPS; for a short trial over http only, set CAPYBARA_AUTH__COOKIE_SECURE=false on the kernel services (CAPYBARA_COOKIE_SECURE=false in the compose .env) and set CAPYBARA_PUBLIC_URL to this address, or attachment uploads and downloads fail.",
       "orgCreation": {
         "title": "Who can create organizations",
         "description": "When restricted, only super admins can create organizations.",
@@ -3492,7 +3526,14 @@
         "listSep": ", ",
         "willReload": "Saving reloads the extension, which can take up to about {seconds} seconds",
         "appliesNow": "These changes apply as soon as they are saved",
-        "noteSep": "; "
+        "noteSep": "; ",
+        "clear": "Clear config",
+        "cleared": "Config cleared.",
+        "clearConfirm": {
+          "title": "Clear the deployment config of “{name}”",
+          "hint": "Clearing deletes the deployment config and secrets saved here. The extension becomes pending configuration and stops loading; agents using its models or tools lose them until it is configured again. Values set in the startup config or environment variables are not affected and stay in effect.",
+          "confirm": "Clear config"
+        }
       },
       "callout": "{n, plural, one {# extension needs attention} other {# extensions need attention}}: {names}",
       "calloutFix": "Fix now",
@@ -3974,6 +4015,7 @@
         "title": "Marketplace sources",
         "description": "Plugins are listed from the sources set up here. Bringing one in from the Marketplace tab of Plugins downloads it, checks it against the marketplace's integrity and reviews it before it is added.",
         "search": "Search sources",
+        "clearSearch": "Clear search",
         "noMatch": "No matching sources.",
         "official": "Official marketplace",
         "officialHint": "The address is set in the deployment config marketplaces.official.* (by default the capybara-hq/plugins git repository) and is read-only here.",
@@ -4814,5 +4856,17 @@
     "noneInOrg": "This plugin offers no component to this organization.",
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
+  },
+  "preferences": {
+    "title": "Preferences",
+    "save": "Save",
+    "saved": "Preferences saved.",
+    "timeZone": {
+      "title": "Time zone",
+      "description": "Agents use this time zone to tell what day it is. By default it follows your browser; messages from an IM have no browser, so they use this setting, or the organization's default when it is not set.",
+      "label": "Time zone",
+      "help": "A time zone you choose takes precedence over your browser's.",
+      "follow": "Follow the browser"
+    }
   }
 }

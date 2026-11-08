@@ -38,6 +38,7 @@ import { toolSearchTool } from "../../src/tools/builtins/tool-search.js";
 import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
@@ -209,7 +210,7 @@ const agentWith = (over: Partial<AgentDefinition> = {}): AgentDefinition => ({
   fallback: null,
   modelParams: {},
   fallbackParams: {},
-  tools: [],
+  disabledTools: builtinsOff(),
   toolPolicies: {},
   ...over,
 });
@@ -1036,7 +1037,7 @@ describe("runModelStep", () => {
     const withTools = () =>
       agentWith({
         model: { provider: "stub", model: "tooly" },
-        tools: [{ kind: "builtin", name: "ReadToolOutput" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "ReadToolOutput" }]),
       });
     const wrapUp = (agent: AgentDefinition) =>
       runFinalWrapUp(deps, {

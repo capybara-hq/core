@@ -3,6 +3,7 @@
 import {
   Button,
   Checkbox,
+  EmptyState,
   Field,
   FormSection,
   Input,
@@ -10,8 +11,11 @@ import {
   ItemListItem,
   Select,
   Stack,
+  Subsection,
   Text,
   Textarea,
+  ToolPolicyList,
+  type ToolPolicyRow,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -59,6 +63,8 @@ import {
   quickActionsOf,
 } from "../agent/QuickActionsEditor";
 import { useSectionDraft } from "../agent/useSectionDraft";
+import { navLevelOf } from "../shell/nav";
+import { useSession } from "../shell/session";
 import {
   type TemplateSave,
   TemplateSaveFeedback,
@@ -398,9 +404,11 @@ export function ModelEdit() {
 }
 
 /**
- * 工具: the builtin tools, the tools of the extensions enabled in the org, and any other key the
- * template names (kept ticked, marked unavailable here; unticking drops it), with a tightened
- * policy per picked tool. Policies of unpicked tools go with them.
+ * 工具 (tools default-on spec §9): an agent created from the template has every tool the org
+ * offers, so every checkbox means on / off and starts checked; unchecking writes the key to the
+ * template's `disallowedTools`. Rows are the builtins, the tools of the extensions enabled in the
+ * org (by group), and any other key the template turns off (kept unticked; ticking drops it), each
+ * with its tightened policy (`ToolPolicyList`). A save never writes the old `tools` allowlist.
  */
 export function ToolsEdit() {
   const t = useTranslations("agents.templatePage");
@@ -413,7 +421,10 @@ export function ToolsEdit() {
   const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
   const pointsQ = availableExtensionPointsQuery(orgId);
   const points = useQuery({ ...pointsQ, retryOnMount: retryOnMountOf(pointsQ.queryKey) });
-  const saved = { tools: definition.tools ?? [], policies: definition.toolPolicies ?? {} };
+  const saved = {
+    off: definition.disallowedTools ?? [],
+    policies: definition.toolPolicies ?? {},
+  };
   const draft = useSectionDraft(saved);
   const d = draft.draft;
   const available = new Set(
@@ -421,7 +432,7 @@ export function ToolsEdit() {
   );
   const builtins = BUILTIN_TOOLS.filter((name) => {
     const point = WEB_TOOL_POINTS[name];
-    return point === undefined || available.has(point) || saved.tools.includes(name);
+    return point === undefined || available.has(point) || saved.off.includes(name);
   });
   const groups = (ext.data?.extensions ?? []).map((e) => ({
     plugin: e.plugin,
@@ -429,53 +440,77 @@ export function ToolsEdit() {
     tools: e.tools.map((x) => ({
       key: extensionToolKey(e.plugin, x.name),
       label: x.title ?? x.name,
-      off: x.switchedOff === true,
+      switchedOff: x.switchedOff === true,
     })),
   }));
   const listed = new Set<string>([
     ...builtins,
     ...groups.flatMap((g) => g.tools.map((x) => x.key)),
   ]);
-  const others = [...new Set([...saved.tools, ...d.tools])].filter((k) => !listed.has(k));
-  const toggle = (key: string, on: boolean) => {
+  // keys the template turns off that this org does not list (another org's extension, a
+  // connector key): kept off; ticking one drops it from the template
+  const others = [...new Set([...saved.off, ...d.off])].filter((k) => !listed.has(k));
+  const check = (keys: string[], on: boolean) => {
     save.begin();
     draft.set((cur) => ({
       ...cur,
-      tools: on ? [...cur.tools, key] : cur.tools.filter((x) => x !== key),
+      off: on ? cur.off.filter((x) => !keys.includes(x)) : [...new Set([...cur.off, ...keys])],
     }));
   };
-  const box = (key: string, label: string, off = false) => (
-    <Stack key={key} gap={0}>
-      <Checkbox
-        label={label}
-        checked={d.tools.includes(key)}
-        disabled={save.pending}
-        onChange={(on) => toggle(key, on)}
-      />
-      {off && d.tools.includes(key) && (
-        <Text variant="small" tone="warn">
-          {tf("extensionToolOffInOrg")}
-        </Text>
-      )}
-    </Stack>
+  const setPolicy = (key: string, v: string) => {
+    save.begin();
+    draft.set((cur) => {
+      const policies = { ...cur.policies };
+      if (v === "") delete policies[key];
+      else policies[key] = v as TightenedPolicy;
+      return { ...cur, policies };
+    });
+  };
+  const policyOptions = [
+    { value: "", label: tf("policy.default") },
+    { value: "ask", label: tf("policy.ask") },
+    { value: "deny", label: tf("policy.deny") },
+  ];
+  const row = (key: string, label: string, note?: string): ToolPolicyRow => {
+    const checked = !d.off.includes(key);
+    return {
+      id: key,
+      label,
+      checked,
+      policy: checked ? (d.policies[key] ?? "") : "",
+      ...(note !== undefined && checked ? { note: { text: note, tone: "warn" as const } } : {}),
+    };
+  };
+  const list = (label: string, rows: ToolPolicyRow[]) => (
+    <ToolPolicyList
+      label={label}
+      policyOptions={policyOptions}
+      disabled={save.pending}
+      rows={rows}
+      onCheck={(key, on) => check([key], on)}
+      onCheckAll={(keys, on) => check(keys, on)}
+      onPolicy={setPolicy}
+    />
   );
   const unsaved = [
-    !sameJson([...d.tools].sort(), [...saved.tools].sort()),
+    !sameJson([...d.off].sort(), [...saved.off].sort()),
     !sameJson(d.policies, saved.policies),
   ].filter(Boolean).length;
 
   async function onSave() {
     if (save.pending) return;
-    const policies = Object.fromEntries(
-      Object.entries(d.policies).filter(([k]) => d.tools.includes(k)),
-    );
+    const off = [...new Set(d.off)];
     const r = await save.send(
       withDefinition(template, {
-        tools: d.tools.length === 0 && definition.tools === undefined ? undefined : d.tools,
+        // tools default-on: no allowlist; the template turns off what is unticked
+        tools: undefined,
+        disallowedTools:
+          off.length === 0 && definition.disallowedTools === undefined ? undefined : off,
+        // a policy stays with its tool, on or off
         toolPolicies:
-          Object.keys(policies).length === 0 && definition.toolPolicies === undefined
+          Object.keys(d.policies).length === 0 && definition.toolPolicies === undefined
             ? undefined
-            : policies,
+            : d.policies,
       }),
     );
     if (r.saved) draft.reset();
@@ -490,92 +525,52 @@ export function ToolsEdit() {
       onDiscard={draft.reset}
     >
       <FormSection id="tools" title={t("sections.tools")} description={t("tools.hint")}>
-        {/* biome-ignore lint/a11y/useSemanticElements: a fieldset brings browser styles; apps/web writes none */}
-        <div role="group" aria-label={tf("builtinLabel")}>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {tf("builtinLabel")}
+        <Subsection variant="divided" title={tf("builtinLabel")}>
+          {list(
+            tf("builtinLabel"),
+            builtins.map((name) => row(name, tf(`builtin.${name}`))),
+          )}
+        </Subsection>
+        <Subsection variant="divided" title={tf("extensionToolsLabel")}>
+          {groups.length === 0 && ext.data !== undefined ? (
+            <Text variant="small" tone="faint">
+              {tf("noExtensionTools")}
             </Text>
-            {builtins.map((name) => box(name, tf(`builtin.${name}`)))}
-          </Stack>
-        </div>
-        {/* biome-ignore lint/a11y/useSemanticElements: as above */}
-        <div role="group" aria-label={tf("extensionToolsLabel")}>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {tf("extensionToolsLabel")}
+          ) : null}
+          {ext.isError ? (
+            <Text variant="small" tone="faint">
+              {tf("extensionToolsUnreadable")}
             </Text>
-            {groups.length === 0 && ext.data !== undefined ? (
-              <Text variant="small" tone="faint">
-                {tf("noExtensionTools")}
-              </Text>
-            ) : null}
-            {ext.isError ? (
-              <Text variant="small" tone="faint">
-                {tf("extensionToolsUnreadable")}
-              </Text>
-            ) : null}
-            {groups.map((g) => (
-              // biome-ignore lint/a11y/useSemanticElements: as above
-              <div key={g.plugin} role="group" aria-label={g.name}>
-                <Stack gap={4}>
-                  <Text variant="small">{g.name}</Text>
-                  {g.tools.map((x) => box(x.key, x.label, x.off))}
-                </Stack>
-              </div>
-            ))}
-          </Stack>
-        </div>
+          ) : null}
+          {groups.map((g) => (
+            <Stack key={g.plugin} gap={4}>
+              <Text variant="small">{g.name}</Text>
+              {list(
+                g.name,
+                g.tools.map((x) =>
+                  row(x.key, x.label, x.switchedOff ? tf("extensionToolOffInOrg") : undefined),
+                ),
+              )}
+            </Stack>
+          ))}
+        </Subsection>
         {others.length > 0 ? (
-          // biome-ignore lint/a11y/useSemanticElements: as above
-          <div role="group" aria-label={t("tools.others")}>
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {t("tools.others")}
-              </Text>
-              {others.map((key) =>
-                box(
+          <Subsection variant="divided" title={t("tools.others")}>
+            {list(
+              t("tools.others"),
+              others.map((key) =>
+                row(
                   key,
                   parseToolKey(key)?.kind === "builtin"
                     ? toolName(key)
                     : t("tools.unavailable", { tool: toolName(key) }),
                 ),
-              )}
-              <Text variant="small" tone="faint">
-                {t("tools.othersHint")}
-              </Text>
-            </Stack>
-          </div>
-        ) : null}
-        {d.tools.length > 0 ? (
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {tf("policiesLabel")}
+              ),
+            )}
+            <Text variant="small" tone="faint">
+              {t("tools.othersHint")}
             </Text>
-            {d.tools.map((key) => (
-              <Field key={key} label={toolName(key)}>
-                <Select
-                  value={d.policies[key] ?? ""}
-                  disabled={save.pending}
-                  onChange={(e) => {
-                    const v = e.target.value as TightenedPolicy | "";
-                    save.begin();
-                    draft.set((cur) => {
-                      const policies = { ...cur.policies };
-                      if (v === "") delete policies[key];
-                      else policies[key] = v;
-                      return { ...cur, policies };
-                    });
-                  }}
-                  options={[
-                    { value: "", label: tf("policy.default") },
-                    { value: "ask", label: tf("policy.ask") },
-                    { value: "deny", label: tf("policy.deny") },
-                  ]}
-                />
-              </Field>
-            ))}
-          </Stack>
+          </Subsection>
         ) : null}
       </FormSection>
     </EditFrame>
@@ -585,11 +580,15 @@ export function ToolsEdit() {
 /**
  * 技能: the skills by name (a template carries names, ruling P4-1): pick from the org's skills,
  * and preload (pin) up to 3 of the picked ones. A name the org does not have stays picked and is
- * marked (用它创建 leaves it out); unticking drops it.
+ * marked (用它创建 leaves it out); unticking drops it. Two titled regions in the card, as on the
+ * agent page: the org skills (the panel empty state, linking to the skills page for members) and
+ * the pinned ones (the count against the limit at the heading's right; with nothing selected, one
+ * short line where the pin list would be).
  */
 export function SkillsEdit() {
   const t = useTranslations("agents.templatePage");
   const { orgId, template, definition } = useTemplatePage();
+  const { me } = useSession();
   const save = useTemplateSave();
   const sq = skillsQuery(orgId);
   const skills = useQuery({ ...sq, retryOnMount: retryOnMountOf(sq.queryKey) });
@@ -639,16 +638,22 @@ export function SkillsEdit() {
       onDiscard={draft.reset}
     >
       <FormSection id="skills" title={t("sections.skills")} description={t("skills.hint")}>
-        {/* biome-ignore lint/a11y/useSemanticElements: a fieldset brings browser styles; apps/web writes none */}
-        <div role="group" aria-label={t("skills.selectLabel")}>
+        <Subsection variant="divided" title={t("skills.selectLabel")}>
           <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("skills.selectLabel")}
-            </Text>
             {org.length === 0 && missing.length === 0 && skills.data !== undefined ? (
-              <Text variant="small" tone="faint">
-                {t("skills.noOrgSkills")}
-              </Text>
+              <EmptyState
+                size="panel"
+                text={t("skills.noOrgSkills")}
+                {...(navLevelOf(me) === "guest"
+                  ? {}
+                  : {
+                      action: {
+                        label: t("skills.goToSkills"),
+                        variant: "default" as const,
+                        href: "/skills",
+                      },
+                    })}
+              />
             ) : null}
             {skills.isError ? (
               <Text variant="small" tone="faint">
@@ -679,13 +684,18 @@ export function SkillsEdit() {
               </Text>
             ) : null}
           </Stack>
-        </div>
-        {/* biome-ignore lint/a11y/useSemanticElements: as above */}
-        <div role="group" aria-label={t("skills.pinLabel")}>
-          <Stack gap={4}>
-            <Text variant="small" tone="muted">
-              {t("skills.pinLabel")}
+        </Subsection>
+        <Subsection
+          variant="divided"
+          title={t("skills.pinLabel")}
+          description={t("skills.pinHint")}
+          actions={
+            <Text variant="small" tone="faint">
+              {t("skills.pinCount", { count: d.pinned.length, max: TEMPLATE_LIMITS.skills })}
             </Text>
+          }
+        >
+          <Stack gap={4}>
             {d.selected.length === 0 ? (
               <Text variant="small" tone="faint">
                 {t("skills.noneToPin")}
@@ -708,11 +718,8 @@ export function SkillsEdit() {
                 />
               );
             })}
-            <Text variant="small" tone="faint">
-              {t("skills.pinHint", { max: TEMPLATE_LIMITS.skills })}
-            </Text>
           </Stack>
-        </div>
+        </Subsection>
       </FormSection>
     </EditFrame>
   );

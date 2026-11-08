@@ -188,16 +188,13 @@ describe("ToolRegistry", () => {
     expect(() => registry.connector("nope")).toThrow();
   });
 
-  it("内置、插件、连接器工具都能解析；插件工具须本组织启用该插件", async () => {
+  /** The connector extension's own tools turned off (installConnector enables it). */
+  const MEM_OFF = { kind: "plugin" as const, plugin: "mem-connector", tools: "all" as const };
+  const ASK_OFF = { kind: "builtin" as const, name: "AskUserQuestion" };
+
+  it("resolves every builtin, every tool of the extensions on in the org and every connector tool", async () => {
     const connectorId = await installConnector("docs");
-    const def = {
-      tools: [
-        { kind: "builtin" as const, name: "AskUserQuestion" },
-        { kind: "plugin" as const, plugin: "mem-connector", name: "echo" },
-        { kind: "plugin" as const, plugin: "mem-connector", name: "wipe" },
-        { kind: "connector" as const, connectorId, tools: "all" as const },
-      ],
-    };
+    const def = { disabledTools: [] };
     await enablePlugin("mem-connector", false);
     const before = await registry.forAgent(orgId, def);
     expect(before.tools.map((t) => t.key)).toEqual([
@@ -206,20 +203,21 @@ describe("ToolRegistry", () => {
       "mcp__docs__read",
       "mcp__docs__write",
     ]);
-    expect(before.unavailable).toEqual([
-      {
-        ref: "plugin__mem-connector__echo",
-        reason: "Plugin mem-connector is not enabled in this organization",
-      },
-      {
-        ref: "plugin__mem-connector__wipe",
-        reason: "Plugin mem-connector is not enabled in this organization",
-      },
-    ]);
+    // an extension that is off in the org is simply not offered (no reminder)
+    expect(before.unavailable).toEqual([]);
 
     await enablePlugin("mem-connector", true);
     const after = await registry.forAgent(orgId, def);
     expect(after.unavailable).toEqual([]);
+    expect(after.tools.map((t) => t.key)).toEqual([
+      "AskUserQuestion",
+      "plugin__mem-connector__echo",
+      "plugin__mem-connector__ask",
+      "plugin__mem-connector__wipe",
+      "mcp__docs__drop",
+      "mcp__docs__read",
+      "mcp__docs__write",
+    ]);
     const byKey = Object.fromEntries(after.tools.map((t) => [t.key, t]));
     expect(byKey.AskUserQuestion).toMatchObject({
       source: { kind: "builtin", name: "AskUserQuestion" },
@@ -239,9 +237,23 @@ describe("ToolRegistry", () => {
     expect(byKey.mcp__docs__read?.spec.description).toBe("Read.");
     expect(byKey.mcp__docs__read?.specHash).toBe(specHash(byKey.mcp__docs__read?.spec));
     expect(byKey.AskUserQuestion?.specHash).toBe(specHash(askUser.spec));
+
+    // turned off: a builtin, one extension tool, one connector tool
+    const off = await registry.forAgent(orgId, {
+      disabledTools: [
+        ASK_OFF,
+        { kind: "plugin", plugin: "mem-connector", tools: ["wipe", "ask"] },
+        { kind: "connector", connectorId, tools: ["drop"] },
+      ],
+    });
+    expect(off.tools.map((t) => t.key)).toEqual([
+      "plugin__mem-connector__echo",
+      "mcp__docs__read",
+      "mcp__docs__write",
+    ]);
   });
 
-  it("过滤停用 / 待复核 / 已删除，并给出原因", async () => {
+  it("leaves out disabled, pending and deleted tools and connectors, explaining them in hidden", async () => {
     const connectorId = await installConnector("docs");
     await db
       .updateTable("connector_tools")
@@ -262,11 +274,9 @@ describe("ToolRegistry", () => {
       .where("name", "=", "read")
       .execute();
 
-    // all：只取启用的工具；停用 / 待复核的不进 unavailable（不触发每步的不可用提醒），
-    // 而是进 hidden，模型点名调用时给事实原因（spec 6.3）
-    const all = await registry.forAgent(orgId, {
-      tools: [{ kind: "connector", connectorId, tools: "all" }],
-    });
+    // only enabled tools; disabled / pending ones never reach `unavailable` (no reminder every
+    // step), but `hidden`, for the facts when the model names one (spec 6.3)
+    const all = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
     expect(all.tools.map((t) => t.key)).toEqual(["mcp__docs__read"]);
     expect(all.tools[0]?.defaultPolicy).toBe("deny");
     expect(all.unavailable).toEqual([]);
@@ -275,65 +285,49 @@ describe("ToolRegistry", () => {
       { ref: "mcp__docs__write", reason: "Tool is disabled" },
     ]);
 
-    // 点名：逐个报原因
-    const named = await registry.forAgent(orgId, {
-      tools: [
-        { kind: "connector", connectorId, tools: ["read", "write", "drop", "gone"] },
-        { kind: "builtin", name: "nope" },
-        { kind: "plugin", plugin: "not-loaded", name: "x" },
-        { kind: "connector", connectorId: "missing-app", tools: "all" },
-      ],
+    // a tool the agent turned off is not explained: it is its own choice
+    const own = await registry.forAgent(orgId, {
+      disabledTools: [ASK_OFF, MEM_OFF, { kind: "connector", connectorId, tools: ["drop"] }],
     });
-    expect(named.tools.map((t) => t.key)).toEqual(["mcp__docs__read"]);
-    expect(named.unavailable).toEqual([
-      { ref: "mcp__docs__write", reason: "Tool is disabled" },
-      { ref: "mcp__docs__drop", reason: "Tool is pending review" },
-      { ref: "mcp__docs__gone", reason: "Tool no longer exists in app docs" },
-      { ref: "nope", reason: "Built-in tool does not exist" },
-      { ref: "plugin__not-loaded__x", reason: "Plugin tool does not exist" },
-      { ref: "app:missing-app", reason: "App does not exist" },
-    ]);
+    expect(own.hidden).toEqual([{ ref: "mcp__docs__write", reason: "Tool is disabled" }]);
 
-    // 连接器停用 → 整个连接器不可用
+    // a disabled connector goes as a whole
     await db
       .updateTable("connectors")
       .set({ status: "disabled" })
       .where("id", "=", connectorId)
       .execute();
-    const disabled = await registry.forAgent(orgId, {
-      tools: [{ kind: "connector", connectorId, tools: "all" }],
-    });
+    const disabled = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
     expect(disabled.tools).toEqual([]);
-    expect(disabled.unavailable).toEqual([{ ref: "mcp__docs__*", reason: "App docs is disabled" }]);
+    expect(disabled.unavailable).toEqual([]);
+    expect(disabled.hidden).toEqual([{ ref: "mcp__docs__*", reason: "App docs is disabled" }]);
 
-    // 连接器删除
+    // a deleted one is gone
     const del = await req({
       method: "DELETE",
       url: `/api/v1/orgs/${orgId}/connectors/${connectorId}`,
     });
     expect(del.statusCode).toBe(204);
-    const deleted = await registry.forAgent(orgId, {
-      tools: [{ kind: "connector", connectorId, tools: ["read"] }],
-    });
-    expect(deleted.unavailable).toEqual([{ ref: "mcp__docs__*", reason: "App docs was deleted" }]);
+    const deleted = await registry.forAgent(orgId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    expect(deleted.tools).toEqual([]);
+    expect(deleted.hidden).toEqual([]);
 
-    // 别的组织的连接器 id → 视为不存在
+    // another org's connector never reaches this org
     const other = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: "Other" } });
     const otherId = (other.json() as { org: { id: string } }).org.id;
-    const app2 = await installConnector("docs2");
-    const cross = await registry.forAgent(otherId, {
-      tools: [{ kind: "connector", connectorId: app2, tools: "all" }],
-    });
-    expect(cross.unavailable).toEqual([{ ref: `app:${app2}`, reason: "App does not exist" }]);
+    await installConnector("docs2");
+    const cross = await registry.forAgent(otherId, { disabledTools: [ASK_OFF, MEM_OFF] });
+    expect(cross.tools).toEqual([]);
   });
 
-  it("an extension tool is unavailable in an org that must configure the extension (spec A §6)", async () => {
-    const def = { tools: [{ kind: "plugin" as const, plugin: "orglevels", name: "echo" }] };
+  it("an extension tool is not offered in an org that must configure the extension (spec A §6)", async () => {
+    const def = { disabledTools: [ASK_OFF] };
     await enablePlugin("orglevels", true);
     // following the platform, which leaves the required overridable apiKey empty
     const following = await registry.forAgent(orgId, def);
     expect(following.tools).toEqual([]);
-    expect(following.unavailable).toEqual([
+    expect(following.unavailable).toEqual([]);
+    expect(following.hidden).toEqual([
       {
         ref: "plugin__orglevels__echo",
         reason: "Plugin orglevels needs configuration in this organization",
@@ -352,11 +346,11 @@ describe("ToolRegistry", () => {
     expect(copied.tools.map((t) => t.key)).toEqual(["plugin__orglevels__echo"]);
   });
 
-  it("an extension tool the org turned off is unavailable there only (spec A §7)", async () => {
+  it("an extension tool the org turned off is offered to no agent there, and only there (spec A §7)", async () => {
     const def = {
-      tools: [
-        { kind: "plugin" as const, plugin: "mem-connector", name: "echo" },
-        { kind: "plugin" as const, plugin: "mem-connector", name: "wipe" },
+      disabledTools: [
+        ASK_OFF,
+        { kind: "plugin" as const, plugin: "mem-connector", tools: ["ask"] },
       ],
     };
     await enablePlugin("mem-connector", true);
@@ -369,7 +363,8 @@ describe("ToolRegistry", () => {
       .execute();
     const here = await registry.forAgent(orgId, def);
     expect(here.tools.map((t) => t.key)).toEqual(["plugin__mem-connector__wipe"]);
-    expect(here.unavailable).toEqual([
+    expect(here.unavailable).toEqual([]);
+    expect(here.hidden).toEqual([
       {
         ref: "plugin__mem-connector__echo",
         reason: "Tool plugin__mem-connector__echo is turned off in this organization",
@@ -382,22 +377,16 @@ describe("ToolRegistry", () => {
     ]);
   });
 
-  it("同一 key 只保留第一个，其余报重复", async () => {
+  it("overlapping entries in disabledTools are harmless", async () => {
     const connectorId = await installConnector("docs");
     const r = await registry.forAgent(orgId, {
-      tools: [
-        { kind: "builtin", name: "AskUserQuestion" },
-        { kind: "builtin", name: "AskUserQuestion" },
+      disabledTools: [
+        MEM_OFF,
         { kind: "connector", connectorId, tools: ["read"] },
-        { kind: "connector", connectorId, tools: "all" },
+        { kind: "connector", connectorId, tools: ["read", "drop"] },
       ],
     });
-    expect(r.tools.map((t) => t.key)).toEqual([
-      "AskUserQuestion",
-      "mcp__docs__read",
-      "mcp__docs__drop",
-      "mcp__docs__write",
-    ]);
+    expect(r.tools.map((t) => t.key)).toEqual(["AskUserQuestion", "mcp__docs__write"]);
     expect(r.unavailable).toEqual([]);
   });
 });
@@ -581,13 +570,9 @@ describe("组织设置与 ToolSearch 启用条件", () => {
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {
     const connectorId = await installConnector("docs");
+    expect(connectorId).toBeTruthy();
     const def = {
-      tools: [
-        { kind: "builtin" as const, name: "AskUserQuestion" },
-        // 定义里显式引用 ToolSearch 也不重复（由注册表按设置管理）
-        { kind: "builtin" as const, name: "ToolSearch" },
-        { kind: "connector" as const, connectorId, tools: "all" as const },
-      ],
+      disabledTools: [{ kind: "plugin" as const, plugin: "mem-connector", tools: "all" as const }],
     };
     const r = searchRegistry();
     // 4 个工具，未超过阈值

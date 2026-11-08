@@ -204,8 +204,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     ["/settings/organization", `GET ${O}/settings`, { radios: 1, kv: 0, items: 0, switches: 0 }],
     // the tool policy and egress radios, the resources' key-value
     ["/settings/sandbox", `GET ${O}/settings`, { radios: 2, kv: 1, items: 0, switches: 0 }],
-    // the kernel's five purposes as cards, each with its model select
-    ["/settings/models", `GET ${O}/model-purposes`, { radios: 0, kv: 0, items: 6, switches: 0 }],
+    // the 用途默认 tab: the kernel's six purposes as item rows, each with its model select
+    [
+      "/settings/models?tab=purposes",
+      `GET ${O}/model-purposes`,
+      { radios: 0, kv: 0, items: 6, switches: 0 },
+    ],
   ] as const)(
     "%s: the loading state draws the page's static shapes (Q6)",
     async (path, held, shapes) => {
@@ -273,7 +277,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await r2();
   });
 
-  it("/settings/organization: the loading page keeps its three sections and an owner's danger zone (the role is the session's)", async () => {
+  it("/settings/organization: the loading page keeps its four sections and an owner's danger zone (the role is the session's)", async () => {
     const loading = async (me: ReturnType<typeof as>) => {
       await renderRouteEmptyCache(
         "/settings/organization",
@@ -285,8 +289,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
     };
     await loading(as("owner"));
-    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(4);
     expect(screen.getByRole("heading", { name: en.orgSettings.toolSearch.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.orgSettings.timeZone.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.platformTool.title })).toBeTruthy();
     expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: en.orgLifecycle.delete.action })).toBeTruthy();
@@ -400,22 +405,28 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   it("/settings/models: a first render from the hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/settings/models", ROUTES);
-    expect(screen.getByText(en.models.org.description)).toBeTruthy();
+    // the 模型 tab (the default) of an org with no providers
+    expect(screen.getByText(en.models.org.noProviders)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
 
-  it.each([`GET ${O}/model-purposes`, `GET ${O}/models`, `GET ${O}/models/catalog`])(
-    "/settings/models: an empty cache shows the template's loading state, then the data (held: %s)",
-    async (held) => {
-      const { release } = await renderHeld("/settings/models", held);
+  it.each([
+    ["/settings/models", `GET ${O}/model-purposes`, en.models.org.noProviders],
+    ["/settings/models", `GET ${O}/models`, en.models.org.noProviders],
+    ["/settings/models", `GET ${O}/models/catalog`, en.models.org.noProviders],
+    ["/settings/models?tab=purposes", `GET ${O}/models/catalog`, en.models.org.description],
+  ])(
+    "%s: an empty cache shows the template's loading state, then the data (held: %s)",
+    async (path, held, text) => {
+      const { release } = await renderHeld(path, held);
       await vi.waitFor(() => {
         if (template("SettingsPage") === null) throw new Error("no page");
       });
       expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
       await release();
       await vi.waitFor(() => expect(document.querySelector("[aria-busy='true']")).toBeNull());
-      expect(screen.getByText(en.models.org.description)).toBeTruthy();
+      expect(screen.getByText(text)).toBeTruthy();
     },
   );
 

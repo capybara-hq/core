@@ -22,6 +22,8 @@ export interface OrgSettings {
   sandboxEgress?: SandboxEgressSetting;
   /** An older kernel leaves it out: read as on. */
   platformTool?: "on" | "read-only" | "off";
+  /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
+  timeZone?: string;
 }
 
 /** 部署默认值（旧内核不返回）。 */
@@ -43,8 +45,10 @@ export interface OrgSettingsResponse {
 }
 
 /** PATCH 体：`sandboxEgress: null` 恢复跟随部署默认。 */
-export type OrgSettingsPatch = Partial<Omit<OrgSettings, "sandboxEgress">> & {
+export type OrgSettingsPatch = Partial<Omit<OrgSettings, "sandboxEgress" | "timeZone">> & {
   sandboxEgress?: SandboxEgressSetting | null;
+  /** null clears the default (UTC). */
+  timeZone?: string | null;
 };
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

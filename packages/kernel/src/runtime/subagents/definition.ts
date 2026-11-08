@@ -1,14 +1,17 @@
 import {
   type AgentTemplate,
   type AgentTemplateTier,
-  connectorToolKey,
-  extensionToolKey,
   type ModelParameter,
-  parseToolKey,
   SKILL_ENTRY_FILE,
   sanitizeParams,
 } from "@capybara-hq/plugin-sdk";
-import type { AgentDefinition, AgentToolRef, ModelRef } from "../../agents/definition.js";
+import {
+  type AgentDefinition,
+  canonicalDisabledTools,
+  type DisabledToolRef,
+  type ModelRef,
+  type SubagentTools,
+} from "../../agents/definition.js";
 import { loadTemplates } from "../../agents/templates.js";
 import type { EventPayload } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
@@ -75,93 +78,36 @@ export function stricterPolicies(
   return out;
 }
 
-interface ConnectorInfo {
-  slug: string;
-  /** Tool names in the connector's snapshot (what `tools: "all"` means now). */
-  tools: string[];
-}
-
-async function loadConnectors(
-  db: KernelSchemaDb,
-  orgId: string,
-  refs: readonly AgentToolRef[],
-): Promise<Map<string, ConnectorInfo>> {
-  const ids = [...new Set(refs.flatMap((r) => (r.kind === "connector" ? [r.connectorId] : [])))];
-  const out = new Map<string, ConnectorInfo>();
-  if (ids.length === 0) return out;
-  const rows = await db
-    .selectFrom("connectors")
-    .select(["id", "slug"])
-    .where("org_id", "=", orgId)
-    .where("deleted_at", "is", null)
-    .where("id", "in", ids)
-    .execute();
-  const tools =
-    rows.length === 0
-      ? []
-      : await db
-          .selectFrom("connector_tools")
-          .select(["connector_id", "name"])
-          .where(
-            "connector_id",
-            "in",
-            rows.map((r) => r.id),
-          )
-          .orderBy("name")
-          .execute();
-  for (const r of rows) {
-    out.set(r.id, {
-      slug: r.slug,
-      tools: tools.filter((t) => t.connector_id === r.id).map((t) => t.name),
-    });
-  }
-  return out;
-}
-
 /**
- * Narrows tool refs by resolved key (spec §5.3): keeps a key when `allow` (if given) lists it and
- * neither `deny` nor {@link CHILD_REMOVED_TOOLS} does (nor, with `removeAgent`, it is `Agent`). A connector ref with `tools: "all"` stays
- * live only when nothing can narrow it (no allowlist and no deny key under `mcp__<slug>__`), so a tool
- * the connector gains later never slips past the template; otherwise it becomes the kept names, or
- * is dropped. A connector that no longer exists keeps its ref only without an allowlist.
+ * A child's key filter (tools default-on spec §4): `deny` = the parent's own filter's (a nested
+ * child), {@link CHILD_REMOVED_TOOLS}, `Agent` when the child is at the depth limit, and the
+ * template's `disallowedTools`; `allow` = the template's `tools` allowlist met with the parent's
+ * (absent on both = everything the parent has). Keys are deduplicated in first-seen order.
  */
-function narrowTools(
-  refs: readonly AgentToolRef[],
-  connectors: Map<string, ConnectorInfo>,
-  allow: ReadonlySet<string> | null,
-  deny: ReadonlySet<string>,
+function childFilter(
   removeAgent: boolean,
-): AgentToolRef[] {
-  const removed = new Set<string>(CHILD_REMOVED_TOOLS);
-  if (removeAgent) removed.add(AGENT_TOOL);
-  const keep = (key: string) =>
-    !removed.has(key) && !deny.has(key) && (allow === null || allow.has(key));
-  const out: AgentToolRef[] = [];
-  for (const ref of refs) {
-    if (ref.kind === "builtin") {
-      if (keep(ref.name)) out.push(ref);
-    } else if (ref.kind === "plugin") {
-      if (keep(extensionToolKey(ref.plugin, ref.name))) out.push(ref);
-    } else {
-      const c = connectors.get(ref.connectorId);
-      if (!c) {
-        if (allow === null) out.push(ref);
-        continue;
-      }
-      const ownsKey = (k: string) => {
-        const parsed = parseToolKey(k);
-        return parsed?.kind === "connector" && parsed.slug === c.slug;
-      };
-      if (ref.tools === "all" && allow === null && ![...deny].some(ownsKey)) {
-        out.push(ref);
-        continue;
-      }
-      const names = ref.tools === "all" ? c.tools : ref.tools;
-      const kept = names.filter((name) => keep(connectorToolKey(c.slug, name)));
-      if (kept.length > 0) out.push({ ...ref, tools: kept });
-    }
-  }
-  return out;
+  template: {
+    tools?: readonly string[] | undefined;
+    disallowedTools?: readonly string[] | undefined;
+  } | null,
+  parent?: SubagentTools,
+): SubagentTools {
+  const deny = [
+    ...new Set<string>([
+      ...(parent?.deny ?? []),
+      ...CHILD_REMOVED_TOOLS,
+      ...(removeAgent ? [AGENT_TOOL] : []),
+      ...(template?.disallowedTools ?? []),
+    ]),
+  ];
+  const own = template?.tools === undefined ? undefined : [...new Set(template.tools)];
+  const allow =
+    own === undefined
+      ? parent?.allow
+      : parent?.allow === undefined
+        ? own
+        : own.filter((k) => parent.allow?.includes(k));
+  return { ...(allow !== undefined && { allow: [...allow] }), deny };
 }
 
 /** The template fields the narrowing reads, from an inline or a plugin template. */
@@ -356,10 +302,12 @@ function orgAgentDefinition(
   // block stays: it is the roster the child dispatches from (agent map spec §4.1); pending
   // connectors are authoring data too (ruling P4-6)
   const { skills, instructionFiles: _files, pendingConnectors: _pending, ...rest } = own;
+  const { subagentTools: _filter, ...ownRest } = rest;
   const definition: AgentDefinition = {
-    ...rest,
+    ...ownRest,
     // its own tools, not intersected with the parent's; only the child-removed ones go
-    tools: narrowTools(own.tools, new Map(), null, new Set(), atMaxDepth(a)),
+    disabledTools: own.disabledTools ?? [],
+    subagentTools: childFilter(atMaxDepth(a), null),
     // its policies, then the parent's on top, stricter wins (keys outside its tools are inert)
     toolPolicies: stricterPolicies(own.toolPolicies ?? {}, a.parent.toolPolicies ?? {}),
     ...(skills !== undefined && {
@@ -430,14 +378,6 @@ export async function effectiveDefinition(
     };
   }
 
-  const connectors = await loadConnectors(d.db, a.orgId, parent.tools);
-  const tools = narrowTools(
-    parent.tools,
-    connectors,
-    template?.tools !== undefined ? new Set(template.tools) : null,
-    new Set(template?.disallowedTools ?? []),
-    atMaxDepth(a),
-  );
   const toolPolicies = stricterPolicies(parent.toolPolicies ?? {}, template?.toolPolicies ?? {});
   const { pinned, warnings } = await pinnedFor(
     d.db,
@@ -465,7 +405,8 @@ export async function effectiveDefinition(
     fallback: m.fallback,
     modelParams,
     fallbackParams: m.fallbackParams,
-    tools,
+    disabledTools: parent.disabledTools ?? [],
+    subagentTools: childFilter(atMaxDepth(a), template, parent.subagentTools),
     toolPolicies,
     ...((parentSkills !== undefined || pinned.length > 0) && {
       skills: {
@@ -486,49 +427,15 @@ export async function effectiveDefinition(
 }
 
 /**
- * What a follow-up (`resume`) may still use (final review I1, spec §5.3): the frozen tools and
- * org skills intersected with the current version they come from. Recorded on the follow-up's
- * task message (`user_message.dispatch.narrowed`), so the run and its replay read it from the log.
+ * What a follow-up (`resume`) may still use (final review I1, spec §5.3): the frozen definition's
+ * turned-off tools together with the current version's (it can lose tools, never gain them), and
+ * the frozen org skills intersected with the current ones. Recorded on the follow-up's task message
+ * (`user_message.dispatch.narrowed`), so the run and its replay read it from the log.
  */
 export interface FollowUpNarrowing {
-  tools: AgentToolRef[];
+  /** Absent in logs from before tools were on by default (no tool narrowing then). */
+  disabledTools?: DisabledToolRef[] | undefined;
   skills?: { orgSkills: string[]; pinned?: string[] | undefined } | undefined;
-}
-
-/**
- * The refs of `frozen` that `current` still has: a builtin or plugin tool by name, a connector by
- * id; a connector's `all` meets the other side's names (`all` on both stays `all`), and a
- * connector left with no names is dropped. Pure: a connector `current` lists is not looked up.
- */
-export function intersectTools(
-  frozen: readonly AgentToolRef[],
-  current: readonly AgentToolRef[],
-): AgentToolRef[] {
-  const out: AgentToolRef[] = [];
-  for (const ref of frozen) {
-    if (ref.kind === "builtin") {
-      if (current.some((c) => c.kind === "builtin" && c.name === ref.name)) out.push(ref);
-    } else if (ref.kind === "plugin") {
-      if (
-        current.some((c) => c.kind === "plugin" && c.plugin === ref.plugin && c.name === ref.name)
-      ) {
-        out.push(ref);
-      }
-    } else {
-      const c = current.find(
-        (x): x is Extract<AgentToolRef, { kind: "connector" }> =>
-          x.kind === "connector" && x.connectorId === ref.connectorId,
-      );
-      if (!c) continue;
-      if (c.tools === "all") {
-        out.push(ref);
-        continue;
-      }
-      const names = ref.tools === "all" ? c.tools : ref.tools.filter((n) => c.tools.includes(n));
-      if (names.length > 0) out.push({ ...ref, tools: names });
-    }
-  }
-  return out;
 }
 
 /**
@@ -536,23 +443,30 @@ export function intersectTools(
  * definition) against `current`, the definition a fresh dispatch would read now: the dispatching
  * parent run's version for `general` / inline / plugin children, the dispatched org agent's
  * current version for an org agent child (whose tools are its own at dispatch too, §5.5). Its
- * `orgSkills` keep only those `current` still selects; a pinned id that was one of the frozen org
- * skills goes with it (the agent's own skills stay).
+ * `disabledTools` are both lists together; its `orgSkills` keep only those `current` still
+ * selects; a pinned id that was one of the frozen org skills goes with it (the agent's own skills
+ * stay).
  */
 export function narrowFollowUp(
-  frozen: Pick<AgentDefinition, "tools" | "skills">,
-  current: Pick<AgentDefinition, "tools" | "skills">,
+  frozen: Pick<AgentDefinition, "disabledTools" | "skills">,
+  current: Pick<AgentDefinition, "disabledTools" | "skills">,
 ): FollowUpNarrowing {
-  const tools = intersectTools(frozen.tools, current.tools);
-  if (frozen.skills === undefined) return { tools };
+  const disabledTools = canonicalDisabledTools([
+    ...(frozen.disabledTools ?? []),
+    ...(current.disabledTools ?? []),
+  ]);
+  if (frozen.skills === undefined) return { disabledTools };
   const frozenOrg = new Set(frozen.skills.orgSkills);
   const now = new Set(current.skills?.orgSkills ?? []);
   const orgSkills = frozen.skills.orgSkills.filter((id) => now.has(id));
   const pinned = frozen.skills.pinned?.filter((id) => !frozenOrg.has(id) || now.has(id));
-  return { tools, skills: { orgSkills, ...(pinned !== undefined && { pinned }) } };
+  return { disabledTools, skills: { orgSkills, ...(pinned !== undefined && { pinned }) } };
 }
 
-/** The definition a child run uses: the frozen one with its trigger's follow-up narrowing. */
+/**
+ * The definition a child run uses: the frozen one with its trigger's follow-up narrowing. A
+ * narrowing logged before tools were on by default (no `disabledTools`) narrows only skills.
+ */
 export function childRunDefinition(
   frozen: AgentDefinition,
   narrowed: FollowUpNarrowing | undefined,
@@ -567,5 +481,9 @@ export function childRunDefinition(
           orgSkills: narrowed.skills.orgSkills,
           ...(narrowed.skills.pinned !== undefined && { pinned: narrowed.skills.pinned }),
         };
-  return { ...rest, tools: narrowed.tools, ...(kept !== undefined && { skills: kept }) };
+  return {
+    ...rest,
+    ...(Array.isArray(narrowed.disabledTools) && { disabledTools: narrowed.disabledTools }),
+    ...(kept !== undefined && { skills: kept }),
+  };
 }

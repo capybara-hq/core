@@ -31,6 +31,7 @@ import {
   JUDGE_GATE_TOKENS,
   RELEASE_FILE,
 } from "../fixtures/plugins/judge-gate/index.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -179,7 +180,7 @@ describe("M6 第一段双副本验收（轨迹、评测集、单步 / 整轮回�
         name: "Planner",
         instructions: "Keep a list.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }],
+        disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "fake-tools-ui", name: "write" }]),
         toolPolicies: { "plugin__fake-tools-ui__write": "ask" },
       },
       visibility: "org",

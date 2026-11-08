@@ -1,4 +1,12 @@
-import { Callout, EmptyState, Grid, ObjectList, ObjectRow } from "@capybara-hq/design";
+import {
+  Callout,
+  Card,
+  EmptyState,
+  Grid,
+  ItemList,
+  ObjectList,
+  ObjectRow,
+} from "@capybara-hq/design";
 import { Row, Section } from "../frame";
 
 const noop = () => {};
@@ -105,6 +113,22 @@ export function ObjectsSection() {
             action={{ label: "新会话", variant: "default", onSelect: noop }}
           />
           <EmptyState size="compact" text="没有匹配的结果。" />
+        </Grid>
+      </Row>
+      {/* An empty region inside a box draws the panel style (spec §6.18 "Where"): an ItemList's
+          empty, here an agent's 渠道 card with 接入渠道 */}
+      <Row label="EmptyState in a box">
+        <Grid columns={1}>
+          <Card title="渠道">
+            <ItemList
+              label="渠道"
+              rows={[]}
+              empty={{
+                text: "这个智能体还没有接入渠道。",
+                action: { label: "接入渠道", variant: "default", onSelect: noop },
+              }}
+            />
+          </Card>
         </Grid>
       </Row>
     </Section>

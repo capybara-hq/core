@@ -18,6 +18,7 @@ import {
 } from "../../src/identity/initial-passwords.js";
 import { createLogger } from "../../src/log.js";
 import { INITIAL_PASSWORD_NOTE } from "../../src/platform/ops/accounts.ops.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -113,7 +114,7 @@ beforeAll(async () => {
         name: "Mine",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Platform" }],
+        disabledTools: builtinsOff("Platform"),
       },
       visibility: "private",
     },

@@ -17,6 +17,8 @@ export const keys = {
       maybeMe: (): readonly unknown[] => [...all, "maybeMe"],
       /** The account's linked external identities. */
       identities: (): readonly unknown[] => [...all, "identities"],
+      /** The account's preferences (its time zone). */
+      preferences: (): readonly unknown[] => [...all, "preferences"],
     };
   },
   org(orgId: string) {

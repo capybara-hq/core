@@ -231,7 +231,8 @@ function SignupForm({
   }
 
   return (
-    <form onSubmit={submit}>
+    // method="post": never a native GET with the password in the URL (lib/form-post.ts answers it).
+    <form method="post" onSubmit={submit}>
       <Stack gap={16}>
         <Field label={t("loginLabel")} help={t("loginHint")}>
           <Input

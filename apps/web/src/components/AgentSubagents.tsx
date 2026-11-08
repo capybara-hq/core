@@ -173,9 +173,10 @@ type Draft = {
 function draftOf(existing: Agent | undefined): Draft {
   const s = existing?.definition.subagents;
   return {
-    agentTool:
-      existing?.definition.tools?.some((r) => r.kind === "builtin" && r.name === AGENT_TOOL) ??
-      false,
+    // on unless turned off (tools default-on spec): a new agent has it too
+    agentTool: !(existing?.definition.disabledTools ?? []).some(
+      (r) => r.kind === "builtin" && r.name === AGENT_TOOL,
+    ),
     general: s?.general !== false,
     templates: s?.templates ?? [],
     inline: s?.inline ?? [],

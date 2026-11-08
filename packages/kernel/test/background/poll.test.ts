@@ -30,6 +30,7 @@ import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -771,7 +772,9 @@ describe("stopping", () => {
             name: "Lead",
             instructions: "Lead the work.",
             model: { provider: "model-script", model: "script-1" },
-            tools: ["Agent", "Bash", "Write"].map((name) => ({ kind: "builtin", name })),
+            disabledTools: onlyBuiltins(
+              ["Agent", "Bash", "Write"].map((name) => ({ kind: "builtin", name })),
+            ),
             toolPolicies: { Write: "ask" },
           },
           visibility: "org",

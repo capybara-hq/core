@@ -299,10 +299,11 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     const a1 = (r1.json() as { agent: AgentView; dropped: string[] }).agent;
     expect(r1.json().dropped).toEqual(["tools.gone", "policies.gone"]);
     expect(a1.currentVersion).toBe(2);
-    expect(a1.definition.tools).toContainEqual({
+    // tools are on by default: the bind turns off the tools the entry leaves out
+    expect(a1.definition.disabledTools).toContainEqual({
       kind: "connector",
       connectorId: gh,
-      tools: ["search"],
+      tools: ["delete_all"],
     });
     expect(a1.definition.toolPolicies[connectorToolKey("gh", "search")]).toBe("ask");
     expect(a1.definition.pendingConnectors?.map((c) => c.key)).toEqual(["connector-2"]);
@@ -324,10 +325,10 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     const a2 = (r2.json() as { agent: AgentView }).agent;
     expect(a2.currentVersion).toBe(3);
     expect(a2.definition.pendingConnectors).toBeUndefined();
-    expect(a2.definition.tools).toContainEqual({
+    expect(a2.definition.disabledTools).toContainEqual({
       kind: "connector",
       connectorId: docs,
-      tools: ["q"],
+      tools: ["r"],
     });
     const [closed] = await requestsOf(agent.id);
     expect(closed).toMatchObject({ status: "approved", decided_by: env.bossId, pending_keys: [] });
@@ -345,7 +346,7 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     expect((await inbox(env.boss)).some((i) => i.id === closed?.id)).toBe(false);
   });
 
-  it("binds all tools when the entry names none and merges into an existing connector ref", async () => {
+  it("binds all tools when the entry names none: nothing of the connector is turned off", async () => {
     const itemId = await catalogItem("crm");
     const platformGh = await connectorTemplate(itemId, "gh");
     const templateId = await platformTemplate(tpl({ connectors: [{ template: "crm:gh" }] }));
@@ -355,9 +356,7 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     const r = await bind(env.boss, agent.id, "connector-1", gh);
     expect(r.statusCode, r.body).toBe(200);
     const a = (r.json() as { agent: AgentView }).agent;
-    expect(a.definition.tools.filter((t) => t.kind === "connector")).toEqual([
-      { kind: "connector", connectorId: gh, tools: "all" },
-    ]);
+    expect(a.definition.disabledTools.filter((t) => t.kind === "connector")).toEqual([]);
     expect(r.json().dropped).toEqual([]);
   });
 
@@ -381,20 +380,20 @@ describe("binding a pending connector (P4-6)", { timeout: 60_000 }, () => {
     const r = await bind(env.boss, agent.id, "connector-1", docs);
     expect(r.statusCode, r.body).toBe(200);
     expect(
-      (r.json() as { agent: AgentView }).agent.definition.tools.filter(
+      (r.json() as { agent: AgentView }).agent.definition.disabledTools.filter(
         (t) => t.kind === "connector",
       ),
-    ).toEqual([{ kind: "connector", connectorId: docs, tools: "all" }]);
+    ).toEqual([]);
     // a connector with one more enabled tool keeps the entry's list
     const agent2 = await createFrom(env.boss, templateId);
     const wider = await connector("wider", ["q", "r", "s"], { kind: "mcp" });
     const r2 = await bind(env.boss, agent2.id, "connector-1", wider);
     expect(r2.statusCode, r2.body).toBe(200);
     expect(
-      (r2.json() as { agent: AgentView }).agent.definition.tools.filter(
+      (r2.json() as { agent: AgentView }).agent.definition.disabledTools.filter(
         (t) => t.kind === "connector",
       ),
-    ).toEqual([{ kind: "connector", connectorId: wider, tools: ["q", "r"] }]);
+    ).toEqual([{ kind: "connector", connectorId: wider, tools: ["s"] }]);
   });
 
   it("refuses a connector that does not fit, each case", async () => {

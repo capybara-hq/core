@@ -65,7 +65,8 @@ const agent = (
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "builtin", name: "AskUserQuestion" }],
+    // the Agent tool turned off (it is on by default, tools default-on spec)
+    disabledTools: [{ kind: "builtin", name: "Agent" }],
     toolPolicies: {},
     ...over.definition,
   },
@@ -162,10 +163,8 @@ describe("the agent page's Sub-agents section", () => {
     const body = bodyOf(calls.find((c) => c.method === "PATCH")) as {
       definition: Record<string, unknown>;
     };
-    expect(body.definition.tools).toEqual([
-      { kind: "builtin", name: "AskUserQuestion" },
-      { kind: "builtin", name: "Agent" },
-    ]);
+    // ticking the Agent tool turns it back on
+    expect(body.definition.disabledTools).toEqual([]);
     expect(body.definition.subagents).toEqual({
       templates: ["t1"],
       inline: [{ name: "helper", description: "Helps.", instructions: "Help out.", model: "fast" }],
@@ -176,10 +175,7 @@ describe("the agent page's Sub-agents section", () => {
   it("a platform template is selected by its linked copy's id (never gone) and shows its badge", async () => {
     const lead = agent("ag1", "Lead", {
       definition: {
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "builtin", name: "Agent" },
-        ],
+        disabledTools: [],
         subagents: { templates: ["tcopy"] },
       },
     });
@@ -223,7 +219,7 @@ describe("the agent page's Sub-agents section", () => {
       const m = (locale === "zh" ? zh : en).agents.form.subagents;
       const lead = agent("ag1", "Lead", {
         definition: {
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: [],
           subagents: {
             inline: [{ name: "Bad Name", description: "x", instructions: "y" }],
             agents: [{ agentId: "ag2", as: "analyst", description: "d" }],
@@ -262,7 +258,7 @@ describe("the agent page's Sub-agents section", () => {
   it("a validation_failed save marks the empty required fields of an inline template (batch 14 review m8)", async () => {
     const lead = agent("ag1", "Lead", {
       definition: {
-        tools: [{ kind: "builtin", name: "Agent" }],
+        disabledTools: [],
         subagents: { inline: [{ name: "helper", description: "", instructions: "Help." }] },
       },
     });
@@ -295,7 +291,7 @@ describe("the agent page's Sub-agents section", () => {
       ...agent("ag1", "Lead", {
         visibility: "members",
         definition: {
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: [],
           subagents: { agents: [{ agentId: "ag2", as: "analyst", description: "d" }] },
         },
       }),
@@ -327,17 +323,14 @@ describe("the agent page's Sub-agents section", () => {
       definition: Record<string, unknown>;
     };
     expect(body.definition.subagents).toEqual({ dispatchable: true });
-    // turning on dispatchable alone does not offer the agent tool
-    expect(body.definition.tools).toEqual([{ kind: "builtin", name: "AskUserQuestion" }]);
+    // turning on dispatchable alone does not turn the agent tool on
+    expect(body.definition.disabledTools).toEqual([{ kind: "builtin", name: "Agent" }]);
   });
 
   it("an untouched agent with a tiered inline template (jsonb key order) has no unsaved change", async () => {
     const lead = agent("ag1", "Lead", {
       definition: {
-        tools: [
-          { kind: "builtin", name: "AskUserQuestion" },
-          { kind: "builtin", name: "Agent" },
-        ],
+        disabledTools: [],
         // jsonb orders keys by length: model comes before description and instructions
         subagents: {
           inline: [{ name: "helper", model: "fast", description: "Helps.", instructions: "Help." }],

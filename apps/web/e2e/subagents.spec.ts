@@ -10,14 +10,13 @@ const zh = JSON.parse(
 
 const S = zh.agents.form.subagents;
 
-/** A new model-fake agent with the agent tool switched on in the Sub-agents section. */
+/** A new model-fake agent: the agent tool is on by default (tools default-on). */
 async function createLead(page: Page, name: string) {
   await newAgent(page, name);
   await openAgentSection(page, "subagents");
   const section = page.getByRole("region", { name: S.section });
-  await section.getByRole("checkbox", { name: S.agentTool }).check();
+  await expect(section.getByRole("checkbox", { name: S.agentTool })).toBeChecked();
   await expect(section.getByRole("checkbox", { name: S.general })).toBeChecked();
-  await saveSection(page);
 }
 
 /** Opens the agent's page from the Agents list (the name links to it) at its Sub-agents section. */

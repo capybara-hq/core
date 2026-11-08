@@ -9,6 +9,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -156,7 +157,7 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: SCRIPT,
-        tools: ["Agent", "Bash"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(["Agent", "Bash"].map((name) => ({ kind: "builtin", name }))),
       },
       // the member can use the agent, so a 404 below is the owner-only rule, not visibility
       visibility: "org",

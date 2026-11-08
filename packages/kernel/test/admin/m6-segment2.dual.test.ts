@@ -22,6 +22,7 @@ import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
 import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
@@ -367,10 +368,10 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         name: "Worker",
         instructions: "Use the tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "builtin", name: "Bash" },
-        ],
+        ]),
       },
       visibility: "org",
     });
@@ -531,7 +532,8 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     await send(1, c, "plugin__fake-tools-ui__write", writeInput("off"));
     const off = await finished(c, 1);
     expect(off.isError).toBe(true);
-    expect(String(off.content)).toContain('Tool "plugin__fake-tools-ui__write" is unavailable');
+    // the extension is gone: the agent does not have its tools (tools default-on spec §4)
+    expect(String(off.content)).toContain('Unknown tool "plugin__fake-tools-ui__write"');
 
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
     await waitFor(

@@ -88,7 +88,7 @@ describe("ProviderRegistry", () => {
     expect(await redis.ttl(keyA as string)).toBeGreaterThan(590);
   });
 
-  it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:v<主版本>:<版本>:<摘要>），不含配置明文", async () => {
+  it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:v<主版本>:f<格式>:<版本>:<摘要>），不含配置明文", async () => {
     await registry.list(ORG);
     const entry = k.app
       .get(ExtensionHost)
@@ -97,7 +97,7 @@ describe("ProviderRegistry", () => {
     expect(entry?.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(entry?.configHash).toMatch(/^[0-9a-f]{16}$/);
     expect(await redis.keys("cache:capk:models:model-fake-b:*")).toEqual([
-      `cache:capk:models:model-fake-b:v2:${entry?.version}:${entry?.configHash}`,
+      `cache:capk:models:model-fake-b:v2:f2:${entry?.version}:${entry?.configHash}`,
     ]);
   });
 
@@ -496,7 +496,7 @@ describe("model-provider@1 / @2", () => {
     expect(err).not.toBeInstanceOf(ProviderListError);
     expect((err as ApiError).code).toBe("agent.model_unavailable");
     // the validated list (without the dropped model) is cached
-    expect(await redis.exists("cache:capk:models:p2:v2:-:-")).toBe(1);
+    expect(await redis.exists("cache:capk:models:p2:v2:f2:-:-")).toBe(1);
   });
 
   it("an older kernel's entry under the pre-@Cacheable key is ignored: the list is cached under the new key", async () => {
@@ -508,9 +508,9 @@ describe("model-provider@1 / @2", () => {
     expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
     expect(p.calls()).toBe(1);
     // cached under the new key (`@Cacheable`), which the next list reads
-    const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:-:-")) ?? "null");
+    const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:f2:-:-")) ?? "null");
     expect(cached.map((m: { id: string }) => m.id)).toEqual(["v2-model"]);
-    expect(await redis.ttl("cache:capk:models:p2:v2:-:-")).toBeGreaterThan(0);
+    expect(await redis.ttl("cache:capk:models:p2:v2:f2:-:-")).toBeGreaterThan(0);
     await r.list(ORG);
     expect(p.calls()).toBe(1);
     // the old key is neither read nor rewritten
@@ -519,13 +519,22 @@ describe("model-provider@1 / @2", () => {
     ]);
   });
 
+  it("a format-1 list (no kind, written before model kinds) is ignored: the model still resolves", async () => {
+    // what the previous kernel cached: the validated list without a normalised `kind`
+    await redis.set("cache:capk:models:p2:v2:-:-", JSON.stringify([{ id: "v2-model" }]), "EX", 600);
+    const p = v2();
+    const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
+    const { info } = await r.resolve(ORG, { provider: "p2", model: "v2-model" });
+    expect(info.kind).toBe("chat");
+    expect(p.calls()).toBe(1);
+  });
   it("插件从 @1 升级到 @2：不读 @1 时写入的缓存（键带契约主版本）", async () => {
     const old = reg([
       { plugin: "p2", capability: "model-provider@1", impl: v1([v1Info("v2-model", true)]).impl },
     ]);
     const [before] = await old.list(ORG);
     expect(before?.models[0]?.parameters.map((d) => d.key)).toEqual(["effort"]);
-    expect(await redis.exists("cache:capk:models:p2:v1:-:-")).toBe(1);
+    expect(await redis.exists("cache:capk:models:p2:v1:f2:-:-")).toBe(1);
     const p = v2();
     const upgraded = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const [after] = await upgraded.list(ORG);

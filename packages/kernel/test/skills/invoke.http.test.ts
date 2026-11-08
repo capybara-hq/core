@@ -29,6 +29,7 @@ import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { conversationsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -234,7 +235,7 @@ const definition = (orgSkills: string[], tools: Tool[] = []) => ({
   name: "Skilled",
   instructions: "Use skills.",
   model: { provider: "model-fake", model: "fake-1" },
-  tools,
+  disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
   skills: { orgSkills },
 });
 

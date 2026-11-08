@@ -52,6 +52,51 @@ body {
 }
 /* biome-ignore-end lint/complexity/noImportantStyles: 必须压过组件内的动效声明 */
 
+/* Touch screens (spec §4.3): text you type into is at least 16px. iOS Safari zooms the page into
+   any focused field set smaller and leaves it zoomed; the viewport keeps pinch zoom, so the fix is
+   the size, not `maximum-scale`. It must beat every component's own font-size. */
+/* biome-ignore-start lint/complexity/noImportantStyles: must beat the components' field sizes */
+@media (pointer: coarse) {
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]),
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="file"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="image"],
+    [type="hidden"]
+  ) {
+    font-size: max(16px, 1em) !important;
+  }
+}
+/* iOS Safari by its own feature, should a phone not report a coarse pointer. */
+@supports (-webkit-touch-callout: none) {
+  textarea,
+  select,
+  [contenteditable]:not([contenteditable="false"]),
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="file"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="image"],
+    [type="hidden"]
+  ) {
+    font-size: max(16px, 1em) !important;
+  }
+}
+/* biome-ignore-end lint/complexity/noImportantStyles: must beat the components' field sizes */
+
 /* A design link's pending navigation (spec §6.13, LinkPendingMark): a 2px accent underline along
    the link's bottom while the router's navigation to it is pending; it sweeps, and stays still
    under reduced motion. The link is positioned only while pending. */

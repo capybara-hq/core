@@ -17,6 +17,7 @@ import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -163,11 +164,11 @@ beforeAll(async () => {
         name: "Replayer",
         instructions: "Use tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
           { kind: "builtin", name: "Bash" },
-        ],
+        ]),
       },
       visibility: "org",
     },
@@ -270,6 +271,7 @@ async function seedRun(
     | { finished: EventPayload<"background_task_finished"> }
     | { delivery: EventPayload<"subagent_delivery"> },
   catalog?: EventPayload<"skills_catalog">,
+  runContext?: EventPayload<"run_context">,
 ): Promise<{ userSeq: number; interjectionSeq: number | null }> {
   const [msg] = await eventLog.append(convId, [
     {
@@ -338,6 +340,9 @@ async function seedRun(
     },
     ...(catalog !== undefined
       ? [{ type: "skills_catalog" as const, runId, payload: catalog }]
+      : []),
+    ...(runContext !== undefined
+      ? [{ type: "run_context" as const, runId, payload: runContext }]
       : []),
     call(1, userSeq),
   ]);
@@ -833,7 +838,27 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       { name: "Edit", input: { file_path: "/workspace/z.txt", old_string: "a" }, content: "ok" },
     ]);
     await addCase(setId, c1, "legacy-edit");
+    // an rc case snapshot holds the rc definition: its enabled list named the extension tool (the
+    // evidence the rc key maps by; tools default-on spec §2 keeps reading it from snapshots)
+    const stored = await db
+      .selectFrom("agent_versions")
+      .select(["version", "definition"])
+      .where("agent_id", "=", agentId)
+      .orderBy("version", "desc")
+      .executeTakeFirstOrThrow();
+    const setDefinition = (definition: unknown) =>
+      db
+        .updateTable("agent_versions")
+        .set({ definition: JSON.stringify(definition) })
+        .where("agent_id", "=", agentId)
+        .where("version", "=", stored.version)
+        .execute();
+    await setDefinition({
+      ...(stored.definition as Record<string, unknown>),
+      tools: [{ kind: "plugin", plugin: "tools-count", name: "count" }],
+    });
     await addCase(setId, c2, "legacy-ext");
+    await setDefinition(stored.definition);
     await addCase(setId, c3, "new-edit");
     const sandboxBefore = (await readFakeSandboxOps(root)).length;
     const run = await startRun(setId, {});
@@ -922,6 +947,34 @@ describe("整轮回放", { timeout: 60_000 }, () => {
       (e) => e.type === "skills_catalog",
     );
     expect(copied.map((e) => e.payload)).toEqual([catalog]);
+  });
+
+  it("the run's run_context is copied unchanged; the replay records no new one (run context §8)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const runContext: EventPayload<"run_context"> = {
+      agent: { name: "Recorded name" },
+      org: { name: "Recorded org" },
+      date: "2020-01-02",
+      timeZone: "Asia/Shanghai",
+      locale: "zh",
+    };
+    await seedRun(
+      conv,
+      "ctx-copy",
+      'tool:plugin__tools-count__count:{"n":1}',
+      [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
+      undefined,
+      undefined,
+      runContext,
+    );
+    await addCase(setId, conv, "ctx-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    const copied = (await evalEvents(r as EvalResultView)).filter((e) => e.type === "run_context");
+    expect(copied.map((e) => e.payload)).toEqual([runContext]);
   });
 
   /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */

@@ -7,6 +7,8 @@ import {
 import {
   type AgentDefinition,
   AgentDefinitionSchema,
+  builtinDisabled,
+  canonicalDisabledTools,
   type ModelRef,
   normalizeStoredDefinition,
 } from "../agents/definition.js";
@@ -389,28 +391,36 @@ const pinsOf = (d: AgentDefinition): string[] =>
   [...new Set(d.skills?.pinned ?? [])].slice(0, PINNED_SKILLS_LIMITS.count);
 
 /**
- * Tool refs as a sub-agent gets them without template narrowing (general and org agents).
- * `Agent` depends on the child's depth, not on the definition (agent map spec §4.1): it is kept
- * only when the logged child had it, so a child logged without it (at the depth limit, or before
- * nesting) compares equal to a candidate that offers it.
+ * A sub-agent's tools without template narrowing (general and org agents), as compared: its
+ * turned-off tools (tools default-on spec §4) and its key filter's allowlist and `deny` keys,
+ * {@link CHILD_REMOVED_TOOLS} left out. `Agent` depends on the child's depth, not on the
+ * definition (agent map spec §4.1): a `deny` of it never counts, and a turned-off `Agent` counts
+ * only when the logged child had it (`keepAgent`), so a child logged without it (at the depth
+ * limit, or before nesting) compares equal to a candidate that offers it.
  */
 const childToolsOf = (d: AgentDefinition, keepAgent: boolean): string =>
-  canonicalJson(
-    d.tools.filter(
-      (t) =>
-        t.kind !== "builtin" ||
-        (!(CHILD_REMOVED_TOOLS as readonly string[]).includes(t.name) &&
-          (keepAgent || t.name !== AGENT_TOOL)),
+  canonicalJson({
+    disabled: canonicalDisabledTools(
+      (d.disabledTools ?? []).filter(
+        (r) => keepAgent || r.kind !== "builtin" || r.name !== AGENT_TOOL,
+      ),
     ),
-  );
+    allow: d.subagentTools?.allow ?? null,
+    deny: (d.subagentTools?.deny ?? []).filter(
+      (k) => !(CHILD_REMOVED_TOOLS as readonly string[]).includes(k) && k !== AGENT_TOOL,
+    ),
+  });
 
+/** Does the child have `Agent` by its definition (not turned off, not removed by its filter)? */
 const hasAgent = (d: AgentDefinition): boolean =>
-  d.tools.some((t) => t.kind === "builtin" && t.name === AGENT_TOOL);
+  !builtinDisabled(d.disabledTools, AGENT_TOOL) &&
+  !(d.subagentTools?.deny ?? []).includes(AGENT_TOOL) &&
+  (d.subagentTools?.allow === undefined || d.subagentTools.allow.includes(AGENT_TOOL));
 
 /** The parent's selection a template child depends on: its tools, org skills and roster entry. */
 const parentSide = (d: AgentDefinition, started: SubagentStarted): string =>
   canonicalJson({
-    tools: d.tools,
+    disabledTools: canonicalDisabledTools(d.disabledTools ?? []),
     orgSkills: d.skills?.orgSkills ?? [],
     listed:
       started.template.source === "general"
@@ -454,7 +464,7 @@ export function subagentChanged(
     (pinned !== null && canonicalJson(pinned) !== canonicalJson(pinsOf(logged))) ||
     (tools !== null && tools !== childTools(logged));
   if (sameVersion) {
-    return differs(candidate.instructions, pinsOf(candidate), canonicalJson(candidate.tools));
+    return differs(candidate.instructions, pinsOf(candidate), childTools(candidate));
   }
   switch (started.template.source) {
     case "agent":

@@ -43,6 +43,7 @@ import { specHash } from "../../src/tools/registry.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -148,7 +149,9 @@ beforeEach(async () => {
         name: "Reader",
         instructions: "Read pages.",
         model: SCRIPT_1,
-        tools: ["WebFetch", "Agent"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(
+          ["WebFetch", "Agent"].map((name) => ({ kind: "builtin", name })),
+        ),
         subagents: {
           inline: [
             {
@@ -430,7 +433,7 @@ describe("WebFetch extraction", { timeout: 120_000 }, () => {
           name: "Reader",
           instructions: "Read pages.",
           model: SCRIPT_2,
-          tools: [{ kind: "builtin", name: "WebFetch" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "WebFetch" }]),
         },
       },
     });

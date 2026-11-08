@@ -191,6 +191,7 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     expect(types(evs)).toEqual([
       "user_message",
       "run_started",
+      "run_context",
       "model_call",
       "assistant_message",
       "usage",
@@ -203,8 +204,14 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
       model: { provider: "model-fake", model: "fake-1" },
       triggerAccountId: ownerId,
     });
-    expect(textOf(evs[3] as ConversationEvent)).toBe("hi");
-    expect(evs[5]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
+    // run context spec §5: written at run start, before the run's first model call
+    expect(evs[2]?.payload).toMatchObject({
+      agent: { name: expect.any(String) },
+      timeZone: expect.any(String),
+      date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+    expect(textOf(evs[4] as ConversationEvent)).toBe("hi");
+    expect(evs[6]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
     expect(await consumedSeq(db, convId)).toBe(seq);
     expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
     // 锁与配额已释放（终态事件写入后才释放，负载高时稍晚一点：等到释放再断言）

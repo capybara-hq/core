@@ -335,10 +335,6 @@ describe("release-candidate tool keys in stored data", () => {
           name: "Legacy",
           instructions: "Be helpful.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [
-            { kind: "connector", connectorId: docsId, tools: "all" },
-            { kind: "builtin", name: "Agent" },
-          ],
         },
         visibility: "org",
       },
@@ -350,7 +346,8 @@ describe("release-candidate tool keys in stored data", () => {
       .select("definition")
       .where("agent_id", "=", agentId)
       .executeTakeFirstOrThrow();
-    // an rc version: old builtin names, old connector and builtin policy keys, an inline template
+    // an rc version: an enabled tool list with old builtin names (from before tools were on by
+    // default), old connector and builtin policy keys, an inline template
     await db
       .updateTable("agent_versions")
       .set({
@@ -380,10 +377,9 @@ describe("release-candidate tool keys in stored data", () => {
     const got = await req({ method: "GET", url: `/api/v1/orgs/${orgA}/agents/${agentId}` });
     expect(got.statusCode, got.body).toBe(200);
     const def = (got.json() as { agent: { definition: Record<string, unknown> } }).agent.definition;
-    expect(def.tools).toEqual([
-      { kind: "connector", connectorId: docsId, tools: "all" },
-      { kind: "builtin", name: "Agent" },
-    ]);
+    // the enabled list reads as nothing turned off (tools default-on spec §2)
+    expect(def.tools).toBeUndefined();
+    expect(def.disabledTools).toEqual([]);
     expect(def.toolPolicies).toEqual({ Bash: "deny", mcp__docs__search: "ask" });
     expect(def.subagents).toMatchObject({
       inline: [{ name: "reader", tools: ["Read"], disallowedTools: ["mcp__docs__search"] }],
@@ -415,16 +411,12 @@ describe("release-candidate tool keys in stored data", () => {
           visibility: "org",
         },
       });
-    const builtin = await save({ tools: [{ kind: "builtin", name: "sandbox_bash" }] });
+    const builtin = await save({ disabledTools: [{ kind: "builtin", name: "sandbox_bash" }] });
     expect(builtin.statusCode, builtin.body).toBe(400);
     expect(builtin.json()).toMatchObject({ error: { code: "validation_failed" } });
     expect(builtin.body).toContain('\\"Bash\\"');
 
     const policy = await save({
-      tools: [
-        { kind: "builtin", name: "Read" },
-        { kind: "connector", connectorId: docsId, tools: "all" },
-      ],
       toolPolicies: { sandbox_read: "ask", docs__search: "deny" },
     });
     expect(policy.statusCode, policy.body).toBe(400);
@@ -433,10 +425,6 @@ describe("release-candidate tool keys in stored data", () => {
     expect(policy.body).toContain('\\"mcp__docs__search\\"');
 
     const inline = await save({
-      tools: [
-        { kind: "builtin", name: "Read" },
-        { kind: "builtin", name: "Agent" },
-      ],
       subagents: {
         inline: [{ name: "r", description: "d", instructions: "i", tools: ["sandbox_read"] }],
       },

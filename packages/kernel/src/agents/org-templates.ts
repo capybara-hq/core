@@ -24,7 +24,9 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { skillVersionsById } from "../skills/usable.js";
 import { canonicalJson } from "../tools/canonical-json.js";
+import { ToolRegistry } from "../tools/registry.js";
 import { AgentLookup, type AgentView } from "./agent-lookup.js";
+import type { DisabledToolRef } from "./definition.js";
 import {
   type AgentTemplateView,
   loadTemplates,
@@ -237,6 +239,8 @@ export async function templateFromAgent(
   orgId: string,
   agent: AgentView,
   meta: { name: string; description: string },
+  /** The extension tools loaded on this replica (a wholly turned-off extension's tools). */
+  extensionTools: readonly { plugin: string; name: string }[] = [],
 ): Promise<{ template: AgentTemplate; omitted: SaveAsOmission[] }> {
   const def = agent.definition;
   const omitted: SaveAsOmission[] = [];
@@ -261,22 +265,46 @@ export async function templateFromAgent(
     });
   }
 
-  // Tools: builtin and plugin tool keys; connector tools become `connectors` entries
-  const tools: string[] = [];
-  const connectorRefs: { connectorId: string; tools: "all" | string[] }[] = [];
-  // stored definitions are not parsed: fields with schema defaults may be missing
-  for (const r of def.tools ?? []) {
-    if (r.kind === "connector") {
-      connectorRefs.push({ connectorId: r.connectorId, tools: r.tools });
-      continue;
-    }
-    const key = r.kind === "builtin" ? r.name : extensionToolKey(r.plugin, r.name);
-    if (!TOOL_KEY_RE.test(key) || tools.includes(key)) continue;
-    if (tools.length >= L.tools) {
+  // Tools (tools default-on spec §3): the template turns off what the agent turns off
+  // (`disallowedTools`, builtin and extension tool keys; a wholly turned-off extension as all its
+  // loaded tools); every connector on for the agent becomes a `connectors` entry
+  const disabled = def.disabledTools ?? [];
+  const disallowedTools: string[] = [];
+  const disallow = (key: string) => {
+    if (!TOOL_KEY_RE.test(key) || disallowedTools.includes(key)) return;
+    if (disallowedTools.length >= L.tools) {
       omitted.push({ kind: "tool", name: key, reason: "limit" });
-      continue;
+      return;
     }
-    tools.push(key);
+    disallowedTools.push(key);
+  };
+  for (const r of disabled) {
+    if (r.kind === "builtin") disallow(r.name);
+    else if (r.kind === "plugin") {
+      const names =
+        r.tools === "all"
+          ? extensionTools.filter((x) => x.plugin === r.plugin).map((x) => x.name)
+          : r.tools;
+      for (const n of names) disallow(extensionToolKey(r.plugin, n));
+    }
+  }
+  const liveConnectors = await db
+    .selectFrom("connectors")
+    .select(["id"])
+    .where("org_id", "=", orgId)
+    .where("status", "=", "active")
+    .where("deleted_at", "is", null)
+    .orderBy("created_at")
+    .orderBy("id")
+    .execute();
+  const connectorRefs: { connectorId: string; off: string[] }[] = [];
+  for (const c of liveConnectors) {
+    const entry = disabled.find(
+      (r): r is Extract<DisabledToolRef, { kind: "connector" }> =>
+        r.kind === "connector" && r.connectorId === c.id,
+    );
+    if (entry?.tools === "all") continue;
+    connectorRefs.push({ connectorId: c.id, off: entry === undefined ? [] : entry.tools });
   }
   // builtin / plugin keys stay keys; a connector tool's policy goes to its connector entry by
   // tool name (`policies`), since the key embeds this org's connector slug
@@ -286,11 +314,11 @@ export async function templateFromAgent(
     { key: string; tool: string; policy: "ask" | "deny" }[]
   >();
   for (const [k, v] of Object.entries(def.toolPolicies ?? {})) {
-    if (tools.includes(k)) {
+    const parsed = parseToolKey(k);
+    if (parsed !== null && parsed.kind !== "connector" && TOOL_KEY_RE.test(k)) {
       toolPolicies[k] = v;
       continue;
     }
-    const parsed = parseToolKey(k);
     if (parsed?.kind === "connector") {
       const list = connectorPolicies.get(parsed.slug) ?? [];
       list.push({ key: k, tool: parsed.tool, policy: v });
@@ -406,10 +434,23 @@ export async function templateFromAgent(
       omitted.push({ kind: "connector", name: id, id, reason: "unavailable" });
       continue;
     }
-    const refs = connectorRefs.filter((r) => r.connectorId === id);
-    const named = refs.some((r) => r.tools === "all")
-      ? null
-      : [...new Set(refs.flatMap((r) => r.tools as string[]))].slice(0, L.connectorTools);
+    const off = connectorRefs.find((r) => r.connectorId === id)?.off ?? [];
+    // some tools off: the entry names the connector's enabled tools that stay on
+    const named =
+      off.length === 0
+        ? null
+        : (
+            await db
+              .selectFrom("connector_tools")
+              .select("name")
+              .where("connector_id", "=", id)
+              .where("status", "=", "enabled")
+              .orderBy("name")
+              .execute()
+          )
+            .map((x) => x.name)
+            .filter((n) => !off.includes(n))
+            .slice(0, L.connectorTools);
     if (c.template_id !== null) {
       // only the platform connector template is recorded, not this connector: creating an agent
       // from the template rebinds the entry to the org's oldest connector made from that
@@ -608,7 +649,7 @@ export async function templateFromAgent(
     name: meta.name,
     description: meta.description,
     instructions: def.instructions ?? "",
-    tools,
+    ...(disallowedTools.length > 0 && { disallowedTools }),
     ...(Object.keys(toolPolicies).length > 0 && { toolPolicies }),
     model: "standard",
     modelRef: `${def.model.provider}/${def.model.model}`,
@@ -641,6 +682,8 @@ export class OrgAgentTemplates {
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "view">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** The extension tools loaded here (a wholly turned-off extension saved as its tool keys). */
+    @Inject(ToolRegistry) private readonly tools: Pick<ToolRegistry, "extensionToolSpecs">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -676,7 +719,13 @@ export class OrgAgentTemplates {
     if (!live) throw agentNotFound();
     const agent = await this.agents.view(agentId);
     await this.assertNameFree(orgId, meta.name);
-    const { template, omitted } = await templateFromAgent(t, orgId, agent, meta);
+    const { template, omitted } = await templateFromAgent(
+      t,
+      orgId,
+      agent,
+      meta,
+      this.tools.extensionToolSpecs().map((x) => ({ plugin: x.plugin, name: x.spec.name })),
+    );
     const put = await putTemplateVersionIn(
       t,
       { orgId, plugin: null, catalogItemId: null, catalogVersion: null, sourceFormat: "capybara" },

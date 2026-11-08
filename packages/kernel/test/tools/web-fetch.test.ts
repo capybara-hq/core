@@ -23,6 +23,7 @@ import {
 import { WebPages } from "../../src/tools/builtins/web/page-cache.js";
 import { specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -287,7 +288,7 @@ describe("WebFetch: fetching", () => {
     await enable(orgId, "fake-web");
     const { tools } = await k.app
       .get(ToolRegistry)
-      .forAgent(orgId, { tools: [{ kind: "builtin", name: "WebFetch" }] });
+      .forAgent(orgId, { disabledTools: builtinsOff("WebFetch") });
     const resolved = tools.find((t) => t.key === "WebFetch");
     expect(resolved?.timeoutMs?.({ url: "https://example.com/", prompt: "p" })).toBe(180_000);
     let ms = 1234;
@@ -415,7 +416,7 @@ describe("WebFetch: approval", { timeout: 90_000 }, () => {
           name: "Reader",
           instructions: "Read pages.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "WebFetch" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "WebFetch" }]),
         },
         visibility: "org",
       },

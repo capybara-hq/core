@@ -5,12 +5,16 @@ description: 'Use when changing the kernel tool pipeline or builtin tools (packa
 
 # Writing tools
 
-This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`, `Skill` / `SkillWrite`, `Agent` / `SendMessage` / `SubagentHandback`, `WebSearch` / `WebFetch`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
+This skill covers what core owns: the tool pipeline, policy and approval, archiving, `ToolSearch`, drift review and resume, the kernel builtin tools (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`, `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`, `Skill` / `SkillWrite`, `Agent` / `SendMessage` / `SubagentHandback`, `WebSearch` / `WebFetch`, `CurrentTime`), hooks around a tool call, and the tool contract as extensions and connectors implement it; tested on the `fake-tools-ui` and `fake-connector` extensions of `@capybara-hq/testing` with model-fake. The description and error rules below apply to builtin tools too (the tool design check of `pnpm check` covers `packages/kernel/src/tools/builtins` and the fake extensions). **Writing a plugin's own tools** is in [writing-tools in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-tools), where `capybara-plugin check` runs the same tool design check.
 
 For the extension host (manifest, config, ctx, the multi-replica prohibitions, dual-replica tests) see `.agents/skills/writing-extensions`. Implementations:
 
 - Kernel builtin tools: `packages/kernel/src/tools/builtins` (`AskUserQuestion`, `ReadToolOutput`, `ToolSearch`; the sandbox tools `Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`
   are in `builtins/sandbox/`; the skill tools `Skill` / `SkillWrite`). See "Kernel builtin tools: sandbox and skills" below.
+- `CurrentTime` (`builtins/current-time.ts`, on by default, allow): the local date-time, weekday, zone and UTC
+  instant; without `timeZone` the conversation's run context zone (`conversationTimeZone`: latest
+  `run_context`, else the org default, else UTC). The clock is the `RUN_CONTEXT_CLOCK` seam. The run
+  context carries only the date, so this is how the model learns the time of day.
 - Extension tools: the core fake `fake-tools-ui` (tool `write`, model-visible `fake-tools-ui__write`, default allow); the official [`todo`](https://github.com/capybara-hq/plugins/tree/main/plugins/todo) plugin in capybara-hq/plugins (one `write` tool, writes the whole list into the extension's schema, default allow) is the reference for plugin authors and the source of the examples below.
 - Connectors: see `.agents/skills/writing-connectors`.
 

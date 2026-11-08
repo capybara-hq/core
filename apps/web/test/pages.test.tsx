@@ -230,7 +230,7 @@ describe("(auth) 页面模板", () => {
 
   it("初始化页：AuthPage + 表单；已初始化时提示前往登录", async () => {
     stubApi({ "GET /api/v1/setup": () => json(200, { needsSetup: false }) });
-    renderPage(<SetupPage />, { locale: "zh" });
+    renderPage(await SetupPage(), { locale: "zh" });
     expect(template("AuthPage")).not.toBeNull();
     expect(screen.getByRole("combobox", { name: zh.common.language })).toBeTruthy();
     expect(await screen.findByText(zh.setup.alreadyDone)).toBeTruthy();
@@ -243,7 +243,7 @@ describe("(auth) 页面模板", () => {
       "GET /api/v1/setup": () => json(200, { needsSetup: true }),
       "POST /api/v1/setup": () => json(200, { account: { id: "a1" } }),
     });
-    renderPage(<SetupPage />);
+    renderPage(await SetupPage());
     const user = userEvent.setup();
     await user.type(await screen.findByRole("textbox", { name: en.setup.loginLabel }), "admin");
     await user.type(

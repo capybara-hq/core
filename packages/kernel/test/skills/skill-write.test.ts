@@ -27,6 +27,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { buildSkillWrite, SKILL_WRITE_MAX_BYTES } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
 import { fakeEnvFile } from "../helpers/fake-fs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -136,7 +137,7 @@ async function createAgent(
         name: "Writer",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "SkillWrite" }, ...extraTools],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "SkillWrite" }, ...extraTools]),
         ...(writePolicy !== undefined && { skills: { writePolicy } }),
       },
       visibility,
@@ -537,7 +538,7 @@ describe("SkillWrite and pinned skills (phase B)", { timeout: 120_000 }, () => {
           name: "Writer",
           instructions: "Write skills.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "SkillWrite" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "SkillWrite" }]),
           skills: { pinned: [memo.id] },
         },
       },
@@ -1027,7 +1028,7 @@ describe("SkillWrite on a shared agent (R4)", { timeout: 180_000 }, () => {
           name: "X",
           instructions: "x",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [],
+          disabledTools: builtinsOff(),
         },
         visibility: "org",
       },
@@ -1213,7 +1214,7 @@ describe("SkillWrite and manual-only skills (phase D)", { timeout: 180_000 }, ()
           name: "Writer",
           instructions: "Write skills.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "SkillWrite" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "SkillWrite" }]),
           skills: { pinned: ids.map((s) => s.id) },
         },
       },

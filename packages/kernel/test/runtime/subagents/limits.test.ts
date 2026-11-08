@@ -28,6 +28,7 @@ import { AGENT_REFUSALS, type AgentToolInputT } from "../../../src/tools/builtin
 import type { ToolStepContext } from "../../../src/tools/pipeline.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
@@ -219,7 +220,7 @@ beforeEach(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(["Agent", "Write"].map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     },
@@ -675,7 +676,9 @@ describe("tokens", () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: { provider: "model-script", model: "script-1" },
-          tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+          disabledTools: onlyBuiltins(
+            ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+          ),
           toolPolicies: { Write: "ask" },
         },
       },

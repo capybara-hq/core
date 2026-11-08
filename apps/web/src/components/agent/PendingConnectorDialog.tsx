@@ -3,6 +3,7 @@
 import {
   Button,
   Dialog,
+  EmptyState,
   Field,
   ItemList,
   ItemListItem,
@@ -342,13 +343,16 @@ function EntryDialog({
             <Skeleton rows={1} />
           )
         ) : candidates.length === 0 ? (
-          <Text variant="prose" tone="muted">
-            {createOff
-              ? t("noCandidatesOff")
-              : template
-                ? t("noCandidatesTemplate")
-                : t("noCandidatesNeeds")}
-          </Text>
+          <EmptyState
+            size="panel"
+            text={
+              createOff
+                ? t("noCandidatesOff")
+                : template
+                  ? t("noCandidatesTemplate")
+                  : t("noCandidatesNeeds")
+            }
+          />
         ) : (
           <Field label={t("connectorLabel")}>
             <Select

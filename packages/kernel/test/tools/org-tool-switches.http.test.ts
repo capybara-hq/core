@@ -5,6 +5,13 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
+
+const PROBER_OFF = [
+  ...builtinsOff(),
+  { kind: "plugin" as const, plugin: "tools-probe", tools: ["second"] },
+];
+
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
@@ -84,7 +91,8 @@ async function createProber(org = orgId): Promise<string> {
         name: "Prober",
         instructions: "Probe.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "tools-probe", name: "echo" }],
+        // only echo: every builtin and the extension's other tool off
+        disabledTools: PROBER_OFF,
       },
       visibility: "org",
     },
@@ -97,9 +105,7 @@ const put = (req: Req, tool: string, body: Record<string, unknown>, org = orgId)
   req({ method: "PUT", url: `${toolsUrl(org)}/${tool}`, payload: body });
 
 const resolve = (org: string) =>
-  k.app.get(ToolRegistry).forAgent(org, {
-    tools: [{ kind: "plugin", plugin: "tools-probe", name: "echo" }],
-  });
+  k.app.get(ToolRegistry).forAgent(org, { disabledTools: PROBER_OFF });
 
 describe("org tool switches over HTTP", () => {
   it("lists the extension's tools, on by default, for members too", async () => {
@@ -161,7 +167,8 @@ describe("org tool switches over HTTP", () => {
     // at run time: unavailable in this org, still there in another
     const here = await resolve(orgId);
     expect(here.tools).toEqual([]);
-    expect(here.unavailable).toEqual([{ ref: KEY, reason: OFF_REASON }]);
+    expect(here.unavailable).toEqual([]);
+    expect(here.hidden).toEqual([{ ref: KEY, reason: OFF_REASON }]);
     expect((await resolve(otherOrg)).tools.map((t) => t.key)).toEqual([KEY]);
 
     const audits = await db

@@ -9,6 +9,7 @@ import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, setDeployment, startOrgEnv } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { PW } from "../helpers/runs.js";
 
@@ -81,10 +82,7 @@ async function agentOf(owner: string, visibility: "private" | "org", name = "Hel
       name,
       instructions: "Be helpful.",
       model: MODEL,
-      tools: [
-        { kind: "builtin", name: "Bash" },
-        { kind: "builtin", name: "Skill" },
-      ],
+      disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,
       modelParams: {},
@@ -243,10 +241,11 @@ describe("agents", () => {
     const seed = await agentOf(env.memId, "private", "Seed");
     const c = ctxOf(env.memId, seed);
     const out = (await run("agents.create", { definition: { name: "Mine", model: MODEL } }, c)) as {
-      agent: { id: string; visibility: string; definition: { tools: unknown[] } };
+      agent: { id: string; visibility: string; definition: { disabledTools: unknown[] } };
     };
     expect(out.agent.visibility).toBe("private");
-    expect(out.agent.definition.tools.length).toBeGreaterThan(0);
+    // nothing turned off: every tool the org offers (tools default-on spec §8)
+    expect(out.agent.definition.disabledTools).toEqual([]);
     const rows = await audits("agent.created");
     expect(
       rows.some((r) => (r.detail as { operation?: string }).operation === "agents.create"),
@@ -599,14 +598,39 @@ describe("agent templates", () => {
   });
 });
 
+describe("agent description", () => {
+  it("agents.update saves the description into a new version and the profile shows it", async () => {
+    const mine = await agentOf(env.memId, "private", "Mine");
+    const c = ctxOf(env.memId, mine);
+    await run(
+      "agents.update",
+      { agentId: mine, version: 1, description: "Answers HR questions." },
+      c,
+    );
+    const got = (await run("agents.get", { agentId: mine }, c)) as {
+      agent: { profile: { description: string } };
+    };
+    expect(got.agent.profile.description).toBe("Answers HR questions.");
+    const me = (await run("platform.me", {}, c)) as {
+      profile: { description: string };
+      version: number;
+    };
+    expect(me).toMatchObject({ profile: { description: "Answers HR questions." }, version: 2 });
+  });
+});
+
 describe("platform", () => {
   it("platform.me lists the agent's tool keys, its sandbox and no secret", async () => {
     const id = await agentOf(env.memId, "private");
     const out = await run("platform.me", {}, ctxOf(env.memId, id));
+    // every builtin but Bash is off; this deployment has no sandbox provider, so Bash cannot load
+    // now and is listed with the reason
     expect(out).toMatchObject({
       id,
-      tools: ["Bash", "Skill"],
-      sandbox: { enabled: true },
+      tools: [],
+      unavailableTools: [{ tool: "Bash" }],
+      disabledTools: builtinsOff("Bash"),
+      sandbox: { enabled: false },
       model: MODEL,
     });
     const text = JSON.stringify(out);

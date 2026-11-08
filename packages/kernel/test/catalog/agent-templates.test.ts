@@ -9,6 +9,7 @@ import { resolveRoster } from "../../src/runtime/subagents/roster.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
@@ -131,7 +132,7 @@ async function lead(templateIds: string[]): Promise<{ id: string; definition: Ag
     name: "Lead",
     instructions: "Lead the work.",
     model: { provider: "model-fake", model: "fake-1" },
-    tools: [{ kind: "builtin", name: "Agent" }],
+    disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
     subagents: { templates: templateIds },
   };
   const r = await env.boss({

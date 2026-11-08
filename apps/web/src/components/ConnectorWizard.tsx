@@ -523,7 +523,7 @@ export function useConnectorWizard(
     content = (
       <Card title={t("wizard.typeTitle")}>
         <EmptyState
-          size="compact"
+          size="panel"
           text={t("wizard.noKinds")}
           action={{ label: t("wizard.noKindsAction"), variant: "default", href: "/plugins" }}
         />

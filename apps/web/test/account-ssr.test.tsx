@@ -154,6 +154,17 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
+  it("/account/connections: no personal connector is the page empty state, not a loose sentence (spec §6.18)", async () => {
+    await renderRouteWithCache("/account/connections", {
+      ...ROUTES,
+      [`GET ${O}/connectors`]: () => json(200, { connectors: [] }),
+    });
+    const state = screen.getByText(en.connections.empty).closest('[data-part="empty-state"]');
+    expect(state?.getAttribute("data-size")).toBe("page");
+    expect(state?.textContent).toContain(en.connections.emptyHint);
+    expect(state?.querySelector('[data-part="empty-illustration"]')).not.toBeNull();
+  });
+
   it("/account/connections: a detail that fails otherwise (500) is the error state; retry reads it again", async () => {
     let failing500 = true;
     const routes: Routes = {

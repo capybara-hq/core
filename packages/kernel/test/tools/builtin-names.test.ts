@@ -21,6 +21,7 @@ import {
   skillsCurrentText,
 } from "../../src/runtime/context/skills.js";
 import {
+  AGENT_BUILTIN_NAMES,
   AGENT_TOOL,
   BUILTIN,
   BUILTIN_TOOL_KINDS,
@@ -149,14 +150,10 @@ describe("builtin names", () => {
 
   it("the web copies name the builtins under their new names", () => {
     const agents = repoFile("apps/web/src/lib/agents.ts");
-    expect(arrayLiteral(agents, "BUILTIN_TOOLS")).toEqual([
-      BUILTIN.AskUserQuestion,
-      BUILTIN.ReadToolOutput,
-      BUILTIN.SkillWrite,
-      BUILTIN.WebSearch,
-      BUILTIN.WebFetch,
-      BUILTIN.Platform,
-    ]);
+    // every builtin an agent can turn off, but Agent (the Sub-agents section switches it)
+    expect(arrayLiteral(agents, "BUILTIN_TOOLS")).toEqual(
+      AGENT_BUILTIN_NAMES.filter((n) => n !== AGENT_TOOL),
+    );
     for (const f of [
       "apps/web/src/lib/timeline.ts",
       "apps/web/src/components/AgentSubagents.tsx",
@@ -179,7 +176,7 @@ describe("builtin names", () => {
     expect(CLAUDE_CODE_TOOL_MAP).not.toMatch(/for example WebFetch/);
   });
 
-  it("the legacy map covers the 13 old names, one per new name (the task, web, message and Platform tools never had one)", () => {
+  it("the legacy map covers the 13 old names, one per new name (the task, web, message, Platform and CurrentTime tools never had one)", () => {
     expect(Object.keys(LEGACY_BUILTINS)).toHaveLength(13);
     const never: readonly string[] = [
       BUILTIN.TaskOutput,
@@ -188,6 +185,7 @@ describe("builtin names", () => {
       BUILTIN.SubagentHandback,
       ...WEB_TOOL_NAMES,
       BUILTIN.Platform,
+      BUILTIN.CurrentTime,
     ];
     expect(new Set(Object.values(LEGACY_BUILTINS).map((l) => l.name))).toEqual(
       new Set(BUILTIN_TOOL_NAMES.filter((n) => !never.includes(n))),

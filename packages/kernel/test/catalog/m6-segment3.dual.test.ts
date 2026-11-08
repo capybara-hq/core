@@ -36,6 +36,7 @@ import {
   replayableCalls,
   toEvents,
 } from "../../src/evals/snapshot.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -698,11 +699,11 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
         name: "Sales",
         instructions: "Use the tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "connector", connectorId, tools: "all" },
           { kind: "plugin", plugin: "fake-tools-ui", name: "write" },
           { kind: "builtin", name: "Skill" },
-        ],
+        ]),
         skills: { orgSkills: [appSkillId] },
       },
       visibility: "org",
@@ -761,12 +762,8 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
     const r = await call("boss", 0, conv, "mcp__docs__search", { q: "after" }, 1);
     expect(r.isError, String(r.content)).toBe(false);
     expect(String(r.content)).toContain("hits for after");
-    // agent 定义里仍留着对 fake-tools-ui 的引用（插件已在本组织停用）：运行照常结束，调它只得到工具错误
-    const left = await ok("boss", 0, "GET", `${base}/agents/${agentId}`);
-    expect(
-      (left.agent as { definition: { tools: { kind: string; plugin?: string }[] } }).definition
-        .tools,
-    ).toContainEqual(expect.objectContaining({ kind: "plugin", plugin: "fake-tools-ui" }));
+    // the extension is off in the org now: the agent no longer has its tools (tools default-on
+    // spec §4); the run ends as usual and a call naming one is only a tool error
     const dangling = await call(
       "boss",
       1,
@@ -855,7 +852,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
         name: "Mine",
         instructions: "Write skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "SkillWrite" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "SkillWrite" }]),
         skills: { writePolicy: "ask" },
       },
       visibility: "private",
@@ -964,7 +961,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
         name: "Legacy",
         instructions: "Search the docs.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "connector", connectorId, tools: "all" }],
+        disabledTools: onlyBuiltins([{ kind: "connector", connectorId, tools: "all" }]),
       },
       visibility: "org",
     });
@@ -979,7 +976,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
       .set({
         definition: JSON.stringify({
           ...(stored.definition as Record<string, unknown>),
-          tools: [{ kind: "app", appId: connectorId, tools: "all" }],
+          disabledTools: onlyBuiltins([{ kind: "app", appId: connectorId, tools: "all" }]),
         }),
       })
       .where("agent_id", "=", legacyId)
@@ -1071,7 +1068,7 @@ describe("M6 第三段双副本验收（平台目录）", { timeout: 240_000 }, 
         name: "Kit",
         instructions: "Load the skill.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Skill" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Skill" }]),
         skills: { orgSkills: [skill?.id] },
       },
       visibility: "org",

@@ -29,6 +29,7 @@ import type { LoopDeps } from "../runtime/langgraph-loop.js";
 import type { AgentLoop, LoopOutcome } from "../runtime/loop.js";
 import { type MediaSourceDeps, RunError } from "../runtime/model-call.js";
 import type { BoundProvider, ProviderRegistry } from "../runtime/providers.js";
+import { runContextIdemKey } from "../runtime/run-context.service.js";
 import type { RunFinish } from "../runtime/run-finish.js";
 import { recordedSkillForks } from "../runtime/subagents/skill-fork.js";
 import { skillsCatalogIdemKey } from "../skills/catalog.js";
@@ -54,7 +55,7 @@ import type { ResolvedCandidate } from "./step-replay.js";
  * {@link RecordedToolPipeline}（只回放记录的结果，不执行任何工具、沙箱、连接器或审批）。
  *
  * - 种子：原运行 `run_started` 之前的事件按原 seq 插入（`last_seq` 停在其前一位，新的 `run_started` 因此与原来同 seq），
- *   原运行开始时的 `skills_catalog` 照抄；然后写 `runs` 行与 `run_started`，`agent` 用候选定义。
+ *   原运行开始时的 `skills_catalog` 与 `run_context` 照抄；然后写 `runs` 行与 `run_started`，`agent` 用候选定义。
  * - 插话：原运行中途吸收的可吸收事件（user_message, and finished background tasks: background Bash
  *   spec §4.4），在「原吸收步骤 ≤ 当前步骤」时追加进评测对话并交给 loop（a recorded finish is
  *   appended as recorded: no task starts, polls or stops; likewise a sub-agent's delivery, agent map
@@ -154,6 +155,11 @@ export interface ReplaySeed {
   model: ModelRef;
   /** The original run's `skills_catalog` event, its payload copied as is. */
   catalog: { payload: unknown } | undefined;
+  /**
+   * The original run's `run_context` event (run context spec §8), copied as is: a candidate sees
+   * the original date, names and org, never the eval day's.
+   */
+  runContext: { payload: unknown } | undefined;
 }
 
 /**
@@ -247,6 +253,16 @@ export class EvalReplaySeeder {
               runId,
               idemKey: skillsCatalogIdemKey(runId),
               payload: p.catalog.payload,
+            },
+          ]
+        : []),
+      ...(p.runContext
+        ? [
+            {
+              type: "run_context" as const,
+              runId,
+              idemKey: runContextIdemKey(runId),
+              payload: p.runContext.payload,
             },
           ]
         : []),
@@ -459,6 +475,9 @@ export async function replayRun(
   const catalog = s.events.find(
     (e) => e.runId === s.runId && e.type === "skills_catalog" && e.seq > R,
   );
+  const runContext = s.events.find(
+    (e) => e.runId === s.runId && e.type === "run_context" && e.seq > R,
+  );
 
   // a sub-agent's case (spec §15.3) runs the effective definition frozen in its subagent_started
   // (the request renders that event's preamble and instructions; its tools come from it too), with
@@ -498,6 +517,7 @@ export async function replayRun(
       agentVersion: candidate.agentVersion,
       model: agent.model,
       catalog,
+      runContext,
     },
     d.onSeeded,
   );

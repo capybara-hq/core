@@ -6,6 +6,7 @@ import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { LIST_MODELS_TIMEOUT } from "./runtime/providers.js";
+import { RUN_CONTEXT_CLOCK } from "./runtime/run-context.service.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "./runtime/run-steps.js";
 import { RUN_HOOKS, type RunHooks } from "./runtime/run-worker.js";
 import {
@@ -29,6 +30,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `BOOTSTRAP_LOCK_TTL`, `FILE_PREVIEW_TIMEOUT`, `LIST_MODELS_TIMEOUT`, `USAGE_REPORT_RETRY`,
  *   `SANDBOX_LEASE_TIMINGS`, `CHANNEL_WEBHOOK_TIMINGS`: shorter timings;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
+ * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
+ *   `CurrentTime` builtin the time;
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -44,6 +47,7 @@ interface KernelSeams {
   [SANDBOX_LEASE_TIMINGS]: Partial<SandboxLeaseTimings>;
   [CHANNEL_WEBHOOK_TIMINGS]: Partial<ChannelWebhookTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
+  [RUN_CONTEXT_CLOCK]: () => number;
   [APP_INTERCEPTOR]: NestInterceptor;
 }
 
@@ -70,6 +74,7 @@ const SEAM_TOKENS = [
   SANDBOX_LEASE_TIMINGS,
   CHANNEL_WEBHOOK_TIMINGS,
   EMBED_TOKEN_CLOCK,
+  RUN_CONTEXT_CLOCK,
   APP_INTERCEPTOR,
 ] as const satisfies readonly (keyof KernelSeams)[];
 

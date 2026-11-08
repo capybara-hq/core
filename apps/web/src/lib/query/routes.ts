@@ -11,7 +11,7 @@ import { myRole, type OrgRole, roleAtLeast } from "../members";
 import { canEditAgent } from "../org-settings";
 import type { Me } from "../session";
 import type { UiContributionItem, UiLocale } from "../ui";
-import { identitiesQuery, toolGrantsQuery } from "./account";
+import { identitiesQuery, preferencesQuery, toolGrantsQuery } from "./account";
 import {
   adminAccountsQuery,
   adminExtensionsQuery,
@@ -168,6 +168,11 @@ export const ROUTES: readonly RouteEntry[] = [
     // No org needed: my identities, and the sign-in sources (which plugins offer 验证).
     queries: ({ me }) =>
       me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
+  },
+  {
+    pattern: "/account/preferences",
+    // No org needed: my preferences.
+    queries: ({ me }) => (me === null ? [] : [q(preferencesQuery(me.account.id))]),
   },
   {
     pattern: "/admin",

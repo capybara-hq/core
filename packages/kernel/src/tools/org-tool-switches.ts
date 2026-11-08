@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { type DisabledToolRef, extensionToolDisabled } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -156,7 +157,7 @@ export class OrgToolSwitches {
 
   /**
    * Switches one tool in the org. On applies at once. Off, while the tool is on: without
-   * `confirm` the preview (the org's agents whose current version selects the tool) and its hash,
+   * `confirm` the preview (the org's agents whose current version does not turn it off) and its hash,
    * with the current hash the switch is written (a changed preview -> 409 `plugin.switch_stale`).
    * A tool the extension does not register -> 404 `extension.tool_not_found`. A change writes the
    * audit row `extension.tool_switched`.
@@ -218,7 +219,10 @@ export class OrgToolSwitches {
     return { applied: true };
   }
 
-  /** The org's live agents whose current version selects `{kind:"plugin", plugin, name: tool}`. */
+  /**
+   * The org's live agents whose current version has extension tool `tool` of `plugin` on: tools
+   * are on by default (tools default-on spec §4), so every agent that does not turn it off.
+   */
   private async agentsSelecting(
     orgId: string,
     plugin: string,
@@ -236,13 +240,11 @@ export class OrgToolSwitches {
       .execute();
     const out: AffectedAgent[] = [];
     for (const r of rows) {
-      const def = r.definition as { name?: unknown; tools?: unknown } | null;
-      const refs = Array.isArray(def?.tools) ? (def.tools as unknown[]) : [];
-      const selects = refs.some((x) => {
-        const ref = x as { kind?: unknown; plugin?: unknown; name?: unknown } | null;
-        return ref?.kind === "plugin" && ref.plugin === plugin && ref.name === tool;
-      });
-      if (selects) out.push({ id: r.id, name: typeof def?.name === "string" ? def.name : r.id });
+      const def = r.definition as { name?: unknown; disabledTools?: unknown } | null;
+      const off = Array.isArray(def?.disabledTools)
+        ? extensionToolDisabled(def.disabledTools as DisabledToolRef[], plugin, tool)
+        : false;
+      if (!off) out.push({ id: r.id, name: typeof def?.name === "string" ? def.name : r.id });
     }
     return out;
   }

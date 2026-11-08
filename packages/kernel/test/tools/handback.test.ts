@@ -19,6 +19,7 @@ import type { ToolStepContext } from "../../src/tools/pipeline.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -86,7 +87,7 @@ async function createAgent(name: string, tools: string[]): Promise<string> {
         name,
         instructions: `${name} works.`,
         model: { provider: "model-script", model: "script-1" },
-        tools: tools.map((t) => ({ kind: "builtin", name: t })),
+        disabledTools: onlyBuiltins(tools.map((t) => ({ kind: "builtin", name: t }))),
       },
       visibility: "org",
     },
@@ -285,7 +286,7 @@ describe("SubagentHandback", { timeout: 90_000 }, () => {
     expect(ofType(await eventsOf(db, conv), "subagent_delivery")).toHaveLength(before);
     // and it is offered neither tool to reach its parent
     const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "builtin", name: "Read" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Read" }]),
       child: true,
       forkChild: true,
     });

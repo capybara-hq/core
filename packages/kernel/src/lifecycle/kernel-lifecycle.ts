@@ -35,6 +35,7 @@ import { syncPackage } from "../extensions/sync.js";
 import type { KernelHttpApp } from "../http/app.js";
 import type { GatewayRoutes } from "../http/gateway-routes.js";
 import { AccountsService } from "../identity/accounts.js";
+import { insecurePublicUrlWarning } from "../identity/cookies.js";
 import { waitWithin } from "../infra/close-within.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -295,6 +296,8 @@ export class KernelLifecycle
     this.listening = await this.shutdown.trackInFlight(this.http.listen(port));
     this.checkpoint();
     this.log.info("kernel started", { roles: this.config.roles, port: this.listening });
+    const insecure = insecurePublicUrlWarning(this.config);
+    if (insecure !== null) this.log.warn(insecure);
     await this.warnIfSetupPending();
     return this.listening;
   }

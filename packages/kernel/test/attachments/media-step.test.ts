@@ -31,6 +31,7 @@ import { MediaCache } from "../../src/runtime/media-cache.js";
 import { type ModelStepDeps, RunError, runModelStep } from "../../src/runtime/model-call.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 
 /**
@@ -208,7 +209,7 @@ const agent = (model: string, fallback: string | null = null): AgentDefinition =
   fallback: fallback === null ? null : { provider: "stub", model: fallback },
   modelParams: {},
   fallbackParams: {},
-  tools: [],
+  disabledTools: builtinsOff(),
   toolPolicies: {},
 });
 

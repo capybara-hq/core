@@ -17,6 +17,7 @@ import {
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { eventsOf, PW, sleep, waitFor } from "../helpers/runs.js";
@@ -242,7 +243,9 @@ describe("M4 第一段验收（双副本）", () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "fake-im", name: "post_announcement" }],
+        disabledTools: onlyBuiltins([
+          { kind: "plugin", plugin: "fake-im", name: "post_announcement" },
+        ]),
       },
       visibility: "org",
     });

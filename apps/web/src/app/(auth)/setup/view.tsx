@@ -23,9 +23,10 @@ const LOADING_FIELDS: FieldShape[] = [{ help: true }, { help: true }, {}, {}, { 
  * `/setup`: the setup wizard (AuthPage; `GET` / `POST /api/v1/setup`). The layout already asked the
  * kernel on the server; only when it couldn't answer (starting, unreachable) the browser asks,
  * through the cache. Setting up signs the new admin in: the other tabs are told, the cache is
- * dropped, then home loads as a new document.
+ * dropped, then home loads as a new document. `error` is the code of a native setup POST that
+ * failed (shown on the form).
  */
-export default function SetupView() {
+export default function SetupView({ error }: { error?: string | undefined }) {
   const initial = useContext(ServerSetupStatus);
   const t = useTranslations();
   const errorMessage = useErrorMessage();
@@ -68,6 +69,7 @@ export default function SetupView() {
   } else {
     body = (
       <SetupForm
+        initialError={error}
         onSuccess={() => {
           broadcastSession("signed-in");
           // A new session: drop the cache, then load the new document (ruling R4).

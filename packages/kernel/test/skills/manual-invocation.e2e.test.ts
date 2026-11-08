@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { fakeEnvFile } from "../helpers/fake-fs.js";
 import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -247,7 +248,7 @@ describe("phase D acceptance: commands, manual-only and forked skills", {
           instructions: "Fix what you are asked to.",
           model: SCRIPT,
           // a sandbox tool: Skill copies a skill's files only for an agent that can run them
-          tools: [{ kind: "builtin", name: "Bash" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
           skills: { orgSkills: skills.map((s) => s.id) },
           subagents: { templates: templates.map((t) => t.id) },
         },

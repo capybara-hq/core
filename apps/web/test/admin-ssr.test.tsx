@@ -390,16 +390,16 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
   });
 
   it.each([
-    ["/admin/models", "GET /api/v1/admin/models"],
-    ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces"],
+    ["/admin/models?tab=purposes", "GET /api/v1/admin/models", 1],
+    ["/admin/plugins/sources", "GET /api/v1/admin/marketplaces", 2],
   ])(
     "%s: the loading page announces once (its sections inside one busy region)",
-    async (path, held) => {
+    async (path, held, sections) => {
       const { release } = await renderHeld(path, held);
       await vi.waitFor(() => {
         if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
       });
-      expect(document.querySelectorAll(".cb-form-section").length).toBe(2);
+      expect(document.querySelectorAll(".cb-form-section").length).toBe(sections);
       // one busy announcer (the toasts' live region is no announcer of the page)
       expect(document.querySelectorAll("[role='status'][aria-busy='true']")).toHaveLength(1);
       expect(screen.getAllByText("Loading")).toHaveLength(1);
@@ -407,8 +407,23 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     },
   );
 
+  it("/admin/models: the loading providers grid announces once", async () => {
+    const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/models");
+    await vi.waitFor(() => {
+      if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
+    });
+    const grid = document.querySelector('[data-columns="list-detail"]') as HTMLElement;
+    expect(grid.querySelectorAll('[data-part="table"]')).toHaveLength(2);
+    expect(document.querySelectorAll("[role='status'][aria-busy='true']")).toHaveLength(1);
+    expect(screen.getAllByText("Loading")).toHaveLength(1);
+    await release();
+  });
+
   it("/admin/models: the purposes load as the kernel's six item rows", async () => {
-    const { release } = await renderHeld("/admin/models", "GET /api/v1/admin/model-purposes");
+    const { release } = await renderHeld(
+      "/admin/models?tab=purposes",
+      "GET /api/v1/admin/model-purposes",
+    );
     await vi.waitFor(() => {
       if (document.querySelector("[aria-busy='true']") === null) throw new Error("not loading");
     });

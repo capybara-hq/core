@@ -167,7 +167,7 @@ export async function takeSnapshot(
     .orderBy("version")
     .execute();
   for (const r of defRows) {
-    definitions[String(r.version)] = normalizeStoredDefinition(r.definition);
+    definitions[String(r.version)] = snapshotDefinition(r.definition);
   }
 
   const toolSpecs: Record<string, ToolSpec> = {};
@@ -229,14 +229,28 @@ export async function takeSnapshot(
 }
 
 /**
- * 读出库里存的快照（`eval_cases.snapshot`）：把各版本定义里改名前（D17）的 `{ kind: "app" }` 工具引用规范化为
- * connector 形（C27）。整轮回放会把定义交给实时注册表，不规范化的话连接器工具全部失效。其余字段原样。
+ * A definition as a snapshot holds it: normalized (`normalizeStoredDefinition`), and one from
+ * before tools were on by default keeps its enabled list next to it: rc tool keys are read by its
+ * extension refs (`legacyScopeOf`); the runtime ignores it (tools default-on spec §2).
+ */
+function snapshotDefinition(d: unknown): AgentDefinition {
+  const enabled = (d as { tools?: unknown } | null)?.tools;
+  return {
+    ...normalizeStoredDefinition(d),
+    ...(Array.isArray(enabled) && { tools: enabled }),
+  } as AgentDefinition;
+}
+
+/**
+ * Reads a stored snapshot (`eval_cases.snapshot`): each version's definition goes through
+ * `normalizeStoredDefinition` (rc tool keys, and an enabled tool list read as nothing turned off).
+ * Other fields as they are.
  */
 export function readSnapshot(raw: unknown): CaseSnapshot {
   const s = raw as CaseSnapshot;
   const definitions: Record<string, AgentDefinition> = {};
   for (const [v, d] of Object.entries(s.definitions ?? {})) {
-    definitions[v] = normalizeStoredDefinition(d);
+    definitions[v] = snapshotDefinition(d);
   }
   return {
     ...s,

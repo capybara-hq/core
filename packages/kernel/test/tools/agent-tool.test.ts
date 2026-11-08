@@ -23,6 +23,7 @@ import {
 import { isAlwaysLoaded } from "../../src/tools/builtins/tool-search.js";
 import { BUILTIN_TOOL_NAMES, ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -473,10 +474,10 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     const t = await template("code-reviewer", "Reviews a <diff>.");
     const a = await orgAgent(def({ name: "Data Analyst", subagents: { dispatchable: true } }));
     const parent = def({
-      tools: [
+      disabledTools: onlyBuiltins([
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Agent" },
-      ],
+      ]),
       subagents: {
         templates: [t],
         inline: [{ name: "scout", description: "Find files.", instructions: "Look." }],
@@ -497,7 +498,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
     ).toBe(true);
     // without subagents the tool lists general-purpose only
     const plain = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "builtin", name: "Agent" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
     });
     // an agent that has Agent also gets SendMessage, to reach its sub-agents (agent map §4.2)
     expect(plain.tools.map((x) => x.key)).toEqual(["Agent", "SendMessage"]);
@@ -506,10 +507,10 @@ describe("tool resolution", { timeout: 60_000 }, () => {
 
   it("an empty roster offers no agent tool at all", async () => {
     const r = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [
+      disabledTools: onlyBuiltins([
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Agent" },
-      ],
+      ]),
       subagents: { general: false },
     });
     expect(r.tools.map((x) => x.key)).toEqual(["ReadToolOutput"]);
@@ -518,10 +519,10 @@ describe("tool resolution", { timeout: 60_000 }, () => {
 
   it("a child at maxDepth resolves no Agent; below it Agent lists the frozen roster", async () => {
     const parent = def({
-      tools: [
+      disabledTools: onlyBuiltins([
         { kind: "builtin", name: "ReadToolOutput" },
         { kind: "builtin", name: "Agent" },
-      ],
+      ]),
       subagents: { inline: [{ name: "scout", description: "Find.", instructions: "Look." }] },
     });
     const parentAgentId = await orgAgent(parent);
@@ -547,7 +548,7 @@ describe("tool resolution", { timeout: 60_000 }, () => {
       // as a child's run: SendMessage to reach its parent and SubagentHandback, without Agent
       const asChild = await k.app
         .get(ToolRegistry)
-        .forAgent(orgId, { ...deep.definition, tools: deep.definition.tools ?? [], child: true });
+        .forAgent(orgId, { ...deep.definition, child: true });
       expect(asChild.tools.map((x) => x.key)).toEqual([
         "ReadToolOutput",
         "SendMessage",

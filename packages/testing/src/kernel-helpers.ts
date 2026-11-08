@@ -276,13 +276,14 @@ export async function joinOrg(
 }
 
 /**
- * Creates an org-visible agent; returns its id. Without `tools` the agent has none (model-fake then
- * answers ordinary messages instead of calling the first tool).
+ * Creates an org-visible agent; returns its id. An agent has every tool the org offers unless
+ * `disabledTools` turns it off (tools default-on spec); with several tools model-fake answers
+ * ordinary messages instead of calling one.
  */
 export async function createAgent(
   req: KernelRequest,
   orgId: string,
-  opts: { model?: { provider: string; model: string }; tools?: unknown[] } = {},
+  opts: { model?: { provider: string; model: string }; disabledTools?: unknown[] } = {},
 ): Promise<string> {
   const res = await req({
     method: "POST",
@@ -292,7 +293,7 @@ export async function createAgent(
         name: "Helper",
         instructions: "Be helpful.",
         model: opts.model ?? { provider: "model-fake", model: "fake-1" },
-        tools: opts.tools ?? [],
+        disabledTools: opts.disabledTools ?? [],
       },
       visibility: "org",
     },

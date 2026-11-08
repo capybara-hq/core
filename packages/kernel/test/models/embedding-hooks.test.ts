@@ -12,6 +12,7 @@ import { ModelEmbeddings } from "../../src/models/embeddings.js";
 import { embedConsumer } from "../fixtures/plugins/embed-consumer/index.js";
 import { embedObserver } from "../fixtures/plugins/embed-observer/index.js";
 import { embedProbe } from "../fixtures/plugins/model-embed-probe/index.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -360,7 +361,8 @@ describe("model.request for ctx.models.embed", { timeout: 60_000 }, () => {
           name: "Memory",
           instructions: "Remember things.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "plugin", plugin: "embed-consumer", name: "remember" }],
+          // extension tools are on by default (tools default-on spec §2)
+          disabledTools: builtinsOff(),
         },
         visibility: "org",
       },

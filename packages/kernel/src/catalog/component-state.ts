@@ -3,7 +3,6 @@
 // and which agents of an org use one. Pure predicates plus the reads they need; the usable sets
 // (skills/usable.ts, agents/templates.ts), the component scope service and the plugin scope preview
 // all decide with the same predicates.
-import { normalizeToolRef } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
 
@@ -342,6 +341,10 @@ export const listedIn = (st: ScopeState, id: string, orgId: string): boolean =>
 
 /** The connectors, skills and agent templates an agent definition references. */
 export interface DefinitionRefs {
+  /**
+   * The connectors the agent uses: tools are on by default (tools default-on spec §6), so every
+   * one of `orgConnectors` it does not turn off as a whole.
+   */
   connectors: Set<string>;
   /** `skills.orgSkills`, `skills.pinned` and the inline sub-agent templates' `skills`. */
   skills: Set<string>;
@@ -349,20 +352,30 @@ export interface DefinitionRefs {
   templates: Set<string>;
 }
 
-/** The ids an agent definition references (see {@link DefinitionRefs}). */
-export function definitionRefs(definition: unknown): DefinitionRefs {
+/**
+ * The ids an agent definition references (see {@link DefinitionRefs}); `orgConnectors` are the
+ * ids of the org's live connectors.
+ */
+export function definitionRefs(
+  definition: unknown,
+  orgConnectors: readonly string[] = [],
+): DefinitionRefs {
   const def = definition as {
-    tools?: unknown[];
+    disabledTools?: unknown[];
     skills?: { orgSkills?: unknown[]; pinned?: unknown[] };
     subagents?: { templates?: unknown[]; inline?: { skills?: unknown[] }[] };
   } | null;
   const connectors = new Set<string>();
   const skills = new Set<string>();
   const templates = new Set<string>();
-  for (const ref of Array.isArray(def?.tools) ? def.tools : []) {
-    const n = normalizeToolRef(ref) as { kind?: unknown; connectorId?: unknown };
-    if (n?.kind === "connector" && typeof n.connectorId === "string") connectors.add(n.connectorId);
+  const off = new Set<string>();
+  for (const ref of Array.isArray(def?.disabledTools) ? def.disabledTools : []) {
+    const n = ref as { kind?: unknown; connectorId?: unknown; tools?: unknown } | null;
+    if (n?.kind === "connector" && typeof n.connectorId === "string" && n.tools === "all") {
+      off.add(n.connectorId);
+    }
   }
+  for (const id of orgConnectors) if (!off.has(id)) connectors.add(id);
   const strings = (xs: unknown, into: Set<string>) => {
     if (Array.isArray(xs)) for (const x of xs) if (typeof x === "string") into.add(x);
   };
@@ -389,12 +402,21 @@ export async function agentDefinitionRefs(
     .where("a.deleted_at", "is", null)
     .orderBy("a.id")
     .execute();
+  const connectors = (
+    await db
+      .selectFrom("connectors")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .execute()
+  ).map((c) => c.id);
   return rows.map((r) => {
     const name = (r.definition as { name?: unknown } | null)?.name;
     return {
       id: r.id,
       name: typeof name === "string" ? name : r.id,
-      ...definitionRefs(r.definition),
+      ...definitionRefs(r.definition, connectors),
     };
   });
 }

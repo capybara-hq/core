@@ -21,6 +21,7 @@ import { PlatformOperations } from "../../src/platform/registry.js";
 import { SkillChangesService } from "../../src/skills/changes.service.js";
 import { buildSkillWrite } from "../../src/tools/builtins/skill-write.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -150,7 +151,7 @@ async function agentOf(owner: string, visibility: "private" | "org") {
       name: "Writer",
       instructions: "Write skills.",
       model: MODEL,
-      tools: [{ kind: "builtin", name: "Bash" }],
+      disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,
       modelParams: {},

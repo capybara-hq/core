@@ -3,6 +3,7 @@
 import {
   type ActionRowProps,
   Card,
+  EmptyState,
   Field,
   type FieldShape,
   Input,
@@ -497,7 +498,7 @@ function Wizard({
               </Text>
             )}
             {withConfig === undefined && own?.enabled !== true && (
-              <Text tone="muted">{t("extensionNone")}</Text>
+              <EmptyState text={t("extensionNone")} />
             )}
             {withConfig !== undefined && (
               <Card

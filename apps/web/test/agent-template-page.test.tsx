@@ -541,7 +541,7 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
   const save = (user: ReturnType<typeof userEvent.setup>) =>
     user.click(screen.getByRole("button", { name: TF.submit }));
 
-  it("工具: a picked extension tool the org turned off shows the switched-off reason", async () => {
+  it("工具: an extension tool the org turned off shows the switched-off reason", async () => {
     const r = live();
     r[`GET ${ORG}/agent-templates/t9`] = () =>
       json(
@@ -572,7 +572,7 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
       });
     stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=tools", r);
-    const group = await screen.findByRole("group", { name: "Todo" });
+    const group = await screen.findByRole("list", { name: "Todo" });
     expect(within(group).getByText(TF.extensionToolOffInOrg)).toBeTruthy();
   });
 
@@ -717,26 +717,31 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     expect(screen.queryByText(en.errors.agent_template.version_conflict)).toBeNull();
   });
 
-  it("工具: ticks and policies; an unticked tool's policy goes with it", async () => {
+  it("工具: everything starts on; unticking writes disallowedTools, policies sit on the rows", async () => {
     const r = live();
     const calls = stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=tools", r);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: TF.builtin.ReadToolOutput }));
-    await user.click(screen.getByRole("checkbox", { name: TF.builtin.AskUserQuestion }));
+    const read = await screen.findByRole("checkbox", { name: TF.builtin.ReadToolOutput });
+    // tools default-on: every box starts checked, the old allowlist notwithstanding
+    expect(read).toHaveProperty("checked", true);
+    expect(screen.getByRole("checkbox", { name: TF.builtin.Bash })).toHaveProperty("checked", true);
+    await user.click(read);
     await pickOption(
-      screen.getByRole("combobox", { name: TF.builtin.ReadToolOutput }),
+      screen.getByRole("combobox", { name: `Policy for ${TF.builtin.Platform}` }),
       TF.policy.deny,
       user,
     );
     await save(user);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const { definition } = lastPut(calls);
-    expect(definition.tools).toEqual(["ReadToolOutput"]);
-    expect(definition.toolPolicies).toEqual({ ReadToolOutput: "deny" });
+    // no allowlist is written; the template turns off what is unticked
+    expect(definition.tools).toBeUndefined();
+    expect(definition.disallowedTools).toEqual(["ReadToolOutput"]);
+    expect(definition.toolPolicies).toEqual({ AskUserQuestion: "ask", Platform: "deny" });
   });
 
-  it("技能: at most 3 preloaded, unticking a skill unpins it, the rest are selected", async () => {
+  it("技能: at most 3 pinned, unticking a skill unpins it, the rest are selected", async () => {
     const r = live();
     const skill = (name: string) => ({
       id: `s-${name}`,
@@ -754,24 +759,47 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     const calls = stubApi(r);
     await renderRouteWithCache("/agents/templates/t9?s=skills", r);
     const user = userEvent.setup();
+    const sk = en.agents.templatePage.skills;
+    // two titled regions; the pinned count at the heading
+    await screen.findByRole("region", { name: sk.selectLabel });
+    const pinned = screen.getByRole("region", { name: sk.pinLabel });
+    expect(within(pinned).getByText(sk.pinHint)).toBeTruthy();
+    expect(within(pinned).getByText("1 / 3")).toBeTruthy();
     await user.click(await screen.findByRole("checkbox", { name: "alpha · alpha skill" }));
     await user.click(screen.getByRole("checkbox", { name: "beta · beta skill" }));
-    await user.click(screen.getByRole("checkbox", { name: "Preload tone" }));
-    await user.click(screen.getByRole("checkbox", { name: "Preload alpha" }));
-    // three preloaded: the fourth cannot be
-    expect(screen.getByRole("checkbox", { name: "Preload beta" })).toHaveProperty("disabled", true);
+    await user.click(screen.getByRole("checkbox", { name: "Pin tone" }));
+    await user.click(screen.getByRole("checkbox", { name: "Pin alpha" }));
+    expect(within(pinned).getByText("3 / 3")).toBeTruthy();
+    // three pinned: the fourth cannot be
+    expect(screen.getByRole("checkbox", { name: "Pin beta" })).toHaveProperty("disabled", true);
     // unticking tone unpins it, which frees a place
     await user.click(screen.getByRole("checkbox", { name: "tone · tone skill" }));
-    expect(screen.queryByRole("checkbox", { name: "Preload tone" })).toBeNull();
-    expect(screen.getByRole("checkbox", { name: "Preload beta" })).toHaveProperty(
-      "disabled",
-      false,
-    );
+    expect(screen.queryByRole("checkbox", { name: "Pin tone" })).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "Pin beta" })).toHaveProperty("disabled", false);
     await save(user);
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const { definition } = lastPut(calls);
     expect(definition.skills).toEqual(["pricing", "alpha"]);
     expect(definition.selectedSkills).toEqual(["beta"]);
+  });
+
+  it("技能: no org skills is the panel empty state linking to the skills page; nothing picked, nothing to pin", async () => {
+    const r = live();
+    const { skills: _p, selectedSkills: _s, ...bare } = DEFINITION;
+    r[`GET ${ORG}/agent-templates/t9`] = () => json(200, detail({ definition: bare, version: 3 }));
+    r[`GET ${ORG}/skills`] = () => json(200, { skills: [] });
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=skills", r);
+    const sk = en.agents.templatePage.skills;
+    const org = await screen.findByRole("region", { name: sk.selectLabel });
+    const pinned = screen.getByRole("region", { name: sk.pinLabel });
+    expect(await within(org).findByText(sk.noOrgSkills)).toBeTruthy();
+    expect(within(org).getByRole("link", { name: sk.goToSkills }).getAttribute("href")).toContain(
+      "/skills",
+    );
+    expect(within(pinned).getByText(sk.noneToPin)).toBeTruthy();
+    expect(within(pinned).queryByRole("checkbox")).toBeNull();
+    expect(within(pinned).getByText("0 / 3")).toBeTruthy();
   });
 
   it("子智能体: inline sub-agents with all, no and listed tools round-trip; an empty list is refused", async () => {

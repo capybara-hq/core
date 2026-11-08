@@ -20,6 +20,7 @@ import { AGENT_REFUSALS } from "../../../src/tools/builtins/agent.js";
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -209,7 +210,7 @@ beforeEach(async () => {
     name: "Lead",
     instructions: "Lead the work.",
     model: SCRIPT,
-    tools: ["Agent", "Write"].map((name) => ({ kind: "builtin", name })),
+    disabledTools: onlyBuiltins(["Agent", "Write"].map((name) => ({ kind: "builtin", name }))),
   });
 });
 
@@ -279,13 +280,13 @@ describe("nested sub-agents", () => {
     expect(toolsOf("L1-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
     expect(toolsOf("L2-go")).toEqual(["Agent", "SendMessage", "SubagentHandback", "Write"]);
     expect(toolsOf("L3-go")).toEqual(["SendMessage", "SubagentHandback", "Write"]);
-    // the frozen definitions: Agent kept below the limit, removed at it
-    const frozenTools = async (id: string) => {
+    // the frozen definitions: Agent kept below the limit, removed at it (by key)
+    const frozenDeny = async (id: string) => {
       const started = ofType(await eventsOf(db, id), "subagent_started")[0];
-      return started?.payload.definition.tools.map((t) => (t as { name: string }).name);
+      return started?.payload.definition.subagentTools?.deny ?? [];
     };
-    expect(await frozenTools(l2?.id as string)).toEqual(["Agent", "Write"]);
-    expect(await frozenTools(l3?.id as string)).toEqual(["Write"]);
+    expect(await frozenDeny(l2?.id as string)).not.toContain("Agent");
+    expect(await frozenDeny(l3?.id as string)).toContain("Agent");
     // the whole tree counts against the root run's budget window (spec §6)
     const rootRun = await db
       .selectFrom("runs")
@@ -334,7 +335,7 @@ describe("nested sub-agents", () => {
       name: "Researcher",
       instructions: `${RESEARCHER}.`,
       model: SCRIPT,
-      tools: [{ kind: "builtin", name: "Agent" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
       subagents: { ...researcherBlock, dispatchable: true },
     });
     // closed stops being dispatchable after the researcher allowlisted it
@@ -355,7 +356,7 @@ describe("nested sub-agents", () => {
       name: "Gatekeeper",
       instructions: "Lead the work.",
       model: SCRIPT,
-      tools: [{ kind: "builtin", name: "Agent" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
       subagents: {
         agents: [{ agentId: researcher, as: "researcher", description: "Research." }],
       },
@@ -496,9 +497,7 @@ describe("the depth limit and gates on a forged call", () => {
     const [deep] = await childOf(ok.conv);
     expect(deep?.subagent_depth).toBe(3);
     const started = ofType(await eventsOf(db, deep?.id as string), "subagent_started")[0];
-    expect(started?.payload.definition.tools.map((t) => (t as { name: string }).name)).toEqual([
-      "Write",
-    ]);
+    expect(started?.payload.definition.subagentTools?.deny).toContain("Agent");
   }, 60_000);
 
   it("the allowlist of the dispatching agent's current version is checked below depth 1", async () => {
@@ -514,7 +513,7 @@ describe("the depth limit and gates on a forged call", () => {
       name: "Lead",
       instructions: "Lead the work.",
       model: SCRIPT,
-      tools: [{ kind: "builtin", name: "Agent" }],
+      disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
       subagents: { agents: [{ agentId: target, as: "target", description: "Target." }] },
     });
     const { conv, ctx } = await runAt(leadId, 1, frozen);

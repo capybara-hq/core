@@ -629,6 +629,106 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     expect(after.json()).not.toHaveProperty("orgsNeedingConfig");
   });
 
+  it("DELETE config: a non-super-admin gets 403; unknown extension 404", async () => {
+    const del = (name: string, req: Req) =>
+      req({ method: "DELETE", url: `/api/v1/admin/extensions/${name}/config` });
+    expect((await del("deploycfg", member)).statusCode).toBe(403);
+    expect((await del("nope", admin)).statusCode).toBe(404);
+    expect(
+      await db
+        .selectFrom("extension_deployment_configs")
+        .select("plugin")
+        .where("plugin", "=", "deploycfg")
+        .executeTakeFirst(),
+    ).toBeDefined();
+  });
+
+  it("DELETE config clears stored values and secrets, audits, and a config-declared extension goes pending until configured again", async () => {
+    const host = k?.app.get(ExtensionHost);
+    expect(host?.current("deploycfg")).toBeDefined();
+    expect(live()?.token).toBe(TOKEN2);
+    const res = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/deploycfg/config" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.body).not.toContain(TOKEN2);
+    const v = res.json() as ConfigView;
+    expect(v.valid).toBe(false);
+    expect(v.fields.filter((f) => f.source === "db")).toEqual([]);
+    expect(field(v, "token")).toMatchObject({ source: "unset", set: false });
+    expect(field(v, "endpoint")).toMatchObject({ source: "unset" });
+    // startup-config fields stay in effect and read-only
+    expect(field(v, "region")).toMatchObject({ source: "file", readonly: true, value: "eu-file" });
+    expect(field(v, "poolSize")).toMatchObject({ source: "env", readonly: true, value: 3 });
+    const got = await getView();
+    expect(got.fields.filter((f) => f.source === "db")).toEqual([]);
+
+    expect(
+      await db
+        .selectFrom("extension_deployment_configs")
+        .selectAll()
+        .where("plugin", "=", "deploycfg")
+        .execute(),
+    ).toEqual([]);
+    const secretRows = await db
+      .selectFrom("secrets")
+      .select("key")
+      .where("key", "like", "plugin-deployment-config:deploycfg:%")
+      .execute();
+    expect(secretRows).toEqual([]);
+    const audits = await db
+      .selectFrom("audit_events")
+      .selectAll()
+      .where("action", "=", "extension.config_cleared")
+      .execute();
+    expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ target: "deploycfg" });
+    expect(audits[0]?.detail).toEqual({ clearedPaths: ["endpoint", "greeting", "tags", "token"] });
+    expect(JSON.stringify(audits)).not.toContain(TOKEN2);
+
+    // unloaded and pending configuration, without a restart
+    expect(host?.current("deploycfg")).toBeUndefined();
+    const status = await admin({ method: "GET", url: "/api/v1/admin/extensions/deploycfg" });
+    expect(status.json()).toMatchObject({ status: "pending_config", configValid: false });
+
+    // clearing again changes nothing (no second audit)
+    const again = await admin({
+      method: "DELETE",
+      url: "/api/v1/admin/extensions/deploycfg/config",
+    });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .selectAll()
+        .where("action", "=", "extension.config_cleared")
+        .execute(),
+    ).toHaveLength(1);
+
+    // configured again: it loads without a restart
+    const before = deploycfgProbe().setups;
+    const saved = await put({ endpoint: "https://two.example", token: TOKEN2 });
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(async () => deploycfgProbe().setups === before + 1, 10_000, "loaded again");
+    expect(host?.current("deploycfg")).toBeDefined();
+    expect(live()).toMatchObject({ endpoint: "https://two.example", token: TOKEN2 });
+  });
+
+  it("DELETE config of an install record (bootstrap plugin) unloads it to pending configuration", async () => {
+    const host = k?.app.get(ExtensionHost);
+    expect(host?.current("badconfig")).toBeDefined();
+    const res = await admin({ method: "DELETE", url: "/api/v1/admin/extensions/badconfig/config" });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toMatchObject({ valid: false });
+    expect(host?.current("badconfig")).toBeUndefined();
+    await waitFor(async () => {
+      const r = await admin({ method: "GET", url: "/api/v1/admin/extensions/badconfig" });
+      return r.json().status === "pending_config";
+    });
+    // a reconcile keeps it pending (the config is still missing)
+    await k?.app.get<ExtensionContext["bus"]>(KERNEL_BUS).publish("plugins.reconcile", {});
+    await new Promise((r) => setTimeout(r, 300));
+    expect(host?.current("badconfig")).toBeUndefined();
+  });
+
   it("文件后来加了 PG 里已有的字段：以文件为准并显示为只读；PUT 该字段 409", async () => {
     await k?.close();
     k = undefined;
@@ -652,5 +752,110 @@ describe("部署级插件配置入 PG（审查重点 5）", { timeout: 120_000 }
     const res = await put({ endpoint: "https://three.example" });
     expect(res.statusCode, res.body).toBe(409);
     expect(res.json().error.code).toBe("extension.config_readonly");
+  });
+});
+
+describe("an extension unloaded for a dependency comes back on the config stored now", {
+  timeout: 120_000,
+}, () => {
+  const DEP_A = fileURLToPath(new URL("../fixtures/plugins/dep-a/index.ts", import.meta.url));
+  const CFG_DEPENDENT = fileURLToPath(
+    new URL("../fixtures/plugins/cfg-dependent/index.ts", import.meta.url),
+  );
+  let pgc: TestContainer;
+  let rd: TestContainer;
+  let db: KernelSchemaDb;
+  let destroyDb: () => Promise<void>;
+  let k: TestKernel;
+  let admin: Req;
+  let extDir: string;
+  const url = "/api/v1/admin/extensions/cfg-dependent/config";
+  const put = (values: Record<string, unknown>) =>
+    admin({ method: "PUT", url, payload: { values } });
+  const host = () => k.app.get(ExtensionHost);
+  const status = async () =>
+    (await admin({ method: "GET", url: "/api/v1/admin/extensions/cfg-dependent" })).json() as {
+      status: string;
+    };
+
+  beforeAll(async () => {
+    [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+    await migrate(pgc.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
+    const raw = createDb(pgc.url, 3);
+    db = kernelDb(raw);
+    destroyDb = () => raw.destroy();
+    extDir = await mkdtemp(join(tmpdir(), "kernel-cfgdep-ext-"));
+    await accountsFor(db).createLocal({
+      login: "root",
+      password: PW,
+      displayName: "R",
+      superAdmin: true,
+    });
+    k = await startKernel(
+      resolveConfig(
+        {
+          db: { url: pgc.url, poolMax: 5 },
+          redis: { url: rd.url },
+          masterKey: Buffer.alloc(32, 7).toString("base64"),
+          marketplaces: { official: { enabled: false } },
+          http: { port: 0 },
+          roles: ["api", "worker"],
+          extensions: [MODEL_FAKE, DEP_A, CFG_DEPENDENT],
+          extensionPermissions: { autoApprove: true },
+          extensionHost: { dir: extDir },
+        },
+        {},
+      ),
+      { logger: createLogger("error", { write: () => {} }) },
+    );
+    admin = await session(k, "root");
+  }, 240_000);
+
+  afterAll(async () => {
+    await k?.close();
+    await destroyDb?.();
+    if (extDir) await rm(extDir, { recursive: true, force: true });
+    await Promise.all([pgc?.stop(), rd?.stop()]);
+  });
+
+  /** Configures cfg-dependent, then unloads dep-a: cfg-dependent goes with it (dependency). */
+  async function loadThenLoseProvider(values: Record<string, unknown>): Promise<void> {
+    const saved = await put(values);
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(async () => host().current("cfg-dependent") !== undefined, 10_000, "loaded");
+    expect(host().current("cfg-dependent")?.config).toEqual(values);
+    expect(await host().unload("dep-a")).toEqual(["dep-a", "cfg-dependent"]);
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+  }
+
+  it("cleared while unloaded for a dependency: the provider's return leaves it pending configuration; a later save loads it", async () => {
+    await loadThenLoseProvider({ endpoint: "https://one.example", token: TOKEN });
+    const cleared = await admin({ method: "DELETE", url });
+    expect(cleared.statusCode, cleared.body).toBe(200);
+    await host().reload("dep-a");
+    // not restored on the cleared config (and its revoked secret)
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+    expect(await status()).toMatchObject({ status: "pending_config" });
+    // configured again: it loads without a restart, on the new config
+    const saved = await put({ endpoint: "https://two.example", token: TOKEN2 });
+    expect(saved.statusCode, saved.body).toBe(200);
+    await waitFor(async () => host().current("cfg-dependent") !== undefined, 10_000, "loaded");
+    expect(host().current("cfg-dependent")?.config).toEqual({
+      endpoint: "https://two.example",
+      token: TOKEN2,
+    });
+  });
+
+  it("saved while unloaded for a dependency: the provider's return restores it on the new config", async () => {
+    if (!host().current("dep-a")) await host().reload("dep-a");
+    await loadThenLoseProvider({ endpoint: "https://three.example", token: TOKEN });
+    const saved = await put({ endpoint: "https://four.example", token: TOKEN2 });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(host().current("cfg-dependent")?.config).toBeUndefined();
+    await host().reload("dep-a");
+    expect(host().current("cfg-dependent")?.config).toEqual({
+      endpoint: "https://four.example",
+      token: TOKEN2,
+    });
   });
 });

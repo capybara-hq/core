@@ -54,7 +54,7 @@ export default function ChangePasswordView() {
 
   return (
     <AuthPage title={t("title")} subtitle={t("subtitle")} preferences={preferences}>
-      <form onSubmit={onSubmit}>
+      <form method="post" onSubmit={onSubmit}>
         <Stack gap={16}>
           <Field label={t("current")}>
             <Input

@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useId } from "react";
 import { useDesignT } from "../provider";
 import { type Status, StatusMark } from "./basic";
+import { EmptyState } from "./empty-state";
 
 /** 瀑布图里的一个 span（spec §6.10）：层级由 `parentId` 给出，调用方按深度优先顺序传入。 */
 export interface Span {
@@ -56,10 +57,9 @@ export function SpanWaterfall({ spans, selectedId, onSelect, labels, label }: Sp
   const base = useId();
   if (spans.length === 0) {
     return (
+      // No spans: the panel empty state in the waterfall's pane (spec §6.18)
       <div className="cb-waterfall-empty">
-        <span className="cb-text" data-variant="body" data-tone="muted">
-          {labels.empty}
-        </span>
+        <EmptyState size="panel" text={labels.empty} />
       </div>
     );
   }

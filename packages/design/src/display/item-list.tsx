@@ -1,6 +1,6 @@
 import { Children, type ReactNode, useId } from "react";
 import { LinkPendingMark, useDesignLink } from "../provider";
-import { EmptyState } from "./empty-state";
+import { EmptyState, type EmptyStateProps } from "./empty-state";
 
 export type ItemListRow = {
   id: string;
@@ -32,8 +32,11 @@ export type ItemListProps = {
   rows?: ItemListRow[];
   /** `ItemListItem`s: rows that hold more than one line (meta lines, fields, a review). */
   children?: ReactNode;
-  /** Shown as the compact empty state when there are no rows (and no children). */
-  empty?: string;
+  /**
+   * Shown as the `panel` empty state (spec §6.18) when there are no rows (and no children): the
+   * sentence alone, or the sentence with a hint and the next step.
+   */
+  empty?: string | Omit<EmptyStateProps, "size">;
   inset?: ItemListInset;
 };
 
@@ -42,13 +45,18 @@ export type ItemListProps = {
  * an agent's channels, the org chooser's orgs, the model purposes, a plugin's permissions. The
  * rows are split by `line-soft` hairlines, never drawn as cards. Plain rows come as `rows`; rows
  * with more in them (meta lines, fields, a warning and its code) are `ItemListItem` children.
- * Empty, it shows `empty` as the compact empty state.
+ * Empty, it shows `empty` as the panel empty state: a list is always inside a box (§6.18).
  */
 export function ItemList({ label, rows, children, empty, inset = "card" }: ItemListProps) {
   const Link = useDesignLink();
   const hasChildren = Children.toArray(children).length > 0;
   if ((rows ?? []).length === 0 && !hasChildren) {
-    return empty ? <EmptyState size="compact" text={empty} /> : null;
+    if (empty === undefined || empty === "") return null;
+    return typeof empty === "string" ? (
+      <EmptyState size="panel" text={empty} />
+    ) : (
+      <EmptyState {...empty} size="panel" />
+    );
   }
   return (
     <ul

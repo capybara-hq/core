@@ -8,6 +8,7 @@ import {
   DangerConfirm,
   DataTable,
   DetailPage,
+  EmptyState,
   Field,
   Grid,
   Input,
@@ -764,7 +765,7 @@ function ReviewTab({
     <Stack gap={16}>
       {pendingTools.length === 0 ? (
         <Card title={t("review.title")}>
-          <Text tone="muted">{t("review.empty")}</Text>
+          <EmptyState size="panel" text={t("review.empty")} />
         </Card>
       ) : (
         // A standing note about every tool below: the quiet info Callout first in the tab (spec

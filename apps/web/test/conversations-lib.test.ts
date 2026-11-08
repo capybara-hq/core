@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   archiveConversation,
   type ConversationGroup,
+  createConversationWithMessage,
   deleteConversation,
   listConversationGroups,
   listConversations,
+  postMessage,
 } from "../src/lib/conversations";
 
 const json = (status: number, body: unknown): Response =>
@@ -119,5 +121,36 @@ describe("row actions", () => {
     const urls = stubFetch(null, 204);
     await deleteConversation("o1", "c1");
     expect(urls).toEqual(["DELETE /api/v1/orgs/o1/conversations/c1"]);
+  });
+});
+
+describe("message sends carry the browser's time zone and UI language (run context spec §3.4)", () => {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  afterEach(() => {
+    document.documentElement.lang = "";
+  });
+
+  it("POST …/messages and the first message of POST /conversations", async () => {
+    document.documentElement.lang = "zh";
+    const urls = stubFetch({ event: {}, conversation: {} }, 202);
+    await postMessage("o1", "c1", { text: "hi", clientMessageId: "m1" });
+    await createConversationWithMessage("o1", "ag1", { text: "first", clientMessageId: "m2" });
+    const bodies = urls.map((u) => JSON.parse(u.slice(u.indexOf("{"))) as Record<string, unknown>);
+    expect(bodies[0]).toEqual({ text: "hi", clientMessageId: "m1", timeZone: zone, locale: "zh" });
+    expect(bodies[1]).toEqual({
+      agentId: "ag1",
+      message: { text: "first", clientMessageId: "m2", timeZone: zone, locale: "zh" },
+    });
+  });
+
+  it("leaves out a language the app does not have", async () => {
+    document.documentElement.lang = "fr";
+    const urls = stubFetch({ event: {} }, 202);
+    await postMessage("o1", "c1", { text: "hi", clientMessageId: "m1" });
+    const body = JSON.parse(urls[0]?.slice(urls[0].indexOf("{")) ?? "{}") as Record<
+      string,
+      unknown
+    >;
+    expect(body).toEqual({ text: "hi", clientMessageId: "m1", timeZone: zone });
   });
 });

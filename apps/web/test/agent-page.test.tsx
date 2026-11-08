@@ -274,9 +274,35 @@ describe("the agent page by section (agent profile design §3)", () => {
     const profile = bodyOf(calls.find((c) => c.url.endsWith("/profile")));
     expect(profile).toEqual({ avatar: { kind: "preset", id: "panda" }, expectedUpdatedAt: P });
     const patch = bodyOf(calls.find((c) => c.method === "PATCH" && c.url === `${ORG}/agents/ag1`));
-    // the saved definition with the new name: nothing of another section, no visibility
+    // the saved definition with the new name and Basics' description (run context spec §3.5:
+    // an older version without one gains the profile's copy): nothing of another section
     expect(patch).toEqual({
-      definition: { ...saved.definition, name: "Helper 2" },
+      definition: { ...saved.definition, name: "Helper 2", description: "Helps with notes." },
+      expectedVersion: 1,
+    });
+  });
+
+  it("the description saves into the definition (a new version), not the profile", async () => {
+    const saved = agent();
+    const calls = stubApi(
+      routes(saved, {
+        [`PATCH ${ORG}/agents/ag1`]: ok({
+          agent: agent({ description: "New words.", version: 2 }),
+          warnings: [],
+        }),
+      }),
+    );
+    await renderEditAgent();
+    const user = userEvent.setup();
+    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
+    await user.clear(description);
+    await user.type(description, "New words.");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(calls.filter((c) => c.method === "PATCH").length).toBe(1));
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.url).toBe(`${ORG}/agents/ag1`);
+    expect(bodyOf(patch)).toEqual({
+      definition: { ...saved.definition, description: "New words." },
       expectedVersion: 1,
     });
   });
@@ -286,7 +312,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     const calls = stubApi(
       routes(saved, {
         [`PATCH ${ORG}/agents/ag1/profile`]: ok({
-          profile: { ...saved.profile, description: "New words.", updatedAt: P2 },
+          profile: { ...saved.profile, avatar: { kind: "preset", id: "panda" }, updatedAt: P2 },
         }),
         [`PATCH ${ORG}/agents/ag1`]: () =>
           json(500, { error: { code: "internal", message: "boom" } }),
@@ -294,19 +320,16 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
     await renderEditAgent();
     const user = userEvent.setup();
-    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
-    await user.clear(description);
-    await user.type(description, "New words.");
+    await user.click(screen.getByRole("radio", { name: "Panda" }));
     await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), " 2");
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(calls.filter((c) => c.method === "PATCH").length).toBe(2);
-    // the name keeps its draft; the description is the saved one now
+    // the name keeps its draft; the avatar is the saved one now
     expect(screen.getByRole("textbox", { name: en.agents.form.nameLabel })).toHaveProperty(
       "value",
       "Helper 2",
     );
-    expect(description).toHaveProperty("value", "New words.");
     // only the failed part is unsaved
     expect(document.querySelector('[data-part="action-row-unsaved"]')?.textContent).toMatch(
       /\b1\b/,
@@ -482,7 +505,7 @@ describe("the agent page by section (agent profile design §3)", () => {
     expect(screen.queryByText(en.agents.warnings.fallback_same_provider)).toBeNull();
   });
 
-  it("a combined save shows the new profile in the head even when the agent refetch is slow", async () => {
+  it("a combined save shows the new name and description in the head even when the agent refetch is slow", async () => {
     let profileSaved = false;
     let patched = false;
     stubApi(
@@ -491,7 +514,8 @@ describe("the agent page by section (agent profile design §3)", () => {
           // the server's state when the read starts; it answers late
           const snapshot = agent({
             name: patched ? "Helper 2" : "Helper",
-            ...(profileSaved ? { description: "New words.", updatedAt: P2 } : {}),
+            ...(patched ? { description: "New words." } : {}),
+            ...(profileSaved ? { updatedAt: P2 } : {}),
           });
           return new Promise<Response>((r) =>
             setTimeout(() => r(json(200, { agent: snapshot })), 60),
@@ -503,19 +527,27 @@ describe("the agent page by section (agent profile design §3)", () => {
               profileSaved = true;
               r(
                 json(200, {
-                  profile: { ...agent().profile, description: "New words.", updatedAt: P2 },
+                  profile: {
+                    ...agent().profile,
+                    avatar: { kind: "preset", id: "panda" },
+                    updatedAt: P2,
+                  },
                 }),
               );
             }, 20),
           ) as unknown as Response,
         [`PATCH ${ORG}/agents/ag1`]: () => {
           patched = true;
-          return json(200, { agent: agent({ name: "Helper 2" }), warnings: [] });
+          return json(200, {
+            agent: agent({ name: "Helper 2", description: "New words." }),
+            warnings: [],
+          });
         },
       }),
     );
     await renderEditAgent();
     const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "Panda" }));
     const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
     await user.clear(description);
     await user.type(description, "New words.");
@@ -581,9 +613,9 @@ describe("the agent page by section (agent profile design §3)", () => {
     const saved = agent();
     stubApi(
       routes(saved, {
-        [`PATCH ${ORG}/agents/ag1/profile`]: async () => {
+        [`PATCH ${ORG}/agents/ag1`]: async () => {
           await held;
-          return json(200, { profile: { ...saved.profile, description: "x", updatedAt: P2 } });
+          return json(200, { agent: agent({ description: "x" }), warnings: [] });
         },
       }),
     );
@@ -637,7 +669,7 @@ describe("the agent page by section (agent profile design §3)", () => {
         [`GET ${ORG}/agents/ag1`]: () => {
           reads += 1;
           return json(200, {
-            agent: reads > 1 ? agent({ description: "Theirs.", updatedAt: P2 }) : agent(),
+            agent: reads > 1 ? agent({ updatedAt: P2 }) : agent(),
           });
         },
         [`PATCH ${ORG}/agents/ag1/profile`]: () =>
@@ -646,8 +678,8 @@ describe("the agent page by section (agent profile design §3)", () => {
     );
     await renderEditAgent();
     const user = userEvent.setup();
-    const description = screen.getByRole("textbox", { name: new RegExp(P_.descriptionLabel) });
-    await user.type(description, " Mine.");
+    const fox = screen.getByRole("radio", { name: "Fox" });
+    await user.click(fox);
     await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
     expect(await screen.findByText(en.errors.agent.profile_conflict)).toBeTruthy();
     // nothing else was sent: only the profile changed
@@ -655,7 +687,9 @@ describe("the agent page by section (agent profile design §3)", () => {
       `${ORG}/agents/ag1/profile`,
     ]);
     await user.click(screen.getByRole("button", { name: P_.reload }));
-    await vi.waitFor(() => expect(description).toHaveProperty("value", "Theirs."));
+    await vi.waitFor(() =>
+      expect(screen.getByRole("radio", { name: "Fox" })).toHaveProperty("checked", false),
+    );
     expect(screen.queryByText(en.errors.agent.profile_conflict)).toBeNull();
   });
 

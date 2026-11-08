@@ -16,6 +16,7 @@ import { reconstructRequest } from "../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../src/evals/snapshot.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -100,7 +101,7 @@ beforeAll(async () => {
         name: "Helper",
         instructions: "Be helpful.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Platform" }],
+        disabledTools: builtinsOff("Platform"),
       },
       visibility: "org",
     },
@@ -350,7 +351,7 @@ describe("Platform tool end to end", { timeout: 180_000 }, () => {
           name: "Own private",
           instructions: "Be brief.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "Platform" }],
+          disabledTools: builtinsOff("Platform"),
         },
         visibility: "private",
       },

@@ -67,6 +67,8 @@ export const ProfileInputSchema = z
   })
   .strict();
 export type ProfileInput = z.infer<typeof ProfileInputSchema>;
+/** What `PATCH …/profile` writes: the description is saved with the definition (run context §3.5). */
+export type ProfilePatch = Omit<ProfileInput, "description">;
 
 export interface AgentProfile {
   avatar: AgentAvatar;

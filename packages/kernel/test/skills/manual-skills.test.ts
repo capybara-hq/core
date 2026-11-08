@@ -16,6 +16,7 @@ import { type SkillsSnapshot, snapshotChangeText } from "../../src/runtime/conte
 import { invocationOf, SkillsCatalogService } from "../../src/skills/catalog.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -221,7 +222,7 @@ async function createAgent(skills: Record<string, unknown>, tools: unknown[] = [
         name: "Skilled",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools,
+        disabledTools: onlyBuiltins(tools as Record<string, unknown>[]),
         skills,
       },
       visibility: "private",

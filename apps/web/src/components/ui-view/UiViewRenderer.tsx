@@ -8,6 +8,7 @@ import {
   type Column,
   DangerConfirm,
   DataTable,
+  EmptyState,
   ImageBlock,
   KeyValue,
   Markdown,
@@ -108,17 +109,38 @@ function FormView({ block, busy, run }: { block: FormBlock; busy: boolean; run: 
 
 type Row = { i: number; cells: Record<string, string> };
 
+/** A list block with nothing in it: a checklist or key-value list without items, a table without rows. */
+function isEmptyListBlock(block: UiBlock): boolean {
+  if (block.type === "checklist" || block.type === "keyValue") return block.items.length === 0;
+  if (block.type === "table") return block.rows.length === 0;
+  return false;
+}
+
+/**
+ * A view with nothing to show: no blocks, or only list blocks without items (the todo panel with no
+ * tasks). The host then draws one empty state in place of the blocks.
+ */
+function isEmptyView(view: UiView): boolean {
+  return view.blocks.every(isEmptyListBlock);
+}
+
 function Block({
   block,
   busy,
   run,
   onOpen,
+  emptyText,
 }: {
   block: UiBlock;
   busy: boolean;
   run: Run;
   onOpen: ((target: UiOpen) => void) | undefined;
+  emptyText: string;
 }): ReactNode {
+  // An empty checklist or key-value list among other blocks: the panel empty state in its place
+  // (spec §6.18); the UiView contract has no empty text, so the host's generic sentence.
+  if ((block.type === "checklist" || block.type === "keyValue") && block.items.length === 0)
+    return <EmptyState size="panel" text={emptyText} />;
   switch (block.type) {
     case "heading":
       return (
@@ -159,6 +181,7 @@ function Block({
           columns={columns}
           rows={block.rows.map((cells, i) => ({ i, cells }))}
           rowKey={(r) => String(r.i)}
+          empty={{ title: emptyText }}
         />
       );
     }
@@ -201,12 +224,20 @@ export function UiViewRenderer({
   view,
   onAction,
   onOpen,
+  emptySize = "panel",
 }: {
   view: UiView;
   onAction(req: UiActionRequest): Promise<void>;
   /** Opens an item's open target (an extension's right panel scrolled to an item). */
   onOpen?(target: UiOpen): void;
+  /**
+   * The empty state's style when the view has nothing to show (spec §6.18): `panel` (default) in a
+   * box (a properties section, a right panel, an inline card, a file preview); `page` for an
+   * extension's own page.
+   */
+  emptySize?: "page" | "panel";
 }) {
+  const t = useTranslations("ui");
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const run: Run = async (req, opts) => {
@@ -220,12 +251,14 @@ export function UiViewRenderer({
       setBusy(false);
     }
   };
+  // Nothing to show (no blocks, or only empty lists): one empty state instead of a blank body
+  if (isEmptyView(view)) return <EmptyState size={emptySize} text={t("empty")} />;
   return (
     <Stack gap={12}>
       {view.blocks.map((block, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: 块的顺序由插件给定，没有稳定 id
         <div key={i} data-block={block.type}>
-          <Block block={block} busy={busy} run={run} onOpen={onOpen} />
+          <Block block={block} busy={busy} run={run} onOpen={onOpen} emptyText={t("empty")} />
         </div>
       ))}
     </Stack>

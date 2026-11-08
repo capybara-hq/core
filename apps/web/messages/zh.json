@@ -38,11 +38,13 @@
         "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
       },
       "auth": {
-        "account_disabled": "该账号已被停用。"
+        "account_disabled": "该账号已被停用。",
+        "invalid_credentials": "用户名或密码错误。",
+        "rate_limited": "尝试次数过多，请稍后再试。"
       },
       "unknown": "登录失败，请重试。"
     },
-    "insecureOrigin": "如果登录后马上又回到登录页：当前页面通过 http 从非 localhost 的地址访问，而会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它。请改用 HTTPS（或在 localhost 上）访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。"
+    "insecureOrigin": "当前通过不安全的 http 地址访问，登录后可能无法保持登录状态。请使用 HTTPS 地址访问，或联系管理员。"
   },
   "changePassword": {
     "title": "设置新密码",
@@ -467,25 +469,30 @@
       "paramsSectionHint": "未改动的参数使用模型默认值。",
       "nameRequired": "请填写名称。",
       "toolsSection": "工具",
-      "toolsSectionHint": "智能体可以调用的工具。策略只能收紧：改为需审批，或禁止。",
+      "toolsSectionHint": "智能体默认可以使用组织提供的所有工具，取消勾选即关闭。策略只能收紧：改为需审批，或禁止。",
       "builtinLabel": "内置工具",
       "builtin": {
         "AskUserQuestion": "向用户提问",
         "ReadToolOutput": "读取存档的工具结果",
         "SkillWrite": "编写技能",
+        "Bash": "运行命令",
+        "Read": "读取文件",
+        "Write": "写入文件",
+        "Edit": "编辑文件",
+        "Glob": "按名称查找文件",
+        "Grep": "搜索文件内容",
+        "Deliver": "交付文件",
         "WebSearch": "搜索网页",
         "WebFetch": "读取网页",
-        "Platform": "操作平台"
+        "Platform": "操作平台",
+        "CurrentTime": "获取当前时间"
       },
       "connectorsLabel": "连接器",
       "noConnectors": "还没有安装连接器。",
       "extensionToolsLabel": "扩展工具",
       "noExtensionTools": "本组织启用的扩展没有提供工具。",
       "extensionToolsUnreadable": "暂时读不到扩展工具列表，刷新页面重试。",
-      "extensionToolUnavailable": "不可用：{reason}",
       "extensionToolOffInOrg": "已在本组织关闭",
-      "extensionNotEnabled": "扩展 {extension} 没有在本组织启用，或已卸载。",
-      "extensionToolGone": "扩展 {extension} 不再提供这个工具。",
       "policiesLabel": "策略",
       "policy": {
         "default": "默认",
@@ -496,30 +503,30 @@
       "skillsSection": "技能",
       "skillsSectionHint": "智能体在任务需要时可以加载的技能。",
       "orgSkillsLabel": "组织技能",
-      "noOrgSkills": "组织还没有技能。",
-      "confirmSkillWrite": "智能体写技能前需要我确认",
-      "confirmSkillWriteHint": "仅私有智能体。不勾选时智能体写的技能直接生效；勾选后每次写入都要你确认，确认后同样直接生效。",
+      "goToSkills": "去技能页",
+      "noOrgSkills": "组织还没有技能",
+      "confirmSkillWrite": "写入前需要我确认",
+      "confirmSkillWriteHint": "仅私有智能体；共享智能体的每次改动由所有者在收件箱批准",
       "deletedSkill": "已删除的技能（{id}）",
       "deletedSkillHint": "已删除的技能在运行时会被忽略；取消勾选即可移除引用。",
       "ownSkillsLabel": "智能体自己写的技能",
-      "ownSkillsHint": "这些技能由智能体通过 SkillWrite 编写。共享智能体的每次改动都要等所有者在收件箱里批准。",
-      "noOwnSkills": "这个智能体还没有写过技能。",
-      "ownSkillVersion": "{name} · v{version}",
+      "noOwnSkills": "这个智能体还没有写过技能",
       "deleteOwnSkill": "删除",
       "deleteOwnSkillLabel": "删除技能 {name}",
       "deleteOwnSkillTitle": "删除技能 {name}？",
       "deleteOwnSkillHint": "智能体不再加载这个技能，针对它的待处理改动会一并取消。",
       "ownSkillDeleted": "已删除技能「{name}」。",
-      "pinnedLabel": "置顶的技能",
+      "pinnedLabel": "置顶",
       "pinnedUnavailable": "读不到技能列表；置顶的技能保持不变。",
-      "pinnedHint": "置顶技能的说明始终在模型的上下文里，不用调用 Skill。最多从已选技能里置顶 3 个，SKILL.md 合计不超过 32 KB。",
-      "noPinnable": "先在上面选择技能，才能置顶。",
+      "pinnedHint": "置顶的技能每次都会带给智能体，不用它先去查找",
+      "pinnedCount": "{count} / {max}",
+      "noPinnable": "先选择技能",
       "pinSkill": "置顶 {name}",
       "suggested": "建议置顶",
       "tokenEstimate": "≈ {n} 个 token",
-      "pinnedTotal": "已置顶 {count} / {max} 个 · ≈ {n} 个 token",
+      "pinnedTotal": "合计 ≈ {n} 个 token",
       "tooMany": "最多置顶 {max} 个技能。先取消一个，才能置顶别的。",
-      "overLimit": "置顶技能的 SKILL.md 合计 {bytes} 字节，超过 {max} 字节的上限。",
+      "overLimit": "置顶技能的说明合计 {bytes} 字节，超过 {max} 字节的上限。",
       "overLimitKept": "运行时按这里的顺序保留放得下的置顶技能，其余不放入。取消置顶一个技能即可解决。",
       "overLimitRefused": "在合计不超限之前，这份置顶列表无法保存。",
       "skillTag": {
@@ -535,7 +542,7 @@
         "not_found": "{name}：技能不存在。",
         "duplicate": "{name} 被重复置顶。",
         "too_many": "{name}：最多置顶 {max} 个技能。",
-        "too_large": "{name}：置顶技能的 SKILL.md 将合计 {bytes} 字节，超过 {max} 字节的上限。",
+        "too_large": "{name}：置顶技能的说明将合计 {bytes} 字节，超过 {max} 字节的上限。",
         "manual_only": "{name} 是手动技能（由人用 / 调用），不在模型的技能目录里，不能置顶。"
       },
       "subagents": {
@@ -592,7 +599,6 @@
         "platform": "平台",
         "templateUnavailable": "不可用：{name}（平台模板在本组织已停用；取消勾选才会移除）"
       },
-      "webUnavailable": "本组织没有可用的网页提供方：需要组织管理员在扩展设置里启用并配置一个；如果已启用多个，则选择一个默认提供方。之后选中的网页工具才能使用。",
       "unavailableSkill": "不可用：{name}",
       "unavailableSkillHint": "这些平台技能在本组织已停用，智能体运行时不会加载；组织管理员重新启用后即可恢复。取消勾选才会移除引用。",
       "groupsLabel": "扩展和连接器",
@@ -600,22 +606,20 @@
         "extension": "扩展",
         "connector": "连接器"
       },
-      "groupSummary": "已启用 {on}/{total} 个工具",
       "groupAsk": "{count} 个需审批",
       "groupDeny": "{count} 个禁止",
-      "groupUnused": "未启用",
-      "groupUsed": "已启用",
-      "groupUnavailable": "有工具不可用",
+      "groupAllOn": "全部开启",
+      "groupAllOff": "已关闭全部",
+      "groupOff": "已关闭 {count} 个",
       "groupNoTools": "这里没有可用的工具。",
       "noGroups": "本组织还没有提供工具的扩展或连接器。",
       "configure": "配置",
       "configureGroup": "配置 {name}",
       "sheetTools": "{name} 的工具",
       "sheetDone": "完成",
-      "sheetHint": "勾选智能体可以调用的工具；策略只能收紧。修改随本页的保存一起生效。",
+      "sheetHint": "默认全部开启，取消勾选即对这个智能体关闭；全部取消即整体关闭（之后新增的工具也关闭）。策略只能收紧。修改随本页的保存一起生效。",
       "loadingTools": "正在读取工具…",
-      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。",
-      "connectorToolUnavailable": "不可用：这个工具已停用、待复核或已不在连接器里。"
+      "connectorToolsUnreadable": "暂时读不到这个连接器的工具，稍后重试。"
     },
     "params": {
       "default": "默认",
@@ -705,7 +709,7 @@
       "uploadOff": "上传图片需要对象存储，这个部署还没有配置。可以先选一只动物。",
       "uploadFailed": "读不了这张图片。请选择 png、jpg 或 webp 文件。",
       "descriptionLabel": "简介",
-      "descriptionHelp": "一句话说明这个智能体做什么。给人看的，模型看不到。",
+      "descriptionHelp": "一句话说明这个智能体做什么。会显示在智能体卡片上，智能体也会知道这是对它自己的描述。",
       "membersLabel": "可以使用的成员",
       "membersLoading": "正在加载成员…",
       "membersFailed": "成员列表加载失败。",
@@ -803,26 +807,30 @@
       "tools": {
         "list": "工具",
         "none": "没有工具。",
-        "disallowed": "不允许",
-        "hint": "用它创建智能体时，组织可用的工具会被带入，其余的会列为不可用。",
+        "allOn": "全部开启",
+        "allOnHint": "用它创建的智能体拥有组织提供的所有工具，下面关闭的除外",
+        "disallowed": "已关闭",
+        "hint": "默认全部开启：用它创建的智能体拥有组织提供的所有工具，取消勾选即关闭。策略只能收紧。",
         "others": "其他工具",
         "unavailable": "{tool}（本组织没有）",
-        "othersHint": "这些工具本组织现在不能用，取消勾选即从模板中移除。"
+        "othersHint": "模板关闭的这些工具本组织没有；勾选即从模板的关闭列表中移除。"
       },
       "skills": {
         "list": "技能",
         "none": "没有技能。",
-        "pinned": "预载",
+        "pinned": "置顶",
         "hint": "模板按名称记录技能，创建智能体时按名称在组织的技能里查找，找不到的会被略过。",
-        "selectLabel": "选用的技能",
-        "noOrgSkills": "本组织还没有技能。",
+        "selectLabel": "组织技能",
+        "goToSkills": "去技能页",
+        "noOrgSkills": "组织还没有技能",
         "unreadable": "读不到组织的技能列表。",
         "missing": "{name}（本组织没有，创建时会被略过）",
-        "tooMany": "最多选用 {max} 个未预载的技能。",
-        "pinLabel": "预载",
-        "noneToPin": "先选用技能，再从中选择预载的。",
-        "pin": "预载 {name}",
-        "pinHint": "预载的技能会写进每次运行的上下文，最多 {max} 个。"
+        "tooMany": "最多选用 {max} 个未置顶的技能。",
+        "pinLabel": "置顶",
+        "noneToPin": "先选择技能",
+        "pin": "置顶 {name}",
+        "pinCount": "{count} / {max}",
+        "pinHint": "置顶的技能每次都会带给智能体，不用它先去查找"
       },
       "connectors": {
         "list": "连接器",
@@ -1388,6 +1396,7 @@
     }
   },
   "ui": {
+    "empty": "这里还没有内容。",
     "dangerDescription": "这个操作由扩展执行，可能无法撤销。",
     "embedRefreshFailed": "扩展页面的凭据续期失败，正在重试；页面可能暂时无法读写。",
     "embedRemountLimit": "扩展页面在加载后反复跳转离开，已停止加载。可以重试，或联系扩展提供方。"
@@ -2005,9 +2014,10 @@
       "general": "通用",
       "sandbox": "沙箱",
       "identities": "IM 身份",
-      "models": "模型用途",
+      "models": "模型",
       "members": "成员",
-      "tokens": "服务令牌"
+      "tokens": "服务令牌",
+      "preferences": "偏好设置"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -2106,6 +2116,11 @@
         "override": "超级管理员为本组织设置"
       },
       "newOnly": "只对新建的沙箱生效；已有的沙箱沿用创建时的限额，直到被销毁。"
+    },
+    "timeZone": {
+      "title": "默认时区",
+      "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
+      "label": "默认时区"
     }
   },
   "configForm": {
@@ -2973,6 +2988,18 @@
     "setMeta": "{agent} · {n} 个用例"
   },
   "models": {
+    "tabs": {
+      "models": "模型",
+      "purposes": "用途默认"
+    },
+    "providers": {
+      "label": "供应商",
+      "provider": "供应商",
+      "count": "模型",
+      "failed": "失败",
+      "option": "{name} · {count} 个模型",
+      "optionFailed": "{name} · 列模型失败"
+    },
     "admin": {
       "title": "模型",
       "providers": {
@@ -2980,7 +3007,8 @@
         "description": "已安装的模型供应商及其模型。价格为每百万 token 的单价，币种 {currency}（在部署设置中修改）；轨迹与评测里的成本都按这里的价格估算。"
       },
       "providerError": "供应商 {provider} 列模型失败，其他供应商不受影响。",
-      "noProviders": "还没有模型供应商。安装模型供应商扩展后会出现在这里。",
+      "noProviders": "还没有模型供应商。安装模型供应商插件后，它会出现在这里。",
+      "toPlugins": "前往插件",
       "noModels": "这个供应商没有模型。",
       "columns": {
         "model": "模型",
@@ -2989,7 +3017,9 @@
         "input": "输入",
         "output": "输出",
         "cacheRead": "缓存读",
-        "cacheWrite": "缓存写"
+        "cacheWrite": "缓存写",
+        "dimensions": "维度",
+        "maxInput": "最大输入"
       },
       "sameAsInput": "同输入",
       "menu": {
@@ -3015,8 +3045,11 @@
       }
     },
     "org": {
+      "pageTitle": "模型",
       "title": "模型用途",
-      "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。"
+      "description": "内核与扩展按用途取模型。每个用途默认使用超级管理员设的部署默认；你可以为本组织覆盖，或恢复默认。",
+      "noProviders": "本组织还没有可用的模型供应商。在插件页启用模型供应商插件，或请超级管理员安装。",
+      "toPlugins": "前往插件"
     },
     "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",
     "capability": {
@@ -3065,13 +3098,13 @@
       "affected": "以下智能体或用途正在使用这些模型："
     },
     "kind": {
-      "chat": "对话模型",
-      "embedding": "向量模型",
-      "rerank": "重排模型",
-      "image_generation": "图像生成",
+      "chat": "对话",
+      "embedding": "向量",
+      "rerank": "重排",
+      "image_generation": "图片生成",
       "video_generation": "视频生成",
-      "speech_to_text": "语音识别",
-      "text_to_speech": "语音合成",
+      "speech_to_text": "语音转文字",
+      "text_to_speech": "文字转语音",
       "other": "其他"
     }
   },
@@ -3298,6 +3331,7 @@
       "saved": "部署设置已保存",
       "allow": "允许",
       "deny": "禁止",
+      "insecureOrigin": "你正在通过 http 从非 localhost 的地址访问控制台。会话 Cookie 默认带 Secure 标记，浏览器在这里不会保存它，用户登录后可能无法保持登录状态。请改用 HTTPS 访问；仅在通过 http 短期试用时，可在内核服务上设置 CAPYBARA_AUTH__COOKIE_SECURE=false（compose 的 .env 中为 CAPYBARA_COOKIE_SECURE=false），并把 CAPYBARA_PUBLIC_URL 设为当前地址，否则附件上传与下载会失败。",
       "orgCreation": {
         "title": "谁能新建组织",
         "description": "限制后只有超级管理员能新建组织。",
@@ -3480,7 +3514,14 @@
         "listSep": "、",
         "willReload": "保存后扩展会重新加载，最多约需 {seconds} 秒",
         "appliesNow": "这些改动保存后立即生效",
-        "noteSep": "；"
+        "noteSep": "；",
+        "clear": "清空配置",
+        "cleared": "配置已清空。",
+        "clearConfirm": {
+          "title": "清空「{name}」的部署配置",
+          "hint": "清空会删除这里保存的部署配置和密钥。扩展会变为待配置并停止加载，使用它的模型或工具的智能体在重新配置之前无法使用它们。启动配置或环境变量里设置的值不受影响，仍然生效。",
+          "confirm": "清空配置"
+        }
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",
@@ -3962,6 +4003,7 @@
         "title": "市场源",
         "description": "插件从这里的市场源列出。在插件页的「市场」里引入时会下载、按市场的完整性校验，审阅后才加入。",
         "search": "搜索市场源",
+        "clearSearch": "清除搜索",
         "noMatch": "没有匹配的市场源。",
         "official": "官方市场",
         "officialHint": "地址在部署配置 marketplaces.official.* 里设置（默认是 git 仓库 capybara-hq/plugins），这里只读。",
@@ -4802,5 +4844,17 @@
     "noneInOrg": "这个插件没有向本组织提供组件。",
     "listUnavailable": "暂时读不到平台组件在本组织的状态：未启用的平台组件和它们的开关没有显示。",
     "retry": "重试"
+  },
+  "preferences": {
+    "title": "偏好设置",
+    "save": "保存",
+    "saved": "偏好设置已保存。",
+    "timeZone": {
+      "title": "时区",
+      "description": "智能体按这个时区判断「今天」。默认跟随你的浏览器；在 IM 里发消息时没有浏览器，就用这里的设置，未设置时用组织的默认时区。",
+      "label": "时区",
+      "help": "选择一个时区后，它优先于浏览器的时区。",
+      "follow": "跟随浏览器"
+    }
   }
 }

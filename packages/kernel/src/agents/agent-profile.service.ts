@@ -8,11 +8,12 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { AgentLookup } from "./agent-lookup.js";
 import { AgentsService } from "./agents.service.js";
-import type { AgentProfile, ProfileInput } from "./profile.js";
+import type { AgentProfile, ProfilePatch } from "./profile.js";
 
 /**
- * Writes an agent's profile (avatar, description, quick actions): display data stored beside the
- * agent, never model-visible, so a change creates no agent version. The permission is the one of
+ * Writes an agent's profile (avatar, quick actions): display data stored beside the agent, never
+ * model-visible, so a change creates no agent version. The description is part of the definition
+ * (run context spec §3.5). The permission is the one of
  * `AgentsService.update` (owner or org admin, checked under the org row lock).
  */
 @Injectable()
@@ -42,7 +43,7 @@ export class AgentProfileService {
     orgId: string,
     agentId: string,
     actorAccountId: string,
-    patch: ProfileInput,
+    patch: ProfilePatch,
     expectedUpdatedAt: string,
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
@@ -71,7 +72,7 @@ export class AgentProfileService {
     orgId: string,
     agentId: string,
     actorAccountId: string,
-    patch: ProfileInput,
+    patch: ProfilePatch,
     expectedUpdatedAt: string,
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
@@ -101,9 +102,7 @@ export class AgentProfileService {
         agentId,
       );
     }
-    const fields = (["avatar", "description", "quickActions"] as const).filter(
-      (f) => patch[f] !== undefined,
-    );
+    const fields = (["avatar", "quickActions"] as const).filter((f) => patch[f] !== undefined);
     // nothing to write: no timestamp bump, no audit row
     if (fields.length === 0) return (await this.lookup.view(agentId)).profile;
     await t
@@ -112,7 +111,6 @@ export class AgentProfileService {
         ...(patch.avatar !== undefined && {
           profile_avatar: patch.avatar === null ? sql<null>`null` : JSON.stringify(patch.avatar),
         }),
-        ...(patch.description !== undefined && { profile_description: patch.description }),
         ...(patch.quickActions !== undefined && {
           profile_quick_actions: JSON.stringify(patch.quickActions),
         }),

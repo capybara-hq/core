@@ -15,12 +15,7 @@ import {
   PendingConnectorParams,
 } from "../../agents/agents.schemas.js";
 import { AgentsService } from "../../agents/agents.service.js";
-import {
-  AgentDefinitionSchema,
-  AgentToolRefCurrent,
-  DEFAULT_AGENT_TOOLS,
-  type ModelRef,
-} from "../../agents/definition.js";
+import { AgentDefinitionSchema, type ModelRef } from "../../agents/definition.js";
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
@@ -49,15 +44,6 @@ const Def = AgentCreateDefinition.shape;
 const Short = z.string().min(1).max(200);
 
 const Model = Def.model.extend({ provider: Short, model: Short }).strict();
-const [BuiltinRef, PluginRef, ConnectorRef] = AgentToolRefCurrent.options;
-const ToolRef = z.union([
-  BuiltinRef.extend({ name: Short }).strict(),
-  PluginRef.extend({ plugin: Short, name: Short }).strict(),
-  ConnectorRef.extend({
-    connectorId: Short,
-    tools: z.union([z.literal("all"), z.array(Short).min(1).max(200)]),
-  }).strict(),
-]);
 const RouteSkills = Def.skills.unwrap();
 /** `writePolicy` stays the web's; `orgSkills` is required here (the route defaults it to []). */
 const Skills = RouteSkills.pick({ pinned: true })
@@ -67,9 +53,14 @@ const Skills = RouteSkills.pick({ pinned: true })
 /** The definition fields an agent can set through the tool; the rest keep the web's defaults. */
 const Fields = {
   name: Def.name,
+  description: Def.description.unwrap(),
   instructions: Def.instructions.unwrap(),
   model: Model,
-  tools: z.array(ToolRef).max(200),
+  /**
+   * Tools turned off (tools default-on spec §8): an agent has every builtin, every tool of the
+   * extensions enabled in the org and every tool of the org's connectors except these.
+   */
+  disabledTools: Def.disabledTools.unwrap(),
   toolPolicies: z.record(Short, Def.toolPolicies.unwrap().valueType),
   skills: Skills,
   subagents: Def.subagents.unwrap(),
@@ -206,7 +197,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.get",
         description:
-          "Read one agent you can see with its full definition (instructions, model, tools, skills and sub-agents) and its profile (avatar, description, quick actions). Takes the agent id from agents.list.",
+          "Read one agent you can see with its full definition (description, instructions, model, the tools it turns off (disabledTools: an agent has every tool the org offers except these), tool policies, skills and sub-agents) and its profile (avatar, description, quick actions). Takes the agent id from agents.list.",
         input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.use" },
@@ -219,7 +210,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create",
         description:
-          "Create a new private agent owned by you, with a name, a model and optionally instructions, tools, skills and sub-agents. Without tools it gets the default ones. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
+          'Create a new private agent owned by you, with a name, a model and optionally instructions, disabledTools, tool policies, skills and sub-agents. An agent has every tool the org offers (all built-in tools, the tools of the extensions on in the org and of the org\'s connectors) unless disabledTools turns it off: { kind: "builtin", name }, { kind: "plugin", plugin, tools: "all" | [names] } or { kind: "connector", connectorId, tools: "all" | [names] }. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.',
         input: z
           .object({
             definition: z
@@ -227,7 +218,7 @@ export class AgentsOperations implements OnModuleInit {
                 name: Fields.name,
                 instructions: Fields.instructions.optional(),
                 model: Fields.model,
-                tools: Fields.tools.optional(),
+                disabledTools: Fields.disabledTools.optional(),
                 toolPolicies: Fields.toolPolicies.optional(),
                 skills: Fields.skills.optional(),
                 subagents: Fields.subagents.optional(),
@@ -262,7 +253,7 @@ export class AgentsOperations implements OnModuleInit {
           const parsed = AgentDefinitionSchema.omit({ pendingConnectors: true }).parse({
             name: d.name,
             model: d.model,
-            tools: d.tools ?? structuredClone(DEFAULT_AGENT_TOOLS),
+            ...(d.disabledTools !== undefined && { disabledTools: d.disabledTools }),
             ...(d.toolPolicies !== undefined && { toolPolicies: d.toolPolicies }),
             ...(d.skills !== undefined && { skills: d.skills }),
             ...(d.subagents !== undefined && { subagents: d.subagents }),
@@ -282,15 +273,16 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          "Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
+          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
             version: AgentUpdateBody.shape.expectedVersion.unwrap(),
             name: Fields.name.optional(),
+            description: Fields.description.optional(),
             instructions: Fields.instructions.optional(),
             model: Fields.model.optional(),
-            tools: Fields.tools.optional(),
+            disabledTools: Fields.disabledTools.optional(),
             toolPolicies: Fields.toolPolicies.optional(),
             skills: Fields.skills.optional(),
             subagents: Fields.subagents.optional(),
@@ -309,9 +301,10 @@ export class AgentsOperations implements OnModuleInit {
         renames: {
           version: "expectedVersion",
           name: "definition.name",
+          description: "definition.description",
           instructions: "definition.instructions",
           model: "definition.model",
-          tools: "definition.tools",
+          disabledTools: "definition.disabledTools",
           toolPolicies: "definition.toolPolicies",
           skills: "definition.skills",
           subagents: "definition.subagents",
@@ -348,9 +341,10 @@ export class AgentsOperations implements OnModuleInit {
               ? { ...base, instructionFiles }
               : base),
             ...(patch.name !== undefined && { name: patch.name }),
+            ...(patch.description !== undefined && { description: patch.description }),
             ...(patch.instructions !== undefined && { instructions: patch.instructions }),
             ...(patch.model !== undefined && { model: patch.model as ModelRef }),
-            ...(patch.tools !== undefined && { tools: patch.tools }),
+            ...(patch.disabledTools !== undefined && { disabledTools: patch.disabledTools }),
             ...(patch.toolPolicies !== undefined && { toolPolicies: patch.toolPolicies }),
             ...(patch.skills !== undefined && { skills: patch.skills }),
             ...(patch.subagents !== undefined && { subagents: patch.subagents }),
@@ -368,7 +362,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update-profile",
         description:
-          "Change how an agent you may edit looks to people: its avatar (one of the preset animals, or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. A custom avatar image and the description are set on the agents page of the web app. A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
+          "Change how an agent you may edit looks to people: its avatar (one of the preset animals, or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A custom avatar image is uploaded on the agents page of the web app. A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
         input: z
           .object({
             agentId: AgentId,
@@ -389,10 +383,10 @@ export class AgentsOperations implements OnModuleInit {
         },
         authz: { orgAction: "agents.create" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId/profile"],
-        // the description is edited with the definition (agents.update); `expectedUpdatedAt` is
-        // read by the operation itself. The narrower avatar (no `upload` kind) needs no
-        // declaration: an input that accepts less than the route passes the parity test.
-        omits: ["description", "expectedUpdatedAt"],
+        // `expectedUpdatedAt` is read by the operation itself (the route takes no description: it
+        // is saved with the definition, agents.update). The narrower avatar (no `upload` kind)
+        // needs no declaration: an input that accepts less than the route passes the parity test.
+        omits: ["expectedUpdatedAt"],
         confirm: "personal",
         confirmFor: (i, ctx) => this.updateClass(i.agentId, ctx),
         errors: [

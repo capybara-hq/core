@@ -11,6 +11,7 @@ import type { AttachmentRef, ResolvedExtra } from "./conversations.service.js";
 import { type AppendEvent, type EventLog, payloadJson } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
+import { type MessageContext, readMessageContext } from "./message-context.js";
 import { planSelection, readSelection } from "./selection.js";
 
 /**
@@ -173,7 +174,7 @@ export function storedSkill(
 }
 
 /** The `user_message` a queued item becomes, as `postUserMessage` would have written it. */
-export function queuedUserMessage(r: QueueRow): AppendEvent {
+export function queuedUserMessage(r: QueueRow, context: MessageContext = {}): AppendEvent {
   const attachments = r.attachments as ResolvedExtra["attachments"];
   const skill = r.skill as QueuedSkill | null;
   return {
@@ -187,6 +188,7 @@ export function queuedUserMessage(r: QueueRow): AppendEvent {
       ],
       ...(attachments.length > 0 && { attachments }),
       authorAccountId: r.account_id,
+      ...context,
       clientMessageId: r.client_message_id,
       ...(skill !== null && { skill: skill.record }),
     },
@@ -227,7 +229,14 @@ export async function appendQueuedIn(
       payload: { ...next, byAccountId: r.account_id, reason: "user" },
     });
   }
-  events.push(queuedUserMessage(r));
+  // run context spec §3.4: no browser values were stored with a leftover row
+  const org = await t
+    .selectFrom("conversations")
+    .select("org_id")
+    .where("id", "=", conversationId)
+    .executeTakeFirstOrThrow();
+  const context = await readMessageContext(t, { orgId: org.org_id, accountId: r.account_id });
+  events.push(queuedUserMessage(r, context));
   const written = await eventLog.appendIn(conversationId, events);
   if (next !== null) {
     await t

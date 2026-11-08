@@ -19,7 +19,10 @@ function lastUserText(req: ModelRequestV1): string {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user") continue;
-    const text = m.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+    // the kernel's sender line (run context spec §4) is a separate first block: skip it
+    const texts = m.content.flatMap((b) => (b.type === "text" ? [b.text] : []));
+    const own = texts.length > 1 && /^From [^\n]+$/.test(texts[0] ?? "") ? texts.slice(1) : texts;
+    const text = own.join("");
     if (text !== "") return text;
   }
   return "";

@@ -20,6 +20,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { buildModelRequest } from "../../src/runtime/context/build.js";
 import { SANDBOX_STARTED_NOTICE } from "../../src/tools/builtins/sandbox/common.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -230,10 +231,10 @@ describe("M5 第三段双副本验收（技能变更审批 + 技能脚本进沙�
         name: "Fruit",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "builtin", name: "SkillWrite" },
           { kind: "builtin", name: "Bash" },
-        ],
+        ]),
       },
       visibility: "org",
     });

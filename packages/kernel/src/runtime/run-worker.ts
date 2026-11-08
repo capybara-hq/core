@@ -39,6 +39,7 @@ import type { AgentLoop, LoopOutcome, SubagentParent, WaitingFor } from "./loop.
 import { RunError, type StreamSink } from "./model-call.js";
 import { ProviderListError, ProviderRegistry } from "./providers.js";
 import { ORG_QUOTA_LEASE_MS, type OrgQuota, orgRunLimit, RUN_QUOTA } from "./quota.js";
+import { RunContextService } from "./run-context.service.js";
 import { RunDrafts, streamSink } from "./run-drafts.js";
 import { type FinishRunArgs, RunFinish, TERMINAL_STATUSES } from "./run-finish.js";
 import type { RunJobData } from "./run-jobs.js";
@@ -163,6 +164,8 @@ export class RunWorker {
     /** Run start's skills catalog snapshot (reads the pinned skills' bodies, phase B). */
     @Inject(SkillsCatalogService)
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
+    /** Run start's run context (run context spec §5): who the agent is, the day, the person. */
+    @Inject(RunContextService) private readonly runContext: Pick<RunContextService, "record">,
     /**
      * In the terminal transaction of every run: writes its open `Agent` call results
      * (`stopOpenAgentCalls`; a no-op without dispatches); `fire` runs their observe hooks after the
@@ -588,6 +591,8 @@ export class RunWorker {
     let saved: AgentDefinition | undefined;
     let maxSteps = runtime.maxSteps;
     let parent: SubagentParent | undefined;
+    /** A sub-agent's name in its run context: the roster name, or the forked skill's. */
+    let childName: string | undefined;
     if (conv.kind === "subagent") {
       // a sub-agent runs its effective definition frozen at dispatch, never agent_versions
       // (spec §6.3), and works for the parent call that dispatched this run
@@ -607,6 +612,7 @@ export class RunWorker {
           : undefined,
       );
       maxSteps = Math.min(started.payload.maxSteps, runtime.maxSteps);
+      childName = started.payload.template.invokedSkill?.name ?? started.payload.agentType;
       const row = await dispatchOfChildRun(this.db, runId);
       const otherAgent = started.payload.template.source === "agent";
       const parentConversationId =
@@ -710,6 +716,22 @@ export class RunWorker {
         });
         return "finished";
       }
+      // run context (spec §5): after the catalog, before the run is running, so before any
+      // compaction and model call; a retried run start finds its event or no change
+      await this.runContext.record({
+        orgId: conv.org_id,
+        conversationId,
+        runId,
+        triggerSeq: Number(run.trigger_seq),
+        agent,
+        ...(parent !== undefined && {
+          subagent: {
+            parentConversationId: parent.conversationId,
+            parentRunId: parent.runId,
+            name: childName ?? agent.name,
+          },
+        }),
+      });
       const updated = await this.db
         .updateTable("runs")
         .set({ status: "running", started_at: sql<Date>`COALESCE(started_at, now())` })

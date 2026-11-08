@@ -29,6 +29,11 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Writes deployment config that can include secret fields",
   },
   {
+    route: "DELETE /api/v1/admin/extensions/:name/config",
+    category: "secret",
+    reason: "Clears deployment config including secret values; done on the web",
+  },
+  {
     route: "POST /api/v1/admin/extensions/:name/approve",
     category: "human-only",
     reason: "Approves an extension's permission manifest, a trust decision",
@@ -346,6 +351,17 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PUT /api/v1/me/current-org",
     category: "human-only",
     reason: "Switches the web session's current org",
+  },
+  {
+    route: "GET /api/v1/me/preferences",
+    category: "internal",
+    reason:
+      "The person's time zone setting the web's preferences page reads; the run context already gives the agent the zone in effect",
+  },
+  {
+    route: "PUT /api/v1/me/preferences",
+    category: "human-only",
+    reason: "A person's own time zone setting, chosen on their preferences page",
   },
   {
     route: "PUT /api/v1/me/password",

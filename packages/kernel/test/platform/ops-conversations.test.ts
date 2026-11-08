@@ -8,6 +8,7 @@ import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 
 /**
  * Platform operations of the conversations domain against PG with the real services: reads, the
@@ -71,7 +72,7 @@ async function agentOf(owner: string) {
       name: "Helper",
       instructions: "Be helpful.",
       model: { provider: "model-fake", model: "fake-1" },
-      tools: [{ kind: "builtin", name: "Bash" }],
+      disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,
       modelParams: {},

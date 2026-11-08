@@ -5,6 +5,7 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -96,7 +97,9 @@ beforeAll(async () => {
         name: "Metered",
         instructions: "Use tools.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "hooks-probe", name: "probe_echo" }],
+        disabledTools: onlyBuiltins([
+          { kind: "plugin", plugin: "hooks-probe", name: "probe_echo" },
+        ]),
       },
       visibility: "org",
     },

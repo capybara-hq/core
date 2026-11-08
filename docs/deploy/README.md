@@ -183,7 +183,9 @@ starting. Read its output with `docker compose logs init`.
 - **HTTPS or localhost.** Session cookies carry the `Secure` attribute, so browsers keep them only over
   HTTPS or on `http://localhost`. Over plain http on any other host name (an IP address, a LAN name),
   sign-in seems to succeed and then drops you back at the login page. In that case the login page
-  shows a notice ("If sign-in doesn't stick: ..."). Serve `web` over HTTPS. For a short trial only,
+  tells people to use the HTTPS address or contact their administrator, the admin console's
+  deployment settings page shows these details to super admins, and the kernel logs a warning at
+  start when `CAPYBARA_PUBLIC_URL` is plain http while cookies are Secure. Serve `web` over HTTPS. For a short trial only,
   set `CAPYBARA_COOKIE_SECURE=false` in `.env`; compose passes it on as
   `CAPYBARA_AUTH__COOKIE_SECURE`. Also set `CAPYBARA_PUBLIC_URL` to the address you open (for example
   `http://192.168.1.20:3000`): presigned attachment URLs point at it, and at the `localhost` default

@@ -135,6 +135,7 @@ function NewChannelForm({
   agents: Agent[];
 }) {
   const scope = usePagePath("org");
+  const ta = useTranslations("agents");
   const t = useTranslations("channels");
   const tc = useTranslations("common");
   const lang = labelLocale(useLocale());
@@ -273,7 +274,12 @@ function NewChannelForm({
         description={t("form.agentSectionHint")}
       >
         {agents.length === 0 ? (
-          <Text tone="muted">{t("form.noAgents")}</Text>
+          // No agent to bind: the panel empty state in the form card, pointing at 新建智能体
+          <EmptyState
+            size="panel"
+            text={t("form.noAgents")}
+            action={{ label: ta("new"), variant: "default", href: "/agents/new" }}
+          />
         ) : (
           <AgentSelect agents={agents} value={agentId} onChange={setAgentId} />
         )}

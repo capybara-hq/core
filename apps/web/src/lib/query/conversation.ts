@@ -672,6 +672,23 @@ export function isFreshlySeeded(qc: QueryClient, orgId: string, id: string): boo
  * tasks, the row, the tool info and the conversation's extension views. Otherwise they follow
  * their freshness class.
  */
+/**
+ * Whether a logged event is a `Platform` call that went through: the agent acted for the person
+ * (renamed a conversation, switched a tool off in the org, changed its own profile …). The web
+ * cannot tell which reads the call touched, so {@link invalidateAfterPlatformCall} marks them all.
+ */
+export const isPlatformCallDone = (e: ConversationEvent): boolean =>
+  e.type === "tool_result" && e.payload.toolKey === "Platform" && !e.payload.isError;
+
+/**
+ * After a `Platform` call: every cached read except event logs (kept current by the stream) is
+ * stale. Shown reads refetch at once, the rest on their next mount, as after the person's own
+ * write; `mine` reads (fresh forever) would otherwise keep the old value until a reload.
+ */
+export function invalidateAfterPlatformCall(qc: QueryClient): Promise<void> {
+  return qc.invalidateQueries({ predicate: (q) => !q.queryKey.includes("events") });
+}
+
 export const CONVERSATION_SIDE_KEYS = (orgId: string, id: string): (readonly unknown[])[] => {
   const c = keys.org(orgId).conversation(id);
   return [

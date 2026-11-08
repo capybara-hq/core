@@ -5,7 +5,9 @@ import { NextIntlClientProvider } from "next-intl";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { LoginForm } from "../src/components/login-form";
+import { LoginErrorNotice, LoginForm } from "../src/components/login-form";
+import { SetupForm } from "../src/components/setup-form";
+import { parseLoginError } from "../src/lib/auth-sources";
 import { testQueryClient } from "./support/render";
 
 afterEach(() => {
@@ -77,5 +79,42 @@ describe("LoginForm", () => {
     renderLogin("en");
     await submit("en");
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", `${en.errors.unknown}`);
+  });
+});
+
+// Acceptance (security): without the client JS the browser submits natively; a form without a
+// method is a GET that put the password in the URL. Every credential form posts.
+describe("credential forms post natively", () => {
+  it("the sign-in form is method=post, its fields named for the proxy's POST handler", () => {
+    renderLogin("en");
+    const form = document.querySelector("form");
+    expect(form?.getAttribute("method")).toBe("post");
+    expect(form?.querySelector('input[type="password"]')?.getAttribute("name")).toBe("password");
+    expect(form?.querySelector('input[name="login"]')).not.toBeNull();
+  });
+
+  it("the setup form is method=post and shows the error code a native POST came back with", () => {
+    render(
+      <QueryClientProvider client={testQueryClient()}>
+        <NextIntlClientProvider locale="en" messages={en}>
+          <SetupForm onSuccess={vi.fn()} initialError="validation_failed" />
+        </NextIntlClientProvider>
+      </QueryClientProvider>,
+    );
+    expect(document.querySelector("form")?.getAttribute("method")).toBe("post");
+    expect(screen.getByRole("alert").textContent).toBe(en.errors.validation_failed);
+  });
+
+  it.each([
+    ["zh", zh.login.ssoError.auth.invalid_credentials],
+    ["en", en.login.ssoError.auth.invalid_credentials],
+  ] as const)("a failed native sign-in's code reads in the page language (%s)", (locale, text) => {
+    expect(parseLoginError("error=auth.invalid_credentials")).toBe("auth.invalid_credentials");
+    render(
+      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+        <LoginErrorNotice code="auth.invalid_credentials" />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("alert").textContent).toBe(text);
   });
 });

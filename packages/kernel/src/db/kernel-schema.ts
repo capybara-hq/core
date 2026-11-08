@@ -18,6 +18,8 @@ export interface AccountsTable {
   updated_at: Ts;
   /** 0064: the org the account last chose as current; a new session starts in it. */
   last_org_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0091: the person's time zone (IANA); null follows the browser (run context spec §3.4). */
+  time_zone: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0090: the account must set its own password first (a generated initial password). */
   must_change_password: Generated<boolean>;
 }

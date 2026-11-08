@@ -42,6 +42,14 @@ const base = {
   onRemove: () => () => {},
 };
 
+/** The text of the elements `aria-describedby` names (the accessible description, jsdom). */
+const description = (el: HTMLElement): string =>
+  (el.getAttribute("aria-describedby") ?? "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((id) => document.getElementById(id)?.textContent ?? "")
+    .join(" ");
+
 /** A stateful host: add appends `e<n>`, remove drops the item and its restore puts it back. */
 function Host(props: {
   initial: string[];
@@ -138,6 +146,37 @@ describe("Repeater (spec §6.26)", () => {
     wrap(<Repeater {...base} items={[card("a"), card("b")]} min={1} max={3} />);
     expect(screen.getByRole("button", { name: "Remove a" })).toHaveProperty("disabled", false);
     expect(screen.getByRole("button", { name: "Add endpoint" })).toHaveProperty("disabled", false);
+  });
+
+  it("at its minimum, remove says why it is off in its tooltip and description (zh and en)", () => {
+    wrap(<Repeater {...base} items={[card("deepseek")]} min={1} />);
+    const off = screen.getByRole("button", { name: "Remove deepseek" });
+    expect(off).toHaveProperty("disabled", true);
+    expect(off.getAttribute("title")).toBe("Keep at least 1");
+    expect(description(off)).toBe("Keep at least 1");
+    cleanup();
+    wrap(<Repeater {...base} items={[card("a"), card("b")]} min={2} />, "zh");
+    const zh = screen.getByRole("button", { name: "移除 a" });
+    expect(zh.getAttribute("title")).toBe("至少保留 2 项");
+    expect(description(zh)).toBe("至少保留 2 项");
+    cleanup();
+    // above the minimum the tooltip is the name again, and no description is added
+    wrap(<Repeater {...base} items={[card("a"), card("b")]} min={1} />);
+    const on = screen.getByRole("button", { name: "Remove a" });
+    expect(on.getAttribute("title")).toBe("Remove a");
+    expect(description(on)).toBe("");
+    cleanup();
+    // a Repeater disabled as a whole (a startup-config field) gives no min reason
+    wrap(<Repeater {...base} items={[card("a")]} min={1} disabled />);
+    expect(screen.getByRole("button", { name: "Remove a" }).getAttribute("title")).toBe("Remove a");
+  });
+
+  it("draws a disabled icon button's icon in faint, so it reads as off (spec §6.1)", () => {
+    const controls = readFileSync(
+      resolve(import.meta.dirname, "../src/styles/controls.css"),
+      "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(controls).toMatch(/\.cb-icon-btn:disabled\s*\{[^}]*color: var\(--cb-faint\);/);
   });
 
   it("shows the empty text when there are no items", () => {

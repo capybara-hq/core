@@ -21,6 +21,7 @@ import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
@@ -190,7 +191,7 @@ async function agentWith(org: string, orgSkills: string[], pinned?: string[]): P
         name: "Skilled",
         instructions: "Use skills.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "builtin", name: "Bash" }],
+        disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
         skills: { orgSkills, ...(pinned !== undefined && { pinned }) },
       },
       visibility: "org",
@@ -694,7 +695,7 @@ describe("promote on share", { timeout: 120_000 }, () => {
           name: "Lead",
           instructions: "Lead the work.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [{ kind: "builtin", name: "Agent" }],
+          disabledTools: onlyBuiltins([{ kind: "builtin", name: "Agent" }]),
           subagents: { templates: [tplId] },
         },
         visibility: "org",

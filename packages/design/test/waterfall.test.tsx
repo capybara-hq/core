@@ -140,6 +140,13 @@ describe("SpanWaterfall", () => {
       "en",
     );
     expect(screen.getByText("Nothing yet")).toBeTruthy();
+    // the panel empty state in the waterfall's pane (spec §6.18)
+    expect(
+      screen
+        .getByText("Nothing yet")
+        .closest('[data-part="empty-state"]')
+        ?.getAttribute("data-size"),
+    ).toBe("panel");
     expect(screen.queryByRole("treeitem")).toBeNull();
     cleanup();
     wrap(

@@ -28,6 +28,7 @@ import { type ResolvedTool, specHash } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -137,7 +138,7 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools: [{ kind: "plugin", plugin: "probe", name: "echo" }],
+    disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "probe", name: "echo" }]),
     toolPolicies: {},
   };
 
@@ -374,10 +375,10 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
           name: "Helper",
           instructions: "Be helpful.",
           model: { provider: "model-fake", model: "fake-1" },
-          tools: [
+          disabledTools: onlyBuiltins([
             { kind: "connector", connectorId, tools: "all" },
             { kind: "plugin", plugin: "mem-connector", name: "echo" },
-          ],
+          ]),
         },
         visibility: "org",
       },

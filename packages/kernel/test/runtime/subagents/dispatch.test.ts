@@ -30,6 +30,7 @@ import { hookDeniedText, type ToolStepContext } from "../../../src/tools/pipelin
 import { type ScriptRule, scriptRules } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
+import { builtinsOff, onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -202,10 +203,12 @@ beforeEach(async () => {
         name: "Lead",
         instructions: INSTRUCTIONS,
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Write", "Read", "Deliver"].map((name) => ({
-          kind: "builtin",
-          name,
-        })),
+        disabledTools: onlyBuiltins(
+          ["Agent", "Write", "Read", "Deliver"].map((name) => ({
+            kind: "builtin",
+            name,
+          })),
+        ),
       },
       visibility: "org",
     },
@@ -318,11 +321,13 @@ describe("dispatch", () => {
       preamble: SUBAGENT_PREAMBLE,
       parent: { conversationId: conv, runId: run.id, step: 1 },
     });
-    expect(started.payload.definition.tools.map((t) => (t as { name: string }).name)).toEqual([
-      "Agent",
-      "Write",
-      "Read",
-    ]);
+    // the parent's turned-off tools, and the child-removed ones by key (tools default-on §4)
+    expect(started.payload.definition.disabledTools).toEqual(
+      builtinsOff("Agent", "Write", "Read", "Deliver"),
+    );
+    expect(started.payload.definition.subagentTools).toEqual({
+      deny: ["AskUserQuestion", "Deliver", "SkillWrite"],
+    });
     const task = cev[1] as Ev<"user_message">;
     expect(task.payload).toMatchObject({
       content: [{ type: "text", text: "gp-task: do it" }],
@@ -335,9 +340,23 @@ describe("dispatch", () => {
     expect(first.system.map((s) => s.text)).toEqual([
       `${BEHAVIOR_RULES}\n\n${SUBAGENT_PREAMBLE}\n\n${INSTRUCTIONS}`,
     ]);
-    expect(first.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "gp-task: do it" }] },
-    ]);
+    // then its own run context (run context spec §6): its roster name, who dispatched it for whom,
+    // the day; no org, no language, no sender line
+    expect(first.messages[0]).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "gp-task: do it" }],
+    });
+    expect(first.messages).toHaveLength(2);
+    expect(first.messages[1]?.role).toBe("system");
+    expect(first.messages[1]?.content).toMatch(
+      /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\nA later context update replaces these facts\.$/,
+    );
+    const ctx = cev.find((e) => e.type === "run_context") as Ev<"run_context">;
+    expect(ctx.payload).toMatchObject({
+      agent: { name: "general-purpose" },
+      dispatchedBy: { agent: "Lead", person: "O" },
+      timeZone: "UTC",
+    });
     // a child at depth 1 keeps the agent tool below maxDepth (agent map spec §4.1)
     // a child also gets the message tools (agent map spec §4.2, §4.3)
     expect(first.tools?.map((t) => t.name).sort()).toEqual([
@@ -412,7 +431,7 @@ describe("dispatch", () => {
           name: "Lead",
           instructions: INSTRUCTIONS,
           model: { provider: "model-script", model: "script-1" },
-          tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+          disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
           // `fast` is unmapped here: the tier falls back to the parent's model
           subagents: {
             inline: [
@@ -480,7 +499,7 @@ describe("dispatch", () => {
           name: "Lead",
           instructions: INSTRUCTIONS,
           model: { provider: "model-script", model: "script-1" },
-          tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+          disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
           subagents: {
             inline: [
               { name: "looper", description: "Loops.", instructions: "You loop.", maxSteps: 3 },
@@ -1042,17 +1061,12 @@ describe("dispatch idempotency under the parent run lock", () => {
     await settle(first);
   }, 60_000);
 
-  it("a follow-up drops a connector the parent lost and narrows `all` to its names (final review I1)", async () => {
+  it("a follow-up turns off what the parent's current version turned off since (final review I1)", async () => {
     const { conv, ctx } = await parentRun();
     const gone = randomUUID();
     const kept = randomUUID();
     const v1 = {
       ...ctx.agent,
-      tools: [
-        ...ctx.agent.tools,
-        { kind: "connector" as const, connectorId: gone, tools: "all" as const },
-        { kind: "connector" as const, connectorId: kept, tools: "all" as const },
-      ],
       // a general-purpose child takes the parent's org skills (and pins nothing)
       skills: { orgSkills: ["s-gone", "s-kept"] },
     };
@@ -1066,9 +1080,10 @@ describe("dispatch idempotency under the parent run lock", () => {
     const childId = (child as { id: string }).id;
     const v2 = {
       ...ctx.agent,
-      tools: [
-        ...ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "Write"),
-        { kind: "connector" as const, connectorId: kept, tools: ["lookup"] },
+      disabledTools: [
+        ...ctx.agent.disabledTools,
+        { kind: "connector" as const, connectorId: gone, tools: "all" as const },
+        { kind: "connector" as const, connectorId: kept, tools: ["other"] },
       ],
       skills: { orgSkills: ["s-kept"] },
     };
@@ -1077,10 +1092,10 @@ describe("dispatch idempotency under the parent run lock", () => {
     expect(await lastMessage(childId)).toMatchObject({
       kind: "message",
       narrowed: {
-        tools: [
-          { kind: "builtin", name: "Agent" },
-          { kind: "builtin", name: "Read" },
-          { kind: "connector", connectorId: kept, tools: ["lookup"] },
+        disabledTools: [
+          ...ctx.agent.disabledTools,
+          { kind: "connector", connectorId: gone, tools: "all" },
+          { kind: "connector", connectorId: kept, tools: ["other"] },
         ],
         skills: { orgSkills: ["s-kept"] },
       },
@@ -1096,7 +1111,7 @@ describe("dispatch idempotency under the parent run lock", () => {
     const childId = (child as { id: string }).id;
     const v2 = {
       ...ctx.agent,
-      tools: ctx.agent.tools.filter((t) => t.kind !== "builtin" || t.name !== "Write"),
+      disabledTools: [...ctx.agent.disabledTools, { kind: "builtin" as const, name: "Write" }],
     };
     capture.reset();
     expect((await send({ ...ctx, agent: v2 }, "s1", childId, "what word?")).isError).toBe(false);

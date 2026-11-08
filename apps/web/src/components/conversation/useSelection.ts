@@ -1,11 +1,12 @@
 "use client";
 
 import type { PickerProps } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
 import type { EnvironmentList } from "../../lib/environments";
+import { extensionLabel } from "../../lib/extension-label";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -87,6 +88,7 @@ export function useSelection(
   const label = (r: ModelRef | null) =>
     r === null ? "—" : ((providers && findModel(providers, r)?.displayName) ?? r.model);
 
+  const locale = useLocale() === "zh" ? "zh" : "en";
   const groups = useMemo(() => {
     const list = [...(providers ?? [])];
     // The agent's provider first, and its model first within it.
@@ -102,7 +104,7 @@ export function useSelection(
             : 0,
       );
       return {
-        label: p.provider,
+        label: extensionLabel({ name: p.provider, displayName: p.displayName }, locale),
         items: models.map((m) => {
           const ref = { provider: p.provider, model: m.id };
           return {
@@ -114,7 +116,7 @@ export function useSelection(
         }),
       };
     });
-  }, [providers, agentModel, model, t]);
+  }, [providers, agentModel, model, t, locale]);
 
   const pickModel = useCallback(
     (id: string) => {

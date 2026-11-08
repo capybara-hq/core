@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
+import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
 import { PATH_HEADER, SESSION_STATE_HEADER } from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
 import { isPublicPath } from "./lib/routes";
@@ -56,6 +57,17 @@ function localeRedirect(req: NextRequest): NextResponse | undefined {
   return res;
 }
 
+/**
+ * A bodiless 303 of `lib/form-post.ts` as the proxy's NextResponse; its relative Location is
+ * resolved against the request (Next's proxy adapter only takes an absolute one).
+ */
+function asNext(req: NextRequest, res: Response): NextResponse {
+  const headers = new Headers(res.headers);
+  const location = headers.get("location");
+  if (location !== null) headers.set("location", new URL(location, req.nextUrl).toString());
+  return new NextResponse(null, { status: res.status, headers });
+}
+
 function withCookies(res: NextResponse, setCookies: readonly string[]): NextResponse {
   for (const c of setCookies) res.headers.append("set-cookie", c);
   return res;
@@ -71,6 +83,9 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * 3. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
  * 4. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
  *    when the kernel could not be reached.
+ * Before all that, a native form POST (the client JS did not load) is answered by
+ * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
+ * a credential page with form fields in its query is redirected to the page without them.
  * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/*` and files never come here.
  */
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
@@ -78,6 +93,11 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   if (legacy !== undefined) return legacy;
 
   const { pathname, search } = req.nextUrl;
+  if (isNativeFormPost(req)) return asNext(req, await handleFormPost(req, pathname, search));
+  if (req.method === "GET") {
+    const scrubbed = credentialQueryRedirect(pathname, search);
+    if (scrubbed !== undefined) return asNext(req, scrubbed);
+  }
   const headers = new Headers(req.headers);
   headers.delete(SESSION_STATE_HEADER);
   headers.set(PATH_HEADER, `${pathname}${search}`);

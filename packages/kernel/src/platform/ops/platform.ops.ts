@@ -1,4 +1,3 @@
-import { extensionToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
@@ -43,30 +42,23 @@ export class PlatformOperationsProvider implements OnModuleInit {
   ) {}
 
   /**
-   * The agent's tools by the keys the model sees: builtins by name, plugin tools as
-   * `plugin__<plugin>__<tool>`, and each connector reference expanded to its live tools'
-   * `mcp__<slug>__<tool>` keys as the registry resolves them for a run; connector tools that
-   * cannot load now are listed with the registry's reason.
+   * The agent's tools by the keys the model sees, as the registry resolves them for a run (tools
+   * default-on spec §8): every tool the org offers that the definition does not turn off, builtins
+   * by name, extension tools as `plugin__<plugin>__<tool>`, connector tools as
+   * `mcp__<slug>__<tool>`; the ones that cannot load now are listed with the registry's reason.
    */
   private async toolKeys(orgId: string, d: AgentView["definition"]) {
-    const connectors = d.tools.filter((r) => r.kind === "connector");
-    const resolved =
-      connectors.length === 0
-        ? { tools: [], unavailable: [] }
-        : await this.tools.forAgent(orgId, { tools: connectors });
-    const live = new Map<string, string[]>();
-    for (const t of resolved.tools) {
-      if (t.source.kind !== "connector") continue;
-      live.set(t.source.connectorId, [...(live.get(t.source.connectorId) ?? []), t.key]);
-    }
-    const keys = d.tools.flatMap((r) =>
-      r.kind === "connector"
-        ? (live.get(r.connectorId) ?? [])
-        : [r.kind === "builtin" ? r.name : extensionToolKey(r.plugin, r.name)],
-    );
+    const resolved = await this.tools.forAgent(orgId, {
+      disabledTools: d.disabledTools ?? [],
+      subagentTools: d.subagentTools,
+      subagents: d.subagents,
+    });
     return {
-      keys: [...new Set(keys)],
-      unavailable: resolved.unavailable.map((u) => ({ tool: u.ref, reason: u.reason })),
+      keys: [...new Set(resolved.tools.map((t) => t.key))],
+      unavailable: [...resolved.unavailable, ...(resolved.hidden ?? [])].map((u) => ({
+        tool: u.ref,
+        reason: u.reason,
+      })),
     };
   }
 
@@ -110,7 +102,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
       defineOperation({
         id: "platform.me",
         description:
-          "Show this agent as configured: its model, tools by the keys you call them by (connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), skills (org and pinned), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
+          "Show this agent as configured: its model, the tools it has now by the keys you call them by (every tool the org offers unless the agent turns it off; connector tools as mcp__<connector>__<tool>, with those that cannot load now and why), the tools it turns off (disabledTools), skills (org and pinned), sub-agents, whether it runs in a sandbox, the sandbox network mode, and its profile (avatar, description, quick actions). Secrets are never shown.",
         input: EMPTY,
         example: {},
         authz: { orgAction: "agents.use" },
@@ -138,6 +130,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
             fallback: d.fallback,
             tools: toolKeys,
             ...(unavailable.length > 0 && { unavailableTools: unavailable }),
+            disabledTools: d.disabledTools ?? [],
             toolPolicies: d.toolPolicies,
             skills: {
               orgSkills: d.skills?.orgSkills ?? [],

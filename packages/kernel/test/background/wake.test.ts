@@ -27,10 +27,12 @@ import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
+import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
+import { isRunContextText } from "../helpers/run-context.js";
 import {
   consumedSeq,
   createConv,
@@ -157,10 +159,10 @@ beforeAll(async () => {
         name: "Waker",
         instructions: "Work in the background.",
         model: { provider: "model-script", model: "script-1" },
-        tools: [
+        disabledTools: onlyBuiltins([
           { kind: "plugin", plugin: "tools-count", name: "count" },
           { kind: "plugin", plugin: "tools-count", name: "ask" },
-        ],
+        ]),
       },
       visibility: "org",
     },
@@ -255,9 +257,12 @@ async function finishTask(
   ) as Finished;
 }
 
+/** The request's system messages, run context snapshots left out (run context spec §4). */
 const systemTexts = (r: ModelRequest | undefined) =>
   (r?.messages ?? []).flatMap((m) =>
-    m.role === "system" && typeof m.content === "string" ? [m.content] : [],
+    m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
+      ? [m.content]
+      : [],
   );
 /** The requests the provider received that mention `marker`, in order. */
 const requestsWith = (marker: string) =>

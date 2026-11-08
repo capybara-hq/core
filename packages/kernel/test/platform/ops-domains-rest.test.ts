@@ -10,6 +10,7 @@ import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { seedConnector } from "../helpers/tool-fixtures.js";
 
 /**
@@ -74,7 +75,7 @@ async function agentOf(owner: string, visibility: "private" | "org", name = "Hel
       name,
       instructions: "Be helpful.",
       model: MODEL,
-      tools: [{ kind: "builtin", name: "Bash" }],
+      disabledTools: builtinsOff("Bash"),
       toolPolicies: {},
       fallback: null,
       modelParams: {},

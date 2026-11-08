@@ -27,6 +27,7 @@ import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
+import { type MessageContext, readMessageContext } from "./message-context.js";
 import { NO_SELECTION, planSelection, readSelection, type Selection } from "./selection.js";
 import { conversationTree } from "./tree.js";
 
@@ -251,6 +252,11 @@ export interface UserMessageInput {
    * rendered skill replaces it as `content[0]`.
    */
   skill?: { name: string };
+  /** The browser's IANA time zone and UI language (run context spec §3.4); IM sends none. */
+  timeZone?: string;
+  locale?: "zh" | "en";
+  /** An anonymous IM guest's IM profile name (run context spec §7); other senders: none. */
+  senderName?: string;
 }
 
 interface UsageRow {
@@ -436,7 +442,7 @@ export class ConversationsService {
     // a concurrent retry committed first: answer with its conversation below
     if (!row) return undefined;
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
-    return this.writeMessage(id, accountId, input, next, extra, blocks, invoked);
+    return this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked);
   }
 
   /**
@@ -1047,16 +1053,11 @@ export class ConversationsService {
       agent === undefined
         ? undefined
         : await this.prepareSkill(orgId, conv.agentId, conversationId, agent, input);
-    let event: ConversationEvent | undefined;
-    if (files.length > 0 || next !== null) {
-      event = await this.postIn(orgId, conversationId, accountId, input, next, extra, invoked);
-      await this.eventLog.notify(conversationId, event.seq);
-      if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
-    } else {
-      [event] = await this.eventLog.append(conversationId, [
-        this.userMessage(accountId, input, extra, [], invoked),
-      ]);
-    }
+    // one transaction: the sender, time zone and language are read with the message's write
+    // (run context spec §3.2)
+    const event = await this.postIn(orgId, conversationId, accountId, input, next, extra, invoked);
+    await this.eventLog.notify(conversationId, event.seq);
+    if (next !== null) await this.eventLog.publishChanged(conversationId, "selection");
     // The message is written: it brings an archived conversation back into the default lists
     if (conv.archivedAt !== null) {
       await this.db
@@ -1067,10 +1068,13 @@ export class ConversationsService {
       await this.eventLog.publishChanged(conversationId, "archived");
     }
     await this.runs.ensureRun(conversationId);
-    return event as ConversationEvent;
+    return event;
   }
 
-  /** A message with files or a model switch: binds the files and writes it in one transaction. */
+  /**
+   * Writes a message in one transaction: binds its files, reads its sender context and appends it
+   * (after its `model_switched` when it switches).
+   */
   // its own transaction: the caller notifies and publishes after the commit
   @Transactional({ propagation: "requires_new" })
   private async postIn(
@@ -1084,6 +1088,7 @@ export class ConversationsService {
   ): Promise<ConversationEvent> {
     const blocks = await this.bindIn(orgId, conversationId, accountId, input.files ?? []);
     const written = await this.writeMessage(
+      orgId,
       conversationId,
       accountId,
       input,
@@ -1149,6 +1154,7 @@ export class ConversationsService {
    */
   @Transactional({ propagation: "mandatory" })
   private async writeMessage(
+    orgId: string,
     conversationId: string,
     accountId: string,
     input: UserMessageInput,
@@ -1167,7 +1173,13 @@ export class ConversationsService {
         payload: { ...next, byAccountId: accountId, reason: "user" },
       });
     }
-    events.push(this.userMessage(accountId, input, extra, blocks, invoked));
+    const context = await readMessageContext(this.db.db, {
+      orgId,
+      accountId,
+      senderName: input.senderName,
+      browser: { timeZone: input.timeZone, locale: input.locale },
+    });
+    events.push(this.userMessage(accountId, input, extra, blocks, invoked, context));
     const written = await this.eventLog.appendIn(conversationId, events);
     if (next !== null) {
       const t = this.db.db;
@@ -1251,7 +1263,8 @@ export class ConversationsService {
     input: UserMessageInput,
     extra: ResolvedExtra,
     fileBlocks: LogContentBlock[],
-    invoked?: RenderedInvocation,
+    invoked: RenderedInvocation | undefined,
+    context: MessageContext,
   ): AppendEvent {
     // a skill invocation's rendered text replaces the typed arguments as content[0]
     const text = invoked?.text ?? input.text;
@@ -1269,6 +1282,7 @@ export class ConversationsService {
         ],
         ...(extra.attachments.length > 0 && { attachments: extra.attachments }),
         authorAccountId: accountId,
+        ...context,
         ...(input.clientMessageId !== undefined && { clientMessageId: input.clientMessageId }),
         ...(input.retryOf !== undefined && { retryOf: input.retryOf }),
         ...(invoked !== undefined && { skill: invoked.skill }),

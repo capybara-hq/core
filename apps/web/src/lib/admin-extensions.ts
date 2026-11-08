@@ -223,6 +223,13 @@ export const putExtensionConfig = (
   });
 
 /**
+ * Clears the deployment config saved in the admin console (values and secrets); the startup
+ * config's fields stay. Answers the config as it is now.
+ */
+export const clearExtensionConfig = (name: string) =>
+  apiFetch<DeploymentConfigView>(`${one(name)}/config`, { method: "DELETE" });
+
+/**
  * Whether the replicas agree: at least one reported, and every one has the same version and state
  * with none failed (`consistent`); `inSync` counts the ones that agree (「副本一致 2/2」,
  * 「副本不一致 1/2」); `failed` lists the failed replicas.

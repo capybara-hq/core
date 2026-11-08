@@ -170,6 +170,8 @@ describe("tool kinds", () => {
       WebFetch: "read",
       // calls the platform's operations: a plain tool row
       Platform: "tool",
+      // reads the clock: a plain tool row
+      CurrentTime: "tool",
     });
   });
 });

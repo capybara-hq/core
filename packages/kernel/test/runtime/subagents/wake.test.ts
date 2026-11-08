@@ -25,10 +25,12 @@ import { renderSubagentDelivery } from "../../../src/runtime/subagents/render.js
 import { Waits } from "../../../src/runtime/waits.js";
 import type { ScriptRule } from "../../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
+import { isRunContextText } from "../../helpers/run-context.js";
 import {
   consumedSeq,
   createConv,
@@ -217,7 +219,7 @@ beforeAll(async () => {
         name: "Lead",
         instructions: "Lead the work.",
         model: { provider: "model-script", model: "script-1" },
-        tools: ["Agent", "Read"].map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(["Agent", "Read"].map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     },
@@ -260,9 +262,12 @@ const runStarted = async (conversationId: string, runId: string) =>
     (e) => e.type === "run_started" && e.runId === runId,
   ) as Extract<ConversationEvent, { type: "run_started" }>;
 
+/** The request's system messages, run context snapshots left out (run context spec §4). */
 const systemTexts = (r: ModelRequest | undefined) =>
   (r?.messages ?? []).flatMap((m) =>
-    m.role === "system" && typeof m.content === "string" ? [m.content] : [],
+    m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
+      ? [m.content]
+      : [],
   );
 /** The parent requests the provider received that carry `marker`, in order (children excluded). */
 const parentRequests = (marker: string) =>

@@ -1,5 +1,5 @@
 import { isValidElement, type ReactElement } from "react";
-import { Button } from "../controls/index";
+import { Button } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignLink } from "../provider";
 import type { HeaderAction } from "../shell/page-header";
@@ -16,10 +16,12 @@ export type EmptyStateProps = {
    */
   action?: Exclude<HeaderAction, { menu: unknown }> | ReactElement;
   /**
-   * `page` (default): the line-art capybara, centered in the content frame with generous space
-   * above and below. `panel`: narrow areas (the sidebar's conversation list); the same centered
-   * look with a smaller capybara, `space.8` above and below and a dense action. `compact`: panels,
-   * cards and tables; the sentence alone, no art.
+   * `page` (default): a page or settings content area with nothing to show; the line-art capybara,
+   * centered in the content frame with generous space above and below. `panel`: an empty region
+   * inside a box (a card, a form card, a Sheet, a Dialog, a right panel, a properties section, the
+   * sidebar); the same centered look with a smaller capybara, `space.8` above and below and a dense
+   * action. `compact`: only where the space is one line (the DataTable's empty area); the sentence
+   * alone, no art.
    */
   size?: "page" | "panel" | "compact";
 };
@@ -27,9 +29,10 @@ export type EmptyStateProps = {
 /**
  * The empty state (spec §6.18), in three styles: `page`, the pixel capybara drawn in faint lines
  * over one sentence in ink, an optional muted second line and the primary action; `panel`, the
- * same centered look sized for a narrow area (the capybara at scale 4, a dense action), used by
- * the sidebar's conversation list; and `compact` (tables, panels, cards), the same words without
- * the art. Used by every list page, the inbox, the DataTable's empty area and the sidebar.
+ * same centered look sized for an empty region inside a box (the capybara at scale 4, a dense
+ * action): an ItemList, a Sheet, a Dialog, a right panel, the sidebar's conversation list; and
+ * `compact`, the same words without the art, for the DataTable's empty area. Used by every list
+ * page, the inbox, every ItemList, the DataTable and the sidebar.
  */
 export function EmptyState({ text, hint, action, size = "page" }: EmptyStateProps) {
   const Link = useDesignLink();

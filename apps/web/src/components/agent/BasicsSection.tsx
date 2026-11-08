@@ -52,25 +52,40 @@ const VISIBILITIES = ["private", "org", "members"] as const satisfies readonly A
 export const CONFLICT_CODES = new Set(["agent.profile_conflict", "agent.version_conflict"]);
 
 /** The profile part of Basics (saved with `PATCH …/profile`). */
-type ProfilePart = { avatar: AgentAvatar; description: string };
-/** The agent part of Basics (the agent PATCH: the name is in the definition). */
-type AgentPart = { name: string; visibility: AgentVisibility; memberIds: string[] };
+type ProfilePart = { avatar: AgentAvatar };
+/**
+ * The agent part of Basics (the agent PATCH: the name and the description are in the definition,
+ * so the model sees them in its run context).
+ */
+type AgentPart = {
+  name: string;
+  description: string;
+  visibility: AgentVisibility;
+  memberIds: string[];
+};
 
-const profilePartOf = (a: Agent): ProfilePart => ({
-  avatar: a.profile.avatar,
-  description: a.profile.description,
-});
+const profilePartOf = (a: Agent): ProfilePart => ({ avatar: a.profile.avatar });
 const agentPartOf = (a: Agent): AgentPart => ({
   name: a.definition.name,
+  // an older version has none: its profile copy is what the page showed
+  description: a.definition.description ?? a.profile.description,
   visibility: a.visibility,
   memberIds: a.memberIds ?? [],
 });
 const sameJson = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
 
-/** The saved definition with only the name changed (see {@link savedDefinition}). */
-const definitionWithName = (agent: Agent, name: string): AgentDefinitionSave => ({
+/**
+ * The saved definition with the name and the description from Basics (see
+ * {@link savedDefinition}); the description is always sent, so an older version gains it.
+ */
+const definitionWithBasics = (
+  agent: Agent,
+  name: string,
+  description: string,
+): AgentDefinitionSave => ({
   ...savedDefinition(agent),
   name,
+  description,
 });
 
 /** A failure of one of Basics' two saves: a conflict offers the reload. */
@@ -89,8 +104,8 @@ function SaveError({ error, onReload }: { error: unknown; onReload(): void }) {
 
 /**
  * 基本信息 Basics (agent profile design §3.2): avatar, name, description, visibility and members.
- * One Save makes up to two requests: the profile (avatar, description) and the agent PATCH (name,
- * visibility, members, with `expectedVersion`). Each part keeps its own draft: when one request
+ * One Save makes up to two requests: the profile (avatar) and the agent PATCH (name and
+ * description in the definition, visibility, members, with `expectedVersion`). Each part keeps its own draft: when one request
  * fails, the other part's saved changes stay and only the failed part's edits are kept. An upload
  * is cropped square in the browser, uploaded, and saved as `{ kind: "upload", uploadId }`.
  */
@@ -256,7 +271,7 @@ function BasicsEdit() {
   const savedBasic = agentPartOf(agent);
   const changed = {
     avatar: !sameJson(d.avatar, savedProfile.avatar),
-    description: d.description !== savedProfile.description,
+    description: b.description !== savedBasic.description,
     name: b.name.trim() !== savedBasic.name,
     visibility: b.visibility !== savedBasic.visibility,
     members: b.visibility === "members" && !sameJson(b.memberIds, savedBasic.memberIds),
@@ -272,10 +287,10 @@ function BasicsEdit() {
     const profileInput: ProfileInput = {
       // an `external` avatar is migrated data: never written back
       ...(changed.avatar && d.avatar?.kind !== "external" ? { avatar: d.avatar } : {}),
-      ...(changed.description ? { description: d.description } : {}),
     };
     const sendProfile = Object.keys(profileInput).length > 0;
-    const sendAgent = changed.name || changed.visibility || changed.members;
+    const sendDefinition = changed.name || changed.description;
+    const sendAgent = sendDefinition || changed.visibility || changed.members;
     setPending(true);
     setProfileError(null);
     setAgentError(null);
@@ -292,7 +307,9 @@ function BasicsEdit() {
     const [a] = await Promise.allSettled([
       sendAgent
         ? saveAgent.mutateAsync({
-            ...(changed.name ? { definition: definitionWithName(agent, name) } : {}),
+            ...(sendDefinition
+              ? { definition: definitionWithBasics(agent, name, b.description) }
+              : {}),
             ...(changed.visibility ? { visibility: b.visibility } : {}),
             ...(b.visibility === "members" && (changed.members || changed.visibility)
               ? { memberIds: b.memberIds }
@@ -393,15 +410,15 @@ function BasicsEdit() {
             label={t("page.descriptionLabel")}
             optional
             help={t("page.descriptionHelp")}
-            count={{ value: d.description.length, max: DESCRIPTION_MAX }}
+            count={{ value: b.description.length, max: DESCRIPTION_MAX }}
           >
             <Textarea
               name="description"
               disabled={pending}
               rows={3}
               maxLength={DESCRIPTION_MAX}
-              value={d.description}
-              onChange={(e) => editProfile({ description: e.target.value })}
+              value={b.description}
+              onChange={(e) => editBasic({ description: e.target.value })}
             />
           </Field>
           <Field label={t("form.visibilityLabel")}>

@@ -10,8 +10,9 @@ export interface AuthSource {
 export const listAuthSources = () => apiFetch<{ sources: AuthSource[] }>("/api/v1/auth/sources");
 
 /**
- * 第三方登录回跳登录页时带的原因码（`/login?error=<code>`）。界面只显示自己的译文，
- * 不在集合里的按 `unknown` 处理。
+ * The reason codes a sign-in failure brings back to the sign-in page (`/login?error=<code>`): a
+ * third-party sign-in's callback, or a native sign-in POST. The page shows only its own text; a
+ * code outside the set reads `unknown`.
  */
 export const LOGIN_ERROR_CODES = [
   "sso.unavailable",
@@ -21,6 +22,9 @@ export const LOGIN_ERROR_CODES = [
   "sso.provider_error",
   "sso.identity_not_verified",
   "auth.account_disabled",
+  // a native sign-in POST (lib/form-post.ts) that failed
+  "auth.invalid_credentials",
+  "auth.rate_limited",
 ] as const;
 export type LoginErrorCode = (typeof LOGIN_ERROR_CODES)[number] | "unknown";
 

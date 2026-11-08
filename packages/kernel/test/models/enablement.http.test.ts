@@ -195,7 +195,7 @@ async function agent(
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
     payload: {
-      definition: { name, instructions: "Be helpful.", model, fallback, tools: [] },
+      definition: { name, instructions: "Be helpful.", model, fallback, disabledTools: [] },
       visibility: "org",
     },
   });

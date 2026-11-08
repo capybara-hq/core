@@ -85,6 +85,14 @@ type EventBody =
         /** `@` 资源引用的附件：第 i 个附件的正文是 `content[i + 1]`。 */
         attachments?: MessageAttachment[];
         authorAccountId: string;
+        /**
+         * Who wrote it, at send time (model-facing data; the page names authors from the live
+         * account and shows no per-message senders).
+         */
+        sender?: { name: string; role?: OrgRole; anonymous?: true };
+        /** The sender's time zone and language at send time (the next run's context). */
+        timeZone?: string;
+        locale?: "zh" | "en";
         clientMessageId?: string;
         /** A retry after a failed run: the seq of the message it repeats (display only). */
         retryOf?: number;
@@ -125,8 +133,11 @@ type EventBody =
         step: number;
         provider: string;
         model: string;
-        /** The user messages the request took in (absent in older logs). */
-        request?: { absorbedUpToSeq?: number };
+        /**
+         * The user messages the request took in (absent in older logs) and the tools it offered
+         * by key.
+         */
+        request?: { absorbedUpToSeq?: number; tools?: { key: string }[] };
       };
     }
   | {
@@ -155,6 +166,21 @@ type EventBody =
   | { type: "reminder"; payload: { step: number; text: string } }
   /** The model's tool set changed since its previous request (model-facing; the UI shows nothing). */
   | { type: "tools_changed"; payload: { step: number; added: string[]; removed: string[] } }
+  /**
+   * Who the agent is and the facts of the day, written at run start (model-facing; the UI shows
+   * nothing).
+   */
+  | {
+      type: "run_context";
+      payload: {
+        agent?: { name: string; description?: string };
+        org?: { name: string };
+        date?: string;
+        timeZone?: string;
+        locale?: "zh" | "en";
+        dispatchedBy?: { agent: string; person: string };
+      };
+    }
   | {
       type: "tool_call_started";
       payload: { step: number; callId: string; toolKey: string; specHash: string };
@@ -306,7 +332,7 @@ type EventBody =
           version?: number;
           plugin?: string;
         };
-        definition: { name: string; tools?: SubagentToolRef[]; [key: string]: unknown };
+        definition: { name: string; [key: string]: unknown };
         maxSteps: number;
         warnings?: string[];
       };
@@ -412,12 +438,6 @@ export type SubagentEndStatus =
   | "aborted"
   | "timed_out"
   | "failed";
-
-/** A tool reference in a sub-agent's frozen definition (only what the child view shows). */
-export type SubagentToolRef =
-  | { kind: "builtin"; name: string }
-  | { kind: "plugin"; plugin: string; name: string }
-  | { kind: "connector"; connectorId: string; tools: "all" | string[] };
 
 /** Token usage summed over events (`GET .../usage`, a `subagent_finished`). */
 export interface ConversationUsage {
@@ -555,6 +575,25 @@ export interface MessageInput {
   skill?: { name: string };
 }
 
+/**
+ * The sender's browser time zone and UI language, sent with every message (run context spec
+ * §3.4): the kernel uses them unless the person set a time zone in their preferences.
+ */
+export function browserContext(): { timeZone?: string; locale?: "zh" | "en" } {
+  let timeZone: string | undefined;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    timeZone = undefined;
+  }
+  const lang = typeof document === "undefined" ? "" : document.documentElement.lang;
+  const locale = lang === "zh" || lang === "en" ? lang : undefined;
+  return {
+    ...(timeZone !== undefined && { timeZone }),
+    ...(locale !== undefined && { locale }),
+  };
+}
+
 const messageBody = (m: MessageInput) => ({
   text: m.text,
   clientMessageId: m.clientMessageId,
@@ -564,6 +603,7 @@ const messageBody = (m: MessageInput) => ({
   ...(m.effort !== undefined && { effort: m.effort }),
   ...(m.retryOf !== undefined && { retryOf: m.retryOf }),
   ...(m.skill !== undefined && { skill: m.skill }),
+  ...browserContext(),
 });
 
 /**

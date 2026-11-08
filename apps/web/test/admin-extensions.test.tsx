@@ -423,6 +423,8 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       expect(save.getAttribute("data-variant")).toBe("primary");
       expect(save.disabled).toBe(true);
       expect(within(sheet).queryAllByRole("button", { name: p.config.save })).toHaveLength(1);
+      // nothing stored here: nothing to clear
+      expect(within(sheet).queryByRole("button", { name: p.config.clear })).toBeNull();
       const list = within(sheet).getByRole("group", { name: "endpoints" });
       await user.click(within(list).getByRole("button", { name: new RegExp(cf.add) }));
       await user.type(within(list).getByLabelText(/^name/), "vllm");
@@ -437,6 +439,93 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       expect(await within(sheet).findByText(cf.errors.invalid)).toBeTruthy();
       expect(within(sheet).queryByText("invalid url")).toBeNull();
       expect(within(sheet).getByText(p.config.saveInvalid)).toBeTruthy();
+    },
+  );
+
+  it.each(LOCALES)(
+    "the Sheet's 清空配置: only with a stored config; asks with the name, DELETEs, the view replaced (%s)",
+    async (locale) => {
+      const p = msgs[locale].admin.extensions;
+      const view = plugin({ name: "openai-compatible", displayName: null });
+      const schema = {
+        type: "object",
+        properties: { baseUrl: { type: "string" }, region: { type: "string" } },
+        required: ["baseUrl"],
+      };
+      const configView = (stored: boolean) => ({
+        plugin: "openai-compatible",
+        version: "1.0.0",
+        configurable: true,
+        schema,
+        fields: [
+          stored
+            ? {
+                path: "baseUrl",
+                secret: false,
+                hot: false,
+                source: "db",
+                readonly: false,
+                value: "https://a.example",
+              }
+            : { path: "baseUrl", secret: false, hot: false, source: "unset", readonly: false },
+          {
+            path: "region",
+            secret: false,
+            hot: false,
+            source: "env",
+            readonly: true,
+            value: "eu",
+          },
+        ],
+        valid: stored,
+        validated: true,
+        issues: stored
+          ? []
+          : [{ path: "baseUrl", segments: ["baseUrl"], message: "expected string" }],
+        orgMustConfigure: [],
+      });
+      const calls = stubApi({
+        "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 30 }),
+        "GET /api/v1/admin/extensions/openai-compatible/config": () =>
+          json(200, configView(!calls.some((c) => c.method === "DELETE"))),
+        "DELETE /api/v1/admin/extensions/openai-compatible/config": () =>
+          json(200, configView(false)),
+      });
+      await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      await user.click(
+        await screen.findByText("openai-compatible", { selector: ".cb-cell-title-name" }),
+      );
+      const sheet = await screen.findByRole("dialog", { name: "openai-compatible" });
+      const foot = sheet.querySelector(".cb-sheet-foot") as HTMLElement;
+      const clear = await within(foot).findByRole("button", { name: p.config.clear });
+      // a secondary action beside the save, never the primary
+      expect(clear.getAttribute("data-variant")).toBe("default");
+      await user.click(clear);
+      const dialog = await screen.findByRole("dialog", {
+        name: fill(p.config.clearConfirm.title, { name: "openai-compatible" }),
+      });
+      expect(within(dialog).getByText(p.config.clearConfirm.hint)).toBeTruthy();
+      const confirm = within(dialog).getByRole("button", { name: p.config.clearConfirm.confirm });
+      expect(confirm).toHaveProperty("disabled", true);
+      await user.type(within(dialog).getByRole("textbox"), "openai-compatible");
+      await user.click(confirm);
+      await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+      expect(await screen.findByText(p.config.cleared)).toBeTruthy();
+      // the answer replaces the cached view: nothing stored, so no clear action any more
+      await vi.waitFor(() =>
+        expect(within(foot).queryByRole("button", { name: p.config.clear })).toBeNull(),
+      );
+      expect(screen.queryByRole("dialog", { name: /openai-compatible.*/ })).toBeTruthy();
+      // the list is read again after the clear (the page's prefetch read it before)
+      await vi.waitFor(() => {
+        const after = calls.slice(calls.findIndex((c) => c.method === "DELETE"));
+        expect(
+          after.some(
+            (c) => c.method === "GET" && c.url.split("?")[0] === "/api/v1/admin/extensions",
+          ),
+        ).toBe(true);
+      });
     },
   );
 

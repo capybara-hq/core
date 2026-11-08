@@ -1,6 +1,7 @@
 /** How long a cached read counts as fresh (ms), by the kind of data it holds. */
 export const FRESHNESS = {
-  /** The person's own data: changes only through their own writes. */
+  /** The person's own data: changes only through their own writes (their agents' Platform calls
+   * included: the stream marks every read stale after one, invalidateAfterPlatformCall). */
   mine: Infinity,
   /** Org configuration other members may change. */
   orgConfig: 30_000,

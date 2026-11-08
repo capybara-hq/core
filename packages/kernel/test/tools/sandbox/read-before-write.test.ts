@@ -16,6 +16,7 @@ import type { ConversationEvent } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { truncateTables } from "../../helpers/db.js";
+import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -119,7 +120,7 @@ async function sandboxConversation(): Promise<string> {
         name: "Coder",
         instructions: "Use the sandbox.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: SANDBOX_TOOLS.map((name) => ({ kind: "builtin", name })),
+        disabledTools: onlyBuiltins(SANDBOX_TOOLS.map((name) => ({ kind: "builtin", name }))),
       },
       visibility: "org",
     },

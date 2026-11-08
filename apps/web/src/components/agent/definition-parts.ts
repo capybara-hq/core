@@ -1,8 +1,8 @@
 import {
   type Agent,
   type AgentDefinitionInput,
-  type AgentToolRef,
   BUILTIN_TOOLS,
+  type DisabledToolRef,
 } from "../../lib/agents";
 import type { ModelRef } from "../../lib/conversations";
 
@@ -33,29 +33,37 @@ export function decodeModel(v: string): ModelRef | null {
   return i <= 0 ? null : { provider: v.slice(0, i), model: v.slice(i + 1) };
 }
 
-/** A tool reference's identity, whatever its key order. */
-const refKey = (r: AgentToolRef) =>
+/** A turned-off entry's identity (one entry per builtin, extension and connector). */
+const entryKey = (r: DisabledToolRef) =>
   r.kind === "builtin"
     ? `builtin:${r.name}`
     : r.kind === "connector"
-      ? `app:${r.connectorId}:${r.tools === "all" ? "*" : r.tools.join(",")}`
-      : `plugin:${r.plugin}:${r.name}`;
+      ? `connector:${r.connectorId}`
+      : `plugin:${r.plugin}`;
 
 /**
- * The saved tool references with the ones a section manages (`managed`) replaced by `picked`:
- * the saved order is kept for those still picked, new ones go last, and everything the section
- * does not manage stays as it is. An unchanged pick gives back the saved list exactly, so it makes
- * no new version.
+ * The saved turned-off entries with the ones a section manages (`managed`) replaced by `next`:
+ * the saved order is kept for entries that stay (with their new tool list), new ones go last, and
+ * everything the section does not manage stays as it is. An unchanged pick gives back the saved
+ * list exactly, so it makes no new version.
  */
-export function replaceToolRefs(
-  saved: readonly AgentToolRef[],
-  managed: (r: AgentToolRef) => boolean,
-  picked: readonly AgentToolRef[],
-): AgentToolRef[] {
-  const pickedKeys = new Set(picked.map(refKey));
-  const kept = saved.filter((r) => !managed(r) || pickedKeys.has(refKey(r)));
-  const keptKeys = new Set(kept.map(refKey));
-  return [...kept, ...picked.filter((r) => !keptKeys.has(refKey(r)))];
+export function replaceDisabled(
+  saved: readonly DisabledToolRef[],
+  managed: (r: DisabledToolRef) => boolean,
+  next: readonly DisabledToolRef[],
+): DisabledToolRef[] {
+  const byKey = new Map(next.map((r) => [entryKey(r), r] as const));
+  const kept = saved.flatMap((r) => {
+    if (!managed(r)) return [r];
+    const n = byKey.get(entryKey(r));
+    return n === undefined ? [] : [sameJson(n, r) ? r : n];
+  });
+  const keptKeys = new Set(kept.map(entryKey));
+  return [...kept, ...next.filter((r) => !keptKeys.has(entryKey(r)))];
 }
+
+/** Is builtin `name` turned off in `disabled`? */
+export const builtinOff = (disabled: readonly DisabledToolRef[] | undefined, name: string) =>
+  (disabled ?? []).some((r) => r.kind === "builtin" && r.name === name);
 
 export const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);

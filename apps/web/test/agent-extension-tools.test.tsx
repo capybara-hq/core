@@ -28,7 +28,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const agentWith = (tools: unknown[], toolPolicies: Record<string, string> = {}) => ({
+const agentWith = (disabledTools: unknown[], toolPolicies: Record<string, string> = {}) => ({
   id: "ag1",
   orgId: "o1",
   ownerAccountId: "a1",
@@ -46,7 +46,7 @@ const agentWith = (tools: unknown[], toolPolicies: Record<string, string> = {}) 
     fallback: null,
     modelParams: {},
     fallbackParams: {},
-    tools,
+    disabledTools,
     toolPolicies,
   },
 });
@@ -105,12 +105,12 @@ const BOARD = {
   ],
 };
 
-const ASK = { kind: "builtin", name: "AskUserQuestion" };
-const WRITE = { kind: "plugin", plugin: "todo", name: "write" };
+const ASK_OFF = { kind: "builtin", name: "AskUserQuestion" };
+const todoOff = (tools: "all" | string[]) => ({ kind: "plugin", plugin: "todo", tools });
 
 const patchBody = (calls: { method: string; body?: unknown }[]) =>
   bodyOf(calls.find((c) => c.method === "PATCH") as never) as {
-    definition: { tools: unknown[]; toolPolicies: Record<string, string> };
+    definition: { disabledTools: unknown[]; toolPolicies: Record<string, string> };
     expectedVersion: number;
   };
 
@@ -132,51 +132,49 @@ const routesWith = (agent: unknown, extensions: unknown[] = [TODO]) => ({
   [`PATCH ${ORG}/agents/ag1`]: () => json(200, { agent, warnings: [] }),
 });
 
-describe("agent page Tools section: one row per tool, groups in a Sheet", () => {
+describe("agent page Tools section: everything on by default, groups in a Sheet", () => {
   beforeEach(() => resetNavigation("/agents/ag1"));
 
   it.each(["zh", "en"] as const)(
-    "an extension is one row with a summary; its Sheet ticks a tool and the page saves it (%s)",
+    "an extension is one row reading all on; unticking a tool in its Sheet writes it off (%s)",
     async (locale) => {
       const m = msgs[locale].agents.form;
-      const calls = stubApi(routesWith(agentWith([ASK])));
+      const calls = stubApi(routesWith(agentWith([])));
       await renderEditAgent({ section: "tools", locale });
       const groups = await screen.findByRole("list", { name: m.groupsLabel });
       const row = within(groups).getByRole("listitem");
       expect(within(row).getByText(TODO.displayName[locale])).toBeTruthy();
       expect(within(row).getByText(m.groupKind.extension)).toBeTruthy();
-      expect(
-        within(row).getByText(m.groupSummary.replace("{on}", "0").replace("{total}", "2")),
-      ).toBeTruthy();
+      expect(within(row).getByText(m.groupAllOn)).toBeTruthy();
       // the model-facing description and the raw key are not drawn
       expect(screen.queryByText("Replace the todo list of the conversation.")).toBeNull();
 
       const sheet = await openGroup(TODO.displayName[locale], locale);
       const write = within(sheet).getByRole("checkbox", { name: "Write the list" });
-      expect(write).toHaveProperty("checked", false);
+      // tools default-on: every box starts checked
+      expect(write).toHaveProperty("checked", true);
+      expect(within(sheet).getByRole("checkbox", { name: "read" })).toHaveProperty("checked", true);
       const user = userEvent.setup();
       await user.click(write);
       await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
-      expect(
-        within(row).getByText(m.groupSummary.replace("{on}", "1").replace("{total}", "2")),
-      ).toBeTruthy();
+      expect(within(row).getByText(m.groupOff.replace("{count}", "1"))).toBeTruthy();
       await user.click(screen.getByRole("button", { name: m.submit }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
       const body = patchBody(calls);
       expect(body.expectedVersion).toBe(2);
-      expect(body.definition.tools).toEqual([ASK, WRITE]);
+      expect(body.definition.disabledTools).toEqual([todoOff(["write"])]);
       expect(body.definition.toolPolicies).toEqual({});
     },
   );
 
-  it("a tool's policy sits on its row: disabled while unticked, and the save sends it", async () => {
+  it("a tool's policy sits on its row: disabled while turned off, and the save sends it", async () => {
     const m = en.agents.form;
-    const calls = stubApi(routesWith(agentWith([ASK, WRITE])));
+    const calls = stubApi(routesWith(agentWith([todoOff(["read"])])));
     await renderEditAgent({ section: "tools" });
     const sheet = await openGroup("Todo");
     const writePolicy = within(sheet).getByRole("combobox", { name: "Policy for Write the list" });
     expect(writePolicy).toHaveProperty("disabled", false);
-    // an untitled tool goes by its name among others; unticked, its select is off
+    // an untitled tool goes by its name among others; turned off, its select is off
     expect(within(sheet).getByRole("combobox", { name: "Policy for read" })).toHaveProperty(
       "disabled",
       true,
@@ -187,115 +185,122 @@ describe("agent page Tools section: one row per tool, groups in a Sheet", () => 
     const row = within(screen.getByRole("list", { name: m.groupsLabel })).getByRole("listitem");
     expect(
       within(row).getByText(
-        `${m.groupSummary.replace("{on}", "1").replace("{total}", "2")} · ${m.groupAsk.replace("{count}", "1")}`,
+        `${m.groupOff.replace("{count}", "1")} · ${m.groupAsk.replace("{count}", "1")}`,
       ),
     ).toBeTruthy();
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.tools).toEqual([ASK, WRITE]);
+    expect(patchBody(calls).definition.disabledTools).toEqual([todoOff(["read"])]);
     expect(patchBody(calls).definition.toolPolicies).toEqual({ plugin__todo__write: "ask" });
   });
 
-  it("a builtin's policy sits on its row in the card", async () => {
+  it("a builtin's policy sits on its row in the card; a turned-off builtin's is disabled", async () => {
     const m = en.agents.form;
-    const calls = stubApi(routesWith(agentWith([ASK])));
+    const calls = stubApi(routesWith(agentWith([ASK_OFF])));
     await renderEditAgent({ section: "tools" });
     const builtins = await screen.findByRole("list", { name: m.builtinLabel });
     expect(
-      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.SkillWrite}` }),
+      within(builtins).getByRole("checkbox", { name: m.builtin.AskUserQuestion }),
+    ).toHaveProperty("checked", false);
+    expect(within(builtins).getByRole("checkbox", { name: m.builtin.Bash })).toHaveProperty(
+      "checked",
+      true,
+    );
+    expect(
+      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.AskUserQuestion}` }),
     ).toHaveProperty("disabled", true);
     const user = userEvent.setup();
     await pickOption(
-      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.AskUserQuestion}` }),
+      within(builtins).getByRole("combobox", { name: `Policy for ${m.builtin.SkillWrite}` }),
       m.policy.deny,
       user,
     );
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.toolPolicies).toEqual({ AskUserQuestion: "deny" });
+    expect(patchBody(calls).definition.toolPolicies).toEqual({ SkillWrite: "deny" });
+    expect(patchBody(calls).definition.disabledTools).toEqual([ASK_OFF]);
   });
 
-  it("select-all in the Sheet ticks every tool of the group", async () => {
+  it("unticking a builtin writes it off; ticking it again removes it", async () => {
     const m = en.agents.form;
-    const calls = stubApi(routesWith(agentWith([ASK])));
+    const calls = stubApi(routesWith(agentWith([ASK_OFF])));
+    await renderEditAgent({ section: "tools" });
+    const builtins = await screen.findByRole("list", { name: m.builtinLabel });
+    const user = userEvent.setup();
+    await user.click(within(builtins).getByRole("checkbox", { name: m.builtin.AskUserQuestion }));
+    await user.click(within(builtins).getByRole("checkbox", { name: m.builtin.Bash }));
+    await user.click(screen.getByRole("button", { name: m.submit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(patchBody(calls).definition.disabledTools).toEqual([{ kind: "builtin", name: "Bash" }]);
+  });
+
+  it("unticking every tool of a group turns it off as a unit", async () => {
+    const m = en.agents.form;
+    const calls = stubApi(routesWith(agentWith([])));
     await renderEditAgent({ section: "tools" });
     const sheet = await openGroup("Todo");
     const user = userEvent.setup();
     await user.click(within(sheet).getByRole("checkbox", { name: "Select all" }));
-    expect(within(sheet).getByRole("checkbox", { name: "read" })).toHaveProperty("checked", true);
+    expect(within(sheet).getByRole("checkbox", { name: "read" })).toHaveProperty("checked", false);
     await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
+    const row = within(screen.getByRole("list", { name: m.groupsLabel })).getByRole("listitem");
+    expect(within(row).getByText(m.groupAllOff)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.tools).toEqual([
-      ASK,
-      WRITE,
-      { kind: "plugin", plugin: "todo", name: "read" },
-    ]);
+    expect(patchBody(calls).definition.disabledTools).toEqual([todoOff("all")]);
   });
 
   it("an untitled tool alone in its extension goes by the extension's name", async () => {
-    stubApi(routesWith(agentWith([ASK]), [BOARD]));
+    stubApi(routesWith(agentWith([]), [BOARD]));
     await renderEditAgent({ section: "tools" });
     const sheet = await openGroup("Board");
     expect(within(sheet).getByRole("checkbox", { name: "Board" })).toBeTruthy();
     expect(within(sheet).queryByText("post")).toBeNull();
   });
 
-  it("unticking a selected tool drops its reference and its policy", async () => {
+  it("ticking a turned-off tool turns it back on; its policy stays with it", async () => {
     const m = en.agents.form;
-    const agent = agentWith([ASK, WRITE], { plugin__todo__write: "ask" });
+    const agent = agentWith([todoOff(["write"])], { plugin__todo__write: "ask" });
     const calls = stubApi(routesWith(agent));
     await renderEditAgent({ section: "tools" });
     const sheet = await openGroup("Todo");
     const write = within(sheet).getByRole("checkbox", { name: "Write the list" });
-    expect(write).toHaveProperty("checked", true);
-    expect(
-      within(sheet).getByRole("combobox", { name: "Policy for Write the list" }).textContent,
-    ).toContain(m.policy.ask);
-
+    expect(write).toHaveProperty("checked", false);
     const user = userEvent.setup();
     await user.click(write);
     await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.tools).toEqual([ASK]);
-    expect(patchBody(calls).definition.toolPolicies).toEqual({});
+    expect(patchBody(calls).definition.disabledTools).toEqual([]);
+    expect(patchBody(calls).definition.toolPolicies).toEqual({ plugin__todo__write: "ask" });
   });
 
   it.each(["zh", "en"] as const)(
-    "a selected tool of an extension that is off stays listed, ticked and unavailable (%s)",
+    "an entry for an extension that is off in the org stays as saved (%s)",
     async (locale) => {
       const m = msgs[locale].agents.form;
-      const calls = stubApi(routesWith(agentWith([ASK, WRITE]), []));
+      const calls = stubApi(routesWith(agentWith([todoOff(["write"])]), []));
       await renderEditAgent({ section: "tools", locale });
-      const groups = await screen.findByRole("list", { name: m.groupsLabel });
-      expect(within(groups).getByText(m.groupUnavailable)).toBeTruthy();
-      const sheet = await openGroup("todo", locale);
-      const write = within(sheet).getByRole("checkbox", { name: "write" });
-      expect(write).toHaveProperty("checked", true);
-      const reason = m.extensionNotEnabled.replace("{extension}", "todo");
+      await screen.findByRole("list", { name: m.builtinLabel });
       expect(
-        within(sheet).getByText(m.extensionToolUnavailable.replace("{reason}", reason)),
-      ).toBeTruthy();
-      const user = userEvent.setup();
-      await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
-
+        screen.queryByRole("button", { name: m.configureGroup.replace("{name}", "todo") }),
+      ).toBeNull();
       // saving another change keeps it
+      const user = userEvent.setup();
       await user.click(screen.getByRole("checkbox", { name: m.builtin.AskUserQuestion }));
       await user.click(screen.getByRole("button", { name: m.submit }));
       await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-      expect(patchBody(calls).definition.tools).toEqual([WRITE]);
+      expect(patchBody(calls).definition.disabledTools).toEqual([todoOff(["write"]), ASK_OFF]);
     },
   );
 
   it.each(["zh", "en"] as const)(
-    "a selected tool the org turned off shows the switched-off reason on its row (%s)",
+    "a tool the org turned off shows the switched-off reason on its row (%s)",
     async (locale) => {
       const m = msgs[locale].agents.form;
-      const ref = { kind: "plugin", plugin: "todo", name: "write" };
       stubApi({
         ...sessionRoutes(),
-        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith([ASK, ref]) }),
+        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith([]) }),
         [`GET ${ORG}/models`]: () => json(200, MODELS),
         [`GET ${ORG}/tools/extensions`]: () =>
           json(200, {
@@ -303,9 +308,6 @@ describe("agent page Tools section: one row per tool, groups in a Sheet", () => 
           }),
       });
       await renderEditAgent({ section: "tools", locale });
-      // the group row warns, the tool's row in the Sheet says why
-      const groups = await screen.findByRole("list", { name: m.groupsLabel });
-      expect(within(groups).getByText(m.groupUnavailable)).toBeTruthy();
       const sheet = await openGroup(TODO.displayName[locale], locale);
       expect(within(sheet).getByText(m.extensionToolOffInOrg)).toBeTruthy();
     },
@@ -316,7 +318,7 @@ describe("agent page Tools section: one row per tool, groups in a Sheet", () => 
     const { calls } = await renderEditAgent({
       section: "tools",
       routes: {
-        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith([ASK]) }),
+        [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith([]) }),
         [`GET ${ORG}/models`]: () => json(200, MODELS),
         [`GET ${ORG}/tools/extensions`]: () => json(200, { extensions: [TODO] }),
       },
@@ -356,8 +358,8 @@ describe("agent page Tools section: connectors", () => {
     ],
     credential: { ownership: null, status: "connected" },
   };
-  const routes = (tools: unknown[], policies: Record<string, string> = {}) => {
-    const agent = agentWith(tools, policies);
+  const routes = (disabled: unknown[], policies: Record<string, string> = {}) => {
+    const agent = agentWith(disabled, policies);
     return {
       ...routesWith(agent, []),
       [`GET ${ORG}/connectors`]: () => json(200, { connectors: [DOCS] }),
@@ -365,49 +367,41 @@ describe("agent page Tools section: connectors", () => {
     };
   };
 
-  it("a whole connector shows its enabled tools by title, all ticked; unticking one names the rest", async () => {
+  it("an org connector is on for the agent: its enabled tools all ticked; unticking one turns it off", async () => {
     const m = en.agents.form;
-    const calls = stubApi(
-      routes([ASK, { kind: "connector", connectorId: "cn1", tools: "all" }], {
-        mcp__docs__create: "ask",
-      }),
-    );
+    const calls = stubApi(routes([], { mcp__docs__create: "ask" }));
     await renderEditAgent({ section: "tools" });
     const groups = await screen.findByRole("list", { name: m.groupsLabel });
     expect(
-      within(groups).getByText(
-        `${m.groupSummary.replace("{on}", "2").replace("{total}", "2")} · ${m.groupAsk.replace("{count}", "1")}`,
-      ),
+      within(groups).getByText(`${m.groupAllOn} · ${m.groupAsk.replace("{count}", "1")}`),
     ).toBeTruthy();
     const sheet = await openGroup("Docs");
     expect(within(sheet).queryByText("drop")).toBeNull();
+    const search = await within(sheet).findByRole("checkbox", { name: "Search documents" });
+    expect(search).toHaveProperty("checked", true);
     const user = userEvent.setup();
-    await user.click(within(sheet).getByRole("checkbox", { name: "Search documents" }));
+    await user.click(search);
     await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.tools).toEqual([
-      ASK,
-      { kind: "connector", connectorId: "cn1", tools: ["create"] },
+    expect(patchBody(calls).definition.disabledTools).toEqual([
+      { kind: "connector", connectorId: "cn1", tools: ["search"] },
     ]);
     expect(patchBody(calls).definition.toolPolicies).toEqual({ mcp__docs__create: "ask" });
   });
 
-  it("an unused connector's Sheet reads its tools; select-all takes it whole", async () => {
+  it("a connector turned off as a whole reads all off; select-all turns it back on", async () => {
     const m = en.agents.form;
-    const calls = stubApi(routes([ASK]));
+    const calls = stubApi(routes([{ kind: "connector", connectorId: "cn1", tools: "all" }]));
     await renderEditAgent({ section: "tools" });
     const groups = await screen.findByRole("list", { name: m.groupsLabel });
-    expect(within(groups).getByText(m.groupUnused)).toBeTruthy();
+    expect(within(groups).getByText(m.groupAllOff)).toBeTruthy();
     const sheet = await openGroup("Docs");
     const user = userEvent.setup();
     await user.click(await within(sheet).findByRole("checkbox", { name: "Select all" }));
     await user.click(within(sheet).getByRole("button", { name: m.sheetDone }));
     await user.click(screen.getByRole("button", { name: m.submit }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(patchBody(calls).definition.tools).toEqual([
-      ASK,
-      { kind: "connector", connectorId: "cn1", tools: "all" },
-    ]);
+    expect(patchBody(calls).definition.disabledTools).toEqual([]);
   });
 });

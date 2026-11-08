@@ -557,6 +557,20 @@ describe("/admin/settings（FormPage）", () => {
     },
   );
 
+  it("warns super admins with the operator details only on an insecure origin", async () => {
+    stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
+    vi.stubGlobal("isSecureContext", false);
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const note = await screen.findByText(/CAPYBARA_AUTH__COOKIE_SECURE=false/);
+    expect(note.textContent).toContain("CAPYBARA_PUBLIC_URL");
+    cleanup();
+    vi.stubGlobal("isSecureContext", true);
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    await screen.findByRole("radiogroup", { name: en.admin.settings.customConnectors.title });
+    expect(screen.queryByText(/CAPYBARA_AUTH__COOKIE_SECURE/)).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it("币种不合法时不能保存", async () => {
     const calls = stubApi({ "GET /api/v1/admin/settings": () => json(200, SETTINGS) });
     await renderRouteWithCache("/admin/settings", lastStubRoutes());

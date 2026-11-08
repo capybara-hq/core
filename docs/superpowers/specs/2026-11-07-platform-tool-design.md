@@ -539,7 +539,8 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   (`AgentProfileBody`, moved out of the controller into `agents.schemas.ts`); `confirmFor` as
   `agents.update` (personal on an own private agent, org otherwise), precheck "not found / not
   editable", role-keyed `forbidden`. `agents.get` already returned the profile (`AgentView`);
-  `platform.me` now returns it too (avatar, description, quick actions).
+  `platform.me` now returns it too (avatar, description, quick actions). `agents.update` takes the
+  description, saved with the definition (run context spec §3.5).
 - Sync (§14.1 item 4): each mirrored route's body / query / params schemas are exported from
   `<domain>.schemas.ts` and registered in `ROUTE_SCHEMAS`; operations build their input from them. The
   parity test (`tools/checks/test/platform-parity.test.ts`, `inputParity`) compares types, bounds,
@@ -604,8 +605,9 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
 - It reads the profile's `updatedAt` itself just before the write and passes it as
   `expectedUpdatedAt` (declared in `omits`) — the person approves the change as shown on the card,
   not a guard on an earlier read; a save racing that read still answers `agent.profile_conflict`.
-- `description` is in `omits` — the run-context work moves it into the agent definition; once it
-  merges, the route drops the field and the entry goes (the parity test reports it as stale).
+- `description` is not an input — the run-context work moved it into the agent definition, so the
+  profile route dropped the field and `agents.update` takes it; `omits` names only
+  `expectedUpdatedAt`.
 - The avatar input is the route's `preset` variant only; the `upload` kind needs no declaration
   — an input accepting less than the route passes the parity test, and `omits` names top-level
   fields only. A custom image stays on the web (the upload route is `transport`).
@@ -613,8 +615,9 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   said `web` for every non-token write before.
 - `later` and the exclusion `issue` field are removed with `LATER_ALLOWED` — nothing uses them,
   and the rule still fails a `later` entry found by the source scan.
-- Personal preference operations wait for the run-context work, which adds the preferences /
-  timezone routes; folded into #91 — no such kernel route exists on `main` yet.
+- The run-context work's preference routes are excluded, not mirrored (#91): `GET /me/preferences`
+  is `internal` (the run context already gives the agent the zone in effect) and
+  `PUT /me/preferences` `human-only` (a person's own setting).
 - `evals.get-case` / `get-result` return metadata and scores, never conversation content — replay
   privacy (trajectories 404 to others, no export); copying a case into another log would be an
   export.
@@ -653,11 +656,14 @@ Plan `docs/superpowers/plans/2026-11-08-platform-tool-phase-2.md`, built in four
   waves the first task of a wave owned the shared registries (`exclusions.ts`,
   `platform-ops.module.ts`, `route-schemas.ts`) and the others' entries were merged after the wave —
   to avoid index collisions, at the cost of merge work.
+- `browse` and `search` rows carry `params`, the operation's input keys (`plugins.get` shows
+  `itemId`, `?` marks an optional key, a union's keys merged), derived from the shared input schema
+  (decided 2026-11-08, after acceptance showed calls guessing `pluginId` or leaving out `agentId`).
+  Types, bounds and the example stay in `describe`; the method line says to describe when unsure
+  and never to send a key `params` does not list.
 
 **Left open**
 
 - Notice dismissals write no audit row (service behaviour, unchanged); whether every Platform write
   must audit is for the maintainer.
 - A webhook-capable test plugin would cover the channels webhook success path.
-- Personal preference operations (#91) wait for the run-context work's preferences / timezone
-  routes; they arrive as new routes, so the fence asks for their operations then.

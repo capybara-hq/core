@@ -182,7 +182,7 @@ describe("org-bound model provider calls", () => {
       .get(ExtensionRegistry)
       .list("model-provider")
       .find((p) => p.plugin === "model-fake");
-    const platformKey = `cache:capk:models:model-fake:v2:${entry?.version}:${entry?.configHash}`;
+    const platformKey = `cache:capk:models:model-fake:v2:f2:${entry?.version}:${entry?.configHash}`;
     await registry.list(orgA);
     await registry.list(orgC);
     expect(await redis.keys("cache:capk:models:model-fake:*")).toEqual([platformKey]);
@@ -193,7 +193,7 @@ describe("org-bound model provider calls", () => {
     const keys = await redis.keys("cache:capk:models:model-fake:*");
     expect(keys).toHaveLength(2);
     const keyB = keys.find((x) => x !== platformKey) as string;
-    expect(keyB).toMatch(/^cache:capk:models:model-fake:v2:[^:]+:[0-9a-f]{16}$/);
+    expect(keyB).toMatch(/^cache:capk:models:model-fake:v2:f2:[^:]+:[0-9a-f]{16}$/);
     // no config text (and no org id) in the key
     expect(keyB).not.toContain("b-only");
     expect(keyB).not.toContain(orgB);

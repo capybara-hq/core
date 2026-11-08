@@ -337,7 +337,7 @@ describe("AppFrame contexts", () => {
     expect(screen.queryByRole("menuitem", { name: "设置" })).toBeNull();
   });
 
-  it("account menu has 语言 ▸, 个人设置 → /account/connections, 退出登录", async () => {
+  it("account menu has 语言 ▸, 个人设置 → /account/preferences, 退出登录", async () => {
     resetNavigation("/");
     renderFrame();
     screen.getByText("page body");
@@ -351,6 +351,6 @@ describe("AppFrame contexts", () => {
     // the org is shown and switched only by the sidebar's org switcher
     expect(screen.queryByRole("menuitem", { name: /组织/ })).toBeNull();
     const item = screen.getByRole("menuitem", { name: zh.shell.accountSettings });
-    expect(item.getAttribute("href")).toBe("/account/connections");
+    expect(item.getAttribute("href")).toBe("/account/preferences");
   });
 });

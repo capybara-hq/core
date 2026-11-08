@@ -77,7 +77,8 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   await page.getByRole("button", { name: P.config.save }).click();
   await expect(page.getByText(P.config.saved)).toBeVisible();
 
-  // 5. 组织启用插件，建引用 greeter 工具的 agent，对话里调用成功（读到刚保存的配置）
+  // 5. The org enables the extension; a new agent has its tool (tools default-on) and the call
+  // succeeds in a conversation (reading the config just saved)
   const me = await page.request.get("/api/v1/me");
   const orgId = ((await me.json()) as { currentOrgId: string }).currentOrgId;
   const base = `/api/v1/orgs/${orgId}`;
@@ -93,7 +94,6 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
         name: "Greeter agent",
         instructions: "Greet people.",
         model: { provider: "model-fake", model: "fake-1" },
-        tools: [{ kind: "plugin", plugin: "greeter", name: "greet" }],
       },
       visibility: "private",
     },
@@ -120,11 +120,12 @@ test("admin extensions: import the plugin tgz -> review (acknowledge sensitive i
   await dialog.getByRole("button", { name: P.detail.disableConfirm.confirm }).click();
   await expect(page.getByText(P.status.disabled).first()).toBeVisible({ timeout: 60_000 });
 
-  // 7. 再调用：工具已卸下，agent 拿到「工具不可用」的错误结果（没有重启内核）
+  // 7. Call again: the tool is unloaded, so the agent no longer has it and gets the unknown-tool
+  // error result (no kernel restart). Tools default-on: the agent never referenced the tool, so it
+  // is simply gone from its tools (tools/pipeline.ts unknownToolText)
   const second = await callGreet(page, convId);
-  // 内核工具管线对 agent 引用、但插件已卸下的工具返回的错误结果（tools/pipeline.ts 的 unavailableText）
   await expect(second.tool).toHaveAttribute("data-tool-status", "failed");
   await expect(second.reply).toHaveText(
-    'Tool result: Tool "plugin__greeter__greet" is unavailable: Plugin tool does not exist.',
+    /^Tool result: Unknown tool "plugin__greeter__greet"\. Available tools: /,
   );
 });

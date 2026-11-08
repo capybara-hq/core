@@ -207,9 +207,19 @@ describe("model-fake", () => {
     const plain = complete(await run(mk(), req("hello", { tools, toolChoice: "none" })));
     expect(plain.stopReason).toBe("end_turn");
     expect(plain.content).toEqual([{ type: "text", text: "You said: hello" }]);
-    // auto / 缺省时照常调用第一个工具
+    // auto / absent: a single offered tool is called as usual
     const auto = complete(await run(mk(), req("hello", { tools, toolChoice: "auto" })));
     expect(auto.stopReason).toBe("tool_use");
+  });
+
+  it("an ordinary message with several tools offered gets an ordinary reply", async () => {
+    const tools = [
+      { name: "a", description: "d", inputSchema: { type: "object" } },
+      { name: "b", description: "d", inputSchema: { type: "object" } },
+    ];
+    const c = complete(await run(mk(), req("hello", { tools })));
+    expect(c.stopReason).toBe("end_turn");
+    expect(c.content).toEqual([{ type: "text", text: "You said: hello" }]);
   });
 
   it("declares tool support", async () => {
@@ -254,6 +264,18 @@ describe("model-fake", () => {
     );
     expect(c.content).toEqual([{ type: "text", text: "ok" }]);
     expect((await mk().listModels())[0]?.capabilities.midConversationSystem).toBe(true);
+  });
+
+  it("reads a turn's script without the kernel's sender line (run context spec §4)", async () => {
+    const turn = (blocks: string[]) =>
+      req("x", {
+        messages: [{ role: "user", content: blocks.map((text) => ({ type: "text", text })) }],
+      });
+    const labelled = complete(await run(mk(), turn(["From Wang Fang (owner)", "echo:ok"])));
+    expect(labelled.content).toEqual([{ type: "text", text: "ok" }]);
+    // a lone "From …" message is the person's own text
+    const alone = complete(await run(mk(), turn(["From here"])));
+    expect(alone.content).toEqual([{ type: "text", text: "You said: From here" }]);
   });
 
   it("compaction request replies with Summary of first 200 chars", async () => {

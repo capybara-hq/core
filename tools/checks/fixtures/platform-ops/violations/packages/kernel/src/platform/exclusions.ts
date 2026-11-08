@@ -3,7 +3,7 @@ export const PLATFORM_EXCLUSIONS = [
   { route: "GET /api/v1/orgs/:orgId/skills/a", category: "internal", reason: "" },
   // platform-op-later: a route is an operation or excluded for good
   { route: "GET /api/v1/orgs/:orgId/skills/b", category: "later", reason: "Later." },
-  // platform-op-later: later, even with an issue URL
+  // platform-op-later: later, even with an issue URL (there is no allow-list)
   {
     route: "GET /api/v1/orgs/:orgId/skills/c",
     category: "later",

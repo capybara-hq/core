@@ -3,6 +3,7 @@
 import {
   Button,
   Dialog,
+  EmptyState,
   Field,
   KeyValue,
   LinkButton,
@@ -304,7 +305,7 @@ function AddToSetDialog({
         ) : read.data === undefined && read.error !== null ? (
           <FormError message={errorMessage(read.error)} />
         ) : sets.length === 0 ? (
-          <Text tone="muted">{t("noSets")}</Text>
+          <EmptyState size="panel" text={t("noSets")} />
         ) : (
           <Field label={t("set")}>
             <Select

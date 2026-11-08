@@ -25,6 +25,7 @@ import { createDecidePolicy } from "../../src/tools/policy.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
+import { builtinsOff } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -375,25 +376,18 @@ describe("漂移检测（后台检查）", () => {
     const app = await createApp(req, orgId);
     driftServer();
     await k.app.get(ToolDrift).check(orgId, app.id, "schedule");
-    const { tools, unavailable } = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [
-        {
-          kind: "connector",
-          connectorId: app.id,
-          tools: ["search", "create_doc", "list_docs", "delete_doc"],
-        },
-      ],
-    });
-    expect(tools.map((t) => t.key)).toEqual(["mcp__docs__delete_doc"]);
-    expect(unavailable).toEqual([
-      { ref: "mcp__docs__search", reason: "Tool is pending review" },
+    const docs = (key: string) => key.startsWith("mcp__docs__");
+    const { tools, unavailable, hidden } = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { disabledTools: builtinsOff() });
+    expect(tools.map((t) => t.key).filter(docs)).toEqual(["mcp__docs__delete_doc"]);
+    // never reported every step: the facts wait for a call naming one (hidden)
+    expect(unavailable).toEqual([]);
+    expect(hidden?.filter((h) => docs(h.ref))).toEqual([
       { ref: "mcp__docs__create_doc", reason: "Tool no longer exists in app docs" },
       { ref: "mcp__docs__list_docs", reason: "Tool is pending review" },
+      { ref: "mcp__docs__search", reason: "Tool is pending review" },
     ]);
-    const all = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
-    });
-    expect(all.tools.map((t) => t.key)).toEqual(["mcp__docs__delete_doc"]);
   });
 
   it("消失后又回来：按新增处理（待复核）", async () => {
@@ -522,13 +516,15 @@ describe("复核", () => {
       status: "enabled",
       defaultPolicy: "allow",
     });
-    const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, {
-      tools: [{ kind: "connector", connectorId: app.id, tools: "all" }],
-    });
-    expect(tools.map((t) => t.key).sort()).toEqual([
-      "mcp__docs__delete_doc",
-      "mcp__docs__list_docs",
-    ]);
+    const { tools } = await k.app
+      .get(ToolRegistry)
+      .forAgent(orgId, { disabledTools: builtinsOff() });
+    expect(
+      tools
+        .map((t) => t.key)
+        .filter((key) => key.startsWith("mcp__docs__"))
+        .sort(),
+    ).toEqual(["mcp__docs__delete_doc", "mcp__docs__list_docs"]);
   });
 
   it("变化后的定义不合规：不采用（存 pending 并停用），approve 被拒；修好后与上次复核的定义对比", async () => {
@@ -700,7 +696,7 @@ describe("复核", () => {
       raw,
     );
 
-    const agent = { tools: [], toolPolicies: {} } as unknown as AgentDefinition;
+    const agent = { disabledTools: [], toolPolicies: {} } as unknown as AgentDefinition;
     const ctx = {
       orgId,
       accountId: owner.id,
@@ -710,10 +706,10 @@ describe("复核", () => {
     };
     const decide = createDecidePolicy(db);
     const resolve = async () => {
-      const { tools } = await k.app.get(ToolRegistry).forAgent(orgId, {
-        tools: [{ kind: "connector", connectorId: app.id, tools: ["create_doc"] }],
-      });
-      return tools[0];
+      const { tools } = await k.app
+        .get(ToolRegistry)
+        .forAgent(orgId, { disabledTools: builtinsOff() });
+      return tools.find((t) => t.key === "mcp__docs__create_doc");
     };
     const t0 = await resolve();
     expect(t0 && (await decide(t0, agent, ctx))).toEqual({ grant: "always" });
