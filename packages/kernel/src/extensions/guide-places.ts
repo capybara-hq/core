@@ -134,17 +134,17 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
       storedMode = connection.inbound_mode;
     }
   } else {
-    // The connector made from the template is looked up by Task 6 of the setup guides v2 plan;
-    // until then no connector id resolves (a 404 rather than a guide for an unchecked id).
-    if (ctx.query.connectorId !== undefined) {
-      throw new ApiError("connector.not_found", "Connector not found");
-    }
+    const connector =
+      ctx.query.connectorId === undefined
+        ? undefined
+        : await liveConnector(ctx, ctx.query.connectorId);
     values.oauthCallbackUrl = publicUrl === null ? null : `${publicUrl}${OAUTH_CALLBACK_PATH}`;
     values.signInCallbackUrl = signIn;
     values.templateId = ctx.guide.template ?? null;
     values.templateName = await templateName(ctx);
-    values.connectorName = null;
+    values.connectorName = connector?.name ?? null;
     reasons.connectorName = "no_connector";
+    if (connector !== undefined) target = { kind: "connector", id: connector.id };
   }
   reasons.publicUrl = "public_url";
   reasons.signInCallbackUrl = "public_url";
@@ -169,6 +169,29 @@ async function liveConnection(ctx: PlaceContext, id: string) {
     .where("org_id", "=", ctx.org.orgId)
     .where("plugin", "=", ctx.item.name)
     .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!c) throw notFound();
+  return c;
+}
+
+/**
+ * A live connector of the org made from the guide's template (`connectors.platform_template_id` ->
+ * the platform component of the item's template, org-owned plugins included); otherwise
+ * `connector.not_found`, also for a custom connector or one made from another template.
+ */
+async function liveConnector(ctx: PlaceContext, id: string) {
+  const notFound = () => new ApiError("connector.not_found", "Connector not found");
+  const template = ctx.guide.template;
+  if (ctx.org === null || template === undefined || !UUID_RE.test(id)) throw notFound();
+  const c = await ctx.db
+    .selectFrom("connectors as c")
+    .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+    .select(["c.id", "c.name"])
+    .where("c.id", "=", id)
+    .where("c.org_id", "=", ctx.org.orgId)
+    .where("c.deleted_at", "is", null)
+    .where("t.catalog_item_id", "=", ctx.item.id)
+    .where("t.template_id", "=", template)
     .executeTakeFirst();
   if (!c) throw notFound();
   return c;

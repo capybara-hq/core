@@ -29,7 +29,8 @@ numbers below refer to it). v1 for context: `docs/superpowers/specs/2026-11-08-p
 - English for code, comments, identifiers, commit messages, model-visible text; UI text through
   i18n zh and en; zh UI says 平台 / 超级管理员 / 智能体, never 企业 or `agent` (`pnpm check:i18n`).
 - Pre-0.1.0: change formats directly, no compatibility layer. Applied migrations are immutable;
-  the new one is the next free number (`0102_setup_guides_v2.sql` at time of writing).
+  the new one is the next free number (`0105_setup_guides_v2.sql`: origin/main took 0102 and 0103,
+  the unreleased fix/acceptance branch 0104; checked 2026-11-09 in Task 6).
 - Kernel: `@Injectable` providers, explicit `@Inject` on every constructor parameter, DTOs via
   `createZodDto`, writes in `@Transactional()` methods, Redis calls never inside a transaction
   (`pnpm check:kernel-conventions`).
@@ -471,7 +472,8 @@ Wave notes:
 ### Task 6: Kernel connector-template place, migration and connector ack
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0102_setup_guides_v2.sql`
+- Create: `packages/kernel/src/migrations/0105_setup_guides_v2.sql` (0102–0104 are taken on
+  origin/main and fix/acceptance)
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (`ConnectorsTable.guide_ack`)
 - Modify: `packages/kernel/src/extensions/guide-places.ts` (connector-template resolver and target
   lookup), `packages/kernel/src/extensions/plugin-guides.ts` (`connectorStates`, `templateGuides`)
@@ -485,7 +487,7 @@ Wave notes:
   changed", counts only)
 - Modify: `packages/kernel/src/platform/exclusions.ts` (connector ack route, `human-only`)
 - Test: `packages/kernel/test/tools/connector-guides.http.test.ts` (new),
-  `packages/kernel/test/migrations/0102.test.ts` (or the existing migration test pattern),
+  `packages/kernel/test/migrations/0105.test.ts`,
   `packages/kernel/test/catalog/plugin-upgrade.test.ts` (preview case)
 
 **Interfaces:**

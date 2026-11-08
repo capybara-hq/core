@@ -15,6 +15,11 @@ import { connectorTemplateState } from "../catalog/component-state.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import {
+  type ConnectionGuideState,
+  type GuideAck,
+  PluginGuides,
+} from "../extensions/plugin-guides.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
@@ -23,6 +28,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OrgLock } from "../orgs/org-lock.js";
+import type { OrgRole } from "../orgs/roles.js";
 import {
   type ConnectorAuth,
   CredentialMissing,
@@ -351,6 +357,9 @@ export class ConnectorsService {
     /** The org row lock (orgs/org-lock.ts): joins the caller's transaction. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Setup guides of connector templates (spec 2026-11-09-setup-guides-v2-design.md §11). */
+    @Inject(PluginGuides)
+    private readonly guides: Pick<PluginGuides, "templateAck" | "connectorStates">,
   ) {}
 
   /** The kernel-schema handle of the current context (its transaction, else the pool). */
@@ -662,6 +671,12 @@ export class ConnectorsService {
       );
     }
 
+    // the guide the wizard and 补充配置 showed: the template's current one (spec §11)
+    const tpl = input.template;
+    const guideAck =
+      tpl?.templateId !== undefined
+        ? await this.guides.templateAck(tpl.itemId, tpl.templateId)
+        : null;
     return this.createIn(orgId, actorAccountId, input, actorTokenId, {
       id,
       slug,
@@ -670,6 +685,7 @@ export class ConnectorsService {
       secret,
       oauth,
       listed,
+      guideAck,
     });
   }
 
@@ -689,6 +705,8 @@ export class ConnectorsService {
       oauth: OAuthSetup | undefined;
       /** The tool listing (none for an authorization-code connector). */
       listed: { specs: unknown; resources: boolean } | undefined;
+      /** The template's setup guide it is set up with (null: none, or a custom connector). */
+      guideAck: GuideAck | null;
     },
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     const { id, endpoint, owner, secret, oauth } = c;
@@ -758,6 +776,9 @@ export class ConnectorsService {
         catalog_item_id: input.template?.itemId ?? null,
         catalog_version: input.template?.version ?? null,
         platform_template_id: platformTemplate?.id ?? null,
+        // linked to its template only through the platform component (drift is judged there)
+        guide_ack:
+          platformTemplate !== undefined && c.guideAck !== null ? JSON.stringify(c.guideAck) : null,
         // 授权码连接器安装时没有快照：模板的默认策略留到首个快照时应用
         template_tool_policies: input.template?.defaultToolPolicies
           ? JSON.stringify(input.template.defaultToolPolicies)
@@ -1186,6 +1207,104 @@ export class ConnectorsService {
   }
 
   /** 本组织未删除的连接器（按创建时间）。 */
+  /**
+   * The setup guide fields of the org's connectors (`setupGuide`, `guideDrift`; spec
+   * 2026-11-09-setup-guides-v2-design.md §9.3, §11): resolved through each connector's platform
+   * template to its item's guide for that template; custom connectors get nulls.
+   */
+  async guideStates(
+    org: { orgId: string; role: OrgRole },
+    connectorIds: string[],
+  ): Promise<Map<string, ConnectionGuideState>> {
+    if (connectorIds.length === 0) return new Map();
+    const rows = await this.db
+      .selectFrom("connectors as c")
+      .leftJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+      .select(["c.id", "c.guide_ack", "t.catalog_item_id", "t.template_id"])
+      .where("c.org_id", "=", org.orgId)
+      .where("c.id", "in", [...new Set(connectorIds)])
+      .where("c.deleted_at", "is", null)
+      .execute();
+    return this.guides.connectorStates(
+      rows.map((r) => ({
+        id: r.id,
+        itemId: r.catalog_item_id ?? null,
+        templateId: r.template_id ?? null,
+        guideAck: r.guide_ack ?? null,
+      })),
+      org,
+    );
+  }
+
+  /**
+   * 「我已更新应用」 for a connector made from a template: records the template's current guide as
+   * the one it is set up with. `hash` is the admin drift hash of the guide the person was shown;
+   * when the plugin moved on since, 409 `connector.guide_changed` (show the new guide first). A
+   * connector without a template guide -> 404 `catalog.guide_not_found`.
+   */
+  async ackGuide(
+    orgId: string,
+    connectorId: string,
+    hash: string,
+    actorAccountId: string,
+    actorTokenId?: string,
+  ): Promise<ConnectorDetail> {
+    const r = await this.db
+      .selectFrom("connectors as c")
+      .leftJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+      .select(["c.id", "t.catalog_item_id", "t.template_id"])
+      .where("c.id", "=", connectorId)
+      .where("c.org_id", "=", orgId)
+      .where("c.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!r) throw notFound();
+    const ack =
+      r.catalog_item_id && r.template_id
+        ? await this.guides.templateAck(r.catalog_item_id, r.template_id)
+        : null;
+    if (ack === null) {
+      throw new ApiError("catalog.guide_not_found", "The connector has no template setup guide");
+    }
+    if (ack.hash !== hash) {
+      throw new ApiError(
+        "connector.guide_changed",
+        "The connector template's setup guide changed since it was shown; review the new guide first",
+      );
+    }
+    return this.ackIn(orgId, connectorId, ack, actorAccountId, actorTokenId);
+  }
+
+  /** The row and audit of {@link ackGuide}, in one transaction under the org lock. */
+  @Transactional()
+  private async ackIn(
+    orgId: string,
+    connectorId: string,
+    ack: GuideAck,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+  ): Promise<ConnectorDetail> {
+    const t = this.db;
+    await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
+    const updated = await t
+      .updateTable("connectors")
+      .set({ guide_ack: JSON.stringify(ack), updated_at: sql<Date>`now()` })
+      .where("id", "=", connectorId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!updated) throw notFound();
+    await audit(t, {
+      actorAccountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "connector.guide_confirmed",
+      target: connectorId,
+      detail: { guideId: ack.guideId, version: ack.version },
+    });
+    return this.detail(t, orgId, connectorId, actorAccountId);
+  }
+
   async list(orgId: string): Promise<ConnectorSummary[]> {
     const rows = await this.db
       .selectFrom("connectors")

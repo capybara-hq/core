@@ -11,7 +11,9 @@ import {
   setupGuideHash,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { readCatalogDisplayFiles } from "../catalog/catalog-content.js";
+import { readDisplayFiles } from "../catalog/catalog-files.js";
 import type { GuideAckJson } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -32,7 +34,8 @@ import { orgVisibleItems } from "./plugin-icons.js";
 export { PLACE_ACTIONS, type UnresolvedReason } from "./guide-places.js";
 
 /**
- * The setup guide a target was set up with (`channel_connections.guide_ack`): the guide, the
+ * The setup guide a target was set up with (`channel_connections.guide_ack`,
+ * `connectors.guide_ack`): the guide, the
  * plugin version, the drift hash of the admin audience and the mode (null for a place without
  * modes).
  */
@@ -46,9 +49,12 @@ export interface SetupGuideRef {
   version: string;
 }
 
-/** The guide fields of a channel connection page. */
+/** The guide fields of a channel connection or connector page. */
 export interface ConnectionGuideState {
-  /** The plugin's channel-connection guide the org may see, null without one. */
+  /**
+   * The plugin's channel-connection guide (or the connector's template guide) the org may see,
+   * null without one.
+   */
   setupGuide: SetupGuideRef | null;
   /**
    * The plugin changed the guide's code blocks or checks for the ack's mode since the connection
@@ -56,6 +62,27 @@ export interface ConnectionGuideState {
    * ack).
    */
   guideDrift: { from: string; to: string } | null;
+}
+
+/** Where a connector template's page finds its guide (`guide` of the template entries). */
+export interface TemplateGuideRef {
+  itemId: string;
+  guideId: string;
+}
+
+/**
+ * A template whose guide an update changes (the platform update preview, spec §11): the admin
+ * hash differs between the platform's current version and the target. `orgs` counts the orgs with
+ * a connector set up with that guide (an ack of it) whose ack the target leaves behind: org admins
+ * asked to update their app. Counts only, never org names.
+ */
+export interface TemplateGuideChange {
+  templateId: string;
+  guideId: string;
+  /** The platform's current version (null: never synced). */
+  from: string | null;
+  to: string;
+  orgs: number;
 }
 
 /** A guide rendered for an org or the platform (spec 2026-11-09-setup-guides-v2-design.md §7.2). */
@@ -162,6 +189,13 @@ const guideFor = (manifest: unknown, place: SetupGuidePlace, templateId?: string
     (g) => g.place === place && (templateId === undefined || g.template === templateId),
   );
 
+/**
+ * A connector template's guide in a version's manifest (v2 entries only), for callers that already
+ * hold the manifest (the org catalog detail).
+ */
+export const templateGuideOf = (manifest: unknown, templateId: string) =>
+  guideFor(manifest, "connector-template", templateId);
+
 /** The stored file of a guide document, or undefined when the version has none. */
 const docMeta = (row: { files: unknown }, id: string, locale: "en" | "zh") => {
   const path = setupGuideDocPath(id, locale);
@@ -263,6 +297,183 @@ export class PluginGuides {
       ...(o.templateId !== undefined && { templateId: o.templateId }),
     });
     return current !== null && current.guideId === ack.guideId && current.hash !== ack.hash;
+  }
+
+  /**
+   * The ack of a connector template's current guide (admin audience, no mode): recorded on a
+   * connector when it is created from the template. Null when the item has no guide for the
+   * template or no stored document. Kernel-internal: no org visibility (the caller is creating or
+   * reading the org's own connector of that template).
+   */
+  async templateAck(itemId: string, templateId: string): Promise<GuideAck | null> {
+    if (!UUID_RE.test(itemId)) return null;
+    const [row] = await this.latest("id", [itemId]);
+    const guide = row && guideFor(row.manifest, "connector-template", templateId);
+    if (!row || !guide) return null;
+    const en = (await this.englishSources([{ row, guide }])).get(`${row.id}/${guide.id}`);
+    if (en === undefined) return null;
+    return {
+      guideId: guide.id,
+      version: row.latest_version,
+      hash: PluginGuides.hashOf(en, guide, null),
+      mode: null,
+    };
+  }
+
+  /**
+   * `<itemId>/<templateId>` -> the template's guide in the item's latest version, for the template
+   * entries of the catalog detail and the components list; templates without one are absent.
+   * Kernel-internal: callers list only items and templates the org already sees.
+   */
+  async templateGuides(
+    pairs: { itemId: string; templateId: string }[],
+  ): Promise<Map<string, TemplateGuideRef>> {
+    const out = new Map<string, TemplateGuideRef>();
+    const ids = [...new Set(pairs.map((p) => p.itemId))].filter((id) => UUID_RE.test(id));
+    if (ids.length === 0) return out;
+    const rows = new Map((await this.latest("id", ids)).map((r) => [r.id, r]));
+    for (const p of pairs) {
+      const row = rows.get(p.itemId);
+      const guide = row && guideFor(row.manifest, "connector-template", p.templateId);
+      if (guide) out.set(`${p.itemId}/${p.templateId}`, { itemId: p.itemId, guideId: guide.id });
+    }
+    return out;
+  }
+
+  /**
+   * The guide fields of connectors (spec §9.3, §11): a connector made from a template
+   * (`itemId` / `templateId` of its platform template) whose item the org's catalog shows gets the
+   * template's guide; drift = an ack of the same guide whose admin hash changed. Custom connectors
+   * (no template) get nulls. One query each for items and documents.
+   */
+  async connectorStates(
+    connectors: {
+      id: string;
+      itemId: string | null;
+      templateId: string | null;
+      guideAck: GuideAck | null;
+    }[],
+    org: { orgId: string; role: OrgRole },
+  ): Promise<Map<string, ConnectionGuideState>> {
+    const out = new Map<string, ConnectionGuideState>();
+    const none: ConnectionGuideState = { setupGuide: null, guideDrift: null };
+    const ids = [
+      ...new Set(
+        connectors.flatMap((c) => (c.itemId !== null && c.templateId !== null ? [c.itemId] : [])),
+      ),
+    ].filter((id) => UUID_RE.test(id));
+    const rows =
+      ids.length === 0
+        ? []
+        : await orgVisibleItems(
+            this.db,
+            await this.latest("id", ids),
+            org.orgId,
+            roleAtLeast(org.role, "admin"),
+          );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const guideOf = (c: (typeof connectors)[number]) => {
+      const row = c.itemId === null ? undefined : byId.get(c.itemId);
+      const guide =
+        row && c.templateId !== null
+          ? guideFor(row.manifest, "connector-template", c.templateId)
+          : undefined;
+      return row && guide ? { row, guide } : undefined;
+    };
+    // documents only for the guides an ack is compared with
+    const compared = new Map<string, { row: ItemRow; guide: PluginSetupGuide }>();
+    for (const c of connectors) {
+      const g = guideOf(c);
+      if (g && c.guideAck !== null && c.guideAck.guideId === g.guide.id) {
+        compared.set(`${g.row.id}/${g.guide.id}`, g);
+      }
+    }
+    const sources = await this.englishSources([...compared.values()]);
+    for (const c of connectors) {
+      const g = guideOf(c);
+      if (!g) {
+        out.set(c.id, none);
+        continue;
+      }
+      const ack = c.guideAck;
+      const en = sources.get(`${g.row.id}/${g.guide.id}`);
+      const drifted =
+        en !== undefined &&
+        ack !== null &&
+        ack.guideId === g.guide.id &&
+        PluginGuides.hashOf(en, g.guide, null) !== ack.hash;
+      out.set(c.id, {
+        setupGuide: { itemId: g.row.id, guideId: g.guide.id, version: g.row.latest_version },
+        guideDrift:
+          drifted && ack !== null ? { from: ack.version, to: g.row.latest_version } : null,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * The connector template guides an update of an item changes (the platform update preview,
+   * {@link TemplateGuideChange}): per template guide of the target whose admin hash differs from
+   * the platform's current version's (a guide new in the target counts only when connectors hold
+   * an ack of it). Documents a version does not store are skipped. Kernel-internal (the super
+   * admin's or the owner's preview).
+   */
+  async templateGuideChanges(
+    itemId: string,
+    from: string | null,
+    to: { version: string; manifest: unknown; files: VersionFile[] },
+  ): Promise<TemplateGuideChange[]> {
+    const targets = guidesOf(to.manifest).guides.filter(
+      (g) => g.place === "connector-template" && g.template !== undefined,
+    );
+    if (targets.length === 0) return [];
+    const fromRow =
+      from === null
+        ? undefined
+        : await this.db
+            .selectFrom("catalog_item_versions")
+            .select(["manifest", "files"])
+            .where("item_id", "=", itemId)
+            .where("version", "=", from)
+            .executeTakeFirst();
+    const out: TemplateGuideChange[] = [];
+    for (const guide of targets) {
+      const templateId = guide.template as string;
+      const toHash = await this.storedHash(to, guide);
+      if (toHash === undefined) continue;
+      const before = fromRow && guideFor(fromRow.manifest, "connector-template", templateId);
+      const fromHash =
+        fromRow && before?.id === guide.id ? await this.storedHash(fromRow, before) : undefined;
+      if (fromHash === toHash) continue;
+      const counted = await this.db
+        .selectFrom("connectors as c")
+        .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
+        .innerJoin("orgs as o", "o.id", "c.org_id")
+        .select((eb) => eb.fn.count<string>("c.org_id").distinct().as("orgs"))
+        .where("t.catalog_item_id", "=", itemId)
+        .where("t.template_id", "=", templateId)
+        .where("c.deleted_at", "is", null)
+        .where("o.deleted_at", "is", null)
+        .where(sql<boolean>`c.guide_ack->>'guideId' = ${guide.id}`)
+        .where(sql<boolean>`c.guide_ack->>'hash' <> ${toHash}`)
+        .executeTakeFirst();
+      const orgs = Number(counted?.orgs ?? 0);
+      if (fromHash === undefined && orgs === 0) continue;
+      out.push({ templateId, guideId: guide.id, from, to: to.version, orgs });
+    }
+    return out;
+  }
+
+  /** The admin drift hash of a guide in a version (no mode), or undefined when not stored. */
+  private async storedHash(
+    row: { manifest: unknown; files: unknown },
+    guide: PluginSetupGuide,
+  ): Promise<string | undefined> {
+    const meta = docMeta(row, guide.id, "en");
+    if (meta === undefined) return undefined;
+    const data = (await readDisplayFiles(this.db, [meta])).get(meta.path)?.data;
+    if (data === undefined || setupGuideDocProblem(meta.path, data) !== undefined) return undefined;
+    return PluginGuides.hashOf(new TextDecoder().decode(data), guide, null);
   }
 
   /**

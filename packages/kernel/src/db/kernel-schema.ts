@@ -459,6 +459,11 @@ export interface ConnectorsTable {
   >;
   /** 0081: the platform connector template this connector was made from (null = none). */
   platform_template_id: ColumnType<string | null, string | null | undefined, string | null>;
+  /**
+   * 0105: the setup guide of its connector template it was last set up with (`{ guideId, version,
+   * hash, mode: null }`); null when unknown (custom connectors, connectors before 0105).
+   */
+  guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
 }
 
 /** 0010_tools.sql（0033 由 `app_tools` 改名）：连接器暴露的工具。 */
@@ -608,8 +613,8 @@ export interface LgCheckpointWritesTable {
 
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
 /**
- * `channel_connections.guide_ack` (0099): the setup guide a target was set up with; `hash` is the
- * v2 drift hash (`setupGuideHash`, admin audience) of `mode` (null for a place without modes).
+ * `channel_connections.guide_ack` (0099) and `connectors.guide_ack` (0105): the setup guide a
+ * target was set up with; `hash` is the v2 drift hash (`setupGuideHash`, admin audience) of `mode` (null for a place without modes).
  */
 export interface GuideAckJson {
   guideId: string;

@@ -509,7 +509,8 @@ describe("setup guides v2: rendering", { timeout: 60_000 }, () => {
     expect(member.checks).toEqual([]);
     const denied = await env.mem({ method: "GET", url: guideUrl(itemId, "gh") });
     expect(denied.statusCode).toBe(403);
-    // no connector id resolves yet (Task 6 looks them up): 404, never a guide for an unchecked id
+    // an id that is no connector of the org made from the template: 404, never a guide (the
+    // connector targets: tools/connector-guides.http.test.ts)
     for (const req of [env.boss, env.mem]) {
       const audience = req === env.mem ? "&audience=member" : "";
       const r = await req({

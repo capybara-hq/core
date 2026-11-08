@@ -633,6 +633,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Edits connector endpoint config that can carry credentials",
   },
   {
+    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack",
+    category: "human-only",
+    reason:
+      "A person confirms they updated the app on the third-party platform after a connector template's setup guide changed; only that person knows it was done",
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",
     category: "human-only",
     reason: "Reviews a connector tool change, an approval decision",

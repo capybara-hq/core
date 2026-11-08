@@ -2,6 +2,7 @@ import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { templateGuideOf } from "../extensions/plugin-guides.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { ExtensionAvailability } from "../extensions/unavailable.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -312,6 +313,11 @@ export class OrgCatalogService {
     if (!v) throw itemNotFound();
     const m = v.manifest as PluginManifest;
     const templates = await readCatalogTemplates(this.storage, v);
+    // where each template's page finds its setup guide (spec 2026-11-09-setup-guides-v2 §9.3)
+    const guideOf = (templateId: string) => {
+      const g = templateGuideOf(m, templateId);
+      return g ? { itemId, guideId: g.id } : null;
+    };
     // Providers the install would switch on first (a refusal is the install's to report)
     const implied = await this.pluginInstaller
       .impliedProviders(orgId, m, templates, m.dependencies ?? [])
@@ -323,7 +329,7 @@ export class OrgCatalogService {
       item,
       hasIcon: m.icon !== undefined,
       extension: m.extension ? m.name : null,
-      templates: templates.map((t) => orgTemplateView(t.id, t.file)),
+      templates: templates.map((t) => orgTemplateView(t.id, t.file, guideOf(t.id))),
       dependencies: [
         ...(m.dependencies ?? []).map((d) => ({ name: d.name, range: d.version })),
         ...implied.map((d) => ({ name: d.name, range: d.range, implied: true as const })),
@@ -333,7 +339,7 @@ export class OrgCatalogService {
       missingTemplates:
         item.installed !== null && item.state === "needs_config"
           ? ((await this.pluginInstaller.missingConnectors(orgId, itemId))?.templates ?? []).map(
-              (t) => orgTemplateView(t.id, t.file),
+              (t) => orgTemplateView(t.id, t.file, guideOf(t.id)),
             )
           : [],
     };

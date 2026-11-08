@@ -221,6 +221,8 @@ export const ERROR_CODES = {
   "background_task.output_unavailable": 409,
   "connector.not_found": 404,
   "connector.slug_taken": 409,
+  /** The connector template's setup guide moved on since the person was shown it (guide-ack). */
+  "connector.guide_changed": 409,
   "connector.kind_unavailable": 409,
   "connector.connect_failed": 502,
   "connector.tool_not_found": 404,

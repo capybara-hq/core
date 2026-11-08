@@ -9,6 +9,11 @@ export const CredentialValue = z
   .record(z.string().max(100), z.unknown())
   .refine((v) => JSON.stringify(v).length <= 16_384, { message: "Credential is too large" });
 
+/** 「我已更新应用」: the admin drift hash of the connector template guide the person was shown. */
+export const ConnectorGuideAckSchema = z
+  .object({ hash: z.string().regex(/^[0-9a-f]{64}$/) })
+  .strict();
+
 /** `:connectorId` as the routes take it (`@Param`). */
 export const ConnectorPathParams = z.object({ connectorId: z.string().min(1) });
 

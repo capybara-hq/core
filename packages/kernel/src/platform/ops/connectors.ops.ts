@@ -129,6 +129,8 @@ export class ConnectorsOperations implements OnModuleInit {
             on: t.on,
             switchable: t.switchable,
             owner: t.owner,
+            // where the template's setup guide is (catalog item and guide id), null without one
+            guide: t.guide ?? null,
           }));
           return pageOf(templates, startOf(input.cursor), PAGE);
         },
