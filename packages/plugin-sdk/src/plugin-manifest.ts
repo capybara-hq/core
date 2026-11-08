@@ -14,14 +14,7 @@ import {
   validateConnectorTemplate,
 } from "./plugin-package.js";
 import { hasUpperBound } from "./semver-range.js";
-import {
-  type PluginSetupGuide,
-  SETUP_GUIDE_FILE_RE,
-  SETUP_GUIDE_LANGUAGES,
-  SETUP_GUIDE_LIMITS,
-  SETUP_GUIDE_MODES,
-  SETUP_GUIDE_PLACES,
-} from "./setup-guide.js";
+import { type PluginSetupGuide, SETUP_GUIDE_LIMITS, SETUP_GUIDE_PLACES } from "./setup-guide.js";
 
 /**
  * The plugin manifest `.capybara-plugin/plugin.json` (package ecosystem spec §4.1). A plugin is a
@@ -150,8 +143,9 @@ export interface PluginManifest {
   /** Agent templates; omitted = scan `agents/*.md`. */
   agents?: PluginAgentRef[];
   /**
-   * Setup guides (spec `2026-11-08-plugin-setup-guides-design.md`): steps and template files the
-   * kernel renders for a place (`channel-connection`); see {@link PluginSetupGuide}.
+   * Setup guides (spec `2026-11-09-setup-guides-v2-design.md`): Markdown documents at
+   * `guides/<id>.md` (+ `guides/<id>.zh.md`) the kernel renders for a place; see
+   * {@link PluginSetupGuide}.
    */
   setupGuides?: PluginSetupGuide[];
   extension?: PluginExtensionSection;
@@ -231,37 +225,14 @@ const configSchemaJson = z
     },
   );
 
-const guideText = (max: number, what: string) =>
-  z.strictObject({ en: text(max, `${what}.en`), zh: text(max, `${what}.zh`).optional() });
-
 const setupGuide = z.strictObject({
   id: z.string().regex(CATALOG_ITEM_NAME_RE, {
     message: "id must match ^[a-z0-9][a-z0-9-]{0,63}$",
   }),
   place: z.enum(SETUP_GUIDE_PLACES),
-  title: guideText(SETUP_GUIDE_LIMITS.titleChars, "title"),
-  steps: z
-    .array(
-      z.strictObject({
-        en: text(SETUP_GUIDE_LIMITS.stepChars, "en"),
-        zh: text(SETUP_GUIDE_LIMITS.stepChars, "zh").optional(),
-        mode: z.string().max(64).optional(),
-      }),
-    )
-    .max(SETUP_GUIDE_LIMITS.steps)
-    .optional(),
-  files: z
-    .array(
-      z.strictObject({
-        path: dotPath("path").regex(SETUP_GUIDE_FILE_RE, {
-          message: "path must be a .tmpl, .yaml, .yml, .json or .txt file",
-        }),
-        title: guideText(SETUP_GUIDE_LIMITS.titleChars, "title"),
-        language: z.enum(SETUP_GUIDE_LANGUAGES),
-        mode: z.string().max(64).optional(),
-      }),
-    )
-    .max(SETUP_GUIDE_LIMITS.files)
+  template: z
+    .string()
+    .regex(CATALOG_ITEM_NAME_RE, { message: "template must match ^[a-z0-9][a-z0-9-]{0,63}$" })
     .optional(),
 });
 
@@ -388,29 +359,41 @@ const schema = z
       agentPaths.add(a.path);
     });
     const guideIds = new Set<string>();
+    const guideTemplates = new Set<string>();
+    let channelGuides = 0;
     m.setupGuides?.forEach((g, i) => {
       if (guideIds.has(g.id)) issue(["setupGuides", i, "id"], `duplicate setup guide id ${g.id}`);
       guideIds.add(g.id);
-      if ((g.steps?.length ?? 0) === 0 && (g.files?.length ?? 0) === 0) {
-        issue(["setupGuides", i], "a setup guide needs at least one step or file");
+      if (g.place === "connector-template") {
+        if (g.template === undefined) {
+          issue(
+            ["setupGuides", i, "template"],
+            "template is required for a connector-template guide",
+          );
+        } else {
+          if (m.connectorTemplates !== undefined && !ids.has(g.template)) {
+            issue(
+              ["setupGuides", i, "template"],
+              `template ${g.template} is not one of the plugin's connector templates`,
+            );
+          }
+          if (guideTemplates.has(g.template)) {
+            issue(
+              ["setupGuides", i, "template"],
+              `at most one setup guide per connector template (${g.template} has two)`,
+            );
+          }
+          guideTemplates.add(g.template);
+        }
+      } else if (g.template !== undefined) {
+        issue(["setupGuides", i, "template"], "template is only for connector-template guides");
       }
-      const modes = SETUP_GUIDE_MODES[g.place];
-      const badMode = (mode: string | undefined, path: (string | number)[]) => {
-        if (mode !== undefined && !modes.includes(mode)) {
-          issue(path, `mode must be one of ${modes.join(", ")} for place ${g.place}`);
+      if (g.place === "channel-connection") {
+        channelGuides++;
+        if (channelGuides === 2) {
+          issue(["setupGuides", i, "place"], "a plugin has at most one channel-connection guide");
         }
-      };
-      g.steps?.forEach((s, j) => {
-        badMode(s.mode, ["setupGuides", i, "steps", j, "mode"]);
-      });
-      const paths = new Set<string>();
-      g.files?.forEach((f, j) => {
-        badMode(f.mode, ["setupGuides", i, "files", j, "mode"]);
-        if (paths.has(f.path)) {
-          issue(["setupGuides", i, "files", j, "path"], `duplicate file ${f.path} in the guide`);
-        }
-        paths.add(f.path);
-      });
+      }
       if (
         g.place === "channel-connection" &&
         m.extension !== undefined &&

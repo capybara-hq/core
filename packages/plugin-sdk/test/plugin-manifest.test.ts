@@ -497,6 +497,69 @@ describe("validatePluginPackageJsonFor", () => {
   });
 });
 
+describe("plugin.json setupGuides", () => {
+  const channel = { id: "slack-app", place: "channel-connection" };
+  const connector = { id: "slack-connector", place: "connector-template", template: "slack" };
+  const slack = (guides: unknown[], over: Record<string, unknown> = {}) =>
+    withExtension(
+      {
+        name: "slack",
+        connectorTemplates: [{ path: "./connectors/slack.json" }],
+        setupGuides: guides,
+        ...over,
+      },
+      { name: "slack", provides: ["channel@1"] },
+    );
+
+  it("setupGuides v2 shape", () => {
+    const r = parsePluginManifest(slack([channel, connector]));
+    expect("errors" in r ? r.errors : []).toEqual([]);
+    expect(!("errors" in r) && r.setupGuides).toEqual([channel, connector]);
+    // a source plugin.json may omit connectorTemplates (scanned at pack time)
+    expect(errorsOf(slack([connector], { connectorTemplates: undefined }))).toEqual([]);
+    // v1 fields are gone
+    expect(errorsOf(slack([{ ...channel, title: { en: "x" } }])).join()).toMatch(/title/);
+    expect(errorsOf(slack([{ ...channel, steps: [] }])).join()).toMatch(/steps/);
+    expect(errorsOf(slack([{ ...channel, id: "Bad" }])).join()).toMatch(/id must match/);
+    expect(errorsOf(slack([{ ...channel, place: "dashboard" }])).join()).toMatch(/place/);
+    expect(errorsOf(slack([channel, { ...connector, id: "slack-app" }])).join()).toMatch(
+      /duplicate setup guide id/,
+    );
+    const many = Array.from({ length: 9 }, (_, i) => ({
+      id: `g${i}`,
+      place: "connector-template",
+      template: "slack",
+    }));
+    expect(errorsOf(slack(many)).length).toBeGreaterThan(0);
+  });
+
+  it("template must name a connector template", () => {
+    expect(errorsOf(slack([{ ...connector, template: undefined }])).join()).toMatch(
+      /template is required/,
+    );
+    expect(errorsOf(slack([{ ...channel, template: "slack" }])).join()).toMatch(
+      /only for connector-template/,
+    );
+    expect(errorsOf(slack([{ ...connector, template: "teams" }])).join()).toMatch(
+      /not one of the plugin's connector templates/,
+    );
+    expect(errorsOf(slack([connector, { ...connector, id: "other" }])).join()).toMatch(
+      /one setup guide per connector template/,
+    );
+  });
+
+  it("one channel guide per plugin", () => {
+    expect(errorsOf(slack([channel, { ...channel, id: "second" }])).join()).toMatch(
+      /at most one channel-connection guide/,
+    );
+    expect(
+      errorsOf(
+        withExtension({ name: "slack", setupGuides: [channel] }, { name: "slack", provides: [] }),
+      ).join(),
+    ).toMatch(/needs the plugin's extension to provide channel@1/);
+  });
+});
+
 describe("JSON Schema (ajv) agrees with zod", () => {
   const ajvFor = (file: string) => {
     const schema = JSON.parse(readFileSync(new URL(`../schemas/${file}`, import.meta.url), "utf8"));
@@ -525,6 +588,15 @@ describe("JSON Schema (ajv) agrees with zod", () => {
     ["localized description", skillsOnly({ description: { en: "Skills", zh: "技能" } })],
     ["description without en", skillsOnly({ description: { zh: "技能" } })],
     ["description unknown language", skillsOnly({ description: { en: "x", fr: "y" } })],
+    [
+      "setup guide",
+      skillsOnly({ setupGuides: [{ id: "a", place: "connector-template", template: "t" }] }),
+    ],
+    [
+      "setup guide v1 title",
+      skillsOnly({ setupGuides: [{ id: "a", place: "channel-connection", title: { en: "x" } }] }),
+    ],
+    ["setup guide unknown place", skillsOnly({ setupGuides: [{ id: "a", place: "x" }] })],
   ];
   for (const [label, json] of pluginFixtures) {
     it(`plugin.v1: ${label}`, () => {
