@@ -2052,6 +2052,12 @@ export interface ParseSkillMdOptions {
 }
 
 // @public
+export function parseSlotRef(ref: string): {
+    id: string;
+    version: number;
+} | null;
+
+// @public
 export function parseThemeFile(id: string, json: unknown, options?: ParseThemeOptions): ParsedTheme | {
     errors: string[];
 };
@@ -2063,6 +2069,9 @@ export interface ParseThemeOptions {
 
 // @public
 export function parseToolKey(key: string): ParsedToolKey | null;
+
+// @public @deprecated
+export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>>;
 
 // @public
 export const PLUGIN_MANIFEST_FILE = ".capybara-plugin/plugin.json";
@@ -2996,6 +3005,12 @@ export interface ToolSpec {
 export function ui<T extends z.ZodTypeAny>(schema: T, hints: ConfigUiHints): T;
 
 // @public
+export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[];
+
+// @public
+export const UI_CONTRIBUTION_KEY_RE: RegExp;
+
+// @public
 export const UI_ICONS: readonly ["list-checks", "layout-grid", "file", "chart", "calendar", "users", "bot", "book", "message-square", "puzzle"];
 
 // @public
@@ -3006,6 +3021,12 @@ export const UI_LIMITS: {
     readonly textChars: 20000;
     readonly payloadBytes: 2000;
 };
+
+// @public
+export const UI_SLOT_IDS: readonly [UiSlotId, ...UiSlotId[]];
+
+// @public
+export const UI_SLOTS: readonly UiSlotSpec[];
 
 // @public
 export interface UiActionArgs extends UiRenderArgs {
@@ -3100,6 +3121,9 @@ export interface UiContribution {
 }
 
 // @public
+export function uiContributionKey(plugin: string, id: string): string;
+
+// @public
 export type UiIcon = (typeof UI_ICONS)[number];
 
 // @public
@@ -3132,6 +3156,26 @@ export interface UiRenderArgs {
 
 // @public
 export type UiRole = "owner" | "admin" | "member" | "guest";
+
+// @public
+export function uiSlot(id: string): UiSlotSpec | undefined;
+
+// Warning: (ae-forgotten-export) The symbol "SLOT_DATA" needs to be exported by the entry point index.d.ts
+//
+// @public
+export type UiSlotId = (typeof SLOT_DATA)[number]["id"];
+
+// @public
+export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
+
+// @public
+export type UiSlotScope = "conversation" | "agent" | "org" | "platform" | "file";
+
+// Warning: (ae-forgotten-export) The symbol "SlotShape" needs to be exported by the entry point index.d.ts
+//
+// @public
+export interface UiSlotSpec extends SlotShape<UiSlotId> {
+}
 
 // @public
 export interface UiView {
