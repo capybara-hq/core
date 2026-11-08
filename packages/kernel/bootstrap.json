@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "835afbb6a399b98e11c22604b6f5539aaf11d013"
+    "commit": "23106860bf79b5ab49ea3a0eeacd60b84142b463"
   },
   "plugins": [
     {
@@ -74,16 +74,16 @@
       "name": "connector-openapi",
       "source": "npm",
       "npm": "@capybara-hq/plugin-connector-openapi",
-      "version": "0.1.0-rc.2",
-      "integrity": "sha512-/hPaWLmu7JznskbrnNF0uZP5MtA0cwm2//n+wAHP/P7BQpd5fmMVFZf2DSI+1i69KBircMmLnpmNs3hm8gDBDQ==",
+      "version": "0.1.0-rc.3",
+      "integrity": "sha512-bBhV2ugPPRCGxDnbTI5rukw+GjVaDF3nwfGo6eLDI2SgENurGK9rHHz2w1kI+fM43Om/FZqZYtHYc46MkN62rQ==",
       "required": false
     },
     {
       "name": "jina",
       "source": "npm",
       "npm": "@capybara-hq/plugin-jina",
-      "version": "0.1.0-rc.1",
-      "integrity": "sha512-SIuyc4OP0e2qQFE2Guz9yriRyVDTSlNIyLEfFB0w/aNawDdVZbJoGAgI+ZL/qr26PBpFSv+MlD9bHE2llNSnBQ==",
+      "version": "0.1.0-rc.2",
+      "integrity": "sha512-r+HrV7hCgWPbqWKl7baL0aP+xS6wvec747HbA6ktV/CsO695UYJUsjfYkkyV4NMsiF/hKRWPvE1nkPswRcQNFw==",
       "required": false
     },
     {
