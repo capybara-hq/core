@@ -85,6 +85,12 @@ The published package `@capybara-hq/plugin-tools` (`packages/plugin-tools`) is t
 - `extension`: **written by the packer, never by hand** (a source `plugin.json` that has it fails to pack). Its `manifest` is `staticManifestOf(manifest)`; its `sdk` range must have an upper bound and equals `package.json` `peerDependencies["@capybara-hq/plugin-sdk"]`.
 - `package.json` in the tgz: an npm name, no install scripts, no `gypfile`, no dependency fields; `peerDependencies` only the host packages (`@capybara-hq/plugin-sdk`, `zod`) and only with an extension.
 
+## Setup guides (`setupGuides`, spec `2026-11-08-plugin-setup-guides-design.md`)
+
+- `plugin.json` `setupGuides` (≤ 8, SDK `setup-guide.ts`): `{ id, place, title, steps?, files? }`. `place` is an enum (`SETUP_GUIDE_PLACES`; only `channel-connection` now, which needs the extension to provide `channel@1`: the parser checks it with an `extension` section, `readPluginFiles` without one, the packer without `src/index.ts`). Titles and steps are `{ en, zh? }`; steps are plain text (the web draws a backtick pair as inline code, nothing else). Files: `./` paths ending in `.tmpl` / `.yaml` / `.yml` / `.json` / `.txt`, `language` `yaml` / `json` / `text`, ≤ 64 KiB UTF-8 without NUL (`setupGuideFileProblem`). A step or file may carry `mode` from the place's modes (`SETUP_GUIDE_MODES`: `long_connection` / `webhook`); per-mode files, never conditionals.
+- Placeholders are `{{name}}` only, from the place's fixed variables (`SETUP_GUIDE_VARIABLES`: `publicUrl`, `webhookUrl`, `signInCallbackUrl`, `connectionName`, `orgName`, `pluginName`, `pluginVersion`, `mode`; never a secret). `renderSetupGuideText` JSON-escapes values in `yaml` / `json` (placeholders go inside double quotes) and leaves unknown and unresolved placeholders as written. The packer refuses an unknown placeholder (`unknownSetupGuidePlaceholders`); the kernel never refuses an import for one.
+- Import keeps the files with the version like the icon (`checkContent`). `PluginGuides` (`packages/kernel/src/extensions/plugin-guides.ts`) renders `GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId?mode=&connectionId=&name=` with the catalog icon's visibility (`orgVisibleItems`) and the place's action (`channels.manage`); the template hash (`setupGuideHash`: path + sha256 of the mode's files from the version row) is what a channel connection's `guide_ack` records (writing-channels). Both new routes are Platform exclusions.
+
 ## Connector templates (`connectors/<id>.json`, C30)
 
 ```json

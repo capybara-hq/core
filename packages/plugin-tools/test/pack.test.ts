@@ -329,25 +329,25 @@ describe("packPlugin: other behavior", () => {
       id: "app",
       place: "channel-connection",
       title: { en: "Create the app" },
-      files: [{ path: "./guides/app.yaml.tmpl", title: { en: "Manifest" }, language: "yaml" }],
+      files: [{ path: "./guides/manifest.yaml.tmpl", title: { en: "Manifest" }, language: "yaml" }],
     };
 
     it("a setup guide file that is missing, binary or uses an unknown placeholder fails", async () => {
       await writeManifest({ ...base, setupGuides: [GUIDE] });
       await expect(packPlugin(dir, out)).rejects.toThrow(
-        /setup guide app file \.\/guides\/app\.yaml\.tmpl does not exist/,
+        /setup guide app file \.\/guides\/manifest\.yaml\.tmpl does not exist/,
       );
       await mkdir(join(dir, "guides"));
-      await writeFile(join(dir, "guides/app.yaml.tmpl"), "a\u0000b");
+      await writeFile(join(dir, "guides/manifest.yaml.tmpl"), "a\u0000b");
       await expect(packPlugin(dir, out)).rejects.toThrow(/setupGuides app: .*NUL/);
       await writeFile(
-        join(dir, "guides/app.yaml.tmpl"),
+        join(dir, "guides/manifest.yaml.tmpl"),
         'url: "{{webhookUrl}}"\nkey: {{appSecret}}\n',
       );
       await expect(packPlugin(dir, out)).rejects.toThrow(
-        /setupGuides app: \.\/guides\/app\.yaml\.tmpl uses \{\{appSecret\}\}, which place channel-connection does not define/,
+        /setupGuides app: \.\/guides\/manifest\.yaml\.tmpl uses \{\{appSecret\}\}, which place channel-connection does not define/,
       );
-      await writeFile(join(dir, "guides/app.yaml.tmpl"), 'url: "{{webhookUrl}}"\n');
+      await writeFile(join(dir, "guides/manifest.yaml.tmpl"), 'url: "{{webhookUrl}}"\n');
       await writeManifest({
         ...base,
         setupGuides: [{ ...GUIDE, steps: [{ en: "Paste {{botToken}}" }] }],

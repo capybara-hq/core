@@ -37,6 +37,7 @@ file is strict: an unknown key is an error. Fields (agent templates are listed u
 | `skills` | array of object | no |
 | `connectorTemplates` | array of object | no |
 | `agents` | array of object | no |
+| `setupGuides` | array of object | no |
 | `extension` | object | no |
 <!-- /generated -->
 
@@ -51,6 +52,16 @@ Rules that the schema cannot show:
   Omit them to scan the default folders. Names and ids are unique within the plugin.
 - `dependencies`: plugin name plus semver range; no self-dependency.
 - `agents`: at most 64 templates (see `agent-templates`).
+- `setupGuides` (at most 8): setup material shown where a person configures what the plugin
+  brings. Each guide has an `id`, a `place` (`channel-connection`: 新建渠道 and the channel detail;
+  the plugin's extension must provide `channel@1`), a `title` and `steps` (`{ en, zh? }`, plain
+  text, a backtick pair shows as inline code) and `files` (`./` paths ending in `.tmpl`, `.yaml`,
+  `.yml`, `.json` or `.txt`, at most 64 KiB of text, with a `title` and a `language` of `yaml`,
+  `json` or `text`). A step or file may carry `mode` (`long_connection` or `webhook`) to apply to
+  that inbound mode only; ship one file per mode instead of conditionals. The kernel fills
+  `{{publicUrl}}`, `{{webhookUrl}}`, `{{signInCallbackUrl}}`, `{{connectionName}}`, `{{orgName}}`,
+  `{{pluginName}}`, `{{pluginVersion}}` and `{{mode}}` (never a secret); in YAML and JSON put a
+  placeholder inside double quotes. `capybara-plugin pack` refuses any other placeholder.
 - `extension` is written by the packer; never write it by hand.
 
 ## Importing

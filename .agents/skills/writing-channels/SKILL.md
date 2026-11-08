@@ -41,6 +41,17 @@ interface Channel {
 }
 ```
 
+### Setup guides and drift (spec `2026-11-08-plugin-setup-guides-design.md`)
+
+A channel plugin may ship a `channel-connection` setup guide (writing-plugins: `setupGuides`): the
+channel pages show it rendered for the connection. `channel_connections.guide_ack` (0097) records
+`{ guideId, version, hash, mode }` of the guide the connection was set up with: on create (the
+default mode), on a PATCH that switches `inboundMode`, and by `POST channels/:id/guide-ack
+{ hash }` (409 `channel.guide_changed` when the hash shown is no longer current). The connection
+views carry `setupGuide` and `guideDrift` (`PluginGuides.connectionStates`): drift = an ack exists,
+the plugin's current guide has its id, and the template hash for the ack's mode differs. No ack,
+no notice. All state is in PG.
+
 ### Conventions for inbound events (`InboundEvent`)
 
 - **`messageId` is unique and stable within the connection** (the same when the platform redelivers): the kernel dedups by it. Slack uses `<channel>:<ts>`, Lark uses `message_id`.
