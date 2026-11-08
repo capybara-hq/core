@@ -632,7 +632,125 @@ export type ContentBlock =
 };
 
 // @public
+export const DEFAULT_SANDBOX_ROOTS: SandboxRoots;
+
+// @public
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
+
+// @public
+export const DEVICE_PROTOCOL_VERSION = 1;
+
+// @public
+export interface DeviceCreateArgs {
+    limits: SandboxLimits;
+}
+
+// @public
+export interface DeviceCreateResult {
+    roots: SandboxRoots;
+}
+
+// @public
+export type DeviceErrorKind = "gone" | "fs_gone" | "policy" | "error";
+
+// @public
+export interface DeviceExecArgs {
+    actor: SandboxActor;
+    command: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    limits: SandboxLimits;
+    maxOutputBytes: number;
+    tag: string;
+    timeoutMs: number;
+}
+
+// @public
+export type DeviceExecResult = ExecResult;
+
+// @public
+export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+
+// @public
+export interface DeviceHello {
+    arch: string;
+    mode: "os" | "docker";
+    os: "darwin" | "linux";
+    programVersion: string;
+    protocol: number;
+    roots: SandboxRoots;
+    sessionIsolation: boolean;
+    type: "hello";
+}
+
+// @public
+export type DeviceKillAllArgs = Record<string, never>;
+
+// @public
+export interface DeviceKillTaggedArgs {
+    tags: string[];
+}
+
+// @public
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop";
+
+// @public
+export class DeviceProtocolError extends Error {
+    constructor(message: string);
+}
+
+// @public
+export interface DeviceReadFileArgs {
+    maxBytes: number;
+    path: string;
+}
+
+// @public
+export type DeviceReadFileResult = {
+    dataB64: string;
+    truncated: boolean;
+} | null;
+
+// @public
+export type DeviceRes = {
+    type: "res";
+    id: string;
+    ok: true;
+    result: unknown;
+} | {
+    type: "res";
+    id: string;
+    ok: false;
+    error: {
+        kind: DeviceErrorKind;
+        message: string;
+    };
+};
+
+// @public
+export interface DeviceStatArgs {
+    path: string;
+}
+
+// @public
+export type DeviceStatResult = {
+    size: number;
+    isDir: boolean;
+} | null;
+
+// @public
+export interface DeviceStopArgs {
+    reason: "revoked" | "deleted";
+}
+
+// @public
+export interface DeviceWriteFileArgs {
+    dataB64: string;
+    path: string;
+}
+
+// @public
+export type DeviceWriteFileResult = null;
 
 // @public
 export interface Directory {
@@ -1349,6 +1467,21 @@ export function isSkillName(s: unknown): s is string;
 export type JsonSchema = Record<string, unknown>;
 
 // @public
+export interface KernelCancel {
+    id: string;
+    type: "cancel";
+}
+
+// @public
+export interface KernelReq {
+    args: unknown;
+    deadlineMs: number;
+    id: string;
+    op: DeviceOp;
+    type: "req";
+}
+
+// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
@@ -1784,6 +1917,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 };
 
 // @public
+export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
+
+// @public
 export interface ParsedSkillMd {
     body: string;
     description: string;
@@ -2016,6 +2152,9 @@ export interface RenderSkillInvocationInput {
 }
 
 // @public
+export function rootsOf(h: SandboxHandle): SandboxRoots;
+
+// @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public
@@ -2041,6 +2180,7 @@ export class SandboxGoneError extends Error {
 // @public
 export interface SandboxHandle {
     id: string;
+    roots?: SandboxRoots;
 }
 
 // @public
@@ -2098,6 +2238,13 @@ export interface SandboxProvider {
     } | null>;
     suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
     writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
+}
+
+// @public
+export interface SandboxRoots {
+    skills: string;
+    tmp: string;
+    workspace: string;
 }
 
 // @public

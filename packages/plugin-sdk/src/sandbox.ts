@@ -27,10 +27,31 @@ export interface SandboxLimits {
   allowHosts: string[];
 }
 
+/** The absolute roots inside one instance (a device may place them anywhere on its host). */
+export interface SandboxRoots {
+  workspace: string;
+  skills: string;
+  tmp: string;
+}
+
+/** The roots every container-like provider uses. */
+export const DEFAULT_SANDBOX_ROOTS: SandboxRoots = {
+  workspace: "/workspace",
+  skills: "/skills",
+  tmp: "/tmp",
+};
+
 /** The provider's instance handle. */
 export interface SandboxHandle {
   /** The provider's instance id. */
   id: string;
+  /** The instance's roots; absent means {@link DEFAULT_SANDBOX_ROOTS}. */
+  roots?: SandboxRoots;
+}
+
+/** The roots of an instance, falling back to {@link DEFAULT_SANDBOX_ROOTS}. */
+export function rootsOf(h: SandboxHandle): SandboxRoots {
+  return h.roots ?? DEFAULT_SANDBOX_ROOTS;
 }
 
 /** The provider's file system handle (an environment's files, independent of any instance). */
