@@ -349,5 +349,5 @@
 ## Execution notes
 
 - Waves (for `wave-planned-subagent-development`): W1 Task 1, Task 2 (disjoint) · W2 Task 3 (high, alone) · W3 Task 4 (high), Task 9 (disjoint) · W4 Task 5 (high), Task 10 · W5 Task 6 (high), Task 11 (high) · W6 Task 7, Task 12 · W7 Task 8, Task 13. High-risk tasks are reviewed alone on the most capable model.
-- One core PR is expected (all in this repository); publishing `@capybara-hq/device` for the first time needs the `NPM_TOKEN` secret (docs/deploy/release.md), so the first release asks the maintainer.
+- One core PR is expected (all in this repository); `@capybara-hq/device` is published by the release workflow like the other packages.
 - Live gates before calling phase 2 done: the checklist of Task 13 on this maintainer's macOS machine and one Linux machine.
