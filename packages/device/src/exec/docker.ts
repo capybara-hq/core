@@ -29,7 +29,22 @@ export const SANDBOX_IMAGE_TAG = "0.1.0-rc.5";
 export const SANDBOX_IMAGE = `ghcr.io/capybara-hq/capybara-sandbox:${SANDBOX_IMAGE_TAG}`;
 
 /** The image's `sandbox` user. */
-const CONTAINER_USER = "1000:1000";
+const IMAGE_USER = "1000:1000";
+
+/**
+ * The user commands run as. On Linux the bind-mounted environment directory belongs to the host user,
+ * so the container runs as that uid:gid (never root: a root host user falls back to the image's user).
+ * Docker Desktop (macOS) maps file ownership itself, so the image's user is used there.
+ */
+export function containerUser(
+  platform: NodeJS.Platform = process.platform,
+  uid: number | undefined = process.getuid?.(),
+  gid: number | undefined = process.getgid?.(),
+): string {
+  if (platform !== "linux" || uid === undefined || gid === undefined || uid === 0)
+    return IMAGE_USER;
+  return `${uid}:${gid}`;
+}
 
 const SPEC_LABEL = "capybara.device.spec";
 
@@ -252,7 +267,7 @@ export class DockerExecutor implements Executor {
       "--init",
       "--read-only",
       "--user",
-      CONTAINER_USER,
+      containerUser(),
       "--cap-drop",
       "ALL",
       "--security-opt",

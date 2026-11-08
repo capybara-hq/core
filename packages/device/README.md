@@ -79,8 +79,9 @@ down with it).
 
 `login --mode docker` runs every command with `docker exec` in one container per environment
 (`capybara-device-<environmentId>`, started on first use from
-`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release) as the image's
-`sandbox` user (uid 1000). `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
+`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux commands
+run as your own uid:gid, so they can write the mounted directories you own (a root user falls back to
+the image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
 at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit of 1024, `--memory-swap` equal to
 `memoryMb`, `--cap-drop ALL` and `no-new-privileges`. The policy's `cpu` and
 `memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and limits
@@ -88,8 +89,7 @@ match and recreated when they change; it stays running (idle) between starts.
 
 Docker mode has no domain allowlist: a command has either no network (`--network none`, when the
 local policy or the environment's egress allows no domain) or the default bridge, with the whole
-internet. Use OS mode to limit commands to the domains of the local policy. On Linux the mounted
-directories must be writable by uid 1000.
+internet. Use OS mode to limit commands to the domains of the local policy.
 
 ## Running at login
 

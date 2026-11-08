@@ -446,3 +446,12 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     expect(existsSync(dir)).toBe(false);
   });
 });
+
+describe("containerUser", () => {
+  it("runs as the host user on Linux, never root, and as the image's user elsewhere", async () => {
+    const { containerUser } = await import("../src/exec/docker.js");
+    expect(containerUser("linux", 1001, 127)).toBe("1001:127");
+    expect(containerUser("linux", 0, 0)).toBe("1000:1000");
+    expect(containerUser("darwin", 501, 20)).toBe("1000:1000");
+  });
+});
