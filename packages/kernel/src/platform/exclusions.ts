@@ -262,13 +262,14 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves sandbox file bytes",
   },
   // environments (personal cloud environments, environments design phase 1)
+  // connected machines (environments design phase 2): device sign-in by the program and on the
+  // confirmation page, and disconnecting a machine
   {
     route: "DELETE /api/v1/orgs/:orgId/environments/:id/machine",
     category: "human-only",
     reason:
       "Disconnects a person's own machine (revokes its credential); a trust decision taken on the environment's page",
   },
-  // device sign-in (environments design phase 2): the program and the confirmation page
   {
     route: "POST /api/v1/device/authorize",
     category: "transport",

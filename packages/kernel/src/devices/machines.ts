@@ -227,6 +227,24 @@ export class MachinesService {
     return machineId;
   }
 
+  /**
+   * Revokes one machine by id (a sign-in whose credential never reached the program), with the
+   * same post-commit disconnect as a replacement (no stop frame). True when it was active.
+   */
+  async revokeMachine(machineId: string): Promise<boolean> {
+    const row = await this.db
+      .updateTable("environment_machines")
+      .set({ revoked_at: sql<Date>`now()` })
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .returning("environment_id")
+      .executeTakeFirst();
+    if (!row) return false;
+    const environmentId = row.environment_id;
+    afterCommit(() => this.disconnect(environmentId, machineId, null));
+    return true;
+  }
+
   /** The environment's active machine, or null. */
   async activeFor(environmentId: string): Promise<ActiveMachine | null> {
     const r = await this.db

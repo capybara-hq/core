@@ -42,12 +42,14 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  *   verificationUri, verificationUriComplete, interval, expiresIn }` (`device-authorize-ip`);
  * - `POST /token { deviceCode }` → `{ credential, orgId, environmentId, connectUrl,
  *   reconnectGraceSeconds }` once, else `device.authorization_pending` / `device.slow_down` /
- *   `device.denied` / `device.expired`.
+ *   `device.denied` / `device.expired` (`device-token-ip`).
  *
  * The person's routes need a web session (the confirmation page `/device`); each try of a user
  * code counts on `device-code-account` (refunded on success):
  * - `GET /pending/:userCode` → `{ machine, expiresAt }`;
- * - `POST /confirm { userCode, orgId, environmentId | name }` → `{ environmentId }`;
+ * - `POST /confirm { userCode, orgId, environmentId | name }` → `{ environmentId }`
+ *   (`device.expired` / `device.unavailable` when the credential could not be handed over: the
+ *   machine is revoked again and the person runs login again);
  * - `POST /deny { userCode }` → 204.
  */
 @Controller("api/v1/device")
@@ -70,6 +72,7 @@ export class DeviceAuthController {
   @Post("token")
   @Public()
   @HttpCode(200)
+  @Throttled("device-token-ip")
   async token(
     @ZBody(DeviceTokenBodyDto) body: z.infer<typeof DeviceTokenBody>,
   ): Promise<DeviceGrant> {

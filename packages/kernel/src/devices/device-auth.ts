@@ -7,7 +7,6 @@ import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import type { UserPrincipal } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -99,6 +98,14 @@ interface Grant {
   environmentId: string;
 }
 
+/** A machine committed by a confirmation, its credential not yet parked. */
+interface Issued {
+  environmentId: string;
+  machineId: string;
+  accountId: string;
+  grant: Grant;
+}
+
 /**
  * `pending`: waiting for the person; `claimed`: a confirmation is writing the machine (polls see
  * it as pending; a failed confirmation puts it back); `approved`: the credential is parked;
@@ -165,7 +172,8 @@ export class DeviceAuthService {
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(EnvironmentsService)
     private readonly environments: Pick<EnvironmentsService, "createDevice">,
-    @Inject(MachinesService) private readonly machines: Pick<MachinesService, "issue">,
+    @Inject(MachinesService)
+    private readonly machines: Pick<MachinesService, "issue" | "revokeMachine">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 
@@ -264,9 +272,10 @@ export class DeviceAuthService {
    * one of their own live device environments or a new one named `name` (` 2`, ` 3`, … appended
    * while the name is taken). One transaction creates the environment if needed, issues the
    * machine (revoking the environment's previous one) and audits
-   * `environment.machine_connected`; after the commit the credential is parked for the poll.
-   * The code is claimed first, so two confirmations of one code cannot both issue a machine; a
-   * failed confirmation leaves it pending.
+   * `environment.machine_connected` (retried once when a concurrent confirmation took the new
+   * name); after the commit the credential is parked for the poll ({@link park}). The code is
+   * claimed first, so two confirmations of one code cannot both issue a machine; a confirmation
+   * that fails before the commit leaves it pending.
    */
   async confirm(
     principal: UserPrincipal,
@@ -280,12 +289,74 @@ export class DeviceAuthService {
     await authorizeOrgAction(this.db.db, principal, input.orgId, "agents.use");
     const { info, hash } = await this.lookup(input.userCode, "pending");
     if (!(await this.transition(hash, "pending", "claimed"))) throw codeInvalid();
+    let issued: Issued;
     try {
-      return await this.confirmIn(principal.account.id, input, info, hash);
+      issued = await this.confirmIn(principal.account.id, input, info).catch((e: unknown) => {
+        // a concurrent confirmation took the same new name between our read and our insert
+        if (
+          input.name !== undefined &&
+          e instanceof ApiError &&
+          e.code === "environment.name_taken"
+        ) {
+          return this.confirmIn(principal.account.id, input, info);
+        }
+        throw e;
+      });
     } catch (e) {
       await this.transition(hash, "claimed", "pending").catch(() => undefined);
       throw e;
     }
+    await this.park(hash, info, issued);
+    return { environmentId: issued.environmentId };
+  }
+
+  /**
+   * Parks the committed machine's credential for the poll. When that fails (the code expired
+   * meanwhile, or Redis failed) the machine is revoked again, so no credential nobody holds stays
+   * valid, and the person is told to start over: `device.expired` / `device.unavailable`.
+   */
+  private async park(hash: string, info: CodeInfo, issued: Issued): Promise<void> {
+    let parked: boolean;
+    let failure: unknown;
+    try {
+      parked = await this.transition(hash, "claimed", "approved", JSON.stringify(issued.grant));
+    } catch (e) {
+      parked = false;
+      failure = e;
+    }
+    if (parked) {
+      await this.redis.del(deviceUserKey(info.userCode)).catch((err: unknown) => {
+        this.log.warn("could not delete a used device user code", { err });
+      });
+      return;
+    }
+    this.log.warn("device credential could not be parked; the machine is revoked", {
+      environmentId: issued.environmentId,
+      machineId: issued.machineId,
+      err: failure,
+    });
+    await this.abandon(issued);
+    // the program's next poll then ends with device.expired instead of waiting out the TTL
+    await this.redis.del(authKeyOf(hash), deviceUserKey(info.userCode)).catch(() => undefined);
+    if (failure === undefined) throw expired();
+    throw new ApiError(
+      "device.unavailable",
+      "The machine could not be connected; run capybara-device login again",
+    );
+  }
+
+  /** Revokes a machine whose credential never reached the program (see {@link park}). */
+  @Transactional()
+  private async abandon(issued: Issued): Promise<void> {
+    const { grant, machineId } = issued;
+    if (!(await this.machines.revokeMachine(machineId))) return;
+    await audit(this.db.db, {
+      actorAccountId: issued.accountId,
+      orgId: grant.orgId,
+      action: "environment.machine_revoked",
+      target: grant.environmentId,
+      detail: { machineId, reason: "sign_in_incomplete" },
+    });
   }
 
   /** The person refuses a user code: the program's next poll gets `device.denied`. */
@@ -300,8 +371,7 @@ export class DeviceAuthService {
     accountId: string,
     input: { orgId: string; environmentId?: string | undefined; name?: string | undefined },
     info: CodeInfo,
-    hash: string,
-  ): Promise<{ environmentId: string }> {
+  ): Promise<Issued> {
     const { orgId } = input;
     let environmentId: string;
     if (input.name !== undefined) {
@@ -337,18 +407,12 @@ export class DeviceAuthService {
       target: environmentId,
       detail: { machineId, ...machine },
     });
-    const grant: Grant = { credential, orgId, environmentId };
-    afterCommit(async () => {
-      if (!(await this.transition(hash, "claimed", "approved", JSON.stringify(grant)))) {
-        // the code expired meanwhile: the machine row stays unused until a new login replaces it
-        this.log.warn("device code expired before its credential was parked", {
-          environmentId,
-          machineId,
-        });
-      }
-      await this.redis.del(deviceUserKey(info.userCode));
-    });
-    return { environmentId };
+    return {
+      environmentId,
+      machineId,
+      accountId,
+      grant: { credential, orgId, environmentId },
+    };
   }
 
   /** `name`, or `name 2`, `name 3`, … : the first that is none of the person's live names. */

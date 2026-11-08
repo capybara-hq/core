@@ -268,6 +268,8 @@ export const ERROR_CODES = {
   "device.denied": 400,
   /** Device sign-in: no pending code matches the one given. */
   "device.code_invalid": 404,
+  /** Device sign-in: the confirmation could not hand the credential to the program; start over. */
+  "device.unavailable": 503,
   /** The machine credential is unknown or revoked. */
   "device.credential_invalid": 401,
   "skill.not_found": 404,

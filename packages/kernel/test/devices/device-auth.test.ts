@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { KernelReq } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { deviceAuthKey, deviceUserKey, USER_CODE_ALPHABET } from "../../src/devices/device-auth.js";
+import {
+  DeviceAuthService,
+  deviceAuthKey,
+  deviceUserKey,
+  USER_CODE_ALPHABET,
+} from "../../src/devices/device-auth.js";
 import { MachinesService } from "../../src/devices/machines.js";
 import type { EnvironmentView } from "../../src/environments/environments.service.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
@@ -73,6 +78,27 @@ async function clearThrottlers(): Promise<void> {
   if (keys.length > 0) await redis.del(...keys);
 }
 beforeEach(clearThrottlers);
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+type Transition = (hash: string, from: string, to: string, grant?: string) => Promise<boolean>;
+
+/** Replaces the claimed → approved step of the service (the post-commit parking) with `park`. */
+function interceptParking(park: (original: Transition, hash: string) => Promise<boolean>): void {
+  const svc = k.app.get(DeviceAuthService) as unknown as { transition: Transition };
+  const original = svc.transition.bind(svc);
+  vi.spyOn(svc, "transition").mockImplementation((hash, from, to, grant) =>
+    to === "approved" ? park(original, hash) : original(hash, from, to, grant),
+  );
+}
+
+const machineRows = (accountId: string) =>
+  db
+    .selectFrom("environment_machines")
+    .select(["id", "environment_id", "revoked_at"])
+    .where("account_id", "=", accountId)
+    .execute();
 
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error?: { code?: string } }).error?.code;
@@ -417,6 +443,82 @@ describe("device authorization", () => {
       .executeTakeFirstOrThrow();
     const c2 = await confirm(bob.req, { userCode: a.userCode, environmentId: cloud.id });
     expect(errCode(c2)).toBe("environment.not_found");
+  });
+
+  it("two concurrent confirms on one code issue exactly one machine", async () => {
+    const m = await member();
+    const a = await authorize();
+    const [x, y] = await Promise.all([
+      confirm(m.req, { userCode: a.userCode, name: "Race A" }),
+      confirm(m.req, { userCode: a.userCode, name: "Race B" }),
+    ]);
+    expect([x.statusCode, y.statusCode].sort()).toEqual([200, 404]);
+    expect(errCode(x.statusCode === 404 ? x : y)).toBe("device.code_invalid");
+    expect(await machineRows(m.id)).toHaveLength(1);
+    expect((await token(a.deviceCode)).statusCode).toBe(200);
+  });
+
+  it("concurrent confirms with the same new name both succeed (one retries with a free name)", async () => {
+    const m = await member();
+    const [a, b] = await Promise.all([authorize(), authorize()]);
+    const res = await Promise.all([
+      confirm(m.req, { userCode: a.userCode, name: "Twin" }),
+      confirm(m.req, { userCode: b.userCode, name: "Twin" }),
+    ]);
+    for (const r of res) expect(r.statusCode, r.body).toBe(200);
+    const names = await Promise.all(
+      res.map(
+        async (r) =>
+          (await envView(m.req, (r.json() as { environmentId: string }).environmentId)).name,
+      ),
+    );
+    expect(names.sort()).toEqual(["Twin", "Twin 2"]);
+  });
+
+  it("a confirm that cannot park the credential answers 503 and revokes the machine", async () => {
+    const m = await member();
+    const a = await authorize();
+    interceptParking(async () => {
+      throw new Error("injected Redis failure");
+    });
+    const c = await confirm(m.req, { userCode: a.userCode, name: "Unlucky" });
+    expect(c.statusCode).toBe(503);
+    expect(errCode(c)).toBe("device.unavailable");
+    vi.restoreAllMocks();
+    const rows = await machineRows(m.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.revoked_at).not.toBeNull();
+    expect(await auditActions(rows[0]?.environment_id as string)).toEqual([
+      "environment.created",
+      "environment.machine_connected",
+      "environment.machine_revoked",
+    ]);
+    // the program stops polling at once
+    expect(errCode(await token(a.deviceCode))).toBe("device.expired");
+  });
+
+  it("a code expiring mid-confirm answers device.expired and leaves no usable machine", async () => {
+    const m = await member();
+    const a = await authorize();
+    interceptParking(async (original, hash) => {
+      await redis.del(`capk:device-auth:${hash}`);
+      return original(hash, "claimed", "approved", "{}");
+    });
+    const c = await confirm(m.req, { userCode: a.userCode, name: "Late" });
+    expect(c.statusCode).toBe(400);
+    expect(errCode(c)).toBe("device.expired");
+    const rows = await machineRows(m.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.revoked_at).not.toBeNull();
+    expect(await machines.activeFor(rows[0]?.environment_id as string)).toBeNull();
+    expect(errCode(await token(a.deviceCode))).toBe("device.expired");
+  });
+
+  it("token polls are limited to 120 per address in 15 minutes", async () => {
+    for (let i = 0; i < 120; i++) await token("nope");
+    const over = await token("nope");
+    expect(over.statusCode).toBe(429);
+    expect(errCode(over)).toBe("auth.rate_limited");
   });
 
   it("a new name that is taken gets a free one", async () => {
