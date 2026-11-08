@@ -23,6 +23,7 @@ export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./secret.js";
+export * from "./setup-check.js";
 export * from "./setup-guide.js";
 export {
   type ParsedSetupGuide,

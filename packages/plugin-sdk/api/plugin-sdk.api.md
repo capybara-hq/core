@@ -1024,6 +1024,9 @@ export interface ExtensionContext {
         get(orgId: string, key: string): Promise<string | null>;
         set(orgId: string, key: string, value: string): Promise<void>;
     };
+    setup: {
+        check(id: string, def: SetupCheckDefinition): void;
+    };
     signal: AbortSignal;
     storage: ExtensionStorage;
     tools: {
@@ -1126,6 +1129,7 @@ export interface ExtensionPermissions {
     network?: string[];
     policyHooks?: PolicyHook[];
     secrets?: boolean;
+    setupChecks?: string[];
     storage?: boolean;
     tools?: string[];
     ui?: {
@@ -2337,6 +2341,21 @@ export function secret<T extends z.ZodTypeAny>(schema: T): T;
 export const SEMVER_VERSION_RE: RegExp;
 
 // @public
+export const SETUP_CHECK_ID_RE: RegExp;
+
+// @public
+export const SETUP_CHECK_LIMITS: Readonly<{
+    readonly timeoutMs: 10000;
+    readonly reasonChars: 300;
+    readonly fixChars: 500;
+    readonly freshMs: 300000;
+    readonly cooldownMs: 10000;
+    readonly orgConcurrency: 8;
+    readonly perAccountPerMinute: 30;
+    readonly idsPerExtension: 32;
+}>;
+
+// @public
 export const SETUP_GUIDE_LIMITS: {
     readonly guides: 8;
     readonly docBytes: 65536;
@@ -2354,6 +2373,51 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
 
 // @public
 export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template"];
+
+// @public
+export interface SetupCheckArgs {
+    readonly config: unknown;
+    readonly locale: "en" | "zh";
+    readonly mode: string | null;
+    readonly orgId: string;
+    readonly signal: AbortSignal;
+    readonly target: SetupCheckTarget;
+}
+
+// @public
+export interface SetupCheckDefinition {
+    place: SetupGuidePlace;
+    run(args: SetupCheckArgs): Promise<SetupCheckResult>;
+}
+
+// @public
+export interface SetupCheckResult {
+    readonly fix?: SetupCheckText;
+    readonly reason?: SetupCheckText;
+    readonly status: SetupCheckStatus;
+}
+
+// @public
+export type SetupCheckStatus = "ok" | "failing" | "unknown";
+
+// @public
+export type SetupCheckTarget = {
+    readonly kind: "channel-connection";
+    readonly connectionId: string;
+    readonly config: unknown;
+} | {
+    readonly kind: "connector";
+    readonly connectorId: string;
+    readonly templateId: string;
+    readonly clientId: string | null;
+    readonly accountId: string | null;
+};
+
+// @public
+export interface SetupCheckText {
+    readonly en: string;
+    readonly zh?: string;
+}
 
 // @public
 export type SetupGuideAudience = "admin" | "member";
@@ -2865,6 +2929,11 @@ export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];
 
 // @public
 export function validateSandboxPathShape(p: string): string[];
+
+// Warning: (ae-forgotten-export) The symbol "Problem" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function validateSetupCheckResult(x: unknown): SetupCheckResult | Problem;
 
 // @public
 export function validateSetupGuide(input: {

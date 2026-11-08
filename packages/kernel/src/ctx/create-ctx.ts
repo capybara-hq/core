@@ -588,6 +588,15 @@ export function createExtensionContext(
         });
       },
     },
+    // Placeholder until the setup check runner lands (setup guides v2, plan task 10): fail closed,
+    // so no check is ever registered or run by a kernel that cannot bound and redact it.
+    setup: {
+      check(id) {
+        throw new Error(
+          `plugin ${name}: setup check "${id}": this kernel does not run setup checks`,
+        );
+      },
+    },
     hooks: {
       on(mount, handler, opts) {
         if (toolsSealed) {

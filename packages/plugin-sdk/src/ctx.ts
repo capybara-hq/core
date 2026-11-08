@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { ModelEmbeddingInfo, ModelKind } from "./model.js";
+import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
 import type { ToolHandler, ToolSpec } from "./tool.js";
 import type { EmbedClaims, UiActionArgs, UiActionResult, UiRenderArgs, UiView } from "./ui.js";
@@ -202,6 +203,18 @@ export interface ExtensionContext {
       contribution: string;
     }): Promise<void>;
     verifyEmbedToken(token: string): Promise<EmbedClaims | null>;
+  };
+  /**
+   * Setup checks (`permissions.setupChecks`): the live rows of the plugin's setup guides.
+   * `check` is only allowed during `setup`; `id` must be listed in `permissions.setupChecks`
+   * (else `ExtensionPermissionError`); registering an id twice throws. The kernel runs a check only
+   * when a person or an agent asks, only for targets of this plugin and of `def.place`, aborts
+   * `signal` after `SETUP_CHECK_LIMITS.timeoutMs`, and redacts and bounds the result. A check never
+   * writes, passes `signal` to every request, does not retry and never puts a secret in `reason`
+   * or `fix`. It never receives an OAuth client secret or a member's token.
+   */
+  setup: {
+    check(id: string, def: SetupCheckDefinition): void;
   };
   /**
    * Hooks (`permissions.hooks`): observe model and tool calls, or deny them with a policy hook.

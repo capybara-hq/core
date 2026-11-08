@@ -131,3 +131,28 @@ describe("validatePermissions", () => {
     ).toMatch(/slack\./);
   });
 });
+
+describe("validatePermissions setupChecks", () => {
+  it("accepts setupChecks ids", () => {
+    expect(validatePermissions("slack", { setupChecks: ["bot-token", "app-token", "0x"] })).toEqual(
+      [],
+    );
+    expect(validatePermissions("slack", { setupChecks: [] })).toEqual([]);
+  });
+  it("rejects bad ids", () => {
+    for (const id of ["Bot", "-a", "a_b", "capybara:public-url", "a.b", "", "a".repeat(49), " a"]) {
+      expect(validatePermissions("p", { setupChecks: [id] }), id).not.toEqual([]);
+    }
+    expect(validatePermissions("p", { setupChecks: ["a".repeat(48)] })).toEqual([]);
+    expect(validatePermissions("p", { setupChecks: [1] })).not.toEqual([]);
+    expect(validatePermissions("p", { setupChecks: "bot-token" }).join()).toMatch(/array/);
+  });
+  it("rejects duplicates", () => {
+    expect(validatePermissions("p", { setupChecks: ["a", "a"] }).join()).toMatch(/duplicate/);
+  });
+  it("rejects more than 32 ids", () => {
+    const ids = Array.from({ length: 33 }, (_, i) => `c${i}`);
+    expect(validatePermissions("p", { setupChecks: ids.slice(0, 32) })).toEqual([]);
+    expect(validatePermissions("p", { setupChecks: ids }).join()).toMatch(/32/);
+  });
+});
