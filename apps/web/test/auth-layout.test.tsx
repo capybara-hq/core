@@ -28,6 +28,7 @@ vi.mock("../src/lib/server-setup", () => ({ serverNeedsSetup: async () => needsS
 const { default: AuthLayout } = await import("../src/app/(auth)/layout");
 const { default: LoginLayout } = await import("../src/app/(auth)/login/layout");
 const { default: BindLayout } = await import("../src/app/(auth)/bind/[token]/layout");
+const { default: DeviceLayout } = await import("../src/app/(auth)/device/layout");
 
 const layoutAt = (path: string) => {
   req.headers = new Headers({ "x-cap-path": path });
@@ -190,5 +191,28 @@ describe("the bind layout's decision before anything renders", () => {
       error: { status: 401 },
     });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("the device layout's decision before anything renders", () => {
+  const PAGE = "/device?code=BCDF-GHJK";
+  const deviceAt = (path: string) => {
+    req.headers = new Headers({ "x-cap-path": path });
+    return DeviceLayout({ children: <p>page body</p> });
+  };
+
+  it("a signed-out visitor goes to sign-in and back here, the code included", async () => {
+    serverRoutes({
+      "GET /api/v1/me": () =>
+        json(401, { error: { code: "auth.required", message: "signed out" } }),
+    });
+    await expect(deviceAt(PAGE)).rejects.toThrow(
+      `REDIRECT /login?returnTo=${encodeURIComponent(PAGE)}`,
+    );
+  });
+
+  it("a signed-in visitor gets the page", async () => {
+    serverRoutes({ "GET /api/v1/me": () => json(200, ME) });
+    await expect(deviceAt(PAGE)).resolves.toBeTruthy();
   });
 });

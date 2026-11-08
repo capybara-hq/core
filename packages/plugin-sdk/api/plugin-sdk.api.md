@@ -635,7 +635,137 @@ export type ContentBlock =
 };
 
 // @public
+export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
+
+// @public
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
+
+// @public
+export const DEVICE_PROTOCOL_VERSION = 1;
+
+// @public
+export interface DeviceCreateArgs {
+    limits: SandboxLimits;
+}
+
+// @public
+export interface DeviceCreateResult {
+    roots: SandboxRoots;
+}
+
+// @public
+export type DeviceErrorKind = "gone" | "fs_gone" | "policy" | "error";
+
+// @public
+export interface DeviceExecArgs {
+    actor: SandboxActor;
+    command: string;
+    cwd?: string;
+    env?: Record<string, string>;
+    limits: SandboxLimits;
+    maxOutputBytes: number;
+    tag: string;
+    timeoutMs: number;
+}
+
+// @public
+export type DeviceExecResult = ExecResult;
+
+// @public
+export type DeviceFrame = DeviceHello | DeviceRes | KernelReq | KernelCancel;
+
+// @public
+export interface DeviceHello {
+    arch: string;
+    mode: "os" | "docker";
+    os: "darwin" | "linux";
+    programVersion: string;
+    protocol: number;
+    roots: SandboxRoots;
+    sessionIsolation: boolean;
+    type: "hello";
+}
+
+// @public
+export type DeviceKillAllArgs = Record<string, never>;
+
+// @public
+export interface DeviceKillTaggedArgs {
+    tags: string[];
+}
+
+// @public
+export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop";
+
+// @public
+export interface DeviceOpResults {
+    create: DeviceCreateResult;
+    exec: DeviceExecResult;
+    killAll: null;
+    killTagged: null;
+    readFile: DeviceReadFileResult;
+    stat: DeviceStatResult;
+    stop: null;
+    writeFile: DeviceWriteFileResult;
+}
+
+// @public
+export class DeviceProtocolError extends Error {
+    constructor(message: string);
+}
+
+// @public
+export interface DeviceReadFileArgs {
+    maxBytes: number;
+    path: string;
+}
+
+// @public
+export type DeviceReadFileResult = {
+    dataB64: string;
+    truncated: boolean;
+} | null;
+
+// @public
+export type DeviceRes = {
+    type: "res";
+    id: string;
+    ok: true;
+    result: unknown;
+} | {
+    type: "res";
+    id: string;
+    ok: false;
+    error: {
+        kind: DeviceErrorKind;
+        message: string;
+    };
+};
+
+// @public
+export interface DeviceStatArgs {
+    path: string;
+}
+
+// @public
+export type DeviceStatResult = {
+    size: number;
+    isDir: boolean;
+} | null;
+
+// @public
+export interface DeviceStopArgs {
+    reason: "revoked" | "deleted";
+}
+
+// @public
+export interface DeviceWriteFileArgs {
+    dataB64: string;
+    path: string;
+}
+
+// @public
+export type DeviceWriteFileResult = null;
 
 // @public
 export interface Directory {
@@ -1354,6 +1484,21 @@ export function isSkillName(s: unknown): s is string;
 export type JsonSchema = Record<string, unknown>;
 
 // @public
+export interface KernelCancel {
+    id: string;
+    type: "cancel";
+}
+
+// @public
+export interface KernelReq {
+    args: unknown;
+    deadlineMs: number;
+    id: string;
+    op: DeviceOp;
+    type: "req";
+}
+
+// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
@@ -1801,6 +1946,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 };
 
 // @public
+export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
+
+// @public
 export interface ParsedSkillMd {
     body: string;
     description: string;
@@ -1835,6 +1983,9 @@ export function parseExtensionPoint(ref: string): {
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
     errors: string[];
 };
+
+// @public
+export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -2027,7 +2178,7 @@ export function renderSetupGuideText(text: string, values: Readonly<Record<strin
 };
 
 // @public
-export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string): string;
+export function renderSkillBody(body: string, invocation: SkillInvocation, args: string, skillName: string, digest: string, skillsRoot?: string): string;
 
 // @public
 export function renderSkillInvocation(i: RenderSkillInvocationInput): string;
@@ -2047,6 +2198,9 @@ export interface RenderSkillInvocationInput {
     skillName: string;
     version: number;
 }
+
+// @public
+export function rootsOf(h: SandboxHandle): SandboxRoots;
 
 // @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
@@ -2074,6 +2228,7 @@ export class SandboxGoneError extends Error {
 // @public
 export interface SandboxHandle {
     id: string;
+    roots?: SandboxRoots;
 }
 
 // @public
@@ -2134,13 +2289,20 @@ export interface SandboxProvider {
 }
 
 // @public
+export interface SandboxRoots {
+    skills: string;
+    tmp: string;
+    workspace: string;
+}
+
+// @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {
     value: Record<string, ParamValue>;
     dropped: string[];
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.5";
+export const SDK_VERSION = "0.1.0-rc.6";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -2258,10 +2420,10 @@ export function skillInvocation(frontmatter: Readonly<Record<string, unknown>>):
 export const SKILLS_SANDBOX_ROOT = "/skills";
 
 // @public
-export function skillSandboxDir(name: string, digest: string): string;
+export function skillSandboxDir(name: string, digest: string, root?: string): string;
 
 // @public
-export function skillSandboxPath(name: string, digest: string, path: string): string;
+export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];
@@ -2631,7 +2793,10 @@ export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManif
 }): string[];
 
 // @public
-export function validateSandboxPath(p: string): string[];
+export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];
+
+// @public
+export function validateSandboxPathShape(p: string): string[];
 
 // @public
 export function validateSkillPackage(files: {

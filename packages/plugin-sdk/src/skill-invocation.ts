@@ -139,8 +139,9 @@ const tooLong = (): RangeError =>
 /**
  * A skill body with its arguments substituted (see the file header), without the wrapper.
  * `skillName` is the resolved skill's bare name and `digest` its version's `skillDigest`:
- * `${CLAUDE_SKILL_DIR}` becomes `/skills/<skillName>@<digest>` (a qualified `<plugin>:<name>` or a
- * digest that is not 12 lowercase hex digits throws a `TypeError`). `args` is trimmed;
+ * `${CLAUDE_SKILL_DIR}` becomes `<skillsRoot>/<skillName>@<digest>` (`skillsRoot`: the instance's
+ * skills root, default `/skills`; a qualified `<plugin>:<name>` or a digest that is not 12
+ * lowercase hex digits throws a `TypeError`). `args` is trimmed;
  * more than {@link SKILL_INVOCATION_LIMITS.argumentsMaxChars} characters throw a `RangeError`, and
  * so does a result longer than {@link SKILL_INVOCATION_LIMITS.renderedMaxChars} (checked while
  * substituting, before the long string is built).
@@ -151,10 +152,11 @@ export function renderSkillBody(
   args: string,
   skillName: string,
   digest: string,
+  skillsRoot: string = SKILLS_SANDBOX_ROOT,
 ): string {
   checkSkillName(skillName);
   checkDigest(digest);
-  const dir = skillSandboxDir(skillName, digest);
+  const dir = skillSandboxDir(skillName, digest, skillsRoot);
   const all = trimmedArgs(args);
   const values = parseSkillArguments(all);
   const named = invocation.arguments ?? [];

@@ -1,5 +1,17 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.9
+
+### Minor Changes
+
+- e2ac9cc: Add `startFakeTelegram`, a fake Telegram Bot API (long polling, messages, callbacks) with update builders.
+
+### Patch Changes
+
+- Updated dependencies [b98e6d1]
+  - @capybara-hq/kernel@0.1.0-rc.8
+  - @capybara-hq/plugin-tools@0.1.0-rc.6
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

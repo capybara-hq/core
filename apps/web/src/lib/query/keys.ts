@@ -358,6 +358,11 @@ export const keys = {
        * drops the whole cache anyway.
        */
       pendingBinding: (token: string): readonly unknown[] => [...all, "pendingBinding", token],
+      /**
+       * The machine waiting behind a device user code (`/device`). Like a binding it needs a
+       * session to read but answers the same whoever asks; a sign-in or sign-out drops the cache.
+       */
+      pendingDevice: (userCode: string): readonly unknown[] => [...all, "pendingDevice", userCode],
       /** The admin console's four overview numbers. */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /** The super admin's inbox (its items). */

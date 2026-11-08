@@ -3,7 +3,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { SandboxProviders } from "../sandbox/providers.js";
+import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { EnvironmentAccess } from "./access.js";
 import { EnvironmentsService } from "./environments.service.js";
@@ -40,7 +40,9 @@ export class ConversationEnvironments {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "current">,
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud"> &
+      Partial<Pick<SandboxProviders, "forName">>,
     @Inject(EnvironmentAccess) private readonly access: Pick<EnvironmentAccess, "usable">,
     @Inject(EnvironmentsService)
     private readonly environments: Pick<EnvironmentsService, "ensureDefault">,
@@ -50,7 +52,8 @@ export class ConversationEnvironments {
    * The environment a new conversation of `accountId` is bound to: the chosen one when it is
    * usable by the person (else `environment.not_found` / `environment.unavailable`, and nothing
    * is created); without a choice the IM default (IM only) or the person's default environment.
-   * Null (unbound) without a sandbox provider and for anonymous IM senders.
+   * Null (unbound) for anonymous IM senders, and without a cloud sandbox provider when no usable
+   * IM default (a connected machine's environment, say) applies.
    */
   async forNew(
     orgId: string,
@@ -60,7 +63,7 @@ export class ConversationEnvironments {
     if (pick.environmentId !== undefined) {
       return (await this.access.usable(orgId, accountId, pick.environmentId)).id;
     }
-    if (this.providers.current() === undefined) return null;
+    if (pick.im !== true && this.providers.cloud() === undefined) return null;
     if (await this.isAnonymous(orgId, accountId)) return null;
     return this.defaultFor(orgId, accountId, pick.im === true);
   }
@@ -70,11 +73,12 @@ export class ConversationEnvironments {
    * enters, checked for its owner now. A conversation still unbound (created before
    * environments, or while no provider existed) is bound first, to the owner's IM default when it
    * is an IM thread, else to the owner's default environment; a racing call binds it once.
-   * Throws `sandbox.unavailable` without a provider or for an anonymous IM conversation, and
-   * `environment.not_found` / `environment.unavailable` when the owner may not use it now.
+   * Throws `sandbox.unavailable` for a cloud environment (or none to bind) without a cloud
+   * provider and for an anonymous IM conversation, and `environment.not_found` /
+   * `environment.unavailable` when the owner may not use it now. A conversation bound to a
+   * connected machine's environment (`@device`) does not need a cloud provider.
    */
   async forTool(orgId: string, rootConversationId: string): Promise<string> {
-    if (this.providers.current() === undefined) throw sandboxUnavailable();
     const conv = await this.db
       .selectFrom("conversations")
       .select(["account_id", "environment_id"])
@@ -87,17 +91,63 @@ export class ConversationEnvironments {
     if (environmentId === null) {
       const im = await this.isImThread(rootConversationId);
       const chosen = await this.defaultFor(orgId, conv.account_id, im);
+      if (chosen === null) throw sandboxUnavailable();
       environmentId = await this.bind(rootConversationId, chosen);
+    }
+    if (this.providers.cloud() === undefined && !(await this.isInternal(environmentId))) {
+      throw sandboxUnavailable();
     }
     return (await this.access.usable(orgId, conv.account_id, environmentId)).id;
   }
 
   /**
-   * The person's IM default when `im` and it is still theirs, live, in this org and usable (the
-   * table has no such guard), else their default environment (created when missing). The owner
-   * having left the org reads as `environment.not_found`.
+   * Whether a sandbox tool call of the tree rooted at `rootConversationId` has a provider to run
+   * on, for tool listings (ruling R8; no binding, no access check, never throws): a cloud
+   * provider is loaded, or the environment the conversation is bound to (an unbound IM thread:
+   * its owner's IM default) runs on a registered kernel provider (`@device`). A forbidden or gone
+   * environment still counts: the call then says why.
    */
-  private async defaultFor(orgId: string, accountId: string, im: boolean): Promise<string> {
+  async usableNow(orgId: string, rootConversationId: string): Promise<boolean> {
+    if (this.providers.cloud() !== undefined) return true;
+    const conv = await this.db
+      .selectFrom("conversations")
+      .select(["account_id", "environment_id"])
+      .where("id", "=", rootConversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!conv) return false;
+    let environmentId = conv.environment_id;
+    if (environmentId === null) {
+      if (!(await this.isImThread(rootConversationId))) return false;
+      const row = await this.db
+        .selectFrom("environment_defaults")
+        .select("environment_id")
+        .where("org_id", "=", orgId)
+        .where("account_id", "=", conv.account_id)
+        .executeTakeFirst();
+      if (!row) return false;
+      environmentId = row.environment_id;
+    }
+    const env = await this.db
+      .selectFrom("environments")
+      .select("provider")
+      .where("id", "=", environmentId)
+      .executeTakeFirst();
+    const provider = env?.provider ?? null;
+    return (
+      provider !== null &&
+      isInternalProvider(provider) &&
+      this.providers.forName?.(provider) !== undefined
+    );
+  }
+
+  /**
+   * The person's IM default when `im` and it is still theirs, live, in this org and usable (the
+   * table has no such guard), else their default environment (created when missing); null when
+   * that is needed and there is no cloud provider to make or use it. The owner having left the org
+   * reads as `environment.not_found`.
+   */
+  private async defaultFor(orgId: string, accountId: string, im: boolean): Promise<string | null> {
     if (im) {
       const row = await this.db
         .selectFrom("environment_defaults")
@@ -113,6 +163,7 @@ export class ConversationEnvironments {
         }
       }
     }
+    if (this.providers.cloud() === undefined) return null;
     try {
       return await this.environments.ensureDefault(orgId, accountId);
     } catch (e) {
@@ -136,6 +187,17 @@ export class ConversationEnvironments {
       .where("id", "=", conversationId)
       .executeTakeFirstOrThrow();
     return row.environment_id ?? environmentId;
+  }
+
+  /** The environment runs on a kernel-internal provider (`@device`). */
+  private async isInternal(environmentId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("environments")
+      .select("provider")
+      .where("id", "=", environmentId)
+      .executeTakeFirst();
+    const provider = row?.provider ?? null;
+    return provider !== null && isInternalProvider(provider);
   }
 
   /** The account is the org's anonymous IM guest (no person behind it). */

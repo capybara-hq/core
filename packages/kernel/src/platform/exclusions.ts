@@ -284,6 +284,42 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves sandbox file bytes",
   },
   // environments (personal cloud environments, environments design phase 1)
+  // connected machines (environments design phase 2): device sign-in by the program and on the
+  // confirmation page, and disconnecting a machine. The machine's WebSocket (`GET /device/connect`)
+  // is a raw gateway-role route, not a Nest controller, so it is not listed (like the webhook)
+  {
+    route: "DELETE /api/v1/orgs/:orgId/environments/:id/machine",
+    category: "human-only",
+    reason:
+      "Disconnects a person's own machine (revokes its credential); a trust decision taken on the environment's page",
+  },
+  {
+    route: "POST /api/v1/device/authorize",
+    category: "transport",
+    reason:
+      "Issues a sign-in code pair to the capybara-device program, which has no credential yet",
+  },
+  {
+    route: "POST /api/v1/device/token",
+    category: "transport",
+    reason: "The capybara-device program polls for its machine credential",
+  },
+  {
+    route: "GET /api/v1/device/pending/:userCode",
+    category: "human-only",
+    reason: "Shows the machine behind a code the person read off their own machine",
+  },
+  {
+    route: "POST /api/v1/device/confirm",
+    category: "human-only",
+    reason:
+      "Lets a machine run commands for the person; only the person, signed in on the web, confirms it",
+  },
+  {
+    route: "POST /api/v1/device/deny",
+    category: "human-only",
+    reason: "Refuses a machine's sign-in code on the confirmation page",
+  },
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/tools",
     category: "internal",

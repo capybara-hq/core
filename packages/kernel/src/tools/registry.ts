@@ -50,6 +50,19 @@ import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 export { BUILTIN_TOOL_NAMES } from "./builtin-names.js";
 export { canonicalJson } from "./canonical-json.js";
 
+/**
+ * What a tool's `unavailable` is asked with: the org, and for a run's listing the root
+ * conversation (`conversationId`; the sandbox tools follow its environment, ruling R8), whether
+ * the run is an eval replay (`replay`: its tool calls are never executed), and a `memo` shared by
+ * the tools of one listing (one answer per question per listing).
+ */
+export interface ToolListingScope {
+  orgId: string;
+  conversationId?: string;
+  replay?: boolean;
+  memo?: Map<string, unknown>;
+}
+
 /** A problem of a saved definition's `disabledTools` (`path` is `disabledTools.<i>`). */
 export interface ToolRefIssue {
   path: string;
@@ -126,9 +139,9 @@ export interface BuiltinTool {
   /**
    * The factual reason this tool is unavailable for the org right now (English, actionable; it goes
    * into the "tool unavailable" reminder), or null when it is available. May be async (e.g. a
-   * per-org extension-point default).
+   * per-org extension-point default). See {@link ToolListingScope} for what a listing passes.
    */
-  unavailable?: (ctx: { orgId: string }) => Promise<string | null> | string | null;
+  unavailable?: (ctx: ToolListingScope) => Promise<string | null> | string | null;
   /**
    * A policy key derived from the validated input (Platform tool spec §6.2), or null to use the
    * tool key. With a key, agent and parent policies, grants and approvals are keyed by it (an
@@ -522,6 +535,13 @@ export class ToolRegistry {
        * it reaches its parent with neither tool (`SendMessage` only to its own sub-agents).
        */
       forkChild?: boolean;
+      /**
+       * The root conversation of the run (a sub-agent's tree root): tools whose availability
+       * depends on the conversation's environment (the sandbox tools) are listed by it.
+       */
+      sandboxConversationId?: string;
+      /** An eval replay's listing: its calls are never executed (the sandbox tools are listed). */
+      replay?: boolean;
     },
   ): Promise<AgentTools> {
     const resolved = await this.resolve(orgId, def);
@@ -579,9 +599,19 @@ export class ToolRegistry {
     def: {
       disabledTools?: readonly DisabledToolRef[] | undefined;
       subagents?: AgentDefinition["subagents"];
+      sandboxConversationId?: string;
+      replay?: boolean;
     },
   ): Promise<{ tools: ResolvedTool[]; unavailable: UnavailableTool[]; hidden: UnavailableTool[] }> {
     const disabled = def.disabledTools ?? [];
+    const scope: ToolListingScope = {
+      orgId,
+      ...(def.sandboxConversationId !== undefined && {
+        conversationId: def.sandboxConversationId,
+      }),
+      ...(def.replay === true && { replay: true }),
+      memo: new Map(),
+    };
     const tools: ResolvedTool[] = [];
     const unavailable: UnavailableTool[] = [];
     const hidden: UnavailableTool[] = [];
@@ -605,7 +635,7 @@ export class ToolRegistry {
       if (builtinDisabled(disabled, name)) continue;
       const b = this.builtins.find((x) => x.spec.name === name);
       if (!b) continue;
-      const why = (await b.unavailable?.({ orgId })) ?? null;
+      const why = (await b.unavailable?.(scope)) ?? null;
       if (why !== null) {
         hidden.push({ ref: name, reason: why });
         continue;
@@ -623,7 +653,7 @@ export class ToolRegistry {
       if (name === BUILTIN.Bash) {
         for (const companion of BASH_COMPANION_TOOLS) {
           const c = this.builtins.find((x) => x.spec.name === companion);
-          if (c && ((await c.unavailable?.({ orgId })) ?? null) === null) {
+          if (c && ((await c.unavailable?.(scope)) ?? null) === null) {
             add(builtinTool(c, c.spec));
           }
         }

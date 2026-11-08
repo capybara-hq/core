@@ -14,7 +14,7 @@ actually loaded. When the elected provider fails to load, the admin console warn
 has no running provider.
 
 Upgrading: a deployment that already had two enabled providers of one point (from before the
-one-provider rule) could switch providers on the rolling deploy, because migration 0095 picks the
-one enabled first by the audit. Migration 0096 prefers the provider replicas are running (a
-`loaded` replica status row, most recent heartbeat); with no such row the 0095 order stays, and the
+one-provider rule) could switch providers on the rolling deploy, because migration 0097 picks the
+one enabled first by the audit. Migration 0098 prefers the provider replicas are running (a
+`loaded` replica status row, most recent heartbeat); with no such row the 0097 order stays, and the
 provider may change: check the admin console after the upgrade and disable the one you don't want.

@@ -32,6 +32,13 @@ function stateOf(e: EnvironmentView): { state: string; reason?: string; next?: s
       next: "Ask an org admin; use another environment meanwhile.",
     };
   }
+  if (e.filesLost && e.source === "device") {
+    return {
+      state: "files_lost",
+      reason: "Its directory is gone from the connected machine.",
+      next: "Ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine.",
+    };
+  }
   if (e.filesLost) {
     return {
       state: "files_lost",
@@ -47,7 +54,14 @@ const row = (e: EnvironmentView) => ({
   name: labelOf(e),
   ...stateOf(e),
   isDefault: e.isDefault,
+  source: e.source,
   provider: e.provider,
+  online: e.online,
+  machine: e.machine && {
+    name: e.machine.name,
+    os: e.machine.os,
+    lastSeenAt: e.machine.lastSeenAt,
+  },
   lastUsedAt: e.instance?.lastUsedAt ?? null,
 });
 
@@ -110,7 +124,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.list",
         description:
-          "List your own cloud environments in this org: one compact row each (name, state, whether it is the default, provider, last use), plus the default and last used ids and whether new cloud environments can be made. The default environment is shown as Personal; a former default left behind by a sandbox provider switch is shown as Personal (<provider>) and becomes the default again when that provider is back.",
+          "List your own environments in this org: one compact row each (name, state, whether it is the default, source: cloud or device for a connected machine, provider, whether a device one is online and its machine, last use), plus the default and last used ids and whether new cloud environments can be made. The default environment is shown as Personal; a former default left behind by a sandbox provider switch is shown as Personal (<provider>) and becomes the default again when that provider is back.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -129,7 +143,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.get",
         description:
-          "Read one of your environments with its provider, state, instance, limits and creation time. Takes the id from environments.list.",
+          "Read one of your environments with its source (cloud or device), provider, state, instance, connected machine and whether it is online, limits and creation time. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -248,7 +262,7 @@ export class EnvironmentsOperations implements OnModuleInit {
       defineOperation({
         id: "environments.reset-files",
         description:
-          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost. The person confirms every reset; it is never remembered. The environment this conversation works in cannot be wiped. Takes the id from environments.list.",
+          "Wipe one of your environments' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when an environment reports its files are lost (not for a connected machine's environment: its files are on the machine). The person confirms every reset; it is never remembered. The environment this conversation works in cannot be wiped. Takes the id from environments.list.",
         input: EnvironmentId,
         example: { environmentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -264,6 +278,10 @@ export class EnvironmentsOperations implements OnModuleInit {
           {
             code: "environment.current",
             next: "This conversation works in it: ask the person to wipe it on the web, or wipe a different one.",
+          },
+          {
+            code: "environment.files_on_device",
+            next: "Its files are on its connected machine: ask the person to run capybara-device logout, then capybara-device login into this environment, on that machine.",
           },
           {
             code: "environment.unavailable",

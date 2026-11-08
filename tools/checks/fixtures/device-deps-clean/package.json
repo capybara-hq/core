@@ -1,0 +1,9 @@
+{
+  "name": "@capybara-hq/device-clean-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "workspace:*",
+    "ws": "8.0.0"
+  }
+}

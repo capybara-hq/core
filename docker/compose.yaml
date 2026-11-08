@@ -15,8 +15,9 @@
 # Scale workers with `docker compose up -d --scale worker=N`.
 #
 # Ports: only web is published. Networks: "frontend" holds only web and api, "objectstore" only web
-# and the S3 gateway; everything else is on the backend (default) network, which api and the S3
-# gateway also join. Never publish api or worker ports (api
+# and the S3 gateway, "devices" only web and gateway (web forwards connected machines' WebSocket at
+# /device/connect there); everything else is on the backend (default) network, which api, gateway
+# and the S3 gateway also join. Never publish api or worker ports (api
 # trusts one proxy hop: web).
 #
 # Secrets: nothing secret is written here; values come from .env (POSTGRES_PASSWORD,
@@ -33,7 +34,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.8}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.10}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -233,7 +234,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.8}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.10}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -243,7 +244,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.8}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.10}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -261,9 +262,14 @@ services:
     # and let the proxy balance across them.
     # ports:
     #   - "127.0.0.1:${CAPYBARA_GATEWAY_PORT:-8081}:8080"
+    # "devices": web forwards connected machines' WebSocket (/device/connect) here; the service
+    # name resolves to every gateway replica.
+    networks:
+      - default
+      - devices
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.8}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.10}
     init: true
     restart: unless-stopped
     depends_on:
@@ -285,11 +291,15 @@ services:
       CAPYBARA_WEB_OBJECT_STORE_URL: http://seaweedfs-s3:8333
       CAPYBARA_WEB_OBJECT_STORE_BUCKET: capybara
       CAPYBARA_WEB_OBJECT_STORE_PUBLIC_HOST: ${CAPYBARA_PUBLIC_URL:-http://localhost:${CAPYBARA_WEB_PORT:-3000}}
-    # api and the S3 gateway only: web never reaches postgres, valkey, the SeaweedFS filer /
-    # master / volume server, worker or gateway.
+      # Connected machines (capybara-device) open a WebSocket at <public URL>/device/connect; web
+      # pipes exactly that upgrade to a gateway replica, which holds the connection.
+      CAPYBARA_WEB_GATEWAY_URL: http://gateway:8080
+    # api, the S3 gateway and the kernel gateway (only for /device/connect) only: web never
+    # reaches postgres, valkey, the SeaweedFS filer / master / volume server or worker.
     networks:
       - frontend
       - objectstore
+      - devices
     # CAPYBARA_WEB_BIND: the host address to publish on; 127.0.0.1 behind a TLS proxy on the same
     # host, so plain http is not exposed.
     ports:
@@ -350,6 +360,8 @@ networks:
   frontend: {}
   # web and seaweedfs-s3 only.
   objectstore: {}
+  # web and gateway only (/device/connect).
+  devices: {}
   # No route out: only worker and sandbox-proxy are on it.
   sandbox:
     internal: true

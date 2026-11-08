@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 
 /**
  * Launching a background Bash task (spec 2026-11-05-background-bash-design §4.2): the task id, the
  * one short exec that starts the command detached from the exec, and the model-visible result.
- * Every path is relative to `/workspace` (the launch exec's `cwd`), so a provider that maps
- * `/workspace` needs no rewriting inside the script.
+ * Every path is relative to the instance's workspace root (the launch exec's `cwd`), so the
+ * script is the same whatever the instance's roots are.
  */
 
 /** The launch exec's own time limit: it only writes a file and forks. */
@@ -18,13 +19,21 @@ export const LAUNCH_EXEC_TIMEOUT_MS = 30_000;
 export const backgroundMaxSeconds = (cfg: Pick<KernelConfig, "sandbox">): number =>
   Math.min(cfg.sandbox.background.maxSeconds, cfg.sandbox.limits.maxCommandSeconds);
 
-/** The directory of the task files, relative to `/workspace`. */
+/** The directory of the task files, relative to the workspace root. */
 export const TASKS_DIR = ".capybara/tasks";
 
-/** A task's output file, relative to `/workspace` (`output_path`). */
+/** A task's output file, relative to the workspace root (`output_path` while reserved). */
 export const taskOutputPath = (id: string): string => `${TASKS_DIR}/${id}.out`;
 
-/** The file the launch writes the session id to, relative to `/workspace`. */
+/**
+ * The absolute output file of a task from its `output_path`: absolute once the task started (the
+ * launch records `<workspace>/.capybara/tasks/<id>.out` of its instance); a reservation's relative
+ * path is read under the default workspace.
+ */
+export const taskOutputFile = (outputPath: string): string =>
+  outputPath.startsWith("/") ? outputPath : `${DEFAULT_SANDBOX_ROOTS.workspace}/${outputPath}`;
+
+/** The file the launch writes the session id to, relative to the workspace root. */
 export const taskSidPath = (id: string): string => `${TASKS_DIR}/${id}.sid`;
 
 const BASE32 = "abcdefghijklmnopqrstuvwxyz234567";
@@ -72,11 +81,15 @@ export function launchScript(id: string, command: string, seconds: number): stri
   ].join("\n");
 }
 
-/** The model-visible result of a launch (spec §2.1). */
-export function startedText(id: string, description: string): string {
+/** The model-visible result of a launch (spec §2.1); `workspace`: the instance's workspace root. */
+export function startedText(
+  id: string,
+  description: string,
+  workspace: string = DEFAULT_SANDBOX_ROOTS.workspace,
+): string {
   return [
     `Started background task ${id} ("${description}").`,
-    `Output: /workspace/${taskOutputPath(id)}`,
+    `Output: ${workspace}/${taskOutputPath(id)}`,
     "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
   ].join("\n");
 }

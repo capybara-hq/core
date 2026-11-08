@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0094_environment_demoted_default.sql: the demotion marker, and the backfill of defaults demoted
+ * 0096_environment_demoted_default.sql: the demotion marker, and the backfill of defaults demoted
  * before it (named `Personal (<provider>)`, ` 2`, … when taken). Migrates to the migration before
- * it, seeds rows, then runs 0094 (twice: it is idempotent).
+ * it, seeds rows, then runs 0096 (twice: it is idempotent).
  */
-const FILE = "0094_environment_demoted_default.sql";
+const FILE = "0096_environment_demoted_default.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -55,7 +55,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
-describe("0094_environment_demoted_default", () => {
+describe("0096_environment_demoted_default", () => {
   it("marks the defaults demoted under the old naming and drops their generated names", async () => {
     const rows = async () =>
       (

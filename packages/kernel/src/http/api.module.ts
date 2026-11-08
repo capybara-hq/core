@@ -43,6 +43,8 @@ import { ChannelConnectionsController } from "../channels/connections.controller
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { DeviceAuthController } from "../devices/device-auth.controller.js";
+import { DeviceAuthModule } from "../devices/device-auth.module.js";
 import { EnvironmentsController } from "../environments/environments.controller.js";
 import { EnvironmentsModule } from "../environments/environments.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
@@ -158,6 +160,7 @@ const CONTROLLERS: Type[] = [
   OrgOwnedPluginsController,
   OrgComponentsController,
   AdminCatalogRequestsController,
+  DeviceAuthController,
 ];
 
 /**
@@ -181,6 +184,7 @@ const CONTROLLERS: Type[] = [
     ConversationsModule,
     BackgroundModule,
     EnvironmentsModule,
+    DeviceAuthModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,

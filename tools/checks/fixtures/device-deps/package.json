@@ -1,0 +1,9 @@
+{
+  "name": "@capybara-hq/device-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@capybara-hq/plugin-sdk": "workspace:*",
+    "@capybara-hq/kernel": "workspace:*"
+  }
+}

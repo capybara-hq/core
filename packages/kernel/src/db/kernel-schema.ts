@@ -607,7 +607,7 @@ export interface LgCheckpointWritesTable {
 }
 
 /** 0018_channels.sql：组织的渠道连接（非密钥配置；密钥在 secrets `channels:<id>:config`）。 */
-/** `channel_connections.guide_ack` (0097): the setup guide a connection was set up with. */
+/** `channel_connections.guide_ack` (0099): the setup guide a connection was set up with. */
 export interface GuideAckJson {
   guideId: string;
   version: string;
@@ -630,7 +630,7 @@ export interface ChannelConnectionsTable {
   bot_user_id: string | null;
   tenant_id: string | null;
   /**
-   * 0097_channel_connection_guide_ack.sql: the setup guide last set up with,
+   * 0099_channel_connection_guide_ack.sql: the setup guide last set up with,
    * `{ guideId, version, hash, mode }`; null when unknown.
    */
   guide_ack: ColumnType<GuideAckJson | null, string | null | undefined, string | null>;
@@ -887,9 +887,10 @@ export interface EnvironmentsTable {
   owner_account_id: string;
   name: ColumnType<string | null, string | null | undefined, string | null>;
   is_default: ColumnType<boolean, boolean | undefined, boolean>;
-  source: "cloud";
+  /** 0093: `device` is a connected machine (environment_machines). */
+  source: "cloud" | "device";
   provider: ColumnType<string | null, string | null | undefined, string | null>;
-  /** 0094: the provider a demoted default was demoted from; null for every other environment. */
+  /** 0096: the provider a demoted default was demoted from; null for every other environment. */
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   created_at: Ts;
   updated_at: Ts;
@@ -923,12 +924,40 @@ export interface EnvironmentInstancesTable {
   generation: ColumnType<number, number | undefined, number>;
   /** An instance was created at least once (only ever set to true). */
   had_instance: ColumnType<boolean, boolean | undefined, boolean>;
-  /** How many times the files were reset (0093); a reset may bring back the same file system id. */
+  /** How many times the files were reset (0095); a reset may bring back the same file system id. */
   fs_resets: ColumnType<number, number | undefined, number>;
   /** The old provider's instance left behind by a provider change. */
   prev_provider: ColumnType<string | null, string | null | undefined, string | null>;
   prev_handle: InstanceHandle;
   sweep_failed_at: TsNullable;
+}
+
+/**
+ * 0093_connected_environments.sql: the machine connected to a `device` environment. At most one
+ * unrevoked row per environment; revoking sets `revoked_at` and keeps the row.
+ */
+export interface EnvironmentMachinesTable {
+  id: Generated<string>;
+  org_id: string;
+  environment_id: string;
+  account_id: string;
+  /** A hash of the machine credential, never the credential itself. */
+  credential_hash: string;
+  name: string;
+  os: string;
+  arch: string;
+  program_version: ColumnType<string | null, string | null | undefined, string | null>;
+  mode: ColumnType<
+    "os" | "docker" | null,
+    "os" | "docker" | null | undefined,
+    "os" | "docker" | null
+  >;
+  /** The roots the program exposes, as it reported them (a JSON array). */
+  roots: ColumnType<unknown, string | null | undefined, string | null>;
+  session_isolation: ColumnType<boolean, boolean | undefined, boolean>;
+  last_seen_at: TsNullable;
+  created_at: Ts;
+  revoked_at: TsNullable;
 }
 
 /** 0088_environments.sql: the environment a member's new conversations use by default. */
@@ -1091,7 +1120,7 @@ export interface ExtensionPackagesTable {
 }
 
 /**
- * 0098: catalog display files (plugin icons, connector template icons, setup guide files) by
+ * 0100: catalog display files (plugin icons, connector template icons, setup guide files) by
  * sha256, shared by every version listing one (`catalog/catalog-files.ts`).
  */
 export interface CatalogFilesTable {
@@ -1126,7 +1155,7 @@ export interface ExtensionInstallsTable {
    */
   required: ColumnType<boolean, boolean | undefined, boolean>;
   /**
-   * 0095: when the desired state last became `enabled` (NULL while disabled). Of two enabled
+   * 0097: when the desired state last became `enabled` (NULL while disabled). Of two enabled
    * providers of one single-provider extension point (left from before enabling a second was
    * refused) the earliest enabled is the one every replica loads.
    */
@@ -1244,6 +1273,7 @@ export interface KernelDatabase {
   environments: EnvironmentsTable;
   environment_instances: EnvironmentInstancesTable;
   environment_defaults: EnvironmentDefaultsTable;
+  environment_machines: EnvironmentMachinesTable;
   background_tasks: BackgroundTasksTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
@@ -1547,7 +1577,7 @@ export interface ComponentOrgSwitchesTable {
  * 0034, renamed in 0042, reshaped in 0044: the versions of a platform catalog item. `manifest` is
  * the normalized plugin.json (skills and connector templates listed explicitly); `extension_sha256`
  * the plugin's extension package in `extension_packages` (null without an extension); `files` the
- * version's stored files: display files (icons, setup guide files) in `catalog_files` (0098), the
+ * version's stored files: display files (icons, setup guide files) in `catalog_files` (0100), the
  * rest (skills, connector and agent templates) under `object_prefix`.
  */
 export interface CatalogItemVersionsTable {
@@ -1620,7 +1650,7 @@ export interface MarketplacesTable {
   owner_name: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0051: entries the last successful refresh could not store (`{ name, reason }[]`). */
   skipped: ColumnType<{ name: string; reason: string }[], string | undefined, string>;
-  /** 0099: the git commit whose repository-path icons were last stored completely. */
+  /** 0101: the git commit whose repository-path icons were last stored completely. */
   icons_commit: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
@@ -1645,7 +1675,7 @@ export interface MarketplaceEntriesTable {
 }
 
 /**
- * 0099: marketplace entry icons, one per (marketplace, the entry's `icon` as written), downloaded
+ * 0101: marketplace entry icons, one per (marketplace, the entry's `icon` as written), downloaded
  * on refresh (`catalog/marketplace-icons.ts`).
  */
 export interface MarketplaceIconsTable {
@@ -1657,7 +1687,7 @@ export interface MarketplaceIconsTable {
   fetched_at: Ts;
 }
 
-/** 0099: icon URLs whose last download failed, retried after a backoff. */
+/** 0101: icon URLs whose last download failed, retried after a backoff. */
 export interface MarketplaceIconFailuresTable {
   source_id: string;
   ref: string;

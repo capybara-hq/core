@@ -10,13 +10,13 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0096_single_provider_running_first.sql: two enabled providers of one single-provider point left
- * from before the rule. 0095 backfills `enabled_at` from the audit, which may name a provider other
- * than the one the replicas run; 0096 moves the provider with a `loaded` replica status row (the
- * most recent heartbeat) before the others, so the rolling deploy keeps it. Migrates to 0094,
- * seeds, runs 0095 and 0096, then runs 0096 a second time.
+ * 0098_single_provider_running_first.sql: two enabled providers of one single-provider point left
+ * from before the rule. 0097 backfills `enabled_at` from the audit, which may name a provider other
+ * than the one the replicas run; 0098 moves the provider with a `loaded` replica status row (the
+ * most recent heartbeat) before the others, so the rolling deploy keeps it. Migrates to 0096,
+ * seeds, runs 0097 and 0098, then runs 0098 a second time.
  */
-const FILE = "0096_single_provider_running_first.sql";
+const FILE = "0098_single_provider_running_first.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -82,7 +82,7 @@ const status = (replica: string, name: string, state: string, heartbeat: string)
 beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
-  before = copyMigrations((f) => f < "0095");
+  before = copyMigrations((f) => f < "0097");
   upTo = copyMigrations((f) => f <= FILE);
   await migrate(pg.url, { schema: "capybara", dir: before });
   // sandbox: sbx-old enabled first by the audit, but the replicas run sbx-run (sorted after it)
@@ -94,7 +94,7 @@ beforeAll(async () => {
   await status("r1", "sbx-old", "loaded", "2026-03-01T00:00:00Z");
   await status("r2", "sbx-run", "loaded", "2026-03-02T00:00:00Z");
   await status("r2", "sbx-old", "pending", "2026-03-02T00:00:00Z");
-  // secret-store: contested but nothing loaded -> 0095's values stay
+  // secret-store: contested but nothing loaded -> 0097's values stay
   await seed("sec-a", ["secret-store@1"], "enabled");
   await seed("sec-b", ["secret-store@1", "tool@1"], "enabled");
   await enabledAudit("sec-a", "2026-02-01T00:00:00Z");
@@ -113,8 +113,8 @@ afterAll(async () => {
   for (const dir of [before, upTo]) if (dir) rmSync(dir, { recursive: true, force: true });
 }, 120_000);
 
-describe("0096_single_provider_running_first", () => {
-  it("the provider replicas run gets the earliest enabled_at; other points keep 0095's values", async () => {
+describe("0098_single_provider_running_first", () => {
+  it("the provider replicas run gets the earliest enabled_at; other points keep 0097's values", async () => {
     expect(await enabledAt()).toEqual({
       "sbx-old": "2026-02-01T00:00:00.000Z",
       "sbx-run": "2026-01-31T23:59:59.999Z",

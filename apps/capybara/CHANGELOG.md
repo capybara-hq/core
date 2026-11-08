@@ -1,5 +1,30 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.10
+
+### Patch Changes
+
+- ae79508: Documents connected environments: the gateway's `/device/connect` route must be reachable over
+  `wss://` on the public origin (WebSocket upgrade allowed, idle connections kept open), the
+  `environments.device.*` keys, and the `@device` provider.
+- 60fe3b6: The gateway role holds connected machines' WebSocket connections at `GET /device/connect`: the
+  machine credential and protocol are checked before the upgrade, one connection per environment
+  across replicas under a Redis lease (the newest connection wins), relayed requests are forwarded
+  and results written back; revocation, takeover, lease loss and shutdown close the socket.
+- Updated dependencies [fe7c389]
+- Updated dependencies [cfc888b]
+- Updated dependencies [60fe3b6]
+- Updated dependencies [af3c477]
+- Updated dependencies [ebbfeb5]
+  - @capybara-hq/kernel@0.1.0-rc.9
+
+## 0.1.0-rc.9
+
+### Patch Changes
+
+- Updated dependencies [b98e6d1]
+  - @capybara-hq/kernel@0.1.0-rc.8
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

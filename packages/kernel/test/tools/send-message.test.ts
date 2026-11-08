@@ -367,7 +367,8 @@ describe("SendMessage to a sub-agent", { timeout: 90_000 }, () => {
     const finished = ofType(events, "run_finished")[0];
     expect(finished?.payload.consumedUpToSeq).toBeGreaterThanOrEqual(messages[1]?.seq ?? 0);
     const second = childRequests("PING-STEP").at(-1);
-    expect(second?.messages.at(-1)?.role).toBe("user");
+    // the absorbed message is the last turn (ruling R22 may add the environment's system line)
+    expect(second?.messages.filter((m) => m.role !== "system").at(-1)?.role).toBe("user");
     // a message to a running child is no dispatch: one row
     expect(await dispatchRows(conv)).toHaveLength(1);
   });

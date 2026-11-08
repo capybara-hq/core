@@ -975,7 +975,7 @@ Maintainer decision 2026-11-08: the admin 插件 → 市场 rows show icons, not
   exist yet when the Version Packages PR writes the file; a commit is not known before it is made).
   The official marketplace is a git marketplace, so it uses this form.
 - **Kernel:** each refresh that reads a manifest, or finds it unchanged, brings the marketplace's
-  icons in line with its stored entries (`catalog/marketplace-icons.ts`, migration 0099
+  icons in line with its stored entries (`catalog/marketplace-icons.ts`, migration 0101
   `marketplace_icons`: one row per marketplace and icon as written, svg / png bytes, sha256,
   content type). A URL is downloaded through `packages/kernel/src/net` under the marketplace
   network rules (https, public addresses or `allowPrivateHosts`, `net.httpsProxy`, no redirects,

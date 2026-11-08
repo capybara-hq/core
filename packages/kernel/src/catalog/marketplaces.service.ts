@@ -215,7 +215,7 @@ interface SourceRow {
   form: MarketplaceForm;
   ref: string | null;
   last_commit: string | null;
-  /** The commit whose repository-path icons were last stored completely (0099). */
+  /** The commit whose repository-path icons were last stored completely (0101). */
   icons_commit: string | null;
   owner_name: string | null;
   mirrors: string[];

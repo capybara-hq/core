@@ -513,7 +513,7 @@ describe("channel setup guide drift", () => {
       .execute();
     expect(audits.map((a) => a.action)).toContain("channel.guide_confirmed");
 
-    // a connection without an ack (made before 0097) never shows a notice
+    // a connection without an ack (made before 0099) never shows a notice
     await db
       .updateTable("channel_connections")
       .set({ guide_ack: null })

@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { EnvironmentAccess } from "./access.js";
@@ -12,8 +13,9 @@ import { EnvironmentsService } from "./environments.service.js";
  * {@link SandboxModule}'s.
  */
 @Module({
-  // ExtensionsModule: the provider display names of demoted defaults
-  imports: [SandboxModule, ExtensionsModule],
+  // ExtensionsModule: the provider display names of demoted defaults; DevicesModule: deleting a
+  // device environment revokes its machine
+  imports: [SandboxModule, ExtensionsModule, DevicesModule],
   providers: [EnvironmentAccess, EnvironmentsService, ConversationEnvironments],
   exports: [EnvironmentAccess, EnvironmentsService, ConversationEnvironments],
 })

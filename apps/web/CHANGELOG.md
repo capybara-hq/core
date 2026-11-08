@@ -1,5 +1,21 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.10
+
+### Patch Changes
+
+- 7ce35ab: Connected environments in the web app: the `/device` page confirms a `capybara-device login`
+  (the code, the machine, the org, a new or existing environment and the disclosure); 新建环境
+  offers 云端沙箱 or 接入设备 (the install and login commands, then waits for the machine); the
+  environment page shows the machine with 断开这台机器; the picker lists connected environments
+  with 在线 / 离线 and an offline one cannot be chosen.
+- cfdf1f0: The web server forwards connected machines' WebSocket upgrades on `/device/connect` to a gateway
+  replica (`CAPYBARA_WEB_GATEWAY_URL`); compose puts web and gateway on a `devices` network.
+
+## 0.1.0-rc.9
+
+No changes in this release.
+
 ## 0.1.0-rc.8
 
 ### Minor Changes

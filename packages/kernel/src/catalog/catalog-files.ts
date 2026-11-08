@@ -1,4 +1,4 @@
-// Catalog display files in PG (`catalog_files`, migration 0098): a plugin's icon, its connector
+// Catalog display files in PG (`catalog_files`, migration 0100): a plugin's icon, its connector
 // templates' icons and its setup guide files. They are small (64 KiB each at most, by the plugin
 // format) and must be readable without object storage: a bootstrap plugin is imported before any
 // object-store extension runs, and the object-store plugin's own icon can never wait for itself.

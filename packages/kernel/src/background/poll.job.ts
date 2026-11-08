@@ -1,4 +1,4 @@
-import type { SandboxHandle } from "@capybara-hq/plugin-sdk";
+import { rootsOf, type SandboxHandle } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelConfig } from "../config/schema.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -66,7 +66,7 @@ export class BackgroundTaskPollJob {
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "available" | "ifRunning">,
+    private readonly sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "ifRunning">,
     @Inject(KernelConfigService) readonly config: KernelConfigService,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -97,7 +97,6 @@ export class BackgroundTaskPollJob {
       );
       for (const c of conversations) await this.eventLog.publishChanged(c, "background");
     }
-    if (!this.sandbox.available) return 0;
     const groups = new Map<string, BackgroundTaskRow[]>();
     for (const t of await this.store.runningStarted()) {
       if (t.sid === null || t.sandboxCreatedAt === null) continue;
@@ -109,6 +108,12 @@ export class BackgroundTaskPollJob {
     for (const tasks of groups.values()) {
       if (signal.aborted) break;
       try {
+        // the environment's provider is not there (no cloud provider, `@device` not served):
+        // its tasks stay as they are until it is
+        const env = tasks[0]?.environmentId ?? null;
+        if (env === null ? !this.sandbox.cloudAvailable : !(await this.sandbox.availableFor(env))) {
+          continue;
+        }
         finished += await this.pollSandbox(tasks, signal);
       } catch (err) {
         if (signal.aborted) break;
@@ -166,7 +171,7 @@ export class BackgroundTaskPollJob {
   ): Promise<Map<string, TaskReport>> {
     const res = await p.exec(h, {
       command: pollScript(tasks.map((t) => ({ id: t.id, sid: t.sid as string }))),
-      cwd: "/workspace",
+      cwd: rootsOf(h).workspace,
       timeoutMs: POLL_EXEC_TIMEOUT_MS,
       maxOutputBytes: POLL_MAX_OUTPUT_BYTES,
       signal,

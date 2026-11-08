@@ -78,6 +78,7 @@ export function corePluginScope(): PluginCheckScope {
     root,
     plugins,
     sdkDirs: [join(root, "packages/plugin-sdk")],
+    deviceDirs: [join(root, "packages/device")],
     toolDesignDirs: toolDesignDirs([]),
     migrationDirs: migrationDirs().filter((d) => !own.has(d)),
   };

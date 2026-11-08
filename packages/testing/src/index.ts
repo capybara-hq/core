@@ -156,6 +156,22 @@ export {
   startFakeSlack,
 } from "./fake-slack.js";
 export {
+  type FakeTelegramBot,
+  type FakeTelegramCall,
+  type FakeTelegramFailure,
+  type FakeTelegramMessage,
+  type FakeTelegramOptions,
+  type FakeTelegramServer,
+  findTelegramButton,
+  startFakeTelegram,
+  type TgChat,
+  type TgUser,
+  telegramCallback,
+  telegramGroupMessage,
+  telegramPrivateMessage,
+  telegramWebhookHeaders,
+} from "./fake-telegram.js";
+export {
   FAKE_EXTENSIONS,
   type FakeExtensionName,
   fakeExtensionDir,

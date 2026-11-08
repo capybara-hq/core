@@ -41,7 +41,11 @@ export interface BackgroundTaskRow {
    * started: readers that act on the process (the poller, stops) skip such a row.
    */
   sid: string | null;
-  /** Relative to `/workspace`. */
+  /**
+   * The output file: absolute once the task started (`markStarted` records it under its
+   * instance's workspace root), relative to the workspace root while reserved
+   * (`taskOutputFile` in launch.ts).
+   */
   outputPath: string;
   status: BackgroundTaskStatus;
   lostReason: string | null;
@@ -142,11 +146,15 @@ export class BackgroundTaskStore {
    */
   async markStarted(
     id: string,
-    to: { sid: string; sandboxCreatedAt: Date },
+    to: { sid: string; sandboxCreatedAt: Date; outputPath?: string },
   ): Promise<"started" | "stopping" | false> {
     const r = await this.db
       .updateTable("background_tasks")
-      .set({ sid: to.sid, sandbox_created_at: to.sandboxCreatedAt })
+      .set({
+        sid: to.sid,
+        sandbox_created_at: to.sandboxCreatedAt,
+        ...(to.outputPath !== undefined && { output_path: to.outputPath }),
+      })
       .where("id", "=", id)
       .where("status", "=", "running")
       .where("sid", "is", null)

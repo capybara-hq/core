@@ -180,7 +180,7 @@ interface RenderedSetupGuide {
 
 ## 6. Version drift
 
-- The connection row gets `guide_ack jsonb` (migration 0097): `{ guideId, version, hash, mode }`
+- The connection row gets `guide_ack jsonb` (migration 0099): `{ guideId, version, hash, mode }`
   of the guide it was last set up with, null when unknown.
 - **The hash is the template hash (designer's call)**: sha256 over `path NUL sha256 LF` of the
   guide's files that apply to the mode, from `catalog_item_versions.files`. It needs no storage
@@ -201,7 +201,7 @@ interface RenderedSetupGuide {
   ack, the notice keeps reporting the change to the guide the connection was set up with.
 - **Drift** = `guide_ack` is set, the plugin's current `channel-connection` guide has the same id
   and its hash for `guide_ack.mode` differs. The view carries `guideDrift: { from, to } | null`
-  (versions). A connection without an ack (created before 0097, or before the plugin had a guide)
+  (versions). A connection without an ack (created before 0099, or before the plugin had a guide)
   never shows a notice **(designer's call: no false alarms on old rows)**.
 - Multi-replica: everything is in PG (the ack on the row, the hashes from the version rows); no
   process state, no cache.

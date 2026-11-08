@@ -532,6 +532,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     "tools_changed",
     z.object({ step: count, added: z.array(z.string()), removed: z.array(z.string()) }),
   ),
+  /**
+   * The directories of the instance a sandbox tool call entered, when they differ from the
+   * defaults (environments spec §13.1: a connected machine's real paths). Written once per
+   * conversation and roots, before that call's result. **Model-visible**: rendered at its position
+   * as a system message (`environmentPathsText`); a summary covering it is followed by the latest
+   * one again.
+   */
+  ev(
+    "environment_paths",
+    z.object({
+      roots: z.object({
+        workspace: z.string().min(1).max(4096),
+        skills: z.string().min(1).max(4096),
+        tmp: z.string().min(1).max(4096),
+      }),
+    }),
+  ),
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",

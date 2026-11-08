@@ -89,14 +89,22 @@ export function skillDigest(files: { path: string; size: number; sha256: string 
   return createHash("sha256").update(lines).digest("hex").slice(0, 12);
 }
 
-/** A skill version's directory in the sandbox: `/skills/<name>@<digest>` ({@link skillDigest}). */
-export function skillSandboxDir(name: string, digest: string): string {
-  return `${SKILLS_SANDBOX_ROOT}/${name}@${digest}`;
+/**
+ * A skill version's directory in the sandbox: `<root>/<name>@<digest>` ({@link skillDigest});
+ * `root` is the instance's skills root (`SandboxRoots.skills`, default `/skills`).
+ */
+export function skillSandboxDir(name: string, digest: string, root = SKILLS_SANDBOX_ROOT): string {
+  return `${root}/${name}@${digest}`;
 }
 
-/** A skill file's path in the sandbox: `/skills/<name>@<digest>/<path>`. */
-export function skillSandboxPath(name: string, digest: string, path: string): string {
-  return `${skillSandboxDir(name, digest)}/${path}`;
+/** A skill file's path in the sandbox: `<root>/<name>@<digest>/<path>` ({@link skillSandboxDir}). */
+export function skillSandboxPath(
+  name: string,
+  digest: string,
+  path: string,
+  root = SKILLS_SANDBOX_ROOT,
+): string {
+  return `${skillSandboxDir(name, digest, root)}/${path}`;
 }
 
 /** {@link parseSkillMd} 成功时的结果。 */

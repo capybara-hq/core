@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { SandboxProviders } from "../sandbox/providers.js";
+import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { environmentNotFound } from "../sandbox/sandbox.service.js";
 
 /** What decides an environment's provider: its own record and its instance row's (if any). */
@@ -17,11 +17,13 @@ export interface ProviderFacts {
 }
 
 /**
- * The provider an environment works with: the one keeping its files or instance once it has any
- * (they are never migrated, spec §4.2 item 13); before that, the current provider (its first use
- * creates them there), else the one recorded at creation. The same rule as `SandboxService`'s use.
+ * The provider an environment works with: a kernel-internal one (`@device`) as recorded; for a
+ * cloud environment the one keeping its files or instance once it has any (they are never
+ * migrated, spec §4.2 item 13); before that, the current cloud provider (its first use creates
+ * them there), else the one recorded at creation. The same rule as `SandboxService`'s use.
  */
 export function environmentProvider(f: ProviderFacts, current: string | undefined): string | null {
+  if (f.provider !== null && isInternalProvider(f.provider)) return f.provider;
   if (holdsResources(f)) return f.instanceProvider;
   return current ?? f.provider;
 }
@@ -55,13 +57,18 @@ export function demotedProvider(marker: string | null, f: ProviderFacts): string
   return (holdsResources(f) ? f.instanceProvider : null) ?? marker;
 }
 
-/** The environment's provider is not the current one, or there is no provider (503). */
+/**
+ * The environment's provider is not the current one, or there is no provider (503); for an
+ * internal provider (`@device`), this kernel does not serve it.
+ */
 export const environmentUnavailable = (provider: string | null): ApiError =>
   new ApiError(
     "environment.unavailable",
     provider === null
       ? "No cloud sandbox is available in this deployment; ask the super admin to enable a sandbox plugin"
-      : `This environment is kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
+      : isInternalProvider(provider)
+        ? `This environment runs on a connected machine (${provider}), which this deployment does not serve`
+        : `This environment is kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
 
 /**
@@ -73,13 +80,15 @@ export const environmentUnavailable = (provider: string | null): ApiError =>
 export class EnvironmentAccess {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(SandboxProviders) private readonly providers: Pick<SandboxProviders, "current">,
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
   ) {}
 
   /**
    * The environment if `accountId` may use it in `orgId` now: `environment.not_found` when it is
    * missing, deleted, in another org or someone else's; `environment.unavailable` when its
-   * provider is not the current one (or there is none).
+   * provider is not the current one (or there is none). A `device` environment is usable while
+   * `@device` is registered: whether its machine is online is the relay's concern, not access.
    */
   async usable(
     orgId: string,
@@ -97,7 +106,13 @@ export class EnvironmentAccess {
       .where("e.deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw environmentNotFound();
-    const current = this.providers.current()?.plugin;
+    if (row.provider !== null && isInternalProvider(row.provider)) {
+      if (this.providers.forName(row.provider) === undefined) {
+        throw environmentUnavailable(row.provider);
+      }
+      return { id: row.id, provider: row.provider };
+    }
+    const current = this.providers.cloud()?.plugin;
     const provider = environmentProvider(
       {
         provider: row.provider,

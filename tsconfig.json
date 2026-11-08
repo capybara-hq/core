@@ -17,6 +17,9 @@
       "path": "packages/plugin-tools"
     },
     {
+      "path": "packages/device"
+    },
+    {
       "path": "tools/release"
     },
     {

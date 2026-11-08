@@ -27,10 +27,31 @@ export interface SandboxLimits {
   allowHosts: string[];
 }
 
+/** The absolute roots inside one instance (a device may place them anywhere on its host). */
+export interface SandboxRoots {
+  workspace: string;
+  skills: string;
+  tmp: string;
+}
+
+/** The roots every container-like provider uses; the same paths as {@link SANDBOX_ROOTS}. */
+export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots> = Object.freeze({
+  workspace: "/workspace",
+  skills: "/skills",
+  tmp: "/tmp",
+});
+
 /** The provider's instance handle. */
 export interface SandboxHandle {
   /** The provider's instance id. */
   id: string;
+  /** The instance's roots; absent means {@link DEFAULT_SANDBOX_ROOTS}. */
+  roots?: SandboxRoots;
+}
+
+/** The roots of an instance, falling back to {@link DEFAULT_SANDBOX_ROOTS}. */
+export function rootsOf(h: SandboxHandle): SandboxRoots {
+  return h.roots ?? DEFAULT_SANDBOX_ROOTS;
 }
 
 /** The provider's file system handle (an environment's files, independent of any instance). */
@@ -263,29 +284,54 @@ export interface SandboxProvider {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
-/** 校验沙箱内路径：返回错误列表，空数组表示合法。 */
-export function validateSandboxPath(p: string): string[] {
+/**
+ * The root-independent checks of a path inside an instance (non-empty, at most 4096 characters, no
+ * control characters or backslashes, absolute, no empty or `..` segments); returns the errors,
+ * empty when valid. {@link validateSandboxPath} adds root membership.
+ */
+export function validateSandboxPathShape(p: string): string[] {
   if (typeof p !== "string" || p.length === 0) return ["path must be a non-empty string"];
   if (p.length > MAX_PATH_LENGTH) return [`path must be at most ${MAX_PATH_LENGTH} characters`];
   if (CONTROL.test(p)) return ["path must not contain control characters"];
   if (p.includes("\\")) return ["path must not contain backslashes"];
   if (!p.startsWith("/")) return ["path must be absolute"];
   if (p.includes("//")) return ["path must not contain empty segments"];
-  const errors: string[] = [];
   for (const seg of p.split("/")) {
     let decoded = seg;
     try {
       decoded = decodeURIComponent(seg);
     } catch {
-      // 非法百分号编码按字面处理
+      // invalid percent-encoding is taken literally
     }
     if (seg === ".." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) {
-      errors.push("path must not contain '..' segments");
-      break;
+      return ["path must not contain '..' segments"];
     }
   }
-  if (!SANDBOX_ROOTS.some((r) => p === r || p.startsWith(`${r}/`))) {
-    errors.push(`path must be under ${SANDBOX_ROOTS.join(", ")}`);
+  return [];
+}
+
+/** A structural error after which {@link validateSandboxPath} stops (before the root check). */
+const STOPS = new Set([
+  "path must be a non-empty string",
+  `path must be at most ${MAX_PATH_LENGTH} characters`,
+  "path must not contain control characters",
+  "path must not contain backslashes",
+  "path must be absolute",
+  "path must not contain empty segments",
+]);
+
+/**
+ * Checks a path inside an instance; returns the errors, empty when valid: the
+ * {@link validateSandboxPathShape} checks, then root membership. `roots`: the instance's roots
+ * ({@link rootsOf}); absent means {@link SANDBOX_ROOTS}. The path must be one of them or under one.
+ */
+export function validateSandboxPath(p: string, roots?: SandboxRoots): string[] {
+  const errors = validateSandboxPathShape(p);
+  if (errors.some((e) => STOPS.has(e))) return errors;
+  const allowed: readonly string[] =
+    roots === undefined ? SANDBOX_ROOTS : [roots.workspace, roots.skills, roots.tmp];
+  if (!allowed.some((r) => p === r || p.startsWith(`${r}/`))) {
+    errors.push(`path must be under ${allowed.join(", ")}`);
   }
   return errors;
 }

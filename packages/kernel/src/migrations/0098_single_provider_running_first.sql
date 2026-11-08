@@ -1,11 +1,11 @@
 -- A deployment that already has two enabled providers of one single-provider extension point
 -- (sandbox, object-store, secret-store, config-source; enabled before the second enable was
--- refused) loads the one with the earliest `enabled_at` (0095). 0095 backfilled it from the audit
+-- refused) loads the one with the earliest `enabled_at` (0097). 0097 backfilled it from the audit
 -- or the install time, which can name a provider other than the one the replicas run now: the
 -- rolling deploy would switch the provider. Prefer what is running: of the enabled providers of a
 -- contested point, the one with a `loaded` replica status row (the most recent heartbeat) gets an
 -- `enabled_at` just before every other provider of that point. A point with no loaded provider
--- keeps the 0095 values. Idempotent: once the running provider is the earliest, nothing matches.
+-- keeps the 0097 values. Idempotent: once the running provider is the earliest, nothing matches.
 WITH provided AS (
   SELECT i.name, split_part(p.ref, '@', 1) AS point, i.enabled_at
     FROM extension_installs i
