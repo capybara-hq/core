@@ -372,7 +372,9 @@
     "payload_too_large": "The request is over the size limit.",
     "theme": {
       "invalid": "A theme of this plugin is invalid; fix the theme file or its fonts and logo and import the plugin again.",
-      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again."
+      "unreadable": "A theme of this plugin is not readable: some text does not stand out enough from its background. Fix the listed colors and import the plugin again.",
+      "platform_default": "This theme is the platform default. Choose another platform default theme in platform settings first, then narrow, disable or remove it.",
+      "id_taken": "Another theme with the same id is already on in that organization; switch it off or remove it first."
     },
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",

@@ -1,6 +1,6 @@
 // Component scope (plugin scope phase 2, Task 6; spec §5 rules 2, 5, 8, 10, 11, §13.5): when a platform
-// component (skill, agent template, connector template) is on in an org, offered to it, or locked on,
-// and which agents of an org use one. Pure predicates plus the reads they need; the usable sets
+// component (skill, agent template, connector template, theme) is on in an org, offered to it, or
+// locked on, and which agents of an org use one. Pure predicates plus the reads they need; the usable sets
 // (skills/usable.ts, agents/templates.ts), the component scope service and the plugin scope preview
 // all decide with the same predicates.
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -9,23 +9,13 @@ import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
 /** The kinds of platform components. */
 export type ComponentKind = "skill" | "agent_template" | "connector_template" | "theme";
 
-/**
- * The kinds the scope, switch, ownership and preview flows (and the HTTP routes over components)
- * walk. `theme` is not in it yet: its scope flows land with the themes plan's Task 7, which adds
- * it here.
- */
+/** The kinds the scope, switch, ownership and preview flows (and the component routes) walk. */
 export const COMPONENT_KINDS: readonly ComponentKind[] = [
   "skill",
   "agent_template",
   "connector_template",
+  "theme",
 ];
-
-/**
- * Thrown by the `theme` branches whose behavior later tasks of the themes plan fill in (import and
- * sync, scope and switches, resolution); none is reachable while `COMPONENT_KINDS` leaves `theme`
- * out.
- */
-export const themeNotImplemented = (): Error => new Error("theme components: not implemented yet");
 
 /** A component's own scope settings (ruling C2). */
 export interface ComponentScopeFacts {
@@ -577,6 +567,29 @@ export async function skillNameClashes(
     ],
     plugins: platform.map((c) => c.plugin ?? "platform"),
   };
+}
+
+/**
+ * The other live themes with id `name` that are on in the org (themes spec §6: theme ids are unique
+ * in an org's usable set, rule 10), excluding `component` itself.
+ */
+export async function themeIdClashes(
+  db: KernelSchemaDb,
+  orgId: string,
+  component: { id: string },
+  name: string,
+): Promise<ComponentRow[]> {
+  const others = (await loadComponents(db, "theme", { name })).filter((c) => c.id !== component.id);
+  if (others.length === 0) return [];
+  const st = await loadScopeState(db, "theme", others);
+  return others.filter((c) =>
+    componentOn(
+      c,
+      pluginFactsOf(st, c.itemId, orgId),
+      listedIn(st, c.id, orgId),
+      switchOf(st, c.id, orgId),
+    ),
+  );
 }
 
 /** A connector template's id from its manifest path (`./connectors/<id>.json`). */

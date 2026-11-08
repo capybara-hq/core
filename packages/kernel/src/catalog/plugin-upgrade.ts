@@ -29,6 +29,11 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { packagePath } from "../packages/tgz.js";
 import { StorageService } from "../storage/storage.service.js";
+import {
+  assertNotPlatformDefault,
+  type ThemePreview,
+  themesPreview,
+} from "../themes/theme-usage.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import type { PreparedTemplateUpdate, TemplateUpdateInput } from "../tools/connectors.service.js";
 import { ConnectorsService } from "../tools/connectors.service.js";
@@ -54,9 +59,11 @@ import {
   componentOn,
   connectorTemplatesOn,
   listedIn,
+  loadComponents,
   loadScopeState,
   pluginFactsOf,
   switchOf,
+  themeIdClashes,
 } from "./component-state.js";
 import { CatalogItemLock } from "./locks.js";
 import { itemPendingError, itemRemovedError } from "./ownership.js";
@@ -134,6 +141,11 @@ export interface PlatformUpdatePreview {
     needsApproval: boolean;
   } | null;
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /**
+   * The themes the update removes that are on in some org (themes spec §6): the orgs whose default
+   * each is and how many people picked it. Absent when no such theme is removed.
+   */
+  themes?: ThemePreview[];
   /**
    * An owner's update preview only ({@link PlatformPluginUpdater.previewForOwner}): the name of
    * every org the preview mentions, by id. An org admin cannot read other orgs, and these names
@@ -221,6 +233,8 @@ interface UpdateDiff {
   extension: ExtensionStep | null;
   connectors: ConnectorChange[];
   connectorOrgs: PlatformUpdateConnectorOrg[];
+  /** See {@link PlatformUpdatePreview.themes}. */
+  themes?: ThemePreview[];
   /** Skills whose content stays and whose pinned suggestion the target sets (by platform id). */
   suggest: Map<string, boolean>;
   contents: TargetContents;
@@ -1303,6 +1317,37 @@ export class PlatformPluginUpdater {
       );
     }
 
+    // Themes spec §7: an update never removes the platform default theme; rule 10 (§6): an added
+    // theme must not take an id already on where the plugin is on
+    const removedThemes = components
+      .filter((c) => c.kind === "theme" && c.change === "removed" && c.id !== null)
+      .map((c) => c.id as string);
+    await assertNotPlatformDefault(db, removedThemes, () => "gone");
+    const themeConflicts: { theme: string; orgId: string; themes: string[]; plugins: string[] }[] =
+      [];
+    for (const c of components) {
+      if (c.kind !== "theme" || c.change !== "added") continue;
+      for (const orgId of onOrgs) {
+        const clash = await themeIdClashes(db, orgId, { id: "" }, c.name);
+        if (clash.length > 0) {
+          themeConflicts.push({
+            theme: c.name,
+            orgId,
+            themes: clash.map((x) => x.id),
+            plugins: clash.map((x) => x.plugin ?? "platform"),
+          });
+        }
+      }
+    }
+    if (themeConflicts.length > 0) {
+      throw new ApiError(
+        "theme.id_taken",
+        `The update adds themes whose ids are already on in organizations where the plugin is on (${[...new Set(themeConflicts.map((c) => c.theme))].join(", ")}); switch those themes off there first`,
+        themeConflicts,
+      );
+    }
+    const themes = await this.themesLost(removedThemes);
+
     // Pinned copies (in orgs where the component is on) and removed components agents use
     for (const kind of ["skill", "agent_template"] as const) {
       const mine = components.filter((c) => c.kind === kind && c.id !== null);
@@ -1427,6 +1472,8 @@ export class PlatformPluginUpdater {
           reset: c.credentialsReset,
         })),
         connectorOrgs,
+        // only when present: a diff without themes keeps the hash it had before themes
+        ...(themes !== undefined && { themes }),
       }),
     );
     return {
@@ -1438,6 +1485,7 @@ export class PlatformPluginUpdater {
       extension,
       connectors,
       connectorOrgs,
+      ...(themes !== undefined && { themes }),
       suggest,
       contents,
       dependencies,
@@ -1679,6 +1727,27 @@ export class PlatformPluginUpdater {
     return { skills, agentTemplates, templates, themes };
   }
 
+  /** The `themes` block of the preview: the orgs each of the removed themes `ids` is on in. */
+  private async themesLost(ids: string[]): Promise<ThemePreview[] | undefined> {
+    if (ids.length === 0) return undefined;
+    const comps = await loadComponents(this.db, "theme", { ids });
+    const st = await loadScopeState(this.db, "theme", comps);
+    const orgs = await this.liveOrgs();
+    const lost = new Map<string, Set<string>>();
+    for (const c of comps) {
+      const on = orgs.filter((orgId) =>
+        componentOn(
+          c,
+          pluginFactsOf(st, c.itemId, orgId),
+          listedIn(st, c.id, orgId),
+          switchOf(st, c.id, orgId),
+        ),
+      );
+      lost.set(c.id, new Set(on));
+    }
+    return themesPreview(this.db, lost);
+  }
+
   /** The orgs where the plugin is on: a live install (builtin: every live org). */
   private async pluginOrgs(itemId: string, builtin: boolean): Promise<string[]> {
     if (builtin) return this.liveOrgs();
@@ -1716,6 +1785,7 @@ function previewOf(d: UpdateDiff): PlatformUpdatePreview {
     components: d.components,
     extension: extensionView(d.extension),
     connectorOrgs: d.connectorOrgs,
+    ...(d.themes !== undefined && { themes: d.themes }),
     diffHash: d.diffHash,
   };
 }

@@ -74,10 +74,6 @@ export const ERROR_CODES = {
   "bootstrap.missing_file": 500,
   "catalog.invalid_manifest": 422,
   "catalog.legacy_format": 422,
-  /** A theme of an imported plugin fails its file or asset checks (themes spec §4, §5). */
-  "theme.invalid": 400,
-  /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
-  "theme.unreadable": 400,
   "catalog.no_extension": 409,
   "catalog.dependency_unresolved": 409,
   "catalog.dependency_disabled": 409,
@@ -100,6 +96,20 @@ export const ERROR_CODES = {
   /** What deleting an org's own plugin does changed since its preview (P3-19). */
   "catalog.preview_stale": 409,
   "catalog.name_conflict": 409,
+  /** A theme of an imported plugin fails its file or asset checks (themes spec §4, §5). */
+  "theme.invalid": 400,
+  /** A theme of an imported plugin fails the readability checks of its merged schemes (§5). */
+  "theme.unreadable": 400,
+  /**
+   * The change would take the platform default theme (`uiTheme`) away from an org: narrowing,
+   * disabling, removing it or its plugin (§7); details `[{ theme, setting: "uiTheme" }]`.
+   */
+  "theme.platform_default": 409,
+  /**
+   * Another theme with the same id is already on in an org the change would turn this one on in
+   * (§6, rule 10); details `[{ theme, orgId, themes, plugins }]`.
+   */
+  "theme.id_taken": 409,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,

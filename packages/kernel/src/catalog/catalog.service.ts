@@ -18,6 +18,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { sameRepository } from "../packages/provenance.js";
+import { assertNotPlatformDefault } from "../themes/theme-usage.js";
 import {
   countInstalls,
   itemConfirmations,
@@ -159,6 +160,7 @@ export interface ComponentCounts {
   skills: number;
   connectorTemplates: number;
   agentTemplates: number;
+  themes: number;
 }
 
 /**
@@ -809,7 +811,7 @@ export class CatalogService {
    * (pre-flight F14: the super admin's remove and an owner's delete or an org deletion,
    * `OwnedItems.transferOrRemove`, share it): `deleted_at` set, a pending version cleared, the
    * extension name claim of a first upload still waiting released (ruling P3-37, F10), its themes
-   * soft-deleted, pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
+   * soft-deleted (refused with 409 `theme.platform_default` while one is the platform default), pending requests cancelled, audit `catalog.removed` (`actor` null: the kernel). Returns the removed
    * item's name, or null when it is gone already.
    */
   @Transactional({ propagation: "mandatory" })
@@ -820,6 +822,19 @@ export class CatalogService {
   ): Promise<{ name: string } | null> {
     const t = this.db;
     const now = sql<Date>`now()` as unknown as Date;
+    // Its themes go with it: refused while one is the platform default (themes spec §7), before
+    // anything is written
+    const themes = await t
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("catalog_item_id", "=", itemId)
+      .where("deleted_at", "is", null)
+      .execute();
+    await assertNotPlatformDefault(
+      t,
+      themes.map((r) => r.id),
+      () => "gone",
+    );
     const row = await t
       .updateTable("catalog_items")
       .set({

@@ -44,6 +44,7 @@ import {
   skillConflicts,
 } from "../skills/skills.service.js";
 import { StorageService } from "../storage/storage.service.js";
+import { type ThemePreview, themesPreview } from "../themes/theme-usage.js";
 import type {
   ConnectorDetail,
   CreateConnectorInput,
@@ -76,6 +77,7 @@ import {
   pluginFactsOf,
   referenceIds,
   switchOf,
+  themeIdClashes,
 } from "./component-state.js";
 import {
   assertItemInstallable,
@@ -154,6 +156,11 @@ export interface UninstallPreview {
   components: { kind: ComponentKind; ref: string; created: boolean }[];
   kept: UninstallReport["kept"];
   agents: { id: string; name: string; uses: { kind: ComponentKind; ref: string }[] }[];
+  /**
+   * The plugin's themes on in the org through it (`follow`) that go off with it (themes spec §6):
+   * whether it is the org's default and how many people picked it. Absent when there are none.
+   */
+  themes?: ThemePreview[];
 }
 
 /** The confirm hash of an uninstall preview: sha256 over its sorted JSON (the scheme of `diffHash`). */
@@ -616,6 +623,7 @@ export class PluginInstaller {
   ): Promise<{ actions: OrgAction[] }> {
     const plan = await this.plan(orgId, actor, itemId, version, null, "", undefined);
     await this.assertNoSkillConflicts(orgId, plan);
+    await this.assertNoThemeClashes(orgId, itemId);
     return { actions: planActions(plan) };
   }
 
@@ -635,6 +643,7 @@ export class PluginInstaller {
     const { switchOn, via, ...actorOpts } = opts;
     const plan = await this.plan(orgId, actor, itemId, version, input, "", undefined);
     await this.assertNoSkillConflicts(orgId, plan);
+    await this.assertNoThemeClashes(orgId, itemId);
     let installId: string;
     try {
       installId = await this.execute(orgId, actor, plan, actorOpts, {
@@ -679,6 +688,45 @@ export class PluginInstaller {
   private async assertNoSkillConflicts(orgId: string, plan: InstallPlan): Promise<void> {
     const conflicts = await planSkillConflicts(this.db, orgId, plan);
     if (conflicts.length > 0) throw skillConflictError(conflicts);
+  }
+
+  /**
+   * Refuses installing a plugin whose themes would come on in the org (they follow it) while
+   * another theme with the same id is on there (themes spec §6, rule 10): 409 `theme.id_taken`,
+   * details `[{ theme, orgId, themes, plugins }]`, before anything is written.
+   */
+  private async assertNoThemeClashes(orgId: string, itemId: string): Promise<void> {
+    const themes = await loadComponents(this.db, "theme", { itemId });
+    if (themes.length === 0) return;
+    const st = await loadScopeState(this.db, "theme", themes);
+    const conflicts: { theme: string; orgId: string; themes: string[]; plugins: string[] }[] = [];
+    for (const c of themes) {
+      const p = pluginFactsOf(st, c.itemId, orgId);
+      const listed = listedIn(st, c.id, orgId);
+      const sw = switchOf(st, c.id, orgId);
+      if (
+        componentOn(c, p, listed, sw) ||
+        !componentOn(c, p && { ...p, installed: true }, listed, sw)
+      ) {
+        continue;
+      }
+      const clash = await themeIdClashes(this.db, orgId, c, c.name);
+      if (clash.length > 0) {
+        conflicts.push({
+          theme: c.name,
+          orgId,
+          themes: clash.map((x) => x.id),
+          plugins: clash.map((x) => x.plugin ?? "platform"),
+        });
+      }
+    }
+    if (conflicts.length > 0) {
+      throw new ApiError(
+        "theme.id_taken",
+        `The plugin's themes would come on next to themes with the same id already on in this organization (${conflicts.map((c) => c.theme).join(", ")}); switch those themes off first`,
+        conflicts,
+      );
+    }
   }
 
   /** The connector checks of templates against what this replica loads right now. */
@@ -2514,8 +2562,26 @@ export class PluginInstaller {
           }
         }
       }
+      const themes = await loadComponents(t, "theme", { itemId });
+      const tst = await loadScopeState(t, "theme", themes);
+      for (const c of themes) {
+        if (
+          c.scopeMode === "follow" &&
+          componentOn(
+            c,
+            pluginFactsOf(tst, c.itemId, orgId),
+            listedIn(tst, c.id, orgId),
+            switchOf(tst, c.id, orgId),
+          )
+        ) {
+          lostThemes.set(c.id, new Set([orgId]));
+        }
+      }
     };
+    /** The themes that go off in the org with the install (and the dependencies it removes). */
+    const lostThemes = new Map<string, Set<string>>();
     await visit(row.item_id, comps, true, new Set([installId]));
+    const themes = await themesPreview(t, lostThemes);
     return {
       installId,
       name: row.name,
@@ -2525,6 +2591,7 @@ export class PluginInstaller {
       agents: [...used.values()]
         .map((a) => ({ ...a, uses: a.uses.sort((x, y) => x.ref.localeCompare(y.ref)) }))
         .sort((x, y) => x.id.localeCompare(y.id)),
+      ...(themes !== undefined && { themes }),
     };
   }
 
