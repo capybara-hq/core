@@ -102,6 +102,7 @@ import {
 } from "../tools/oauth/oauth.controller.js";
 import { QuestionsController } from "../tools/questions.controller.js";
 import { ToolsModule } from "../tools/tools.module.js";
+import { AdminUiController } from "../ui/admin-ui.controller.js";
 import { UiModule } from "../ui/ui.module.js";
 import { UiController } from "../ui/views.controller.js";
 
@@ -155,6 +156,7 @@ const CONTROLLERS: Type[] = [
   ChannelConnectionsController,
   DirectorySyncController,
   UiController,
+  AdminUiController,
   FilePreviewersController,
   ExtensionPointDefaultsController,
   TrajectoryController,

@@ -19,6 +19,7 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 const PLUGIN_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const CLAIM_KEYS = new Set([
   "plugin",
+  "scope",
   "orgId",
   "accountId",
   "role",
@@ -43,20 +44,39 @@ function decodeStrict(s: string): Buffer | null {
   return buf.toString("base64url") === s ? buf : null;
 }
 
-/** 逐字段核对声明：只认已知字段、类型正确，返回只含已知字段的新对象。 */
+/**
+ * 逐字段核对声明：只认已知字段、类型正确，返回只含已知字段的新对象。The scope decides the shape:
+ * `"platform"` exactly when `orgId` is absent and `role` is `"superAdmin"`, with no
+ * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles.
+ */
 function parseClaims(v: unknown): EmbedClaims | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const c = v as Record<string, unknown>;
   if (Object.keys(c).some((k) => !CLAIM_KEYS.has(k))) return null;
   if (typeof c.plugin !== "string" || !PLUGIN_RE.test(c.plugin)) return null;
-  if (!isId(c.orgId) || !isId(c.accountId) || !isId(c.contribution)) return null;
-  if (!ROLES.has(c.role)) return null;
+  if (!isId(c.accountId) || !isId(c.contribution)) return null;
+  if (typeof c.exp !== "number" || !Number.isSafeInteger(c.exp)) return null;
+  if (c.scope === "platform") {
+    if (c.orgId !== undefined || c.role !== "superAdmin") return null;
+    if (c.conversationId !== undefined || c.agentId !== undefined || c.fileId !== undefined) {
+      return null;
+    }
+    return {
+      plugin: c.plugin,
+      scope: "platform",
+      accountId: c.accountId,
+      role: "superAdmin",
+      contribution: c.contribution,
+      exp: c.exp,
+    };
+  }
+  if (c.scope !== "org" || !isId(c.orgId) || !ROLES.has(c.role)) return null;
   if (c.conversationId !== undefined && !isId(c.conversationId)) return null;
   if (c.agentId !== undefined && (!isId(c.agentId) || c.conversationId !== undefined)) return null;
   if (c.fileId !== undefined && (!isId(c.fileId) || c.conversationId === undefined)) return null;
-  if (typeof c.exp !== "number" || !Number.isSafeInteger(c.exp)) return null;
   return {
     plugin: c.plugin,
+    scope: "org",
     orgId: c.orgId,
     accountId: c.accountId,
     role: c.role as EmbedClaims["role"],

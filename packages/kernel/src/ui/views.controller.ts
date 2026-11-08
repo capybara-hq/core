@@ -20,10 +20,10 @@ import {
 import { OrgUiStreams } from "./ui-stream.js";
 import { type UiContributionItem, UiViews } from "./views.js";
 
-const BEARER_RE = /^Bearer\s+(\S+)$/i;
+export const BEARER_RE = /^Bearer\s+(\S+)$/i;
 
 /** 嵌入页的同源代理前缀（网页 `/plugin-ui/<plugin>/<rest>` → 内核 `/plugins/<plugin>/ui/<rest>`）。 */
-const embedSrc = (plugin: string, path: string) =>
+export const embedSrc = (plugin: string, path: string) =>
   `/plugin-ui/${plugin}/${path.replace(/^\/ui\//, "")}`;
 
 class UiContributionsQueryDto extends createZodDto(ContributionsQuery, "UiContributionsQuery") {}
@@ -155,6 +155,7 @@ export class UiController {
     });
     const { token, expiresAt } = this.embeds.issue({
       plugin: target.plugin,
+      scope: "org",
       orgId: org.orgId,
       accountId: p.account.id,
       role: org.role,

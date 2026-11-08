@@ -15,7 +15,8 @@ const named =
  * with an action answering a toast; embeds in `platform.page`, `org.page` and
  * `agent.detail.section`, whose data route answers the verified embed claims (401 without); a view
  * `lost` in a slot the catalog does not know and a view `old-page` at `org.page@2` (both dropped at
- * load, the extension still loads) and a tool `ping`.
+ * load, the extension still loads) and a tool `ping`. Route `POST /invalidate` calls
+ * `ctx.ui.invalidate` with the request body (204; 400 with the error message when it throws).
  */
 export default defineExtension({
   name: "ui-slots",
@@ -66,6 +67,7 @@ export default defineExtension({
     http: [
       { method: "GET", path: "/ui/platform" },
       { method: "GET", path: "/ui/platform-data" },
+      { method: "POST", path: "/invalidate" },
     ],
     ui: {
       views: ["notes", "org-admin", "platform-home", "page", "lost", "old-page"],
@@ -93,6 +95,16 @@ export default defineExtension({
       const claims = await ctx.ui.verifyEmbedToken(token);
       if (claims === null) return new Response(null, { status: 401 });
       return Response.json(claims);
+    });
+    ctx.http.route("POST", "/invalidate", async (req) => {
+      try {
+        await ctx.ui.invalidate(
+          (await req.json()) as { orgId?: string; conversationId?: string; contribution: string },
+        );
+      } catch (e) {
+        return new Response((e as Error).message, { status: 400 });
+      }
+      return new Response(null, { status: 204 });
     });
   },
 });

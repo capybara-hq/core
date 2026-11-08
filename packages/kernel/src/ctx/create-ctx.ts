@@ -46,6 +46,7 @@ import type { EmbedTokens } from "../ui/embed-token.js";
 import {
   canUseSlot,
   orgUiTopic,
+  PLATFORM_UI_TOPIC,
   PluginUiRegistration,
   type UiActionHandler,
   type UiBusMessage,
@@ -144,6 +145,24 @@ async function currentEmbedRole(
     .where("accounts.status", "=", "active")
     .executeTakeFirst();
   return row?.role;
+}
+
+/**
+ * Whether the account is, right now, an active super admin (one query): what a platform embed
+ * token and the platform refresh stream re-check.
+ */
+export async function currentPlatformAccount(
+  db: KernelDeps["db"],
+  accountId: string,
+): Promise<boolean> {
+  const row = await kernelDb(db)
+    .selectFrom("accounts")
+    .select("accounts.id")
+    .where("accounts.id", "=", accountId)
+    .where("accounts.status", "=", "active")
+    .where("accounts.is_super_admin", "=", true)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 /** `ui.invalidate` 目标的一条查询：插件在该组织启用，且（带对话时）对话属于该组织。 */
@@ -416,6 +435,10 @@ export function createExtensionContext(
   const uiSlots = new Map<string, UiSlotSpec>(
     uiResolution.resolved.map((r) => [r.contribution.id, r.slot]),
   );
+  /** Ids of the extension's `platform.page` contributions (their invalidate takes no orgId). */
+  const platformUi: ReadonlySet<string> = new Set(
+    [...uiSlots].filter(([, s]) => s.id === "platform.page").map(([id]) => id),
+  );
 
   type Entry = { plugin: string; impl: unknown };
   /** 校验能力可取用（非 brokered、已在清单声明），返回其登记信息。 */
@@ -651,9 +674,15 @@ export function createExtensionContext(
         });
       },
       // 目标先核对（一条查询）：插件在 orgId 启用；带对话时对话属于 orgId。不满足就只记 debug、不发
-      // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）
+      // （插件拿着过期或别的组织的 id 调用不是错误，但不能借它往别的组织的流里发刷新）。A `platform.page`
+      // contribution takes no orgId and refreshes the platform stream (super admins only)
       async invalidate(target) {
-        const t = uiReg.target(target);
+        const t = uiReg.target(target, platformUi);
+        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
+        if (t.scope === "platform") {
+          await kernelBus.publish(PLATFORM_UI_TOPIC, msg);
+          return;
+        }
         if (!(await invalidateTargetOk(deps.db, name, t.orgId, t.conversationId))) {
           deps.log.debug?.(
             "plugin ui invalidate ignored: plugin not enabled or conversation not in org",
@@ -666,7 +695,6 @@ export function createExtensionContext(
           );
           return;
         }
-        const msg: UiBusMessage = { kind: "ui", plugin: name, contribution: t.contribution };
         await kernelBus.publish(
           t.conversationId !== undefined
             ? conversationTopic(t.conversationId)
@@ -676,17 +704,23 @@ export function createExtensionContext(
       },
       // 只认签给本插件、未过期、未篡改的令牌（见 ui/embed-token.ts）；再用一条查询核对此刻：本插件仍在该组织
       // 启用、组织未删除、账号 active 且仍是成员（每次查 PG、不缓存：停用插件、离职、停用账号后已签出的令牌立即失效）。
-      // 返回的 role 是此刻的角色；令牌在此刻的角色低于贡献所在位置的 minRole 时失效（A38, UI slots spec §7）。其余一律 null
+      // 返回的 role 是此刻的角色；令牌在此刻的角色低于贡献所在位置的 minRole 时失效（A38, UI slots spec §7）。
+      // A platform token: the contribution is a `platform.page` and the account is still an active
+      // super admin. A token of one scope never verifies for the other's slots. 其余一律 null
       async verifyEmbedToken(token) {
         const claims = embedTokens.verify(token, name);
         if (claims === null) return null;
-        const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
-        if (role === undefined) return null;
+        const slot = uiSlots.get(claims.contribution);
+        if (claims.scope === "platform") {
+          if (slot?.id !== "platform.page") return null;
+          return (await currentPlatformAccount(deps.db, claims.accountId)) ? claims : null;
+        }
+        if (claims.scope !== "org" || claims.orgId === undefined) return null;
         // the contribution's slot as loaded now: never `platform.page` through an org token, and the
         // current role still meets the slot's minRole (a demoted caller's token stops working)
-        const slot = uiSlots.get(claims.contribution);
-        if (slot === undefined || slot.id === "platform.page" || !canUseSlot(slot, role))
-          return null;
+        if (slot === undefined || slot.id === "platform.page") return null;
+        const role = await currentEmbedRole(deps.db, name, claims.orgId, claims.accountId);
+        if (role === undefined || !canUseSlot(slot, role)) return null;
         return { ...claims, role };
       },
     },

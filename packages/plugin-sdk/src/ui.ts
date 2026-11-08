@@ -391,22 +391,34 @@ export function validateUiView(v: unknown): string[] {
  */
 export type UiRole = "owner" | "admin" | "member" | "guest";
 
-/** 内核调用插件 `render` 时传入的参数（身份由内核鉴权后给出，插件拿不到用户的会话凭据）。 */
-export interface UiRenderArgs {
-  orgId: string;
+/** The render args every scope shares (identity comes from the kernel's auth, never the caller's credentials). */
+interface UiRenderArgsBase {
   accountId: string;
-  /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
-  role: UiRole;
   /** The catalog slot the contribution resolved to. */
   slot: UiSlotId;
+  locale: Locale;
+  signal: AbortSignal;
+  /**
+   * The extension's effective deployment config: for an org, the platform's deployment config
+   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
+   * platform's config (equal to `ctx.config`) while the org follows it; for the platform scope,
+   * the platform's config. Use it, not `ctx.config`, for work done for this org. Optional in the
+   * type so older extensions compile; the kernel always passes it.
+   */
+  config?: unknown;
+}
+
+/** 内核调用插件 `render` 时传入的参数，组织内的位置（会话、智能体、组织、文件）。 */
+export interface UiOrgRenderArgs extends UiRenderArgsBase {
   /** The scope of {@link slot}: which of the context ids below are set. */
-  scope: UiSlotScope;
+  scope: Exclude<UiSlotScope, "platform">;
+  orgId: string;
+  /** 调用者此刻在 `orgId` 的角色（内核按成员关系填，插件可据此收紧按钮等，见 {@link UiRole}）。 */
+  role: UiRole;
   /** 仅对话视图。 */
   conversationId?: string;
   /** Only an agent view (`agent.detail.section`): an agent of `orgId` the caller can read. */
   agentId?: string;
-  locale: Locale;
-  signal: AbortSignal;
   /** A panel opened from an open target: the block or item `id` to scroll to. */
   item?: string;
   /**
@@ -415,33 +427,55 @@ export interface UiRenderArgs {
    * recorded this very card (same extension, view and key); scope lookups by `conversationId` too.
    */
   card?: { callId: string; key?: string };
-  /**
-   * The extension's effective deployment config for this org: the platform's deployment config
-   * with the org's copy applied to the overridable fields (`orgAccess(…, "override")`), or the
-   * platform's config (equal to `ctx.config`) while the org follows it. Use it, not `ctx.config`,
-   * for work done for this org. Optional in the type so older extensions compile; the kernel
-   * always passes it.
-   */
-  config?: unknown;
 }
 
-/** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */
-export interface UiActionArgs extends UiRenderArgs {
+/**
+ * The render args of a `platform.page` contribution: rendered for a super admin in the admin
+ * console, with no org (and so no org role, conversation or agent).
+ */
+export interface UiPlatformRenderArgs extends UiRenderArgsBase {
+  scope: "platform";
+  orgId?: undefined;
+  role: "superAdmin";
+  conversationId?: undefined;
+  agentId?: undefined;
+  item?: undefined;
+  card?: undefined;
+}
+
+/** 内核调用插件 `render` 时传入的参数：narrow on `scope` (`"platform"` has no `orgId`). */
+export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
+
+/** What a button or form submit adds to the render args. */
+interface UiActionInput {
   actionId: string;
   payload?: unknown;
   answer?: FormAnswer;
 }
 
+/** An action of an org-scope view. */
+export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {}
+/** An action of a `platform.page` view. */
+export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {}
+/** 视图里的按钮或表单提交：`actionId` 来自块；表单提交时带 `answer`。 */
+export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
+
 /** 动作结果：一条提示，或一份新的视图。 */
 export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
 
-/** 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）。`exp` 为 Unix 秒。 */
+/**
+ * 嵌入令牌里的声明（经 `ctx.ui.verifyEmbedToken` 校验后可信）。`exp` 为 Unix 秒。`scope` is `"platform"`
+ * exactly when `orgId` is absent and `role` is `"superAdmin"` (a `platform.page` embed, which names
+ * no conversation, agent or file).
+ */
 export interface EmbedClaims {
   plugin: string;
-  orgId: string;
+  scope: "org" | "platform";
+  /** The org of an org-scope token; absent for the platform scope. */
+  orgId?: string;
   accountId: string;
   /** 调用者的角色：签发时写入；`ctx.ui.verifyEmbedToken` 返回校验时刻的当前角色。 */
-  role: UiRole;
+  role: UiRole | "superAdmin";
   conversationId?: string;
   /** Only an agent embed's token (`agent.detail.section`): the agent it was issued for. */
   agentId?: string;

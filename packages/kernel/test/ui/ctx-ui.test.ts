@@ -229,6 +229,7 @@ describe("ctx.ui.invalidate", () => {
   ) =>
     new EmbedTokens(ring).issue({
       plugin: over.plugin ?? "ui-test",
+      scope: "org",
       orgId: c.orgId,
       accountId: c.accountId,
       contribution: over.contribution ?? "board",

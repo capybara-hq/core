@@ -69,3 +69,9 @@ export const EmbedTokenBody = z
     fileId: z.uuid().optional(),
   })
   .default({});
+
+/** `GET /api/v1/admin/ui/views/:plugin/:id?locale=`: a platform page takes no context id. */
+export const PlatformViewQuery = z.object({ locale: Locale });
+
+/** `POST /api/v1/admin/ui/actions/:plugin/:id`: an action of a platform page (no context id). */
+export const PlatformActionBody = ActionBody.omit({ conversationId: true, agentId: true });

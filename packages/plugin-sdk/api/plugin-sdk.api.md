@@ -886,9 +886,10 @@ export interface EmbedClaims {
     conversationId?: string;
     exp: number;
     fileId?: string;
-    orgId: string;
+    orgId?: string;
     plugin: string;
-    role: UiRole;
+    role: UiRole | "superAdmin";
+    scope: "org" | "platform";
 }
 
 // @public
@@ -1062,7 +1063,7 @@ export interface ExtensionContext {
         view(id: string, render: (args: UiRenderArgs) => Promise<UiView>): void;
         action(id: string, handler: (args: UiActionArgs) => Promise<UiActionResult>): void;
         invalidate(target: {
-            orgId: string;
+            orgId?: string;
             conversationId?: string;
             contribution: string;
         }): Promise<void>;
@@ -3056,11 +3057,7 @@ export const UI_SLOT_IDS: readonly ["conversation.panel", "conversation.properti
 export const UI_SLOTS: readonly UiSlotSpec[];
 
 // @public
-export interface UiActionArgs extends UiRenderArgs {
-    actionId: string;
-    answer?: FormAnswer;
-    payload?: unknown;
-}
+export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 
 // @public
 export type UiActionResult = {
@@ -3168,27 +3165,48 @@ export interface UiOpen {
     item?: string;
 }
 
+// Warning: (ae-forgotten-export) The symbol "UiActionInput" needs to be exported by the entry point index.d.ts
+//
 // @public
-export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
+export interface UiOrgActionArgs extends UiOrgRenderArgs, UiActionInput {
+}
 
+// Warning: (ae-forgotten-export) The symbol "UiRenderArgsBase" needs to be exported by the entry point index.d.ts
+//
 // @public
-export interface UiRenderArgs {
-    accountId: string;
+export interface UiOrgRenderArgs extends UiRenderArgsBase {
     agentId?: string;
     card?: {
         callId: string;
         key?: string;
     };
-    config?: unknown;
     conversationId?: string;
     item?: string;
-    locale: Locale;
     orgId: string;
     role: UiRole;
-    scope: UiSlotScope;
-    signal: AbortSignal;
-    slot: UiSlotId;
+    scope: Exclude<UiSlotScope, "platform">;
 }
+
+// @public
+export type UiPlace = "conversation" | "panel" | "section" | "inline" | "page" | "file-preview";
+
+// @public
+export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInput {
+}
+
+// @public
+export interface UiPlatformRenderArgs extends UiRenderArgsBase {
+    agentId?: undefined;
+    card?: undefined;
+    conversationId?: undefined;
+    item?: undefined;
+    orgId?: undefined;
+    role: "superAdmin";
+    scope: "platform";
+}
+
+// @public
+export type UiRenderArgs = UiOrgRenderArgs | UiPlatformRenderArgs;
 
 // @public
 export type UiRole = "owner" | "admin" | "member" | "guest";

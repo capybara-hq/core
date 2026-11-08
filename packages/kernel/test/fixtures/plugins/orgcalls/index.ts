@@ -110,11 +110,11 @@ export default defineExtension({
     ctx.provide("web-fetch@1", fetch);
     ctx.provide("directory@1", directory);
     ctx.ui.view("page", async (args) => {
-      record("ui.render", args.orgId, args.config);
+      record("ui.render", args.orgId ?? "platform", args.config);
       return { blocks: [{ type: "text", markdown: JSON.stringify(shown(args.config)) }] };
     });
     ctx.ui.action("page", async (args) => {
-      record("ui.action", args.orgId, args.config);
+      record("ui.action", args.orgId ?? "platform", args.config);
       return { toast: t("好", "ok") };
     });
     ctx.hooks.on(

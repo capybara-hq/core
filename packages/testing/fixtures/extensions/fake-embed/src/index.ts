@@ -120,9 +120,15 @@ export default defineExtension({
     ui: { embeds: ["panel", "panel-conv"] },
   },
   setup(ctx) {
-    const auth = async (req: Request): Promise<EmbedClaims | null> => {
+    /** An org-scope token's claims (every contribution here is in an org slot), or null. */
+    const auth = async (
+      req: Request,
+    ): Promise<(EmbedClaims & { scope: "org"; orgId: string }) | null> => {
       const m = BEARER_RE.exec(req.headers.get("authorization") ?? "");
-      return m?.[1] === undefined ? null : ctx.ui.verifyEmbedToken(m[1]);
+      const claims = m?.[1] === undefined ? null : await ctx.ui.verifyEmbedToken(m[1]);
+      return claims?.scope === "org" && claims.orgId !== undefined
+        ? { ...claims, scope: "org", orgId: claims.orgId }
+        : null;
     };
     const page = async () =>
       new Response(PAGE, { headers: { "content-type": "text/html; charset=utf-8" } });

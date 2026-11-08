@@ -698,6 +698,31 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
   },
+  {
+    route: "GET /api/v1/admin/ui/contributions",
+    category: "internal",
+    reason: "Navigation entries of the admin console (platform pages)",
+  },
+  {
+    route: "GET /api/v1/admin/ui/views/:plugin/:id",
+    category: "transport",
+    reason: "Renders an extension UI view for the web app",
+  },
+  {
+    route: "POST /api/v1/admin/ui/actions/:plugin/:id",
+    category: "transport",
+    reason: "Runs an extension UI action from the web app",
+  },
+  {
+    route: "POST /api/v1/admin/ui/embeds/:plugin/:id/token",
+    category: "transport",
+    reason: "Issues an embed token for an iframe",
+  },
+  {
+    route: "GET /api/v1/admin/ui/stream",
+    category: "transport",
+    reason: "Server-sent event stream of UI invalidations",
+  },
   // themes (themes spec §8-§9)
   {
     route: "GET /api/v1/themes/:id/:version/theme.css",

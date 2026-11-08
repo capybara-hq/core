@@ -67,7 +67,7 @@ interface UiViewsDeps {
    * `render` / `action` as `config`; when it is not valid the block fails alone (409
    * `extension.needs_config`) and the extension is not called.
    */
-  effective: Pick<EffectiveConfigs, "get">;
+  effective: Pick<EffectiveConfigs, "get" | "platform">;
   /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`), queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /** 调用者能否访问这个对话（与会话 SSE 流同一判定）。 */
@@ -102,8 +102,9 @@ interface UiViewsDeps {
   log: Pick<Logger, "warn">;
 }
 
-/** 取视图 / 执行动作的调用者与目标（身份来自内核鉴权）。 */
-export interface UiTarget {
+/** 取视图 / 执行动作的调用者与目标（身份来自内核鉴权）: an org route's. */
+export interface UiOrgTarget {
+  scope?: "org";
   orgId: string;
   accountId: string;
   /** 调用者在 `orgId` 的角色（OrgGuard 查出的成员关系）。 */
@@ -119,6 +120,56 @@ export interface UiTarget {
   /** An inline card: the tool call it hangs off and its `ToolResult.card.key`. */
   card?: { callId: string; key?: string };
 }
+
+/** A super admin's request on the org-less admin UI routes (`platform.page` only). */
+export interface UiPlatformTarget {
+  scope: "platform";
+  accountId: string;
+  plugin: string;
+  id: string;
+  locale: "zh" | "en";
+}
+
+/** The caller and target of a view, action or embed: an org route's or the platform's. */
+export type UiTarget = UiOrgTarget | UiPlatformTarget;
+
+/** {@link UiTarget} without `locale`, per variant (what `embed` takes). */
+export type UiEmbedRequest =
+  | (Omit<UiOrgTarget, "locale"> & { fileId?: string })
+  | Omit<UiPlatformTarget, "locale">;
+
+/** The log field naming where a target is: its org, or the platform scope. */
+const whereOf = (t: UiTarget): { orgId: string } | { scope: "platform" } =>
+  t.scope === "platform" ? { scope: "platform" } : { orgId: t.orgId };
+
+/** The args passed to the extension's `render` / `action`, without the signal. */
+type ResolvedArgs =
+  | {
+      scope: Exclude<UiSlotScope, "platform">;
+      orgId: string;
+      accountId: string;
+      role: OrgRole;
+      slot: UiSlotId;
+      locale: UiTarget["locale"];
+      config: unknown;
+      conversationId?: string;
+      agentId?: string;
+      item?: string;
+      card?: { callId: string; key?: string };
+    }
+  | {
+      scope: "platform";
+      orgId?: undefined;
+      accountId: string;
+      role: "superAdmin";
+      slot: UiSlotId;
+      locale: UiTarget["locale"];
+      config: unknown;
+      conversationId?: undefined;
+      agentId?: undefined;
+      item?: undefined;
+      card?: undefined;
+    };
 
 /**
  * The card a `tool_result` of the conversation recorded for `callId`, or null (the inline-card
@@ -168,6 +219,35 @@ export function dropForeignOpens(view: UiView, panels: ReadonlySet<string>): UiV
   return { ...rest, ...(open !== undefined && ok(open) && { open }), blocks };
 }
 
+/**
+ * Lists contributions for a listing route: no alias, a view's render registered; base order
+ * (spec §5): extension name, then manifest order (stable).
+ */
+function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
+  return entries
+    .filter(
+      (c) => c.contribution.aliasOf === undefined && (c.contribution.kind === "embed" || c.render),
+    )
+    .map((c, i) => ({ c, i }))
+    .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
+    .map(({ c: { plugin, contribution: c, slot: s, after } }) => ({
+      plugin,
+      id: c.id,
+      title: c.title,
+      slot: s.id,
+      ...(after !== undefined && { after }),
+      kind: c.kind,
+      ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
+      icon: c.icon ?? "puzzle",
+    }));
+}
+
+/** A platform route's contribution: found, and in `platform.page`; else 404. */
+function platformEntry(entry: LoadedUiContribution | undefined): LoadedUiContribution {
+  if (entry === undefined || entry.slot.id !== "platform.page") throw notFound();
+  return entry;
+}
+
 const TOAST_MAX = 500;
 const MAX_LOGGED_PROBLEMS = 10;
 
@@ -214,7 +294,7 @@ export class UiViews {
     @Inject(PreviewerRegistry) previewers: PreviewerRegistry,
     @Inject(KernelDb) db: KernelDb,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
-    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get">,
+    @Inject(EffectiveConfigs) effective: Pick<EffectiveConfigs, "get" | "platform">,
   ) {
     this.d = {
       host,
@@ -248,37 +328,33 @@ export class UiViews {
     const all = this.d.host.uiContributions();
     if (all.length === 0) return [];
     const enabled = await this.d.enabledPlugins(orgId);
-    return all
-      .filter(
+    return listed(
+      all.filter(
         (c) =>
           enabled.has(c.plugin) &&
-          c.contribution.aliasOf === undefined &&
           c.slot.id !== "file.preview" &&
           (slot === undefined || c.slot.id === slot) &&
-          (c.contribution.kind === "embed" || c.render) &&
           canUseSlot(c.slot, role),
-      )
-      .map((c, i) => ({ c, i }))
-      .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
-      .map(({ c: { plugin, contribution: c, slot: s, after } }) => ({
-        plugin,
-        id: c.id,
-        title: c.title,
-        slot: s.id,
-        ...(after !== undefined && { after }),
-        kind: c.kind,
-        ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
-        icon: c.icon ?? "puzzle",
-      }));
+      ),
+    );
+  }
+
+  /**
+   * The `platform.page` contributions of the running extensions, for the admin console (super
+   * admins; no org enablement applies): no alias, a view's render registered. Base order like
+   * {@link contributions}.
+   */
+  async platformContributions(): Promise<UiContributionItem[]> {
+    return listed(this.d.host.uiContributions().filter((c) => c.slot.id === "platform.page"));
   }
 
   /**
    * 嵌入应用：核对贡献是 embed、插件在该组织启用；对话嵌入要求调用者能访问该对话（否则 404，与视图一致），
    * 组织页面不收 `conversationId`。返回签发令牌所需的目标（令牌由调用方签）。
    */
-  async embed(t: Omit<UiTarget, "locale"> & { fileId?: string }): Promise<UiEmbedTarget> {
-    const { fileId, ...target } = t;
-    const { entry, args } = await this.resolve({ ...target, locale: "en" }, "embed");
+  async embed(t: UiEmbedRequest): Promise<UiEmbedTarget> {
+    const { fileId, ...target } = t.scope === "platform" ? { ...t, fileId: undefined } : t;
+    const { entry, args } = await this.resolve({ ...target, locale: "en" } as UiTarget, "embed");
     const path = entry.contribution.path;
     if (path === undefined) throw notFound();
     const preview = entry.slot.id === "file.preview";
@@ -291,10 +367,12 @@ export class UiViews {
       );
     }
     if (fileId !== undefined) {
+      // a file-preview embed is an org's (a platform target never carries a fileId)
+      if (args.orgId === undefined) throw notFound();
       const allowed =
         this.d.previewEmbedAllowed !== undefined &&
         (await this.d.previewEmbedAllowed({
-          orgId: t.orgId,
+          orgId: args.orgId,
           accountId: t.accountId,
           conversationId: args.conversationId as string,
           fileId,
@@ -360,28 +438,15 @@ export class UiViews {
    * from an org (not `platform`), the role meets the slot's `minRole`, the extension is enabled in
    * the org, its effective config is valid, and the slot's scope rule (conversation: readable;
    * agent: readable and in this org; org: the role alone; file: a conversation the caller reads,
-   * the previewer's grant is checked by `embed`). Returns the args passed to the extension (no
-   * signal). Anything refused for a contribution that exists is 404 `ui.not_found`.
+   * the previewer's grant is checked by `embed`). A platform target (the admin routes) takes the
+   * platform gate instead ({@link platformArgs}): only a `platform.page` contribution. Returns the
+   * args passed to the extension (no signal). Anything refused for a contribution that exists is
+   * 404 `ui.not_found`.
    */
   private async resolve(
     t: UiTarget,
     need: "render" | "action" | "embed",
-  ): Promise<{
-    entry: LoadedUiContribution;
-    args: {
-      orgId: string;
-      accountId: string;
-      role: OrgRole;
-      slot: UiSlotId;
-      scope: UiSlotScope;
-      locale: UiTarget["locale"];
-      config: unknown;
-      conversationId?: string;
-      agentId?: string;
-      item?: string;
-      card?: { callId: string; key?: string };
-    };
-  }> {
+  ): Promise<{ entry: LoadedUiContribution; args: ResolvedArgs }> {
     const loaded = this.d.host.uiContributions();
     const named = loaded.find((c) => c.plugin === t.plugin && c.contribution.id === t.id);
     // a retired alias answers with the contribution it names (same extension and kind)
@@ -396,6 +461,10 @@ export class UiViews {
           ? c.contribution.kind === "embed"
           : c.contribution.kind === "view" && c[need] !== undefined),
     );
+    if (t.scope === "platform") {
+      const found = platformEntry(entry);
+      return { entry: found, args: this.platformArgs(t, found) };
+    }
     if (!entry || entry.slot.scope === "platform" || !canUseSlot(entry.slot, t.role)) {
       throw notFound();
     }
@@ -490,6 +559,27 @@ export class UiViews {
     };
   }
 
+  /**
+   * The platform gate (UI slots spec §7): the contribution is a `platform.page` of a running
+   * extension (no org enablement applies), given the platform's deployment config. The caller is a
+   * super admin (`@SuperAdmin` on the admin routes); anything else is 404 `ui.not_found`.
+   */
+  private platformArgs(t: UiPlatformTarget, entry: LoadedUiContribution): ResolvedArgs {
+    const effective = this.d.effective.platform(t.plugin);
+    if (!effective.ok) {
+      if (effective.notRunning) throw notFound();
+      throw new ApiError("extension.needs_config", `Extension ${t.plugin} ${NEEDS_CONFIG_REASON}`);
+    }
+    return {
+      scope: "platform",
+      accountId: t.accountId,
+      role: "superAdmin",
+      slot: entry.slot.id,
+      locale: t.locale,
+      config: effective.config,
+    };
+  }
+
   /** 带时限调用插件：超时中止信号并 504；抛错 502（render / action 各一个码，不回显插件的异常信息）。 */
   private call<T>(
     t: UiTarget,
@@ -500,7 +590,7 @@ export class UiViews {
       log: this.d.log,
       plugin: t.plugin,
       what,
-      fields: { plugin: t.plugin, contribution: t.id, orgId: t.orgId },
+      fields: { plugin: t.plugin, contribution: t.id, ...whereOf(t) },
       timeoutMs: UI_CALL_TIMEOUT_MS,
       failCode: what === "render" ? "ui.render_failed" : "ui.action_failed",
       failMessage: `Plugin ${t.plugin} failed to ${what} ${t.id}`,
@@ -514,7 +604,7 @@ export class UiViews {
     this.d.log.warn(`plugin ui ${what} returned an invalid view`, {
       plugin: t.plugin,
       contribution: t.id,
-      orgId: t.orgId,
+      ...whereOf(t),
       problems: problems.slice(0, MAX_LOGGED_PROBLEMS),
     });
     throw new ApiError("ui.invalid_view", `Plugin ${t.plugin} returned an invalid view`);

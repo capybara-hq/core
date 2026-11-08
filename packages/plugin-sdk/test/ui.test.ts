@@ -411,7 +411,7 @@ describe("类型", () => {
   it("ctx.ui 与块联合", () => {
     expectTypeOf<ExtensionContext["ui"]["invalidate"]>()
       .parameter(0)
-      .toEqualTypeOf<{ orgId: string; conversationId?: string; contribution: string }>();
+      .toEqualTypeOf<{ orgId?: string; conversationId?: string; contribution: string }>();
     expectTypeOf<UiView["blocks"][number]>().toEqualTypeOf<UiBlock>();
   });
 });

@@ -31,7 +31,18 @@ export type UiActionHandler = (args: UiActionArgs) => Promise<UiActionResult>;
  */
 export const orgUiTopic = (orgId: string): string => `org-ui.${orgId}`;
 
-/** 界面刷新消息：`conv.<id>` 与 `org-ui.<orgId>` 上的 `{ kind: "ui", plugin, contribution }`。 */
+/**
+ * The kernel bus topic of the platform refresh (namespace `kernel`): `ctx.ui.invalidate` of a
+ * `platform.page` contribution (no `orgId`), read by `GET /api/v1/admin/ui/stream`.
+ */
+export const PLATFORM_UI_TOPIC = "platform-ui";
+
+/** A checked `ui.invalidate` target: an org's (optionally one conversation's) or the platform's. */
+export type UiInvalidateTarget =
+  | { scope: "org"; orgId: string; conversationId?: string; contribution: string }
+  | { scope: "platform"; contribution: string };
+
+/** 界面刷新消息：`conv.<id>`、`org-ui.<orgId>` 与 `platform-ui` 上的 `{ kind: "ui", plugin, contribution }`。 */
 export interface UiBusMessage {
   kind: "ui";
   plugin: string;
@@ -83,12 +94,15 @@ export class PluginUiRegistration {
     this.register("action", this.actions, id, handler);
   }
 
-  /** 校验 invalidate 的目标，返回规范化后的 `{ orgId, conversationId?, contribution }`。 */
-  target(t: unknown): { orgId: string; conversationId?: string; contribution: string } {
+  /**
+   * 校验 invalidate 的目标。A contribution in `platform` (the ids of the extension's `platform.page`
+   * contributions) takes no `orgId` and no `conversationId`; every other contribution needs an
+   * `orgId`.
+   */
+  target(t: unknown, platform: ReadonlySet<string>): UiInvalidateTarget {
     const name = this.manifest.name;
     const x = (typeof t === "object" && t !== null ? t : {}) as Record<string, unknown>;
     const id = (v: unknown) => typeof v === "string" && v !== "" && v.length <= 200;
-    if (!id(x.orgId)) throw new Error(`plugin ${name}: ui.invalidate needs a non-empty orgId`);
     if (
       x.conversationId !== undefined &&
       (typeof x.conversationId !== "string" || !UUID_RE.test(x.conversationId))
@@ -100,7 +114,22 @@ export class PluginUiRegistration {
         `plugin ${name}: ui.invalidate: ${JSON.stringify(x.contribution)} is not a ui contribution in the manifest`,
       );
     }
+    if (platform.has(x.contribution)) {
+      if (x.orgId !== undefined) {
+        throw new Error(
+          `plugin ${name}: ui.invalidate: ${x.contribution} is a platform page; omit orgId`,
+        );
+      }
+      if (x.conversationId !== undefined) {
+        throw new Error(
+          `plugin ${name}: ui.invalidate: ${x.contribution} is a platform page; omit conversationId`,
+        );
+      }
+      return { scope: "platform", contribution: x.contribution };
+    }
+    if (!id(x.orgId)) throw new Error(`plugin ${name}: ui.invalidate needs a non-empty orgId`);
     return {
+      scope: "org",
       orgId: x.orgId as string,
       ...(x.conversationId !== undefined && { conversationId: x.conversationId as string }),
       contribution: x.contribution,
