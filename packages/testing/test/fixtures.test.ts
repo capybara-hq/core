@@ -1157,11 +1157,7 @@ describe("fake-theme (a declarative plugin, no extension)", () => {
 
   it("passes the plugin checks (capybara-plugin check)", async () => {
     const plugins = [fakeExtensionDir("fake-theme")];
-    // "Plugin pack" is left out until the kernel's plugin reader accepts a theme-only plugin (it
-    // still demands an extension, skill or template); re-enable it with that change.
-    const checks = pluginChecks({ plugins, root: plugins[0] as string }).filter(
-      (c) => c.name !== "Plugin pack",
-    );
+    const checks = pluginChecks({ plugins, root: plugins[0] as string });
     for (const c of checks) {
       expect(await c.run(), c.name).toEqual([]);
     }
