@@ -23,7 +23,13 @@ import type { OrgRole } from "../orgs/roles.js";
 import { type Account, AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
-import { CurrentPrincipal, type Principal, requireUser, SessionOnly } from "./principal.js";
+import {
+  AllowPendingPasswordChange,
+  CurrentPrincipal,
+  type Principal,
+  requireUser,
+  SessionOnly,
+} from "./principal.js";
 import { SessionService } from "./sessions.js";
 import { SettingsService } from "./settings.js";
 
@@ -61,6 +67,7 @@ export class MeController {
   ) {}
 
   @Get()
+  @AllowPendingPasswordChange()
   async me(@CurrentPrincipal() principal: Principal): Promise<{
     account: Account;
     via: "session" | "pat";
@@ -110,6 +117,7 @@ export class MeController {
    */
   @Put("password")
   @SessionOnly()
+  @AllowPendingPasswordChange()
   @HttpCode(204)
   async changePassword(
     @CurrentPrincipal() principal: Principal,
@@ -126,6 +134,11 @@ export class MeController {
       throw new ApiError("auth.invalid_credentials", "Current password is incorrect");
     }
     await this.throttler.succeeded(CHANGE_PASSWORD_THROTTLERS, req);
+    if (p.account.mustChangePassword && body.newPassword === body.currentPassword) {
+      throw new ApiError("validation_failed", "Choose a password other than the initial one", [
+        { path: "newPassword", message: "must differ from the initial password" },
+      ]);
+    }
     // 新密码、吊销其他会话（PG revoked_at）与个人令牌在同一个 PG 事务里完成
     const revoked = await this.accounts.changePassword(p.account.id, body.newPassword, p.sessionId);
     try {

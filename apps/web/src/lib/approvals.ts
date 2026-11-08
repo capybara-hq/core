@@ -86,6 +86,22 @@ export const decideApproval = (
     { method: "POST", body: JSON.stringify(body) },
   );
 
+/**
+ * The Platform operation whose approval carries a generated initial password: the account it
+ * created, shown once to the person who approved the call (Platform tool spec §14.5 item 2).
+ */
+export const CREATE_ACCOUNT_OPERATION = "accounts.create";
+
+/**
+ * Reads the generated initial password of an approved `accounts.create` call, once: the kernel
+ * deletes it as it answers (`account.initial_password_unavailable` afterwards).
+ */
+export const revealInitialPassword = (orgId: string, approvalId: string) =>
+  apiFetch<{ accountId: string; login: string | null; password: string }>(
+    `${base(orgId)}/approvals/${encodeURIComponent(approvalId)}/initial-password`,
+    { method: "POST" },
+  );
+
 export const listToolGrants = (orgId: string) =>
   apiFetch<{ grants: ToolGrant[] }>(`${base(orgId)}/me/tool-grants`);
 

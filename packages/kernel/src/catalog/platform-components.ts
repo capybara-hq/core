@@ -176,6 +176,8 @@ export interface OwnerVersion {
 export interface UploadActor {
   accountId: string;
   actorTokenId?: string;
+  /** Added to the audit detail (the Platform tool's `via`). */
+  auditDetail?: Record<string, unknown>;
 }
 
 /** Plans are retried this many times against concurrent syncs of the same item. */
@@ -505,6 +507,7 @@ export class PlatformComponents {
         plugin: live.plugin_name,
         from: live.current_version,
         to,
+        ...actor.auditDetail,
       },
     });
   }
@@ -564,6 +567,7 @@ export class PlatformComponents {
         plugin: live.plugin_name,
         from: live.current_version,
         to,
+        ...actor.auditDetail,
       },
     });
   }

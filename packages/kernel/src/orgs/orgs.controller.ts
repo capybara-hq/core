@@ -13,6 +13,7 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { type Member, MembersService } from "./members.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
+import { OrgUpdateBody } from "./orgs.schemas.js";
 import { type Org, OrgsService } from "./orgs.service.js";
 import { ORG_ROLES, type OrgRole } from "./roles.js";
 
@@ -21,11 +22,7 @@ const CreateSchema = z.object({
   slug: z.string().min(1).max(40).optional(),
 });
 class OrgCreateBody extends createZodDto(CreateSchema, "OrgCreateBody") {}
-const UpdateSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  slug: z.string().min(1).max(40).optional(),
-});
-class OrgUpdateBody extends createZodDto(UpdateSchema, "OrgUpdateBody") {}
+class OrgUpdateBodyDto extends createZodDto(OrgUpdateBody, "OrgUpdateBody") {}
 const TransferSchema = z.object({ toAccountId: z.string().min(1) });
 class OrgTransferBody extends createZodDto(TransferSchema, "OrgTransferBody") {}
 const ServiceTokenSchema = z.object({
@@ -77,7 +74,7 @@ export class OrgsController {
   async update(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(OrgUpdateBody) body: z.infer<typeof UpdateSchema>,
+    @ZBody(OrgUpdateBodyDto) body: z.infer<typeof OrgUpdateBody>,
   ): Promise<{ org: Org }> {
     const p = requireUser(principal);
     return { org: await this.orgs.update(org.orgId, body, p.account, patTokenId(p)) };

@@ -24,6 +24,8 @@ let failWith: unknown = null;
 /** What `skills.create`'s precheck does: pass, fail on a taken name, hang, or throw. */
 let precheckMode: "pass" | "taken" | "hang" | "throw" | "keyed" = "pass";
 let precheckSignal: AbortSignal | null = null;
+/** The `errorRole` each step of `skills.create` was handed (deferred Task 3 item c). */
+let seenRoles: Record<string, unknown> = {};
 
 /** A next step that differs by role (spec §14.5 item 7). */
 const DEPLOY_NEXT = {
@@ -63,6 +65,19 @@ const personalOp = defineOperation({
   },
 });
 
+const neverOp = defineOperation({
+  id: "conversations.delete",
+  description: "Delete one of your conversations.",
+  input: z.object({ conversationId: z.string().min(1).max(100) }),
+  example: { conversationId: "c1" },
+  authz: { orgAction: "org.read" },
+  mirrors: ["DELETE /api/v1/orgs/:orgId/conversations/:id"],
+  confirm: "personal",
+  rememberable: false,
+  summary: (i) => ({ zh: `删除 ${i.conversationId}`, en: `Delete ${i.conversationId}` }),
+  run: async () => ({ deleted: true }),
+});
+
 const orgOp = defineOperation({
   id: "skills.create",
   description: "Create an org skill from a name and a body.",
@@ -77,6 +92,7 @@ const orgOp = defineOperation({
   ],
   precheck: async (i, c) => {
     precheckSignal = c.signal;
+    seenRoles.precheck = c.errorRole;
     if (precheckMode === "throw") throw new Error("db down");
     if (precheckMode === "hang") return new Promise(() => {});
     if (precheckMode === "keyed") {
@@ -96,8 +112,12 @@ const orgOp = defineOperation({
     }
     return { ok: true };
   },
-  summary: (i) => ({ zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` }),
+  summary: (i, c) => {
+    seenRoles.summary = c.errorRole;
+    return { zh: `创建组织技能 ${i.name}`, en: `Create the org skill ${i.name}` };
+  },
   run: async (input, ctx) => {
+    seenRoles.run = ctx.errorRole;
     ran.push({ id: "skills.create", input, agentId: ctx.agentId });
     if (failWith !== null) throw failWith;
     return { name: input.name };
@@ -148,13 +168,14 @@ beforeEach(() => {
   failWith = null;
   precheckMode = "pass";
   precheckSignal = null;
+  seenRoles = {};
   facts = ADMIN;
   factsCalls = [];
   logged = [];
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
-  ops.register([listOp, personalOp, orgOp, targetedOp] as PlatformOperation[]);
+  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -261,6 +282,11 @@ describe("browse, search, describe, read", () => {
       "requests",
       "connectors",
       "extensions",
+      "conversations",
+      "orgs",
+      "accounts",
+      "admin",
+      "models",
     ]);
     expect(domains.find((d) => d.id === "skills")?.operations).toBe(2);
     expect(out.method).toContain("describe");
@@ -461,6 +487,21 @@ describe("callPolicy", () => {
     });
   });
 
+  it("a personal operation with rememberable false asks every time and is never remembered", async () => {
+    expect(
+      await policy({
+        action: "call",
+        operation: "conversations.delete",
+        params: { conversationId: "c1" },
+      }),
+    ).toEqual({
+      key: "Platform:conversations.delete",
+      policy: "ask",
+      remember: false,
+      summary: { zh: "删除 c1", en: "Delete c1" },
+    });
+  });
+
   it("an unavailable operation is denied with its reason", async () => {
     facts = { ...ADMIN, role: "member" };
     const p = await policy({ action: "call", operation: "skills.create", params: orgOp.example });
@@ -584,6 +625,15 @@ describe("callPolicy: precheck before the card", () => {
     expect((await policy(input))?.policy).toBe("ask");
     precheckMode = "taken";
     expect((await policy(input))?.policy).toBe("deny");
+  });
+
+  it("hands precheck, summary and run the role of the call's actor facts (no second read)", async () => {
+    facts = { ...ADMIN, isSuperAdmin: true };
+    expect((await policy(input))?.policy).toBe("ask");
+    expect(seenRoles).toEqual({ precheck: "superAdmin", summary: "superAdmin" });
+    facts = ADMIN;
+    await run(input);
+    expect(seenRoles.run).toBe("orgAdmin");
   });
 
   it("a precheck that times out or throws is skipped: the card appears", async () => {

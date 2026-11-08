@@ -205,6 +205,9 @@ interface Target {
   disabled: boolean;
 }
 
+/** Actor facts of a write: the token, and detail the caller adds to the audit row. */
+type AuditOpts = ActorOpts & { auditDetail?: Record<string, unknown> };
+
 const notFound = () => new ApiError("component.not_found", "Component not found");
 const staleError = () =>
   new ApiError(
@@ -629,7 +632,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     body: ({ scope: PluginScope; orgs?: string[] } | { follow: true }) & { scopeHash: string },
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     const { scopeHash, ...target } = body;
     const r = await this.resolve(kind, id);
@@ -670,7 +673,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     body: { disabled: boolean; scopeHash?: string },
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     if (body.disabled && body.scopeHash === undefined) {
       throw new ApiError(
@@ -689,7 +692,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     shown: boolean,
-    opts: ActorOpts = {},
+    opts: AuditOpts = {},
   ): Promise<ComponentView> {
     const r = await this.resolve(kind, id);
     if ("c" in r) {
@@ -723,6 +726,7 @@ export class ComponentScopeService {
     id: string,
     body: { enabled: boolean; confirm?: string },
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<ComponentSwitchResult> {
     await this.orgLock.lockAndAuthorize(orgId, actor, ACTION[kind]);
     // The rows an unshare narrows (ruling P3-25) are locked before the scope is read, in its order
@@ -811,7 +815,14 @@ export class ComponentScopeService {
         orgId,
         action: "component.org_switched",
         target: c.id,
-        detail: { kind, name: c.name, plugin: c.plugin, from: sw, to: body.enabled },
+        detail: {
+          kind,
+          name: c.name,
+          plugin: c.plugin,
+          from: sw,
+          to: body.enabled,
+          ...auditDetail,
+        },
       });
     }
     return {
@@ -829,6 +840,58 @@ export class ComponentScopeService {
   }
 
   /**
+   * What {@link setSwitch} would do to the org's switch, read-only (the Platform tool's preview):
+   * the component as the org sees it, whether it is `stopped` on the deployment, and for one that
+   * is on and can be switched off the preview of the agents that lose it with the `confirm` hash
+   * the switch-off needs (both null otherwise). Unknown or not offered -> 404 `component.not_found`.
+   */
+  async switchPreview(
+    orgId: string,
+    kind: ComponentKind,
+    id: string,
+  ): Promise<{
+    component: OrgComponentView;
+    stopped: boolean;
+    preview: {
+      agents: { id: string; name: string; refs: string[] }[];
+      connectorsKept: number;
+    } | null;
+    confirm: string | null;
+  }> {
+    const [c] = await loadComponents(this.db, kind, { ids: [id] });
+    if (!c) throw notFound();
+    const st = await loadScopeState(this.db, kind, [c]);
+    const p = pluginFactsOf(st, c.itemId, orgId);
+    const listed = listedIn(st, c.id, orgId);
+    const sw = switchOf(st, c.id, orgId);
+    const on = componentOn(c, p, listed, sw);
+    const stopped = c.disabled || (p?.live === true && p.disabled);
+    const offered = componentOffered(
+      { ...c, disabled: false },
+      p && { ...p, disabled: false },
+      listed,
+    );
+    if (!on && !offered) throw notFound();
+    const locked = componentLocked(c, p);
+    let preview = null;
+    let confirm = null;
+    if (on && !locked) {
+      preview = {
+        agents: await agentsUsing(this.db, orgId, kind, [c.id]),
+        connectorsKept:
+          kind === "connector_template" ? await connectorsMadeFrom(this.db, orgId, c.id) : 0,
+      };
+      confirm = switchHash(orgId, c, preview);
+    }
+    return {
+      component: { kind, id: c.id, name: c.name, plugin: c.plugin, switch: sw, on, locked },
+      stopped,
+      preview,
+      confirm,
+    };
+  }
+
+  /**
    * `x.hashId`: the id the preview was asked for (an org row's id before its promotion);
    * `x.promote`: the org row to promote first, in this transaction. Returns the id written.
    */
@@ -839,7 +902,7 @@ export class ComponentScopeService {
     id: string,
     target: { scope: PluginScope; orgs?: string[] } | { follow: true },
     hash: string,
-    opts: ActorOpts,
+    opts: AuditOpts,
     x: { hashId: string; promote?: PreparedPromotion },
   ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -899,6 +962,7 @@ export class ComponentScopeService {
         plugin: c.plugin,
         from: { scopeMode: c.scopeMode, scope: c.scope, orgs: from },
         to: { scopeMode: t.scopeMode, scope: t.scope, orgs: t.orgs },
+        ...opts.auditDetail,
       },
     });
     return id;
@@ -911,7 +975,7 @@ export class ComponentScopeService {
     id: string,
     disabled: boolean,
     hash: string | undefined,
-    opts: ActorOpts,
+    opts: AuditOpts,
   ): Promise<void> {
     await this.adminLock.lockAndAuthorize(actor);
     const c = await this.component(kind, id, true);
@@ -938,6 +1002,7 @@ export class ComponentScopeService {
         name: c.name,
         plugin: c.plugin,
         disabled: { from: c.disabled, to: disabled },
+        ...opts.auditDetail,
       },
     });
   }
@@ -949,7 +1014,7 @@ export class ComponentScopeService {
     kind: ComponentKind,
     id: string,
     shown: boolean,
-    opts: ActorOpts,
+    opts: AuditOpts,
     promote?: PreparedPromotion,
   ): Promise<string> {
     await this.adminLock.lockAndAuthorize(actor);
@@ -969,7 +1034,14 @@ export class ComponentScopeService {
       ...(opts.actorTokenId !== undefined && { actorTokenId: opts.actorTokenId }),
       action: "component.shown_changed",
       target: id,
-      detail: { kind, name: c.name, plugin: c.plugin, from: c.shownToOthers, to: shown },
+      detail: {
+        kind,
+        name: c.name,
+        plugin: c.plugin,
+        from: c.shownToOthers,
+        to: shown,
+        ...opts.auditDetail,
+      },
     });
     return id;
   }

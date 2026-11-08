@@ -241,13 +241,14 @@ function paramsOf(op: PlatformOperation, params: Record<string, unknown> | undef
  * The operation context of a confirmation (`confirmFor`, `summary`): the runtime's ids, never
  * input. Nothing aborts it; it only reads.
  */
-const confirmCtx = (ctx: CallPolicyContext): OperationContext => ({
+const confirmCtx = (ctx: CallPolicyContext, errorRole: ErrorRole): OperationContext => ({
   orgId: ctx.orgId,
   actorAccountId: ctx.accountId,
   agentId: ctx.agentId,
   conversationId: ctx.conversationId,
   runId: ctx.runId,
   signal: new AbortController().signal,
+  errorRole,
 });
 
 const factsCtx = (ctx: BuiltinCallContext): CallPolicyContext => ({
@@ -290,19 +291,20 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     if (hasOutputRef((ctx.rawInput as PlatformInput | undefined)?.params)) {
       return deny(outputRefText(op.id));
     }
+    const role = errorRoleOf(f);
     const failed = await precheckOf(
       op,
       params,
       ctx,
+      role,
       deps.precheckTimeoutMs ?? PRECHECK_TIMEOUT_MS,
       deps.log,
     );
     if (failed !== null) {
-      const role = errorRoleOf(f);
       const next = resolveNext(failed.next, role) ?? nextStepFor(op.errors, failed.code, role);
       return deny(precheckText(op.id, failed.code, failed.message, next));
     }
-    const octx = confirmCtx(ctx);
+    const octx = confirmCtx(ctx, role);
     const [cls, summary] = await Promise.all([
       classOf(op, params, octx),
       summaryOf(op, params, octx),
@@ -311,7 +313,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       key,
       policy: "ask",
       // org / platform writes are confirmed every time (spec §6.2)
-      remember: cls === "personal",
+      remember: cls === "personal" && op.rememberable !== false,
       summary,
     };
   }
@@ -420,7 +422,9 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId ?? null,
+        callId: ctx.callId,
         signal: ctx.signal,
+        errorRole: role,
       });
     } catch (e) {
       // a service refusal after the approval (a race the precheck could not see) still names the
@@ -486,6 +490,7 @@ async function precheckOf(
   op: PlatformOperation,
   params: unknown,
   ctx: CallPolicyContext,
+  role: ErrorRole,
   ms: number,
   log: PlatformToolDeps["log"],
 ): Promise<{ code: string; message: string; next?: OperationErrorNext } | null> {
@@ -501,7 +506,10 @@ async function precheckOf(
     }, ms);
   });
   try {
-    const r = await Promise.race([op.precheck(params, { ...confirmCtx(ctx), signal }), timeout]);
+    const r = await Promise.race([
+      op.precheck(params, { ...confirmCtx(ctx, role), signal }),
+      timeout,
+    ]);
     if (r === null || r.ok) return null;
     return { code: r.code, message: r.message, ...(r.next !== undefined && { next: r.next }) };
   } catch (err) {

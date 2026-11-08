@@ -3,26 +3,22 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { CatalogIdPathParams, CatalogUpdateBody } from "../../catalog/admin-catalog.schemas.js";
 import { CatalogService } from "../../catalog/catalog.service.js";
-import type { OrgCatalogItem } from "../../catalog/catalog-content.js";
+import type { OrgCatalogItem, PluginUnavailableReason } from "../../catalog/catalog-content.js";
 import { CatalogItemPathParams } from "../../catalog/org-catalog.schemas.js";
 import { OrgCatalogService } from "../../catalog/org-catalog.service.js";
 import { PluginInstaller, uninstallPreviewHash } from "../../catalog/plugin-install.js";
 import { PlatformPluginUpdater } from "../../catalog/plugin-upgrade.js";
 import { OrgExtensionConfigs, type OrgExtensionView } from "../../extensions/org-config.js";
+import { ExtensionAvailability } from "../../extensions/unavailable.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import type { ErrorRole } from "../errors.js";
 import { defineOperation } from "../operation.js";
-import { redactOrgs } from "../redact-orgs.js";
 import { PlatformOperations } from "../registry.js";
 import { viaAgent } from "./errors.js";
+import { assertNotOtherOrgs, otherOrgItems } from "./other-orgs.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { localized } from "./summary.js";
-import {
-  errorRoleFor,
-  unavailableFields,
-  unavailableMessage,
-  unavailableNext,
-} from "./unavailable.js";
+import { roleFor, unavailableFields, unavailableMessage, unavailableNext } from "./unavailable.js";
 
 /** An org catalog item id (`:itemId` of the org routes). */
 const ItemId = CatalogItemPathParams.shape.itemId.max(100);
@@ -37,7 +33,8 @@ const PAGE = 50;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export const OTHER_ORG = "This plugin belongs to another org; use the admin console.";
+export { OTHER_ORG } from "./other-orgs.js";
+
 const LOCKED =
   "This plugin is on for every org (or shipped with the platform) and cannot be switched off in one org.";
 /** The confirm value of switching off a plugin with nothing installed in the org. */
@@ -48,6 +45,15 @@ export const NEEDS_INPUT =
 
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;
+
+/** The item with the reason its extension stopped loading (state unchanged), when it has one. */
+const withStopped = (
+  i: OrgCatalogItem,
+  stopped: ReadonlyMap<string, PluginUnavailableReason>,
+): OrgCatalogItem => {
+  const reason = i.reason ?? stopped.get(i.name);
+  return reason === undefined ? i : { ...i, reason };
+};
 
 /**
  * An org's view of a plugin (`plugins.get`): the state, and when unavailable the reason and the
@@ -104,7 +110,8 @@ function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[
 /**
  * Plugin operations of the `Platform` tool (spec §7): the org's view (list, get, switch on or off)
  * and the super admin's platform view (list, get, update with its preview). Every platform result
- * goes through {@link redactOrgs}: other orgs only as counts (spec §6.1).
+ * shows the admin console's data in full for platform items and the org's own (spec §14.5 item 1);
+ * plugins other orgs own are only counted, and reading or updating one is refused.
  */
 @Injectable()
 export class PluginsOperations implements OnModuleInit {
@@ -116,32 +123,29 @@ export class PluginsOperations implements OnModuleInit {
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(OrgExtensionConfigs) private readonly extensions: OrgExtensionConfigs,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(ExtensionAvailability) private readonly availability: ExtensionAvailability,
   ) {}
 
   /**
-   * Refuses a super-admin operation on an item another org owns: its results would describe that
-   * org's private plugin in this org's log (spec §6.1). Platform items and the org's own pass.
+   * Installed (or builtin) plugins whose extension stopped loading: the reason, keyed by plugin
+   * name. Their state stays (`on` / `needs_config`) so an org admin can still switch them off;
+   * the reason and next step tell why the plugin does nothing now.
    */
-  private async assertNotOtherOrgs(itemId: string, orgId: string): Promise<void> {
-    if (!UUID_RE.test(itemId)) return;
-    const row = await this.kdb.db
-      .selectFrom("catalog_items")
-      .select("owner_org_id")
-      .where("id", "=", itemId)
-      .executeTakeFirst();
-    if (row?.owner_org_id != null && row.owner_org_id !== orgId) throw new ToolError(OTHER_ORG);
-  }
-
-  /** How many live catalog items other orgs own (left out of the platform list). */
-  private async otherOrgItems(orgId: string): Promise<number> {
-    const r = await this.kdb.db
-      .selectFrom("catalog_items")
-      .select((eb) => eb.fn.countAll<string>().as("n"))
-      .where("deleted_at", "is", null)
-      .where("owner_org_id", "is not", null)
-      .where("owner_org_id", "!=", orgId)
-      .executeTakeFirstOrThrow();
-    return Number(r.n);
+  private async stopped(
+    items: readonly OrgCatalogItem[],
+  ): Promise<Map<string, PluginUnavailableReason>> {
+    const names = items
+      .filter(
+        (i) =>
+          i.reason === undefined &&
+          i.componentCounts.extension > 0 &&
+          (i.installed !== null || i.builtin),
+      )
+      // a plugin's extension carries the plugin's name
+      .map((i) => i.name);
+    const out = new Map<string, PluginUnavailableReason>();
+    for (const [name, u] of await this.availability.unavailable(names)) out.set(name, u.reason);
+    return out;
   }
 
   onModuleInit(): void {
@@ -149,7 +153,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.list",
         description:
-          "List the plugins this org can see, one compact row each: the state here (on, off, needs_config, unavailable, not_offered), why an unavailable one cannot be used (reason) and your next step (next), whether an org admin can switch it, and the org's pending request. Details come from plugins.get. Pages by 50: pass the returned next as params.cursor.",
+          "List the plugins this org can see, one compact row each: the state here (on, off, needs_config, unavailable, not_offered), why an unavailable one cannot be used (reason) and your next step (next; an installed plugin whose extension stopped running keeps its state and carries them too), whether an org admin can switch it, and the org's pending request. Details come from plugins.get. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "catalog.read" },
@@ -159,10 +163,11 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           const [all, role] = await Promise.all([
             this.orgCatalog.list(ctx.orgId, ctx.actorAccountId),
-            errorRoleFor(this.kdb.db, ctx.orgId, ctx.actorAccountId),
+            roleFor(this.kdb.db, ctx),
           ]);
+          const stopped = await this.stopped(all);
           return pageOf(
-            all.map((i) => row(i, role)),
+            all.map((i) => row(withStopped(i, stopped), role)),
             startOf(input.cursor),
             PAGE,
           );
@@ -171,7 +176,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.get",
         description:
-          "Read one plugin as this org sees it: its state (with the reason and your next step when it is unavailable), extension, connector templates (presets only, never credentials), dependencies, skills and agent templates.",
+          "Read one plugin as this org sees it: its state (with the reason and your next step when it is unavailable, or installed but its extension stopped running), extension, connector templates (presets only, never credentials), dependencies, skills and agent templates.",
         input: z.object({ itemId: ItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { orgAction: "catalog.read" },
@@ -183,9 +188,9 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           const [d, role] = await Promise.all([
             this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, input.itemId),
-            errorRoleFor(this.kdb.db, ctx.orgId, ctx.actorAccountId),
+            roleFor(this.kdb.db, ctx),
           ]);
-          return { ...d, item: brief(d.item, role) };
+          return { ...d, item: brief(withStopped(d.item, await this.stopped([d.item])), role) };
         },
       }),
       defineOperation({
@@ -347,7 +352,7 @@ export class PluginsOperations implements OnModuleInit {
           );
           if (r.kind === "done") {
             return {
-              item: brief(r.item, await errorRoleFor(this.kdb.db, ctx.orgId, ctx.actorAccountId)),
+              item: brief(r.item, await roleFor(this.kdb.db, ctx)),
             };
           }
           // unreachable: confirm is required when switching off
@@ -357,7 +362,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.platform-list",
         description:
-          "List the platform's plugins and this org's own (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Plugins other orgs own are only counted (otherOrgItems); orgs are given as counts. Pages by 50: pass the returned next as params.cursor.",
+          "List the platform's plugins and this org's own (super admin): scope, disabled, versions, pending confirmation and how many orgs use it. Plugins other orgs own are only counted (otherOrgItems). Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -368,17 +373,17 @@ export class PluginsOperations implements OnModuleInit {
         confirm: "read",
         run: async (input, ctx) => {
           const p = await this.catalog.page({ limit: PAGE, offset: startOf(input.cursor) });
-          return redactOrgs({
+          return {
             items: p.items.filter((i) => i.owner.kind !== "org" || i.owner.orgId === ctx.orgId),
-            otherOrgItems: await this.otherOrgItems(ctx.orgId),
+            otherOrgItems: await otherOrgItems(this.kdb.db, ctx.orgId),
             next: p.nextOffset === null ? null : String(p.nextOffset),
-          });
+          };
         },
       }),
       defineOperation({
         id: "plugins.platform-get",
         description:
-          "Read one platform catalog plugin (super admin): the item, its platform version and every version with its source. Orgs are given as counts only.",
+          "Read one platform catalog plugin (super admin): the item, its platform version and every version with its source, and the orgs it is offered to. Another org's own plugin is refused.",
         input: z.object({ itemId: PlatformItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
@@ -392,9 +397,9 @@ export class PluginsOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => {
-          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
+          await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
           const d = await this.catalog.get(input.itemId);
-          return redactOrgs({
+          return {
             item: d.item,
             versions: d.versions.map((v) => ({
               version: v.version,
@@ -404,13 +409,13 @@ export class PluginsOperations implements OnModuleInit {
               importedAt: v.importedAt,
               ...(v.version === d.item.platformVersion && { manifest: v.manifest }),
             })),
-          });
+          };
         },
       }),
       defineOperation({
         id: "plugins.update-preview",
         description:
-          "Preview updating a platform plugin to another imported version (super admin): every component's change, the extension step and the org connectors it touches, with the diffHash plugins.update takes. Orgs are given as counts only; the admin console shows which.",
+          "Preview updating a platform plugin to another imported version (super admin): every component's change, the extension step and the org connectors it touches, with the diffHash plugins.update takes. Another org's own plugin is refused.",
         input: z.object({ itemId: PlatformItemId, version: Version }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c", version: "1.2.0" },
         authz: { superAdmin: true },
@@ -424,8 +429,8 @@ export class PluginsOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => {
-          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
-          return redactOrgs(await this.updater.preview(input.itemId, input.version));
+          await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
+          return this.updater.preview(input.itemId, input.version);
         },
       }),
       defineOperation({
@@ -459,7 +464,7 @@ export class PluginsOperations implements OnModuleInit {
           },
         ],
         summary: async (i, ctx) => {
-          await this.assertNotOtherOrgs(i.itemId, ctx.orgId);
+          await assertNotOtherOrgs(this.kdb.db, i.itemId, ctx.orgId);
           const [{ item }, p] = await Promise.all([
             this.catalog.get(i.itemId),
             this.updater.preview(i.itemId, i.version),
@@ -470,7 +475,7 @@ export class PluginsOperations implements OnModuleInit {
           const changed = count("upgrade", "downgrade");
           const added = count("added");
           const removed = count("removed");
-          // one version for every org: the orgs it is on in, as a count (spec §6.1)
+          // one version for every org: how many orgs it is on in
           const orgs = item.enabledOrgs;
           return {
             zh: `把平台插件「${n.zh}」从 ${p.from ?? "无"} 更新到 ${p.to}：组件 ${changed} 个更新、${added} 个新增、${removed} 个移除，影响 ${orgs} 个组织`,
@@ -478,14 +483,12 @@ export class PluginsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          await this.assertNotOtherOrgs(input.itemId, ctx.orgId);
-          return redactOrgs(
-            await this.updater.update(
-              ctx.actorAccountId,
-              input.itemId,
-              { version: input.version, diffHash: input.diffHash },
-              { auditDetail: viaAgent("plugins.update", ctx) },
-            ),
+          await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
+          return this.updater.update(
+            ctx.actorAccountId,
+            input.itemId,
+            { version: input.version, diffHash: input.diffHash },
+            { auditDetail: viaAgent("plugins.update", ctx) },
           );
         },
       }),

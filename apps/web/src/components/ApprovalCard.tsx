@@ -17,6 +17,7 @@ import { useCallback, useState } from "react";
 import {
   type Approval,
   type ApprovalScope,
+  CREATE_ACCOUNT_OPERATION,
   decideApproval,
   formatInput,
   scopesFor,
@@ -32,6 +33,7 @@ import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
+import { InitialPasswordReveal } from "./InitialPasswordReveal";
 import { useSession } from "./shell/session";
 
 /** 已处理的结果（来自 `approval_decided` 事件或审批详情）。 */
@@ -244,6 +246,12 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
+  // an approved accounts.create: its generated password is shown once to the person who approved
+  const revealsPassword =
+    outcome?.decision === "approved" &&
+    outcome.byAccountId === me.account.id &&
+    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
+      (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
   let state: ApprovalState;
   if (outcome !== null) {
     state = {
@@ -283,6 +291,7 @@ export function ApprovalCard({
         onApprove={(scope) => void onDecide("approve", scope)}
         onDeny={(reason) => void onDecide("deny", "once", reason)}
       />
+      {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );
 }

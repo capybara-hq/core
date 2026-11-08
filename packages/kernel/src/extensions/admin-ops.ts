@@ -285,8 +285,10 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId?: string,
     owner?: ExtensionOpsOwner,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<AdminExtensionView> {
-    return this.setState(name, "enabled", actor, actorTokenId, owner);
+    return this.setState(name, "enabled", actor, actorTokenId, owner, auditDetail);
   }
 
   /**
@@ -300,8 +302,9 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId?: string,
     owner?: ExtensionOpsOwner,
+    auditDetail?: Record<string, unknown>,
   ): Promise<AdminExtensionView> {
-    return this.setState(name, "disabled", actor, actorTokenId, owner);
+    return this.setState(name, "disabled", actor, actorTokenId, owner, auditDetail);
   }
 
   /**
@@ -317,9 +320,10 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId?: string,
     owner?: ExtensionOpsOwner,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     this.assertInstallable(name);
-    await this.writeUninstall(name, actor, actorTokenId, owner);
+    await this.writeUninstall(name, actor, actorTokenId, owner, auditDetail);
   }
 
   @Transactional()
@@ -328,6 +332,7 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId: string | undefined,
     owner: ExtensionOpsOwner | undefined,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const db = this.db;
     await this.authorize(actor, owner);
@@ -343,15 +348,10 @@ export class ExtensionAdminOps {
     await db.deleteFrom("extension_installs").where("name", "=", name).execute();
     // 来源条目随安装记录一起删：之后不经目录重新安装时不再受旧条目的策略约束（T26 裁决）
     await db.deleteFrom("extension_catalog_sources").where("plugin", "=", name).execute();
-    await this.audit(
-      actor,
-      actorTokenId,
-      "extension.uninstalled",
-      name,
-      row.version,
-      row.sha256,
-      ownerDetail(owner),
-    );
+    await this.audit(actor, actorTokenId, "extension.uninstalled", name, row.version, row.sha256, {
+      ...ownerDetail(owner),
+      ...auditDetail,
+    });
     afterCommit(() => this.notify(name));
   }
 
@@ -361,9 +361,10 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId: string | undefined,
     owner?: ExtensionOpsOwner,
+    auditDetail?: Record<string, unknown>,
   ): Promise<AdminExtensionView> {
     this.assertInstallable(name);
-    const result = await this.writeState(name, state, actor, actorTokenId, owner);
+    const result = await this.writeState(name, state, actor, actorTokenId, owner, auditDetail);
     return this.viewAfterCommit(name, {
       version: result.row.version,
       sha256: result.row.sha256,
@@ -378,6 +379,7 @@ export class ExtensionAdminOps {
     actor: string | null,
     actorTokenId: string | undefined,
     owner?: ExtensionOpsOwner,
+    auditDetail?: Record<string, unknown>,
   ) {
     const db = this.db;
     await this.authorize(actor, owner);
@@ -401,7 +403,7 @@ export class ExtensionAdminOps {
       name,
       row.version,
       row.sha256,
-      ownerDetail(owner),
+      { ...ownerDetail(owner), ...auditDetail },
     );
     afterCommit(() => this.notify(name));
     return { row, changed: true };

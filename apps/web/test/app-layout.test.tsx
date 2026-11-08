@@ -108,6 +108,17 @@ describe("the (app) layout's setup redirect", () => {
   });
 });
 
+describe("the (app) layout's initial password gate", () => {
+  it("an account that must change its generated password goes to /change-password, reading nothing else", async () => {
+    const calls = serverRoutes({
+      "GET /api/v1/me": () =>
+        json(200, { ...ME, account: { ...ME.account, mustChangePassword: true } }),
+    });
+    await expect(layoutAt("/agents")).rejects.toThrow("REDIRECT /change-password");
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/me"]);
+  });
+});
+
 /** A response held until `open()`: the test sees which reads started before any answered. */
 function gate() {
   let open = () => {};

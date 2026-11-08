@@ -35,7 +35,7 @@ const write = (id: string, withSummary: boolean): PlatformOperation =>
   }) as PlatformOperation;
 
 describe("PlatformOperations", () => {
-  it("lists the phase 1 domains", () => {
+  it("lists the domains", () => {
     expect(new PlatformOperations().domains().map((d) => d.id)).toEqual(
       PLATFORM_DOMAINS.map((d) => d.id),
     );
@@ -49,6 +49,11 @@ describe("PlatformOperations", () => {
       "requests",
       "connectors",
       "extensions",
+      "conversations",
+      "orgs",
+      "accounts",
+      "admin",
+      "models",
     ]);
   });
 

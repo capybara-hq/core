@@ -24,6 +24,7 @@ import {
   CatalogConnectorInput,
   CatalogMarketplaceRequestBody,
   CatalogRequestBody,
+  CatalogRequestsListQuery,
   OrgPluginInstallBody,
   OrgPluginSwitchBody,
 } from "./org-catalog.schemas.js";
@@ -71,11 +72,7 @@ const DecideBody = z
   .object({ approve: z.boolean(), reason: z.string().max(1000).optional() })
   .strict();
 
-const AdminListQuery = z.object({
-  status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional(),
-});
-
-class CatalogRequestsQuery extends createZodDto(AdminListQuery, "CatalogRequestsQuery") {}
+class CatalogRequestsQuery extends createZodDto(CatalogRequestsListQuery, "CatalogRequestsQuery") {}
 class CatalogDecideBody extends createZodDto(DecideBody, "CatalogDecideBody") {}
 class OrgPluginInstallBodyDto extends createZodDto(OrgPluginInstallBody, "OrgPluginInstallBody") {}
 class OrgPluginConnectorsBody extends createZodDto(ConnectorsBody, "OrgPluginConnectorsBody") {}
@@ -382,7 +379,7 @@ export class AdminCatalogRequestsController {
 
   @Get()
   async list(
-    @ZQuery(CatalogRequestsQuery) q: z.infer<typeof AdminListQuery>,
+    @ZQuery(CatalogRequestsQuery) q: z.infer<typeof CatalogRequestsListQuery>,
   ): Promise<{ requests: CatalogRequestView[] }> {
     return {
       requests: await this.requests.listDeployment(

@@ -18,7 +18,6 @@ import { CurrentPrincipal, type Principal, requireUser } from "../identity/princ
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { MAX_ATTACHMENTS } from "../tools/connector-content.js";
 import {
   ConversationToolInfo,
@@ -33,7 +32,15 @@ import {
   ConversationArtifacts,
 } from "./artifacts.js";
 import {
-  CONVERSATION_TITLE_MAX_CHARS,
+  EventsQuery,
+  FilesQuery,
+  IdParams,
+  ListQuery,
+  PatchBody,
+  SubagentsQuery,
+  searchFields,
+} from "./conversations.schemas.js";
+import {
   type ConversationGroup,
   ConversationsService,
   type ConversationView,
@@ -42,30 +49,10 @@ import {
 } from "./conversations.service.js";
 import { ConversationEnvironmentStatus } from "./environment-status.js";
 import type { ConversationEvent } from "./events.js";
-import {
-  ConversationFiles,
-  FILE_CONTENT_MAX_BYTES,
-  FILES_PAGE_MAX,
-  type FileOutput,
-} from "./files.js";
+import { ConversationFiles, FILE_CONTENT_MAX_BYTES, type FileOutput } from "./files.js";
 import { ConversationOutputs, OUTPUT_PAGE_MAX_CHARS, type OutputPage } from "./outputs-read.js";
 import type { QueueItem, QueuePauseReason } from "./queue.js";
 import { ConversationQueue } from "./queue.service.js";
-
-/** Shared by the list and groups queries: title search, run activity and the archived list. */
-const searchFields = {
-  q: z.string().min(1).max(100).optional(),
-  state: z.enum(["running", "waiting"]).optional(),
-  archived: z.enum(["1"]).optional(),
-};
-
-const ListQuery = z.object({
-  after: z.string().min(1).max(100).optional(),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  /** Only this agent's conversations (the sidebar's per-group "More"). */
-  agentId: z.string().min(1).max(100).optional(),
-  ...searchFields,
-});
 
 const GroupsQuery = z.object({
   perGroup: z.coerce.number().int().min(1).max(20).default(5),
@@ -74,24 +61,6 @@ const GroupsQuery = z.object({
   after: z.string().min(1).max(100).optional(),
   ...searchFields,
 });
-
-const SubagentsQuery = z.object({
-  /** The previous page's last sub-agent id (`next`). */
-  after: z.string().min(1).max(100).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-
-const EventsQuery = z
-  .object({
-    after: z.coerce.number().int().min(0).optional(),
-    /** The page before this seq, or the log's last page (`end`); exclusive with `after`. */
-    before: z.union([z.literal("end"), z.coerce.number().int().min(1)]).optional(),
-    limit: z.coerce.number().int().min(1).max(500).default(500),
-  })
-  .refine((q) => q.after === undefined || q.before === undefined, {
-    message: "after and before are exclusive",
-    path: ["before"],
-  });
 
 /** `?keys=a,b`: 1–100 comma-separated tool keys of 1–200 characters each. */
 const ToolsQuery = z.object({
@@ -105,11 +74,6 @@ const ToolsQuery = z.object({
 const OutputQuery = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(OUTPUT_PAGE_MAX_CHARS).default(OUTPUT_PAGE_MAX_CHARS),
-});
-
-const FilesQuery = z.object({
-  after: z.string().min(1).max(100).optional(),
-  limit: z.coerce.number().int().min(1).max(FILES_PAGE_MAX).default(50),
 });
 
 const FileContentQuery = z.object({
@@ -209,37 +173,6 @@ const QueueBody = MessageFields.omit({ retryOf: true })
 
 /** `PATCH …/queue/:itemId`: only the text changes (the text rule is checked against the item). */
 const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
-
-/**
- * A rename: 1–120 characters counted in code points after trimming, with no control or format
- * (bidi, zero-width) characters, the same rule generated and tool titles follow.
- */
-const PatchBody = z
-  .object({
-    title: z
-      .string()
-      .max(CONVERSATION_TITLE_MAX_CHARS * 2 + 100)
-      .trim()
-      .refine((t) => t.length > 0, "title must not be empty")
-      .refine(
-        (t) => Array.from(t).length <= CONVERSATION_TITLE_MAX_CHARS,
-        `title must be at most ${CONVERSATION_TITLE_MAX_CHARS} characters`,
-      )
-      .refine(
-        (t) => !CONTROL_OR_HIDDEN_RE.test(t),
-        "title must not contain control or format characters",
-      )
-      .optional(),
-    /** true archives (hidden from the default lists), false unarchives. */
-    archived: z.boolean().optional(),
-  })
-  .strict()
-  .refine(
-    (b) => b.title !== undefined || b.archived !== undefined,
-    "title or archived is required",
-  );
-
-const IdParams = z.object({ id: z.string().min(1).max(100) });
 
 class ConversationCreateBodyDto extends createZodDto(CreateBody, "ConversationCreateBody") {}
 class ConversationPatchBodyDto extends createZodDto(PatchBody, "ConversationPatchBody") {}

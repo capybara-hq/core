@@ -556,6 +556,8 @@ export class OrgCatalogService {
     actor: string,
     installId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (a write made through the Platform tool). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<UninstallReport> {
     if (!UUID_RE.test(installId))
       throw new ApiError("plugin.install_not_found", "Plugin install not found");
@@ -578,7 +580,10 @@ export class OrgCatalogService {
       orgId,
       actor,
       installId,
-      actorTokenId !== undefined ? { actorTokenId } : {},
+      {
+        ...(actorTokenId !== undefined && { actorTokenId }),
+        ...(auditDetail !== undefined && { auditDetail }),
+      },
       // only a live install was on: removing a failed or stale one writes no switch row, so an
       // item its scope wants stays wanted and the sync installs it again
       row !== undefined && live ? {} : undefined,

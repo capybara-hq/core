@@ -1,15 +1,28 @@
 import { Module } from "@nestjs/common";
 import { AgentsModule } from "../agents/agents.module.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
+import { ConversationsModule } from "../conversations/conversations.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { IdentityModule } from "../identity/identity.module.js";
+import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { ProvidersModule } from "../runtime/providers.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
+import { AccountsOperations } from "./ops/accounts.ops.js";
+import { AdminOperations } from "./ops/admin.ops.js";
 import { AgentTemplatesOperations } from "./ops/agent-templates.ops.js";
 import { AgentsOperations } from "./ops/agents.ops.js";
+import { CatalogAdminOperations } from "./ops/catalog-admin.ops.js";
+import { ComponentsOperations } from "./ops/components.ops.js";
 import { ConnectorsOperations } from "./ops/connectors.ops.js";
+import { ConversationsOperations } from "./ops/conversations.ops.js";
 import { ExtensionsOperations } from "./ops/extensions.ops.js";
+import { ExtensionsAdminOperations } from "./ops/extensions-admin.ops.js";
 import { MarketplacesOperations } from "./ops/marketplaces.ops.js";
+import { ModelsOperations } from "./ops/models.ops.js";
+import { OrgPluginsOperations } from "./ops/org-plugins.ops.js";
+import { OrgsOperations } from "./ops/orgs.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
@@ -30,6 +43,17 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   RequestsOperations,
   ConnectorsOperations,
   ExtensionsOperations,
+  ConversationsOperations,
+  ComponentsOperations,
+  // Task 7: admin accounts and orgs
+  AccountsOperations,
+  OrgsOperations,
+  AdminOperations,
+  // Task 8: admin catalog, extensions, marketplaces, models, org uploads
+  CatalogAdminOperations,
+  OrgPluginsOperations,
+  ExtensionsAdminOperations,
+  ModelsOperations,
 ] as const;
 
 /**
@@ -46,6 +70,10 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     CatalogModule,
     ExtensionsModule,
     ToolsModule,
+    ConversationsModule,
+    IdentityModule,
+    ModelsModule,
+    ProvidersModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

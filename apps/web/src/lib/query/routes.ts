@@ -431,6 +431,11 @@ export const ROUTES: readonly RouteEntry[] = [
       params.token === undefined ? [] : [q(pendingBindingQuery(params.token))],
   },
   {
+    pattern: "/change-password",
+    // The session: signed out goes to sign-in, an account with nothing to change goes home.
+    queries: () => [q(maybeMeQuery())],
+  },
+  {
     pattern: "/channels",
     // Org admins; the agents name the connections' agents (a section).
     queries: ({ orgId, me }) =>

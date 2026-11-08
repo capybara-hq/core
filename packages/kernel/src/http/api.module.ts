@@ -56,6 +56,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
+import { InitialPasswordsController } from "../identity/initial-passwords.controller.js";
 import { MeController } from "../identity/me.controller.js";
 import {
   BindController,
@@ -100,6 +101,7 @@ import { UiController } from "../ui/views.controller.js";
 const CONTROLLERS: Type[] = [
   AuthController,
   MeController,
+  InitialPasswordsController,
   OrgsController,
   OrgSettingsController,
   InvitationsController,

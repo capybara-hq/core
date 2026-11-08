@@ -116,9 +116,12 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => /^(platform|skills|agents|agent-templates)\./.test(id)),
     ).toEqual([
+      "agent-templates.available",
+      "agent-templates.disable-preview",
       "agent-templates.get",
       "agent-templates.list",
       "agent-templates.save",
+      "agent-templates.set-enabled",
       "agents.create",
       "agents.create-from-template",
       "agents.get",
@@ -127,9 +130,15 @@ describe("registration", () => {
       "agents.update",
       "platform.me",
       "platform.overview",
+      "skills.available",
       "skills.create",
+      "skills.delete",
+      "skills.delete-preview",
+      "skills.disable-preview",
       "skills.get",
       "skills.list",
+      "skills.set-enabled",
+      "skills.set-shareable",
     ]);
   });
 });
