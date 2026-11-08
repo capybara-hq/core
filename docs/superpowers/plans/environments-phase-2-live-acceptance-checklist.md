@@ -20,7 +20,7 @@ commit. Gates before calling phase 2 done: the maintainer's macOS machine and on
 ## Linux, `--no-browser`
 
 - [ ] `login --no-browser` prints the address and code; approving in a browser on another machine
-      finishes the login; `bwrap` and `socat` are installed (or `status` says what is missing).
+      finishes the login; `bwrap` and `socat` are installed first (sandbox-runtime needs them).
 - [ ] The same conversation checks as on macOS pass (real paths, `Bash`, `Write`, denied reads).
 
 ## Network loss

@@ -656,7 +656,8 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   stream (nginx: `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`,
   `proxy_set_header Connection "upgrade"`).
 - **Long idle connections.** A connection stays open for as long as the machine is online. The
-  program and the gateway ping every 20 s, so a proxy idle timeout of at least 60 s is enough; do not
+  gateway pings every 20 s and the program reconnects after 60 s without any frame from it, so a
+  proxy idle timeout of at least 60 s is enough; do not
   set a maximum connection age shorter than a few hours (the program reconnects, but a command in
   flight waits out the reconnect grace).
 - **Replicas.** Any gateway replica can hold the connection; one lease per environment
