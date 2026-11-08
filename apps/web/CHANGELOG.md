@@ -1,5 +1,25 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.12
+
+### Minor Changes
+
+- 32b4dfa: Appearance settings and the admin themes page: 组织设置 › 外观 (the org's themes with their switches,
+  the platform default locked on; the default theme and 允许成员自选; read only for members), a 外观
+  section in 偏好设置 (the person's theme, or the org's lock line), the platform default theme in the
+  deployment settings (内置主题 or a platform `all` theme; a refusal names the orgs where it is off),
+  and `/admin/themes` with its detail beside the other platform component pages.
+  
+  Theme names come from the themes themselves on the admin pages; the switch-off, scope, disable,
+  uninstall and update previews list the orgs whose default a theme is and how many people picked it;
+  the platform default theme offers no scope or disable action. Pickers use the design
+  `ThemeSwatchGroup` (one tab stop, arrow keys select).
+- 54d3507: Themed first paint: the workspace and sign-in layouts read the viewer's resolved theme (the org's
+  themes, or the platform default before sign-in), link its stylesheet in the streamed `<head>`, pass
+  its logo and wordmark to the design system and use its favicon; the account row's scheme toggle is
+  hidden under a single-scheme theme.
+  Switching themes without a reload leaves only the current theme's stylesheet enabled.
+
 ## 0.1.0-rc.11
 
 ### Patch Changes
