@@ -503,6 +503,15 @@ export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
 /** 外层页面与嵌入 iframe 之间 `postMessage` 协议的版本标识。 */
 export const EMBED_PROTOCOL = "capybara-embed/1";
 
+/**
+ * What an embed's `init` says about where it is shown, narrowed on `scope` like {@link EmbedClaims}:
+ * an org's page, panel, section or previewer (`orgId`, and the conversation when there is one), or
+ * a platform page of the admin console (no org).
+ */
+export type EmbedInitContext =
+  | { scope: "org"; orgId: string; conversationId?: string }
+  | { scope: "platform"; orgId?: undefined; conversationId?: undefined };
+
 /** 外层页面发给 iframe 的消息。 */
 export type EmbedParentMessage =
   | {
@@ -512,7 +521,7 @@ export type EmbedParentMessage =
       locale: Locale;
       theme: "dark" | "light";
       tokens: Record<string, string>;
-      context: { orgId: string; conversationId?: string };
+      context: EmbedInitContext;
     }
   | { protocol: typeof EMBED_PROTOCOL; type: "token"; token: string }
   | {

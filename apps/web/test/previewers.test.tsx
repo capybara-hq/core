@@ -30,7 +30,7 @@ function bridge(over: Partial<EmbedBridgeOptions> = {}) {
     frameWindow: () => frame,
     fetchToken: async () => ({ token: "tok", expiresIn: 300 }),
     locale: "en",
-    context: { orgId: "o1", conversationId: "c1" },
+    context: { scope: "org", orgId: "o1", conversationId: "c1" },
     readTheme: () => ({ theme: "dark", tokens: {} }),
     onResize: vi.fn(),
     onNavigate: vi.fn(),

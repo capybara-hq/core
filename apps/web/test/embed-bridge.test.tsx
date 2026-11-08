@@ -89,7 +89,7 @@ function setup(over: Partial<EmbedBridgeOptions> = {}) {
     frameWindow: () => frame,
     fetchToken,
     locale: "zh",
-    context: { orgId: "o1", conversationId: "c1" },
+    context: { scope: "org", orgId: "o1", conversationId: "c1" },
     readTheme: () => ({ theme: "dark", tokens: { "--cb-bg": "black" } }),
     onResize: vi.fn(),
     onNavigate: vi.fn(),
@@ -153,8 +153,17 @@ describe("createEmbedBridge", () => {
         locale: "zh",
         theme: "dark",
         tokens: { "--cb-bg": "black" },
-        context: { orgId: "o1", conversationId: "c1" },
+        context: { scope: "org", orgId: "o1", conversationId: "c1" },
       },
+    ]);
+  });
+
+  it("a platform page's init carries the platform scope and no org", async () => {
+    const { bridge, posted } = setup({ context: { scope: "platform" } });
+    await bridge.start();
+    bridge.loaded();
+    expect(posted.map((m) => (m.type === "init" ? m.context : null))).toEqual([
+      { scope: "platform" },
     ]);
   });
 

@@ -119,10 +119,14 @@ export function EmbedTab({
         return r;
       },
       locale,
-      context: {
-        ...(orgId !== null && { orgId }),
-        ...(conversationId !== undefined && { conversationId }),
-      },
+      context:
+        orgId === null
+          ? { scope: "platform" }
+          : {
+              scope: "org",
+              orgId,
+              ...(conversationId !== undefined && { conversationId }),
+            },
       readTheme: () => ({ theme: readTheme(document), tokens: readDesignTokens(document) }),
       onResize: setHeight,
       onNavigate: (path) => latest.current.router.push(path),
