@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
@@ -311,7 +311,7 @@ export class DockerExecutor implements Executor {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
-    if (c !== null && !this.matches(c)) {
+    if (c !== null && (!this.matches(c) || !(await this.seesHostRoots(c)))) {
       await this.mustDocker(["rm", "-f", this.name], "removing the old container");
       c = null;
     }
@@ -335,6 +335,24 @@ export class DockerExecutor implements Executor {
       this.netOpen = "bridge" in (await this.inspectNetworks());
     }
     this.ready = true;
+  }
+
+  /**
+   * Whether a reused container's mounts still show this directory's roots: after the directory was
+   * removed and recreated (`login` again), a Linux bind mount still holds the deleted one.
+   */
+  private async seesHostRoots(c: Inspected): Promise<boolean> {
+    if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
+    const probe = `.capybara-mount-probe-${randomBytes(8).toString("hex")}`;
+    const checks = this.wanted();
+    try {
+      for (const m of checks) writeFileSync(join(m.source, probe), "");
+      const script = checks.map((m) => `[ -e ${m.dest}/${probe} ]`).join(" && ");
+      const r = await docker(["exec", this.name, "/bin/sh", "-c", script], { timeoutMs: 10_000 });
+      return r.code === 0;
+    } finally {
+      for (const m of checks) rmSync(join(m.source, probe), { force: true });
+    }
   }
 
   private async inspectNetworks(): Promise<Record<string, unknown>> {

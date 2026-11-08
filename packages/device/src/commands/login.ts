@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
 import { hostname } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
-import { defaultWorkDir, readCredential, writeCredential } from "../state.js";
+import { prepareEnvironmentDir } from "../exec/shared.js";
+import {
+  DEFAULT_MAX_FRAME_BYTES,
+  defaultWorkDir,
+  readCredential,
+  writeCredential,
+} from "../state.js";
 
 export interface LoginDeps {
   stateDir: string;
@@ -104,9 +109,8 @@ export async function login(
             : isAbsolute(cmd.dir)
               ? cmd.dir
               : resolve(cmd.dir);
-        for (const sub of ["workspace", "skills", "tmp"]) {
-          mkdirSync(join(dir, sub), { recursive: true });
-        }
+        // Recreates a lost directory, marker or root: the environment starts afresh.
+        prepareEnvironmentDir(dir);
         writeCredential(deps.stateDir, {
           url: baseUrl,
           connectUrl: granted.connectUrl,
@@ -116,6 +120,7 @@ export async function login(
           dir,
           mode: cmd.mode,
           reconnectGraceSeconds: granted.reconnectGraceSeconds,
+          maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Environment ${granted.environmentId}, working directory ${dir}`);
         return 0;

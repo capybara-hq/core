@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
+import { logout } from "../src/commands/logout.js";
+import { pidPath, writePid } from "../src/pid.js";
 
 interface Seen {
   path: string;
@@ -80,8 +82,13 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-const run = (argv: string[], platform: NodeJS.Platform = "linux") =>
+const run = (
+  argv: string[],
+  platform: NodeJS.Platform = "linux",
+  kill: typeof process.kill | undefined = undefined,
+) =>
   runCli(argv, {
+    ...(kill && { kill }),
     env: { XDG_CONFIG_HOME: join(home, "cfg") },
     home,
     platform,
@@ -125,11 +132,39 @@ describe("login", () => {
       orgId: "org-1",
       mode: "os",
       reconnectGraceSeconds: 90,
+      maxFrameBytes: 16_777_216,
       dir: join(home, "capybara-device", "env-1"),
     });
-    for (const sub of ["workspace", "skills", "tmp"]) {
+    for (const sub of ["workspace", "skills", "tmp", ".capybara-device"]) {
       expect(existsSync(join(cred.dir, sub))).toBe(true);
     }
+  });
+
+  it("stores the deployment's maxFrameBytes", async () => {
+    tokenAnswers = [{ status: 200, body: { ...granted.body, maxFrameBytes: 4_194_304 } }];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
+  });
+
+  it("logging in again after the files were lost recreates the directory and marker", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    const dir = join(home, "capybara-device", "env-1");
+    writeFileSync(join(dir, "workspace", "kept"), "x");
+    rmSync(dir, { recursive: true });
+    expect(await run(["logout"])).toBe(0);
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    for (const sub of ["workspace", "skills", "tmp", ".capybara-device"]) {
+      expect(existsSync(join(dir, sub))).toBe(true);
+    }
+    expect(existsSync(join(dir, "workspace", "kept"))).toBe(false);
+    // A lost root under a kept directory is recreated as well.
+    expect(await run(["logout"])).toBe(0);
+    rmSync(join(dir, "skills"), { recursive: true });
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(existsSync(join(dir, "skills"))).toBe(true);
   });
 
   it("does not open the browser with --no-browser and honours --dir / --mode", async () => {
@@ -227,6 +262,52 @@ describe("status and logout", () => {
     expect(await run(["logout"])).toBe(0);
     expect(existsSync(credFile())).toBe(false);
     expect(await run(["status"])).toBe(1);
+  });
+
+  it("logout stops the running program before forgetting the credential", async () => {
+    tokenAnswers = [granted];
+    await run(["login", "--url", base]);
+    const state = join(home, "cfg", "capybara-device");
+    writePid(state, 999_001);
+    const alive = new Set([999_001]);
+    const sent: Array<[number, string | number | undefined]> = [];
+    let credAtSigterm: boolean | undefined;
+    const kill = ((pid: number, sig?: string | number) => {
+      sent.push([pid, sig]);
+      if (!alive.has(pid)) throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+      if (sig === "SIGTERM") {
+        alive.delete(pid);
+        credAtSigterm = existsSync(credFile());
+      }
+      return true;
+    }) as typeof process.kill;
+    out.length = 0;
+    expect(await run(["logout"], "linux", kill)).toBe(0);
+    expect(sent).toContainEqual([999_001, "SIGTERM"]);
+    expect(credAtSigterm).toBe(true);
+    expect(out[0]).toContain("Stopping the running capybara-device (pid 999001)");
+    expect(existsSync(credFile())).toBe(false);
+    expect(existsSync(pidPath(state))).toBe(true); // the program removes its own pid file
+  });
+
+  it("logout warns when the program does not exit in time, and still logs out", async () => {
+    tokenAnswers = [granted];
+    await run(["login", "--url", base]);
+    const state = join(home, "cfg", "capybara-device");
+    writePid(state, 999_002);
+    const kill = (() => true) as unknown as typeof process.kill;
+    const lines: string[] = [];
+    const errs: string[] = [];
+    const code = await logout(state, {
+      out: (l) => lines.push(l),
+      err: (l) => errs.push(l),
+      kill,
+      sleep: async () => {},
+      waitMs: 300,
+    });
+    expect(code).toBe(0);
+    expect(errs[0]).toContain("still running");
+    expect(existsSync(credFile())).toBe(false);
   });
 });
 

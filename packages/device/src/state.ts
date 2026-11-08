@@ -23,6 +23,8 @@ export interface Credential {
   mode: DeviceMode;
   /** The deployment's `environments.device.reconnectGraceSeconds`, returned with the credential. */
   reconnectGraceSeconds: number;
+  /** The deployment's `environments.device.maxFrameBytes`: no frame this program sends is larger. */
+  maxFrameBytes: number;
 }
 
 /** Local limits the person sets for this machine. */
@@ -34,6 +36,7 @@ export interface Policy {
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
+export const DEFAULT_MAX_FRAME_BYTES = 16 * 1024 * 1024;
 
 export const DEFAULT_POLICY: Policy = {
   allowedDomains: [],
@@ -105,7 +108,11 @@ export function readCredential(dir: string): Credential | undefined {
   if (!Number.isInteger(grace) || grace <= 0) {
     throw new Error(`${file} is invalid: reconnectGraceSeconds must be a positive integer`);
   }
-  return { ...(raw as Credential), reconnectGraceSeconds: grace };
+  const maxFrameBytes = raw.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+  if (!Number.isInteger(maxFrameBytes) || maxFrameBytes <= 0) {
+    throw new Error(`${file} is invalid: maxFrameBytes must be a positive integer`);
+  }
+  return { ...(raw as Credential), reconnectGraceSeconds: grace, maxFrameBytes };
 }
 
 export function removeCredential(dir: string): boolean {
@@ -115,10 +122,37 @@ export function removeCredential(dir: string): boolean {
   return true;
 }
 
+const isStringList = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((x) => typeof x === "string");
+const isCeiling = (v: unknown): v is number | null =>
+  v === null || (typeof v === "number" && Number.isFinite(v) && v > 0);
+
+/** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
 export function readPolicy(dir: string): Policy {
   const file = policyPath(dir);
   if (!existsSync(file)) return { ...DEFAULT_POLICY };
-  return { ...DEFAULT_POLICY, ...(JSON.parse(readFileSync(file, "utf8")) as Partial<Policy>) };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (e) {
+    throw new Error(`${file} is not valid JSON (${(e as Error).message})`);
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${file} is invalid: expected a JSON object`);
+  }
+  const policy: Policy = { ...DEFAULT_POLICY, ...(raw as Partial<Policy>) };
+  const bad = (key: string, want: string): Error =>
+    new Error(`${file} is invalid: ${key} must be ${want} (fix or delete the file)`);
+  if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
+  if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
+  if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
+  if (!isCeiling(policy.memoryMb)) throw bad("memoryMb", "a positive number or null");
+  return {
+    allowedDomains: policy.allowedDomains,
+    allowCredentials: policy.allowCredentials,
+    cpu: policy.cpu,
+    memoryMb: policy.memoryMb,
+  };
 }
 
 export function writePolicy(dir: string, policy: Policy): void {

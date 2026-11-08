@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -20,6 +21,7 @@ import {
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
 } from "../src/exec/docker.js";
+import { prepareEnvironmentDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
 import { DEFAULT_POLICY } from "../src/state.js";
 
@@ -402,6 +404,37 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     // Commands see the skills read only and cannot plant links there.
     const w = await ex.exec(execArgs("ln -s /etc/passwd /skills/plant"), live);
     expect(w.exitCode).not.toBe(0);
+  });
+
+  it("a root removed under the marked directory is gone", async () => {
+    rmSync(join(dir, "workspace"), { recursive: true });
+    expect(await ex.ensureRoot()).toBe("gone");
+    expect(existsSync(join(dir, "workspace"))).toBe(false);
+  });
+
+  it("a reused container whose mounts lost the directory is recreated", async () => {
+    await ex.writeFile("/workspace/old", Buffer.from("old"));
+    const id = () =>
+      execFileSync("docker", ["inspect", "-f", "{{.Id}}", containerName(envId)])
+        .toString()
+        .trim();
+    const first = id();
+    await ex.dispose();
+    // A new program over the same directory reuses the container while its mounts still match.
+    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    expect(await ex.ensureRoot()).toBe("ok");
+    expect((await ex.exec(execArgs("cat /workspace/old"), live)).stdout).toBe("old");
+    expect(id()).toBe(first);
+    await ex.dispose();
+    // The directory is lost and recreated by login: the container must see the new one.
+    rmSync(dir, { recursive: true });
+    prepareEnvironmentDir(dir);
+    writeFileSync(join(dir, "workspace", "new"), "new");
+    ex = new DockerExecutor({ dir, environmentId: envId, policy: DEFAULT_POLICY });
+    expect(await ex.ensureRoot()).toBe("ok");
+    const r = await ex.exec(execArgs("cat /workspace/new; ls /workspace"), live);
+    expect(r.stdout).toBe("newnew\n");
+    expect(readdirSync(join(dir, "workspace"))).toEqual(["new"]);
   });
 
   it("ensureRoot creates the marker and roots; a vanished directory is gone", async () => {

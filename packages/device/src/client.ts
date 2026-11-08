@@ -21,6 +21,12 @@ export const REPLACED_MESSAGE =
 export const DELETED_MESSAGE =
   "The environment was deleted on the deployment. The files on this machine stay where they are.";
 
+/** The answer sent instead of a result whose frame would exceed the connection's frame limit. */
+export const TOO_LARGE_MESSAGE = "result larger than the connection's frame limit";
+
+/** A failing connection is reported at most this often. */
+const FAILURE_REPORT_INTERVAL_MS = 60_000;
+
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
 
@@ -39,7 +45,11 @@ export interface ConnectOptions {
   closeTimeoutMs?: number;
 }
 
-/** A running connection. `done` resolves with the exit code once the program should end. */
+/**
+ * A running connection. `done` resolves with the exit code once the program should end: 0 for the
+ * terminal conditions (revoked, outdated, replaced, deleted, stopped, drained), so a service
+ * manager that restarts on failure leaves it stopped.
+ */
 export interface Connection {
   readonly done: Promise<number>;
   /** Accept no new operations; end when the running ones have finished. */
@@ -110,7 +120,19 @@ export function connect(
 
   const isOpen = (): boolean => ws !== undefined && ws.readyState === WebSocket.OPEN;
 
-  const deliver = (res: DeviceRes): void => {
+  /** `res`, or an error answer when its frame would exceed the deployment's frame limit. */
+  const fit = (res: DeviceRes): DeviceRes =>
+    Buffer.byteLength(JSON.stringify(res)) <= cred.maxFrameBytes
+      ? res
+      : {
+          type: "res",
+          id: res.id,
+          ok: false,
+          error: { kind: "error", message: TOO_LARGE_MESSAGE },
+        };
+
+  const deliver = (answer: DeviceRes): void => {
+    const res = fit(answer);
     if (isOpen()) {
       ws?.send(JSON.stringify(res), (e) => {
         if (e) pending.set(res.id, { res, expires: now() + graceMs });
@@ -183,7 +205,7 @@ export function connect(
         const reason = (req.args as { reason: "revoked" | "deleted" }).reason;
         exitAfterStop =
           reason === "revoked"
-            ? { exit: 1, message: DISCONNECTED_MESSAGE }
+            ? { exit: 0, message: DISCONNECTED_MESSAGE }
             : { exit: 0, message: DELETED_MESSAGE };
         halt();
         const sock = ws;
@@ -244,6 +266,16 @@ export function connect(
   });
 
   let attempt = 0;
+  /** When a failing connection was last reported; reset once a connection stays up. */
+  let lastReport: number | undefined;
+
+  /** Reports why connecting keeps failing, at most once a minute. */
+  const reportFailure = (why: string): void => {
+    const t = now();
+    if (lastReport !== undefined && t - lastReport < FAILURE_REPORT_INTERVAL_MS) return;
+    lastReport = t;
+    err(`${why} Retrying.`);
+  };
 
   const runSession = (): Promise<SessionEnd> =>
     new Promise<SessionEnd>((resolve) => {
@@ -257,15 +289,20 @@ export function connect(
       ws = sock;
       let liveness: ReturnType<typeof setTimeout> | undefined;
       let stable: ReturnType<typeof setTimeout> | undefined;
+      let opened = false;
+      /** The deployment answered the upgrade with an HTTP status (already handled). */
+      let answered = false;
       const heard = (): void => {
         clearTimeout(liveness);
         liveness = setTimeout(() => sock.terminate(), livenessMs);
       };
       sock.on("ping", heard);
       sock.on("open", () => {
+        opened = true;
         heard();
         stable = setTimeout(() => {
           attempt = 0;
+          lastReport = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
         prune();
@@ -281,23 +318,38 @@ export function connect(
         onMessage(data.toString("utf8"));
       });
       sock.on("unexpected-response", (_req, res) => {
+        answered = true;
         const status = res.statusCode ?? 0;
         res.resume();
         sock.terminate();
-        if (status === 401) endSession({ exit: 1, message: DISCONNECTED_MESSAGE });
-        else if (status === 426) endSession({ exit: 1, message: OUTDATED_MESSAGE });
-        else endSession({ reconnect: true });
+        if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (status === 426) return endSession({ exit: 0, message: OUTDATED_MESSAGE });
+        reportFailure(
+          status === 404
+            ? `Connecting to ${cred.connectUrl} failed: HTTP 404. The deployment must route ` +
+                "/device/connect to its gateway (see the deployment docs)."
+            : `Connecting to ${cred.connectUrl} failed: HTTP ${status}.`,
+        );
+        endSession({ reconnect: true });
       });
-      sock.on("error", () => {
-        // 'close' follows; the reason is decided there.
+      sock.on("error", (e) => {
+        // 'close' follows; the reason is decided there. A failure before the socket opened is a
+        // connection attempt that did not reach the deployment.
+        if (!opened && !answered && !stopping) {
+          reportFailure(`Cannot reach ${cred.connectUrl}: ${e.message}.`);
+        }
       });
-      sock.on("close", (code) => {
+      sock.on("close", (code, reason) => {
         clearTimeout(liveness);
         clearTimeout(stable);
         if (ws === sock) ws = undefined;
         if (exitAfterStop) return endSession(exitAfterStop);
-        if (code === 4002) return endSession({ exit: 1, message: REPLACED_MESSAGE });
-        if (code === 4003) return endSession({ exit: 1, message: DISCONNECTED_MESSAGE });
+        if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });
+        if (code === 4003) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (code === 4400) {
+          const why = reason.toString("utf8");
+          reportFailure(`The deployment closed the connection: 4400${why ? ` ${why}` : ""}.`);
+        }
         endSession({ reconnect: true });
       });
     });

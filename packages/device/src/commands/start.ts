@@ -29,8 +29,9 @@ export async function start(deps: StartDeps): Promise<number> {
     return 1;
   }
   if (cred === undefined) {
+    // Terminal: exit 0 so a service manager does not restart it until someone logs in.
     err("Not logged in. Run capybara-device login --url <url> first.");
-    return 1;
+    return 0;
   }
   if (deps.createExecutor === undefined) {
     err("capybara-device start: no execution backend is available in this build");

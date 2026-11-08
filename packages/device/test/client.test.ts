@@ -22,10 +22,11 @@ const cred = (): Credential => ({
   dir: "/work/e1",
   mode: "os",
   reconnectGraceSeconds: 120,
+  maxFrameBytes: 16 * 1024 * 1024,
 });
 
-const start = (extra: Partial<ConnectOptions> = {}): Connection => {
-  conn = connect(cred(), exec, {
+const start = (extra: Partial<ConnectOptions> = {}, over: Partial<Credential> = {}): Connection => {
+  conn = connect({ ...cred(), ...over }, exec, {
     err: (l) => errs.push(l),
     log: new CommandLog(dir),
     sleep: () => new Promise((r) => setTimeout(r, 10)),
@@ -249,20 +250,21 @@ describe("client", () => {
     expect(exec.started).toEqual([]);
   });
 
-  it("426 exits with the upgrade message", async () => {
+  it("426 exits 0 (terminal) with the upgrade message", async () => {
     kernel.rejectWith = 426;
     const c = start();
-    expect(await c.done).toBe(1);
+    expect(await c.done).toBe(0);
     expect(errs).toEqual([
       "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device",
     ]);
   });
 
-  it("401 and close 4003 exit with the disconnected message", async () => {
+  it("401 and close 4003 exit 0 (terminal) with the disconnected message", async () => {
     const msg =
       "This machine was disconnected from the deployment. Run capybara-device login again.";
     kernel.rejectWith = 401;
-    expect(await start().done).toBe(1);
+    expect(await start().done).toBe(0);
+    await new Promise((r) => setTimeout(r, 20));
     expect(errs).toEqual([msg]);
 
     kernel.rejectWith = undefined;
@@ -270,15 +272,15 @@ describe("client", () => {
     const c = start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     kernel.sockets.at(-1)?.close(4003);
-    expect(await c.done).toBe(1);
+    expect(await c.done).toBe(0);
     expect(errs).toEqual([msg]);
   });
 
-  it("close 4002 exits saying the machine connected elsewhere", async () => {
+  it("close 4002 exits 0 (terminal) saying the machine connected elsewhere", async () => {
     const c = start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     kernel.sockets[0]?.close(4002);
-    expect(await c.done).toBe(1);
+    expect(await c.done).toBe(0);
     expect(errs[0]).toContain("connected elsewhere");
   });
 
@@ -291,11 +293,11 @@ describe("client", () => {
     await kernel.waitFor("third hello", () => kernel.of("hello", 2)[0]);
   });
 
-  it("a stop op is answered, then the program exits", async () => {
+  it("a stop op is answered, then the program exits 0 (terminal)", async () => {
     const c = start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     kernel.send(0, req("s1", "stop", { reason: "revoked" }));
-    expect(await c.done).toBe(1);
+    expect(await c.done).toBe(0);
     const res = await kernel.waitFor("res", () => kernel.of("res")[0]);
     expect(res).toEqual({ type: "res", id: "s1", ok: true, result: null });
     expect(errs[0]).toContain("disconnected");
@@ -314,6 +316,86 @@ describe("client", () => {
     exec.release("slow");
     expect(await c.done).toBe(0);
     await kernel.waitFor("r1", () => kernel.of("res").find((r) => r.id === "r1"));
+  });
+
+  it("a stop op for a deleted environment exits 0 with the deleted message", async () => {
+    const c = start();
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.send(0, req("s1", "stop", { reason: "deleted" }));
+    expect(await c.done).toBe(0);
+    expect(errs[0]).toContain("deleted");
+  });
+
+  it("a 404 upgrade keeps retrying and says /device/connect must be routed, once a minute", async () => {
+    kernel.rejectWith = 404;
+    let clock = 0;
+    start({ now: () => clock });
+    await kernel.waitFor("3 attempts", () => kernel.headers.length >= 3);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toContain("HTTP 404");
+    expect(errs[0]).toContain("must route /device/connect to its gateway");
+    clock = 61_000;
+    const seen = kernel.headers.length;
+    await kernel.waitFor("another attempt", () => kernel.headers.length > seen + 1);
+    expect(errs).toHaveLength(2);
+    kernel.rejectWith = undefined;
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+  });
+
+  it("another non-101 answer is reported with its status and retried", async () => {
+    kernel.rejectWith = 502;
+    start();
+    await kernel.waitFor("2 attempts", () => kernel.headers.length >= 2);
+    expect(errs).toEqual([`Connecting to ${kernel.url} failed: HTTP 502. Retrying.`]);
+    kernel.rejectWith = undefined;
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+  });
+
+  it("close 4400 is reported with its reason and retried", async () => {
+    start();
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    kernel.sockets[0]?.close(4400, "not authenticated");
+    await kernel.waitFor("second hello", () => kernel.of("hello", 1)[0]);
+    expect(errs).toEqual([
+      "The deployment closed the connection: 4400 not authenticated. Retrying.",
+    ]);
+  });
+
+  it("an unreachable deployment is reported and retried", async () => {
+    const clock = 0;
+    let attempts = 0;
+    const c = start(
+      {
+        now: () => clock,
+        sleep: () => {
+          attempts++;
+          return new Promise((r) => setTimeout(r, 5));
+        },
+      },
+      { connectUrl: "ws://127.0.0.1:1/device/connect" },
+    );
+    await kernel.waitFor("3 attempts", () => attempts >= 3);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]).toMatch(/^Cannot reach ws:\/\/127\.0\.0\.1:1\/device\/connect: .*Retrying\.$/);
+    c.stop();
+    expect(await c.done).toBe(0);
+  });
+
+  it("a result larger than the frame limit is answered with an error", async () => {
+    start({}, { maxFrameBytes: 200 });
+    await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    exec.files.set("/work/e1/big", new Uint8Array(1000));
+    kernel.send(0, req("r1", "readFile", { path: "/work/e1/big", maxBytes: 1000 }));
+    kernel.send(0, req("r2", "readFile", { path: "/work/e1/big", maxBytes: 10 }));
+    await kernel.waitFor("2 results", () => kernel.of("res").length === 2);
+    const byId = Object.fromEntries(kernel.of("res").map((r) => [r.id, r]));
+    expect(byId.r1).toEqual({
+      type: "res",
+      id: "r1",
+      ok: false,
+      error: { kind: "error", message: "result larger than the connection's frame limit" },
+    });
+    expect(byId.r2).toMatchObject({ ok: true, result: { truncated: true } });
   });
 
   it("answers an invalid request with an error", async () => {

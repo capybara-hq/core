@@ -74,6 +74,18 @@ describe("OsExecutor: roots, ensureRoot and the skills root", () => {
     expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
   });
 
+  it("a root removed under a marked directory is gone, never recreated empty", async () => {
+    for (const root of ["workspace", "skills", "tmp"]) {
+      expect(await ex.ensureRoot()).toBe("ok");
+      rmSync(join(dir, root), { recursive: true });
+      expect(await ex.ensureRoot()).toBe("gone");
+      expect(existsSync(join(dir, root))).toBe(false);
+      // A fresh process sees the marker and the missing root: still gone.
+      expect(await new OsExecutor({ dir, policy: DEFAULT_POLICY }).ensureRoot()).toBe("gone");
+      mkdirSync(join(dir, root));
+    }
+  });
+
   it("the marker vanishing while the directory stays is gone in this process", async () => {
     expect(await ex.ensureRoot()).toBe("ok");
     rmSync(join(dir, ".capybara-device"));

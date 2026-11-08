@@ -79,9 +79,21 @@ export class OutputCap {
   }
 }
 
+const MARKER_TEXT = "This directory is a capybara-device environment.\n";
+
 /**
- * The environment directory's marker and roots. The marker seen once means its vanishing (or the
- * directory's) is "gone"; a directory removed after login is never recreated silently.
+ * Creates (or completes) an environment directory: the marker and the three roots. Only `login`
+ * calls it, so logging in again after the files were lost starts the environment afresh.
+ */
+export function prepareEnvironmentDir(dir: string): void {
+  for (const r of Object.values(osRoots(dir))) mkdirSync(r, { recursive: true });
+  const marker = join(dir, ROOT_MARKER);
+  if (!existsSync(marker)) writeFileSync(marker, MARKER_TEXT);
+}
+
+/**
+ * The environment directory's marker and roots. Once the marker exists, the directory, the marker
+ * or any root vanishing is "gone": nothing is recreated silently (log in again to start afresh).
  */
 export class RootGuard {
   /** The marker was seen in this process: its vanishing means the directory was removed. */
@@ -94,17 +106,17 @@ export class RootGuard {
 
   ensure(): "ok" | "gone" {
     const marker = join(this.dir, ROOT_MARKER);
+    const rootList = [this.roots.workspace, this.roots.skills, this.roots.tmp];
     if (existsSync(marker)) {
       this.seen = true;
-    } else {
-      // login creates the directory, so a missing one was removed after login.
-      if (this.seen || !existsSync(this.dir)) return "gone";
-      writeFileSync(marker, "This directory is a capybara-device environment.\n");
-      this.seen = true;
+      // A root removed under a marked directory lost its files: never recreate it empty.
+      return rootList.every((r) => existsSync(r)) ? "ok" : "gone";
     }
-    for (const r of [this.roots.workspace, this.roots.skills, this.roots.tmp]) {
-      mkdirSync(r, { recursive: true });
-    }
+    // login creates the directory, so a missing one was removed after login.
+    if (this.seen || !existsSync(this.dir)) return "gone";
+    writeFileSync(marker, MARKER_TEXT);
+    this.seen = true;
+    for (const r of rootList) mkdirSync(r, { recursive: true });
     return "ok";
   }
 }

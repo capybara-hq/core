@@ -78,7 +78,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.openBrowser && { openBrowser: io.openBrowser }),
       });
     case "logout":
-      return logout(dir, out);
+      return logout(dir, { out, err, ...(io.kill && { kill: io.kill }) });
     case "status":
       return status(dir, cmd.json, out, err);
     case "start":

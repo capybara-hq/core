@@ -21,6 +21,7 @@ const cred: Credential = {
   dir: "/tmp/d",
   mode: "os",
   reconnectGraceSeconds: 120,
+  maxFrameBytes: 1_000_000,
 };
 
 let dir: string;
@@ -63,6 +64,18 @@ describe("state", () => {
     expect(() => readCredential(dir)).toThrow(/positive integer/);
   });
 
+  it("defaults maxFrameBytes to 16 MiB and validates it", () => {
+    const { maxFrameBytes: _m, ...rest } = cred;
+    writeFileSync(credentialPath(dir), JSON.stringify(rest), { mode: 0o600 });
+    expect(readCredential(dir)?.maxFrameBytes).toBe(16_777_216);
+    writeCredential(dir, cred);
+    expect(readCredential(dir)?.maxFrameBytes).toBe(1_000_000);
+    writeFileSync(credentialPath(dir), JSON.stringify({ ...cred, maxFrameBytes: "big" }), {
+      mode: 0o600,
+    });
+    expect(() => readCredential(dir)).toThrow(/maxFrameBytes must be a positive integer/);
+  });
+
   it("names the file when the JSON is invalid", () => {
     writeFileSync(credentialPath(dir), "{nope", { mode: 0o600 });
     expect(() => readCredential(dir)).toThrow(/credential\.json is not valid JSON/);
@@ -88,5 +101,31 @@ describe("state", () => {
     });
     writePolicy(dir, { allowedDomains: ["a.test"], allowCredentials: [], cpu: 2, memoryMb: null });
     expect(readPolicy(dir).allowedDomains).toEqual(["a.test"]);
+  });
+
+  it("readPolicy names the file on bad JSON and on wrong field types", () => {
+    const file = join(dir, "policy.json");
+    writeFileSync(file, "{nope");
+    expect(() => readPolicy(dir)).toThrow(/policy\.json is not valid JSON/);
+    for (const [body, field] of [
+      [{ allowedDomains: "a.test" }, "allowedDomains"],
+      [{ allowedDomains: [1] }, "allowedDomains"],
+      [{ allowCredentials: null }, "allowCredentials"],
+      [{ cpu: "2" }, "cpu"],
+      [{ cpu: 0 }, "cpu"],
+      [{ memoryMb: -1 }, "memoryMb"],
+    ] as const) {
+      writeFileSync(file, JSON.stringify(body));
+      expect(() => readPolicy(dir)).toThrow(new RegExp(`policy\\.json is invalid: ${field} must`));
+    }
+    writeFileSync(file, "[]");
+    expect(() => readPolicy(dir)).toThrow(/policy\.json is invalid: expected a JSON object/);
+    writeFileSync(file, JSON.stringify({ cpu: 1.5, extra: true }));
+    expect(readPolicy(dir)).toEqual({
+      allowedDomains: [],
+      allowCredentials: [],
+      cpu: 1.5,
+      memoryMb: null,
+    });
   });
 });

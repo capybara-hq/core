@@ -15,6 +15,8 @@ export interface TokenResponse {
   environmentId: string;
   connectUrl: string;
   reconnectGraceSeconds: number;
+  /** The program uses 16 MiB when it is absent. */
+  maxFrameBytes?: number;
 }
 
 /** An error response of the kernel: `{ error: { code, message } }`. */

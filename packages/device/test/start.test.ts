@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,6 +26,7 @@ const cred = {
   dir: "/w",
   mode: "os" as const,
   reconnectGraceSeconds: 120,
+  maxFrameBytes: 16 * 1024 * 1024,
 };
 
 describe("start, stop, drain", () => {
@@ -86,11 +87,44 @@ describe("start, stop, drain", () => {
     expect(existsSync(pidPath(dir))).toBe(false);
   });
 
-  it("start without a credential exits 1", async () => {
+  it("start without a credential exits 0 (terminal: a service does not restart it)", async () => {
     const err: string[] = [];
     const code = await start({ stateDir: dir, out: () => {}, err: (l) => err.push(l) });
-    expect(code).toBe(1);
+    expect(code).toBe(0);
     expect(err[0]).toContain("Not logged in");
+  });
+
+  it("start passes the connection's exit code through: 0 terminal, 1 transient", async () => {
+    writeCredential(dir, cred);
+    for (const exit of [0, 1]) {
+      const code = await start({
+        stateDir: dir,
+        out: () => {},
+        err: () => {},
+        proc: Object.assign(new EventEmitter(), { pid: 4300 + exit }) as never,
+        createExecutor: () => new FakeExecutor(),
+        connect: () => ({ done: Promise.resolve(exit), drain: () => {}, stop: () => {} }),
+      });
+      expect(code).toBe(exit);
+    }
+  });
+
+  it("an invalid policy.json stops start with a non-zero exit naming the file", async () => {
+    writeCredential(dir, cred);
+    writeFileSync(join(dir, "policy.json"), JSON.stringify({ cpu: "lots" }));
+    const err: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => err.push(l),
+      proc: Object.assign(new EventEmitter(), { pid: 4400 }) as never,
+      createExecutor: () => new FakeExecutor(),
+      connect: () => {
+        throw new Error("must not connect");
+      },
+    });
+    expect(code).toBe(1);
+    expect(err[0]).toMatch(/policy\.json is invalid: cpu must/);
   });
 
   it("stop and drain signal the running pid, and fail when none runs", () => {
