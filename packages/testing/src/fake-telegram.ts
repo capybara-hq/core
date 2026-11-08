@@ -81,7 +81,7 @@ export interface FakeTelegramServer {
   bots: FakeTelegramBot[];
   /** sendMessage results, in order. */
   messages: FakeTelegramMessage[];
-  /** Successful editMessageText calls, in order. */
+  /** Successful editMessageText calls, in order (markup-only edits are recorded too). */
   edits: FakeTelegramMessage[];
   calls: FakeTelegramCall[];
   /** answerCallbackQuery `callback_query_id`s, in order. */
@@ -129,6 +129,22 @@ export type TgChat = {
 };
 
 const MAX_TEXT = 4096;
+const ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"' };
+
+/**
+ * The text length Telegram limits: UTF-16 code units after entity parsing. With `parse_mode`
+ * HTML, tags (including `<a href>`) are removed and character references decoded.
+ */
+function telegramTextLength(text: string, parseMode?: string): number {
+  if (parseMode?.toUpperCase() !== "HTML") return text.length;
+  return text
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|amp|quot);/g, (_, ref: string) => {
+      if (ref.startsWith("#x")) return String.fromCodePoint(Number.parseInt(ref.slice(2), 16));
+      if (ref.startsWith("#")) return String.fromCodePoint(Number.parseInt(ref.slice(1), 10));
+      return ENTITIES[ref] ?? "";
+    }).length;
+}
 const JSON_PARAMS = new Set(["reply_markup", "reply_parameters", "allowed_updates", "entities"]);
 
 const DEFAULT_BOT: FakeTelegramBot = {
@@ -175,7 +191,13 @@ function parseParams(url: URL, raw: string, contentType: string | undefined) {
   fromForm(url.searchParams);
   if (raw === "") return out;
   if (contentType?.includes("application/json")) {
-    Object.assign(out, JSON.parse(raw) as Record<string, unknown>);
+    let body: unknown;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new TelegramError(400, "Bad Request: invalid JSON");
+    }
+    if (body !== null && typeof body === "object") Object.assign(out, body);
   } else {
     fromForm(new URLSearchParams(raw));
   }
@@ -240,6 +262,8 @@ export async function startFakeTelegram(
   const lastMessageId = new Map<string, number>();
   /** Per bot, chat and message: the current text and markup (for "message is not modified"). */
   const current = new Map<string, FakeTelegramMessage>();
+  /** Pending `delay` waits, cleared (and released) on close. */
+  const delayTimers = new Map<NodeJS.Timeout, () => void>();
   let closed = false;
 
   const stateOf = (token: string | undefined) => {
@@ -313,7 +337,9 @@ export async function startFakeTelegram(
     if (chatId === undefined) throw new TelegramError(400, "Bad Request: chat not found");
     const text = str(params.text) ?? "";
     if (text === "") throw new TelegramError(400, "Bad Request: message text is empty");
-    if (text.length > MAX_TEXT) throw new TelegramError(400, "Bad Request: message is too long");
+    if (telegramTextLength(text, str(params.parse_mode)) > MAX_TEXT) {
+      throw new TelegramError(400, "Bad Request: message is too long");
+    }
     const chatKey = `${s.bot.token}|${chatId}`;
     const messageId = (lastMessageId.get(chatKey) ?? 0) + 1;
     lastMessageId.set(chatKey, messageId);
@@ -346,7 +372,9 @@ export async function startFakeTelegram(
     }
     const text = str(params.text) ?? "";
     if (text === "") throw new TelegramError(400, "Bad Request: message text is empty");
-    if (text.length > MAX_TEXT) throw new TelegramError(400, "Bad Request: message is too long");
+    if (telegramTextLength(text, str(params.parse_mode)) > MAX_TEXT) {
+      throw new TelegramError(400, "Bad Request: message is too long");
+    }
     const markup = params.reply_markup;
     if (text === before.text && JSON.stringify(markup) === JSON.stringify(before.replyMarkup)) {
       throw new TelegramError(400, "Bad Request: message is not modified");
@@ -379,13 +407,28 @@ export async function startFakeTelegram(
 
   const handle = async (req: IncomingMessage, res: ServerResponse, token: string, name: string) => {
     const url = new URL(req.url ?? "/", "http://x");
-    const params = parseParams(url, await readBody(req), req.headers["content-type"]);
+    let params: Record<string, unknown>;
+    try {
+      params = parseParams(url, await readBody(req), req.headers["content-type"]);
+    } catch (e) {
+      if (e instanceof TelegramError) return fail(res, e.code, e.message);
+      throw e;
+    }
     const s = states.get(token);
     if (!s) return fail(res, 401, "Unauthorized");
     calls.push({ method: name, token, params, at: Date.now() });
     const method = name.toLowerCase();
     const wait = delays.get(method) ?? 0;
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    if (wait > 0) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          delayTimers.delete(timer);
+          resolve();
+        }, wait);
+        delayTimers.set(timer, resolve);
+      });
+      if (closed) return;
+    }
     const f = failures.find((x) => x.method === method && x.left > 0);
     if (f) {
       f.left--;
@@ -503,6 +546,11 @@ export async function startFakeTelegram(
     },
     async close() {
       closed = true;
+      for (const [timer, release] of delayTimers) {
+        clearTimeout(timer);
+        release();
+      }
+      delayTimers.clear();
       for (const s of states.values()) for (const p of [...s.pollers]) removePoller(s, p);
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));

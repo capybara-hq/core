@@ -257,6 +257,54 @@ describe("fake Telegram Bot API", () => {
     expect(tg.messages).toHaveLength(3);
   });
 
+  it("counts the HTML text length after entity parsing, in UTF-16 code units", async () => {
+    tg = await startFakeTelegram();
+    const html = (text: string) =>
+      call(tg as FakeTelegramServer, "sendMessage", {
+        chat_id: 7,
+        text,
+        parse_mode: "HTML",
+      });
+    const marked = `<b>${"x".repeat(2000)}</b><a href="https://example.test/${"p".repeat(200)}">${"y".repeat(2000)}</a>`;
+    expect(marked.length).toBeGreaterThan(4096);
+    expect((await html(marked)).status).toBe(200);
+    expect((await html(`<i>${"x".repeat(4096)}</i>`)).status).toBe(200);
+    expect((await html(`<i>${"x".repeat(4097)}</i>`)).body.description).toBe(
+      "Bad Request: message is too long",
+    );
+    // each reference is one character: 4092 + 4 = 4096
+    expect((await html(`${"x".repeat(4092)}&lt;&amp;&#65;&#x42;`)).status).toBe(200);
+    expect((await html(`${"x".repeat(4093)}&lt;&amp;&#65;&#x42;`)).status).toBe(400);
+    // an astral character is two UTF-16 code units
+    expect((await html(`${"x".repeat(4095)}😀`)).status).toBe(400);
+    const sent = await html("draft");
+    const messageId = (sent.body.result as { message_id: number }).message_id;
+    const edit = (text: string) =>
+      call(tg as FakeTelegramServer, "editMessageText", {
+        chat_id: 7,
+        message_id: messageId,
+        text,
+        parse_mode: "HTML",
+      });
+    expect((await edit(`<b>${"x".repeat(4096)}</b>`)).status).toBe(200);
+    expect((await edit(`<b>${"x".repeat(4097)}</b>`)).status).toBe(400);
+  });
+
+  it("answers an invalid JSON body with a 400 envelope", async () => {
+    tg = await startFakeTelegram();
+    const res = await fetch(`${tg.apiUrl}/bot${tg.bot.token}/sendMessage`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error_code: 400,
+      description: "Bad Request: invalid JSON",
+    });
+  });
+
   it("editMessageText records edits and answers 400 when the text is not modified", async () => {
     tg = await startFakeTelegram();
     const sent = await call(tg, "sendMessage", { chat_id: 7, text: "draft" });
@@ -328,6 +376,20 @@ describe("fake Telegram Bot API", () => {
     const started = Date.now();
     await call(tg, "getMe");
     expect(Date.now() - started).toBeGreaterThanOrEqual(180);
+  });
+
+  it("close releases a delayed call without leaving its timer behind", async () => {
+    const s = await startFakeTelegram();
+    const timeouts = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const before = timeouts();
+    s.delay("getMe", 30_000);
+    const pending = call(s, "getMe").catch((e: unknown) => e);
+    await waitFor(() => s.calls.length === 1, "the delayed call");
+    const started = Date.now();
+    await s.close();
+    await pending;
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(timeouts()).toBe(before);
   });
 
   it("close ends an in-flight long poll", async () => {
