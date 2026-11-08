@@ -40,7 +40,7 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  * they need `X-Capybara-Csrf: 1`, which `capybara-device` sends:
  * - `POST /authorize { name, os, arch, programVersion }` → `{ deviceCode, userCode,
  *   verificationUri, verificationUriComplete, interval, expiresIn }` (`device-authorize-ip`);
- * - `POST /token { deviceCode }` → `{ credential, orgId, environmentId, connectUrl,
+ * - `POST /token { deviceCode }` → `{ credential, orgId, deviceId, connectUrl,
  *   reconnectGraceSeconds, maxFrameBytes }` once, else `device_sign_in.authorization_pending` / `device_sign_in.slow_down` /
  *   `device_sign_in.denied` / `device_sign_in.expired` (`device-token-ip`).
  *

@@ -122,14 +122,7 @@ export interface DeviceAuthorization {
   expiresIn: number;
 }
 
-/**
- * The token response. `environmentId` (the local device's id) keeps its name: it is the field
- * `capybara-device` stores in its credential file, part of the unchanged sign-in protocol.
- */
-export interface DeviceGrant {
-  credential: string;
-  orgId: string;
-  environmentId: string;
+export interface DeviceGrant extends Grant {
   connectUrl: string;
   reconnectGraceSeconds: number;
   /** `devices.local.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
@@ -247,9 +240,7 @@ export class DeviceAuthService {
         const grant = JSON.parse(r[1] as string) as Grant;
         const local = this.config.get().devices.local;
         return {
-          credential: grant.credential,
-          orgId: grant.orgId,
-          environmentId: grant.deviceId,
+          ...grant,
           connectUrl,
           reconnectGraceSeconds: local.reconnectGraceSeconds,
           maxFrameBytes: local.maxFrameBytes,

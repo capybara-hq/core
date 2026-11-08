@@ -150,8 +150,7 @@ async function confirm(
 interface Granted {
   credential: string;
   orgId: string;
-  /** The token response keeps the protocol's field name. */
-  environmentId: string;
+  deviceId: string;
   connectUrl: string;
   reconnectGraceSeconds: number;
   maxFrameBytes: number;
@@ -275,7 +274,7 @@ describe("device authorization", () => {
     expect(g).toEqual({
       credential: expect.stringMatching(/^cap_dev_[A-Za-z0-9_-]{43}$/),
       orgId,
-      environmentId: deviceId,
+      deviceId,
       connectUrl: "wss://cap.example.com/device/connect",
       reconnectGraceSeconds: 120,
       maxFrameBytes: 16 * 1024 * 1024,
@@ -420,7 +419,7 @@ describe("device authorization", () => {
     const bob = await member();
     const g = await login(alice.req, "Alice box");
     const a = await authorize();
-    const c = await confirm(bob.req, { userCode: a.userCode, deviceId: g.environmentId });
+    const c = await confirm(bob.req, { userCode: a.userCode, deviceId: g.deviceId });
     expect(c.statusCode).toBe(404);
     expect(errCode(c)).toBe("device.not_found");
     // the failed confirm leaves the code pending for another try
@@ -524,45 +523,45 @@ describe("device authorization", () => {
     const m = await member();
     const first = await login(m.req, "Box");
     const second = await login(m.req, "box");
-    expect((await envView(m.req, first.environmentId)).name).toBe("Box");
-    expect((await envView(m.req, second.environmentId)).name).toBe("box 2");
+    expect((await envView(m.req, first.deviceId)).name).toBe("Box");
+    expect((await envView(m.req, second.deviceId)).name).toBe("box 2");
   });
 
   it("a new login replaces the machine and the old credential stops authenticating", async () => {
     const m = await member();
     const first = await login(m.req, "Desk");
-    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), first.environmentId);
+    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), first.deviceId);
     await holder.connect();
-    const old = await machines.activeFor(first.environmentId);
+    const old = await machines.activeFor(first.deviceId);
     expect(old).not.toBeNull();
     const revoked: unknown[] = [];
     const unsub = await k.app
       .get(KERNEL_BUS)
-      .subscribe(`device.revoked.${first.environmentId}`, (p: unknown) => {
+      .subscribe(`device.revoked.${first.deviceId}`, (p: unknown) => {
         revoked.push(p);
       });
     try {
       const a = await authorize({ ...MACHINE, name: "desk-2" });
       const c = await confirm(m.req, {
         userCode: a.userCode,
-        deviceId: first.environmentId,
+        deviceId: first.deviceId,
       });
       expect(c.statusCode, c.body).toBe(200);
-      expect((c.json() as { deviceId: string }).deviceId).toBe(first.environmentId);
+      expect((c.json() as { deviceId: string }).deviceId).toBe(first.deviceId);
       const t = await token(a.deviceCode);
       expect(t.statusCode, t.body).toBe(200);
       const second = t.json() as Granted;
-      expect(second.environmentId).toBe(first.environmentId);
+      expect(second.deviceId).toBe(first.deviceId);
       expect(await machines.authenticate(first.credential)).toBeNull();
       expect(await machines.authenticate(second.credential)).toMatchObject({
-        deviceId: first.environmentId,
+        deviceId: first.deviceId,
       });
       // the old machine's connection is closed; no stop frame is queued (the replacement
       // machine connecting next would drain it)
       await waitFor(async () => revoked.length > 0);
       expect(holder.frames.filter((f) => f.type === "req" && f.op === "stop")).toEqual([]);
       expect(revoked[0]).toEqual({ machineId: old?.id });
-      expect((await machines.activeFor(first.environmentId))?.name).toBe("desk-2");
+      expect((await machines.activeFor(first.deviceId))?.name).toBe("desk-2");
     } finally {
       await unsub();
       await holder.disconnect();
@@ -572,7 +571,7 @@ describe("device authorization", () => {
   it("revoke audits and the credential no longer authenticates", async () => {
     const m = await member();
     const g = await login(m.req, "Revokable");
-    const url = `/api/v1/orgs/${orgId}/devices/${g.environmentId}/machine`;
+    const url = `/api/v1/orgs/${orgId}/devices/${g.deviceId}/machine`;
     // someone else cannot revoke it
     const other = await member();
     const denied = await other.req({ method: "DELETE", url });
@@ -580,7 +579,7 @@ describe("device authorization", () => {
     expect(errCode(denied)).toBe("device.not_found");
     expect(await machines.authenticate(g.credential)).not.toBeNull();
 
-    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.environmentId);
+    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.deviceId);
     await holder.connect();
     try {
       const res = await m.req({ method: "DELETE", url });
@@ -591,28 +590,28 @@ describe("device authorization", () => {
       await holder.disconnect();
     }
     expect(await machines.authenticate(g.credential)).toBeNull();
-    expect(await auditActions(g.environmentId)).toContain("device.machine_revoked");
-    expect((await envView(m.req, g.environmentId)).machine).toBeNull();
+    expect(await auditActions(g.deviceId)).toContain("device.machine_revoked");
+    expect((await envView(m.req, g.deviceId)).machine).toBeNull();
     // the device stays
-    expect((await envView(m.req, g.environmentId)).source).toBe("local");
+    expect((await envView(m.req, g.deviceId)).source).toBe("local");
   });
 
   it("deleting a local device revokes its machine", async () => {
     const m = await member();
     const g = await login(m.req, "Doomed");
-    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.environmentId);
+    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.deviceId);
     await holder.connect();
     try {
       const del = await m.req({
         method: "DELETE",
-        url: `/api/v1/orgs/${orgId}/devices/${g.environmentId}`,
+        url: `/api/v1/orgs/${orgId}/devices/${g.deviceId}`,
       });
       expect(del.statusCode, del.body).toBe(202);
       expect(await machines.authenticate(g.credential)).toBeNull();
       const row = await db
         .selectFrom("device_machines")
         .select("revoked_at")
-        .where("device_id", "=", g.environmentId)
+        .where("device_id", "=", g.deviceId)
         .executeTakeFirstOrThrow();
       expect(row.revoked_at).not.toBeNull();
       const stop = (await holder.next((f) => f.type === "req" && f.op === "stop")) as KernelReq;

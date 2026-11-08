@@ -116,7 +116,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or device for a connected machine, provider, whether a device one is online and its machine, last use), plus the default and last used ids and whether new cloud devices can be made. The default device is shown as Personal.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids and whether new cloud devices can be made. The default device is shown as Personal.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -135,7 +135,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.get",
         description:
-          "Read one of your devices with its source (cloud or device), provider, state, instance, connected machine and whether it is online, limits and creation time. Takes the id from devices.list.",
+          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits and creation time. Takes the id from devices.list.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },

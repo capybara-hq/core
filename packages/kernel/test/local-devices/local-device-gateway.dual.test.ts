@@ -108,10 +108,7 @@ async function setup() {
   expect(c.status, JSON.stringify(c.json)).toBe(200);
   const t = await call("POST", "/api/v1/device/token", { deviceCode: a.json.deviceCode });
   expect(t.status, JSON.stringify(t.json)).toBe(200);
-  const { credential, environmentId: deviceId } = t.json as {
-    credential: string;
-    environmentId: string;
-  };
+  const { credential, deviceId } = t.json as { credential: string; deviceId: string };
   return { harness, redis, call, orgId, credential, deviceId };
 }
 

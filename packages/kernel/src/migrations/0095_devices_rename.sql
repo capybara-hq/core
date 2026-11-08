@@ -61,6 +61,7 @@ ALTER INDEX IF EXISTS environment_machines_active_uq RENAME TO device_machines_a
 -- capybara:allow-destructive index rename; names follow the table rename (not released)
 ALTER INDEX IF EXISTS environment_machines_org_idx RENAME TO device_machines_org_idx;
 
+-- NOT NULL constraints are unnamed on PostgreSQL 17 (the target), so nothing to rename there.
 -- The other CHECK and foreign key constraints: RENAME CONSTRAINT has no IF EXISTS, so each is
 -- checked against pg_constraint first. The source CHECK is not renamed here: it is replaced
 -- below with the new value list.
@@ -109,9 +110,8 @@ UPDATE devices SET provider = '@local' WHERE provider = '@device';
 UPDATE device_instances SET provider = '@local' WHERE provider = '@device';
 UPDATE device_instances SET prev_provider = '@local' WHERE prev_provider = '@device';
 
--- The log event 'environment_paths' becomes 'device_paths' (its idempotency key prefix too), and
--- its partial index (0094) follows.
-DROP INDEX IF EXISTS conversation_events_environment_paths_idx;
+-- The log event 'environment_paths' becomes 'device_paths' (its idempotency key prefix too); the
+-- rows are updated first, so the old partial index (0094) finds them, then the index follows.
 UPDATE conversation_events
   SET type = 'device_paths',
       idem_key = CASE
@@ -119,11 +119,13 @@ UPDATE conversation_events
         ELSE idem_key
       END
   WHERE type = 'environment_paths';
+DROP INDEX IF EXISTS conversation_events_environment_paths_idx;
 CREATE INDEX IF NOT EXISTS conversation_events_device_paths_idx
   ON conversation_events (conversation_id, seq)
   WHERE type = 'device_paths';
 
 -- Eval case snapshots carry the events of their run: the same event type change, order kept.
+-- snapshot_bytes is not recomputed: only type names change (a few bytes shorter), harmless.
 UPDATE eval_cases
   SET snapshot = jsonb_set(snapshot, '{events}', (
     SELECT jsonb_agg(
