@@ -2,7 +2,14 @@ import { type NextRequest, NextResponse } from "next/server";
 import { isAppLocale, LOCALE_COOKIE } from "./i18n/routing";
 import { loginPathFor } from "./lib/auth-sources";
 import { credentialQueryRedirect, handleFormPost, isNativeFormPost } from "./lib/form-post";
-import { PATH_HEADER, SESSION_STATE_HEADER } from "./lib/headers";
+import {
+  CSP_HEADER,
+  documentPolicy,
+  NONCE_HEADER,
+  newNonce,
+  PATH_HEADER,
+  SESSION_STATE_HEADER,
+} from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
 import { isPublicPath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
@@ -82,7 +89,10 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  *    the response);
  * 3. a protected page still without `cap_at` redirects to `/setup` (fresh deployment) or sign-in;
  * 4. the forwarded request carries `x-cap-path` (path + query), and `x-cap-session: unavailable`
- *    when the kernel could not be reached.
+ *    when the kernel could not be reached;
+ * 5. the document CSP (client extensions spec §9.5, {@link documentPolicy}) with a fresh nonce goes
+ *    on the forwarded request (Next takes the nonce from it and puts it on its own scripts; the
+ *    layouts read `x-nonce`) and on the response. A client-sent nonce or policy never survives.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
@@ -101,6 +111,12 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const headers = new Headers(req.headers);
   headers.delete(SESSION_STATE_HEADER);
   headers.set(PATH_HEADER, `${pathname}${search}`);
+  const nonce = newNonce();
+  const policy = documentPolicy(nonce, process.env.NODE_ENV !== "production");
+  headers.set(CSP_HEADER, policy);
+  // Next falls back to the report-only header for the nonce: never let a client supply one
+  headers.delete(`${CSP_HEADER}-report-only`);
+  headers.set(NONCE_HEADER, nonce);
 
   const pairs = parseCookies(req.headers.get("cookie"));
   const hasRetry = pairs.some(([n]) => n === RETRY_COOKIE);
@@ -167,7 +183,9 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
     return withCookies(NextResponse.redirect(new URL(to, req.nextUrl), 307), setCookies);
   }
 
-  return withCookies(NextResponse.next({ request: { headers } }), setCookies);
+  const res = NextResponse.next({ request: { headers } });
+  res.headers.set(CSP_HEADER, policy);
+  return withCookies(res, setCookies);
 }
 
 export const config = {

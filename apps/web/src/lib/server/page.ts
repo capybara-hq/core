@@ -3,7 +3,7 @@ import "server-only";
 import "./register";
 import { headers } from "next/headers";
 import { ApiClientError } from "../api";
-import { PATH_HEADER } from "../headers";
+import { NONCE_HEADER, PATH_HEADER } from "../headers";
 import { isSignedOut } from "../signed-out";
 
 export { PATH_HEADER };
@@ -11,6 +11,14 @@ export { PATH_HEADER };
 /** The path (with its query) of the page being rendered; `/` when the proxy did not record it. */
 export async function currentPath(): Promise<string> {
   return (await headers()).get(PATH_HEADER) ?? "/";
+}
+
+/**
+ * The document's CSP nonce, for scripts a layout renders itself (`<script nonce>`); Next's own
+ * scripts carry it already. `""` when the proxy did not run (then the document has no CSP either).
+ */
+export async function currentNonce(): Promise<string> {
+  return (await headers()).get(NONCE_HEADER) ?? "";
 }
 
 export { isSignedOut };
