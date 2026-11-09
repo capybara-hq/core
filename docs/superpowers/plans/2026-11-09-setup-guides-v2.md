@@ -968,3 +968,33 @@ skills.
   each task; delivery order §17 → the waves.
 - Route fence: every new route lands with its operation or exclusion in the same task (T4 admin
   route exclusion, T6 ack exclusion, T10 status/check ops, T13 list route op).
+
+## Appendix: binding requirements for T10 / T11 (from the T7 trust review, f47ca901)
+
+
+## T10
+1. Registration: only during setup, sealed with ui.view. id matches SETUP_CHECK_ID_RE and is in permissions.setupChecks, else ExtensionPermissionError + audit. Duplicate id throws. Runtime-check def.place is a known place, def.run a function. Read place/run once into a frozen record. Kernel capybara:* ids in a separate map.
+2. Target built field by field, never spread a DB row. Channel: {kind, connectionId, config} (config decrypted exactly as verify gets it, only for connection org = route org, plugin = check's plugin). Connector: {kind, connectorId, templateId, clientId, accountId}; template must belong to the plugin; clientId only the manual OAuth client id else null; never client secret, credential rows, endpoint config, headers, token URLs; accountId only the caller's. Freeze args.
+3. Order: catalog visibility + place/audience action before any target load; check must be in the rendered guide for that mode/audience, def.place == guide place; extension disabled or needsConfig -> unknown, call nothing.
+4. args.config from the same effective-config function as other org-bound calls (no overridable platform secrets).
+5. Run: signal = AbortSignal.any([AbortSignal.timeout(timeoutMs), ctx.signal]); race run() against the signal so an ignore-signal check yields unknown "timed out" at 10 s; swallow late settle. Single-flight lock TTL 15 s > timeout. Release lock + org semaphore in finally.
+6. Cache key includes the account when audience is member or target.accountId non-null (kernel member checks too). Fingerprint = HMAC over revisions only. Every Redis key has a TTL; Redis outside transactions.
+7. Result: await -> validate -> redact -> validate; try/catch, throw -> unknown; cache/return only the second validation's output; log only the problem string via the redacting logger.
+8. Redaction sources (>= 8 chars): every secret() field of the connection config; connector stored credentials (OAuth client secret, member access/refresh tokens, static values) even though the plugin never got them; every secret field of the org effective config and the platform deployment config; KernelCheckArgs.secrets. Exact substrings, longest first. Also redact error messages from a throwing check before logging.
+9. Responses + Platform ops return only {status, reason, fix, checkedAt, cooldownUntil}, never extension error text; Platform setup.check uses the same service.
+10. Fixtures (fake-im): echo-secret, proxy, ignore-signal, pad-to-limit (reason exactly 300 chars containing a secret < 10 chars so redaction pushes it over -> unknown). Assert response, Redis value and captured logs.
+Also: add permissions.setupChecks to the kernel permission snapshot; import SETUP_CHECK_ID_RE in setup-guide-parse.ts instead of a copied regex; a test that the placeholder is replaced; member A/B cache split test.
+
+## T11
+1. Kernel checks use the same registry and validate/redact/validate pipeline, timeout and lock.
+2. KernelCheckArgs.secrets lists the client secret and member tokens they touch.
+3. Token endpoint probe: secret only in body/auth header to the endpoint resolved by the connect flow; via packages/kernel/src/net, no redirects, egress rules, run signal; never log request/response bodies; a 2xx token is discarded unread, nothing written (test asserts no credential row); fixed result texts only; the redirect_uri fix interpolates only the kernel-built callback URL, never error_description.
+4. capybara:connection-active reuses last_error only after the same redaction + validation (incl. bidi/surrogate rules).
+5. capybara:connector-connected cached per account.
+6. Webhook marker = Redis SET NX with TTL, outside transactions.
+
+## Status (2026-11-09, handover)
+
+- Waves 1–3 done, reviewed, green (T1–T8, migration 0105). main merged at f09e7df3.
+- Wave 4 in progress: T10 (f178b922) and T9 (db2c2329) are partial WIP commits from an interrupted session; finish, then review T10 alone as a trust boundary.
+- Then waves 5–10 as planned (T11 kernel checks + token probe, T12 live rows, T13–T14 Platform setup ops, T15 token paste warning, T16 docs, T17 baselines, T18 release, T19 Slack plugin migration).
