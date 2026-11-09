@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { clientPlugin, importClientPlugin } from "../client/client-env.js";
 import { enableExtensions } from "../helpers/runs.js";
-import { setThemeScope, writeOrgTheme } from "../themes/theme-env.js";
+import { setThemeScope, setThemeSwitch, writeOrgTheme, writeUiTheme } from "../themes/theme-env.js";
 import { clearAppearance, importLook, LOOK, orgRows, platformRows } from "./appearance-env.js";
 import { type OrgEnv, startOrgEnv } from "./org-env.js";
 
@@ -257,6 +257,27 @@ describe("suggested appearance", { timeout: 60_000 }, () => {
     expect((await applyOrg(env.boss, LOOK)).statusCode).toBe(200);
     // the org keeps following the platform
     expect(await orgRows(env, env.orgId)).toEqual({});
+  });
+
+  it("a following org whose platform default is no longer eligible sees the built-in", async () => {
+    // the platform stores this theme, but it is no longer scope all: every org renders the
+    // built-in instead, so applying it in an org (where it is switched on) is a change
+    await writeUiTheme(env, themeId);
+    await setThemeScope(env, themeId, "optional");
+    await setThemeSwitch(env, env.orgId, themeId, true);
+    try {
+      const o = await applyOrg(env.boss, LOOK, true);
+      expect(o.statusCode, o.body).toBe(200);
+      expect(o.json().theme).toEqual({ from: null, to: themeId, followsPlatform: true });
+      // still eligible: nothing changes
+      await setThemeScope(env, themeId, "all");
+      expect((await applyOrg(env.boss, LOOK, true)).json().theme).toBeNull();
+    } finally {
+      await env.db
+        .deleteFrom("component_org_switches")
+        .where("component_id", "=", themeId)
+        .execute();
+    }
   });
 
   it("at org level from is the effective value and says whether it follows the platform", async () => {

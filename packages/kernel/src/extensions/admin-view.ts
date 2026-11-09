@@ -59,10 +59,10 @@ export interface PublishBus {
   publish(topic: string, payload: unknown): Promise<void>;
 }
 
-/** The raw material for one extension in the admin console (before building the {@link AdminExtensionView}). */
 /** The most client reports an extension view lists (the newest). */
 const CLIENT_REPORTS_SHOWN = 50;
 
+/** The raw material for one extension in the admin console (before building the {@link AdminExtensionView}). */
 interface Subject {
   name: string;
   source: ExtensionSource;

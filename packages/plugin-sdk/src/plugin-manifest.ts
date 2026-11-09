@@ -581,7 +581,7 @@ const schema = z
     if (ext.client === undefined && hasClientPermission) {
       issue(
         ["extension", "manifest", "permissions", "client"],
-        "extension.client needs permissions.client: true",
+        "permissions.client is true but extension.client is missing (pack the plugin with its client code, or drop permissions.client)",
       );
     }
     if (!EXTENSION_NAME_RE.test(m.name)) {

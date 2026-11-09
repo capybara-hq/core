@@ -621,11 +621,11 @@ describe("client section and suggestedAppearance", () => {
     expect(errorsOf(noPerm)).toContain(
       "extension.client: extension.client needs permissions.client: true",
     );
-    // the reverse: the same plain text, at the permission's path
+    // the reverse says what is missing, at the permission's path
     expect(
       errorsOf(withClient({}, { ui: undefined, permissions: { client: true } }, null)),
     ).toContain(
-      "extension.manifest.permissions.client: extension.client needs permissions.client: true",
+      "extension.manifest.permissions.client: permissions.client is true but extension.client is missing (pack the plugin with its client code, or drop permissions.client)",
     );
   });
 

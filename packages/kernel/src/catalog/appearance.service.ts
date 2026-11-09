@@ -21,6 +21,7 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsService, readOrgSettings } from "../orgs/settings.service.js";
 import {
   assertPlatformDefaultEligible,
+  eligiblePlatformDefault,
   themeNotAvailable,
   themeOnIn,
 } from "../themes/theme-state.js";
@@ -260,10 +261,18 @@ export class AppearanceService {
       readUiArrangement(this.db.db),
     ]);
     const org = "orgId" in level ? await readOrgSettings(this.db.db, level.orgId) : null;
-    // the theme in effect: an org without its own theme (id null) follows the platform default
+    // the theme in effect: an org without its own theme (id null) follows the platform default,
+    // which renders only while it is eligible (else the org sees the built-in, as ThemesService
+    // resolves it)
     const orgTheme = org === null ? undefined : (org.theme?.id ?? null);
     const themeFollows = orgTheme === null;
-    const themeInEffect = orgTheme ?? platformTheme;
+    const followed =
+      themeFollows && platformTheme !== null
+        ? (await eligiblePlatformDefault(this.db.db, platformTheme)) !== null
+          ? platformTheme
+          : null
+        : platformTheme;
+    const themeInEffect = orgTheme ?? followed;
     /** The `use` in effect for a single slot, and whether an org follows the platform's. */
     const inEffect = (slot: UiSlotId): { use: string | null; follows?: boolean } => {
       if (org === null) return { use: useOf(platformArrangement[slot]) };
