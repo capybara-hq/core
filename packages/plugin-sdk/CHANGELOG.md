@@ -1,5 +1,36 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.10
+
+### Minor Changes
+
+- aa81e5a: Setup checks contract: an extension registers the live rows of its setup guides with
+  `ctx.setup.check(id, { place, run })` during `setup`, each id listed in the new
+  `permissions.setupChecks` (`SETUP_CHECK_ID_RE`, at most 32; ids with `:` stay the kernel's).
+  `run` gets the org, the extension's effective config, the locale, the mode, an abort signal and the
+  target: a channel connection with its config, or a connector with its ids and OAuth client id
+  (never the client secret or a member's token). Results are `ok` / `failing` / `unknown` with plain
+  text `reason` and `fix` (en required, zh optional, 300 / 500 characters) and no details field;
+  `validateSetupCheckResult` returns a fresh copy or why it is invalid. `SETUP_CHECK_LIMITS` holds
+  the run limits. A check never writes, passes `signal` on, does not retry and never puts a secret
+  in its result.
+- 2219734: Setup guides v2: a guide is a Markdown document `guides/<id>.md` (optional `guides/<id>.zh.md`)
+  declared in `plugin.json` `setupGuides` as `{ id, place, template? }`. The SDK adds the place
+  registry (`channel-connection`, `connector-template`; modes, audiences, typed variables), the
+  parser (`parseSetupGuide`: title, `::: mode` / `::: audience` sections, `::check` lines, titled
+  code fences), the validator (`validateSetupGuide`, including zh parity), the renderer
+  (`renderSetupGuide`: substitution into the parsed tree, link policy, raw HTML as text, blocks) and
+  the drift hash (`setupGuideHash`, code blocks and check lines only). The v1 steps-and-files format
+  and its helpers are removed.
+
+### Patch Changes
+
+- 70a50f5: Add the `setup` agent docs topic: how an agent helps a person through a plugin's setup guide with
+  the `setup` operations, and what stays with the person (secrets, OAuth consent, the guide ack).
+  
+  The `plugin-format` and `extensions` topics describe v2 setup guides (Markdown documents, places,
+  sections, check lines) and setup checks (`ctx.setup.check`, `permissions.setupChecks`).
+
 ## 0.1.0-rc.9
 
 ### Minor Changes

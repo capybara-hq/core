@@ -1,5 +1,28 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.13
+
+### Patch Changes
+
+- ba8ebaf: The fake-im fixture's setup guide is a v2 Markdown document (`guides/fake-im-app.md` and its zh
+  translation) instead of the v1 steps and template files.
+- 2f01b01: `fake-im` registers setup checks for the kernel's check runner tests (`pass`, `fail`, `proxy`,
+  `throw`, `hang`, `ignore-signal`, `long`, `echo-secret`, `pad-to-limit`), and
+  `startFakeChannelServer` records the `proxy` check's `POST /checks` calls (`checks`) and can hold
+  their answers (`holdChecks`).
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+- Updated dependencies [ba8ebaf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/kernel@0.1.0-rc.14
+  - @capybara-hq/plugin-tools@0.1.0-rc.11
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
 ## 0.1.0-rc.12
 
 ### Patch Changes

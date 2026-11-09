@@ -1,5 +1,31 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.11
+
+### Minor Changes
+
+- ba8ebaf: Setup guides v2: `capybara-plugin pack` / `check` ship and validate the Markdown guide documents
+  `guides/<id>.md` and `guides/<id>.zh.md` with the SDK validator (errors fail; warnings such as a
+  text variable outside quotes in a yaml block are printed as `plugin-pack-guide` and fail
+  nothing; plugin check ids must be in the extension's `permissions.setupChecks`). The new
+  `capybara-plugin guide <id>` command prints a guide rendered for a locale, mode, audience and
+  variable values. `PackResult` gains `warnings`. The v1 template files are no longer read.
+  The permission check gains `perm-setup-check`: every `ctx.setup.check(id, …)` id must be listed in
+  `permissions.setupChecks`.
+
+### Patch Changes
+
+- Updated dependencies [848fb39]
+- Updated dependencies [2f01b01]
+- Updated dependencies [155c1cf]
+- Updated dependencies [70a50f5]
+- Updated dependencies [6622107]
+- Updated dependencies [70a50f5]
+- Updated dependencies [aa81e5a]
+- Updated dependencies [2219734]
+  - @capybara-hq/kernel@0.1.0-rc.14
+  - @capybara-hq/plugin-sdk@0.1.0-rc.10
+
 ## 0.1.0-rc.10
 
 ### Minor Changes
