@@ -13,7 +13,7 @@ import {
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
-import type { EnvironmentView } from "../environments/environments.service.js";
+import type { DeviceView } from "../devices/devices.service.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
@@ -47,7 +47,7 @@ import {
   type SubagentView,
   type UsageTotals,
 } from "./conversations.service.js";
-import { ConversationEnvironmentStatus } from "./environment-status.js";
+import { ConversationDeviceStatus } from "./device-status.js";
 import type { ConversationEvent } from "./events.js";
 import { ConversationFiles, FILE_CONTENT_MAX_BYTES, type FileOutput } from "./files.js";
 import { ConversationOutputs, OUTPUT_PAGE_MAX_CHARS, type OutputPage } from "./outputs-read.js";
@@ -155,13 +155,13 @@ const MessageBody = MessageFields.strict().refine(...textRule);
  * `POST /conversations`: `message` creates the conversation with its first message (create on
  * first send; `clientMessageId` is required and makes a retry return the same conversation).
  * Without it the conversation is created empty (API clients; the web never does).
- * `environmentId` binds it to one of the caller's environments; without it the caller's default
- * environment (environments spec §4.1 item 1).
+ * `deviceId` binds it to one of the caller's devices; without it the caller's default
+ * device (environments spec §4.1 item 1).
  */
 const CreateBody = z
   .object({
     agentId: z.string().min(1).max(100),
-    environmentId: z.string().min(1).max(100).optional(),
+    deviceId: z.string().min(1).max(100).optional(),
     message: MessageFields.omit({ retryOf: true })
       .extend({ clientMessageId: z.string().min(1).max(200) })
       .strict()
@@ -219,8 +219,8 @@ export class ConversationsController {
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
     @Inject(ConversationOutputs) private readonly outputs: ConversationOutputs,
     @Inject(ConversationArtifacts) private readonly artifacts: ConversationArtifacts,
-    @Inject(ConversationEnvironmentStatus)
-    private readonly environmentStatus: ConversationEnvironmentStatus,
+    @Inject(ConversationDeviceStatus)
+    private readonly deviceStatus: ConversationDeviceStatus,
     @Inject(ConversationToolInfo) private readonly toolInfo: ConversationToolInfo,
     @Inject(ConversationQueue) private readonly queue: ConversationQueue,
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
@@ -244,7 +244,7 @@ export class ConversationsController {
     events?: ConversationEvent[];
   }> {
     const p = requireUser(principal);
-    const pick = body.environmentId === undefined ? {} : { environmentId: body.environmentId };
+    const pick = body.deviceId === undefined ? {} : { deviceId: body.deviceId };
     if (body.message === undefined) {
       return {
         conversation: await this.conversations.create(org.orgId, p.account.id, body.agentId, pick),
@@ -563,20 +563,20 @@ export class ConversationsController {
   }
 
   /**
-   * The environment the conversation works in (a sub-agent: its root's), as its owner sees it,
-   * with its instance state; `null` while unbound, or when the environment was deleted. Same
+   * The device the conversation works in (a sub-agent: its root's), as its owner sees it,
+   * with its instance state; `null` while unbound, or when the device was deleted. Same
    * visibility as the event stream.
    */
-  @Get(":id/environment")
+  @Get(":id/device")
   @Header("cache-control", "private, no-store")
   @OrgAction("agents.use")
-  async environment(
+  async device(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<{ environment: EnvironmentView | null }> {
+  ): Promise<{ device: DeviceView | null }> {
     const p = requireUser(principal);
-    return { environment: await this.environmentStatus.get(org.orgId, id, p.account.id) };
+    return { device: await this.deviceStatus.get(org.orgId, id, p.account.id) };
   }
 
   /**

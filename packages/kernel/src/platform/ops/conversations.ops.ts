@@ -12,7 +12,7 @@ import {
   ConversationsService,
   type ConversationView,
 } from "../../conversations/conversations.service.js";
-import { ConversationEnvironmentStatus } from "../../conversations/environment-status.js";
+import { ConversationDeviceStatus } from "../../conversations/device-status.js";
 import { ConversationFiles } from "../../conversations/files.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
@@ -47,8 +47,8 @@ export class ConversationsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ConversationsService) private readonly conversations: ConversationsService,
     @Inject(ConversationFiles) private readonly files: ConversationFiles,
-    @Inject(ConversationEnvironmentStatus)
-    private readonly environment: ConversationEnvironmentStatus,
+    @Inject(ConversationDeviceStatus)
+    private readonly device: ConversationDeviceStatus,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
 
@@ -403,13 +403,13 @@ export class ConversationsOperations implements OnModuleInit {
         },
       }),
       defineOperation({
-        id: "conversations.environment",
+        id: "conversations.device",
         description:
-          "Read the environment one of your conversations works in and whether its instance is running or suspended; environment is null while the conversation has none. Takes the id from conversations.list.",
+          "Read the device one of your conversations works in and whether its instance is running or suspended; device is null while the conversation has none. Takes the id from conversations.list.",
         input: Id,
         example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },
-        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/environment"],
+        mirrors: ["GET /api/v1/orgs/:orgId/conversations/:id/device"],
         renames: { conversationId: "id" },
         errors: [
           {
@@ -419,11 +419,7 @@ export class ConversationsOperations implements OnModuleInit {
         ],
         confirm: "read",
         run: async (input, ctx) => ({
-          environment: await this.environment.get(
-            ctx.orgId,
-            input.conversationId,
-            ctx.actorAccountId,
-          ),
+          device: await this.device.get(ctx.orgId, input.conversationId, ctx.actorAccountId),
         }),
       }),
       defineOperation({

@@ -1,9 +1,9 @@
 import { apiFetch } from "./api";
 import type { ConversationEvent } from "./conversations";
-import type { Environment } from "./environments";
+import type { Device } from "./devices";
 
 /**
- * 产物（agent 经 `Deliver` 交付的文件）与对话所在的环境。产物列表从会话日志的 `artifact_created`
+ * 产物（agent 经 `Deliver` 交付的文件）与对话所在的设备。产物列表从会话日志的 `artifact_created`
  * 重建（日志是唯一事实源），字节经内核的 artifacts 接口取：
  * - 下载 `GET .../artifacts/:id/download`：302 到预签名地址，一律 attachment；
  * - 缩略图 `?inline=1`：内核只对位图（PNG / JPEG / GIF / WebP）给 inline，SVG / HTML 等一律仍是 attachment；
@@ -84,11 +84,9 @@ export const getArtifactPreview = (orgId: string, conversationId: string, artifa
   ).then((r) => r.preview);
 
 /**
- * The environment a conversation runs in. `null` when it has none bound, and also when the bound
- * environment was deleted or is no longer visible (tell them apart with the conversation's
- * `environmentId`).
+ * The device a conversation runs in. `null` when it has none bound, and also when the bound
+ * device was deleted or is no longer visible (tell them apart with the conversation's
+ * `deviceId`).
  */
-export const getConversationEnvironment = (orgId: string, conversationId: string) =>
-  apiFetch<{ environment: Environment | null }>(`${one(orgId, conversationId)}/environment`).then(
-    (r) => r.environment,
-  );
+export const getConversationDevice = (orgId: string, conversationId: string) =>
+  apiFetch<{ device: Device | null }>(`${one(orgId, conversationId)}/device`).then((r) => r.device);

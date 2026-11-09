@@ -17,19 +17,19 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
-import { environmentState } from "../../lib/environments";
+import { deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   connectorsQuery,
-  conversationEnvironmentQuery,
+  conversationDeviceQuery,
   conversationQuery,
 } from "../../lib/query/conversation";
 import { useToolInfo } from "../../lib/tool-info";
 import { parseToolKey } from "../../lib/tool-key";
 import type { UiOpen } from "../../lib/ui";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
-import { useEnvironmentName } from "../use-environment-name";
+import { useDeviceName } from "../use-device-name";
 import { BackgroundSection } from "./BackgroundSection";
 
 /** A connector tool's key is `mcp__<connector slug>__<tool>`. */
@@ -89,12 +89,12 @@ const sandboxUses = (
 };
 
 /**
- * Reads the conversation's environment again whenever the number of sandbox tool results changes:
+ * Reads the conversation's device again whenever the number of sandbox tool results changes:
  * a result may have started, stopped or suspended the instance. It lives in the conversation page,
  * which is mounted from the start, not in the properties panel: a panel opened after the tools ran
  * would take the current count as its baseline and keep showing a fresh but outdated state.
  */
-export function useEnvironmentRefresh(
+export function useDeviceRefresh(
   orgId: string,
   conversationId: string,
   events: readonly ConversationEvent[],
@@ -116,14 +116,14 @@ export function useEnvironmentRefresh(
     // The first resolved count is the baseline, not a change.
     if (prev !== null && uses !== prev)
       void qc.invalidateQueries({
-        queryKey: conversationEnvironmentQuery(orgId, conversationId).queryKey,
+        queryKey: conversationDeviceQuery(orgId, conversationId).queryKey,
       });
   }, [uses, qc, orgId, conversationId]);
 }
 
 /**
  * The built-in Context section (the old Context tab): the context ratio of the latest step's usage,
- * the model, the environment and its state (kept current by {@link useEnvironmentRefresh}) and the
+ * the model, the device and its state (kept current by {@link useDeviceRefresh}) and the
  * connectors used.
  * A connectors read the role is refused (R5: not read again on mount) names no connectors.
  */
@@ -156,36 +156,36 @@ export function ContextSection({
     () => new Map((connectors?.connectors ?? []).map((a) => [a.slug, a.name])),
     [connectors],
   );
-  const te = useTranslations("environments");
-  const nameOf = useEnvironmentName();
+  const te = useTranslations("devices");
+  const nameOf = useDeviceName();
   const rowQ = conversationQuery(orgId, conversationId);
-  const environmentId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
-    ?.environmentId;
-  const environmentQ = conversationEnvironmentQuery(orgId, conversationId);
-  const environment = useQuery({
-    ...environmentQ,
-    retryOnMount: retryOnMountOf(environmentQ.queryKey),
+  const deviceId = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) }).data
+    ?.deviceId;
+  const deviceQ = conversationDeviceQuery(orgId, conversationId);
+  const device = useQuery({
+    ...deviceQ,
+    retryOnMount: retryOnMountOf(deviceQ.queryKey),
   });
   // The route answers null both for "none bound" and "the bound one was deleted": the
-  // conversation's own environmentId tells them apart.
-  const environmentText =
-    environment.data === undefined
-      ? environment.error === null
+  // conversation's own deviceId tells them apart.
+  const deviceText =
+    device.data === undefined
+      ? device.error === null
         ? undefined
-        : t("environmentFailed")
-      : environment.data === null
-        ? environmentId
-          ? t("environmentDeleted")
-          : t("environmentNone")
-        : t("environmentLine", {
-            name: nameOf(environment.data),
-            state: te(`state.${environmentState(environment.data)}`),
+        : t("deviceFailed")
+      : device.data === null
+        ? deviceId
+          ? t("deviceDeleted")
+          : t("deviceNone")
+        : t("deviceLine", {
+            name: nameOf(device.data),
+            state: te(`state.${deviceState(device.data)}`),
           });
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
-      {...(environmentText !== undefined ? { sandbox: environmentText } : {})}
+      {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}
       {...(total !== undefined ? { total } : {})}

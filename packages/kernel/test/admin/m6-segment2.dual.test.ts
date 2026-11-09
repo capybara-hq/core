@@ -285,13 +285,13 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     });
     expect(r.status, JSON.stringify(r.json)).toBe(202);
   };
-  /** A new conversation (in `environmentId`, else the caller's default environment). */
-  const newConv = async (i: 0 | 1, environmentId?: string) =>
+  /** A new conversation (in `deviceId`, else the caller's default device). */
+  const newConv = async (i: 0 | 1, deviceId?: string) =>
     (
       (
         await ok(i, "POST", `${base}/conversations`, {
           agentId,
-          ...(environmentId !== undefined && { environmentId }),
+          ...(deviceId !== undefined && { deviceId }),
         })
       ).conversation as { id: string }
     ).id;
@@ -612,11 +612,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
   });
 
   it("5. 组织沙箱覆盖：之后新建的沙箱拿到覆盖的 cpu，已有的不变", async () => {
-    // the instance of the conversation's environment
+    // the instance of the conversation's device
     const sandboxOf = async (convId: string) => {
       const row = await db
-        .selectFrom("environment_instances as i")
-        .innerJoin("conversations as c", "c.environment_id", "i.environment_id")
+        .selectFrom("device_instances as i")
+        .innerJoin("conversations as c", "c.device_id", "i.device_id")
         .select("i.handle")
         .where("c.id", "=", convId)
         .executeTakeFirstOrThrow();
@@ -635,9 +635,9 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     const settings = await ok(1, "GET", `${base}/settings`);
     expect(settings.sandboxLimits).toEqual({ cpu: 2, memoryMb: 2048, source: "override" });
 
-    // a new environment gets a new instance (the default one keeps its instance and limits)
+    // a new device gets a new instance (the default one keeps its instance and limits)
     const env = (
-      (await ok(1, "POST", `${base}/environments`, { name: "After override" })).environment as {
+      (await ok(1, "POST", `${base}/devices`, { name: "After override" })).device as {
         id: string;
       }
     ).id;

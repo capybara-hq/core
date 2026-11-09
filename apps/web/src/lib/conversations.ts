@@ -286,11 +286,11 @@ type EventBody =
       };
     }
   /**
-   * The paths the sandbox tools use in the conversation's environment (written on its first
+   * The paths the sandbox tools use in the conversation's device (written on its first
    * sandbox call and whenever they change; model-facing, the UI shows nothing).
    */
   | {
-      type: "environment_paths";
+      type: "device_paths";
       payload: { roots: { workspace: string; skills: string; tmp: string } };
     }
   /** A background `Bash` task ended (background Bash spec §2): the thread's one-line notice. */
@@ -508,8 +508,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
-  /** The environment it runs in, bound at the first message (null: none, or an older kernel). */
-  environmentId?: string | null;
+  /** The device it runs in, bound at the first message (null: none, or an older kernel). */
+  deviceId?: string | null;
   /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
   activity?: "running" | "waiting" | null;
 }
@@ -630,7 +630,7 @@ export const createConversationWithMessage = (
   orgId: string,
   agentId: string,
   message: Omit<MessageInput, "retryOf">,
-  environmentId?: string,
+  deviceId?: string,
 ) =>
   apiFetch<{
     conversation: Conversation;
@@ -642,7 +642,7 @@ export const createConversationWithMessage = (
     body: JSON.stringify({
       agentId,
       message: messageBody(message),
-      ...(environmentId !== undefined ? { environmentId } : {}),
+      ...(deviceId !== undefined ? { deviceId } : {}),
     }),
   });
 

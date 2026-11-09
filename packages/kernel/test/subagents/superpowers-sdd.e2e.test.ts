@@ -474,14 +474,14 @@ describe("phase C acceptance: superpowers subagent-driven-development", {
     expect(readFileSync(join(ws, "farewell.txt"), "utf8")).toBe("bye\n");
     // the SDD workspace stays out of git (sdd-workspace writes its own .gitignore)
     expect(git(ws, "status", "--porcelain")).toBe("");
-    // one instance, in the parent conversation's environment
-    const boxes = await db.selectFrom("environment_instances").select("environment_id").execute();
-    const { environment_id: rootEnv } = await db
+    // one instance, in the parent conversation's device
+    const boxes = await db.selectFrom("device_instances").select("device_id").execute();
+    const { device_id: rootEnv } = await db
       .selectFrom("conversations")
-      .select("environment_id")
+      .select("device_id")
       .where("id", "=", state.conv as string)
       .executeTakeFirstOrThrow();
-    expect(boxes.map((b) => b.environment_id)).toEqual([rootEnv]);
+    expect(boxes.map((b) => b.device_id)).toEqual([rootEnv]);
   });
 
   it("the children's usage sums into the parent run's counter", async () => {

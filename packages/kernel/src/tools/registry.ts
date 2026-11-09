@@ -52,7 +52,7 @@ export { canonicalJson } from "./canonical-json.js";
 
 /**
  * What a tool's `unavailable` is asked with: the org, and for a run's listing the root
- * conversation (`conversationId`; the sandbox tools follow its environment, ruling R8), whether
+ * conversation (`conversationId`; the sandbox tools follow its device, ruling R8), whether
  * the run is an eval replay (`replay`: its tool calls are never executed), and a `memo` shared by
  * the tools of one listing (one answer per question per listing).
  */
@@ -537,7 +537,7 @@ export class ToolRegistry {
       forkChild?: boolean;
       /**
        * The root conversation of the run (a sub-agent's tree root): tools whose availability
-       * depends on the conversation's environment (the sandbox tools) are listed by it.
+       * depends on the conversation's device (the sandbox tools) are listed by it.
        */
       sandboxConversationId?: string;
       /** An eval replay's listing: its calls are never executed (the sandbox tools are listed). */

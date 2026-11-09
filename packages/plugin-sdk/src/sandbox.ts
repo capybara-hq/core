@@ -4,8 +4,8 @@
  * primitives below; the kernel builds `glob` / `grep` / `edit` from `exec` plus `readFile` /
  * `writeFile`.
  *
- * `@2` separates an environment's **file system** from its **instance**: the file system
- * (`createFileSystem`) lives until the environment is deleted (`destroyFileSystem`); instances
+ * `@2` separates a device's **file system** from its **instance**: the file system
+ * (`createFileSystem`) lives until the device is deleted (`destroyFileSystem`); instances
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
 
@@ -54,7 +54,7 @@ export function rootsOf(h: SandboxHandle): SandboxRoots {
   return h.roots ?? DEFAULT_SANDBOX_ROOTS;
 }
 
-/** The provider's file system handle (an environment's files, independent of any instance). */
+/** The provider's file system handle (a device's files, independent of any instance). */
 export interface FileSystemHandle {
   /** The provider's file system id. */
   id: string;
@@ -103,7 +103,7 @@ export function isSandboxGoneError(e: unknown): e is SandboxGoneError {
 /**
  * The file system is definitely gone on the provider's side (volume removed, E2B sandbox killed).
  * `create` throws it instead of attaching the instance to a new, empty file system; the kernel then
- * reports the environment's files as lost rather than handing out a silently empty workspace.
+ * reports the device's files as lost rather than handing out a silently empty workspace.
  */
 export class FileSystemGoneError extends Error {
   readonly fileSystemGone = true as const;
@@ -133,8 +133,8 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
 /**
  * The `sandbox@2` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
- * **File systems and instances.** `createFileSystem` makes an environment's files; they live until
- * `destroyFileSystem` (the environment is deleted). `create` makes an instance attached to an
+ * **File systems and instances.** `createFileSystem` makes a device's files; they live until
+ * `destroyFileSystem` (the device is deleted). `create` makes an instance attached to an
  * existing file system; `destroy` / `destroyByName` drop the instance only and keep the files, and
  * `suspend` keeps them too. When the file system is gone, `create` must throw
  * {@link FileSystemGoneError} and never create an empty one in its place (a Docker provider checks
@@ -166,7 +166,7 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
  * `exitCode: null`, `timedOut: false` (and the output collected so far), it does not reject. An
  * `exec` called with an already aborted signal rejects at once.
  *
- * **Concurrent use** (required in `@2`): the sessions of one environment share its instance, so the
+ * **Concurrent use** (required in `@2`): the sessions of one device share its instance, so the
  * kernel calls `exec`, `readFile`, `writeFile` and `stat` concurrently on one instance. Those four
  * methods must be safe to call concurrently. Each `exec` labels its command with its `tag`, and an
  * aborted `exec` kills only its own command.
@@ -175,12 +175,12 @@ export interface SandboxProvider {
   /** `exec` / `readFile` / `writeFile` / `stat` may run concurrently on one instance (required). */
   readonly concurrentExec: true;
   /**
-   * Whether the provider isolates the sessions of one environment from each other inside the
+   * Whether the provider isolates the sessions of one device from each other inside the
    * instance (a declared capability; absent means false).
    */
   readonly sessionIsolation?: boolean;
   /**
-   * Creates an environment's file system. `name` looks like `cap-env-<environmentId>`. If a file
+   * Creates a device's file system. `name` looks like `cap-device-<deviceId>`. If a file
    * system with this name already exists, return it.
    */
   createFileSystem(args: {

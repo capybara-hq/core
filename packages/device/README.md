@@ -1,7 +1,7 @@
 # @capybara-hq/device
 
 `capybara-device` connects a laptop or server to a [Capybara](https://github.com/capybara-hq/core)
-deployment as an environment: the platform's agents run commands and read and write files on this
+deployment as a device: the platform's agents run commands and read and write files on this
 machine, inside a sandbox, while the program is online.
 
 Runs on macOS and Linux. Native Windows is refused: use WSL (then it is a Linux machine) or Docker
@@ -16,13 +16,13 @@ capybara-device status [--json]
 capybara-device logout
 ```
 
-`login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/device`) and
-the code to enter on any signed-in browser, where you pick the org and the environment (a new one or
+`login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/devices/link`) and
+the code to enter on any signed-in browser, where you pick the org and the device (a new one or
 an existing connected one of yours) after reading what the program can do. Logging in again from
-another machine into the same environment replaces the first machine (its credential is revoked).
+another machine into the same device replaces the first machine (its credential is revoked).
 `stop` ends the running program, `drain` makes it accept no new commands and exit when the running
 ones finish. `logout` stops a running program, then forgets the credential (the machine stays
-connected on the platform until it is revoked there). Deleting the environment in the web app
+connected on the platform until it is revoked there). Deleting the device in the web app
 revokes the machine and stops the program; the files in the working directory stay on your machine.
 
 The deployment must route `/device/connect` on its public URL to the gateway role (see
@@ -31,16 +31,16 @@ While connecting keeps failing, `start` retries and prints why at most once a mi
 status (a 404 usually means that route is missing), the close reason, or the network error.
 
 `start` exits 0, after printing why, when retrying cannot help: the machine was revoked or the
-environment deleted, the program is too old for the deployment (426), another login replaced this
+device deleted, the program is too old for the deployment (426), another login replaced this
 connection, or the machine is not logged in. Other failures exit non-zero, so a service (below)
 restarts the program after those and leaves it stopped after the terminal ones; fix the cause
 (log in again, upgrade), then run `start` or `service install` again.
 
 If the working directory (or its marker `.capybara-device`, or one of `workspace/`, `skills/`,
 `tmp/`) is removed, the program never recreates it: operations answer that the files are lost and
-the environment page says so. To start afresh, run `capybara-device logout` and then
-`capybara-device login` into the same environment: login recreates the directory and the marker,
-and the platform rebuilds the environment on its next use.
+the device page says so. To start afresh, run `capybara-device logout` and then
+`capybara-device login` into the same device: login recreates the directory and the marker,
+and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]`, `start`, `stop`, `drain`, `policy [show|set <key> <value>]` and
@@ -51,14 +51,14 @@ State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-d
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
 error naming it).
-The working directory (default `~/capybara-device/<environmentId>`) holds `workspace/`, `skills/`
+The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`.
 
 In OS mode every command runs inside `@anthropic-ai/sandbox-runtime` (macOS Seatbelt, Linux
 bubblewrap; Linux needs `bwrap` and `socat`): writes only under `workspace/` and `tmp/`,
 `skills/` read only, `~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles and
 this program's state directory unreadable. Network is limited to the domains of the local policy
-that the environment's egress also allows; with an empty policy (the default) commands reach no
+that the device's egress also allows; with an empty policy (the default) commands reach no
 network at all. Only you edit the policy, the platform can never widen it:
 
 ```bash
@@ -77,8 +77,8 @@ down with it).
 
 ## Docker mode
 
-`login --mode docker` runs every command with `docker exec` in one container per environment
-(`capybara-device-<environmentId>`, started on first use from
+`login --mode docker` runs every command with `docker exec` in one container per device
+(`capybara-device-<deviceId>`, started on first use from
 `ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux commands
 run as your own uid:gid, so they can write the mounted directories you own (a root user falls back to
 the image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
@@ -88,7 +88,7 @@ at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file s
 match and recreated when they change; it stays running (idle) between starts.
 
 Docker mode has no domain allowlist: a command has either no network (`--network none`, when the
-local policy or the environment's egress allows no domain) or the default bridge, with the whole
+local policy or the device's egress allows no domain) or the default bridge, with the whole
 internet. Use OS mode to limit commands to the domains of the local policy.
 
 ## Running at login

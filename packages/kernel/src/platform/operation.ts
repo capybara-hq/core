@@ -245,9 +245,9 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
       "The org's settings (tool search, language, sandbox policy, the Platform tool switch, the default theme): read and change.",
   },
   {
-    id: "environments",
+    id: "devices",
     description:
-      "Your own cloud environments (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
+      "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
   },
   {
     id: "themes",

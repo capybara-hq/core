@@ -62,7 +62,7 @@ function conversationApi(
     [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "in c1")] }),
     [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
     [`GET ${BASE}/files`]: () => json(200, { files: [FILE], next: null }),
-    [`GET ${BASE}/environment`]: () => json(200, { environment: null }),
+    [`GET ${BASE}/device`]: () => json(200, { device: null }),
     [`GET ${UI}/contributions`]: () => json(200, { items }),
     ...extra,
   });

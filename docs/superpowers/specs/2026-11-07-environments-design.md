@@ -709,3 +709,61 @@ The shape of RFC 8628 for both cases (browser or not):
 - Phase 3 is therefore two designs: kernel shared environments with `ctx.environments`, and the
   project plugin. Phase 1's `owner_kind` CHECK lists only `personal`, so nothing is renamed.
 
+
+## 15. One name: devices (2026-11-09, decided)
+
+The maintainer decided (2026-11-09) to drop the word **environment** everywhere, inside and out: a
+person picks a **device** (设备). A cloud device (云端设备) and a local device (本地设备, a machine
+connected with `capybara-device`) are both devices; 新建设备 asks which. Nothing about how they work
+changes: a cloud device keeps its files while its instance is suspended or destroyed (§4-§5); a
+local device is registered through the device flow and is online or offline (§6, §13). Before
+0.1.0, so no compatibility layer (AGENTS.md "Before 0.1.0").
+
+### 15.1 Vocabulary
+
+| Was | Now |
+|---|---|
+| environment (环境) | device (设备) |
+| cloud environment (云端沙箱) | cloud device (云端设备) |
+| connected environment (接入设备) | local device (本地设备) |
+| 个人环境 / "Personal" (the default) | 个人设备 / "Personal" |
+| the connected machine of an environment | the machine of a local device (the computer it runs on) |
+| connector program | `capybara-device` (unchanged) |
+| owner kind personal / shared (§14) | unchanged: a personal device; a shared device (phase 3) |
+
+Sections 1-14 keep their original wording as history; this section wins where they disagree.
+
+### 15.2 Names in code and data (designer's calls)
+
+- **Data** (one migration, `ALTER ... RENAME`, applied with the kernel; a rolling deploy across it
+  is not supported before 0.1.0): `environments` → `devices` (`source` values `cloud` | `local`),
+  `environment_instances` → `device_instances`, `environment_defaults` → `device_defaults`,
+  `environment_machines` → `device_machines`, `conversations.environment_id` and
+  `background_tasks.environment_id` → `device_id`, indexes and constraints renamed with them; the
+  log event `environment_paths` → `device_paths` (existing rows updated by the migration; replay
+  reads the new type only).
+- **Provider name** `@device` → `@local` (rows updated by the migration).
+- **Kernel**: module `environments/` → `devices/`; today's `devices/` (the local-device plumbing:
+  relay, gateway, sign-in, machines) → `local-devices/`. Service and type names follow
+  (`DevicesService`, `DeviceView`, `DeviceAccess`, `ConversationDevices`, `LocalDeviceRelay`,
+  `LocalDeviceGateway`, `LocalDeviceProvider`, `MachinesService` unchanged).
+- **HTTP**: `orgs/:orgId/environments…` → `orgs/:orgId/devices…` (machine revoke:
+  `…/devices/:id/machine`); the sign-in routes `api/v1/device/*` and `GET /device/connect` stay.
+- **Errors**: `environment.*` → `device.*`. The sign-in flow's codes, which already use `device.*`,
+  move to `device_sign_in.*` (`authorization_pending`, `slow_down`, `expired`, `denied`,
+  `code_invalid`, `unavailable`); `device.credential_invalid` stays (connection route).
+- **Platform ops**: `environments.*` → `devices.*`.
+- **Config**: `environments.maxPersonal` → `devices.maxPersonal`; `environments.device.*` →
+  `devices.local.*` (env vars follow: `CAPYBARA_DEVICES__…`).
+- **Web**: `/environments` and `/environments/[id]` → `/devices` and `/devices/[id]`; navigation
+  item 设备; the sign-in confirmation page `/device` → `/devices/link` (the address the kernel hands
+  `capybara-device` as `verificationUri`); all copy says 设备 / device.
+- **IM** (every channel, not only Lark): `/env` → `/device`.
+- **Model-visible text**: tool errors and the paths line say "device" (e.g. "The device's machine
+  is offline"). The tool descriptions already name no environment.
+- **Sandbox resource names** `cap-env-<id>` → `cap-device-<id>` (Docker volumes, E2B sandbox
+  metadata). Existing cloud files under the old names are orphaned; accepted by the maintainer before
+  any release. `sandbox@2` (instances and file systems) and the SDK's device protocol are unchanged.
+- **Docs**: this spec keeps its file name; docs, skills (`writing-sandbox-providers`), the deploy
+  section, the device README and the checklists say device. The plugins repository follows with a
+  docs-only PR (provider READMEs, its writing-sandbox-providers skill).

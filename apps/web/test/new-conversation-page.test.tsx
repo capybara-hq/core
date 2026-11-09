@@ -16,7 +16,7 @@ import { conversationGroupsQuery } from "../src/lib/query/shell";
 import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
-  ENVIRONMENTS,
+  DEVICES,
   envView,
   FakeEventSource,
   LIMITS,
@@ -104,7 +104,7 @@ const routes = (agents: unknown = AGENTS, groups: unknown = GROUPS) => ({
   [`GET ${ORG}/attachments/limits`]: () => json(200, LIMITS),
   [`GET ${ORG}/agents`]: () => json(200, agents),
   [`GET ${ORG}/models`]: () => json(200, MODELS),
-  [`GET ${ORG}/environments`]: () => json(200, ENVIRONMENTS),
+  [`GET ${ORG}/devices`]: () => json(200, DEVICES),
   [`GET ${ORG}/conversations/groups`]: () => json(200, groups),
 });
 
@@ -387,12 +387,12 @@ describe("the new conversation page (agent profile design §4)", () => {
   });
 });
 
-describe("the environment picker (environments design §4.1)", () => {
+describe("the device picker (environments design §4.1)", () => {
   const picker = () =>
-    screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickEnvironment}: `) });
-  const withEnvironments = (environments: unknown) => ({
+    screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickDevice}: `) });
+  const withDevices = (devices: unknown) => ({
     ...routes(),
-    [`GET ${ORG}/environments`]: () => json(200, environments),
+    [`GET ${ORG}/devices`]: () => json(200, devices),
   });
   const send = async (text: string) => {
     const user = userEvent.setup();
@@ -401,90 +401,90 @@ describe("the environment picker (environments design §4.1)", () => {
   };
   const createdAt = () => json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "go") });
 
-  it("new conversation sends the chosen environment", async () => {
+  it("new conversation sends the chosen device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
-    await renderRouteWithCache("/", withEnvironments(ENVIRONMENTS));
+    await renderRouteWithCache("/", withDevices(DEVICES));
     const user = userEvent.setup();
-    expect(picker()?.textContent).toContain(en.environments.personal);
+    expect(picker()?.textContent).toContain(en.devices.personal);
     await user.click(picker() as HTMLElement);
     // the one whose provider is gone is listed but cannot be chosen
     const gone = await screen.findByRole("menuitemradio", { name: /Old box/ });
     expect(gone.hasAttribute("data-disabled")).toBe(true);
-    expect(gone.textContent).toContain(en.environments.state.unavailable);
+    expect(gone.textContent).toContain(en.devices.state.unavailable);
     await user.click(screen.getByRole("menuitemradio", { name: /Build box/ }));
     expect(picker()?.textContent).toContain("Build box");
     await send("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({
       message: { text: "go" },
-      environmentId: "e2",
+      deviceId: "e2",
     });
   });
 
-  it("picker defaults to the last used environment", async () => {
+  it("picker defaults to the last used device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
-    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e2" }));
+    await renderRouteWithCache("/", withDevices({ ...DEVICES, lastUsedId: "e2" }));
     expect(picker()?.textContent).toContain("Build box");
     await send("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "e2" });
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ deviceId: "e2" });
   });
 
   it("falls back to the default when the last used one is unavailable", async () => {
     resetNavigation("/");
-    await renderRouteWithCache("/", withEnvironments({ ...ENVIRONMENTS, lastUsedId: "e3" }));
-    expect(picker()?.textContent).toContain(en.environments.personal);
+    await renderRouteWithCache("/", withDevices({ ...DEVICES, lastUsedId: "e3" }));
+    expect(picker()?.textContent).toContain(en.devices.personal);
   });
 
-  it("an environment whose files are lost is tagged and not preselected", async () => {
+  it("a device whose files are lost is tagged and not preselected", async () => {
     resetNavigation("/");
     const lost = {
-      ...ENVIRONMENTS,
-      items: ENVIRONMENTS.items.map((e) => (e.id === "e2" ? { ...e, filesLost: true } : e)),
+      ...DEVICES,
+      items: DEVICES.items.map((e) => (e.id === "e2" ? { ...e, filesLost: true } : e)),
       lastUsedId: "e2",
     };
-    await renderRouteWithCache("/", withEnvironments(lost));
-    expect(picker()?.textContent).toContain(en.environments.personal);
+    await renderRouteWithCache("/", withDevices(lost));
+    expect(picker()?.textContent).toContain(en.devices.personal);
     const user = userEvent.setup();
     await user.click(picker() as HTMLElement);
     const item = await screen.findByRole("menuitemradio", { name: /Build box/ });
     expect(item.hasAttribute("data-disabled")).toBe(true);
-    expect(item.textContent).toContain(en.environments.state.filesLost);
+    expect(item.textContent).toContain(en.devices.state.filesLost);
   });
 
-  it("picker disables an offline device environment", async () => {
+  it("picker disables an offline local device", async () => {
     resetNavigation("/");
     const devices = {
-      ...ENVIRONMENTS,
+      ...DEVICES,
       items: [
-        ...ENVIRONMENTS.items,
-        envView("d1", "Laptop", { source: "device", provider: "@device", online: true }),
-        envView("d2", "Server", { source: "device", provider: "@device", online: false }),
+        ...DEVICES.items,
+        envView("d1", "Laptop", { source: "local", provider: "@local", online: true }),
+        envView("d2", "Server", { source: "local", provider: "@local", online: false }),
       ],
       lastUsedId: "d2",
     };
-    await renderRouteWithCache("/", withEnvironments(devices));
+    await renderRouteWithCache("/", withDevices(devices));
     // the last used one is offline: it is not preselected
-    expect(picker()?.textContent).toContain(en.environments.personal);
+    expect(picker()?.textContent).toContain(en.devices.personal);
     const user = userEvent.setup();
     await user.click(picker() as HTMLElement);
     const offline = await screen.findByRole("menuitemradio", { name: /Server/ });
     expect(offline.hasAttribute("data-disabled")).toBe(true);
-    expect(offline.textContent).toContain(en.environments.state.offline);
+    expect(offline.textContent).toContain(en.devices.state.offline);
     const online = screen.getByRole("menuitemradio", { name: /Laptop/ });
     expect(online.hasAttribute("data-disabled")).toBe(false);
-    expect(online.textContent).toContain(en.environments.state.online);
+    expect(online.textContent).toContain(en.devices.state.online);
   });
 
-  it("without a cloud sandbox the picker still lists the connected environments", async () => {
+  it("without a cloud sandbox the picker still lists the local devices", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
     await renderRouteWithCache(
       "/",
-      withEnvironments({
-        items: [envView("d1", "Laptop", { source: "device", provider: "@device", online: true })],
+      withDevices({
+        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: true })],
         defaultId: null,
         lastUsedId: null,
         cloudAvailable: false,
@@ -493,7 +493,7 @@ describe("the environment picker (environments design §4.1)", () => {
     expect(picker()?.textContent).toContain("Laptop");
     await send("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ environmentId: "d1" });
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ deviceId: "d1" });
   });
 
   it("without a cloud sandbox and only offline devices, send waits and says why", async () => {
@@ -501,32 +501,32 @@ describe("the environment picker (environments design §4.1)", () => {
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
     await renderRouteWithCache(
       "/",
-      withEnvironments({
-        items: [envView("d1", "Laptop", { source: "device", provider: "@device", online: false })],
+      withDevices({
+        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
         defaultId: null,
         lastUsedId: null,
         cloudAvailable: false,
       }),
     );
     expect(picker()?.textContent).toContain("—");
-    expect(screen.getByText(en.chat.environmentOffline)).toBeTruthy();
+    expect(screen.getByText(en.chat.deviceOffline)).toBeTruthy();
     await send("go");
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(calls.some((c) => c.method === "POST")).toBe(false);
     expect(router.replace).not.toHaveBeenCalled();
   });
 
-  it("without a sandbox provider there is no picker and the send carries no environment", async () => {
+  it("without a sandbox provider there is no picker and the send carries no device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
     await renderRouteWithCache(
       "/",
-      withEnvironments({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
+      withDevices({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
     );
     expect(picker()).toBeNull();
     await send("go");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("environmentId");
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).not.toHaveProperty("deviceId");
   });
 });
 

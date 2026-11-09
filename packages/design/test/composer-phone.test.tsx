@@ -14,7 +14,7 @@ import {
   type PickerProps,
   QuickActionList,
   QuickActions,
-  shortEnvironmentLabel,
+  shortDeviceLabel,
   shortModelLabel,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
@@ -76,15 +76,15 @@ function effortPicker(onPick: (id: string) => void = vi.fn(), value = "高"): Pi
   };
 }
 
-function environmentPicker(onPick = vi.fn()): PickerProps {
+function devicePicker(onPick = vi.fn()): PickerProps {
   return {
-    label: "切换环境",
-    value: "个人环境",
+    label: "切换设备",
+    value: "个人设备",
     groups: [
       {
         items: [
-          { id: "personal", label: "个人环境", checked: true },
-          { id: "e2b", label: "个人环境（E2B 沙箱）", disabled: true, tag: "不可用" },
+          { id: "personal", label: "个人设备", checked: true },
+          { id: "e2b", label: "个人设备（E2B 沙箱）", disabled: true, tag: "不可用" },
         ],
       },
     ],
@@ -98,7 +98,7 @@ const box = (over: Partial<ComposerBoxProps> = {}) => (
     onChange={() => {}}
     placeholder="p"
     onAttach={() => {}}
-    pickers={{ environment: environmentPicker(), model: modelPicker(), effort: effortPicker() }}
+    pickers={{ device: devicePicker(), model: modelPicker(), effort: effortPicker() }}
     send={{ mode: "send", disabled: true, onClick: () => {} }}
     {...over}
   />
@@ -109,7 +109,7 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     wrap(box());
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;
     expect(button.tagName).toBe("BUTTON");
-    expect(button.getAttribute("aria-label")).toBe("会话选项: DeepSeek-V4.1-Flash · 高 · 个人环境");
+    expect(button.getAttribute("aria-label")).toBe("会话选项: DeepSeek-V4.1-Flash · 高 · 个人设备");
     const parts = [...button.querySelectorAll(".cb-options-value")].map((e) => [
       e.getAttribute("data-part"),
       e.textContent,
@@ -117,7 +117,7 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     expect(parts).toEqual([
       ["options-model", "DeepSeek-V4.1-Flash"],
       ["options-effort", "高"],
-      ["options-environment", "个人"],
+      ["options-device", "个人"],
     ]);
     // the pickers stay for 640 and up; CSS shows one of the two
     const pickers = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
@@ -129,23 +129,19 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     expect(css).toMatch(/\.cb-composer-bar > \.cb-composer-options\.cb-btn \{\s*display: none;/);
   });
 
-  it("opens a bottom sheet with the environment, model and effort groups", async () => {
+  it("opens a bottom sheet with the device, model and effort groups", async () => {
     const user = userEvent.setup();
     wrap(box());
     await user.click(screen.getByRole("button", { name: /^会话选项/ }));
     const sheet = screen.getByRole("dialog", { name: "会话选项" });
     expect(sheet.getAttribute("data-part")).toBe("composer-options-sheet");
     const groups = [...sheet.querySelectorAll('[data-part="options-group"]')];
-    expect(groups.map((g) => g.getAttribute("data-group"))).toEqual([
-      "environment",
-      "model",
-      "effort",
-    ]);
+    expect(groups.map((g) => g.getAttribute("data-group"))).toEqual(["device", "model", "effort"]);
     expect(
       within(sheet)
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
-    ).toEqual(["环境", "模型", "思考档位"]);
+    ).toEqual(["设备", "模型", "思考档位"]);
     // the picker's contents: provider labels, checked items, a disabled item with its reason, the note
     const model = within(sheet).getByRole("radiogroup", { name: "模型" });
     expect(
@@ -189,21 +185,21 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     ).toBe(true);
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;
     expect(button.getAttribute("aria-label")).toBe("会话选项: DeepSeek-V4-Pro · 低");
-    // no environment picker: two groups
+    // no device picker: two groups
     expect(document.querySelectorAll('[data-part="options-group"]')).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("a locked environment (an existing conversation) is read-only in the sheet", async () => {
+  it("a locked device (an existing conversation) is read-only in the sheet", async () => {
     const user = userEvent.setup();
     wrap(
       box({
         pickers: {
-          environment: {
-            label: "环境",
-            value: "个人环境",
-            locked: { hint: "发送第一条消息后不能再换环境" },
+          device: {
+            label: "设备",
+            value: "个人设备",
+            locked: { hint: "发送第一条消息后不能再换设备" },
             groups: [],
             onPick: () => {},
           },
@@ -213,10 +209,10 @@ describe("the composer's options button (phones, §6.16.2)", () => {
       }),
     );
     await user.click(screen.getByRole("button", { name: /^会话选项/ }));
-    const env = document.querySelector('[data-group="environment"]') as HTMLElement;
+    const env = document.querySelector('[data-group="device"]') as HTMLElement;
     expect(within(env).queryAllByRole("radio")).toHaveLength(0);
     const locked = env.querySelector('[data-part="options-locked"]') as HTMLElement;
-    expect(locked.textContent).toBe("个人环境发送第一条消息后不能再换环境");
+    expect(locked.textContent).toBe("个人设备发送第一条消息后不能再换设备");
   });
 
   it("shortens names sensibly", () => {
@@ -224,10 +220,10 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     expect(shortModelLabel("claude-opus-5-5-20261101")).toBe("claude-opus-5-5");
     expect(shortModelLabel("gpt-latest")).toBe("gpt");
     expect(shortModelLabel("Qwen3.8-Max")).toBe("Qwen3.8-Max");
-    expect(shortEnvironmentLabel("个人环境")).toBe("个人");
-    expect(shortEnvironmentLabel("Personal environment")).toBe("Personal");
-    expect(shortEnvironmentLabel("环境")).toBe("环境");
-    expect(shortEnvironmentLabel("Grant's MacBook")).toBe("Grant's MacBook");
+    expect(shortDeviceLabel("个人设备")).toBe("个人");
+    expect(shortDeviceLabel("Personal device")).toBe("Personal");
+    expect(shortDeviceLabel("设备")).toBe("设备");
+    expect(shortDeviceLabel("Grant's MacBook")).toBe("Grant's MacBook");
   });
 });
 
@@ -243,7 +239,7 @@ describe("the effort label is never cut in half", () => {
     );
     expect(isShortPickerValue("高")).toBe(true);
     expect(isShortPickerValue("max")).toBe(true);
-    expect(isShortPickerValue("个人环境")).toBe(false);
+    expect(isShortPickerValue("个人设备")).toBe(false);
   });
 });
 

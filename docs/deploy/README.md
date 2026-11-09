@@ -647,7 +647,7 @@ Lark and the test fake deliver exactly once.
 
 ## Connected devices
 
-People can connect their own laptop or server as an environment with `@capybara-hq/device`
+People can connect their own laptop or server as a local device with `@capybara-hq/device`
 (`capybara-device`, see [its README](../../packages/device/README.md)). The program opens one
 long-lived WebSocket connection to the kernel's `gateway` role.
 
@@ -669,16 +669,16 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   gateway pings every 20 s and the program reconnects after 60 s without any frame from it, so a
   proxy idle timeout of at least 60 s is enough. Don't set a maximum connection age shorter than a
   few hours: the program reconnects, but a command in flight waits out the reconnect grace.
-- **Replicas.** Any gateway replica can hold the connection; one lease per environment
-  (`capk:device-lease:<environmentId>`) keeps it to one connection across replicas, and the newest
+- **Replicas.** Any gateway replica can hold the connection; one lease per device
+  (`capk:device-lease:<deviceId>`) keeps it to one connection across replicas, and the newest
   connection wins. Requests from api and worker replicas reach the holder through Redis.
-- **Config.** `environments.device.reconnectGraceSeconds` (how long a disconnected machine is not yet
+- **Config.** `devices.local.reconnectGraceSeconds` (how long a disconnected machine is not yet
   reported offline, default 120; also sent to the program at sign-in), `leaseTtlMs`,
   `authCodeTtlSeconds`, `pollIntervalSeconds` and `maxFrameBytes`; names and defaults in
   [docs/config.md](../config.md). Environment variables follow the usual rule
-  (`CAPYBARA_ENVIRONMENTS__DEVICE__RECONNECT_GRACE_SECONDS`).
+  (`CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS`).
 - **Sign-in** uses the public routes `POST /api/v1/device/authorize` and `/device/token` and the web
-  page `/device`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
+  page `/devices/link`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
 
 ## Sandbox (optional)
 

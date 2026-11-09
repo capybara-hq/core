@@ -36,7 +36,7 @@ vi.mock("../src/lib/server-setup", () => ({ serverNeedsSetup: async () => needsS
 const { default: AuthLayout } = await import("../src/app/(auth)/layout");
 const { default: LoginLayout } = await import("../src/app/(auth)/login/layout");
 const { default: BindLayout } = await import("../src/app/(auth)/bind/[token]/layout");
-const { default: DeviceLayout } = await import("../src/app/(auth)/device/layout");
+const { default: DeviceLayout } = await import("../src/app/(auth)/devices/link/layout");
 
 const layoutAt = (path: string) => {
   req.headers = new Headers({ "x-cap-path": path });
@@ -226,7 +226,7 @@ describe("the bind layout's decision before anything renders", () => {
 });
 
 describe("the device layout's decision before anything renders", () => {
-  const PAGE = "/device?code=BCDF-GHJK";
+  const PAGE = "/devices/link?code=BCDF-GHJK";
   const deviceAt = (path: string) => {
     req.headers = new Headers({ "x-cap-path": path });
     return DeviceLayout({ children: <p>page body</p> });

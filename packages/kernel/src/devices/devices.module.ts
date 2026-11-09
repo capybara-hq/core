@@ -1,30 +1,22 @@
-import { Inject, Module, type OnModuleInit } from "@nestjs/common";
-import { DEVICE_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
+import { Module } from "@nestjs/common";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
+import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
-import { DeviceSandboxProvider } from "./device-provider.js";
-import { MachinesService } from "./machines.js";
-import { DeviceRelay } from "./relay.js";
-import { DeviceTargets } from "./targets.js";
+import { DeviceAccess } from "./access.js";
+import { ConversationDevices } from "./conversation-devices.js";
+import { DevicesService } from "./devices.service.js";
 
 /**
- * Connected machines (environments spec §6, §13): the caller side of the device relay and the
- * kernel-internal `@device` sandbox provider, registered with {@link SandboxProviders} on init, and
- * the machines and their credentials ({@link MachinesService}).
- * Imported on every role: any replica may run a sandbox operation on a connected environment
- * (the socket itself is held by the gateway role).
+ * Devices (spec 2026-11-07-environments-design): a person's devices
+ * ({@link DevicesService}), who may use one ({@link DeviceAccess}) and the one a
+ * conversation works in ({@link ConversationDevices}). The instances and file systems are the
+ * {@link SandboxModule}'s.
  */
 @Module({
-  imports: [SandboxModule],
-  providers: [DeviceTargets, DeviceRelay, DeviceSandboxProvider, MachinesService],
-  exports: [DeviceRelay, DeviceSandboxProvider, MachinesService],
+  // ExtensionsModule: the provider display names of demoted defaults; LocalDevicesModule: deleting
+  // a local device revokes its machine
+  imports: [SandboxModule, ExtensionsModule, LocalDevicesModule],
+  providers: [DeviceAccess, DevicesService, ConversationDevices],
+  exports: [DeviceAccess, DevicesService, ConversationDevices],
 })
-export class DevicesModule implements OnModuleInit {
-  constructor(
-    @Inject(SandboxProviders) private readonly providers: SandboxProviders,
-    @Inject(DeviceSandboxProvider) private readonly device: DeviceSandboxProvider,
-  ) {}
-
-  onModuleInit(): void {
-    this.providers.register({ plugin: DEVICE_PROVIDER, impl: this.device });
-  }
-}
+export class DevicesModule {}

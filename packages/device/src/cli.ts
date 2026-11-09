@@ -33,7 +33,7 @@ function defaultCreateExecutor(stateDir: string, home: string) {
       const { createDockerExecutor } = await import("./exec/docker.js");
       return createDockerExecutor({
         dir: cred.dir,
-        environmentId: cred.environmentId,
+        deviceId: cred.deviceId,
         policy,
       });
     }

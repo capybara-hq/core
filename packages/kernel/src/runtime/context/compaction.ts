@@ -143,7 +143,7 @@ function transcriptLine(e: ConversationEvent): string | null {
     // phase D: a forked skill's report is user content of the request (build.ts)
     case "skill_fork_result":
       return `User: ${e.payload.text}`;
-    // environment_paths is left out too: the latest one follows the summary (build.ts)
+    // device_paths is left out too: the latest one follows the summary (build.ts)
     // run_context is left out: its current values follow the summary anyway (build.ts), and
     // stale names should not be summarised as current
     case "tool_result":

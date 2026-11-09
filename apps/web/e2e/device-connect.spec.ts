@@ -13,10 +13,10 @@ const CSRF = { "X-Capybara-Csrf": "1" };
 /**
  * Connecting a machine (environments spec §13.3): the program's side (`authorize`, then `token`)
  * is driven over the public API like `capybara-device login` does; the person confirms the code on
- * `/device`; the machine's environment then shows on the 环境 page as a connected device (offline:
- * nothing holds its connection in this spec), and is deleted again.
+ * `/devices/link`; the machine then shows on the 设备 page as a local device (offline: nothing
+ * holds its connection in this spec), and is deleted again.
  */
-test("connect a machine: authorize → confirm on /device → token → the environment page", async ({
+test("connect a machine: authorize → confirm on /devices/link → token → the device page", async ({
   page,
   playwright,
   baseURL,
@@ -44,49 +44,49 @@ test("connect a machine: authorize → confirm on /device → token → the envi
       data: { deviceCode },
     });
     expect(((await early.json()) as { error: { code: string } }).error.code).toBe(
-      "device.authorization_pending",
+      "device_sign_in.authorization_pending",
     );
 
-    await page.goto(`/device?code=${userCode}`);
+    await page.goto(`/devices/link?code=${userCode}`);
     await expect(page.locator('[data-template="AuthPage"]')).toBeVisible();
     await hydrated(page);
     await expect(page.getByText(userCode)).toBeVisible();
-    await expect(page.getByText(zh.device.disclosure)).toBeVisible();
-    await expect(page.getByRole("textbox", { name: zh.device.name })).toHaveValue(machine);
-    await page.getByRole("button", { name: zh.device.confirm }).click();
-    await expect(page.getByText(zh.device.doneTitle)).toBeVisible();
+    await expect(page.getByText(zh.deviceLink.disclosure)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: zh.deviceLink.name })).toHaveValue(machine);
+    await page.getByRole("button", { name: zh.deviceLink.confirm }).click();
+    await expect(page.getByText(zh.deviceLink.doneTitle)).toBeVisible();
 
     // the program's next poll, one interval after the last, gets the credential
     let interval = 5;
-    let granted: { credential?: string; environmentId?: string } = {};
+    let granted: { credential?: string; deviceId?: string } = {};
     for (let attempt = 0; attempt < 5 && granted.credential === undefined; attempt++) {
       await page.waitForTimeout(interval * 1000 + 500);
       const r = await program.post("/api/v1/device/token", { headers: CSRF, data: { deviceCode } });
       const body = (await r.json()) as {
         credential?: string;
-        environmentId?: string;
+        deviceId?: string;
         error?: { code: string; details?: { interval?: number }[] };
       };
       if (r.status() === 200) granted = body;
-      else if (body.error?.code === "device.slow_down") {
+      else if (body.error?.code === "device_sign_in.slow_down") {
         interval = body.error.details?.[0]?.interval ?? interval + 5;
-      } else expect(body.error?.code).toBe("device.authorization_pending");
+      } else expect(body.error?.code).toBe("device_sign_in.authorization_pending");
     }
     expect(granted.credential).toMatch(/^cap_dev_/);
 
-    await page.getByRole("button", { name: zh.device.openEnvironment }).click();
+    await page.getByRole("button", { name: zh.deviceLink.openDevice }).click();
     await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
-    await expect(page.getByText(zh.environments.source.device)).toBeVisible();
-    await expect(page.getByText(zh.environments.state.offline)).toBeVisible();
+    await expect(page.getByText(zh.devices.source.local)).toBeVisible();
+    await expect(page.getByText(zh.devices.state.offline)).toBeVisible();
     await expect(page.getByText(machine).first()).toBeVisible();
 
-    // clean up: delete the environment (typing its name)
+    // clean up: delete the device (typing its name)
     await page.getByRole("button", { name: zh.common.moreActions }).click();
-    await page.getByRole("menuitem", { name: zh.environments.detail.delete }).click();
+    await page.getByRole("menuitem", { name: zh.devices.detail.delete }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox").fill(machine);
-    await dialog.getByRole("button", { name: zh.environments.detail.delete }).click();
-    await expect(page).toHaveURL(/\/environments$/);
+    await dialog.getByRole("button", { name: zh.devices.detail.delete }).click();
+    await expect(page).toHaveURL(/\/devices$/);
   } finally {
     await program.dispose();
   }

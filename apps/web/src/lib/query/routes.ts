@@ -5,7 +5,7 @@ import type { ChannelConnection } from "../channels";
 import { maybeOwnTemplate, type OrgComponent, usableRows } from "../components";
 import { type ConnectorSummary, canManageConnectors, personalConnectors } from "../connectors";
 import type { Conversation } from "../conversations";
-import { codeParam, defaultDeviceOrg } from "../devices";
+import { codeParam, defaultDeviceOrg } from "../device-sign-in";
 import type { EvalSetDetail } from "../evals";
 import type { InboxItem } from "../inbox";
 import { myRole, type OrgRole, roleAtLeast } from "../members";
@@ -53,7 +53,7 @@ import {
   connectorQuery,
   connectorsQuery,
   contributionsQuery,
-  conversationEnvironmentQuery,
+  conversationDeviceQuery,
   conversationFollowUps,
   conversationQuery,
   type EventWindow,
@@ -62,8 +62,8 @@ import {
   modelsQuery,
   queueQuery,
 } from "./conversation";
-import { pendingDeviceQuery } from "./devices";
-import { environmentQuery, environmentsQuery } from "./environments";
+import { pendingDeviceQuery } from "./device-sign-in";
+import { deviceQuery, devicesQuery } from "./devices";
 import {
   type EvalRunState,
   evalCaseQuery,
@@ -507,9 +507,9 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: () => [q(maybeMeQuery())],
   },
   {
-    pattern: "/device",
-    // The session (the device layout sends a signed-out visitor to sign-in first) and the machine
-    // behind `?code=`; then the org's environments (its connected ones can take the machine).
+    pattern: "/devices/link",
+    // The session (the device-link layout sends a signed-out visitor to sign-in first) and the machine
+    // behind `?code=`; then the org's devices (its connected ones can take the machine).
     queries: ({ search }) => {
       const code = codeParam(search.get("code"));
       return code === "" ? [q(maybeMeQuery())] : [q(maybeMeQuery()), q(pendingDeviceQuery(code))];
@@ -519,7 +519,7 @@ export const ROUTES: readonly RouteEntry[] = [
       const me = qc.getQueryData<Me | null>(maybeMeQuery().queryKey);
       const orgId = me ? defaultDeviceOrg(me) : undefined;
       if (orgId === undefined || codeParam(search.get("code")) === "") return;
-      await qc.prefetchQuery({ ...environmentsQuery(orgId), retry: false });
+      await qc.prefetchQuery({ ...devicesQuery(orgId), retry: false });
     },
   },
   {
@@ -571,7 +571,7 @@ export const ROUTES: readonly RouteEntry[] = [
           q(agentsQuery(orgId)),
           q(modelsQuery(orgId)),
           q(attachmentLimitsQuery(orgId)),
-          q(environmentsQuery(orgId)),
+          q(devicesQuery(orgId)),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
     },
@@ -589,7 +589,7 @@ export const ROUTES: readonly RouteEntry[] = [
         q(queueQuery(orgId, id)),
         q(contributionsQuery(orgId)),
         q(filesQuery(orgId, id)),
-        q(conversationEnvironmentQuery(orgId, id)),
+        q(conversationDeviceQuery(orgId, id)),
         q(connectorsQuery(orgId)),
         q(attachmentLimitsQuery(orgId)),
       ];
@@ -644,13 +644,13 @@ export const ROUTES: readonly RouteEntry[] = [
         : [q(connectorQuery(orgId, params.connectorId))],
   },
   {
-    pattern: "/environments",
-    queries: ({ orgId }) => (orgId === null ? [] : [q(environmentsQuery(orgId))]),
+    pattern: "/devices",
+    queries: ({ orgId }) => (orgId === null ? [] : [q(devicesQuery(orgId))]),
   },
   {
-    pattern: "/environments/[id]",
+    pattern: "/devices/[id]",
     queries: ({ orgId, params }) =>
-      orgId === null || params.id === undefined ? [] : [q(environmentQuery(orgId, params.id))],
+      orgId === null || params.id === undefined ? [] : [q(deviceQuery(orgId, params.id))],
   },
   {
     pattern: "/connectors/install",

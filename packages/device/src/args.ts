@@ -20,7 +20,7 @@ export const USAGE = `Usage:
                                   Connect this machine: approve the code in the browser
   capybara-device logout          Forget the credential on this machine
   capybara-device status [--json] Show whether this machine is logged in
-  capybara-device start           Connect and serve the environment
+  capybara-device start           Connect and serve the device
   capybara-device stop            Stop the running program
   capybara-device drain           Finish running commands, accept no new ones, then stop
   capybara-device policy [show]   Show the local policy

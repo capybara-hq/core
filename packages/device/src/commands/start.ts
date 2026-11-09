@@ -71,7 +71,7 @@ export async function start(deps: StartDeps): Promise<number> {
     if (stopRequested) return 0;
     conn = (deps.connect ?? connect)(cred, executor, { log: new CommandLog(stateDir), err });
     if (drainRequested) conn.drain();
-    out(`capybara-device: serving environment ${cred.environmentId} (${cred.mode} mode)`);
+    out(`capybara-device: serving device ${cred.deviceId} (${cred.mode} mode)`);
     return await conn.done;
   } finally {
     proc.off("SIGTERM", onStop);

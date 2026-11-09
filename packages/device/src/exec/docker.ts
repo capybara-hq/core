@@ -32,7 +32,7 @@ export const SANDBOX_IMAGE = `ghcr.io/capybara-hq/capybara-sandbox:${SANDBOX_IMA
 const IMAGE_USER = "1000:1000";
 
 /**
- * The user commands run as. On Linux the bind-mounted environment directory belongs to the host user,
+ * The user commands run as. On Linux the bind-mounted device directory belongs to the host user,
  * so the container runs as that uid:gid (never root: a root host user falls back to the image's user).
  * Docker Desktop (macOS) maps file ownership itself, so the image's user is used there.
  */
@@ -53,9 +53,9 @@ const FILE_OP_TIMEOUT_S = 30;
 
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
 
-/** Container name of an environment. */
-export function containerName(environmentId: string): string {
-  return `capybara-device-${environmentId}`;
+/** Container name of a device. */
+export function containerName(deviceId: string): string {
+  return `capybara-device-${deviceId}`;
 }
 
 interface DockerRun {
@@ -64,7 +64,7 @@ interface DockerRun {
   stderr: Buffer;
 }
 
-/** Runs `docker <args>` to completion (not a command of the environment). */
+/** Runs `docker <args>` to completion (not a command of the device). */
 function docker(
   args: string[],
   o: { input?: Uint8Array; timeoutMs?: number; maxBytes?: number } = {},
@@ -164,9 +164,9 @@ if [ -e "$f" ] && [ ! -f "$f" ]; then exit ${E_NOT_FILE}; fi
 cat > "$f" || exit ${E_FAIL}`;
 
 export interface DockerExecutorOptions {
-  /** The environment directory (from login). */
+  /** The device directory (from login). */
   dir: string;
-  environmentId: string;
+  deviceId: string;
   policy: Policy;
 }
 
@@ -195,7 +195,7 @@ interface Inspected {
 
 /**
  * Runs every command with `docker exec` in one long-lived container of the published sandbox
- * image: the environment directory's workspace, skills (read only) and tmp are mounted at
+ * image: the device directory's workspace, skills (read only) and tmp are mounted at
  * /workspace, /skills and /tmp. Workspace and tmp files are read and written inside the container
  * (as the `sandbox` user, so a link a command plants resolves in the container and never on the
  * host); the skills directory, which commands cannot write, is accessed from the host with the
@@ -210,7 +210,7 @@ export class DockerExecutor implements Executor {
   private readonly hostRoots: SandboxRoots;
   private readonly guard: RootGuard;
   private readonly hostFiles: HostFiles;
-  /** Marks every process of this environment's commands: `<dirKey>.<tag>`. */
+  /** Marks every process of this device's commands: `<dirKey>.<tag>`. */
   private readonly dirKey: string;
   private readonly running = new Set<Running>();
   private chain: Promise<unknown> = Promise.resolve();
@@ -228,7 +228,7 @@ export class DockerExecutor implements Executor {
     this.hostRoots = osRoots(this.dir);
     this.guard = new RootGuard(this.dir, this.hostRoots);
     this.hostFiles = new HostFiles(this.hostRoots);
-    this.name = containerName(opts.environmentId);
+    this.name = containerName(opts.deviceId);
     this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
   }
 
@@ -277,7 +277,7 @@ export class DockerExecutor implements Executor {
       "--workdir",
       ROOTS.workspace,
       "--label",
-      `capybara.device.environment=${this.opts.environmentId}`,
+      `capybara.device.id=${this.opts.deviceId}`,
       ...this.wanted().flatMap((m) => [
         "--mount",
         `type=bind,source=${m.source},target=${m.dest}${m.rw ? "" : ",readonly"}`,
@@ -317,11 +317,11 @@ export class DockerExecutor implements Executor {
   private async ensureContainer(): Promise<void> {
     if (this.ready) return;
     if (!existsSync(this.dir)) {
-      throw new DeviceOpError("error", "the environment directory is gone");
+      throw new DeviceOpError("error", "the device directory is gone");
     }
     for (const r of Object.values(this.hostRoots)) {
       if (r.includes(",")) {
-        throw new DeviceOpError("error", `the environment directory ${this.dir} contains a comma`);
+        throw new DeviceOpError("error", `the device directory ${this.dir} contains a comma`);
       }
       mkdirSync(r, { recursive: true });
     }
@@ -633,7 +633,7 @@ export class DockerExecutor implements Executor {
     const p = resolve(path);
     const roots = Object.values(ROOTS);
     if (!roots.some((r) => isUnder(p, r))) {
-      throw policyError(`${path} is outside the environment's roots (${roots.join(", ")})`);
+      throw policyError(`${path} is outside the device's roots (${roots.join(", ")})`);
     }
     return p;
   }
@@ -687,7 +687,7 @@ export class DockerExecutor implements Executor {
       case E_MISSING:
         return null;
       case E_OUTSIDE:
-        throw policyError(`${path} resolves outside the environment's roots`);
+        throw policyError(`${path} resolves outside the device's roots`);
       case E_NOT_FILE:
         throw policyError(`${path} is not a regular file`);
       case E_DANGLING:
@@ -757,7 +757,7 @@ export class DockerExecutor implements Executor {
     await this.killLeftovers();
   }
 
-  /** Kills every process carrying this environment's marker (also a previous run's). */
+  /** Kills every process carrying this device's marker (also a previous run's). */
   async killLeftovers(): Promise<void> {
     await this.killScript("", `${this.dirKey}.`);
   }

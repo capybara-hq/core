@@ -9,33 +9,33 @@ export type ChannelLocale = "zh" | "en";
 export const CHANNEL_PHRASES = {
   /** 私聊 `/new` 之后。 */
   newConversation: { zh: "已开始新对话", en: "Started a new conversation." },
-  /** 私聊 `/env`：列出可用环境（`{list}` 每行一个，当前的带标记）。 */
-  envList: {
-    zh: "你的环境：\n{list}\n发送 /env <名称> 选择下一个新对话使用的环境。",
-    en: "Your environments:\n{list}\nSend /env <name> to choose the one your next new conversation uses.",
+  /** Direct message `/device`: lists the usable devices (`{list}` one per line, the current one marked). */
+  deviceList: {
+    zh: "你的设备：\n{list}\n发送 /device <名称> 选择下一个新对话使用的设备。",
+    en: "Your devices:\n{list}\nSend /device <name> to choose the one your next new conversation uses.",
   },
-  /** 私聊 `/env <名称>` 之后（`{name}` 是环境名）。 */
-  envSwitched: {
-    zh: "下一个新对话将使用环境「{name}」，发送 /new 开始。",
-    en: "Your next new conversation will use the environment \u201c{name}\u201d; send /new to start one.",
+  /** After a direct message `/device <name>` (`{name}` is the device's name). */
+  deviceSwitched: {
+    zh: "下一个新对话将使用设备「{name}」，发送 /new 开始。",
+    en: "Your next new conversation will use the device \u201c{name}\u201d; send /new to start one.",
   },
-  /** 私聊 `/env <名称>` 没有匹配的可用环境（`{list}` 同 envList）。 */
-  envUnknown: {
-    zh: "没有找到名为「{name}」的环境。你的环境：\n{list}",
-    en: "No environment named \u201c{name}\u201d. Your environments:\n{list}",
+  /** `/device <name>` matches no usable device (`{list}` as in deviceList). */
+  deviceUnknown: {
+    zh: "没有找到名为「{name}」的设备。你的设备：\n{list}",
+    en: "No device named \u201c{name}\u201d. Your devices:\n{list}",
   },
-  /** `/env <name>` names an existing environment that is unavailable now (`{list}` as in envList). */
-  envUnavailable: {
-    zh: "环境「{name}」当前不可用（它的文件由未启用的沙箱提供方保存）。你的环境：\n{list}",
-    en: "The environment \u201c{name}\u201d is unavailable: its files are kept by a sandbox provider that is not active. Your environments:\n{list}",
+  /** `/device <name>` names an existing device that is unavailable now (`{list}` as in deviceList). */
+  deviceUnavailable: {
+    zh: "设备「{name}」当前不可用（它的文件由未启用的沙箱提供方保存）。你的设备：\n{list}",
+    en: "The device \u201c{name}\u201d is unavailable: its files are kept by a sandbox provider that is not active. Your devices:\n{list}",
   },
-  /** 私聊 `/env` 时此人没有可用环境（部署没有云沙箱）。 */
-  envNone: {
-    zh: "你目前没有可用的环境。",
-    en: "You have no usable environments.",
+  /** Direct message `/device` when the person has no usable device (no cloud sandbox in the deployment). */
+  deviceNone: {
+    zh: "你目前没有可用的设备。",
+    en: "You have no usable devices.",
   },
-  /** 环境列表里当前 IM 默认环境的标记。 */
-  envCurrent: { zh: "（当前）", en: " (current)" },
+  /** The mark of the current IM default device in the device list. */
+  deviceCurrent: { zh: "（当前）", en: " (current)" },
   /** 未绑定的人在私聊里发消息：附绑定卡片。 */
   bindPrompt: {
     zh: "请先绑定你的 Capybara 账号，再与我对话。",

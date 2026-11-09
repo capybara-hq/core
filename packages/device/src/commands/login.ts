@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
-import { prepareEnvironmentDir } from "../exec/shared.js";
+import { prepareDeviceDir } from "../exec/shared.js";
 import {
   DEFAULT_MAX_FRAME_BYTES,
   defaultWorkDir,
@@ -105,34 +105,38 @@ export async function login(
         const granted = await token(fetchFn, baseUrl, auth.deviceCode);
         const dir =
           cmd.dir === undefined
-            ? defaultWorkDir(granted.environmentId, deps.home)
+            ? defaultWorkDir(granted.deviceId, deps.home)
             : isAbsolute(cmd.dir)
               ? cmd.dir
               : resolve(cmd.dir);
-        // Recreates a lost directory, marker or root: the environment starts afresh.
-        prepareEnvironmentDir(dir);
+        // Recreates a lost directory, marker or root: the device starts afresh.
+        prepareDeviceDir(dir);
         writeCredential(deps.stateDir, {
           url: baseUrl,
           connectUrl: granted.connectUrl,
           credential: granted.credential,
           orgId: granted.orgId,
-          environmentId: granted.environmentId,
+          deviceId: granted.deviceId,
           dir,
           mode: cmd.mode,
           reconnectGraceSeconds: granted.reconnectGraceSeconds,
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
-        out(`Logged in. Environment ${granted.environmentId}, working directory ${dir}`);
+        out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
         return 0;
       } catch (e) {
         if (!(e instanceof ApiError)) throw e;
-        if (e.code === "device.slow_down") interval += SLOW_DOWN_STEP_SECONDS;
-        else if (e.code === "device.authorization_pending" || e.status === 0 || e.status >= 500) {
+        if (e.code === "device_sign_in.slow_down") interval += SLOW_DOWN_STEP_SECONDS;
+        else if (
+          e.code === "device_sign_in.authorization_pending" ||
+          e.status === 0 ||
+          e.status >= 500
+        ) {
           // Keep polling at the normal interval: pending, a network blip or a server error.
-        } else if (e.code === "device.expired") {
+        } else if (e.code === "device_sign_in.expired") {
           err("The code expired before it was approved. Run `capybara-device login` again.");
           return 1;
-        } else if (e.code === "device.denied") {
+        } else if (e.code === "device_sign_in.denied") {
           err("The login was denied in the browser.");
           return 1;
         } else throw e;

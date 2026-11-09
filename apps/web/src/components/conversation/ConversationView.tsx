@@ -22,7 +22,7 @@ import { canEditAgent } from "../../lib/org-settings";
 import { agentsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
-  conversationEnvironmentQuery,
+  conversationDeviceQuery,
   modelsQuery,
   renameWithRow,
   sentHereOf,
@@ -61,7 +61,7 @@ import { FormError } from "../form-error";
 import { statusPrompt } from "../shell/nav";
 import { usePagePath } from "../shell/path";
 import { useSession } from "../shell/session";
-import { useEnvironmentName } from "../use-environment-name";
+import { useDeviceName } from "../use-device-name";
 import {
   ComposerBar,
   type ComposerControl,
@@ -69,11 +69,11 @@ import {
   newClientMessageId,
 } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
-import { useEnvironmentRefresh } from "./PropertiesSections";
+import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
-import { lockedEnvironmentPicker, useSelection } from "./useSelection";
+import { lockedDevicePicker, useSelection } from "./useSelection";
 
 /**
  * The conversation status bar's prompt and time zone, signed like every page's
@@ -199,27 +199,27 @@ export function useConversationPage(
   const providers = useQuery({ ...modelsQ, retryOnMount: retryOnMountOf(modelsQ.queryKey) }).data
     ?.providers;
   const selection = useSelection(providers, agent, conv.conversation?.selection);
-  const environmentQ = conversationEnvironmentQuery(orgId, conversationId);
-  const environment = useQuery({
-    ...environmentQ,
-    retryOnMount: retryOnMountOf(environmentQ.queryKey),
+  const deviceQ = conversationDeviceQuery(orgId, conversationId);
+  const device = useQuery({
+    ...deviceQ,
+    retryOnMount: retryOnMountOf(deviceQ.queryKey),
   });
-  const environmentName = useEnvironmentName();
-  const environmentPicker = lockedEnvironmentPicker(
+  const deviceName = useDeviceName();
+  const devicePicker = lockedDevicePicker(
     {
-      label: t("pickEnvironment"),
-      hint: t("environmentLocked"),
-      deleted: t("environmentDeleted"),
+      label: t("pickDevice"),
+      hint: t("deviceLocked"),
+      deleted: t("deviceDeleted"),
     },
-    // a row read before the first tool call bound the conversation says none; the environment
+    // a row read before the first tool call bound the conversation says none; the device
     // query (read again after sandbox tool results) knows better
-    conv.conversation?.environmentId ?? environment.data?.id,
-    environment.data,
-    environmentName,
+    conv.conversation?.deviceId ?? device.data?.id,
+    device.data,
+    deviceName,
   );
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
-  useEnvironmentRefresh(orgId, conversationId, conv.events);
+  useDeviceRefresh(orgId, conversationId, conv.events);
   const subagents = useSubagents(
     orgId,
     conversationId,
@@ -458,7 +458,7 @@ export function useConversationPage(
           onSend={send}
           // no agent here: the title bar's path names it (issue U)
           pickers={{
-            ...(environmentPicker ? { environment: environmentPicker } : {}),
+            ...(devicePicker ? { device: devicePicker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}

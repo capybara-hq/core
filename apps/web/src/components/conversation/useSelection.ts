@@ -5,14 +5,9 @@ import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useMemo, useState } from "react";
 import { type Agent, findModel, type ModelInfo, type ProviderModels } from "../../lib/agents";
 import type { ModelRef, Selection } from "../../lib/conversations";
-import {
-  type Environment,
-  type EnvironmentList,
-  environmentPickable,
-  environmentState,
-} from "../../lib/environments";
+import { type Device, type DeviceList, devicePickable, deviceState } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
-import { useEnvironmentName } from "../use-environment-name";
+import { useDeviceName } from "../use-device-name";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type Effort = (typeof EFFORTS)[number];
@@ -190,61 +185,61 @@ export function useSelection(
   };
 }
 
-export type EnvironmentChoice = {
+export type DeviceChoice = {
   /**
-   * The environment the first message binds the conversation to (none: no provider, or none
+   * The device the first message binds the conversation to (none: no provider, or none
    * usable).
    */
-  environmentId: string | undefined;
+  deviceId: string | undefined;
   /**
-   * Without a cloud sandbox, when none of the connected environments can be used now (their
+   * Without a cloud sandbox, when none of the local devices can be used now (their
    * machines are offline): sending must wait, and this says why. Never set while the platform has
-   * a cloud sandbox (the kernel then makes or uses the personal environment).
+   * a cloud sandbox (the kernel then makes or uses the personal device).
    */
   unavailable?: string;
   /**
-   * Undefined without a sandbox provider and without a connected environment: the composer then
-   * has no environment picker.
+   * Undefined without a sandbox provider and without a local device: the composer then
+   * has no device picker.
    */
   picker: PickerProps | undefined;
 };
 
 /**
- * The new conversation's environment picker (environments design §4.1 item 2, §9): the person's
- * environments; the ones whose provider is gone (hint 不可用), whose files are lost (hint 文件已丢失;
+ * The new conversation's device picker (environments design §4.1 item 2, §9): the person's
+ * devices; the ones whose provider is gone (hint 不可用), whose files are lost (hint 文件已丢失;
  * 重建文件 on its page first) or whose machine is offline (hint 离线) shown but not selectable; a
- * connected one that is online says 在线. It starts on the last used environment, else the
+ * connected one that is online says 在线. It starts on the last used device, else the
  * default, else the first usable one. It shows when the platform has a cloud sandbox or the person
- * has a connected environment. Without a cloud sandbox and with every connected environment
+ * has a local device. Without a cloud sandbox and with every local device
  * offline, nothing is chosen and `unavailable` holds the reason the composer shows instead of
- * sending with no environment.
+ * sending with no device.
  */
-export function useEnvironmentChoice(list: EnvironmentList | undefined): EnvironmentChoice {
+export function useDeviceChoice(list: DeviceList | undefined): DeviceChoice {
   const t = useTranslations("chat");
-  const te = useTranslations("environments");
-  const nameOf = useEnvironmentName();
+  const te = useTranslations("devices");
+  const nameOf = useDeviceName();
   const [picked, setPicked] = useState<string | null>(null);
-  if (list === undefined || !(list.cloudAvailable || list.items.some((e) => e.source === "device")))
-    return { environmentId: undefined, picker: undefined };
+  if (list === undefined || !(list.cloudAvailable || list.items.some((e) => e.source === "local")))
+    return { deviceId: undefined, picker: undefined };
   const usable = (id: string | null | undefined) =>
-    list.items.find((e) => e.id === id && environmentPickable(e))?.id;
+    list.items.find((e) => e.id === id && devicePickable(e))?.id;
   const id =
     usable(picked) ??
     usable(list.lastUsedId) ??
     usable(list.defaultId) ??
-    list.items.find(environmentPickable)?.id;
+    list.items.find(devicePickable)?.id;
   const current = list.items.find((e) => e.id === id);
-  const tagOf = (e: Environment) => {
-    const state = environmentState(e);
+  const tagOf = (e: Device) => {
+    const state = deviceState(e);
     if (state === "unavailable" || state === "filesLost" || state === "offline")
       return { disabled: true, tag: te(`state.${state}`) };
     return state === "online" ? { tag: te("state.online") } : {};
   };
   return {
-    environmentId: id,
-    ...(id === undefined && !list.cloudAvailable ? { unavailable: t("environmentOffline") } : {}),
+    deviceId: id,
+    ...(id === undefined && !list.cloudAvailable ? { unavailable: t("deviceOffline") } : {}),
     picker: {
-      label: t("pickEnvironment"),
+      label: t("pickDevice"),
       value: current ? nameOf(current) : "—",
       groups: [
         {
@@ -256,26 +251,26 @@ export function useEnvironmentChoice(list: EnvironmentList | undefined): Environ
           })),
         },
       ],
-      note: t("environmentNote"),
+      note: t("deviceNote"),
       onPick: setPicked,
     },
   };
 }
 
 /**
- * An existing conversation's environment, read only (the composer's `locked` picker): its name,
- * 环境已删除 when the bound environment is gone, nothing for a conversation with none bound.
+ * An existing conversation's device, read only (the composer's `locked` picker): its name,
+ * 设备已删除 when the bound device is gone, nothing for a conversation with none bound.
  */
-export function lockedEnvironmentPicker(
+export function lockedDevicePicker(
   text: { label: string; hint: string; deleted: string },
-  environmentId: string | null | undefined,
-  environment: Pick<Environment, "name" | "demotedFrom"> | null | undefined,
-  nameOf: (e: Pick<Environment, "name" | "demotedFrom">) => string,
+  deviceId: string | null | undefined,
+  device: Pick<Device, "name" | "demotedFrom"> | null | undefined,
+  nameOf: (e: Pick<Device, "name" | "demotedFrom">) => string,
 ): PickerProps | undefined {
-  if (!environmentId || environment === undefined) return undefined;
+  if (!deviceId || device === undefined) return undefined;
   return {
     label: text.label,
-    value: environment === null ? text.deleted : nameOf(environment),
+    value: device === null ? text.deleted : nameOf(device),
     locked: { hint: text.hint },
     groups: [],
     onPick: () => {},

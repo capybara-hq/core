@@ -17,7 +17,7 @@ const cred: Credential = {
   connectUrl: "wss://x.test/device/connect",
   credential: "cap_dev_abc",
   orgId: "o",
-  environmentId: "e",
+  deviceId: "e",
   dir: "/tmp/d",
   mode: "os",
   reconnectGraceSeconds: 120,

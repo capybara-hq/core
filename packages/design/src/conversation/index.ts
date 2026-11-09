@@ -45,7 +45,7 @@ export {
 export {
   ComposerOptions,
   type ComposerOptionsProps,
-  shortEnvironmentLabel,
+  shortDeviceLabel,
   shortModelLabel,
 } from "./composer-options";
 export { DiffBlock, type DiffData, type DiffHunk, type DiffLineData } from "./diff-block";
