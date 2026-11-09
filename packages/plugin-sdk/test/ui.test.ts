@@ -754,4 +754,51 @@ describe("component contributions (client extensions spec §5.1)", () => {
       "view data is 32769 bytes; the limit is 32768",
     ]);
   });
+
+  it("the limit counts UTF-8 bytes, not characters", () => {
+    // é is 2 bytes: 16383 of them plus the quotes is exactly 32768 bytes (16385 characters)
+    const e = (n: number) => ({ blocks: [], data: "é".repeat(n) });
+    expect(validateUiView(e(16383), { component: true })).toEqual([]);
+    expect(validateUiView(e(16384), { component: true })).toEqual([
+      "view data is 32770 bytes; the limit is 32768",
+    ]);
+    // a 4-byte character (2 UTF-16 code units)
+    const emoji = { blocks: [], data: { s: "😀".repeat(8191) } };
+    expect(validateUiView(emoji, { component: true })).toEqual([
+      "view data is 32772 bytes; the limit is 32768",
+    ]);
+  });
+
+  it("view data JSON would silently rewrite is refused", () => {
+    const check = (data: unknown) => validateUiView({ blocks: [], data }, { component: true });
+    expect(check({ a: Number.NaN })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.a is NaN",
+    ]);
+    expect(check([1, Number.POSITIVE_INFINITY])).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data[1] is Infinity",
+    ]);
+    expect(check({ f: () => 1 })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.f is a function",
+    ]);
+    expect(check([undefined])).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data[0] is undefined",
+    ]);
+    expect(check({ m: new Map([["k", 1]]) })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.m is a Map",
+    ]);
+    expect(check({ d: new Date(0) })).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.d is a Date",
+    ]);
+    expect(check(10n)).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data is a bigint",
+    ]);
+    const loop: Record<string, unknown> = {};
+    loop.self = loop;
+    expect(check(loop)).toEqual([
+      "view data must be JSON (null, booleans, finite numbers, strings, arrays, plain objects): data.self is a cycle",
+    ]);
+    // an undefined property is dropped as an absent optional field: accepted
+    expect(check({ a: 1, b: undefined, nested: { c: [null, true, "x", -0.5] } })).toEqual([]);
+    expect(check(Object.assign(Object.create(null), { k: 1 }))).toEqual([]);
+  });
 });

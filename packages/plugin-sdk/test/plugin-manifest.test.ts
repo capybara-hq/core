@@ -621,11 +621,12 @@ describe("client section and suggestedAppearance", () => {
     expect(errorsOf(noPerm)).toContain(
       "extension.client: extension.client needs permissions.client: true",
     );
+    // the reverse: the same plain text, at the permission's path
     expect(
-      errorsOf(withClient({}, { ui: undefined, permissions: { client: true } }, null)).some((e) =>
-        e.includes("extension.client needs permissions.client: true"),
-      ),
-    ).toBe(true);
+      errorsOf(withClient({}, { ui: undefined, permissions: { client: true } }, null)),
+    ).toContain(
+      "extension.manifest.permissions.client: extension.client needs permissions.client: true",
+    );
   });
 
   it("a bad client section is reported", () => {

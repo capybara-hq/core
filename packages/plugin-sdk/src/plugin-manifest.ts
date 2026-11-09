@@ -581,7 +581,7 @@ const schema = z
     if (ext.client === undefined && hasClientPermission) {
       issue(
         ["extension", "manifest", "permissions", "client"],
-        "extension.client needs permissions.client: true (permissions.client is set without a client section)",
+        "extension.client needs permissions.client: true",
       );
     }
     if (!EXTENSION_NAME_RE.test(m.name)) {

@@ -88,6 +88,22 @@ describe("validateClientSection", () => {
     ).not.toEqual([]);
   });
 
+  it("an asset path the kernel cannot serve by exact key is refused", () => {
+    // the first problem names the path (an unlisted path's integrity entry is reported too)
+    const check = (a: string) =>
+      validateClientSection(section({ assets: [a], integrity: { [ENTRY]: sri(), [a]: sri() } }))[0];
+    expect(check("./dist/client/assets/%2e%2e/a.png")).toBe(
+      "client.assets: ./dist/client/assets/%2e%2e/a.png must use letters, digits, . _ - in each path segment",
+    );
+    expect(check("./dist/client/assets/a b.png")).toBe(
+      "client.assets: ./dist/client/assets/a b.png must use letters, digits, . _ - in each path segment",
+    );
+    for (const a of ["./dist/client/assets/.png", "./dist/client/assets/fx/.ogg"]) {
+      expect(check(a)).toBe(`client.assets: ${a} needs a file name before the extension`);
+    }
+    expect(check("./dist/client/assets/fx/boot-1.ogg")).toBeUndefined();
+  });
+
   it("nine styles are refused", () => {
     const styles = Array.from({ length: 9 }, (_, i) => css(`s${i}`));
     const integrity = Object.fromEntries(styles.map((p) => [p, sri()]));

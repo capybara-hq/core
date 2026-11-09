@@ -198,12 +198,51 @@ function jsonBytes(v: unknown): number | undefined {
   }
 }
 
+const JSON_KINDS = "null, booleans, finite numbers, strings, arrays, plain objects";
+
+/**
+ * The first part of `v` (`at` is its path) that JSON would not carry as is, or undefined: a value
+ * `JSON.stringify` drops, rewrites or throws on (a function, symbol or bigint, NaN or ±Infinity,
+ * `undefined` in an array, an object that is not plain such as a Map or a Date, a cycle). A plain
+ * object's `undefined` property is accepted: JSON drops it, which reads as an absent optional field.
+ */
+function jsonProblem(v: unknown, at: string, seen: Set<object> = new Set()): string | undefined {
+  if (v === null || typeof v === "boolean" || typeof v === "string") return undefined;
+  if (typeof v === "number") return Number.isFinite(v) ? undefined : `${at} is ${v}`;
+  if (v === undefined) return `${at} is undefined`;
+  if (typeof v !== "object") return `${at} is a ${typeof v}`;
+  if (seen.has(v)) return `${at} is a cycle`;
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const p = jsonProblem(v[i], `${at}[${i}]`, seen);
+        if (p !== undefined) return p;
+      }
+      return undefined;
+    }
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      return `${at} is a ${(proto as { constructor?: { name?: string } }).constructor?.name || "non-plain object"}`;
+    }
+    for (const [k, x] of Object.entries(v)) {
+      if (x === undefined) continue;
+      const p = jsonProblem(x, `${at}.${k}`, seen);
+      if (p !== undefined) return p;
+    }
+    return undefined;
+  } finally {
+    seen.delete(v);
+  }
+}
+
 /**
  * 校验插件返回的视图，返回问题列表（空 = 合法）。链接与图片只允许 http(s) 绝对地址；
  * Markdown 的检查是纵深防御，网页渲染时仍须只认 http(s) 链接、不渲染原生 HTML。
  * 按钮与表单的 `actionId` 在整个视图内唯一（动作回调靠它区分来源）。
- * `data` is accepted only with `opts.component` (the view of a component contribution), up to
- * `UI_LIMITS.componentDataBytes` bytes of JSON.
+ * `data` is accepted only with `opts.component` (the view of a component contribution): JSON as is
+ * (nothing JSON would drop or rewrite, see `jsonProblem`), up to `UI_LIMITS.componentDataBytes`
+ * bytes of UTF-8.
  */
 export function validateUiView(v: unknown, opts: { component?: boolean } = {}): string[] {
   if (!isObj(v)) return ["view must be an object"];
@@ -211,10 +250,13 @@ export function validateUiView(v: unknown, opts: { component?: boolean } = {}): 
   if (v.data !== undefined) {
     if (opts.component !== true) out.push("view data is only allowed for component views");
     else {
-      const n = jsonBytes(v.data);
-      if (n === undefined) out.push("view data must be JSON-serializable");
-      else if (n > UI_LIMITS.componentDataBytes)
-        out.push(`view data is ${n} bytes; the limit is ${UI_LIMITS.componentDataBytes}`);
+      const problem = jsonProblem(v.data, "data");
+      if (problem !== undefined) out.push(`view data must be JSON (${JSON_KINDS}): ${problem}`);
+      else {
+        const n = jsonBytes(v.data) ?? 0;
+        if (n > UI_LIMITS.componentDataBytes)
+          out.push(`view data is ${n} bytes; the limit is ${UI_LIMITS.componentDataBytes}`);
+      }
     }
   }
   let chars = 0;

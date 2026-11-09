@@ -47,6 +47,8 @@ export const CLIENT_ASSET_TYPES: Readonly<Record<string, string>> = {
 export const CLIENT_ENTRY_PATH = "./dist/client/client.mjs";
 const STYLE_RE = /^\.\/dist\/client\/styles\/[A-Za-z0-9][A-Za-z0-9._-]*\.css$/;
 const ASSET_PREFIX = "./dist/client/assets/";
+/** One segment of an asset path: URL-safe characters only (the kernel's delivery key charset). */
+const ASSET_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 const INTEGRITY_RE = /^sha384-[A-Za-z0-9+/]{64}$/;
 
 const isStringArray = (v: unknown): v is string[] =>
@@ -99,8 +101,19 @@ export function validateClientSection(s: unknown): string[] {
           errs.push(`client.assets: ${p} must be a safe path under ${ASSET_PREFIX}`);
           continue;
         }
-        const dot = rest.lastIndexOf(".");
-        const ext = dot < 0 ? "" : rest.slice(dot).toLowerCase();
+        // the kernel looks a file up by its exact key, never decoding the URL (`%2e%2e` names no
+        // file there), so every segment uses the URL-safe characters only
+        if (!rest.split("/").every((seg) => ASSET_SEGMENT_RE.test(seg))) {
+          errs.push(`client.assets: ${p} must use letters, digits, . _ - in each path segment`);
+          continue;
+        }
+        const name = rest.slice(rest.lastIndexOf("/") + 1);
+        const dot = name.lastIndexOf(".");
+        if (dot === 0) {
+          errs.push(`client.assets: ${p} needs a file name before the extension`);
+          continue;
+        }
+        const ext = dot < 0 ? "" : name.slice(dot).toLowerCase();
         if (!Object.hasOwn(CLIENT_ASSET_TYPES, ext)) {
           errs.push(
             `client.assets: ${p} has an unsupported type; allowed: ${Object.keys(CLIENT_ASSET_TYPES).join(" ")}`,
