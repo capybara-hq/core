@@ -7,6 +7,7 @@
 
 import type { Kysely } from "kysely";
 import type { core } from "zod";
+import { ClientBuilds } from "../../src/client/client-builds.service.js";
 import type { KernelDeps } from "../../src/ctx/create-ctx.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import { ExtensionApprovals } from "../../src/extensions/approvals.js";
@@ -20,6 +21,7 @@ import { ReplicaStatusStore } from "../../src/extensions/sources.js";
 import type { ExtensionAvailability } from "../../src/extensions/unavailable.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
+import type { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import type { StorageService } from "../../src/storage/storage.service.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
@@ -152,11 +154,15 @@ export function blobsFor(
   o: { maxBytes: number; storage?: StorageService },
 ): ExtensionBlobs {
   const h = handlesFor(db);
+  const storage = o.storage ?? ({ available: false } as unknown as StorageService);
   return new ExtensionBlobs(
     h.db,
     h.txHost,
-    o.storage ?? ({ available: false } as unknown as StorageService),
+    storage,
     { get: () => ({ packages: { maxBytes: o.maxBytes } }) } as unknown as KernelConfigService,
+    new ClientBuilds(h.db, h.txHost, storage, {
+      run: (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
+    } as unknown as LockService),
   );
 }
 

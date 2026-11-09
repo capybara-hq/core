@@ -14,7 +14,7 @@ export class UiOperations implements OnModuleInit {
       defineOperation({
         id: "ui.slots",
         description:
-          "List the UI slots an extension can contribute to (id, version, where it is, scope and args, accepted kinds view / embed, minimum role, anchors). Use a slot id as a ui contribution's `slot` in a plugin manifest.",
+          "List the UI slots an extension can contribute to (id, version, where it is, scope and args, accepted kinds view / embed / component, cardinality list or single, minimum role, anchors). Use a slot id as a ui contribution's `slot` in a plugin manifest.",
         input: z.object({}).strict(),
         example: {},
         // any signed-in person may call the route; every run's actor is a member of this org

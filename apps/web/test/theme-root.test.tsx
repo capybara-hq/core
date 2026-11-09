@@ -8,6 +8,7 @@ import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -16,6 +17,7 @@ const { ThemeLink } = await import("../src/components/theme-link");
 
 const NIGHT_CITY: ThemeRef = {
   id: "t-night",
+  key: "neon/night-city",
   version: "1.0.0",
   name: { en: "Night City", zh: "夜之城" },
   schemes: ["dark"],
@@ -25,16 +27,17 @@ const NIGHT_CITY: ThemeRef = {
     wordmark: "NIGHT CITY",
     faviconUrl: null,
   },
-  cssUrl: "/api/v1/themes/t-night/1.0.0/theme.css",
+  cssUrl: themeCssUrl("t-night", "1.0.0"),
 };
 const PAPER: ThemeRef = {
   id: "t-paper",
+  key: "paper/paper",
   version: "2.0.0",
   name: { en: "Paper" },
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
-  cssUrl: "/api/v1/themes/t-paper/2.0.0/theme.css",
+  cssUrl: themeCssUrl("t-paper", "2.0.0"),
 };
 
 const sidebar = () => screen.getByRole("complementary");
@@ -54,7 +57,7 @@ const themeLinks = () =>
 const at = (theme: ThemeRef, version: string): ThemeRef => ({
   ...theme,
   version,
-  cssUrl: `/api/v1/themes/${theme.id}/${version}/theme.css`,
+  cssUrl: themeCssUrl(theme.id, version),
 });
 const linksTo = (href: string) =>
   document.querySelectorAll(`link[rel="stylesheet"][href="${href}"]`).length;
@@ -97,7 +100,11 @@ describe("ThemeRoot in the workspace frame", () => {
   });
 
   it("a settings change that updates the themes read swaps the stylesheet and the brand", () => {
-    const next = { ...PAPER, version: "2.1.0", cssUrl: "/api/v1/themes/t-paper/2.1.0/theme.css" };
+    const next = {
+      ...PAPER,
+      version: "2.1.0",
+      cssUrl: themeCssUrl("t-paper", "2.1.0"),
+    };
     const view = renderFrame(shellOf(ME, { theme: NIGHT_CITY }));
     view.update(shellOf(ME, { theme: next }));
     expect(themeLinks()).toEqual([next.cssUrl]);

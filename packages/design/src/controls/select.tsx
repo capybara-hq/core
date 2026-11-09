@@ -113,6 +113,7 @@ export function Select({
       value={current}
       className="cb-select"
       data-part="select"
+      data-cap-part="input"
       data-density={step}
       data-state={disabled ? "disabled" : isInvalid ? "error" : undefined}
       // a click on the Field's label reaches the button as a click without a pointer (detail 0):

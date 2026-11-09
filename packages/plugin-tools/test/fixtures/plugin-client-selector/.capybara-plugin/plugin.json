@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "fixture-plugin-client-selector",
+  "version": "0.1.0",
+  "publisher": "Capybara",
+  "description": "Fixture: plugin-client-selector"
+}

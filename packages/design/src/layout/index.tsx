@@ -83,7 +83,7 @@ export function Card({
   children?: ReactNode;
 }) {
   return (
-    <section className="cb-card" data-part="card" data-tone={tone}>
+    <section className="cb-card" data-part="card" data-cap-part="card" data-tone={tone}>
       <BoxScope kind="card">
         {title || actions ? (
           <header className="cb-card-head">

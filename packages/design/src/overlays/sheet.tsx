@@ -60,6 +60,7 @@ export function Sheet({
         <RD.Portal>
           <RD.Content
             className="cb-sheet"
+            data-cap-part="dialog"
             data-width={width}
             aria-describedby={undefined}
             onOpenAutoFocus={focusReturn.capture}

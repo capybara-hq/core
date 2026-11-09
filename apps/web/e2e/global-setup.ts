@@ -31,11 +31,14 @@
  * fake git server holds a git marketplace repository (two versions of the skills plugin `notes`);
  * its URL goes into `CAPYBARA_E2E_GIT_MARKETPLACE_URL` for the catalog case that adds it and
  * upgrades the plugin. The declarative fixture plugin `fake-theme` (themes `night-city` and
- * `paper`) is packed to `CAPYBARA_E2E_THEME_TGZ` for themes.spec.ts, which imports it.
+ * `paper`) is packed to `CAPYBARA_E2E_THEME_TGZ` for themes.spec.ts, which imports it. The client
+ * extension fixtures `fake-client` and `fake-client-broken` are packed (client entry, styles,
+ * integrity) to `CAPYBARA_E2E_CLIENT_TGZ` / `CAPYBARA_E2E_CLIENT_BROKEN_TGZ` for
+ * client-extensions.spec.ts.
  * The returned function is the global cleanup: stop web, the kernel, the fakes and the containers,
  * and remove the temp dir.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -690,6 +693,10 @@ export default async function globalSetup(): Promise<Cleanup> {
       throw new Error(`${(e as Error).message}\n${await tail(logs.kernel)}`);
     });
 
+    // The client host shims the import map points at (`pnpm dev` / `build` run it too).
+    execFileSync(process.execPath, [join(webDir, "scripts", "gen-client-host.mjs")], {
+      stdio: "ignore",
+    });
     const web = run(
       process.execPath,
       [join(webDir, "server.mjs")],
@@ -725,6 +732,12 @@ export default async function globalSetup(): Promise<Cleanup> {
       packFixture: (name: string, outDir: string) => Promise<{ file: string }>;
     };
     process.env.CAPYBARA_E2E_THEME_TGZ = (await packFixture("fake-theme", dir)).file;
+    // The client extension fixtures (packed with their client entry and styles) for
+    // client-extensions.spec.ts, which imports them through the catalog file import.
+    process.env.CAPYBARA_E2E_CLIENT_TGZ = (await packFixture("fake-client", dir)).file;
+    process.env.CAPYBARA_E2E_CLIENT_BROKEN_TGZ = (
+      await packFixture("fake-client-broken", dir)
+    ).file;
     console.log(`[e2e] kernel :${kernelPort}, web ${baseUrl}, logs in ${logDir}`);
   } catch (e) {
     await cleanup();

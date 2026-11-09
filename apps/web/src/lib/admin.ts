@@ -80,13 +80,31 @@ export interface DeploymentSettings {
   customSkills: CustomPolicy;
   /** The platform default theme (themes spec §7); `id` null: the built-in theme. */
   uiTheme?: { id: string | null };
+  /**
+   * The client code kill switch (client extensions spec §10.2): `enabled: false` stops every
+   * plugin's client code; `disabled` names the plugins whose client code alone is stopped. Absent
+   * from a kernel before client extensions (read as everything on).
+   */
+  clientExtensions?: ClientExtensionsSetting;
 }
+
+/** The kill switch as stored (kernel `ClientExtensionsSetting`). */
+export interface ClientExtensionsSetting {
+  enabled: boolean;
+  disabled: string[];
+}
+
+/** The kill switch's default: everything on. */
+export const CLIENT_EXTENSIONS_DEFAULT: ClientExtensionsSetting = { enabled: true, disabled: [] };
 
 /** `PUT /admin/settings` 的体：只给改动的键；两个覆盖表按组织合并，值为 null 删除该组织的覆盖。 */
 export type DeploymentSettingsPatch = Partial<
   Omit<
     DeploymentSettings,
-    "runConcurrencyOverrides" | "sandboxLimitOverrides" | "subagentLimitOverrides"
+    | "runConcurrencyOverrides"
+    | "sandboxLimitOverrides"
+    | "subagentLimitOverrides"
+    | "clientExtensions"
   >
 > & {
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
@@ -94,6 +112,8 @@ export type DeploymentSettingsPatch = Partial<
   sandboxLimitOverrides?: Record<string, SandboxLimitOverride | null>;
   /** Per slot: the entry replaces the platform default, null removes it. */
   uiArrangement?: Record<string, UiArrangementEntry | null>;
+  /** Each given field replaces the stored one (`disabled` is the whole list). */
+  clientExtensions?: Partial<ClientExtensionsSetting>;
 };
 
 export interface NewAccountInput {

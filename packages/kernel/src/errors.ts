@@ -133,6 +133,35 @@ export const ERROR_CODES = {
    * a removed theme's versions are still served.
    */
   "theme.not_found": 404,
+  /**
+   * An `extension.client` section whose extension manifest lacks `permissions.client: true`
+   * (client extensions spec §5.4: client code is always declared and reviewed).
+   */
+  "client.undeclared": 400,
+  /**
+   * A client file's sha384 is not the integrity its plugin.json records (spec §9.1); details
+   * `[{ file }]` (the manifest key).
+   */
+  "client.integrity_mismatch": 400,
+  /**
+   * The client section or a client file fails the import checks (spec §4.1, §9.1: a listed file
+   * missing, a file not listed, a key that cannot be looked up exactly, a size limit, a stylesheet
+   * not wrapped in `@layer extensions` or with `@import` / an absolute `url()`); details
+   * `[{ file, reason }]`.
+   */
+  "client.invalid": 400,
+  /**
+   * The client section's `apiVersion` is newer than the deployment's `CLIENT_API_VERSION` (spec
+   * §4.2): the web host could not run the bundle; details `[{ apiVersion, supported }]`.
+   */
+  "client.api_unsupported": 400,
+  /**
+   * A client file URL (`/api/v1/client/<plugin>/<build>/<file>`, spec §9.3) the caller may not
+   * fetch: an unknown or old build, a file the build does not list (by its exact key), an extension
+   * not running or not approved, not enabled in any live org the caller belongs to, or stopped by
+   * the kill switch. One code for all, so nothing tells them apart.
+   */
+  "client.not_found": 404,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,

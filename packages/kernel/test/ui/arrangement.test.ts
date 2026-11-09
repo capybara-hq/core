@@ -3,7 +3,7 @@ import {
   arrange,
   effectiveEntry,
   type UiArrangement,
-  type UiArrangementEntry,
+  type UiListEntry,
 } from "../../src/ui/arrangement.js";
 import type { UiContributionItem } from "../../src/ui/views.js";
 
@@ -17,7 +17,7 @@ const item = (plugin: string, id: string, after?: string): UiContributionItem =>
   icon: "puzzle",
 });
 const keys = (items: UiContributionItem[]) => items.map((i) => `${i.plugin}/${i.id}`);
-const entry = (e: Partial<UiArrangementEntry>): UiArrangementEntry => ({
+const entry = (e: Partial<UiListEntry>): UiListEntry => ({
   hidden: [],
   order: [],
   ...e,

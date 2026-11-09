@@ -8,15 +8,17 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 describe("the repository's release set (F2)", () => {
   const plan = planPublish(discoverWorkspace(root), new Map());
 
-  it("publishes the SDK, kernel, testing, plugin-tools, device and every official plugin except example-*", () => {
+  it("publishes the SDK, kernel, testing, plugin-tools, device, plugin-client and every official plugin except example-*", () => {
     const names = plan.map((s) => s.name);
-    // the four libraries, then the device program (it depends only on the SDK, published first)
-    expect(names.slice(0, 5)).toEqual([
+    // the four libraries, then the other packages by name: the device program (it depends only on
+    // the SDK, published first) and the client SDK (no workspace dependency)
+    expect(names.slice(0, 6)).toEqual([
       "@capybara-hq/plugin-sdk",
       "@capybara-hq/kernel",
       "@capybara-hq/testing",
       "@capybara-hq/plugin-tools",
       "@capybara-hq/device",
+      "@capybara-hq/plugin-client",
     ]);
     expect(names).toContain("@capybara-hq/plugin-model-fake");
     expect(names.filter((n) => n.includes("example"))).toEqual([]);
@@ -24,7 +26,7 @@ describe("the repository's release set (F2)", () => {
     expect(names).not.toContain("@capybara-hq/capybara");
     expect(names).not.toContain("@capybara-hq/web");
     const libraries = plan.filter((s) => s.kind === "pnpm").map((s) => s.name);
-    expect(libraries).toEqual(names.slice(0, 5));
+    expect(libraries).toEqual(names.slice(0, 6));
   });
 
   it("publishes everything under plugins/ as a plugin tgz and nothing else", () => {

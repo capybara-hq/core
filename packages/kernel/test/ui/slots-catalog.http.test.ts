@@ -66,6 +66,10 @@ describe("GET /api/v1/ui/slots", () => {
           "org.page",
           "org.settings.section",
           "platform.page",
+          "shell.brand",
+          "shell.overlay",
+          "conversation.empty",
+          "conversation.composer.frame",
         ].sort(),
       );
     }

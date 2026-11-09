@@ -29,6 +29,11 @@ const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
 export interface ThemeRef {
   /** The `platform_themes` id (what settings and picks store). */
   id: string;
+  /**
+   * `"<plugin>/<theme file id>"`: the name the web's `theme=` state token and `useTheme()` carry
+   * (client extensions spec §7.3). Stable across versions, unlike `id`.
+   */
+  key: string;
   /** Its current version. */
   version: string;
   name: LocalizedName;
@@ -38,7 +43,7 @@ export interface ThemeRef {
   singleScheme: ThemeScheme | null;
   /** null: the theme has no logo (the built-in mark and wordmark). */
   logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
-  /** `/api/v1/themes/<id>/<version>/theme.css`. */
+  /** `/api/v1/themes/<id>/<version>/r<THEME_CSS_REVISION>/theme.css`. */
   cssUrl: string;
 }
 
@@ -54,7 +59,18 @@ export interface ThemeSwatch {
 export type ListedTheme = ThemeRef & { swatches: Partial<Record<ThemeScheme, ThemeSwatch>> };
 
 /**
- * The delivery URL of a theme version (spec §8): its stylesheet, or with `asset` (a path inside the
+ * The render revision of theme stylesheets, a segment of the stylesheet URL (`r<N>/theme.css`).
+ * The stylesheet is cached as immutable for a year, keyed by its URL: bump this whenever
+ * `renderThemeCss`'s output format changes, so no browser keeps an older format under a URL
+ * that now means the new one. The delivery route serves only the current revision (404
+ * `theme.not_found` otherwise). History: (none, `<version>/theme.css`) plain rules; 2: one
+ * `@layer theme { … }` block (client extensions spec §7.2).
+ */
+export const THEME_CSS_REVISION = 2;
+
+/**
+ * The delivery URL of a theme version (spec §8): its stylesheet (with the render revision,
+ * {@link THEME_CSS_REVISION}), or with `asset` (a path inside the
  * plugin as the theme file names it, e.g. `./fonts/MiSans.woff2`) that asset, as one path segment
  * (`assets/fonts%2FMiSans.woff2`; the route decodes it back to the stored path `fonts/MiSans.woff2`).
  * The one builder of these URLs: the listing, the stylesheet and the asset routes all use it.
@@ -62,15 +78,24 @@ export type ListedTheme = ThemeRef & { swatches: Partial<Record<ThemeScheme, The
 export function themeUrl(id: string, version: string, asset?: string): string {
   const base = `/api/v1/themes/${encodeURIComponent(id)}/${encodeURIComponent(version)}`;
   return asset === undefined
-    ? `${base}/theme.css`
+    ? `${base}/r${THEME_CSS_REVISION}/theme.css`
     : `${base}/assets/${encodeURIComponent(packagePath(asset))}`;
 }
 
-/** The {@link ThemeRef} of version `version` of theme `id`. */
-export function themeRefOf(id: string, version: string, def: ParsedTheme): ThemeRef {
+/**
+ * The {@link ThemeRef} of version `version` of theme `id` of plugin `plugin` (null only for a row
+ * without provenance: the key is then the file id alone).
+ */
+export function themeRefOf(
+  id: string,
+  version: string,
+  def: ParsedTheme,
+  plugin: string | null,
+): ThemeRef {
   const url = (ref: string | undefined) => (ref === undefined ? null : themeUrl(id, version, ref));
   return {
     id,
+    key: plugin === null ? def.id : `${plugin}/${def.id}`,
     version,
     name: def.name,
     schemes: SCHEMES.filter((s) => def.schemes[s] !== undefined),
@@ -102,24 +127,35 @@ export function themeSwatches(def: ParsedTheme): Partial<Record<ThemeScheme, The
   return out;
 }
 
+/** A live theme's current definition and its plugin (null: no provenance). */
+export interface ThemeDefinition {
+  version: string;
+  definition: ParsedTheme;
+  plugin: string | null;
+}
+
 /** The current definitions of live themes `ids`, by id. */
 export async function themeDefinitions(
   db: KernelSchemaDb,
   ids: readonly string[],
-): Promise<Map<string, { version: string; definition: ParsedTheme }>> {
-  const out = new Map<string, { version: string; definition: ParsedTheme }>();
+): Promise<Map<string, ThemeDefinition>> {
+  const out = new Map<string, ThemeDefinition>();
   if (ids.length === 0) return out;
   const rows = await db
     .selectFrom("platform_themes as p")
     .innerJoin("platform_theme_versions as v", (j) =>
       j.onRef("v.theme_id", "=", "p.id").onRef("v.version", "=", "p.current_version"),
     )
-    .select(["p.id", "p.current_version", "v.definition"])
+    .select(["p.id", "p.current_version", "p.plugin_name", "v.definition"])
     .where("p.id", "in", [...ids])
     .where("p.deleted_at", "is", null)
     .execute();
   for (const r of rows) {
-    out.set(r.id, { version: String(r.current_version), definition: r.definition as ParsedTheme });
+    out.set(r.id, {
+      version: String(r.current_version),
+      definition: r.definition as ParsedTheme,
+      plugin: r.plugin_name,
+    });
   }
   return out;
 }

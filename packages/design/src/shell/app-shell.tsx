@@ -4,9 +4,9 @@ import { Icon } from "../icons/icon";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { keyboardInset } from "./pointer";
-import { Sidebar, type SidebarProps } from "./sidebar";
+import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
-import { useHydrated, useMediaQuery } from "./use-media-query";
+import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "drawer" | "drawerInline">;
@@ -28,6 +28,19 @@ export type AppShellProps = {
    * full-height right panel sits beside it); the shell then draws none.
    */
   ownStatusBar?: boolean;
+  /**
+   * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
+   * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
+   * or `sidebar=full` after hydration (the drawer below 960 counts as `full`: it is the full
+   * panel).
+   */
+  capState?: string;
+  /**
+   * A shell-wide notice row (safe mode's `SafeModeBanner`): the shell's first row, across the
+   * sidebar and the content column, which share the rest of the window. The shell keeps its
+   * window height, so the status bar and the page's bottom stay visible.
+   */
+  banner?: ReactNode;
   children?: ReactNode;
 };
 
@@ -43,6 +56,8 @@ export function AppShell({
   title,
   reference,
   ownStatusBar,
+  capState,
+  banner,
   children,
 }: AppShellProps) {
   const t = useDesignT();
@@ -53,7 +68,21 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(drawerRef);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
-  const narrow = useMediaQuery("(max-width: 959px)");
+  // the sidebar's own breakpoints (one place: sidebar.tsx)
+  const widthMode = useSidebarWidthMode();
+  const narrow = widthMode === "drawer";
+  const railWidth = widthMode === "rail";
+  // Public mirror of the sidebar's mode (`data-mode` is internal); none before hydration, when
+  // both panels are drawn and CSS picks one.
+  const sidebarMode = !hydrated
+    ? null
+    : railRef || (reference === undefined && railWidth)
+      ? "rail"
+      : "full";
+  const stateTokens =
+    sidebarMode === null
+      ? capState
+      : [capState, `sidebar=${sidebarMode}`].filter(Boolean).join(" ");
 
   const searchable = commands !== undefined;
   useEffect(() => {
@@ -125,11 +154,22 @@ export function AppShell({
 
   return (
     <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div ref={shellRef} className="cb-shell">
+      <div
+        ref={shellRef}
+        className="cb-shell"
+        data-cap-part="shell"
+        data-cap-state={stateTokens}
+        data-banner={banner ? "true" : undefined}
+      >
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
           {t("shell.skipToContent")}
         </a>
+        {banner ? (
+          <div className="cb-shell-banner" data-part="shell-banner">
+            {banner}
+          </div>
+        ) : null}
         <Sidebar
           {...sidebar}
           onOpenCommands={() => setPaletteOpen(true)}

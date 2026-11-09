@@ -51,13 +51,15 @@ export { HOST_ZOD_VERSION };
 export type ExtensionPackageLimits = PackageTgzLimits;
 
 /**
- * Codes of {@link ExtensionPackageError}: an invalid package, a tgz in the pre-0.1.0 format, or a
- * plugin without an extension (nothing to install on the deployment).
+ * Codes of {@link ExtensionPackageError}: an invalid package, a tgz in the pre-0.1.0 format, a
+ * plugin without an extension (nothing to install on the deployment), or client code the
+ * extension manifest does not declare.
  */
 export type ExtensionPackageErrorCode =
   | "extension.package_invalid"
   | "extension.legacy_format"
-  | "extension.no_extension";
+  | "extension.no_extension"
+  | "client.undeclared";
 
 /** The extension package is invalid; `issues` lists the problems (English, shown to the admin). */
 export class ExtensionPackageError extends Error {
@@ -174,7 +176,11 @@ function checkModuleGraph(entry: string, byPath: Map<string, Uint8Array>): strin
 const fromPluginPackageError = (e: PluginPackageError): ExtensionPackageError =>
   new ExtensionPackageError(
     e.issues,
-    e.code === "catalog.legacy_format" ? "extension.legacy_format" : "extension.package_invalid",
+    e.code === "catalog.legacy_format"
+      ? "extension.legacy_format"
+      : e.code === "client.undeclared"
+        ? "client.undeclared"
+        : "extension.package_invalid",
   );
 
 /**

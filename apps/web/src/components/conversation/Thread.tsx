@@ -684,19 +684,21 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       }
       case "prose":
         return (
-          <Prose
-            markdown={e.text}
-            streaming={e.streaming}
-            {...(paths.size > 0 ? { paths } : {})}
-            {...(onOpenFile && filePaths
-              ? {
-                  onOpenPath: (p: string) => {
-                    const id = filePaths.get(p);
-                    if (id !== undefined) onOpenFile(id);
-                  },
-                }
-              : {})}
-          />
+          <div data-cap-part="message.assistant">
+            <Prose
+              markdown={e.text}
+              streaming={e.streaming}
+              {...(paths.size > 0 ? { paths } : {})}
+              {...(onOpenFile && filePaths
+                ? {
+                    onOpenPath: (p: string) => {
+                      const id = filePaths.get(p);
+                      if (id !== undefined) onOpenFile(id);
+                    },
+                  }
+                : {})}
+            />
+          </div>
         );
       case "thinking":
         if (e.model !== null && reasoningOf(e.model) === false) return null;

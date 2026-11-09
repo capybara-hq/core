@@ -76,7 +76,7 @@ describe("/plugin-ui/[...path] 代理", () => {
 
   it("Next's Proxy (old language-prefixed links) never sees /plugin-ui", () => {
     expect(proxyConfig.matcher).toEqual([
-      "/((?!api(?:/|$)|plugin-ui(?:/|$)|_next(?:/|$)|dev(?:/|$)|.*\\.).*)",
+      "/((?!api/|plugin-ui/|_next/|dev/ui(?:/|$)|icon\\.svg$).*)",
     ]);
   });
 

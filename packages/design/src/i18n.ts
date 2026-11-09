@@ -152,6 +152,8 @@ const zh = {
   "shell.filter": "筛选",
   "settings.nav": "设置导航",
   "shell.skipToContent": "跳到主要内容",
+  "safeMode.message": "安全模式：插件界面代码已停用，只显示内置界面。",
+  "safeMode.exit": "退出安全模式",
   "shell.details": "详情",
   "shell.metrics": "指标",
   "shell.path": "路径",
@@ -610,6 +612,9 @@ const en: Record<DesignKey, string> = {
   "shell.filter": "Filters",
   "settings.nav": "Settings navigation",
   "shell.skipToContent": "Skip to main content",
+  "safeMode.message":
+    "Safe mode: plugin interface code is off; only the built-in interface is shown.",
+  "safeMode.exit": "Exit safe mode",
   "shell.details": "Details",
   "shell.metrics": "Metrics",
   "shell.path": "Path",

@@ -5,6 +5,9 @@
       "path": "packages/plugin-sdk"
     },
     {
+      "path": "packages/plugin-client"
+    },
+    {
       "path": "packages/testing"
     },
     {

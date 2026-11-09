@@ -398,6 +398,13 @@
       "id_taken": "该组织中已启用了同一 ID 的另一个主题；请先关闭或移除它。",
       "not_found": "该主题版本或文件不存在。请刷新页面以加载当前主题。"
     },
+    "client": {
+      "undeclared": "该插件包含扩展未声明的客户端代码（permissions.client）。请用 capybara-plugin pack 重新打包后再导入。",
+      "integrity_mismatch": "该插件的某个客户端文件与清单记录的完整性校验值不符，插件包可能已损坏或被改动。请重新获取后再导入。",
+      "invalid": "该插件的客户端代码不合法：有文件缺失、未列出或过大，或某个样式表不被允许。请用 capybara-plugin pack 重新打包后再导入。",
+      "api_unsupported": "该插件的客户端代码针对更新的客户端 API 版本构建，本部署不支持。请升级 Capybara，或针对当前版本重新构建插件。",
+      "not_found": "该插件界面代码不可用：插件可能已停用、已升级或界面代码已被停用。请重新加载页面。"
+    },
     "invitation": {
       "invalid": "邀请链接无效或已被撤销。",
       "expired": "邀请已过期。",
@@ -2486,7 +2493,9 @@
       "hooks": "Hook",
       "models": "模型",
       "network": "网络访问",
-      "ui": "界面（视图 / 嵌入页面）"
+      "ui": "界面（视图 / 嵌入页面）",
+      "client": "客户端代码",
+      "components": "界面组件"
     },
     "configTitle": "组织配置",
     "save": "保存配置",
@@ -2510,6 +2519,8 @@
         "tools": "组织里的智能体可以调用这些工具",
         "hooks": "可以介入内核流程",
         "ui_embed": "会把扩展自己的页面嵌入网页",
+        "client_code": "会在成员的浏览器里运行自己的代码，可完全访问网页应用",
+        "ui_component": "会在网页应用的页面里渲染自己的代码",
         "channel": "收到组织在 IM 里的对话内容",
         "directory": "能把人加进组织，并为其建账号",
         "identity_source": "决定谁能登录成哪个账号",
@@ -2524,7 +2535,8 @@
         "dynamic_sql": "DO 块（内容没有检查）",
         "foreign_schema": "越出扩展自己 schema 的语句（内核表、权限 / 角色、函数 / 触发器或事务控制）"
       },
-      "at": "{file} 第 {line} 行"
+      "at": "{file} 第 {line} 行",
+      "clientTotal": "共 {files} 个文件，{size}"
     },
     "pointDefaults": {
       "title": "默认提供方",
@@ -2625,7 +2637,8 @@
       "saveInvalid": "配置不正确，请检查标出的字段。",
       "loadFailed": "无法读取配置。",
       "retry": "重试"
-    }
+    },
+    "appearanceTitle": "外观"
   },
   "identities": {
     "title": "IM 身份",
@@ -3539,6 +3552,16 @@
         "description": "组织能否不经平台目录、自己新建或导入技能。",
         "allowHint": "组织可以自己新建、导入技能，也可以从平台目录安装。",
         "denyHint": "组织只能从平台目录安装技能。"
+      },
+      "clientCode": {
+        "title": "插件界面代码",
+        "description": "插件可以在成员的浏览器里运行自己的界面代码：组件、样式和装饰。出问题时可以在这里全部停用，或只停用某个插件的界面代码；插件的服务端功能照常运行。",
+        "all": "运行插件界面代码",
+        "allOnHint": "页面会加载下面这些插件的界面代码。",
+        "allOffHint": "已停用：所有页面都不加载插件界面代码。",
+        "pluginLabel": "运行 {name} 的界面代码",
+        "pluginOnHint": "运行中",
+        "pluginOffHint": "已停用：只停用界面代码，服务端功能照常运行。"
       }
     },
     "extensions": {
@@ -3760,6 +3783,43 @@
         "unset": "{path} 未配置",
         "loadFailed": "无法读取组织的配置。",
         "retry": "重试"
+      },
+      "clientCode": {
+        "title": "界面代码",
+        "running": "正在成员的浏览器里运行。",
+        "stoppedState": "已停用：此插件的界面代码不再加载，服务端功能照常运行。",
+        "allStopped": "已停用：部署设置里停用了所有插件界面代码。",
+        "build": "构建",
+        "apiVersion": "客户端 API",
+        "total": "大小",
+        "totalValue": "{files} 个文件 · {size}",
+        "stop": "停用界面代码",
+        "resume": "恢复界面代码",
+        "stopHint": "只停用此插件的界面代码（组件、样式、装饰），它的工具和其他服务端功能照常可用。已打开的页面会在下次刷新时卸下。",
+        "stopped": "已停用 {name} 的界面代码",
+        "resumed": "已恢复 {name} 的界面代码",
+        "filesTitle": "文件",
+        "reportsTitle": "错误报告",
+        "noReports": "此构建没有错误报告。",
+        "adminPages": "管理后台页面",
+        "deletedOrg": "已删除的组织",
+        "columns": {
+          "path": "文件",
+          "size": "大小",
+          "kind": "类型",
+          "contribution": "组件",
+          "where": "组织",
+          "count": "次数",
+          "last": "最近一次",
+          "message": "消息"
+        },
+        "kind": {
+          "load": "加载",
+          "render": "渲染",
+          "event": "事件",
+          "api": "API 不支持",
+          "budget": "已自动停用"
+        }
       }
     }
   },
@@ -3968,7 +4028,8 @@
           "update": "更新到 {version}",
           "disable": "停用",
           "enable": "启用",
-          "import": "导入 {version}"
+          "import": "导入 {version}",
+          "applyAppearance": "应用此插件的外观"
         },
         "componentColumns": {
           "name": "组件",
@@ -4618,7 +4679,11 @@
       "title": "标题",
       "extension": "扩展",
       "hidden": "隐藏",
-      "move": "顺序"
+      "move": "顺序",
+      "slot": "位置",
+      "use": "使用",
+      "source": "来源",
+      "reset": "跟随"
     },
     "slots": {
       "conversationPanel": "对话面板",
@@ -4628,8 +4693,18 @@
       "filePreview": "文件预览",
       "agentSection": "智能体页面区块",
       "orgSettingsSection": "组织设置区块",
-      "platformPage": "平台页面"
-    }
+      "platformPage": "平台页面",
+      "shellBrand": "侧边栏品牌",
+      "shellOverlay": "全屏图层",
+      "conversationEmpty": "新对话主视觉",
+      "composerFrame": "输入框边框"
+    },
+    "replaceTitle": "替换",
+    "replaceDescription": "插件的组件可以接管的位置。选内置则保留网页应用自带的；插件的组件只在该插件启用的地方显示。",
+    "builtin": "内置",
+    "unavailableUse": "{key}（不可用）",
+    "useLabel": "{slot}使用",
+    "orgOwn": "本组织"
   },
   "filePreviewers": {
     "title": "文件预览",
@@ -5149,6 +5224,45 @@
       "description": "平台默认主题：组织没有设置默认主题时使用它，登录页也使用它。只能选择平台拥有、范围为全部组织且未停用的主题。",
       "label": "平台默认主题",
       "notAvailable": "这个主题没有在所有组织启用，不能作为平台默认主题。未启用它的组织：{orgs}。"
+    }
+  },
+  "clientExtensions": {
+    "budget": "「{plugin}」的界面代码出错，已在本次会话停用",
+    "safeReload": "以安全模式重新加载",
+    "changed": "新的插件界面代码已就绪，重新加载页面后生效。",
+    "reload": "重新加载",
+    "componentFailed": "它的界面代码没有加载或已出错。请重新加载页面再试；若仍然失败，可以安全模式重新加载。",
+    "componentOff": "此插件界面当前不可用。",
+    "componentOffHint": "插件界面代码已停用：处于安全模式、被超级管理员停用，或在本次浏览器会话中出错后已关闭。"
+  },
+  "applyAppearance": {
+    "action": "应用此插件的外观",
+    "actionLabel": "应用 {name} 的外观",
+    "actionHintPlatform": "把此插件建议的主题和替换设为平台默认。",
+    "actionHintOrg": "把此插件建议的主题和替换设为本组织的默认。",
+    "title": "应用 {name} 的外观？",
+    "platformHint": "这些会成为平台默认：所有没有自己选择的组织都会看到。",
+    "orgHint": "这些会成为本组织的默认：没有自己选主题的成员都会看到。",
+    "unchanged": "外观已经是此插件建议的样子，没有需要更改的。",
+    "changes": "更改",
+    "theme": "默认主题",
+    "change": "{from} → {to}",
+    "builtinTheme": "内置主题",
+    "followsPlatform": "跟随平台：{name}",
+    "builtin": "内置",
+    "skipped": "跳过：{what}",
+    "reason": {
+      "unknownSlot": "当前版本的网页应用没有这个位置。",
+      "notAvailable": "此插件的组件在这里不可用。",
+      "notEligible": "这个位置不能由它替换。"
+    },
+    "apply": "应用",
+    "ok": "知道了",
+    "applied": "已应用 {name} 的外观",
+    "reloadHint": "此插件带有界面代码：应用后页面会重新加载，让它的界面立即显示。",
+    "errors": {
+      "orgTheme": "此插件的主题未在本组织启用。请先在组织设置的「外观」中启用它（或请超级管理员向本组织提供它），再重新应用。",
+      "platformTheme": "此插件的主题不能作为平台默认主题：它必须向所有组织提供并处于启用状态。请先把此插件的范围设为所有组织，再重新应用。"
     }
   }
 }

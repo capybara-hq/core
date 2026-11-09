@@ -40,12 +40,18 @@ export interface UiOpen {
   item?: string;
 }
 
-/** 界面贡献的种类：`view` = 渲染 schema（由我们的组件画）；`embed` = 插件自己的页面放进 iframe。 */
-export type UiKind = "view" | "embed";
+/**
+ * The kind of a UI contribution: `view` = a render schema drawn by the host's components; `embed` =
+ * the extension's own page in an iframe; `component` = a React component from the extension's
+ * client code (client extensions spec §5).
+ */
+export type UiKind = "view" | "embed" | "component";
 
 /**
- * 插件清单 `ui` 里的一项界面贡献。`id` 必须同时出现在 `permissions.ui.views`（kind view）
- * 或 `permissions.ui.embeds`（kind embed）里；`embed` 的页面由插件路由提供。
+ * One UI contribution of the extension manifest's `ui`. Its `id` must be listed in the list of its
+ * kind: `permissions.ui.views` (view), `permissions.ui.embeds` (embed) or
+ * `permissions.ui.components` (component, which also needs `permissions.client: true`); an embed's
+ * page is served by an extension route.
  */
 export interface UiContribution {
   id: string;
@@ -64,7 +70,7 @@ export interface UiContribution {
    */
   after?: string;
   kind: UiKind;
-  /** 仅 embed：插件路由下 `/ui/` 开头的路径，须在 `permissions.http` 中声明为 GET。 */
+  /** Embed only: a path under `/ui/` of the extension's routes, declared in `permissions.http` as GET. */
   path?: string;
   /** Icon from {@link UI_ICONS}; default `puzzle`. */
   icon?: UiIcon;
@@ -117,12 +123,27 @@ export type UiBlock =
     }
   | { type: "form"; form: InputForm; actionId: string; submitLabel: string };
 
+/** A JSON value: what survives `JSON.stringify` and `JSON.parse` unchanged. */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
 /** 插件视图：有上限的块列表；`badge` 显示在标签上（如「2/4」）。 */
 export interface UiView {
   badge?: string;
   /** The ⤢ of an inline card's title row and a properties section's header. */
   open?: UiOpen;
+  /** A component's view may have no blocks (`[]`). */
   blocks: UiBlock[];
+  /**
+   * Only from a component's render (`useView` hands it to the component): at most
+   * `UI_LIMITS.componentDataBytes` bytes of JSON. Refused in the views of the other kinds.
+   */
+  data?: JsonValue;
 }
 
 /**
@@ -132,6 +153,7 @@ export interface UiView {
  * - `checklistItems`：清单项数；
  * - `textChars`：整个视图所有文本（含表单 JSON）的字符总数；
  * - `payloadBytes`：单个按钮 `payload` 的 JSON 序列化后 UTF-8 字节数。
+ * - `componentDataBytes`: the UTF-8 bytes of a component view's `data` as JSON.
  */
 export const UI_LIMITS = {
   blocks: 50,
@@ -139,6 +161,7 @@ export const UI_LIMITS = {
   checklistItems: 100,
   textChars: 20000,
   payloadBytes: 2000,
+  componentDataBytes: 32768,
 } as const;
 
 const BADGE_MAX = 32;
@@ -175,14 +198,67 @@ function jsonBytes(v: unknown): number | undefined {
   }
 }
 
+const JSON_KINDS = "null, booleans, finite numbers, strings, arrays, plain objects";
+
+/**
+ * The first part of `v` (`at` is its path) that JSON would not carry as is, or undefined: a value
+ * `JSON.stringify` drops, rewrites or throws on (a function, symbol or bigint, NaN or ±Infinity,
+ * `undefined` in an array, an object that is not plain such as a Map or a Date, a cycle). A plain
+ * object's `undefined` property is accepted: JSON drops it, which reads as an absent optional field.
+ */
+function jsonProblem(v: unknown, at: string, seen: Set<object> = new Set()): string | undefined {
+  if (v === null || typeof v === "boolean" || typeof v === "string") return undefined;
+  if (typeof v === "number") return Number.isFinite(v) ? undefined : `${at} is ${v}`;
+  if (v === undefined) return `${at} is undefined`;
+  if (typeof v !== "object") return `${at} is a ${typeof v}`;
+  if (seen.has(v)) return `${at} is a cycle`;
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const p = jsonProblem(v[i], `${at}[${i}]`, seen);
+        if (p !== undefined) return p;
+      }
+      return undefined;
+    }
+    const proto = Object.getPrototypeOf(v);
+    if (proto !== Object.prototype && proto !== null) {
+      return `${at} is a ${(proto as { constructor?: { name?: string } }).constructor?.name || "non-plain object"}`;
+    }
+    for (const [k, x] of Object.entries(v)) {
+      if (x === undefined) continue;
+      const p = jsonProblem(x, `${at}.${k}`, seen);
+      if (p !== undefined) return p;
+    }
+    return undefined;
+  } finally {
+    seen.delete(v);
+  }
+}
+
 /**
  * 校验插件返回的视图，返回问题列表（空 = 合法）。链接与图片只允许 http(s) 绝对地址；
  * Markdown 的检查是纵深防御，网页渲染时仍须只认 http(s) 链接、不渲染原生 HTML。
  * 按钮与表单的 `actionId` 在整个视图内唯一（动作回调靠它区分来源）。
+ * `data` is accepted only with `opts.component` (the view of a component contribution): JSON as is
+ * (nothing JSON would drop or rewrite, see `jsonProblem`), up to `UI_LIMITS.componentDataBytes`
+ * bytes of UTF-8.
  */
-export function validateUiView(v: unknown): string[] {
+export function validateUiView(v: unknown, opts: { component?: boolean } = {}): string[] {
   if (!isObj(v)) return ["view must be an object"];
   const out: string[] = [];
+  if (v.data !== undefined) {
+    if (opts.component !== true) out.push("view data is only allowed for component views");
+    else {
+      const problem = jsonProblem(v.data, "data");
+      if (problem !== undefined) out.push(`view data must be JSON (${JSON_KINDS}): ${problem}`);
+      else {
+        const n = jsonBytes(v.data) ?? 0;
+        if (n > UI_LIMITS.componentDataBytes)
+          out.push(`view data is ${n} bytes; the limit is ${UI_LIMITS.componentDataBytes}`);
+      }
+    }
+  }
   let chars = 0;
   const text = (at: string, s: unknown, nonEmpty = false): void => {
     if (typeof s !== "string" || (nonEmpty && s === "")) {

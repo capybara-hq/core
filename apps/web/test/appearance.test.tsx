@@ -12,6 +12,7 @@ import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { themeCssUrl } from "./support/themes";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -41,7 +42,7 @@ const ref = (id: string, en: string, zhName: string, schemes: ("dark" | "light")
   schemes,
   singleScheme: schemes.length === 1 ? schemes[0] : null,
   logo: null,
-  cssUrl: `/api/v1/themes/${id}/1/theme.css`,
+  cssUrl: themeCssUrl(id, "1"),
 });
 const sw = (bg: string) => ({ bg, panel: "#111", ink: "#eee", accent: "#f60" });
 const NIGHT = {
@@ -302,6 +303,8 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
   };
   const routes = (put: Routes[string]): Routes => ({
     ...orgRoutes(),
+    // 插件界面代码 lists the extensions with client code
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, THEMES),
@@ -398,6 +401,8 @@ describe("/admin/themes", () => {
         ],
       }),
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [], limitDefaults: {} }),
+    // 插件界面代码 lists the extensions with client code
+    "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/settings": () => json(200, { uiTheme: { id: "t-night" } }),
     "GET /api/v1/admin/components/theme/t-night/versions": versions,
     "GET /api/v1/admin/components/theme/t-paper/versions": versions,

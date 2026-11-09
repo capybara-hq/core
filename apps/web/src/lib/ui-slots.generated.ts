@@ -8,7 +8,11 @@ export type UiSlotId =
   | "file.preview"
   | "agent.detail.section"
   | "org.settings.section"
-  | "platform.page";
+  | "platform.page"
+  | "shell.brand"
+  | "shell.overlay"
+  | "conversation.empty"
+  | "conversation.composer.frame";
 
 export type UiSlotScope = "conversation" | "org" | "file" | "agent" | "platform";
 
@@ -25,7 +29,7 @@ export const UI_SLOT_SPECS: Record<
 > = {
   "conversation.panel": {
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "guest",
     args: ["conversationId", "item"],
     density: "regular",
@@ -33,7 +37,7 @@ export const UI_SLOT_SPECS: Record<
   },
   "conversation.properties.section": {
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "guest",
     args: ["conversationId"],
     density: "dense",
@@ -41,7 +45,7 @@ export const UI_SLOT_SPECS: Record<
   },
   "conversation.tool-result.card": {
     scope: "conversation",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "guest",
     args: ["conversationId", "card"],
     density: "regular",
@@ -49,7 +53,7 @@ export const UI_SLOT_SPECS: Record<
   },
   "org.page": {
     scope: "org",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "member",
     args: [],
     density: "regular",
@@ -65,7 +69,7 @@ export const UI_SLOT_SPECS: Record<
   },
   "agent.detail.section": {
     scope: "agent",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "guest",
     args: ["agentId"],
     density: "regular",
@@ -73,7 +77,7 @@ export const UI_SLOT_SPECS: Record<
   },
   "org.settings.section": {
     scope: "org",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "admin",
     args: [],
     density: "regular",
@@ -81,8 +85,40 @@ export const UI_SLOT_SPECS: Record<
   },
   "platform.page": {
     scope: "platform",
-    accepts: ["view", "embed"],
+    accepts: ["view", "embed", "component"],
     minRole: "superAdmin",
+    args: [],
+    density: "regular",
+    anchors: [],
+  },
+  "shell.brand": {
+    scope: "org",
+    accepts: ["component"],
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    anchors: [],
+  },
+  "shell.overlay": {
+    scope: "org",
+    accepts: ["component"],
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    anchors: [],
+  },
+  "conversation.empty": {
+    scope: "org",
+    accepts: ["component"],
+    minRole: "guest",
+    args: [],
+    density: "regular",
+    anchors: [],
+  },
+  "conversation.composer.frame": {
+    scope: "org",
+    accepts: ["component"],
+    minRole: "guest",
     args: [],
     density: "regular",
     anchors: [],

@@ -6,7 +6,10 @@ import {
   FormPage,
   FormSection,
   Input,
+  ItemList,
+  ItemListItem,
   RadioGroup,
+  Switch,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,22 +22,30 @@ import { usePagePath } from "../../../../components/shell/path";
 import { builtinChoice, type ThemeChoice, ThemePicker } from "../../../../components/ThemePicker";
 import { UiArrangementSection } from "../../../../components/UiArrangementSection";
 import {
+  CLIENT_EXTENSIONS_DEFAULT,
+  type ClientExtensionsSetting,
   type CustomPolicy,
   type DeploymentSettings,
   type DeploymentSettingsPatch,
   isCurrencyCode,
   updateDeploymentSettings,
 } from "../../../../lib/admin";
-import { ApiClientError } from "../../../../lib/api";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
-import { deploymentSettingsQuery, settingsChangeKeys } from "../../../../lib/query/admin";
+import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
+import {
+  adminExtensionsQuery,
+  deploymentSettingsQuery,
+  settingsChangeKeys,
+} from "../../../../lib/query/admin";
 import { retryOnMountOf } from "../../../../lib/query/client";
+import { invalidateClientSets } from "../../../../lib/query/client-extensions";
 import { adminComponentsQuery } from "../../../../lib/query/components";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { invalidatePlatformTheme } from "../../../../lib/query/themes";
 import { useAdmin } from "../../../../lib/query/workspace";
 import { useSecureCookiesBlocked } from "../../../../lib/secure-origin";
+import { themeOffOrgs } from "../../../../lib/themes";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
 
@@ -42,7 +53,9 @@ import NotFound from "../../not-found";
  * `/admin/settings`：部署设置（超级管理员，SettingsPage）——谁能建组织、价格币种、
  * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）, and 外观: the platform default theme
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
- * disabled; the kernel refuses one off in some org with the orgs (shown). 按组织的限额在「组织」页；
+ * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
+ * code kill switch and the plugins whose client code alone is stopped (client extensions spec
+ * §10.2); a save that changes it marks every cached client set stale. 按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
  * settings into the cache.
@@ -80,6 +93,7 @@ function AdminSettingsRead() {
   const tc = useTranslations("common");
   const read = usePageQuery(deploymentSettingsQuery());
   const ta = useTranslations("appearance.platform");
+  const tk = useTranslations("admin.settings.clientCode");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -111,6 +125,13 @@ function AdminSettingsRead() {
           description={ta("description")}
           loading={{ fields: [{ control: "radio-cards", options: 3 }] }}
         />
+        <FormSection
+          id="client-code"
+          flush
+          title={tk("title")}
+          description={tk("description")}
+          loading={{ items: [{ lines: 1, buttons: 1 }] }}
+        />
       </FormPage>
     );
   }
@@ -137,6 +158,8 @@ function AdminSettings({
       const r = await updateDeploymentSettings(patch);
       // the platform default: every org's resolved theme falls back to it
       if (patch.uiTheme !== undefined) await invalidatePlatformTheme(qc);
+      // the kill switch: open pages drop (or pick up) client code at their next shell read
+      if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),
@@ -144,6 +167,7 @@ function AdminSettings({
   });
   const [draft, setDraft] = useState<Partial<Simple>>({});
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
+  const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -170,6 +194,10 @@ function AdminSettings({
     if (v !== undefined && v !== saved[k]) Object.assign(patch, { [k]: v });
   }
   if (uiTheme !== savedTheme) patch.uiTheme = { id: uiTheme };
+  const savedClient = saved.clientExtensions ?? CLIENT_EXTENSIONS_DEFAULT;
+  const client = clientDraft ?? savedClient;
+  const clientPatch = clientChange(savedClient, client);
+  if (clientPatch !== null) patch.clientExtensions = clientPatch;
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -178,9 +206,10 @@ function AdminSettings({
       await update.mutateAsync(patch);
       setDraft({});
       setThemeDraft(undefined);
+      setClientDraft(undefined);
       toast.success(t("saved"));
     } catch (e) {
-      const off = offOrgs(e);
+      const off = themeOffOrgs(e);
       toast.error(
         off.length > 0
           ? ta("platform.notAvailable", { orgs: off.join(locale === "zh" ? "、" : ", ") })
@@ -218,6 +247,7 @@ function AdminSettings({
           onSelect: () => {
             setDraft({});
             setThemeDraft(undefined);
+            setClientDraft(undefined);
           },
         },
         primary: {
@@ -279,14 +309,91 @@ function AdminSettings({
           onChange={(v) => setThemeDraft(v === BUILTIN ? null : v)}
         />
       </FormSection>
+      <ClientCodeSection value={client} onChange={setClientDraft} />
       <UiArrangementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
   );
 }
 
-/** The orgs a `theme.not_available` refusal names (the theme is off there), by name. */
-function offOrgs(e: unknown): string[] {
-  if (!(e instanceof ApiClientError) || e.code !== "theme.not_available") return [];
-  const d = e.rawDetails[0] as { orgs?: { orgName: string }[] } | undefined;
-  return (d?.orgs ?? []).map((o) => o.orgName);
+/** The kill switch patch: only the fields that differ from the saved setting, or null. */
+function clientChange(
+  saved: ClientExtensionsSetting,
+  next: ClientExtensionsSetting,
+): Partial<ClientExtensionsSetting> | null {
+  const sorted = (l: string[]) => [...new Set(l)].sort();
+  const disabledChanged = sorted(saved.disabled).join("\n") !== sorted(next.disabled).join("\n");
+  const change: Partial<ClientExtensionsSetting> = {
+    ...(next.enabled !== saved.enabled && { enabled: next.enabled }),
+    ...(disabledChanged && { disabled: sorted(next.disabled) }),
+  };
+  return Object.keys(change).length > 0 ? change : null;
+}
+
+/**
+ * 插件界面代码 (client extensions spec §10.2): one switch for all client code, then one per plugin
+ * with client code (the deployment's extensions with a client build, and any plugin still listed as
+ * stopped); a plugin's switch off stops its client code alone, its server side keeps running.
+ * Saved with the page's ActionRow.
+ */
+function ClientCodeSection({
+  value,
+  onChange,
+}: {
+  value: ClientExtensionsSetting;
+  onChange(v: ClientExtensionsSetting): void;
+}) {
+  const t = useTranslations("admin.settings.clientCode");
+  const lang = labelLocale(useLocale());
+  const eq = adminExtensionsQuery();
+  const extensions =
+    useQuery({ ...eq, retryOnMount: retryOnMountOf(eq.queryKey) }).data?.extensions ?? [];
+  const withClient = extensions.filter((e) => e.client != null);
+  const plugins = [
+    ...withClient.map((e) => ({ name: e.name, label: extensionLabel(e, lang) })),
+    ...value.disabled
+      .filter((n) => !withClient.some((e) => e.name === n))
+      .map((n) => ({ name: n, label: n })),
+  ];
+  return (
+    <FormSection id="client-code" flush title={t("title")} description={t("description")}>
+      <ItemList label={t("title")} inset="flush">
+        <ItemListItem
+          title={t("all")}
+          meta={t(value.enabled ? "allOnHint" : "allOffHint")}
+          actions={
+            <Switch
+              label={t("all")}
+              checked={value.enabled}
+              onChange={(on) => onChange({ ...value, enabled: on })}
+            />
+          }
+        />
+        {plugins.map((p) => {
+          const on = !value.disabled.includes(p.name);
+          return (
+            <ItemListItem
+              key={p.name}
+              title={p.label}
+              {...(p.label !== p.name && { code: p.name })}
+              meta={t(on ? "pluginOnHint" : "pluginOffHint")}
+              actions={
+                <Switch
+                  label={t("pluginLabel", { name: p.label })}
+                  checked={on}
+                  onChange={(next) =>
+                    onChange({
+                      ...value,
+                      disabled: next
+                        ? value.disabled.filter((n) => n !== p.name)
+                        : [...value.disabled, p.name],
+                    })
+                  }
+                />
+              }
+            />
+          );
+        })}
+      </ItemList>
+    </FormSection>
+  );
 }

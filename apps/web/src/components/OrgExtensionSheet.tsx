@@ -11,7 +11,7 @@ import {
   versionLabel,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "../i18n/navigation";
 import { type OrgExtension, provides } from "../lib/extensions";
 import type { ConfigIssue } from "../lib/json-schema";
@@ -46,7 +46,8 @@ export interface SaveError {
  * switch was refused: a missing dependency, dependents that remain with 仍然停用, the kernel's
  * reason with a link to 插件; 立即同步 for an enabled directory-sync extension); 权限 (org admins:
  * folded into one line that opens the full blocks); 工具 (the single-tool switches of an enabled
- * extension; members read the states). Members get the 状态 and 工具 regions only.
+ * extension; members read the states); 外观 (org admins, a plugin that suggests an appearance:
+ * 应用此插件的外观). Members get the 状态 and 工具 regions only.
  * The list page keeps the switch logic; this Sheet only reports the person's actions.
  */
 export function OrgExtensionSheet({
@@ -72,6 +73,7 @@ export function OrgExtensionSheet({
   onSaveAndEnable,
   onForceDisable,
   onSync,
+  appearance,
 }: {
   orgId: string;
   extension: OrgExtension;
@@ -99,6 +101,8 @@ export function OrgExtensionSheet({
   onSaveAndEnable(config: Record<string, unknown>): void;
   onForceDisable(): void;
   onSync(): void;
+  /** 外观 (org admins, a plugin on in the org that suggests an appearance): its action. */
+  appearance?: ReactNode;
 }) {
   const t = useTranslations("extensions");
   const [form, setForm] = useState<{
@@ -267,13 +271,22 @@ export function OrgExtensionSheet({
             </Stack>
           )}
         </Subsection>
+        {appearance !== undefined && (
+          <Subsection title={t("appearanceTitle")} variant="divided">
+            {appearance}
+          </Subsection>
+        )}
         {plugin.enabled && !unavailable && (
           <OrgToolSwitches orgId={orgId} plugin={plugin.plugin} canEdit={canEdit} />
         )}
         {canEdit && plugin.permissions.length > 0 && (
           <Subsection title={t("permissions")} variant="divided">
             <PermissionSummary groups={plugin.permissions}>
-              <PermissionReview plugin={plugin.plugin} groups={plugin.permissions} />
+              <PermissionReview
+                plugin={plugin.plugin}
+                groups={plugin.permissions}
+                {...(plugin.client != null && { clientFiles: plugin.client.files })}
+              />
             </PermissionSummary>
           </Subsection>
         )}

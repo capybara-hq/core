@@ -8,6 +8,7 @@ import { checkDesignI18n, checkI18n } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkPackageSchemas } from "../package-schemas.js";
 import { checkPlatformOps } from "../platform-ops.js";
+import { checkPluginClientApi, checkPluginClientApiReport } from "../plugin-client-api.js";
 import { checkReleaseMetadata } from "../release-metadata.js";
 import { checkSdkApi } from "../sdk-api.js";
 import { checkSkillsFrontmatter } from "../skills-frontmatter.js";
@@ -15,6 +16,7 @@ import { checkSyncedSkills } from "../synced-skills.js";
 import { checkTerms } from "../terms.js";
 import { checkTestPlugins } from "../test-plugins.js";
 import { checkTokens } from "../tokens.js";
+import { checkUiParts } from "../ui-parts.js";
 import { checkUiSlots } from "../ui-slots.js";
 import { checkWebUi } from "../web-ui.js";
 import { corePluginScope, requireScanTargets } from "./dirs.js";
@@ -43,6 +45,7 @@ const checks: NamedCheck[] = [
   },
   { name: "Design tokens", run: () => checkTokens(root) },
   { name: "UI slots", run: () => checkUiSlots(root) },
+  { name: "UI parts", run: () => checkUiParts(root) },
   {
     name: "Web UI rules",
     run: () => checkWebUi(join(root, "apps/web/src"), join(root, "packages/design/src")),
@@ -52,6 +55,13 @@ const checks: NamedCheck[] = [
   { name: "Skills frontmatter", run: () => checkSkillsFrontmatter(join(root, ".agents/skills")) },
   { name: "release metadata", run: () => checkReleaseMetadata(root) },
   { name: "SDK API snapshot", run: () => checkSdkApi({ update: false }) },
+  {
+    name: "plugin-client API",
+    run: async () => [
+      ...checkPluginClientApi(root),
+      ...(await checkPluginClientApiReport({ update: false })),
+    ],
+  },
   { name: "Agent docs", run: () => checkAgentDocs(root) },
   { name: "Terms", run: () => checkTerms(root) },
   { name: "Kernel conventions", run: () => checkKernelConventions(root) },

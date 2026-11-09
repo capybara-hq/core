@@ -17,6 +17,7 @@
   "devDependencies": {
     "@capybara-hq/design": "workspace:*",
     "@capybara-hq/kernel": "workspace:*",
+    "@capybara-hq/plugin-client": "workspace:*",
     "@capybara-hq/plugin-sdk": "workspace:*",
     "@capybara-hq/plugin-tools": "workspace:*",
     "@capybara-hq/testing": "workspace:*",

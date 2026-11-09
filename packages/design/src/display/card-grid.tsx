@@ -272,7 +272,12 @@ export function CardGrid({
 /** The skeleton card: the loaded card's boxes, each text a bar slot (spec §6.29). */
 function SkeletonCard({ announce }: { announce?: string | undefined }) {
   return (
-    <li className="cb-object-card" data-part="object-card" data-skeleton="true">
+    <li
+      className="cb-object-card"
+      data-part="object-card"
+      data-cap-part="card"
+      data-skeleton="true"
+    >
       <span className="cb-object-card-head" data-part="object-card-head">
         <span className="cb-object-card-avatar" data-part="object-card-avatar" aria-hidden="true">
           <SkeletonBox part="block" height={40} width={40} />
@@ -442,6 +447,7 @@ function LoadedCard({
       ref={liRef}
       className="cb-object-card"
       data-part="object-card"
+      data-cap-part="card"
       data-card-key={cardKey ?? undefined}
       onFocus={slot === null ? undefined : () => slot.onFocusCard()}
     >

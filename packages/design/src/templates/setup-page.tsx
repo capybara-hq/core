@@ -22,6 +22,8 @@ export type SetupPageProps = {
   title?: string;
   /** Draw as below 960 (drawer open in place) or as the rail (the reference set and the catalog). */
   reference?: AppShellProps["reference"];
+  /** A shell-wide notice row (safe mode's banner), as {@link AppShellProps.banner}. */
+  banner?: ReactNode;
   /** The page: a template (its own page head), in the shell's content area. */
   children?: ReactNode;
 };
@@ -32,7 +34,7 @@ export type SetupPageProps = {
  * drawer) with the setup sidebar: the setup home and the steps are its navigation; no search, no
  * inbox, no conversations, no command palette. The page brings its own template and page head.
  */
-export function SetupPage({ sidebar, status, title, reference, children }: SetupPageProps) {
+export function SetupPage({ sidebar, status, title, reference, banner, children }: SetupPageProps) {
   const { org, home, steps, adminHref, ...rest } = sidebar;
   return (
     <div className="cb-setup" data-template="SetupPage">
@@ -50,6 +52,7 @@ export function SetupPage({ sidebar, status, title, reference, children }: Setup
         status={status}
         {...(title !== undefined ? { title } : {})}
         {...(reference !== undefined ? { reference } : {})}
+        {...(banner !== undefined ? { banner } : {})}
       >
         {children}
       </AppShell>

@@ -2,3 +2,11 @@
 export function navigateBrowser(url: string): void {
   window.location.assign(url);
 }
+
+/**
+ * Reloads the document (a separate module so tests can replace it): after an admin action that
+ * changes the client code the page should run, which a loaded document cannot pick up itself.
+ */
+export function reloadDocument(): void {
+  window.location.reload();
+}

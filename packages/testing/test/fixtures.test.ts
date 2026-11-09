@@ -79,6 +79,8 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-web": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-config-form": { provides: [] },
+  "fake-client": { provides: [] },
+  "fake-client-broken": { provides: [] },
 };
 
 let out: string;

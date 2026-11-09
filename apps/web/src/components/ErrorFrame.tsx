@@ -1,9 +1,10 @@
 "use client";
 
-import { Button, StatusPage } from "@capybara-hq/design";
+import { Button, Stack, StatusPage } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useCallback, useEffect, useTransition } from "react";
 import { useRouter } from "../i18n/navigation";
+import { withSafeUi } from "../lib/client-extensions";
 import { useRoutePath } from "./shell/path";
 
 /** The automatic retry: once, 3 s after the error, and not again within a minute. */
@@ -19,10 +20,13 @@ let lastAutoRetry = Number.NEGATIVE_INFINITY;
  * The error boundaries' page (web-SSR spec §5, ruling R2): the maintenance status page with
  * 加载失败 and 重试. Next hides server error messages in production, so the page cannot tell one
  * failure from another: 重试 re-renders the route on the server (`router.refresh()`) and resets the
- * boundary in one transition, and the page does that once by itself after 3 s.
+ * boundary in one transition, and the page does that once by itself after 3 s. The route-level
+ * boundaries pass `safeReload`: 以安全模式重新加载 loads the current URL again as a document with
+ * `safe-ui=1`, so no plugin interface code runs (client extensions spec §10.1).
  */
-export function ErrorFrame({ reset }: { reset(): void }) {
+export function ErrorFrame({ reset, safeReload = false }: { reset(): void; safeReload?: boolean }) {
   const t = useTranslations("errors.page");
+  const tc = useTranslations("clientExtensions");
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   // The page's own path (`<slug> / trajectories`), not `~`: the head says where the error is.
@@ -50,9 +54,26 @@ export function ErrorFrame({ reset }: { reset(): void }) {
       title={t("title")}
       description={t("description")}
       action={
-        <Button variant="primary" loading={pending} onClick={retry}>
-          {t("retry")}
-        </Button>
+        safeReload ? (
+          <Stack direction="row" gap={8} justify="center" wrap>
+            <Button variant="primary" loading={pending} onClick={retry}>
+              {t("retry")}
+            </Button>
+            <Button
+              onClick={() =>
+                window.location.assign(
+                  withSafeUi(`${location.pathname}${location.search}${location.hash}`),
+                )
+              }
+            >
+              {tc("safeReload")}
+            </Button>
+          </Stack>
+        ) : (
+          <Button variant="primary" loading={pending} onClick={retry}>
+            {t("retry")}
+          </Button>
+        )
       }
     />
   );

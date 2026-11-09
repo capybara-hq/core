@@ -99,7 +99,10 @@ interface Manifest {
   secrets: boolean;
   http: Set<string>;
   tools: Set<string>;
-  /** permissions.ui.views：ctx.ui.view / action 只能用这些 id。 */
+  /**
+   * permissions.ui.views and permissions.ui.components: ctx.ui.view / action may only use these
+   * ids (a component may have a server view, client extensions spec §5.2).
+   */
   uiViews: Set<string>;
   /** permissions.hooks: ctx.hooks.on may only use these mount points. */
   hooks: Set<string>;
@@ -188,8 +191,10 @@ function readManifest(obj: Node, decls: Map<string, Node>): Manifest {
     const ui = prop(pe, "ui");
     const ue = ui ? resolve(ui.value as Node, decls) : undefined;
     if (ue?.type === "ObjectExpression") {
-      for (const v of strings(prop(ue, "views")?.value as Node | undefined, decls)) {
-        m.uiViews.add(v);
+      for (const list of ["views", "components"]) {
+        for (const v of strings(prop(ue, list)?.value as Node | undefined, decls)) {
+          m.uiViews.add(v);
+        }
       }
     }
     const http = prop(pe, "http");
@@ -335,7 +340,7 @@ function scanSetup(
             add(
               n,
               "perm-ui",
-              `UI view "${id}" is not declared; add it to permissions.ui.views (and ui) in the extension manifest`,
+              `UI view "${id}" is not declared; add it to permissions.ui.views (or permissions.ui.components for a component) and ui in the extension manifest`,
             );
           }
         } else if (area === "setup" && method === "check") {
@@ -472,7 +477,8 @@ function scanFile(
  * - perm-http：ctx.http.route(method, path) 不在 permissions.http 里；
  * - perm-tools：ctx.tools.register({ name }) 的名字不在 permissions.tools 里；
  * - perm-extension-point: the ref of ctx.extensionPoints.get|list(ref) is not in requires / optional / provides;
- * - perm-ui：ctx.ui.view|action(id) 的 id 不在 permissions.ui.views 里；
+ * - perm-ui: the id of ctx.ui.view|action(id) is in neither permissions.ui.views nor
+ *   permissions.ui.components;
  * - perm-storage：用了 ctx.storage 而 permissions.storage 不是 true；
  * - perm-hooks: the mount point of ctx.hooks.on(mount, …) is not in permissions.hooks (the mount
  *   point must be a string literal or a same-file const, like the names below), or the options are

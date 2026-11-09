@@ -17,15 +17,21 @@ const IMMUTABLE = "public, max-age=31536000, immutable";
 export class ThemeDeliveryController {
   constructor(@Inject(ThemeDeliveryService) private readonly delivery: ThemeDeliveryService) {}
 
-  /** The version's stylesheet: scheme overrides, `@font-face` rules and font stacks. */
+  /**
+   * The version's stylesheet: scheme overrides, `@font-face` rules and font stacks, in the render
+   * revision `revision` (`r<THEME_CSS_REVISION>`; only the current one is served). The URL without
+   * a revision (before revision 2) has no route: 404, so a browser's cached unlayered copy is never
+   * answered with the new format under an immutable cache.
+   */
   @Public()
-  @Get("theme.css")
+  @Get(":revision/theme.css")
   async css(
     @Param("id") id: string,
     @Param("version") version: string,
+    @Param("revision") revision: string,
     @Res() reply: FastifyReply,
   ): Promise<void> {
-    const css = await this.delivery.stylesheet(id, version);
+    const css = await this.delivery.stylesheet(id, version, revision);
     await reply
       .header("content-type", "text/css; charset=utf-8")
       .header("x-content-type-options", "nosniff")

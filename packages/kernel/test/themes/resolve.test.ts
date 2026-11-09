@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { ThemesService } from "../../src/themes/themes.service.js";
 import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import {
@@ -50,6 +51,7 @@ describe("theme resolution", () => {
     const r = await themes.resolve(env.orgId, env.memId);
     expect(r).toEqual({
       id: a,
+      key: "neon/night-city",
       version: "1",
       name: { en: "night-city en", zh: "night-city zh" },
       schemes: ["dark"],
@@ -59,7 +61,7 @@ describe("theme resolution", () => {
         wordmark: "NIGHT CITY",
         faviconUrl: null,
       },
-      cssUrl: `/api/v1/themes/${a}/1/theme.css`,
+      cssUrl: `/api/v1/themes/${a}/1/r${THEME_CSS_REVISION}/theme.css`,
     });
   });
 
@@ -111,7 +113,10 @@ describe("theme resolution", () => {
       dark: { bg: "#05070D", panel: "#0A0E18", ink: expect.any(String), accent: "#FCE300" },
     });
     expect(Object.keys(body.themes[1]?.swatches ?? {}).sort()).toEqual(["dark", "light"]);
-    expect(body.resolved).toMatchObject({ id: b, cssUrl: `/api/v1/themes/${b}/1/theme.css` });
+    expect(body.resolved).toMatchObject({
+      id: b,
+      cssUrl: `/api/v1/themes/${b}/1/r${THEME_CSS_REVISION}/theme.css`,
+    });
     expect(body.resolved).not.toHaveProperty("swatches");
     expect(body.org).toEqual({ id: a, personal: "allowed" });
     // another member with no pick gets the org's default; the org with no setting reads as allowed

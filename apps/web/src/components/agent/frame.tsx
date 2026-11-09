@@ -12,6 +12,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { createContext, type ReactNode, useContext, useEffect } from "react";
 import type { Agent } from "../../lib/agents";
 import { uiLocale } from "../../lib/ui";
+import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 import { useSlotContributions } from "../extension-ui/ExtensionSlot";
 import {
   type AgentSection,
@@ -79,12 +80,14 @@ export function useExtSections(orgId: string) {
 
 /**
  * The nav of the sections this viewer sees: the built-in ones, then one item per extension
- * section (its title), for editable and read-only viewers alike.
+ * section (its title), for editable and read-only viewers alike. A client component's section is
+ * listed only while its code may run (not in safe mode, under the kill switch or after the crash
+ * budget); its direct link shows the section's "not available" state.
  */
 export function useSectionNav(orgId: string, agentId: string, editable: boolean) {
   const t = useTranslations("agents.page");
   const locale = uiLocale(useLocale());
-  const ext = useExtSections(orgId);
+  const ext = useOfferedContributions(useExtSections(orgId));
   return [
     {
       group: t("navGroup"),

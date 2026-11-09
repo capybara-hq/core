@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "name": "client-code",
+  "version": "1.2.3",
+  "publisher": "Capybara",
+  "description": "Fixture: a plugin with client code that a bootstrap entry must not pin"
+}

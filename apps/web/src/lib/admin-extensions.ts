@@ -62,6 +62,25 @@ export interface ExtensionReplica {
   heartbeatAt: string;
 }
 
+/** An extension's client build (kernel `AdminExtensionView.client`). */
+export interface AdminExtensionClient {
+  build: string;
+  files: { path: string; bytes: number }[];
+  apiVersion: number;
+}
+
+/** One stored error report of a client build (kernel `AdminExtensionView.clientReports`). */
+export interface ClientReportRow {
+  /** null: reported from an admin page. */
+  orgId: string | null;
+  contribution: string | null;
+  kind: "load" | "render" | "event" | "api" | "budget";
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  lastMessage: string;
+}
+
 /** One row of the admin extension list (kernel `AdminExtensionView`). */
 export interface AdminExtension {
   name: string;
@@ -118,6 +137,15 @@ export interface AdminExtension {
    * does not know, or not at that version. `[]` when the extension is not loaded.
    */
   uiDropped: { id: string; ref: string; reason: "unknown-slot" | "unsupported-version" }[];
+  /**
+   * The client build of the package the install record names (client extensions spec §9.1, §10.4):
+   * the build id (the package sha256), every file by its path inside `dist/client/` with its size,
+   * and the client API version; null without client code (or not installed). Absent from a kernel
+   * before client extensions.
+   */
+  client?: AdminExtensionClient | null;
+  /** The current build's error reports, newest first (at most 50). */
+  clientReports?: ClientReportRow[];
   /**
    * Only with status `conflict`: the single-provider extension point (`sandbox@2`) and the other
    * extensions providing it; disabling them loads this one, no restart.

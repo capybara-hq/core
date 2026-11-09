@@ -1,4 +1,5 @@
 import type { QueryClient, UseQueryOptions } from "@tanstack/react-query";
+import type { AdminExtension } from "../admin-extensions";
 import { type Agent, type AgentTemplateView, setupReady } from "../agents";
 import type { ApiClientError } from "../api";
 import type { OrgCatalogDetail } from "../catalog";
@@ -242,11 +243,28 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/extensions/[name]",
-    // The list (the extension is found in it) and its deployment config (the Config tab).
+    // The list (the extension is found in it) and its deployment config (the Config tab); for an
+    // extension with client code, the settings too (界面代码 says whether it is stopped), and the
+    // orgs when its reports name any (each report row shows the org's name).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
+    // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
+    then: async ({ me, params }, qc) => {
+      if (!superAdmin(me) || params.name === undefined) return;
+      const list = qc.getQueryData<{ extensions: AdminExtension[] }>(
+        adminExtensionsQuery().queryKey,
+      );
+      const ext = list?.extensions.find((e) => e.name === params.name);
+      if (ext?.client == null) return;
+      await Promise.all([
+        qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false }),
+        ...((ext.clientReports ?? []).some((r) => r.orgId !== null)
+          ? [qc.prefetchQuery({ ...adminOrgsQuery(), retry: false })]
+          : []),
+      ]);
+    },
   },
   {
     pattern: "/admin/p/[plugin]/[id]",
@@ -433,13 +451,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings and the themes (外观's eligible ones, with their names and swatches).
+    // The settings, the themes (外观's eligible ones, with their names and swatches), the platform
+    // arrangement and the extensions (插件界面代码 lists those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
             q(deploymentSettingsQuery()),
             q(adminComponentsQuery("theme")),
             q(adminUiArrangementQuery()),
+            q(adminExtensionsQuery()),
           ]
         : [],
   },

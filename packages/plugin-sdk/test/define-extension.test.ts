@@ -164,4 +164,34 @@ describe("defineExtension and ui slots", () => {
     });
     expect(() => defineExtension(m)).toThrow(/slot file\.preview does not accept kind view/);
   });
+
+  it("defineExtension accepts components with client: true and keeps ui as written", () => {
+    const components = (): UiContribution[] => [
+      {
+        id: "run-hud",
+        title,
+        slot: "conversation.properties.section",
+        kind: "component",
+        after: "context",
+      },
+      { id: "brand", title, slot: "shell.brand", kind: "component" },
+      { id: "scanlines", title, slot: "shell.overlay", kind: "component" },
+    ];
+    const m = defineExtension(
+      valid({
+        ui: components(),
+        permissions: { client: true, ui: { components: ["run-hud", "brand", "scanlines"] } },
+      }),
+    );
+    expect(m.ui).toEqual(components());
+    expect(staticManifestOf(m).ui).toEqual(components());
+    expect(() =>
+      defineExtension(
+        valid({
+          ui: components(),
+          permissions: { ui: { components: ["run-hud", "brand", "scanlines"] } },
+        }),
+      ),
+    ).toThrow(/permissions\.ui\.components needs permissions\.client: true/);
+  });
 });
