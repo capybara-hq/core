@@ -12,11 +12,13 @@ import {
   CatalogShownBody,
   CatalogStagingPathParams,
 } from "../../catalog/admin-catalog.schemas.js";
+import { type AppearanceResult, AppearanceService } from "../../catalog/appearance.service.js";
 import { CatalogService } from "../../catalog/catalog.service.js";
 import { CatalogScopeService, type ScopePreview } from "../../catalog/catalog-scope.service.js";
 import { PluginImport, type PluginReview } from "../../catalog/plugin-import.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -79,6 +81,43 @@ const conflictText = (cs: ScopePreview["conflicts"]): string =>
     )
     .join("; ");
 
+/**
+ * The card of an "apply this plugin's appearance" operation (client extensions spec §6.5), from the
+ * route's dry run: the theme it sets (its name), the slots it replaces and how many were skipped.
+ */
+export function appearanceSummary(
+  level: "platform" | "org",
+  plugin: { zh: string; en: string },
+  r: AppearanceResult,
+  theme: { zh: string; en: string } | null,
+): { zh: string; en: string } {
+  const zh: string[] = [];
+  const en: string[] = [];
+  if (r.theme !== null && theme !== null) {
+    zh.push(`${level === "platform" ? "平台" : "本组织"}默认主题改为「${theme.zh}」`);
+    en.push(`${level === "platform" ? "platform" : "org"} default theme becomes "${theme.en}"`);
+  }
+  if (r.replacements.length > 0) {
+    const slots = r.replacements.map((x) => x.slot).join(", ");
+    zh.push(`替换 ${slots}`);
+    en.push(`replaces ${slots}`);
+  }
+  if (r.skipped.length > 0) {
+    zh.push(`跳过 ${r.skipped.length} 项`);
+    en.push(`${r.skipped.length} skipped`);
+  }
+  if (zh.length === 0) {
+    return {
+      zh: `插件「${plugin.zh}」的外观已经应用，没有改动`,
+      en: `The appearance of plugin "${plugin.en}" is applied already; nothing changes`,
+    };
+  }
+  return {
+    zh: `应用插件「${plugin.zh}」的外观：${zh.join("；")}`,
+    en: `Apply the appearance of plugin "${plugin.en}": ${en.join("; ")}`,
+  };
+}
+
 /** A scope preview as the admin console shows it (orgs named); conflicting plugins counted. */
 const previewBrief = (p: ScopePreview) => ({
   affected: p.affected,
@@ -111,6 +150,8 @@ export class CatalogAdminOperations implements OnModuleInit {
     @Inject(CatalogScopeService) private readonly scope: CatalogScopeService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(AppearanceService) private readonly appearance: AppearanceService,
+    @Inject(ThemesService) private readonly themes: ThemesService,
   ) {}
 
   /** The precheck refusal of another org's private plugin (the phase-1 rule), else null. */
@@ -637,6 +678,67 @@ export class CatalogAdminOperations implements OnModuleInit {
             auditDetail: viaAgent("plugins.delete", ctx),
           });
           return { deleted: input.itemId };
+        },
+      }),
+      defineOperation({
+        id: "plugins.platform-apply-appearance",
+        description:
+          "Apply a platform plugin's suggested appearance (super admin; the admin console's 应用此插件的外观): in one step, its theme becomes the platform default theme and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the platform arrangement; orgs that set their own keep theirs. The card shows exactly what changes; a theme that cannot be the platform default (scope not all, or off in an org) refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.",
+        input: z.object({ itemId: ItemId }).strict(),
+        example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/catalog/items/:id/appearance"],
+        renames: { itemId: "id" },
+        // the route's dry run is this operation's card and precheck, never a confirmed call
+        omits: ["dryRun"],
+        confirm: "platform",
+        rememberable: false,
+        errors: [
+          {
+            code: "catalog.item_not_found",
+            next: "Check the plugin id with plugins.platform-list; only a plugin whose plugin.json has suggestedAppearance can be applied.",
+          },
+          {
+            code: "theme.not_available",
+            next: "The plugin's theme cannot be the platform default: give it scope all (plugins.component-scope-preview, then plugins.set-component-scope) and make sure no org switched it off, then apply again.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const other = await this.otherOrgs(i.itemId, ctx.orgId);
+          if (other !== null) return other;
+          return precheckBy(() =>
+            this.appearance.apply(
+              { platform: true },
+              i.itemId,
+              { accountId: ctx.actorAccountId },
+              true,
+            ),
+          );
+        },
+        summary: async (i, ctx) => {
+          const [n, r] = await Promise.all([
+            this.names(i.itemId),
+            this.appearance.apply(
+              { platform: true },
+              i.itemId,
+              { accountId: ctx.actorAccountId },
+              true,
+            ),
+          ]);
+          const theme = r.theme && localized(await this.themes.nameOf(r.theme.to), r.theme.to);
+          return appearanceSummary("platform", n, r, theme);
+        },
+        run: async (input, ctx) => {
+          await assertNotOtherOrgs(this.kdb.db, input.itemId, ctx.orgId);
+          return this.appearance.apply(
+            { platform: true },
+            input.itemId,
+            {
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("plugins.platform-apply-appearance", ctx),
+            },
+            false,
+          );
         },
       }),
     ]);

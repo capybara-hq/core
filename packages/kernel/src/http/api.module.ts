@@ -16,6 +16,7 @@ import {
 import { BackgroundController } from "../background/background.controller.js";
 import { BackgroundModule } from "../background/background.module.js";
 import { AdminCatalogController } from "../catalog/admin-catalog.controller.js";
+import { AppearanceModule } from "../catalog/appearance.service.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import {
   AdminComponentsController,
@@ -198,6 +199,8 @@ const CONTROLLERS: Type[] = [
     AdminModule,
     ExtensionsModule,
     CatalogModule,
+    // a plugin's suggested appearance (its own module: it writes through the org settings)
+    AppearanceModule,
     ToolsModule,
     AgentsModule,
     ConversationsModule,

@@ -5,6 +5,7 @@ import { AGENT_ROUTES } from "../agents/agents.schemas.js";
 import { AGENT_TEMPLATE_ROUTES } from "../agents/templates.schemas.js";
 import { BACKGROUND_ROUTES } from "../background/background.schemas.js";
 import { ADMIN_CATALOG_ROUTES } from "../catalog/admin-catalog.schemas.js";
+import { APPEARANCE_ROUTES } from "../catalog/appearance.schemas.js";
 import { COMPONENT_SCOPE_ROUTES } from "../catalog/component-scope.schemas.js";
 import { MARKETPLACE_ROUTES } from "../catalog/marketplaces.schemas.js";
 import { ORG_CATALOG_ROUTES } from "../catalog/org-catalog.schemas.js";
@@ -78,6 +79,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ME_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
+  // a plugin's suggested appearance (client extensions spec §6.5)
+  ...APPEARANCE_ROUTES,
   // UI slots (UI slots spec §3)
   ...UI_ROUTES,
 ];

@@ -1,4 +1,4 @@
-import type { LocalizedName } from "@capybara-hq/plugin-sdk";
+import type { LocalizedName, SuggestedAppearance } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
@@ -24,6 +24,8 @@ import {
   OrgToolSwitches,
   type OrgToolSwitchResult,
 } from "../tools/org-tool-switches.js";
+import { AppearanceApplyBody } from "./appearance.schemas.js";
+import { type AppearanceResult, AppearanceService } from "./appearance.service.js";
 import {
   OrgExtensionParams as ExtensionParams,
   OrgExtensionToolParams as ToolParams,
@@ -79,29 +81,33 @@ class OrgToolSwitchPutBody extends createZodDto(ToolSwitchPut, "OrgToolSwitchPut
 class OrgExtensionParamsDto extends createZodDto(ExtensionParams, "OrgExtensionParams") {}
 class OrgExtensionToolParamsDto extends createZodDto(ToolParams, "OrgExtensionToolParams") {}
 
+class OrgAppearanceApplyBody extends createZodDto(AppearanceApplyBody, "OrgAppearanceApplyBody") {}
+
 class OrgOverridesPutBody extends createZodDto(OverridesPut, "OrgOverridesPutBody") {}
 class OrgOverridesTakeBody extends createZodDto(OverridesTake, "OrgOverridesTakeBody") {}
 
 /**
  * One extension of the org list: the org view plus the plugin's display name, the URL of its
  * plugin's icon on the org's catalog route (null without one or when the org may not see the
- * plugin's item) and the extension points it provides (`channel@1`, `web-search@1`, … the names
- * only, also for members).
+ * plugin's item), the extension points it provides (`channel@1`, `web-search@1`, … the names
+ * only, also for members) and the plugin's suggested appearance (null without one; the page offers
+ * 应用此插件的外观 to org admins when set, client extensions spec §6.5).
  */
 export type OrgExtensionItem = OrgExtensionView & {
   displayName: LocalizedName | null;
   icon: string | null;
   provides: string[];
+  suggestedAppearance: SuggestedAppearance | null;
 };
 
 /**
  * What a member sees of an extension: its state and the points it provides (names only, what the
- * 扩展 page sorts by), never the org config, the secrets' state, the config schema or the
- * permission list.
+ * 扩展 page sorts by), never the org config, the secrets' state, the config schema, the
+ * permission list or the suggested appearance (members cannot apply it).
  */
 export type OrgExtensionMemberItem = Omit<
   OrgExtensionItem,
-  "config" | "secrets" | "orgConfigSchema" | "permissions"
+  "config" | "secrets" | "orgConfigSchema" | "permissions" | "suggestedAppearance"
 >;
 
 /**
@@ -115,6 +121,7 @@ export class OrgExtensionConfigsController {
     @Inject(ExtensionDisplayNames) private readonly displayNames: ExtensionDisplayNames,
     @Inject(OrgExtensionSwitch) private readonly extSwitch: OrgExtensionSwitch,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
+    @Inject(AppearanceService) private readonly appearance: AppearanceService,
   ) {}
 
   /**
@@ -128,20 +135,30 @@ export class OrgExtensionConfigsController {
   ): Promise<{ extensions: OrgExtensionItem[] | OrgExtensionMemberItem[] }> {
     const views = await this.configs.list(org.orgId);
     const plugins = views.map((v) => v.plugin);
-    const [names, icons] = await Promise.all([
+    const admin = roleAtLeast(org.role, "admin");
+    const [names, icons, suggestions] = await Promise.all([
       this.displayNames.many(plugins),
       this.icons.many(plugins, orgIconScope(org)),
+      admin ? this.appearance.suggestions(plugins) : new Map<string, SuggestedAppearance | null>(),
     ]);
     const items = views.map((v) => ({
       ...v,
       displayName: names.get(v.plugin) ?? null,
       icon: icons.get(v.plugin) ?? null,
       provides: providesOf(v),
+      suggestedAppearance: suggestions.get(v.plugin) ?? null,
     }));
-    if (roleAtLeast(org.role, "admin")) return { extensions: items };
+    if (admin) return { extensions: items };
     return {
       extensions: items.map(
-        ({ config: _c, secrets: _s, orgConfigSchema: _o, permissions: _p, ...rest }) => rest,
+        ({
+          config: _c,
+          secrets: _s,
+          orgConfigSchema: _o,
+          permissions: _p,
+          suggestedAppearance: _a,
+          ...rest
+        }) => rest,
       ),
     };
   }
@@ -161,9 +178,10 @@ export class OrgExtensionConfigsController {
     const p = requireUser(principal);
     const r = await this.extSwitch.put(org.orgId, p.account.id, extension, body, patTokenId(p));
     if (r.kind === "preview") return { preview: r.preview, confirm: r.confirm };
-    const [displayName, icons] = await Promise.all([
+    const [displayName, icons, suggestions] = await Promise.all([
       this.displayNames.get(r.view.plugin),
       this.icons.many([r.view.plugin], orgIconScope(org)),
+      this.appearance.suggestions([r.view.plugin]),
     ]);
     return {
       extension: {
@@ -171,8 +189,36 @@ export class OrgExtensionConfigsController {
         displayName,
         icon: icons.get(r.view.plugin) ?? null,
         provides: providesOf(r.view),
+        suggestedAppearance: suggestions.get(r.view.plugin) ?? null,
       },
     };
+  }
+
+  /**
+   * 应用此插件的外观 (client extensions spec §6.5), for a plugin whose extension is on in the org:
+   * sets the plugin's suggested theme as the org's default theme (keeping `personal`) and each
+   * suggested replacement as the org arrangement's `use` of its slot, in one transaction.
+   * `dryRun: true` answers the same changes and writes nothing. A theme not on in the org -> 400
+   * `theme.not_available` (nothing written); a replacement not available in the org is skipped.
+   * An extension not on in the org, or a plugin without a suggestion -> 404 `extension.not_found`.
+   */
+  @Post(":extension/appearance")
+  @HttpCode(200)
+  @OrgAction("org.update")
+  applyAppearance(
+    @CurrentPrincipal() principal: Principal,
+    @CurrentOrg() org: OrgContext,
+    @ZParam(OrgExtensionParamsDto) { extension }: z.infer<typeof ExtensionParams>,
+    @ZBody(OrgAppearanceApplyBody) body: z.infer<typeof AppearanceApplyBody>,
+  ): Promise<AppearanceResult> {
+    const p = requireUser(principal);
+    const tokenId = patTokenId(p);
+    return this.appearance.apply(
+      { orgId: org.orgId },
+      extension,
+      { accountId: p.account.id, ...(tokenId !== undefined && { tokenId }) },
+      body.dryRun === true,
+    );
   }
 }
 
