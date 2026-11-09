@@ -1942,7 +1942,9 @@
       "rotate": "替换客户端",
       "rotated": "OAuth 客户端已替换。",
       "rotateVerified": "新客户端会先换取一次令牌验证，验证失败则不做任何修改。",
-      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。"
+      "rotateUnverified": "新客户端不会被验证；如果填错，所有成员都需要重新连接。",
+      "callbackTitle": "回调地址",
+      "callbackHint": "在授权服务器（如 Slack 应用的 OAuth 设置）里登记这个地址，必须一字不差。"
     },
     "settings": {
       "title": "常规",
@@ -2165,7 +2167,8 @@
     "cancel": "取消",
     "enterCredentialTitle": "填写 {name} 的凭据",
     "updateCredentialTitle": "更新 {name} 的凭据",
-    "updateHint": "保存后替换你已保存的凭据，其他成员使用各自的凭据。"
+    "updateHint": "保存后替换你已保存的凭据，其他成员使用各自的凭据。",
+    "manageCredentials": "管理凭据"
   },
   "sandboxSettings": {
     "title": "沙箱",

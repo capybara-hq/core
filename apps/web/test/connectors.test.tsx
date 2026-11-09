@@ -346,7 +346,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(footControls(again)).toEqual([en.connections.oauthConnect]);
   });
 
-  it("org admins: 修改配置 in ⋯ on every connector card (the 设置 tab); never two buttons", async () => {
+  it("org admins: 管理凭据 (the 凭据 tab) in ⋯, or 修改配置 without credentials; never two buttons", async () => {
     const personal = summary({ id: "c-slack", name: "Slack", auth: OAUTH });
     const shared = summary({ id: "c-wiki", name: "Wiki", slug: "wiki" });
     let connected = false;
@@ -373,8 +373,8 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     const slack = await cardOf("Slack");
     expect(footControls(slack)).toEqual([en.connections.oauthConnect, MORE.en]);
     const items = await openCardMenu(slack);
-    expect(items.map((i) => i.textContent)).toEqual([en.connections.editConfig]);
-    expect(items[0]?.getAttribute("href")).toBe("/connectors/c-slack?tab=settings");
+    expect(items.map((i) => i.textContent)).toEqual([en.connections.manageCredentials]);
+    expect(items[0]?.getAttribute("href")).toBe("/connectors/c-slack?tab=credentials");
     await userEvent.setup().keyboard("{Escape}");
     cleanup();
     connected = true;
@@ -383,7 +383,7 @@ describe("/connectors: a card per connector and per template of a plugin on in t
     expect(footControls(again)).toEqual([en.connectors.cards.permissions, MORE.en]);
     expect(await cardMenuLabels(again)).toEqual([
       en.connections.reconnect,
-      en.connections.editConfig,
+      en.connections.manageCredentials,
       en.connections.disconnect,
     ]);
   });

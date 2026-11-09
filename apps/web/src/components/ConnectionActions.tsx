@@ -26,9 +26,20 @@ import { ConnectorGuideSheet } from "./ConnectorGuides";
 import { ConnectorPermissionsSheet } from "./ConnectorPermissions";
 import { FormError } from "./form-error";
 
-/** Where an org admin edits a connector's configuration: its detail page's 设置 tab. */
-export const connectorConfigHref = (connectorId: string) =>
-  `/connectors/${encodeURIComponent(connectorId)}?tab=settings`;
+/**
+ * The org admin's item for a connector: its 凭据 tab (the OAuth client, the redirect URL, the org
+ * credential: what an admin comes to change), or its 设置 tab for a connector without credentials.
+ */
+export const connectorAdminItem = (
+  c: { id: string; auth: { type: string } },
+  t: (key: "editConfig" | "manageCredentials") => string,
+): MenuItem =>
+  c.auth.type === "none"
+    ? { label: t("editConfig"), href: `/connectors/${encodeURIComponent(c.id)}?tab=settings` }
+    : {
+        label: t("manageCredentials"),
+        href: `/connectors/${encodeURIComponent(c.id)}?tab=credentials`,
+      };
 
 /** The anchor of a personal connector's card on `/account/connections` (see `connectionHref`). */
 export const connectionAnchor = (connectorId: string) => `connector-${connectorId}`;
@@ -137,10 +148,7 @@ export function usePersonalConnections({
     const howTo: MenuItem[] = guides.has(app.id)
       ? [{ label: tg("howToConnect"), onSelect: () => setOpen({ kind: "howTo", id: app.id }) }]
       : [];
-    const config: MenuItem[] =
-      admin && page === "connectors"
-        ? [{ label: t("editConfig"), href: connectorConfigHref(app.id) }]
-        : [];
+    const config: MenuItem[] = admin && page === "connectors" ? [connectorAdminItem(app, t)] : [];
     const permissions = () => setOpen({ kind: "permissions", id: app.id });
     const credential = () => setOpen({ kind: "credential", id: app.id });
     const connect = () => void start(app.id);

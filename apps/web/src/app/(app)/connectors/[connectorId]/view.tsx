@@ -5,6 +5,7 @@ import {
   Callout,
   Card,
   type Column,
+  CodeBlock as CopyBlock,
   DangerConfirm,
   DataTable,
   DetailPage,
@@ -594,11 +595,22 @@ function CredentialsTab({
         {personalCard}
         {manage && (
           <Card title={t("credential.clientTitle")}>
-            {auth.client === "manual" ? (
-              <RotateClient orgId={orgId} app={app} />
-            ) : (
-              <Text tone="muted">{t("credential.clientDcr")}</Text>
-            )}
+            <Stack gap={16}>
+              {app.oauthCallbackUrl != null && (
+                <Stack gap={8}>
+                  <Text variant="h3">{t("credential.callbackTitle")}</Text>
+                  <Text variant="prose" tone="muted">
+                    {t("credential.callbackHint")}
+                  </Text>
+                  <CopyBlock text={app.oauthCallbackUrl} copyable />
+                </Stack>
+              )}
+              {auth.client === "manual" ? (
+                <RotateClient orgId={orgId} app={app} />
+              ) : (
+                <Text tone="muted">{t("credential.clientDcr")}</Text>
+              )}
+            </Stack>
           </Card>
         )}
       </Stack>

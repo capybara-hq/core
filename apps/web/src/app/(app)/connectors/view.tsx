@@ -6,7 +6,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { useOwnerLabel } from "../../../components/CatalogParts";
 import { useComponentSwitch } from "../../../components/ComponentSwitch";
-import { connectorConfigHref, usePersonalConnections } from "../../../components/ConnectionActions";
+import { connectorAdminItem, usePersonalConnections } from "../../../components/ConnectionActions";
 import { useMemberGuides } from "../../../components/ConnectorGuides";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { FormError } from "../../../components/form-error";
@@ -176,10 +176,8 @@ function Connectors({ orgId, me }: { orgId: string; me: Me }) {
   const connectorCard = (c: ConnectorSummary) => {
     const d: ConnectorDetail | undefined = detailOf.get(c.id);
     const own = personal.some((p) => p.id === c.id);
-    // 修改配置 for org admins: the connector's 设置 tab (alone, it is the card's one button)
-    const config: MenuItem[] = manage
-      ? [{ label: tn("editConfig"), href: connectorConfigHref(c.id) }]
-      : [];
+    // for org admins: the connector's 凭据 tab, or 设置 without credentials (alone, the one button)
+    const config: MenuItem[] = manage ? [connectorAdminItem(c, tn)] : [];
     const base = {
       avatar: { image: c.icon ?? null },
       title: c.name,

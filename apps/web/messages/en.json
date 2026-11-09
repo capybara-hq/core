@@ -1954,7 +1954,9 @@
       "rotate": "Replace client",
       "rotated": "OAuth client replaced.",
       "rotateVerified": "The new client is verified by obtaining a token first; nothing changes if that fails.",
-      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect."
+      "rotateUnverified": "The new client is not verified. If it is wrong, every member has to reconnect.",
+      "callbackTitle": "Redirect URL",
+      "callbackHint": "Register this exact URL at the authorization server (e.g. the Slack app's OAuth settings)."
     },
     "settings": {
       "title": "General",
@@ -2177,7 +2179,8 @@
     "cancel": "Cancel",
     "enterCredentialTitle": "Enter your credential for {name}",
     "updateCredentialTitle": "Update your credential for {name}",
-    "updateHint": "Saving replaces the credential you saved; other members use theirs."
+    "updateHint": "Saving replaces the credential you saved; other members use theirs.",
+    "manageCredentials": "Manage credentials"
   },
   "sandboxSettings": {
     "title": "Sandbox",
