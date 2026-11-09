@@ -54,12 +54,14 @@ import {
   type UpdateConnectorInput,
   updateConnector,
 } from "../../../../lib/connectors";
+import { labelLocale } from "../../../../lib/extension-label";
 import { orgCatalogItemQuery } from "../../../../lib/query/catalog";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { connectorQuery } from "../../../../lib/query/conversation";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
+import { setupGuideQuery } from "../../../../lib/query/setup";
 import { useWorkspace } from "../../../../lib/query/workspace";
 import { useErrorMessage } from "../../../../lib/use-error-message";
 import NotFound from "../../not-found";
@@ -223,7 +225,8 @@ function Connector({
       {guide !== null && tab !== "guide" && app.guideDrift ? (
         <GuideDriftCallout
           orgId={orgId}
-          itemId={guide.itemId}
+          connectorId={app.id}
+          guide={guide}
           drift={app.guideDrift}
           onOpen={() => setTab("guide")}
         />
@@ -248,12 +251,30 @@ function Connector({
   );
 }
 
-/** The plugin's display name for the drift notice, from the org's catalog (its name meanwhile). */
-function usePluginLabel(orgId: string, itemId: string): string | undefined {
+/**
+ * The plugin's display name for the drift notice, from the org's catalog; when the item cannot be
+ * read, the plugin's name from the guide rendered for the connector (the guide tab's read).
+ */
+function usePluginLabel(
+  orgId: string,
+  connectorId: string,
+  guide: NonNullable<ConnectorDetail["setupGuide"]>,
+): string | undefined {
   const locale = useLocale();
-  const q = orgCatalogItemQuery(orgId, itemId);
-  const item = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data?.item;
-  return item === undefined ? undefined : displayNameOf(item, locale);
+  const q = orgCatalogItemQuery(orgId, guide.itemId);
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  const gq = setupGuideQuery(orgId, guide, {
+    connectorId,
+    audience: "admin",
+    locale: labelLocale(locale),
+  });
+  const fallback = useQuery({
+    ...gq,
+    enabled: read.isError,
+    retryOnMount: retryOnMountOf(gq.queryKey),
+  }).data?.plugin;
+  const item = read.data?.item;
+  return item === undefined ? fallback : displayNameOf(item, locale);
 }
 
 /**
@@ -262,17 +283,19 @@ function usePluginLabel(orgId: string, itemId: string): string | undefined {
  */
 function GuideDriftCallout({
   orgId,
-  itemId,
+  connectorId,
+  guide,
   drift,
   onOpen,
 }: {
   orgId: string;
-  itemId: string;
+  connectorId: string;
+  guide: NonNullable<ConnectorDetail["setupGuide"]>;
   drift: { from: string; to: string };
   onOpen(): void;
 }) {
   const t = useTranslations("setupGuide");
-  const plugin = usePluginLabel(orgId, itemId);
+  const plugin = usePluginLabel(orgId, connectorId, guide);
   if (plugin === undefined) return null;
   return (
     <Callout tone="warn" action={{ label: t("openGuide"), onSelect: onOpen }}>
@@ -302,7 +325,7 @@ function GuideTab({
   onSaved(next: ConnectorDetail): void;
 }) {
   const t = useTranslations("setupGuide");
-  const plugin = usePluginLabel(orgId, guide.itemId);
+  const plugin = usePluginLabel(orgId, app.id, guide);
   const ack = useAppMutation({
     fn: (hash: string) => ackConnectorGuide(orgId, app.id, hash),
     invalidates: () => [keys.org(orgId).connectors()],
@@ -311,23 +334,28 @@ function GuideTab({
   const drift = app.guideDrift ?? null;
   return (
     <Card title={t("title")}>
-      <SetupGuideSection
-        key={guide.version}
-        orgId={orgId}
-        guide={guide}
-        query={{ connectorId: app.id, audience: "admin" }}
-        {...(plugin !== undefined ? { pluginLabel: plugin } : {})}
-        drift={
-          drift === null
-            ? null
-            : {
-                ...drift,
-                onAck: async (hash) => {
-                  await ack.mutateAsync(hash);
-                },
-              }
-        }
-      />
+      <Stack gap={16}>
+        <Text variant="prose" tone="muted">
+          {t("connectorHint")}
+        </Text>
+        <SetupGuideSection
+          key={guide.version}
+          orgId={orgId}
+          guide={guide}
+          query={{ connectorId: app.id, audience: "admin" }}
+          {...(plugin !== undefined ? { pluginLabel: plugin } : {})}
+          drift={
+            drift === null
+              ? null
+              : {
+                  ...drift,
+                  onAck: async (hash) => {
+                    await ack.mutateAsync(hash);
+                  },
+                }
+          }
+        />
+      </Stack>
     </Card>
   );
 }

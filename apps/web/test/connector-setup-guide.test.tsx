@@ -205,6 +205,28 @@ describe("补充配置: the template's admin guide above its input", () => {
     expect(browser).toEqual([]);
   });
 
+  it("install from a template: the wizard's first step shows the admin guide first", async () => {
+    resetNavigation("/connectors/install");
+    const browser = expectNoFirstPaintFetch();
+    const { container } = await renderRouteWithCache(
+      `/connectors/install?template=${ITEM}`,
+      { ...routes(), [`GET ${ORG}/extensions`]: () => json(200, { extensions: [] }) },
+      { locale: "zh" },
+    );
+    const section = await screen.findByRole("region", { name: zh.setupGuide.title });
+    expect(within(section).getByText("Create the Slack OAuth app")).toBeTruthy();
+    const row = within(section).getByRole("group", { name: "OAuth client works" });
+    expect(within(row).getByText(zh.setupGuide.checkAfterSave)).toBeTruthy();
+    const clientField = await screen.findByLabelText(/client id/i);
+    expect(
+      section.compareDocumentPosition(clientField) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(findNestedBoxes(container)).toEqual([]);
+    // the layout read the first template's admin text
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
   it("a template without a guide shows its input alone", async () => {
     resetNavigation(`/plugins/${ITEM}/connectors`);
     stubApi(routes({ ...TEMPLATE, guide: null }));
@@ -258,6 +280,35 @@ describe("connector detail: 接入指南 with the drift notice", () => {
     );
     await vi.waitFor(() => expect(screen.queryByText(notice)).toBeNull());
     expect(findNestedBoxes(container)).toEqual([]);
+  });
+
+  it("a first load of ?tab=guide with drift paints the guide and the notice", async () => {
+    resetNavigation("/connectors/app1");
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache(
+      "/connectors/app1?tab=guide",
+      routes({ guideDrift: { from: "0.1.0", to: "0.2.0" } }),
+      { locale: "en" },
+    );
+    expect(await screen.findByText("Create the Slack OAuth app")).toBeTruthy();
+    expect(screen.getByText(/changed the connector's setup/)).toBeTruthy();
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
+  it("the notice names the plugin by its guide when the catalog item is unreadable", async () => {
+    resetNavigation("/connectors/app1");
+    stubApi({
+      ...routes({ guideDrift: { from: "0.1.0", to: "0.2.0" } }),
+      [`GET ${ORG}/catalog/${ITEM}`]: () =>
+        json(404, { error: { code: "catalog.item_not_found", message: "Catalog item not found" } }),
+    });
+    await renderRouteWithCache("/connectors/app1", lastStubRoutes(), { locale: "en" });
+    expect(
+      await screen.findByText(
+        "The slack plugin changed the connector's setup (v0.1.0 → v0.2.0): update the manifest in your slack app.",
+      ),
+    ).toBeTruthy();
   });
 
   it("?tab=guide opens 接入指南; no drift, no notice", async () => {

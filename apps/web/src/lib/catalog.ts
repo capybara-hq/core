@@ -1419,7 +1419,6 @@ export const descriptionOf = (
 ): string =>
   locale === "zh" && typeof i.descriptionZh === "string" ? i.descriptionZh : i.description;
 
-/** 显示名：有双语名按界面语言取，否则用条目名。 */
 /**
  * A connector template's setup guide in an item's latest version (the super admin's template
  * page, setup guides v2 spec §9.3): the `connector-template` guide naming the template, as the
@@ -1438,6 +1437,7 @@ export function templateGuideIn(
     : { itemId: detail.item.id, guideId: g.id, version: v.version };
 }
 
+/** The display name: the bilingual name in the UI language when there is one, else the item name. */
 export const displayNameOf = (
   i: { name: string; displayName: LocalizedName | null },
   locale: string,
