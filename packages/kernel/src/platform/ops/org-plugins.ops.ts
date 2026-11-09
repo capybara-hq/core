@@ -1,4 +1,3 @@
-import { UI_SINGLE_SLOTS } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { AppearanceService } from "../../catalog/appearance.service.js";
@@ -355,7 +354,8 @@ export class OrgPluginsOperations implements OnModuleInit {
       }),
       defineOperation({
         id: "plugins.apply-appearance",
-        description: `Apply a plugin's suggested appearance in this org (org admins; the 扩展 page's 应用此插件的外观), for a plugin whose extension is on here: in one step, its theme becomes the org's default theme (whether members may pick their own stays as it is) and each component it suggests replaces the built-in block of its slot (${UI_SINGLE_SLOTS.join(", ")}) in the org's arrangement. The card shows exactly what changes; a theme that is not on in the org refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.`,
+        description:
+          "Apply a plugin's suggested appearance in this org (org admins; the 扩展 page's 应用此插件的外观), for a plugin whose extension is on here: in one step, its theme becomes the org's default theme (whether members may pick their own stays as it is) and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the org's arrangement. The card shows exactly what changes; a theme that is not on in the org refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.",
         input: z.object({ extension: OrgExtensionParams.shape.extension }).strict(),
         example: { extension: "theme-cyberpunk" },
         authz: { orgAction: "org.update" },
