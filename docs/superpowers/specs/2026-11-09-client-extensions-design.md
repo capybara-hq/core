@@ -551,7 +551,7 @@ interface SuggestedAppearance {
     gets nothing pinned, and a followed platform theme that is no longer eligible reads as the
     built-in. Platform-level results carry no `followsPlatform`. Results come **in the author's
     order** (`suggestedAppearance` as written): prepare stages the key order
-    (`catalog_item_versions.appearance_order`, migration 0105) because the staging jsonb drops it.
+    (`catalog_item_versions.appearance_order`, migration 0107) because the staging jsonb drops it.
     Two refs to one slot (`shell.brand` and `shell.brand@1`) are refused by the SDK parser; a stored
     duplicate is skipped as `not-eligible`. The web first calls with
     `dryRun: true` and shows the changes in a confirm dialog; the confirmed call writes everything
@@ -775,7 +775,7 @@ type CapybaraEventOf<K extends CapybaraEventType> = Extract<CapybaraEvent, { typ
   `client.integrity_mismatch`, 400), and writes them to object storage under
   `deployment/platform/client/<plugin>/<sha256>/<path inside dist/client/>` (the storage service
   adds the `deployment/` prefix).
-- Migration `0105_extension_client_builds.sql` (0104 was taken on `main`), kernel schema:
+- Migration `0107_extension_client_builds.sql` (0104 to 0106 were taken on `main`), kernel schema:
   `extension_client_builds (package_sha256 text PRIMARY KEY REFERENCES extension_packages(sha256) ON
   DELETE CASCADE, plugin text NOT NULL, entry text, styles text[] NOT NULL, assets text[] NOT NULL,
   integrity jsonb NOT NULL, sizes jsonb NOT NULL, api_version int NOT NULL, object_prefix text NOT
@@ -1195,7 +1195,7 @@ waves; it starts after `feat/ui-slots` merges.
    `PluginClientSection`, `CLIENT_LIMITS`, `UI_PARTS`; the `@capybara-hq/plugin-client` package
    (types, runtime, `/testing`); pack and check rules; changesets for `plugin-sdk`, `plugin-client`,
    `plugin-tools`; `pnpm gen:sdk-api`.
-2. **Kernel**: permission keys and review, import checks and build storage (migration 0104),
+2. **Kernel**: permission keys and review, import checks and build storage (migration 0107),
    delivery and shell routes, `use` in the arrangement, the suggested-appearance routes and
    Platform operations, `clientExtensions` setting, reports and
    prune, Platform exclusions (delivery and reports `transport`, shell reads `internal`) and the
@@ -1265,7 +1265,7 @@ change (the first five at design time, the rest while implementing):
   `plugins.apply-appearance`; availability of a replacement is judged on the serving replica (§6.5).
 - **Theme CSS URL** gains a render revision (`r<THEME_CSS_REVISION>`) because the stylesheet moved
   into `@layer theme` (§13).
-- **Migration** is `0105_extension_client_builds.sql`; the admin read takes `?plugin=` (§9.1, §9.2).
+- **Migration** is `0107_extension_client_builds.sql`; the admin read takes `?plugin=` (§9.1, §9.2).
 - **C3, addition**: a plugin with only CSS has no `ui.component:*` key, so `permissions.client`
   (sensitive, blocking) makes every client section visible to the review (§5.4).
 

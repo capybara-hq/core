@@ -14,7 +14,7 @@
 
 - Run single tests from the repo root: `pnpm exec vitest run <path>` (never `pnpm --filter <pkg> exec vitest`). Finish each task with `pnpm typecheck` and `pnpm lint`, and `pnpm check` when the task touches a checked area (kernel conventions, web UI, i18n, platform ops, SDK API, package schemas, bootstrap, extension permissions).
 - Kernel code follows `check:kernel-conventions`: `@Injectable` providers in one module each, explicit `@Inject` on every constructor parameter, DTOs via `createZodDto` with `@ZBody` / `@ZQuery` / `@ZParam`, config through `KernelConfigService`, writes in `@Transactional()` methods, enqueues / bus / Redis / object-store deletes in `afterCommit`. The periodic job is `@LockedCron` under `WorkerModule`.
-- Migration: one file, `packages/kernel/src/migrations/0104_extension_client_builds.sql` (renumber to the next free number if main moved), `IF [NOT] EXISTS`, kernel schema, both tables of spec §9.1 and §10.4. Applied files are never edited.
+- Migration: one file, `packages/kernel/src/migrations/0107_extension_client_builds.sql` (renumbered twice as main took 0104 to 0106), `IF [NOT] EXISTS`, kernel schema, both tables of spec §9.1 and §10.4. Applied files are never edited.
 - Exact values (spec): `CLIENT_API_VERSION = 1`; `CLIENT_LIMITS = { entryBytes: 1048576, styleFiles: 8, styleBytes: 262144, assetFiles: 64, assetBytes: 2097152, totalBytes: 8388608, loadTimeoutMs: 10000, pendingMs: 1500, crashBudget: 3 }`; `UI_LIMITS.componentDataBytes = 32768`; asset types `.png .webp .svg .woff2 .mp3 .ogg .wav`; report `message` ≤ 500 characters, throttle 20 / minute / account, retention 30 days; `suggestedAppearance.replacements` ≤ 8 entries.
 - New slot ids: `shell.brand`, `conversation.empty`, `conversation.composer.frame` (single, replaceable, accepts `component` only, scope `org`, minRole `guest`) and `shell.overlay` (list, `maxShown: 4`, accepts `component`, scope `org`, minRole `guest`). Owners: `components/shell/AppFrame.tsx` (brand, overlay), `components/conversation/NewConversation.tsx` (empty), `components/conversation/ComposerBar.tsx` (composer frame).
 - Permission keys: `permissions.client` and `ui.component:<id>`, both sensitive (reasons `client_code`, `ui_component`) and blocking; only `ui.view:*` stays non-blocking.
@@ -221,12 +221,12 @@ Risk: high (the trust decision of D2).
 - [ ] **Step 4: Run** the test, `pnpm exec vitest run packages/kernel/test/extensions`, `pnpm check`. Expected: PASS.
 - [ ] **Step 5: Commit** with a changeset on `@capybara-hq/kernel`: `feat(kernel): review client code and components as sensitive permissions`.
 
-### Task 8: Kernel import checks and client build storage (migration 0104)
+### Task 8: Kernel import checks and client build storage (migration 0107)
 
 Risk: high (what is stored and later trusted by integrity).
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0104_extension_client_builds.sql`, `packages/kernel/src/client/client.module.ts`, `packages/kernel/src/client/client-builds.service.ts`, `packages/kernel/src/client/client-css.ts` (the wrap / `@import` / absolute `url()` check)
+- Create: `packages/kernel/src/migrations/0107_extension_client_builds.sql`, `packages/kernel/src/client/client.module.ts`, `packages/kernel/src/client/client-builds.service.ts`, `packages/kernel/src/client/client-css.ts` (the wrap / `@import` / absolute `url()` check)
 - Modify: `packages/kernel/src/extensions/blobs.ts` (`ExtensionBlobs.store` calls `ClientBuilds.extract` for a package with `section.client`, before `record` commits; refuses with `storage.unavailable` when no object store), `packages/kernel/src/catalog/plugin-import.ts` (the import review re-runs `validateClientSection`, `appearanceIssues` after the theme scan, the manifest / section agreement), `packages/kernel/src/errors.ts` (codes), `packages/kernel/src/db/schema.ts` (Kysely types), `packages/kernel/src/kernel.module.ts` (`ClientModule`), `apps/web/messages/{en,zh}.json` (`errors.client.*`), package cleanup (where the package row is deleted, delete the prefix in `afterCommit`)
 - Test: `packages/kernel/test/client/client-builds.test.ts`
 

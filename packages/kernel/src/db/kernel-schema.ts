@@ -1216,7 +1216,7 @@ export interface ExtensionReplicaStatusTable {
   /** The old version this replica still serves when this row's version did not load (see migration 0030). */
   serving_version: Generated<string | null>;
   /**
-   * 0105: the package sha256 this replica actually serves for the plugin (the row's `sha256` when
+   * 0107: the package sha256 this replica actually serves for the plugin (the row's `sha256` when
    * loaded, the older package still running when the row's version is pending or failed, null when
    * none runs). Client code is delivered for the package a live replica serves.
    */
@@ -1361,7 +1361,7 @@ export interface KernelDatabase {
 }
 
 /**
- * 0105: the client files of an extension package (client extensions spec §9.1), keyed by the
+ * 0107: the client files of an extension package (client extensions spec §9.1), keyed by the
  * package sha256 (the build id). Paths are the manifest keys (`./dist/client/...`); the files live
  * in object storage under `deployment/<object_prefix>`.
  */
@@ -1382,7 +1382,7 @@ export interface ExtensionClientBuildsTable {
   created_at: Ts;
 }
 
-/** 0105: crash and load reports of client code (client extensions spec §10.4). */
+/** 0107: crash and load reports of client code (client extensions spec §10.4). */
 export interface ExtensionClientReportsTable {
   plugin: string;
   build: string;
@@ -1726,7 +1726,7 @@ export interface CatalogItemVersionsTable {
   /** 0084 (ruling P3-52): when the super admin rejected this pending org version. */
   rejected_at: TsNullable;
   /**
-   * 0105: the keys of `suggestedAppearance.replacements` in plugin.json order (jsonb does not keep
+   * 0107: the keys of `suggestedAppearance.replacements` in plugin.json order (jsonb does not keep
    * key order); null without replacements.
    */
   appearance_order: ColumnType<string[] | null, string[] | null | undefined, string[] | null>;

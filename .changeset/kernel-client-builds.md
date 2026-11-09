@@ -2,7 +2,7 @@
 "@capybara-hq/kernel": minor
 ---
 
-Client builds are stored per package: migration `0105_extension_client_builds.sql` adds
+Client builds are stored per package: migration `0107_extension_client_builds.sql` adds
 `extension_client_builds` and `extension_client_reports`. When a package with an `extension.client`
 section is stored, its client files are read again from the stored bytes, checked against the
 section (every key exact, listed = present, size limits, sha384 recomputed, each stylesheet one
