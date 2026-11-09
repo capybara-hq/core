@@ -12,6 +12,8 @@ export type SensitiveReason =
   | "tools"
   | "hooks"
   | "ui_embed"
+  | "client_code"
+  | "ui_component"
   | "channel"
   | "directory"
   | "identity_source"

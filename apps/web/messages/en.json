@@ -2469,7 +2469,8 @@
       "hooks": "Hooks",
       "models": "Models",
       "network": "Network access",
-      "ui": "Interface (views / embeds)"
+      "ui": "Interface (views / embeds / components)",
+      "client": "Client code"
     },
     "configTitle": "Organization config",
     "save": "Save config",
@@ -2493,6 +2494,8 @@
         "tools": "agents in organizations can call these tools",
         "hooks": "can hook into kernel flows",
         "ui_embed": "embeds the extension's own pages in the web app",
+        "client_code": "runs its own code in members' browsers, with full access to the web app",
+        "ui_component": "renders its own code inside the web app's pages",
         "channel": "receives the organization's IM conversations",
         "directory": "can add people to organizations and create their accounts",
         "identity_source": "decides who can sign in as which account",

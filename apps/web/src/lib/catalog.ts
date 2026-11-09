@@ -120,7 +120,9 @@ export interface StaticExtensionManifest {
     models?: { purpose: string }[];
     storage?: boolean;
     network?: string[];
-    ui?: { views?: string[]; embeds?: string[] };
+    /** Client code: a browser bundle that runs in members' browsers. */
+    client?: boolean;
+    ui?: { views?: string[]; embeds?: string[]; components?: string[] };
   };
   config?: { deployment: { key: string }[]; org: { key: string }[] };
 }
@@ -1543,7 +1545,11 @@ export function declaredPermissions(
     },
     { category: "models", items: (p.models ?? []).map((x) => x.purpose) },
     { category: "network", items: p.network ?? [] },
-    { category: "ui", items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? [])] },
+    {
+      category: "ui",
+      items: [...(p.ui?.views ?? []), ...(p.ui?.embeds ?? []), ...(p.ui?.components ?? [])],
+    },
+    { category: "client", items: p.client === true ? ["client"] : [] },
   ];
   return groups.filter((g) => g.items.length > 0);
 }

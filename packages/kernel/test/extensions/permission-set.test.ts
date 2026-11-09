@@ -119,7 +119,8 @@ describe("computePermissionSet", () => {
         hooks: [],
         models: [{ purpose: "perm-demo.sum", kind: "chat" }],
         network: ["a.example.com", "b.example.com"],
-        ui: { views: [], embeds: [] },
+        client: false,
+        ui: { views: [], embeds: [], components: [] },
       },
     });
     expect(permissionKeys(set)).toEqual(
