@@ -29,7 +29,12 @@ import {
 import { UI_SLOT_SPECS } from "../../lib/ui-slots.generated";
 import type { RunState } from "../client-ext/run-state";
 import { BlockBoundary } from "../conversation/BlockBoundary";
-import { ClientComponentBlock, useSlotHasClientCode } from "./ClientComponentBlock";
+import {
+  ClientComponentBlock,
+  useClientComponent,
+  useReadyContributions,
+  useSlotHasClientCode,
+} from "./ClientComponentBlock";
 import { EmbedTab } from "./EmbedTab";
 import {
   type BlockContext,
@@ -136,7 +141,8 @@ const NONE: UiContributionItem[] = [];
 /**
  * The org's contributions of one slot, in the kernel's (arranged) order. A failed read (not read
  * again on mount) lists none; `pending` while the first read is on its way. `enabled` false: no
- * read, none listed (the shell slots read only when the document has client code for them).
+ * read, only what the cache holds (the shell slots read only when the document has client code
+ * for them; the layout prefetches the winners then, spec §6.3).
  */
 export function useSlotContributions(
   orgId: string,
@@ -145,7 +151,7 @@ export function useSlotContributions(
 ): { items: UiContributionItem[]; pending: boolean } {
   const q = contributionsQuery(orgId);
   const r = useQuery({ ...q, enabled, retryOnMount: retryOnMountOf(q.queryKey) });
-  const all = enabled ? r.data : undefined;
+  const all = r.data;
   const items = useMemo(() => (all ? all.filter((c) => c.slot === slot) : NONE), [all, slot]);
   return { items, pending: enabled && all === undefined && r.error === null };
 }
@@ -233,7 +239,8 @@ export function ExtensionSlot<S extends UiSlotId>(props: SlotProps<S>): ReactNod
 function OverlaySlot({ args }: { args: SlotArgs["shell.overlay"] }) {
   const code = useSlotHasClientCode("shell.overlay");
   const { items } = useSlotContributions(args.orgId, "shell.overlay", code);
-  const shown = items.filter((c) => c.kind === "component").slice(0, 4);
+  // no layer until a component is ready (loading or broken overlays draw nothing)
+  const shown = useReadyContributions(items.filter((c) => c.kind === "component").slice(0, 4));
   if (shown.length === 0) return null;
   return (
     <DecorationLayer>
@@ -254,6 +261,55 @@ const NO_PROPS: Record<string, unknown> = {};
 
 type Select = { plugin: string; id: string } | undefined;
 
+/**
+ * A component's right panel: the host always draws the panel (the manifest title, the switcher,
+ * close), with the loading state while the module loads and the failure line when it is not
+ * there (failed, off); the component, in its own block, once ready.
+ */
+function ComponentPanel({
+  c,
+  title,
+  args,
+  host,
+}: {
+  c: UiContributionItem;
+  title: string;
+  args: SlotArgs["conversation.panel"];
+  host: SlotHost["conversation.panel"];
+}) {
+  const found = useClientComponent(c);
+  return (
+    <RightPanel
+      title={title}
+      {...(host.switcher ? { switcher: host.switcher } : {})}
+      onClose={host.onClose}
+      {...(found.status === "ready" ? { onFullscreen: host.onFullscreen } : {})}
+      body="pad"
+      {...(found.status === "loading"
+        ? { state: "loading" as const }
+        : found.status === "none"
+          ? { state: "failed" as const }
+          : {})}
+    >
+      {found.status === "ready" ? (
+        <ClientComponentBlock
+          c={c}
+          args={{
+            orgId: args.orgId,
+            conversationId: args.conversationId,
+            ...(args.item !== undefined && { item: args.item }),
+          }}
+          hostProps={{
+            conversationId: args.conversationId,
+            ...(args.item !== undefined && { item: args.item }),
+            close: host.onClose,
+          }}
+        />
+      ) : null}
+    </RightPanel>
+  );
+}
+
 function PanelSlot({
   args,
   select,
@@ -268,32 +324,13 @@ function PanelSlot({
   const c = items.find((x) => matches(x, select));
   if (!c) return null;
   if (c.kind === "component") {
-    const title = c.title[uiLocale(locale)];
     return (
-      <ClientComponentBlock
+      <ComponentPanel
         key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
         c={c}
-        args={{
-          orgId: args.orgId,
-          conversationId: args.conversationId,
-          ...(args.item !== undefined && { item: args.item }),
-        }}
-        hostProps={{
-          conversationId: args.conversationId,
-          ...(args.item !== undefined && { item: args.item }),
-          close: host.onClose,
-        }}
-        frame={(block) => (
-          <RightPanel
-            title={title}
-            {...(host.switcher ? { switcher: host.switcher } : {})}
-            onClose={host.onClose}
-            onFullscreen={host.onFullscreen}
-            body="pad"
-          >
-            {block}
-          </RightPanel>
-        )}
+        title={c.title[uiLocale(locale)]}
+        args={args}
+        host={host}
       />
     );
   }

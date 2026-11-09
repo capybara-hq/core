@@ -20,13 +20,18 @@ describe("ReplaceableFrame", () => {
     );
     const frame = container.firstElementChild as HTMLElement;
     expect(frame.getAttribute("data-pending")).toBe("true");
-    expect(frame.getAttribute("aria-hidden")).toBe("true");
-    expect(frame.hasAttribute("inert")).toBe(true);
+    // visibility alone takes it out of focus and the accessibility tree (inert / aria-hidden
+    // would outlast the CSS reveal)
+    expect(frame.hasAttribute("aria-hidden")).toBe(false);
+    expect(frame.hasAttribute("inert")).toBe(false);
     // the children stay mounted (layout kept); the frame hides them with visibility, never display
     expect(frame.textContent).toBe("built-in");
     const hidden = rule('.cb-replaceable[data-pending="true"]');
     expect(hidden).toContain("visibility: hidden");
     expect(hidden).not.toContain("display");
+    // revealed by CSS alone after 1 500 ms (no scripts needed)
+    expect(hidden).toMatch(/animation: cb-replaceable-reveal 0s linear 1500ms forwards/);
+    expect(SHELL_CSS).toMatch(/@keyframes cb-replaceable-reveal \{\s*to \{\s*visibility: visible;/);
     rerender(
       <ReplaceableFrame pending={false}>
         <p>built-in</p>

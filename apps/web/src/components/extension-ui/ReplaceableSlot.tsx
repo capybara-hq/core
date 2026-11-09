@@ -16,7 +16,7 @@ import { useSlotContributions } from "./ExtensionSlot";
 /** `CLIENT_LIMITS.pendingMs`: how long a loading winner may keep the built-in hidden. */
 export const REPLACEABLE_PENDING_MS = 1500;
 
-/** The composer's text field: it must be in the document after a composer frame commits. */
+/** The composer's text field: it must stay inside the composer frame slot. */
 const COMPOSER_TEXTAREA = '[data-cap-part~="composer"] textarea';
 
 /** The single slots a contribution may take instead of the built-in (spec §6.2). */
@@ -26,16 +26,32 @@ export type ReplaceableSlotId =
   | "conversation.composer.frame";
 
 /**
- * Throws once the composer frame committed without the composer's textarea in the document: the
- * winner dropped its `children`, and the boundary around it falls back to the built-in (spec §5.3:
- * the composer must always be usable).
+ * Throws once the composer's textarea is no longer inside the slot (`scope`, the slot's frame):
+ * checked after every commit of the slot and on every DOM change inside it, so a winner that drops
+ * its `children` on its own re-render is caught too. The boundary around the winner then falls
+ * back to the built-in (spec §5.3: the composer must always be usable).
  */
-function ComposerCheck() {
+function ComposerGuard({ scope }: { scope: HTMLDivElement | null }) {
   const [missing, setMissing] = useState(false);
+  // `scope` arrives after the frame's first commit (a parent's ref is set after its children's
+  // layout effects), so both checks run again once it is there
+  const lost = useCallback(
+    () => scope !== null && scope.querySelector(COMPOSER_TEXTAREA) === null,
+    [scope],
+  );
   // every commit of the slot: the winner's DOM is in place before layout effects run
   useLayoutEffect(() => {
-    if (!missing && document.querySelector(COMPOSER_TEXTAREA) === null) setMissing(true);
+    if (!missing && lost()) setMissing(true);
   });
+  // the winner's own re-renders: watch the slot's subtree
+  useLayoutEffect(() => {
+    if (scope === null || typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => {
+      if (lost()) setMissing(true);
+    });
+    observer.observe(scope, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [scope, lost]);
   if (missing) {
     throw new Error("the composer frame did not render the composer (its children)");
   }
@@ -49,7 +65,9 @@ function ComposerCheck() {
  * so hydration never mismatches), and when the winner fails to load, is off or lacks the component.
  * While the winner's module loads (or, with client code for the slot, the read naming the winner)
  * the built-in is hidden in a `ReplaceableFrame` (its layout kept) for at most 1 500 ms, then
- * shown until the module arrives. A winner that throws, or a composer
+ * shown until the module arrives. When the layout prefetched a winner the document's set delivers,
+ * the server render is already pending; the frame's CSS reveals the built-in after 1 500 ms even
+ * without scripts. A winner that throws, or a composer
  * frame that drops the composer, falls back to the built-in for this mount, reported once (and
  * counted against the plugin's crash budget). The winner gets `builtin`, `extra` and the base
  * props.
@@ -70,6 +88,7 @@ export function ReplaceableSlot({
   const winner = items.find((c) => c.kind === "component");
   const found = useClientComponent(winner);
   const controls = useClientHostControls();
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
   // The winner's module, or the read naming the winner, is on its way.
   const loading = found.status === "loading" || (code && pending);
   const [waited, setWaited] = useState(false);
@@ -91,7 +110,7 @@ export function ReplaceableSlot({
     return <ReplaceableFrame pending={loading && !waited}>{builtin}</ReplaceableFrame>;
   }
   return (
-    <ReplaceableFrame pending={false}>
+    <ReplaceableFrame pending={false} ref={setFrame}>
       <ClientBoundary key={uiKey(winner.plugin, winner.id)} fallback={builtin} onError={onError}>
         <ComponentHost
           c={winner}
@@ -99,7 +118,7 @@ export function ReplaceableSlot({
           render={found.render}
           hostProps={{ ...extra, builtin }}
         />
-        {slot === "conversation.composer.frame" ? <ComposerCheck /> : null}
+        {slot === "conversation.composer.frame" ? <ComposerGuard scope={frame} /> : null}
       </ClientBoundary>
     </ReplaceableFrame>
   );

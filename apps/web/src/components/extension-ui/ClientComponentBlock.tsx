@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ClientExtensionItem } from "../../lib/client-extensions";
 import type { FormAnswer } from "../../lib/conversations";
 import { useAppMutation } from "../../lib/query/mutation";
 import { postUiAction, type UiContributionItem, type UiView, uiKey, uiLocale } from "../../lib/ui";
@@ -52,24 +53,67 @@ export type ComponentLookup =
 const LOADING: ComponentLookup = { status: "loading" };
 const NONE: ComponentLookup = { status: "none" };
 
+type ComponentRef = Pick<UiContributionItem, "plugin" | "id" | "slot" | "kind">;
+
+/** Whether the document's client set delivers this component (an entry listing it, same slot). */
+const delivered = (item: ClientExtensionItem | undefined, c: ComponentRef): boolean =>
+  item !== undefined &&
+  item.entry !== null &&
+  item.components.some((x) => x.id === c.id && x.slot === c.slot);
+
 /**
  * Looks a `component` contribution up in the client registry (spec §11): `ready` once its plugin's
  * entry loaded and activated a component of that id bound to the same slot; `loading` while the
- * entry loads; `none` otherwise (safe mode and the kill switch leave the registry empty; a failed
- * or session-disabled plugin is `failed` / `disabled`).
+ * entry loads, and before the host starts loading (the server render and the first client render)
+ * when the document's set delivers it; `none` otherwise (safe mode and the kill switch leave the
+ * set and the registry empty; a failed or session-disabled plugin is `failed` / `disabled`).
  */
-export function useClientComponent(
-  c: Pick<UiContributionItem, "plugin" | "id" | "slot" | "kind"> | undefined,
-): ComponentLookup {
+export function useClientComponent(c: ComponentRef | undefined): ComponentLookup {
   const registry = useClientRegistry();
+  const controls = useClientHostControls();
   if (c === undefined || c.kind !== "component") return NONE;
   const entry = registry[c.plugin];
-  if (entry?.status === "loading") return LOADING;
+  if (entry === undefined) return delivered(controls.item(c.plugin), c) ? LOADING : NONE;
+  if (entry.status === "loading") return LOADING;
   if (entry?.status !== "ready") return NONE;
   const comp = entry.definition?.components?.[c.id];
   return comp !== undefined && comp.slot === c.slot
     ? { status: "ready", render: comp.render }
     : NONE;
+}
+
+/**
+ * The contributions a page may offer (a title-bar entry, a list): views and embeds, and components
+ * the document's client set delivers and that are not off (safe mode, the kill switch, a withdrawn
+ * plugin or a spent crash budget offer none). A component whose load failed is still offered: it
+ * shows its failure line.
+ */
+export function useOfferedContributions(items: UiContributionItem[]): UiContributionItem[] {
+  const registry = useClientRegistry();
+  const controls = useClientHostControls();
+  return useMemo(
+    () =>
+      items.filter(
+        (c) =>
+          c.kind !== "component" ||
+          (delivered(controls.item(c.plugin), c) && registry[c.plugin]?.status !== "disabled"),
+      ),
+    [items, registry, controls],
+  );
+}
+
+/** The `component` contributions whose client component is ready (registered and active). */
+export function useReadyContributions(items: UiContributionItem[]): UiContributionItem[] {
+  const registry = useClientRegistry();
+  return useMemo(
+    () =>
+      items.filter((c) => {
+        const entry = registry[c.plugin];
+        const comp = entry?.status === "ready" ? entry.definition?.components?.[c.id] : undefined;
+        return c.kind === "component" && comp !== undefined && comp.slot === c.slot;
+      }),
+    [items, registry],
+  );
 }
 
 /**

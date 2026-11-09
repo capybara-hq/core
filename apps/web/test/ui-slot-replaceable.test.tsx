@@ -6,7 +6,8 @@ import { DesignProvider, type LinkComponent, ToastProvider } from "@capybara-hq/
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import type { ComponentType, ReactNode } from "react";
+import { type ComponentType, type ReactNode, useEffect, useState } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { ClientHost } from "../src/components/client-ext/ClientHost";
@@ -300,6 +301,78 @@ describe("ReplaceableSlot", () => {
     ]);
   });
 
+  it("a composer frame that drops children through its own state falls back", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const composer = (
+      <div data-cap-part="composer">
+        <textarea aria-label="Message" />
+      </div>
+    );
+    let hide: () => void = () => {};
+    const Toggle = ({ children }: { children: ReactNode }) => {
+      const [open, setOpen] = useState(true);
+      useEffect(() => {
+        hide = () => setOpen(false);
+      }, []);
+      return <div data-testid="frame">{open ? children : <i>hud only</i>}</div>;
+    };
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({
+        frame: { slot: "conversation.composer.frame", render: Toggle as ComponentType<never> },
+      }),
+    );
+    renderSlot(
+      [winner("frame", "conversation.composer.frame")],
+      setOf([{ id: "frame", slot: "conversation.composer.frame" }]),
+      <ExtensionSlot
+        slot="conversation.composer.frame"
+        args={{ orgId: "o1" }}
+        host={{ builtin: composer, children: composer, conversationId: null, runState: "idle" }}
+      />,
+    );
+    await flush();
+    expect(screen.getByTestId("frame")).toBeTruthy();
+    // the winner hides the composer on its own re-render (the slot does not re-render)
+    act(() => hide());
+    await flush();
+    expect(screen.queryByTestId("frame")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+    expect(reports()).toEqual([
+      expect.objectContaining({ plugin: "fake-client", contribution: "frame", kind: "render" }),
+    ]);
+  });
+
+  it("the composer check looks only inside its slot", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const composer = (
+      <div data-cap-part="composer">
+        <textarea aria-label="Message" />
+      </div>
+    );
+    const Drop = () => <div data-testid="frame">no composer here</div>;
+    ClientHost.load = vi.fn(async () =>
+      moduleOf({ frame: { slot: "conversation.composer.frame", render: Drop } }),
+    );
+    renderSlot(
+      [winner("frame", "conversation.composer.frame")],
+      setOf([{ id: "frame", slot: "conversation.composer.frame" }]),
+      <>
+        {/* another composer elsewhere on the page does not satisfy the slot's check */}
+        <div data-cap-part="composer">
+          <textarea aria-label="Elsewhere" />
+        </div>
+        <ExtensionSlot
+          slot="conversation.composer.frame"
+          args={{ orgId: "o1" }}
+          host={{ builtin: composer, children: composer, conversationId: null, runState: "idle" }}
+        />
+      </>,
+    );
+    await flush();
+    expect(screen.queryByTestId("frame")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Message" })).toBeTruthy();
+  });
+
   it("a composer frame that renders its children stays", async () => {
     const composer = (
       <div data-cap-part="composer">
@@ -383,6 +456,33 @@ describe("ReplaceableSlot", () => {
     expect(composers[0]?.getAttribute("data-frame")).toBeNull();
   });
 
+  it("the server render of a slot whose winner is listed is pending", () => {
+    ClientHost.load = vi.fn(() => new Promise<unknown>(() => {}));
+    const client = testQueryClient();
+    client.setQueryData(contributionsQuery("o1").queryKey, [winner("brand", "shell.brand")]);
+    client.setQueryData(meQuery().queryKey, ME);
+    const html = renderToString(
+      pageElement(
+        <ClientHost set={BRAND_SET} safe={false} scope="org" orgId="o1">
+          {brandSlot()}
+        </ClientHost>,
+        { client },
+      ),
+    );
+    expect(html).toMatch(/data-part="replaceable-frame" data-pending="true"/);
+    expect(html).toContain("CAPYBARA");
+    // safe mode: the built-in, not pending
+    const safe = renderToString(
+      pageElement(
+        <ClientHost set={BRAND_SET} safe scope="org" orgId="o1">
+          {brandSlot()}
+        </ClientHost>,
+        { client },
+      ),
+    );
+    expect(safe).not.toContain('data-pending="true"');
+  });
+
   it("safe mode renders the built-in", async () => {
     ClientHost.load = vi.fn(async () =>
       moduleOf({ brand: { slot: "shell.brand", render: () => <span>NEON</span> } }),
@@ -418,7 +518,7 @@ describe("shell slots in AppFrame", () => {
     <span data-testid="fake-client-brand">{builtin}</span>
   );
 
-  function renderFrameAt(path: string) {
+  function renderFrameAt(path: string, load?: () => Promise<unknown>) {
     resetNavigation(path);
     window.history.replaceState(null, "", path);
     const client = shellClient(shellOf(ME));
@@ -426,11 +526,13 @@ describe("shell slots in AppFrame", () => {
       winner("fx", "shell.overlay"),
       winner("brand", "shell.brand"),
     ]);
-    ClientHost.load = vi.fn(async () =>
-      moduleOf({
-        fx: { slot: "shell.overlay", render: Fx },
-        brand: { slot: "shell.brand", render: Brand as ComponentType<never> },
-      }),
+    ClientHost.load = vi.fn(
+      load ??
+        (async () =>
+          moduleOf({
+            fx: { slot: "shell.overlay", render: Fx },
+            brand: { slot: "shell.brand", render: Brand as ComponentType<never> },
+          })),
     );
     return render(
       <QueryClientProvider client={client}>
@@ -458,6 +560,23 @@ describe("shell slots in AppFrame", () => {
     expect(layer?.querySelector('[data-testid="fx"]')).not.toBeNull();
     const row = document.querySelector('[data-cap-part="sidebar.brand"]');
     expect(row?.querySelector('[data-testid="fake-client-brand"]')).not.toBeNull();
+  });
+
+  it("the overlay draws no layer until one of its components is ready", async () => {
+    let resolve: (m: unknown) => void = () => {};
+    renderFrameAt("/agents", () => new Promise<unknown>((r) => (resolve = r)));
+    await flush();
+    expect(document.querySelector('[data-part="decoration-layer"]')).toBeNull();
+    resolve(
+      moduleOf({
+        fx: { slot: "shell.overlay", render: Fx },
+        brand: { slot: "shell.brand", render: Brand as ComponentType<never> },
+      }),
+    );
+    await flush();
+    expect(
+      document.querySelector('[data-part="decoration-layer"] [data-testid="fx"]'),
+    ).not.toBeNull();
   });
 
   it("the overlay is not rendered on admin pages", async () => {

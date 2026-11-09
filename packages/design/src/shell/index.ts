@@ -17,6 +17,7 @@ export {
   type SetupStep,
   Sidebar,
   type SidebarActivity,
+  type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversation,
   type SidebarConversations,

@@ -61,11 +61,51 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     expect(row().querySelector(".cb-logo")).not.toBeNull();
     rerender(
       <DesignProvider locale="zh">
-        <Sidebar {...sidebarProps({ brand: <b data-testid="mine">MINE</b> })} />
+        <Sidebar {...sidebarProps({ brand: () => <b data-testid="mine">MINE</b> })} />
       </DesignProvider>,
     );
     expect(row().querySelector(".cb-logo")).toBeNull();
     expect(screen.getByTestId("mine").closest('[data-cap-part="sidebar.brand"]')).toBe(row());
+  });
+
+  it("Sidebar calls brand once per drawn panel with that panel's variant", () => {
+    const seen: string[] = [];
+    const brand = (v: { collapsed: boolean; panel: string }) => {
+      seen.push(`${v.panel}:${v.collapsed}`);
+      return <b data-testid={`brand-${v.panel}`}>{v.collapsed ? "C" : "CAPY"}</b>;
+    };
+    const { unmount } = render(
+      <DesignProvider locale="zh">
+        <Sidebar {...sidebarProps({ brand, mode: "rail" })} />
+      </DesignProvider>,
+    );
+    expect(screen.getByTestId("brand-rail").textContent).toBe("C");
+    expect(screen.queryByTestId("brand-full")).toBeNull();
+    unmount();
+    seen.length = 0;
+    render(
+      <DesignProvider locale="zh">
+        <Sidebar {...sidebarProps({ brand, mode: "full" })} />
+      </DesignProvider>,
+    );
+    expect(screen.getByTestId("brand-full").textContent).toBe("CAPY");
+    expect(new Set(seen)).toEqual(new Set(["full:false"]));
+  });
+
+  it("Sidebar's drawer draws brand uncollapsed", () => {
+    const brand = (v: { collapsed: boolean; panel: string }) => (
+      <b data-testid={`brand-${v.panel}`}>{String(v.collapsed)}</b>
+    );
+    render(
+      <DesignProvider locale="zh">
+        <Sidebar
+          {...sidebarProps({ brand, mode: "rail", drawer: { open: true, onOpenChange: () => {} } })}
+          drawerInline
+        />
+      </DesignProvider>,
+    );
+    expect(screen.getByTestId("brand-rail").textContent).toBe("true");
+    expect(screen.getByTestId("brand-drawer").textContent).toBe("false");
   });
 
   it("AppShell renders capState as data-cap-state on the shell element", () => {

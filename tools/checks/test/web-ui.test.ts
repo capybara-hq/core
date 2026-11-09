@@ -125,6 +125,7 @@ describe("checkWebUi", () => {
     expect(f.map((x) => [x.rule, x.line])).toEqual([
       ["web-ui-extension-slot", 8],
       ["web-ui-extension-slot", 9],
+      ["web-ui-extension-slot", 10],
     ]);
   });
   it("blocks inside extension-ui and a locally declared name pass", () =>

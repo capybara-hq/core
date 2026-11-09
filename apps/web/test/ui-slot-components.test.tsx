@@ -6,16 +6,19 @@ import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ClientHost } from "../src/components/client-ext/ClientHost";
 import { PLUGIN_CLIENT, type ViewState } from "../src/components/client-ext/host-api";
+import { useOfferedContributions } from "../src/components/extension-ui/ClientComponentBlock";
 import { ExtensionSlot } from "../src/components/extension-ui/ExtensionSlot";
 import type { ClientExtensionItem, ClientExtensionsResponse } from "../src/lib/client-extensions";
 import { contributionsQuery } from "../src/lib/query/conversation";
 import { meQuery } from "../src/lib/query/shell";
 import type { UiContributionItem, UiSlotId } from "../src/lib/ui";
 import { bodyOf, type Call, json, noContent, stubApi } from "./support/api";
+import { CONV, FakeEventSource, renderChatRoute, userMsg } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
 import { ME, renderPage, testQueryClient } from "./support/render";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
+vi.mock("next/navigation", () => ({ useParams: () => ({ conversationId: "c1" }) }));
 
 const BUILD = "b".repeat(64);
 const ORG = "/api/v1/orgs/o1";
@@ -228,6 +231,96 @@ describe("ClientComponentBlock", () => {
     await flush();
     act(() => screen.getByRole("button", { name: "close c1" }).click());
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  const panelSlot = (onClose: () => void) => (
+    <ExtensionSlot
+      slot="conversation.panel"
+      args={{ orgId: "o1", conversationId: "c1" }}
+      select={{ plugin: "fake-client", id: "board" }}
+      host={{ onClose, onFullscreen: () => {}, onOpenTarget: () => {} }}
+    />
+  );
+
+  it("a loading component panel draws its frame: title, close and the loading state", async () => {
+    ClientHost.load = vi.fn(() => new Promise<unknown>(() => {}));
+    const onClose = vi.fn();
+    renderWithHost(
+      [component("board", "conversation.panel")],
+      setOf([{ id: "board", slot: "conversation.panel" }]),
+      panelSlot(onClose),
+    );
+    await flush();
+    const panel = screen.getByRole("complementary", { name: "BOARD" });
+    expect(panel.querySelector('[data-part="skeleton-bar"]')).not.toBeNull();
+    act(() => within(panel).getByRole("button", { name: /close/i }).click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("a component panel whose load failed shows the failure line in its frame", async () => {
+    ClientHost.load = vi.fn(async () => {
+      throw new Error("integrity mismatch");
+    });
+    const onClose = vi.fn();
+    renderWithHost(
+      [component("board", "conversation.panel")],
+      setOf([{ id: "board", slot: "conversation.panel" }]),
+      panelSlot(onClose),
+    );
+    await flush();
+    const panel = screen.getByRole("complementary", { name: "BOARD" });
+    expect(within(panel).getByRole("alert").textContent).toContain("BOARD");
+    act(() => within(panel).getByRole("button", { name: /close/i }).click());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("safe mode and the kill switch offer no component panel", async () => {
+    ClientHost.load = vi.fn(() => new Promise<unknown>(() => {}));
+    const view: UiContributionItem = { ...component("v", "conversation.panel"), kind: "view" };
+    const items = [component("board", "conversation.panel"), view];
+    const Probe = () => (
+      <output data-testid="offered">
+        {useOfferedContributions(items)
+          .map((c) => c.id)
+          .join(",")}
+      </output>
+    );
+    const set = setOf([{ id: "board", slot: "conversation.panel" }]);
+    const offered = async (s: ClientExtensionsResponse, safe: boolean) => {
+      const r = renderWithHost(items, s, <Probe />, safe);
+      await flush();
+      const text = screen.getByTestId("offered").textContent;
+      r.unmount();
+      return text;
+    };
+    expect(await offered(set, false)).toBe("board,v");
+    expect(await offered(set, true)).toBe("v");
+    expect(await offered({ enabled: false, apiVersion: 1, items: [] }, false)).toBe("v");
+  });
+
+  it("without client code a component panel has no title-bar button", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const BASE = `${ORG}/conversations/c1`;
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, CONV("c1")),
+      [`GET ${BASE}/events`]: () => json(200, { events: [userMsg(1, "in c1")] }),
+      [`GET ${BASE}/queue`]: () => json(200, { items: [], paused: false }),
+      [`GET ${BASE}/files`]: () => json(200, { files: [], next: null }),
+      [`GET ${BASE}/environment`]: () => json(200, { environment: null }),
+      [`GET ${ORG}/ui/contributions`]: () =>
+        json(200, {
+          items: [
+            component("board", "conversation.panel"),
+            { ...component("tasks", "conversation.panel"), plugin: "todo", kind: "view" },
+          ],
+        }),
+    });
+    await renderChatRoute();
+    await screen.findByText("in c1");
+    const bar = document.querySelector('[data-part="title-bar"]') as HTMLElement;
+    expect(within(bar).getByRole("button", { name: "TASKS" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: "BOARD" })).toBeNull();
+    FakeEventSource.instances = [];
   });
 
   it("safe mode skips components in list slots", async () => {

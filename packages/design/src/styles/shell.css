@@ -711,6 +711,14 @@ a.cb-stat-card:focus-visible {
 }
 .cb-replaceable[data-pending="true"] {
   visibility: hidden;
+  /* revealed after CLIENT_LIMITS.pendingMs by CSS alone (no scripts needed); a discrete step, so
+     reduced motion reveals the same way, without a transition */
+  animation: cb-replaceable-reveal 0s linear 1500ms forwards;
+}
+@keyframes cb-replaceable-reveal {
+  to {
+    visibility: visible;
+  }
 }
 
 /* Safe mode banner (spec §9.6): one hairline-ruled row above the page. */

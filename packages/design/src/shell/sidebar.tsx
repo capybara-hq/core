@@ -109,13 +109,17 @@ export type SidebarContext =
       adminHref?: string;
     };
 
+/** The panel a `brand` is drawn in: the full sidebar, the rail (collapsed) or the drawer. */
+export type SidebarBrandVariant = { collapsed: boolean; panel: "full" | "rail" | "drawer" };
+
 export type SidebarProps = {
   context: SidebarContext;
   /**
-   * Drawn in the brand row instead of the Logo (a plugin's `shell.brand` contribution); the row
-   * keeps its size and `data-cap-part="sidebar.brand"`.
+   * Drawn in the brand row instead of the Logo (a plugin's `shell.brand` contribution), called once
+   * per drawn panel with that panel's variant (`collapsed` in the rail); the row keeps its size and
+   * `data-cap-part="sidebar.brand"`.
    */
-  brand?: ReactNode;
+  brand?: (v: SidebarBrandVariant) => ReactNode;
   /** The "New conversation" item of the work context (label from design i18n). */
   newConversation?: { href: string };
   /**
@@ -306,7 +310,14 @@ function SidebarPanel({
       data-responsive={responsive ? "true" : undefined}
     >
       <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
-        {p.brand ?? <Logo scale={2} wordmark={!rail} />}
+        {p.brand ? (
+          p.brand({
+            collapsed: rail,
+            panel: rail ? "rail" : variant === "panel" ? "drawer" : "full",
+          })
+        ) : (
+          <Logo scale={2} wordmark={!rail} />
+        )}
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
