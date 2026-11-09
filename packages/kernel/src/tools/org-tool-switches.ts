@@ -62,7 +62,7 @@ export class OrgToolSwitches {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(ExtensionHost) private readonly host: Pick<ExtensionHost, "tools">,
+    @Inject(ExtensionHost) private readonly host: Pick<ExtensionHost, "tools" | "current">,
     /** The org row lock: re-checks `org.extensions.manage` under the lock. */
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockAndAuthorize">,
   ) {}
@@ -85,14 +85,14 @@ export class OrgToolSwitches {
 
   /**
    * The tools of an extension the org sees: running here and visible under plugin scope, else 404
-   * `extension.not_found` (an invisible one is answered like an unknown one).
+   * `extension.not_found` (an invisible one is answered like an unknown one). An extension that
+   * runs but registers no tools (a channel, a model provider) answers an empty list, not 404.
    */
   private async toolsFor(orgId: string, plugin: string): Promise<string[]> {
-    const tools = this.registered(plugin);
-    if (tools.length === 0 || !(await extensionVisibleTo(this.db, orgId, plugin))) {
+    if (!this.host.current(plugin) || !(await extensionVisibleTo(this.db, orgId, plugin))) {
       throw new ApiError("extension.not_found", `Extension ${plugin} is not installed`);
     }
-    return tools;
+    return this.registered(plugin);
   }
 
   /** The stored switches of the org (all extensions, or one), `false` ones only matter. */
