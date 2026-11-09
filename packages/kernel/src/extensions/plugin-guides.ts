@@ -91,6 +91,8 @@ export interface RenderedSetupGuide {
   version: string;
   id: string;
   place: SetupGuidePlace;
+  /** The connector template a `connector-template` guide is for; null for other places. */
+  template: string | null;
   /** The document rendered (zh falls back to en). */
   locale: "en" | "zh";
   title: string;
@@ -735,6 +737,7 @@ export class PluginGuides {
       version: row.latest_version,
       id: guide.id,
       place: guide.place,
+      template: guide.template ?? null,
       locale: docs.locale,
       title: doc.title,
       modes: doc.modes,

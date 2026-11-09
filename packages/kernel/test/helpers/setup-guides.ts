@@ -81,11 +81,14 @@ export const FAKE_IM_CHECKS_GUIDE = [
 
 /**
  * Seeds the catalog item `fake-im` (scope all) whose latest version has the guide `fake-im-app`
- * ({@link FAKE_IM_CHECKS_GUIDE}); returns the item id.
+ * (`doc`, default {@link FAKE_IM_CHECKS_GUIDE}); returns the item id.
  */
-export async function seedFakeImGuideItem(db: KernelSchemaDb): Promise<string> {
+export async function seedFakeImGuideItem(
+  db: KernelSchemaDb,
+  doc: string = FAKE_IM_CHECKS_GUIDE,
+): Promise<string> {
   const itemId = randomUUID();
-  const files = await seedGuideFiles(db, { "guides/fake-im-app.md": FAKE_IM_CHECKS_GUIDE });
+  const files = await seedGuideFiles(db, { "guides/fake-im-app.md": doc });
   await db
     .insertInto("catalog_items")
     .values({

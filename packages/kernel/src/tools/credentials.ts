@@ -13,6 +13,7 @@ import { KERNEL_LOGGER, KEYRING, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { oauthHttpOptions } from "./oauth/discovery.js";
 import {
+  basicClientAuth,
   type OAuthClientRecord,
   OAuthReconnectRequired,
   type OAuthStore,
@@ -376,8 +377,11 @@ export class Credentials {
    * For setup checks (setup guides v2 §10.8), never refreshing or writing anything: every stored
    * credential value of a connector (decrypted: the OAuth client secret and DCR registration
    * token, the org credential, every member's access and refresh tokens or static values) that a
-   * check result is redacted by, and the stored OAuth client id (null without a client). Never
-   * echo the values; a plugin check gets only a manual client's id.
+   * check result is redacted by, with the forms they are sent in (what `injectionSecrets` covers
+   * for a tool call: the Basic header value, its base64 token and decoded `user:pass`, the
+   * `encodeURIComponent` forms; for the client also the `client_secret_basic` header the token
+   * request sends and the raw `id:secret`), and the stored OAuth client id (null without a
+   * client). Never echo the values; a plugin check gets only a manual client's id.
    */
   async checkMaterial(
     orgId: string,
@@ -391,9 +395,19 @@ export class Credentials {
       .where("org_id", "=", orgId)
       .where(sql<string>`left(key, ${prefix.length})`, "=", prefix)
       .execute();
-    const secrets: string[] = [];
+    const secrets = new Set<string>();
     const push = (...vs: unknown[]) => {
-      for (const v of vs) if (typeof v === "string" && v !== "") secrets.push(v);
+      for (const v of vs) {
+        if (typeof v !== "string" || v === "") continue;
+        // the value and the forms an injection carries it in (`Bearer`, query, percent-encoded)
+        for (const s of injectionSecrets({ headers: { a: `Bearer ${v}` }, query: { q: v } })) {
+          secrets.add(s);
+        }
+      }
+    };
+    const pushBasic = (user: string, password: string) => {
+      const header = `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+      for (const s of injectionSecrets({ headers: { a: header } })) secrets.add(s);
     };
     let clientId: string | null = null;
     for (const r of rows) {
@@ -406,14 +420,30 @@ export class Credentials {
           v.clientSecret,
           (v.registration as { accessToken?: unknown } | undefined)?.accessToken,
         );
+        if (typeof v.clientId === "string" && typeof v.clientSecret === "string") {
+          // as the token request sends it (both parts form-encoded), and as typed
+          const header = basicClientAuth(v.clientId, v.clientSecret);
+          for (const s of injectionSecrets({ headers: { a: header } })) secrets.add(s);
+          pushBasic(v.clientId, v.clientSecret);
+        }
       } else if (typeof v.access_token === "string") {
         push(v.access_token, v.refresh_token);
       } else {
         push(v.token, v.password);
-        if (typeof v.headers === "object" && v.headers !== null) push(...Object.values(v.headers));
+        if (typeof v.username === "string" && typeof v.password === "string") {
+          pushBasic(v.username, v.password);
+        }
+        if (typeof v.headers === "object" && v.headers !== null) {
+          const headers = Object.fromEntries(
+            Object.entries(v.headers).filter(
+              (e): e is [string, string] => typeof e[1] === "string",
+            ),
+          );
+          for (const s of injectionSecrets({ headers })) secrets.add(s);
+        }
       }
     }
-    return { secrets, clientId };
+    return { secrets: [...secrets], clientId };
   }
 
   /** 只看与 auth.ownership 对应的那一条凭据是否存在（不解密）；none 恒为 connected。 */

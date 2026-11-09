@@ -1022,11 +1022,11 @@ code **(designer's call on the list)**:
 | Id | Place | ok when |
 |---|---|---|
 | `capybara:public-url` | any | `http.publicUrl` is set (failing: "ask your super admin to set http.publicUrl") |
-| `capybara:webhook-public` | channel-connection (webhook) | `channels.webhookBaseUrl` (or `http.publicUrl`) is set and https |
+| `capybara:webhook-public` | channel-connection (webhook) | `channels.webhookBaseUrl` is set and https (the kernel builds webhook URLs from it only, never from `http.publicUrl`) |
 | `capybara:webhook-received` | channel-connection (webhook) | a webhook request for this connection passed the plugin's signature check within 7 days (needs the marker below); unknown when none yet |
-| `capybara:connection-active` | channel-connection | the connection's `status` is `active` and it has a `bot_user_id`; failing with its `last_error` (already redacted) |
+| `capybara:connection-active` | channel-connection | the connection's `status` is `active`, it has a `bot_user_id` and no `last_error`; `disabled` → failing ("enable it"); `error` or a recorded `last_error` (an active connection retrying) → failing with the `last_error`, redacted again by the connection's secrets over the whole text, cut to 200 characters, and kept only when the result passes validation (control, bidi, separator and lone surrogate rules), else a generic reason; active without a bot identity yet → unknown |
 | `capybara:oauth-client` | connector-template | the connector's manual OAuth client id and secret are both stored |
-| `capybara:connector-tools` | connector-template | the connector has a tool snapshot (some member connected and the tool list was read) |
+| `capybara:connector-tools` | connector-template | the connector has a tool snapshot (some member connected and the tool list was read); unknown before that |
 | `capybara:connector-connected` | connector-template (member) | the viewing member holds a credential for the connector |
 | `capybara:oauth-token-endpoint` | connector-template | the token endpoint authenticates the stored client (below) |
 
@@ -1048,6 +1048,33 @@ rules), 10 s. The answer is read with the OAuth flow's existing refusal parser:
 It never logs the request body, never stores what it receives and is subject to every limit in
 §10.5. Clients from dynamic registration (`client: "dcr"`) answer `unknown` ("Registered
 automatically; nothing to check").
+
+Implementation notes (plan task 11):
+
+- "The token endpoint as the connect flow resolves it" is the stored client record's
+  `tokenEndpoint` (written at install from discovery or the template's `tokenUrl`) with its
+  stored auth method, exactly what the OAuth callback posts the real code to; the redirect URI is
+  the callback URL (`http.publicUrl` + `/api/v1/oauth/callback`; without `http.publicUrl` the
+  probe answers unknown). The fixed PKCE verifier and the client's `resource` are sent as the flow
+  does.
+- The deployment's network rules for the probe are `net.httpsProxy` / `net.noProxy`,
+  `marketplaces.allowPrivateHosts` (the kernel's one list of internal hosts it may reach) and
+  loopback http only under `tools.oauthAllowInsecureLoopback`. A token endpoint on an internal
+  address that the list does not name answers unknown with a fixed text naming the network rules
+  (the connect flow itself is not under these rules yet).
+- Only answers that can carry a refusal (200, 400, 401) are read, at most 64 KiB, and only for
+  the refusal code (`parseTokenRefusal`, the parser `tokenRequest` uses); any other 401 is a
+  refused client. Other bodies are dropped unread.
+- Every kernel check is cached per account (§10.7), the probe included, so it runs once per admin
+  per freshness window, inside each admin's run budget and the org's cap. It does not depend on
+  the account and could be shared per org, but a per-check scope flag is not added: the cost is a
+  handful of token requests per org per five minutes, and keeping every kernel answer per
+  account means no kernel check ever needs a reviewed exception to the "one admin's answer is
+  never another admin's" rule.
+- The kernel's redaction sources for a connector (`Credentials.checkMaterial`) also list the
+  forms the values are sent in, as `injectionSecrets` does for a tool call: `Bearer` / Basic
+  header values, the base64 token, the decoded `user:pass`, the `encodeURIComponent` forms, and
+  for the OAuth client the `client_secret_basic` header the token request sends and `id:secret`.
 
 `capybara:webhook-received` needs one new fact: when the gateway accepts a verified webhook
 (`onWebhook` returned `accept`) it sets the Redis key `capk:channel-webhook-seen:<connectionId>`

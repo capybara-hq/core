@@ -140,6 +140,8 @@ interface Prepared {
   itemId: string;
   version: string;
   place: "channel-connection" | "connector-template";
+  /** The connector template of a `connector-template` guide; null for other places. */
+  template: string | null;
   mode: string | null;
   audience: "admin" | "member";
   target: { kind: "channel-connection" | "connector"; id: string };
@@ -349,6 +351,9 @@ export class SetupChecksService {
     try {
       locked = await this.locks.lease(keys.lock, token, LOCK_TTL_MS);
       if (!locked) return { status: "running" };
+      // a run that finished between the read above and the lock: its answer, not a second call
+      const settled = await this.settledWhileLocking(keys, fingerprint, fresh, body.force === true);
+      if (settled) return settled;
       slot = await this.locks.takeSlot(
         orgSlots,
         token,
@@ -422,6 +427,7 @@ export class SetupChecksService {
       itemId: guide.itemId,
       version: guide.version,
       place: guide.place,
+      template: guide.template,
       mode: guide.mode,
       audience: guide.audience,
       target: { kind: guide.target.kind, id: guide.target.id },
@@ -533,6 +539,29 @@ export class SetupChecksService {
     return createHmac("sha256", this.keyring.deriveKey("setup-check-fingerprint").current)
       .update(JSON.stringify([revision, p.version, ...loaded, p.mode ?? "-"]))
       .digest("hex");
+  }
+
+  /**
+   * After the lock is taken: the cache read again. A fresh result written since the first read
+   * (another run settled in between) is answered as is, with its cooldown when this was a forced
+   * run; null when this run must call the check.
+   */
+  private async settledWhileLocking(
+    keys: CheckKeys,
+    fingerprint: string,
+    seen: CachedResult | null,
+    force: boolean,
+  ): Promise<SetupCheckState | null> {
+    const again = parseCached(await this.redis.get(keys.result));
+    if (again === null || again.fingerprint !== fingerprint) return null;
+    if (force && seen !== null && again.checkedAt === seen.checkedAt) return null;
+    if (!force) return stateOf(again.result, again.checkedAt);
+    const cooldownMs = await this.redis.pttl(keys.cooldown);
+    return stateOf(
+      again.result,
+      again.checkedAt,
+      cooldownMs > 0 ? new Date(Date.now() + cooldownMs).toISOString() : undefined,
+    );
   }
 
   /** Counts one run of the account in its window; false at the limit (nothing counted). */
@@ -669,6 +698,8 @@ export class SetupChecksService {
         connectionConfig: deepFreeze(structuredClone(rt.config)),
       };
     }
+    // a live connector of the org made from the guide's own template, a live platform component
+    if (p.template === null) throw new ApiError("connector.not_found", "Connector not found");
     const row = await this.db
       .selectFrom("connectors as c")
       .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
@@ -677,6 +708,8 @@ export class SetupChecksService {
       .where("c.org_id", "=", p.caller.orgId)
       .where("c.deleted_at", "is", null)
       .where("t.catalog_item_id", "=", p.itemId)
+      .where("t.template_id", "=", p.template)
+      .where("t.deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw new ApiError("connector.not_found", "Connector not found");
     const auth = row.auth as unknown as ConnectorAuth;

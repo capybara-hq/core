@@ -28,6 +28,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import type { KernelLogger } from "../../src/log.js";
 import { packagePath } from "../../src/packages/tgz.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -91,6 +92,8 @@ export async function startOrgEnv(
     marketplaces?: Record<string, unknown>;
     /** Replaces the `tools` config (default `{ timeoutMs: 5_000 }`). */
     tools?: Record<string, unknown>;
+    /** The kernel's logger (default: logs discarded). */
+    logger?: KernelLogger;
   } = {},
 ): Promise<OrgEnv> {
   let pgc: TestContainer | undefined;
@@ -147,10 +150,15 @@ export async function startOrgEnv(
       },
       tools: { timeoutMs: 5_000 },
       http: { port: 0, publicUrl: "https://capybara.example.com" },
-      ...overrides,
+      ...(overrides.packages !== undefined && { packages: overrides.packages }),
+      ...(overrides.marketplaces !== undefined && { marketplaces: overrides.marketplaces }),
+      ...(overrides.tools !== undefined && { tools: overrides.tools }),
     },
   );
-  const k = await startKernel(config, { env: {} });
+  const k = await startKernel(config, {
+    env: {},
+    ...(overrides.logger !== undefined && { logger: overrides.logger }),
+  });
   const accounts = accountsFor(db);
   const rootId = (
     await accounts.createLocal({

@@ -6,9 +6,11 @@ import type {
   Logger,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import type { Redis } from "ioredis";
 import { ApiError, type ErrorCode, errorBody } from "../errors.js";
 import { ExtensionUnloadedError, type InflightEntry } from "../extensions/inflight.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { LockService } from "../infra/lock/lock.service.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import { ChannelConnections } from "./connections.service.js";
 import { ChannelInbound } from "./inbound.js";
 
@@ -30,6 +32,14 @@ export interface ChannelWebhookTimings {
 export const CHANNEL_WEBHOOK_TIMINGS = Symbol("CHANNEL_WEBHOOK_TIMINGS");
 /** Most connections whose runtime is cached in one process. */
 export const WEBHOOK_RUNTIME_CACHE_MAX = 1_000;
+
+/** How long a connection's last accepted webhook is remembered (`capybara:webhook-received`). */
+export const WEBHOOK_SEEN_TTL_SECONDS = 7 * 24 * 3600;
+/** When the gateway last accepted a verified webhook for the connection (ISO time, TTL 7 days). */
+export const webhookSeenKey = (connectionId: string) => `capk:channel-webhook-seen:${connectionId}`;
+/** The minute gate of {@link webhookSeenKey}: the marker is written at most once a minute. */
+const webhookSeenMinuteKey = (connectionId: string, minute: number) =>
+  `capk:channel-webhook-seen-min:${connectionId}:${minute}`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -120,6 +130,10 @@ type Runtime = Awaited<ReturnType<ChannelConnections["runtime"]>>;
  *   for it (`extensionHost.drainSeconds`) before `dispose`; past that the call is aborted → 503
  *   `channel.webhook_retry`.
  * Every response carries {@link WEBHOOK_SECURITY_HEADERS}.
+ * - An accepted `events` result (every event handed to `onEvent`) sets the marker
+ *   {@link webhookSeenKey} (the setup check `capybara:webhook-received`), at most once a minute per
+ *   connection (`LockService.lease`, `SET NX` with a 60 s TTL, on a minute key), in Redis with a TTL, never in PG; a Redis error
+ *   never fails the request.
  *
  * The decrypted runtime (plugin implementation + config) is cached per connection for a few seconds
  * (bounded, process local), so unauthenticated requests stay cheap before the signature check. It is
@@ -142,6 +156,9 @@ export class ChannelWebhooks {
     private readonly connections: Pick<ChannelConnections, "row" | "runtime">,
     @Inject(ChannelInbound) private readonly inbound: Pick<ChannelInbound, "onEvent">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
+    /** The minute gate of the seen marker (`SET NX` with a TTL). */
+    @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set">,
     @Optional() @Inject(CHANNEL_WEBHOOK_TIMINGS) timings: Partial<ChannelWebhookTimings> = {},
   ) {
     this.handleTimeoutMs = timings.handleTimeoutMs ?? WEBHOOK_HANDLE_TIMEOUT_MS;
@@ -165,6 +182,26 @@ export class ChannelWebhooks {
     signal: AbortSignal,
   ): Promise<ChannelWebhookResponse> {
     return secure(await this.respond(connectionId, request, signal));
+  }
+
+  /**
+   * Records that a verified webhook arrived for the connection: the minute gate first (`NX`), then
+   * the marker, both with a TTL. Failures are logged and swallowed (the platform got its ack).
+   */
+  private async markSeen(connectionId: string): Promise<void> {
+    try {
+      const minute = Math.floor(Date.now() / 60_000);
+      if (!(await this.locks.lease(webhookSeenMinuteKey(connectionId, minute), "1", 60_000)))
+        return;
+      await this.redis.set(
+        webhookSeenKey(connectionId),
+        new Date().toISOString(),
+        "EX",
+        WEBHOOK_SEEN_TTL_SECONDS,
+      );
+    } catch (err) {
+      this.log.warn("cannot record the channel webhook marker", { connectionId, err });
+    }
   }
 
   private async runtime(connectionId: string, deadline: AbortSignal): Promise<Runtime> {
@@ -293,6 +330,7 @@ export class ChannelWebhooks {
             return retryLater();
           }
         }
+        await this.markSeen(connectionId);
         return sanitize(result.ack);
       }
     }
