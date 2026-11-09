@@ -40,6 +40,9 @@ import {
 } from "../catalog/org-plugin-uploads.controller.js";
 import { ChannelsModule } from "../channels/channels.module.js";
 import { ChannelConnectionsController } from "../channels/connections.controller.js";
+import { AdminClientController, OrgClientController } from "../client/client.controller.js";
+import { ClientModule } from "../client/client.module.js";
+import { ClientDeliveryController } from "../client/client-delivery.controller.js";
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
@@ -174,6 +177,9 @@ const CONTROLLERS: Type[] = [
   ThemeDeliveryController,
   PlatformThemeController,
   DeviceAuthController,
+  ClientDeliveryController,
+  OrgClientController,
+  AdminClientController,
 ];
 
 /**
@@ -205,6 +211,7 @@ const CONTROLLERS: Type[] = [
     UiModule,
     InboxModule,
     ThemesModule,
+    ClientModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],

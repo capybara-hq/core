@@ -34,6 +34,7 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   orgMarketplaceBrowse: true,
   uiTheme: true,
   uiArrangement: true,
+  clientExtensions: true,
 }).strict();
 
 const ProviderId = ModelProviderParams.shape.provider.describe(
@@ -114,7 +115,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -141,7 +142,7 @@ export class AdminOperations implements OnModuleInit {
             : { ok: false, code: "validation_failed", message: r.error.issues[0]?.message ?? "" };
         },
         summary: async (i) => {
-          const { uiTheme, uiArrangement, ...rest } = i;
+          const { uiTheme, uiArrangement, clientExtensions, ...rest } = i;
           const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
           const zh = [...parts];
           const en = [...parts];
@@ -155,6 +156,24 @@ export class AdminOperations implements OnModuleInit {
             const slots = Object.keys(uiArrangement).join(", ");
             zh.push(`uiArrangement（${slots}）`);
             en.push(`uiArrangement (${slots})`);
+          }
+          if (clientExtensions !== undefined) {
+            const { enabled, disabled } = clientExtensions;
+            if (enabled !== undefined) {
+              zh.push(enabled ? "开启插件界面代码" : "停用全部插件界面代码");
+              en.push(enabled ? "plugin interface code on" : "all plugin interface code stopped");
+            }
+            if (disabled !== undefined) {
+              const list = disabled.length === 0 ? null : disabled.join(", ");
+              zh.push(
+                list === null ? "不再单独停用任何插件的界面代码" : `停用界面代码的插件：${list}`,
+              );
+              en.push(
+                list === null
+                  ? "no plugin's interface code stopped on its own"
+                  : `interface code stopped for: ${list}`,
+              );
+            }
           }
           return {
             zh: `修改平台部署设置：${zh.join("，")}`,

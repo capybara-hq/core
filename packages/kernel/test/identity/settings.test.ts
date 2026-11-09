@@ -5,6 +5,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
+import { readClientExtensions } from "../../src/identity/settings.js";
 import { accountsFor, settingsFor } from "../helpers/identity.js";
 
 let box: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -76,6 +77,7 @@ describe("SettingsService", () => {
       customSkills: "allow",
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
+      clientExtensions: { enabled: true, disabled: [] },
     });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
@@ -170,6 +172,52 @@ describe("SettingsService", () => {
       }
     }
     expect(await db.selectFrom("deployment_settings").selectAll().execute()).toEqual([]);
+  });
+
+  it("clientExtensions: each given field replaces the stored one; disabled is stored sorted once; invalid input is refused", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const s = settingsFor(db);
+    const admin = await accountsFor(db).createLocal({
+      login: "client-kill-admin",
+      password: "correct horse battery",
+      displayName: "K",
+      superAdmin: true,
+    });
+    expect((await s.get()).clientExtensions).toEqual({ enabled: true, disabled: [] });
+    expect(await readClientExtensions(db)).toEqual({ enabled: true, disabled: [] });
+    const r1 = await s.update(
+      { clientExtensions: { disabled: ["b-ext", "a-ext", "b-ext"] } },
+      admin.id,
+    );
+    expect(r1.clientExtensions).toEqual({ enabled: true, disabled: ["a-ext", "b-ext"] });
+    const r2 = await s.update({ clientExtensions: { enabled: false } }, admin.id);
+    expect(r2.clientExtensions).toEqual({ enabled: false, disabled: ["a-ext", "b-ext"] });
+    expect(await readClientExtensions(db)).toEqual({
+      enabled: false,
+      disabled: ["a-ext", "b-ext"],
+    });
+    for (const patch of [
+      { clientExtensions: {} },
+      { clientExtensions: { disabled: ["Not A Name"] } },
+      { clientExtensions: { enabled: "no" } },
+      { clientExtensions: { enabled: true, other: 1 } },
+      { clientExtensions: { disabled: Array.from({ length: 201 }, (_, i) => `ext-${i}`) } },
+    ]) {
+      try {
+        // biome-ignore lint/suspicious/noExplicitAny: invalid on purpose
+        await s.update(patch as any, admin.id);
+        expect.unreachable(JSON.stringify(patch).slice(0, 80));
+      } catch (e) {
+        expect((e as ApiError).code, JSON.stringify(patch).slice(0, 80)).toBe("validation_failed");
+      }
+    }
+    // an invalid stored value reads as everything on
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ enabled: "x" }) })
+      .where("key", "=", "clientExtensions")
+      .execute();
+    expect(await readClientExtensions(db)).toEqual({ enabled: true, disabled: [] });
   });
 
   it("读：库里非法的 sandboxLimitOverrides 回落为 {}", async () => {

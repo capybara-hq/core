@@ -150,6 +150,13 @@ export const ERROR_CODES = {
    * `[{ file, reason }]`.
    */
   "client.invalid": 400,
+  /**
+   * A client file URL (`/api/v1/client/<plugin>/<build>/<file>`, spec §9.3) the caller may not
+   * fetch: an unknown or old build, a file the build does not list (by its exact key), an extension
+   * not running or not approved, not enabled in any live org the caller belongs to, or stopped by
+   * the kill switch. One code for all, so nothing tells them apart.
+   */
+  "client.not_found": 404,
   "directory.not_configured": 409,
   "catalog.item_disabled": 403,
   "plugin.disabled": 409,

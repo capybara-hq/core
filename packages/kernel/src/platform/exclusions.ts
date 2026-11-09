@@ -747,6 +747,24 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Server-sent event stream of UI invalidations",
   },
+  // client extensions (client extensions spec §9.2-§9.3)
+  {
+    route: "GET /api/v1/client/:plugin/:build/*",
+    category: "transport",
+    reason: "Serves a plugin's client code, stylesheets and assets to the browser that runs them",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/ui/client",
+    category: "internal",
+    reason:
+      "The web shell's list of client code to load (file URLs and integrity); nothing an agent acts on",
+  },
+  {
+    route: "GET /api/v1/admin/ui/client",
+    category: "internal",
+    reason:
+      "The admin console's list of platform page client code to load; nothing an agent acts on",
+  },
   // themes (themes spec §8-§9)
   {
     route: "GET /api/v1/themes/:id/:version/:revision/theme.css",

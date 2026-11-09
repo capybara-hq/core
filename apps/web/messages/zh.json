@@ -399,7 +399,8 @@
     "client": {
       "undeclared": "该插件包含扩展未声明的客户端代码（permissions.client）。请用 capybara-plugin pack 重新打包后再导入。",
       "integrity_mismatch": "该插件的某个客户端文件与清单记录的完整性校验值不符，插件包可能已损坏或被改动。请重新获取后再导入。",
-      "invalid": "该插件的客户端代码不合法：有文件缺失、未列出或过大，或某个样式表不被允许。请用 capybara-plugin pack 重新打包后再导入。"
+      "invalid": "该插件的客户端代码不合法：有文件缺失、未列出或过大，或某个样式表不被允许。请用 capybara-plugin pack 重新打包后再导入。",
+      "not_found": "该插件界面代码不可用：插件可能已停用、已升级或界面代码已被停用。请重新加载页面。"
     },
     "invitation": {
       "invalid": "邀请链接无效或已被撤销。",
