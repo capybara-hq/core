@@ -3773,6 +3773,7 @@
         "reportsTitle": "错误报告",
         "noReports": "此构建没有错误报告。",
         "adminPages": "管理后台页面",
+        "deletedOrg": "已删除的组织",
         "columns": {
           "path": "文件",
           "size": "大小",

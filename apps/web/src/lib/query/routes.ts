@@ -205,7 +205,8 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab); for an
-    // extension with client code, the settings too (界面代码 says whether it is stopped).
+    // extension with client code, the settings too (界面代码 says whether it is stopped), and the
+    // orgs when its reports name any (each report row shows the org's name).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
@@ -216,8 +217,14 @@ export const ROUTES: readonly RouteEntry[] = [
       const list = qc.getQueryData<{ extensions: AdminExtension[] }>(
         adminExtensionsQuery().queryKey,
       );
-      if (list?.extensions.find((e) => e.name === params.name)?.client == null) return;
-      await qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false });
+      const ext = list?.extensions.find((e) => e.name === params.name);
+      if (ext?.client == null) return;
+      await Promise.all([
+        qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false }),
+        ...((ext.clientReports ?? []).some((r) => r.orgId !== null)
+          ? [qc.prefetchQuery({ ...adminOrgsQuery(), retry: false })]
+          : []),
+      ]);
     },
   },
   {

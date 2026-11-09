@@ -19,7 +19,7 @@ import {
   updateDeploymentSettings,
 } from "../lib/admin";
 import type { AdminExtension, ClientReportRow } from "../lib/admin-extensions";
-import { deploymentSettingsQuery } from "../lib/query/admin";
+import { adminOrgsQuery, deploymentSettingsQuery } from "../lib/query/admin";
 import { retryOnMountOf } from "../lib/query/client";
 import { invalidateClientSets } from "../lib/query/client-extensions";
 import { useAppMutation } from "../lib/query/mutation";
@@ -63,10 +63,23 @@ export function AdminClientCode({ plugin }: { plugin: AdminExtension }) {
     invalidates: () => [],
     onSuccess: (r: DeploymentSettings) => qc.setQueryData(sq.queryKey, r),
   });
+  const reports = plugin.clientReports ?? [];
+  // Each report names its org (by name; an org deleted since is said so, never a bare uuid)
+  const oq = adminOrgsQuery();
+  const orgs = useQuery({
+    ...oq,
+    enabled: plugin.client != null && reports.some((r) => r.orgId !== null),
+    retryOnMount: retryOnMountOf(oq.queryKey),
+  }).data?.orgs;
   const client = plugin.client;
   if (client == null) return null;
   const total = client.files.reduce((n, f) => n + f.bytes, 0);
-  const reports = plugin.clientReports ?? [];
+  /** Where a report comes from: admin pages, the org's name, or a deleted org once the list is in. */
+  const where = (orgId: string | null): string => {
+    if (orgId === null) return t("adminPages");
+    if (orgs === undefined) return "—";
+    return orgs.find((o) => o.id === orgId)?.name ?? t("deletedOrg");
+  };
 
   async function toggle() {
     try {
@@ -95,7 +108,7 @@ export function AdminClientCode({ plugin }: { plugin: AdminExtension }) {
       header: t("columns.where"),
       tone: "muted",
       fit: true,
-      cell: (r) => r.orgId ?? t("adminPages"),
+      cell: (r) => where(r.orgId),
     },
     { key: "count", header: t("columns.count"), fit: true, cell: (r) => String(r.count) },
     {

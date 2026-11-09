@@ -190,6 +190,14 @@ describe("插件界面代码 on /admin/settings", () => {
   });
 });
 
+const ACME = {
+  id: "o1",
+  slug: "acme",
+  name: "Acme",
+  createdAt: "2026-11-01T00:00:00.000Z",
+  memberCount: 3,
+};
+
 const detailRoutes = (
   view: Record<string, unknown>,
   extra: Record<string, (c: Call) => Response> = {},
@@ -208,6 +216,8 @@ const detailRoutes = (
         issues: [],
       }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
+    // the reports name orgs: the list is read with the extension
+    "GET /api/v1/admin/orgs": () => json(200, { orgs: [ACME], limitDefaults: {} }),
     "PUT /api/v1/admin/settings": (c) =>
       json(200, {
         ...SETTINGS,
@@ -251,6 +261,32 @@ describe("界面代码 on /admin/extensions/[name]", () => {
     expect(screen.getByRole("button", { name: C.resume })).toBeTruthy();
     expect(client.getQueryState(keys.org("o1").clientExtensions())?.isInvalidated).toBe(true);
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("reports name the org; a deleted org has its own line, admin pages theirs", async () => {
+    const report = (orgId: string | null, contribution: string) => ({
+      orgId,
+      contribution,
+      kind: "render",
+      count: 1,
+      firstAt: "2026-11-08T08:00:00.000Z",
+      lastAt: "2026-11-09T08:00:00.000Z",
+      lastMessage: `failed in ${contribution}`,
+    });
+    const calls = detailRoutes(
+      ext({
+        clientReports: [report("o1", "brand"), report("o-gone", "hud"), report(null, "page")],
+      }),
+    );
+    await renderRouteWithCache("/admin/extensions/theme-neon", lastStubRoutes());
+    const reports = await screen.findByRole("table", { name: C.reportsTitle });
+    const rowOf = (text: string) => within(reports).getByRole("row", { name: new RegExp(text) });
+    // the org list was read on the server with the extension (reports name orgs)
+    expect(calls.some((c) => c.url === "/api/v1/admin/orgs")).toBe(false);
+    expect(within(rowOf("failed in brand")).getByText("Acme")).toBeTruthy();
+    expect(within(rowOf("failed in brand")).queryByText("o1")).toBeNull();
+    expect(within(rowOf("failed in hud")).getByText(C.deletedOrg)).toBeTruthy();
+    expect(within(rowOf("failed in page")).getByText(C.adminPages)).toBeTruthy();
   });
 
   it("恢复界面代码 takes a stopped plugin out of the list; no reports shows the empty line (zh)", async () => {
