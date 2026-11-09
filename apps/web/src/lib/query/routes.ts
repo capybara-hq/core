@@ -93,6 +93,7 @@ import {
   serviceTokensQuery,
 } from "./settings";
 import { memberGuideQuery, setupGuideQuery } from "./setup";
+import { setupCheckStatesQuery } from "./setup-checks";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
@@ -686,6 +687,11 @@ export const ROUTES: readonly RouteEntry[] = [
                   audience: "admin",
                   locale: labelLocale(locale),
                 }),
+                retry: false,
+              }),
+              // and its checks' cached states (the live rows; reading them runs nothing)
+              qc.prefetchQuery({
+                ...setupCheckStatesQuery(orgId, guide, { connectorId: id, audience: "admin" }),
                 retry: false,
               }),
             ]

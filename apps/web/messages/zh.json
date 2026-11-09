@@ -2407,6 +2407,8 @@
       "webhook": "Webhook"
     },
     "checkAfterSave": "保存后检查",
+    "checksRateLimited": "检查次数太多，请一分钟后再重新检查；各项显示的是上次的结果。",
+    "checksUnavailable": "暂时读不到检查结果，请稍后刷新页面。",
     "unresolved": {
       "not_saved": "{names} 保存后显示，现在原样显示。",
       "public_url": "{names} 现在原样显示：需要超级管理员设置 http.publicUrl（平台的公开地址）。",

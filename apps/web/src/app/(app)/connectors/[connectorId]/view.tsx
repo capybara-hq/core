@@ -124,10 +124,10 @@ function Connector({
   const key = connectorQuery(orgId, connectorId).queryKey;
   const saved = (next: ConnectorDetail) => qc.setQueryData(key, next);
   // The kernel answers a change with the connector: it replaces the cached one; the list (names,
-  // status) is read again when shown.
+  // status) is read again when shown, and so are the setup checks' states (a new input reruns them).
   const save = useAppMutation({
     fn: (input: UpdateConnectorInput) => updateConnector(orgId, connectorId, input),
-    invalidates: () => [keys.org(orgId).connectors()],
+    invalidates: () => [keys.org(orgId).connectors(), keys.org(orgId).setupChecksAll()],
     onSuccess: (r) => saved(r.connector),
   });
   const update: Update = (input) => save.mutateAsync(input).then((r) => r.connector);
@@ -343,6 +343,7 @@ function GuideTab({
           orgId={orgId}
           guide={guide}
           query={{ connectorId: app.id, audience: "admin" }}
+          checks="live"
           {...(plugin !== undefined ? { pluginLabel: plugin } : {})}
           drift={
             drift === null
@@ -534,7 +535,7 @@ function CredentialsTab({
   const setCredential = useAppMutation({
     fn: (credential: Parameters<typeof setOrgCredential>[2]) =>
       setOrgCredential(orgId, app.id, credential),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
+    invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const status = (
     <StatusMark
@@ -787,7 +788,7 @@ function RotateClient({ orgId, app }: { orgId: string; app: ConnectorDetail }) {
   const [pending, setPending] = useState(false);
   const setClient = useAppMutation({
     fn: (client: Parameters<typeof setOrgCredential>[2]) => setOrgCredential(orgId, app.id, client),
-    invalidates: () => [keys.org(orgId).connector(app.id)],
+    invalidates: () => [keys.org(orgId).connector(app.id), keys.org(orgId).setupChecksAll()],
   });
   const clientFlow = app.auth.type === "oauth_client";
   const value = buildOAuthClient(values);

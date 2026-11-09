@@ -101,10 +101,10 @@ function Channel({ orgId, channelId }: { orgId: string; channelId: string }) {
   const agentsQ = agentsQuery(orgId);
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) });
   // The kernel answers a change with the connection: it replaces the cached one; the list is
-  // read again when shown.
+  // read again when shown, and so are the setup checks' states (a new input reruns them).
   const save = useAppMutation({
     fn: (input: UpdateChannelInput) => updateChannel(orgId, channelId, input),
-    invalidates: () => [keys.org(orgId).channels()],
+    invalidates: () => [keys.org(orgId).channels(), keys.org(orgId).setupChecksAll()],
     onSuccess: (r) => qc.setQueryData(channelQuery(orgId, channelId).queryKey, r.channel),
   });
   const update: Update = (input) => save.mutateAsync(input).then((r) => r.channel);
@@ -296,6 +296,7 @@ function GuideSection({
         orgId={orgId}
         guide={guide}
         query={{ connectionId: channel.id }}
+        checks="live"
         pluginLabel={channelPluginLabel(channel, lang)}
         drift={
           drift === null

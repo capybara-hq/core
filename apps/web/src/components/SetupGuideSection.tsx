@@ -3,6 +3,7 @@
 import {
   Callout,
   CheckRow,
+  type CheckRowState,
   GuideDocument,
   Segmented,
   Skeleton,
@@ -13,16 +14,22 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiClientError } from "../lib/api";
 import { labelLocale } from "../lib/extension-label";
 import { keys } from "../lib/query/keys";
+import { useAppMutation } from "../lib/query/mutation";
 import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/setup";
-import type {
-  RenderedSetupGuide,
-  SetupGuideAudience,
-  SetupGuideRef,
-  UnresolvedReason,
+import { setupCheckStatesQuery } from "../lib/query/setup-checks";
+import {
+  type RenderedSetupGuide,
+  runSetupCheck,
+  type SetupCheckSelection,
+  type SetupCheckState,
+  type SetupCheckText,
+  type SetupGuideAudience,
+  type SetupGuideRef,
+  type UnresolvedReason,
 } from "../lib/setup-guides";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
@@ -44,7 +51,11 @@ export type SetupGuideSectionProps = {
    * own mode (`onAck` gets its hash; a 409 `*.guide_changed` reads the guide again).
    */
   drift?: { from: string; to: string; onAck: (hash: string) => Promise<void> } | null;
-  /** Live check rows (Task 12); without it check rows are static. */
+  /**
+   * `live`: a saved target's check rows read their cached states, run the rows without a fresh
+   * result and offer 重新检查 (spec §10.4). Otherwise (and always without a saved target) the rows
+   * only show the check.
+   */
   checks?: "static" | "live";
   /** The super admin's platform route: no org, no target (spec §9.3). */
   admin?: boolean;
@@ -66,6 +77,7 @@ export function SetupGuideSection({
   guide,
   query,
   drift = null,
+  checks = "static",
   admin = false,
   pluginLabel,
 }: SetupGuideSectionProps) {
@@ -113,21 +125,37 @@ export function SetupGuideSection({
           }))}
         />
       )}
-      <GuideDocument
-        blocks={g.blocks}
-        renderCheck={(c) =>
-          // the platform view has no target to check (spec §9.3): no rows
-          admin ? null : saved ? (
-            <CheckRow label={c.label} state={{ status: "not_run" }} />
-          ) : (
-            <CheckRow
-              label={c.label}
-              state={{ status: "static" }}
-              staticNote={t("checkAfterSave")}
-            />
-          )
-        }
-      />
+      {checks === "live" && !admin && saved ? (
+        <LiveGuideDocument
+          // a mode's rows are their own: switching starts over
+          key={g.mode ?? ""}
+          orgId={orgId}
+          guide={guide}
+          g={g}
+          selection={{
+            ...(query.connectionId !== undefined && { connectionId: query.connectionId }),
+            ...(query.connectorId !== undefined && { connectorId: query.connectorId }),
+            ...(g.mode !== null && { mode: g.mode }),
+            ...(query.audience !== undefined && { audience: query.audience }),
+          }}
+        />
+      ) : (
+        <GuideDocument
+          blocks={g.blocks}
+          renderCheck={(c) =>
+            // the platform view has no target to check (spec §9.3): no rows
+            admin ? null : saved ? (
+              <CheckRow label={c.label} state={{ status: "not_run" }} />
+            ) : (
+              <CheckRow
+                label={c.label}
+                state={{ status: "static" }}
+                staticNote={t("checkAfterSave")}
+              />
+            )
+          }
+        />
+      )}
       {unresolvedLines(g).map(([reason, names]) => (
         <Text key={reason} variant="small" tone="muted">
           {t(`unresolved.${reason}`, { names: names.map((n) => `{{${n}}}`).join(", ") })}
@@ -136,6 +164,166 @@ export function SetupGuideSection({
     </Stack>
   );
 }
+
+/** How often a row running elsewhere is read again, and for how long at most (spec §10.4). */
+const POLL_MS = 1000;
+const POLL_WINDOW_MS = 10_000;
+/** Runs started on view at once per page (spec §10.4). */
+const MAX_IN_FLIGHT = 4;
+/** Runs a row gets on view (a run answered `running` that left no result is tried again). */
+const MAX_AUTO_RUNS = 3;
+
+/**
+ * The guide with live check rows (spec §10.3, §10.4): the cached states first (`GET …/checks`,
+ * which runs nothing), then a run without `force` for each row without a fresh result (at most
+ * four at a time), the states read again every second while a row runs elsewhere (up to ten
+ * seconds), and 重新检查 as a forced run (refused within the cooldown: the button waits for
+ * `cooldownUntil`). Over the per-account limit (429 `rate_limited`) the rows keep their last state
+ * and a muted line says so; runs on view stop.
+ */
+function LiveGuideDocument({
+  orgId,
+  guide,
+  g,
+  selection,
+}: {
+  orgId: string;
+  guide: SetupGuideRef;
+  g: RenderedSetupGuide;
+  selection: SetupCheckSelection;
+}) {
+  const t = useTranslations("setupGuide");
+  const locale = labelLocale(useLocale());
+  const qc = useQueryClient();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const q = setupCheckStatesQuery(orgId, guide, selection);
+  const pollingSince = useRef<number | null>(null);
+  const states = useQuery({
+    ...q,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data === undefined || !Object.values(data).some((s) => s.status === "running")) {
+        pollingSince.current = null;
+        return false;
+      }
+      pollingSince.current ??= Date.now();
+      return Date.now() - pollingSince.current < POLL_WINDOW_MS ? POLL_MS : false;
+    },
+  });
+  const [inFlight, setInFlight] = useState<ReadonlySet<string>>(() => new Set());
+  const [rateLimited, setRateLimited] = useState(false);
+  const run = useAppMutation({
+    fn: (v: { id: string; force: boolean }) =>
+      runSetupCheck(orgId, guide, v.id, { ...selection, ...(v.force && { force: true }) }),
+    // the answer is the row's new state; a `running` one is polled through the states read
+    invalidates: () => [],
+    onSuccess: (r, v) =>
+      qc.setQueryData<Record<string, SetupCheckState>>(q.queryKey, (old) => ({
+        ...old,
+        [v.id]: r.result,
+      })),
+  });
+
+  async function start(id: string, force: boolean): Promise<"ok" | "limited" | "failed"> {
+    setInFlight((s) => new Set(s).add(id));
+    try {
+      await run.mutateAsync({ id, force });
+      setRateLimited(false);
+      return "ok";
+    } catch (e) {
+      if (e instanceof ApiClientError && e.status === 429) {
+        setRateLimited(true);
+        return "limited";
+      }
+      if (force) toast.error(errorMessage(e));
+      return "failed";
+    } finally {
+      setInFlight((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  }
+
+  // Runs on view: each row without a fresh result, a few at a time, until the limit answers 429
+  const auto = useRef({ attempts: new Map<string, number>(), queue: [] as string[], active: 0 });
+  const stopped = useRef(false);
+  const data = states.data;
+  const idsKey = g.checks.map((c) => c.id).join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the ids are keyed by `idsKey`; `start` is the latest render's
+  useEffect(() => {
+    if (data === undefined || stopped.current) return;
+    const a = auto.current;
+    for (const id of new Set(idsKey.split("\n"))) {
+      if (id === "" || (data[id]?.status ?? "not_run") !== "not_run" || a.queue.includes(id)) {
+        continue;
+      }
+      const n = a.attempts.get(id) ?? 0;
+      if (n >= MAX_AUTO_RUNS) continue;
+      a.attempts.set(id, n + 1);
+      a.queue.push(id);
+    }
+    const pump = () => {
+      while (!stopped.current && a.active < MAX_IN_FLIGHT && a.queue.length > 0) {
+        const id = a.queue.shift() as string;
+        a.active += 1;
+        void start(id, false).then((outcome) => {
+          a.active -= 1;
+          if (outcome === "limited") {
+            stopped.current = true;
+            a.queue.length = 0;
+          }
+          pump();
+        });
+      }
+    };
+    pump();
+  }, [data, idsKey]);
+
+  const rowState = (id: string): CheckRowState => {
+    if (inFlight.has(id)) return { status: "running" };
+    const s = data?.[id];
+    if (s === undefined) return { status: "not_run" };
+    return {
+      status: s.status,
+      ...(s.reason && { reason: textIn(s.reason, locale) }),
+      ...(s.fix && { fix: textIn(s.fix, locale) }),
+      ...(s.checkedAt !== undefined && { checkedAt: s.checkedAt }),
+      ...(s.cooldownUntil !== undefined && { cooldownUntil: s.cooldownUntil }),
+    };
+  };
+
+  return (
+    <>
+      <GuideDocument
+        blocks={g.blocks}
+        renderCheck={(c) => (
+          <CheckRow
+            label={c.label}
+            state={rowState(c.id)}
+            onRecheck={() => void start(c.id, true)}
+          />
+        )}
+      />
+      {rateLimited && (
+        <Text variant="small" tone="muted">
+          {t("checksRateLimited")}
+        </Text>
+      )}
+      {data === undefined && states.error !== null && (
+        <Text variant="small" tone="muted">
+          {t("checksUnavailable")}
+        </Text>
+      )}
+    </>
+  );
+}
+
+/** A check's text in the UI language (Chinese when the plugin wrote it, else English). */
+const textIn = (text: SetupCheckText, locale: "en" | "zh"): string =>
+  locale === "zh" ? (text.zh ?? text.en) : text.en;
 
 /** The unresolved variables grouped by reason, in the order the kernel listed them. */
 function unresolvedLines(g: RenderedSetupGuide): [UnresolvedReason, string[]][] {

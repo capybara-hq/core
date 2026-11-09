@@ -95,3 +95,73 @@ export const getAdminSetupGuide = (ref: SetupGuideRef, q: { locale?: "en" | "zh"
   apiFetch<{ guide: RenderedSetupGuide }>(
     `/api/v1/admin/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}${guideParams(q)}`,
   );
+
+/** A check result's text in English and, when the plugin wrote one, Chinese. */
+export interface SetupCheckText {
+  en: string;
+  zh?: string;
+}
+
+/**
+ * The state of one live check (spec §10.3): a result (`ok` / `failing` / `unknown`), `running`
+ * while a run holds it (on any replica), or `not_run` without a fresh result for the target's
+ * current input. `cooldownUntil`: a forced rerun is refused until then.
+ */
+export interface SetupCheckState {
+  status: "ok" | "failing" | "unknown" | "running" | "not_run";
+  reason?: SetupCheckText;
+  fix?: SetupCheckText;
+  checkedAt?: string;
+  cooldownUntil?: string;
+}
+
+/** Which rendered guide the checks belong to: the target, its mode and the audience. */
+export interface SetupCheckSelection {
+  connectionId?: string;
+  connectorId?: string;
+  mode?: string;
+  audience?: SetupGuideAudience;
+}
+
+const checksPath = (orgId: string, ref: SetupGuideRef) =>
+  `/api/v1/orgs/${encodeURIComponent(orgId)}/catalog/${encodeURIComponent(ref.itemId)}/guides/${encodeURIComponent(ref.guideId)}/checks`;
+
+const selectionOf = (s: SetupCheckSelection): SetupCheckSelection => ({
+  ...(s.connectionId && { connectionId: s.connectionId }),
+  ...(s.connectorId && { connectorId: s.connectorId }),
+  ...(s.mode && { mode: s.mode }),
+  ...(s.audience && { audience: s.audience }),
+});
+
+/** The cached state of each check of the rendered guide, by check id; runs nothing. */
+export const getSetupCheckStates = (
+  orgId: string,
+  ref: SetupGuideRef,
+  s: SetupCheckSelection,
+  signal?: AbortSignal,
+) => {
+  const query = new URLSearchParams(selectionOf(s) as Record<string, string>).toString();
+  return apiFetch<{ results: Record<string, SetupCheckState> }>(
+    `${checksPath(orgId, ref)}${query ? `?${query}` : ""}`,
+    signal ? { signal } : {},
+  );
+};
+
+/**
+ * Runs one check unless a fresh result is cached; `force` (重新检查) reruns it, refused within the
+ * cooldown (the cached state comes back with `cooldownUntil`). 429 `rate_limited` over the
+ * per-account budget.
+ */
+export const runSetupCheck = (
+  orgId: string,
+  ref: SetupGuideRef,
+  checkId: string,
+  s: SetupCheckSelection & { force?: boolean },
+) =>
+  apiFetch<{ result: SetupCheckState }>(
+    `${checksPath(orgId, ref)}/${encodeURIComponent(checkId)}/run`,
+    {
+      method: "POST",
+      body: JSON.stringify({ ...selectionOf(s), ...(s.force && { force: true }) }),
+    },
+  );

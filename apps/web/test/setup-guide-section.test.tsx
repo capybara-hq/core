@@ -259,6 +259,16 @@ describe("channel detail: 接入指南 and the drift notice", () => {
     [`GET ${BASE}/channels/schema/slack`]: () =>
       json(200, { plugin: "slack", schema: SCHEMA, guide: { itemId: "item1", guideId: "app" } }),
     [`GET ${GUIDE_URL}`]: guideRoute,
+    // the live rows' cached states: fresh results, so nothing runs
+    [`GET ${GUIDE_URL}/checks`]: () =>
+      json(200, {
+        results: Object.fromEntries(
+          ["app-token", "capybara:webhook-seen", "bot-token", "capybara:public-url"].map((id) => [
+            id,
+            { status: "ok", checkedAt: "2026-10-01T00:00:00Z" },
+          ]),
+        ),
+      }),
     ...overrides,
   });
 

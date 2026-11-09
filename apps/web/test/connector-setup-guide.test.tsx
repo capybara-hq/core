@@ -242,6 +242,9 @@ describe("connector detail: 接入指南 with the drift notice", () => {
     [`GET ${ORG}/connectors/app1`]: () => json(200, { connector: connector(over) }),
     [`GET ${ORG}/catalog/${ITEM}`]: () => json(200, orgDetail()),
     [`GET ${GUIDE_URL}`]: guideRoute(),
+    // the live rows' cached states (a fresh result: nothing runs)
+    [`GET ${GUIDE_URL}/checks`]: () =>
+      json(200, { results: { "oauth-client": { status: "ok", checkedAt: T } } }),
   });
 
   it("connector detail shows drift and acks", async () => {
@@ -270,7 +273,7 @@ describe("connector detail: 接入指南 with the drift notice", () => {
     expect(
       calls.some((c) => c.url === `${GUIDE_URL}?audience=admin&locale=zh&connectorId=app1`),
     ).toBe(true);
-    // a saved target: the rows wait for live checks (T12), no 保存后检查
+    // a saved target: live rows, no 保存后检查
     const row = screen.getByRole("group", { name: "OAuth client works" });
     expect(within(row).queryByText(zh.setupGuide.checkAfterSave)).toBeNull();
     expect(screen.getAllByText(notice)).toHaveLength(1);

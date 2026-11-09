@@ -107,6 +107,28 @@ export const keys = {
         q.audience,
         q.locale,
       ],
+      /** Every setup guide's check states (an invalidation prefix: a target's input changed). */
+      setupChecksAll: (): readonly unknown[] => [...all, "setupChecks"],
+      /**
+       * The cached states of a rendered guide's live checks: the guide at the item's version, the
+       * target, the mode and the audience (the language only picks the text, so it is not part).
+       */
+      setupChecks: (
+        itemId: string,
+        guideId: string,
+        version: string,
+        q: { connectionId: string; connectorId: string; mode: string; audience: string },
+      ): readonly unknown[] => [
+        ...all,
+        "setupChecks",
+        itemId,
+        guideId,
+        version,
+        q.connectionId,
+        q.connectorId,
+        q.mode,
+        q.audience,
+      ],
       /** The org's extensions (installed plugins with an extension, enabled or not). */
       orgExtensions: (): readonly unknown[] => [...all, "orgExtensions"],
       /** One extension's two-level config in the org: following or a copy, per-field levels. */

@@ -2419,6 +2419,8 @@
       "webhook": "Webhook"
     },
     "checkAfterSave": "Checked after saving",
+    "checksRateLimited": "Too many checks in a short time. Try again in a minute; the rows show the last results.",
+    "checksUnavailable": "Check results cannot be read right now. Reload the page later.",
     "unresolved": {
       "not_saved": "{names} appear once saved and are shown as written for now.",
       "public_url": "{names} are shown as written: a super admin needs to set http.publicUrl (the platform's public address).",

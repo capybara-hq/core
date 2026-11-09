@@ -18,8 +18,8 @@ import { SetupGuideSection } from "./SetupGuideSection";
 /**
  * 接入指南 above a connector template's input (the install wizard's template step, 补充配置): the
  * admin text, read before the client fields because the admin registers `{{oauthCallbackUrl}}` at
- * the third party before they have a client id. No target yet, so its checks wait for the save.
- * Nothing without a guide.
+ * the third party before they have a client id. Live checks, but no target while the wizard is open
+ * (its connectors are created on submit), so the rows say 保存后检查. Nothing without a guide.
  */
 export function TemplateGuideSection({
   orgId,
@@ -42,6 +42,7 @@ export function TemplateGuideSection({
         orgId={orgId}
         guide={template.guide}
         query={{ audience: "admin" }}
+        checks="live"
       />
     </FormSection>
   );
@@ -111,6 +112,7 @@ export function ConnectorGuideSheet({
         orgId={orgId}
         guide={guide}
         query={{ connectorId: connector.id, audience: "member" }}
+        checks="live"
       />
     </Sheet>
   );
