@@ -15,6 +15,22 @@ import {
  * - 请求末尾是收尾提醒（`Step limit reached`）→ 文本 `wrapped up`；
  * - 其他文本 → `You said: <text>`（流式，每 4 字符一块）。
  */
+
+/**
+ * Test probe shared through `globalThis` (the kernel loads this module itself): when
+ * `beforeComplete` is set, a `loop:` step awaits it after its wait and before it completes, so a
+ * test can hold a step open until something it observes has happened.
+ */
+export interface LooperState {
+  beforeComplete?: () => Promise<void>;
+}
+
+export function looperState(): LooperState {
+  const g = globalThis as { __modelLooper?: LooperState };
+  g.__modelLooper ??= {};
+  return g.__modelLooper;
+}
+
 function lastUserText(req: ModelRequestV1): string {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
@@ -86,6 +102,7 @@ export default defineExtension({
         const loop = /^loop:(\d+)$/.exec(text);
         if (loop) {
           await wait(Number(loop[1]), signal);
+          await looperState().beforeComplete?.();
           yield {
             type: "message_complete",
             content: [{ type: "tool_call", id: randomUUID(), name: "noop", input: {} }],

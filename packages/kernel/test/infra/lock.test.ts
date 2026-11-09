@@ -9,6 +9,7 @@ import { LockService } from "../../src/infra/lock/lock.service.js";
 import { DOWNGRADE_SHARED_LEASE, RENEW_SHARED_LEASE } from "../../src/infra/lock/shared-lease.js";
 import { WithLock } from "../../src/infra/lock/with-lock.decorator.js";
 import { createLogger } from "../../src/log.js";
+import { LOCK_FAKE_CLOCK, renewalPeriods } from "../helpers/lock-clock.js";
 
 let rd: TestContainer;
 let r1: Redis;
@@ -33,35 +34,6 @@ async function until(cond: () => boolean | Promise<boolean>, ms = 3000) {
     await sleep(10);
   }
 }
-/**
- * Moves a watchdog through `periods` renewal periods of `intervalMs` on a fake clock (the caller
- * installed it before taking the lease), against real Redis: after each tick, waits in real time
- * for the one renewal it sent (an `eval` on `spy`'s client), then lets the watchdog take the
- * answer before the next tick. The watchdog's clock moves only when the test moves it, so a slow
- * event loop or a busy shared Redis cannot push a renewal past the loss deadline (TTL - TTL/3
- * after the last success, by design: a stalled holder gives the lock up). Returns the answers.
- */
-async function renewalPeriods(
-  spy: { mock: { calls: unknown[]; results: { value: unknown }[] } },
-  intervalMs: number,
-  periods: number,
-): Promise<unknown[]> {
-  const answers: unknown[] = [];
-  for (let i = 0; i < periods; i++) {
-    const before = spy.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(intervalMs);
-    expect(spy.mock.calls.length).toBe(before + 1);
-    answers.push(await spy.mock.results[before]?.value);
-    // setImmediate is not faked: it runs after the watchdog's continuation took the answer
-    await new Promise((r) => setImmediate(r));
-  }
-  return answers;
-}
-const FAKE_CLOCK = {
-  toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
-  now: 0,
-} satisfies Parameters<typeof vi.useFakeTimers>[0];
-
 let n = 0;
 const k = (name: string) => `${name}-${++n}-${Math.random().toString(36).slice(2)}`;
 
@@ -136,7 +108,7 @@ describe("LockService", () => {
     const ttlMs = 30_000;
     const key = k("renew");
     const evals = vi.spyOn(r1, "eval");
-    vi.useFakeTimers(FAKE_CLOCK);
+    vi.useFakeTimers(LOCK_FAKE_CLOCK);
     try {
       const h = await new LockService(r1, log).acquire(key, { ttlMs });
       // 8 renewal periods = 2.67 TTLs: without renewals moving the deadline, lost fires at 2/3 TTL
@@ -597,7 +569,7 @@ describe("LockService shared leases", () => {
     const a = new LockService(r1, log);
     const keys = keysOf("renew");
     const evals = vi.spyOn(r1, "eval");
-    vi.useFakeTimers(FAKE_CLOCK);
+    vi.useFakeTimers(LOCK_FAKE_CLOCK);
     try {
       const s = await a.tryShared(keys, "s", 4, ttlMs);
       expect(s).toBeDefined();
